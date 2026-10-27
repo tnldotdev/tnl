@@ -1,0 +1,12 @@
+{
+  "type": "hello_accepted",
+  "protocol_version": 1,
+  "native_pair_leg_accepted": {
+    "pair_id": "npp_1234567890123456789012",
+    "delivery_id": "AQEBAQEBAQEBAQEBAQEBAQ",
+    "delivery_generation": 3,
+    "connection_slot": 1,
+    "source_ip": "192.0.2.10",
+    "expires_at": "2026-01-02T03:05:00Z"
+  }
+}

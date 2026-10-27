@@ -29,6 +29,11 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 			RelayServiceID: "relay-a", RelayID: "node-a", RelayRunID: "process-a", RelayLeaseRevision: 3,
 			RequestedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Nonce: make([]byte, 32), Signature: make([]byte, 64)},
 	}, WriteControl, ReadControl)
+	assertGoldenFrame(t, "control-native-accepted", Message{Type: HelloAccepted, ProtocolVersion: Version,
+		NativePairLegAccepted: &NativePairLegAccepted{PairID: "npp_1234567890123456789012", DeliveryID: "AQEBAQEBAQEBAQEBAQEBAQ",
+			DeliveryGeneration: 3, ConnectionSlot: 1, SourceIP: "192.0.2.10",
+			ExpiresAt: time.Date(2026, 1, 2, 3, 5, 0, 0, time.UTC)}}, WriteControl, ReadControl)
+	assertGoldenFrame(t, "control-accepted", Message{Type: HelloAccepted, ProtocolVersion: Version}, WriteControl, ReadControl)
 	assertGoldenFrame(t, "visitor-stream-header", VisitorStreamHeader{
 		ProtocolVersion: Version, Kind: VisitorStream, VisitorConnectionID: "visitor_connection_1",
 		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
@@ -74,6 +79,9 @@ func TestInvalidFixtures(t *testing.T) {
 		{"invalid-native-publisher-role", readControl},
 		{"invalid-native-credential", readControl},
 		{"invalid-native-missing-proof", readControl},
+		{"invalid-native-receipt-on-hello", readControl},
+		{"invalid-native-receipt-on-ping", readControl},
+		{"invalid-native-receipt-source", readControl},
 		{"invalid-visitor-missing-field", readVisitor},
 		{"invalid-admission-missing-relay", readAdmission},
 	} {

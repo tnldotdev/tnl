@@ -21,7 +21,7 @@ type sessionWithoutAcceptedPeer struct{ muxsession.Session }
 
 // peerNativeDial sends the first control stream through an accepted physical
 // socket. no transport metadata is supplied by the test to relay admission.
-func peerNativeDial(t *testing.T, kind string, acceptor *PublisherAcceptor, hello tunnelv1.Message, hidePeer bool, hint ...string) (error, error) {
+func peerNativeDial(t *testing.T, kind string, acceptor *PublisherAcceptor, hello tunnelv1.Message, expectedDeliveryID string, hidePeer bool, hint ...string) (error, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	t.Cleanup(cancel)
@@ -108,7 +108,7 @@ func peerNativeDial(t *testing.T, kind string, acceptor *PublisherAcceptor, hell
 		}
 		return err, relayAwait(t, done)
 	}
-	session, dialErr := tunnel.Dial(ctx, client, hello)
+	session, _, dialErr := tunnel.DialNative(ctx, client, hello, expectedDeliveryID)
 	if session != nil {
 		_ = session.Close()
 	}

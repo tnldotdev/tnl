@@ -172,6 +172,14 @@ visitor access, ready publisher run and two distinct relay assignments. its
 stored deadline advances only after a fresh authorized renewal; an uncertain
 response repeats the same key and delivery generation. the transport binding
 is not a publisher grant or permission to open an application stream.
+[relay native admission](../../../internal/relay/native_connector.go) claims each
+signed leg using the directly accepted socket's source. only after control
+confirms that claim does the relay send a bounded `hello_accepted` receipt with
+the source, exact delivery ID, pair, generation, slot, and expiry. the pair key
+stays in the private control claim. [native dialing](../../../internal/transport/tunnel/session.go)
+requires the delivery ID from the prepared pair and rejects a missing, expired,
+or mismatched receipt before returning the session. acknowledged native sessions
+do not accept further streams until a peer owner can enforce the pair lifetime.
 [connector preparation](../../../internal/connector/stream/peer_preparation.go)
 can sign, recover, and renew a pair in background work using the enrolled device
 or workload key. its test-only opt-in denies the existing ingress application

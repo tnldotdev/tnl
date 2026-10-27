@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestControlMessages(t *testing.T) {
@@ -74,6 +75,82 @@ func TestPeerNativeHelloRoleSeparation(t *testing.T) {
 	for _, kind := range []string{`"role":"ingress","credential":"secret"`, `"role":"publisher","credential":"secret"`} {
 		if err := readControl(frame(`{"type":"hello","protocol_version":1,` + kind + `,"native_pair_leg_proof":null}`)); err == nil {
 			t.Fatalf("non-native role accepted null proof: %s", kind)
+		}
+	}
+}
+
+func TestPeerNativeReceiptBindingAndInvalidWire(t *testing.T) {
+	hello, err := ReadControl(bytes.NewReader(goldenWire(t, "control-native-hello")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := ReadControl(bytes.NewReader(goldenWire(t, "control-native-accepted")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := *accepted.NativePairLegAccepted
+	// the accepted fixture describes the second leg of the same pair.
+	proof := *hello.NativePairLegProof
+	proof.ConnectionSlot = receipt.ConnectionSlot
+	before := receipt.ExpiresAt.Add(-time.Second)
+	if err := receipt.Match(proof, receipt.DeliveryID, before); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*NativePairLegAccepted, *NativePairLegProof, *string, *time.Time)
+	}{
+		{"pair", func(r *NativePairLegAccepted, _ *NativePairLegProof, _ *string, _ *time.Time) {
+			r.PairID = "npp_abcdefghijklmnopqrstuv"
+		}},
+		{"generation", func(r *NativePairLegAccepted, _ *NativePairLegProof, _ *string, _ *time.Time) { r.DeliveryGeneration++ }},
+		{"slot", func(r *NativePairLegAccepted, _ *NativePairLegProof, _ *string, _ *time.Time) { r.ConnectionSlot = 0 }},
+		{"delivery", func(r *NativePairLegAccepted, _ *NativePairLegProof, _ *string, _ *time.Time) {
+			r.DeliveryID = "AgICAgICAgICAgICAgICAg"
+		}},
+		{"expected delivery", func(_ *NativePairLegAccepted, _ *NativePairLegProof, id *string, _ *time.Time) {
+			*id = "AgICAgICAgICAgICAgICAg"
+		}},
+		{"invalid expected delivery", func(_ *NativePairLegAccepted, _ *NativePairLegProof, id *string, _ *time.Time) { *id = "bad" }},
+		{"expired", func(_ *NativePairLegAccepted, _ *NativePairLegProof, _ *string, now *time.Time) {
+			*now = receipt.ExpiresAt
+		}},
+		{"missing expiry", func(r *NativePairLegAccepted, _ *NativePairLegProof, _ *string, _ *time.Time) {
+			r.ExpiresAt = time.Time{}
+		}},
+		{"untrusted source", func(r *NativePairLegAccepted, _ *NativePairLegProof, _ *string, _ *time.Time) {
+			r.SourceIP = "not-an-ip"
+		}},
+		{"unspecified source", func(r *NativePairLegAccepted, _ *NativePairLegProof, _ *string, _ *time.Time) { r.SourceIP = "0.0.0.0" }},
+		{"mapped source", func(r *NativePairLegAccepted, _ *NativePairLegProof, _ *string, _ *time.Time) {
+			r.SourceIP = "::ffff:192.0.2.10"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			r, leg, id, now := receipt, proof, receipt.DeliveryID, before
+			test.change(&r, &leg, &id, &now)
+			if err := r.Match(leg, id, now); err == nil {
+				t.Fatal("accepted an unbound native receipt")
+			}
+		})
+	}
+	for _, kind := range []MessageType{Hello, Ping, Drain, Error, GoAway} {
+		bad := accepted
+		bad.Type = kind
+		bad.Code = Unauthenticated
+		bad.RequestID = "req"
+		if err := bad.Validate(); err == nil {
+			t.Fatalf("accepted receipt on %s", kind)
+		}
+	}
+	for _, raw := range []string{
+		`{"type":"hello_accepted","protocol_version":1,"native_pair_leg_accepted":null}`,
+		`{"type":"hello_accepted","protocol_version":1,"native_pair_leg_accepted": null }`,
+		`{"type":"hello_accepted","protocol_version":1,"role":"publisher","native_pair_leg_accepted":null}`,
+		`{"type":"error","protocol_version":1,"code":"internal","native_pair_leg_accepted":null}`,
+	} {
+		if err := readControl(frame(raw)); err == nil {
+			t.Fatal("accepted receipt on another role or message")
 		}
 	}
 }

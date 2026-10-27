@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -91,6 +92,90 @@ func TestSessionRejectsHello(t *testing.T) {
 	}
 	if errors.Is(peerErr, cause) || !errors.Is(localErr, cause) {
 		t.Fatalf("claim cause leaked to peer or was lost locally: peer=%v local=%v", peerErr, localErr)
+	}
+}
+
+func TestNativeHelloReceiptRequiredAndBoundToPreparedDelivery(t *testing.T) {
+	proof := tunnelv1.NativePairLegProof{PairID: "npp_1234567890123456789012", DeliveryGeneration: 1,
+		ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 1,
+		PublisherIdentityID: "pub_1234567890123456789012", PublisherConnectionID: "pc_1234567890123456789012",
+		AssignmentRevision: 1, RelayServiceID: "relay-a", RelayID: "node-a", RelayRunID: "run-a", RelayLeaseRevision: 1,
+		RequestedAt: time.Now(), Nonce: make([]byte, 32), Signature: make([]byte, 64)}
+	hello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.NativeConnector, NativePairLegProof: &proof}
+	id := "AQEBAQEBAQEBAQEBAQEBAQ"
+	receipt := tunnelv1.NativePairLegAccepted{PairID: proof.PairID, DeliveryID: id, DeliveryGeneration: 1, ConnectionSlot: 0,
+		SourceIP: "127.0.0.1", ExpiresAt: time.Now().Add(time.Minute).UTC().Truncate(time.Microsecond)}
+	for _, test := range []struct {
+		name     string
+		response *tunnelv1.NativePairLegAccepted
+		expected string
+		ok       bool
+		serverOK bool
+	}{
+		{"accepted", &receipt, id, true, true},
+		{"missing receipt", nil, id, false, false},
+		{"wrong prepared delivery", &receipt, "AgICAgICAgICAgICAgICAg", false, true},
+		{"wrong signed slot", &tunnelv1.NativePairLegAccepted{PairID: receipt.PairID, DeliveryID: id, DeliveryGeneration: 1, ConnectionSlot: 1, SourceIP: receipt.SourceIP, ExpiresAt: receipt.ExpiresAt}, id, false, false},
+		{"expired receipt", &tunnelv1.NativePairLegAccepted{PairID: receipt.PairID, DeliveryID: id, DeliveryGeneration: 1, ConnectionSlot: 0, SourceIP: receipt.SourceIP, ExpiresAt: time.Now().Add(-time.Second)}, id, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client, server := newMemoryPair(t)
+			ctx := tunnelContext(t)
+			done := tunnelWorker(t, func() { _ = server.Close() }, func() error {
+				s, _, err := AcceptWithResult(ctx, server, func(context.Context, tunnelv1.Message) (*tunnelv1.NativePairLegAccepted, error) {
+					return test.response, nil
+				})
+				if s != nil {
+					if incoming, streamErr := s.AcceptVisitorStream(ctx); streamErr == nil || incoming != nil {
+						return errors.New("native receipt admitted a visitor stream without a peer owner")
+					}
+					<-s.Done()
+				}
+				return err
+			})
+			s, got, err := DialNative(ctx, client, hello, test.expected)
+			if (err == nil) != test.ok || test.ok && got != receipt {
+				t.Fatalf("native handshake: receipt=%+v err=%v", got, err)
+			}
+			if s != nil {
+				_ = s.Close()
+			}
+			if err := await(t, done); (err == nil) != test.serverOK {
+				t.Fatalf("server handshake: %v", err)
+			}
+		})
+	}
+	client, _ := newMemoryPair(t)
+	if s, err := Dial(t.Context(), client, hello); err == nil || s != nil {
+		t.Fatal("generic dial accepted native hello without an expected delivery")
+	}
+}
+
+func TestPublisherAndIngressRejectNativeHelloReceipt(t *testing.T) {
+	for _, hello := range []tunnelv1.Message{publisherHello(), {Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Ingress, Credential: "secret"}} {
+		t.Run(string(hello.Role), func(t *testing.T) {
+			client, server := newMemoryPair(t)
+			ctx := tunnelContext(t)
+			done := tunnelWorker(t, func() { _ = server.Close() }, func() error {
+				stream, err := server.AcceptStream(ctx)
+				if err != nil {
+					return err
+				}
+				if _, err := tunnelv1.ReadControl(stream); err != nil {
+					return err
+				}
+				return tunnelv1.WriteControl(stream, tunnelv1.Message{Type: tunnelv1.HelloAccepted, ProtocolVersion: tunnelv1.Version,
+					NativePairLegAccepted: &tunnelv1.NativePairLegAccepted{PairID: "npp_1234567890123456789012",
+						DeliveryID: "AQEBAQEBAQEBAQEBAQEBAQ", DeliveryGeneration: 1, ConnectionSlot: 0,
+						SourceIP: "127.0.0.1", ExpiresAt: time.Now().Add(time.Minute)}})
+			})
+			if s, err := Dial(ctx, client, hello); err == nil || s != nil {
+				t.Fatal("another role accepted a native receipt")
+			}
+			if err := await(t, done); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

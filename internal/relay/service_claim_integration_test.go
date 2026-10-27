@@ -61,7 +61,12 @@ func dialPrivateClaim(t *testing.T, acceptor *PublisherAcceptor, hello tunnelv1.
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := tunnel.Dial(ctx, transport, hello)
+	var session *tunnel.Session
+	if hello.Role == tunnelv1.NativeConnector {
+		session, _, err = tunnel.DialNative(ctx, transport, hello, nativeTestDeliveryID)
+	} else {
+		session, err = tunnel.Dial(ctx, transport, hello)
+	}
 	if session != nil {
 		t.Cleanup(func() { _ = session.Close() })
 	}

@@ -472,11 +472,11 @@ func TestIntegrationNativePeerPairRelayClaimHTTPDirect(t *testing.T) {
 			previous := nativeOwner.SourceMode
 			nativeOwner.SourceMode = NativeConnectorNoSource
 			defer func() { nativeOwner.SourceMode = previous }()
-			dialErr, acceptErr := peerNativeDial(t, kind, acceptor, hello, false)
+			dialErr, acceptErr := peerNativeDial(t, kind, acceptor, hello, pair.DeliveryId, false)
 			peerNativeAssertDenied(t, dialErr, acceptErr)
 		})
 		t.Run("missing accepted peer "+kind, func(t *testing.T) {
-			dialErr, acceptErr := peerNativeDial(t, kind, acceptor, hello, true)
+			dialErr, acceptErr := peerNativeDial(t, kind, acceptor, hello, pair.DeliveryId, true)
 			peerNativeAssertDenied(t, dialErr, acceptErr)
 		})
 	}
@@ -485,11 +485,11 @@ func TestIntegrationNativePeerPairRelayClaimHTTPDirect(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		dialErr, acceptErr := peerNativeDial(t, "quic", ordinary, hello, false)
+		dialErr, acceptErr := peerNativeDial(t, "quic", ordinary, hello, pair.DeliveryId, false)
 		peerNativeAssertDenied(t, dialErr, acceptErr)
 	})
 	t.Run("wrong source hint", func(t *testing.T) {
-		_, acceptErr := peerNativeDial(t, "quic", acceptor, hello, false, "192.0.2.10")
+		_, acceptErr := peerNativeDial(t, "quic", acceptor, hello, pair.DeliveryId, false, "192.0.2.10")
 		if acceptErr == nil || !strings.Contains(acceptErr.Error(), "unknown field") {
 			t.Fatal("untrusted connector source hint reached claim")
 		}
@@ -497,13 +497,13 @@ func TestIntegrationNativePeerPairRelayClaimHTTPDirect(t *testing.T) {
 	t.Run("stale relay process", func(t *testing.T) {
 		nativeOwner.CurrentLease = func() relayv1.RelayLease { l := wiredLease(lease0); l.RelayRunId = "previous-run"; return l }
 		defer func() { nativeOwner.CurrentLease = func() relayv1.RelayLease { return wiredLease(lease0) } }()
-		dialErr, acceptErr := peerNativeDial(t, "quic", acceptor, hello, false)
+		dialErr, acceptErr := peerNativeDial(t, "quic", acceptor, hello, pair.DeliveryId, false)
 		peerNativeAssertDenied(t, dialErr, acceptErr)
 	})
 	t.Run("wrong signing key", func(t *testing.T) {
 		nativeOwner.SigningKey = keys[lease1.RelayServiceId]
 		defer func() { nativeOwner.SigningKey = keys[lease0.RelayServiceId] }()
-		dialErr, acceptErr := peerNativeDial(t, "tls_yamux", acceptor, hello, false)
+		dialErr, acceptErr := peerNativeDial(t, "tls_yamux", acceptor, hello, pair.DeliveryId, false)
 		peerNativeAssertDenied(t, dialErr, acceptErr)
 	})
 	t.Run("wrong pair", func(t *testing.T) {
@@ -514,7 +514,7 @@ func TestIntegrationNativePeerPairRelayClaimHTTPDirect(t *testing.T) {
 			t.Fatal(err)
 		}
 		bad.Signature = ed25519.Sign(deviceKey, msg)
-		dialErr, acceptErr := peerNativeDial(t, "quic", acceptor, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.NativeConnector, NativePairLegProof: &bad}, false)
+		dialErr, acceptErr := peerNativeDial(t, "quic", acceptor, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.NativeConnector, NativePairLegProof: &bad}, pair.DeliveryId, false)
 		peerNativeAssertDenied(t, dialErr, acceptErr)
 	})
 	for _, test := range []struct {
@@ -529,8 +529,17 @@ func TestIntegrationNativePeerPairRelayClaimHTTPDirect(t *testing.T) {
 			nativeOwner.SigningKey = keys[test.lease.RelayServiceId]
 			leg := test.proof
 			acceptedHello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.NativeConnector, NativePairLegProof: &leg}
-			session, done, _ := peerNativeHold(t, test.kind, acceptor, acceptedHello)
-			dialErr, acceptErr := peerNativeDial(t, test.kind, acceptor, acceptedHello, false)
+			session, receipt, done, _ := peerNativeHold(t, test.kind, acceptor, acceptedHello, pair.DeliveryId)
+			if receipt.PairID != pair.PairId || receipt.DeliveryID != pair.DeliveryId ||
+				receipt.DeliveryGeneration != pair.DeliveryGeneration || receipt.ConnectionSlot != leg.ConnectionSlot ||
+				receipt.SourceIP != "127.0.0.1" || !receipt.ExpiresAt.After(time.Now()) ||
+				receipt.ExpiresAt.After(pair.ExpiresAt) {
+				t.Fatalf("accepted socket returned a different claim: %+v", receipt)
+			}
+			if _, err := tunnelv1.ParsePeerDeliveryIdentifier(receipt.DeliveryID); err != nil {
+				t.Fatal("receipt does not carry the exact binary delivery identifier", err)
+			}
+			dialErr, acceptErr := peerNativeDial(t, test.kind, acceptor, acceptedHello, pair.DeliveryId, false)
 			peerNativeAssertDenied(t, dialErr, acceptErr)
 			select {
 			case <-session.Done():

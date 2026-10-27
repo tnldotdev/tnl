@@ -95,27 +95,28 @@ func (a *NativeConnectorAcceptor) reserve(proof tunnelv1.NativePairLegProof) (fu
 	}, nil
 }
 
-func (a *NativeConnectorAcceptor) admit(ctx context.Context, transport muxsession.Session, proof tunnelv1.NativePairLegProof) (func(), error) {
+func (a *NativeConnectorAcceptor) admit(ctx context.Context, transport muxsession.Session, proof tunnelv1.NativePairLegProof) (relayv1.NativePeerPairLegClaim, func(), error) {
 	denied := &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	if a.validate() != nil {
-		return nil, denied
+		return relayv1.NativePeerPairLegClaim{}, nil, denied
 	}
 	release, err := a.reserve(proof)
 	if err != nil {
-		return nil, err
+		return relayv1.NativePeerPairLegClaim{}, nil, err
 	}
-	if err := a.claim(ctx, transport, proof); err != nil {
+	claim, err := a.claim(ctx, transport, proof)
+	if err != nil {
 		release()
-		return nil, err
+		return relayv1.NativePeerPairLegClaim{}, nil, err
 	}
-	return release, nil
+	return claim, release, nil
 }
 
-func (a *NativeConnectorAcceptor) claim(ctx context.Context, transport muxsession.Session, proof tunnelv1.NativePairLegProof) error {
+func (a *NativeConnectorAcceptor) claim(ctx context.Context, transport muxsession.Session, proof tunnelv1.NativePairLegProof) (relayv1.NativePeerPairLegClaim, error) {
 	denied := &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	peer, ok := transport.(muxsession.AcceptedPeer)
 	if !ok {
-		return denied
+		return relayv1.NativePeerPairLegClaim{}, denied
 	}
 	// only the concrete, directly accepted socket can supply the source. SNI,
 	// connector frames, STUN/ICE and unconfigured PROXY metadata have no say.
@@ -123,39 +124,42 @@ func (a *NativeConnectorAcceptor) claim(ctx context.Context, transport muxsessio
 	switch socket := address.(type) {
 	case *net.TCPAddr:
 		if socket == nil {
-			return denied
+			return relayv1.NativePeerPairLegClaim{}, denied
 		}
 	case *net.UDPAddr:
 		if socket == nil {
-			return denied
+			return relayv1.NativePeerPairLegClaim{}, denied
 		}
 	default:
-		return denied
+		return relayv1.NativePeerPairLegClaim{}, denied
 	}
 	socket, err := netip.ParseAddrPort(address.String())
 	if err != nil || !socket.Addr().IsValid() || socket.Addr().IsUnspecified() || socket.Addr().Zone() != "" {
-		return denied
+		return relayv1.NativePeerPairLegClaim{}, denied
 	}
 	source := socket.Addr().Unmap()
 	now := a.now()
 	lease, ok := a.currentLease(proof, now)
 	if !ok {
-		return denied
+		return relayv1.NativePeerPairLegClaim{}, denied
 	}
 	message, err := proof.RelayClaimMessage(source)
 	if err != nil {
-		return denied
+		return relayv1.NativePeerPairLegClaim{}, denied
 	}
 	claim, err := a.Claim.ClaimNativePeerPairLegFromAcceptedSocket(ctx, lease, source, proof, ed25519.Sign(a.SigningKey, message))
 	if err != nil {
-		return errors.Join(err, denied)
+		return relayv1.NativePeerPairLegClaim{}, errors.Join(err, denied)
 	}
 	if claim.PairId != proof.PairID || claim.DeliveryGeneration != proof.DeliveryGeneration ||
 		claim.ConnectionSlot != proof.ConnectionSlot || claim.SourceIp != source.String() ||
 		claim.Key == "" || !claim.ExpiresAt.After(now) {
-		return denied
+		return relayv1.NativePeerPairLegClaim{}, denied
 	}
-	return nil
+	if _, err := tunnelv1.ParsePeerDeliveryIdentifier(claim.DeliveryId); err != nil {
+		return relayv1.NativePeerPairLegClaim{}, denied
+	}
+	return claim, nil
 }
 
 func (a *NativeConnectorAcceptor) now() time.Time {

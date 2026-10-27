@@ -25,6 +25,8 @@ import (
 
 type nativeClaimFunc func(context.Context, relayv1.RelayLease, netip.Addr, tunnelv1.NativePairLegProof, []byte) (relayv1.NativePeerPairLegClaim, error)
 
+const nativeTestDeliveryID = "AQEBAQEBAQEBAQEBAQEBAQ"
+
 type nativeAdmissionObserver struct{ publisher atomic.Int32 }
 
 func (o *nativeAdmissionObserver) ObserveOperation(name string, _ error, _ time.Duration) {
@@ -65,7 +67,7 @@ func nativeAdmissionFixture(t *testing.T, max int, claim NativePeerLegClaimClien
 
 // peerNativeHold leaves the acknowledged outer session open so the caller can
 // check capacity while another real QUIC or TLS/yamux socket owns a slot.
-func peerNativeHold(t *testing.T, kind string, acceptor *PublisherAcceptor, hello tunnelv1.Message) (*tunnel.Session, <-chan error, context.CancelFunc) {
+func peerNativeHold(t *testing.T, kind string, acceptor *PublisherAcceptor, hello tunnelv1.Message, deliveryID ...string) (*tunnel.Session, tunnelv1.NativePairLegAccepted, <-chan error, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	t.Cleanup(cancel)
@@ -125,30 +127,34 @@ func peerNativeHold(t *testing.T, kind string, acceptor *PublisherAcceptor, hell
 		t.Fatal("unknown socket kind")
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	session, err := tunnel.Dial(ctx, client, hello)
+	expected := nativeTestDeliveryID
+	if len(deliveryID) != 0 {
+		expected = deliveryID[0]
+	}
+	session, receipt, err := tunnel.DialNative(ctx, client, hello, expected)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = session.Close() })
-	return session, done, cancel
+	return session, receipt, done, cancel
 }
 
 func TestNativeConnectorSessionReservations(t *testing.T) {
 	var claims atomic.Int32
 	claim := nativeClaimFunc(func(_ context.Context, _ relayv1.RelayLease, source netip.Addr, proof tunnelv1.NativePairLegProof, _ []byte) (relayv1.NativePeerPairLegClaim, error) {
 		claims.Add(1)
-		return relayv1.NativePeerPairLegClaim{PairId: proof.PairID, DeliveryGeneration: proof.DeliveryGeneration,
+		return relayv1.NativePeerPairLegClaim{PairId: proof.PairID, DeliveryId: nativeTestDeliveryID, DeliveryGeneration: proof.DeliveryGeneration,
 			ConnectionSlot: proof.ConnectionSlot, SourceIp: source.String(), Key: "test-key", ExpiresAt: time.Now().Add(time.Minute)}, nil
 	})
 	acceptor, owner, hello := nativeAdmissionFixture(t, 3, claim)
 	observer := new(nativeAdmissionObserver)
 	acceptor.observer = observer
-	first, firstDone, _ := peerNativeHold(t, "quic", acceptor, hello)
-	second, secondDone, _ := peerNativeHold(t, "tls_yamux", acceptor, hello)
+	first, _, firstDone, _ := peerNativeHold(t, "quic", acceptor, hello)
+	second, _, secondDone, _ := peerNativeHold(t, "tls_yamux", acceptor, hello)
 	checkFull := func(name string, message tunnelv1.Message) {
 		t.Helper()
 		start := time.Now()
-		dialErr, acceptErr := peerNativeDial(t, "quic", acceptor, message, false)
+		dialErr, acceptErr := peerNativeDial(t, "quic", acceptor, message, nativeTestDeliveryID, false)
 		var rejected *tunnel.ProtocolError
 		if dialErr == nil || !errors.As(acceptErr, &rejected) || rejected.Code != tunnelv1.CapacityExceeded || time.Since(start) > 3*time.Second {
 			t.Fatalf("%s was not promptly rejected: dial=%v accept=%v", name, dialErr, acceptErr)
@@ -169,7 +175,7 @@ func TestNativeConnectorSessionReservations(t *testing.T) {
 	otherProof.PairID = "npp_abcdefghijklmnopqrstuv"
 	other := hello
 	other.NativePairLegProof = &otherProof
-	third, thirdDone, thirdCancel := peerNativeHold(t, "quic", acceptor, other)
+	third, _, thirdDone, thirdCancel := peerNativeHold(t, "quic", acceptor, other)
 	checkFull("global saturation on another pair", other)
 	if claims.Load() != 3 {
 		t.Fatal("global saturation reached control")
@@ -182,7 +188,7 @@ func TestNativeConnectorSessionReservations(t *testing.T) {
 	}
 	// releasing one pair does not close or replace a sibling. a new session
 	// for the other pair can use the released global reservation.
-	fourth, fourthDone, fourthCancel := peerNativeHold(t, "tls_yamux", acceptor, other)
+	fourth, _, fourthDone, fourthCancel := peerNativeHold(t, "tls_yamux", acceptor, other)
 	if claims.Load() != 4 {
 		t.Fatal("released reservation did not admit the other pair")
 	}
@@ -219,13 +225,13 @@ func TestNativeConnectorSessionReservations(t *testing.T) {
 func TestNativeConnectorDrainJoinsHeldSession(t *testing.T) {
 	var draining atomic.Bool
 	claim := nativeClaimFunc(func(_ context.Context, _ relayv1.RelayLease, source netip.Addr, proof tunnelv1.NativePairLegProof, _ []byte) (relayv1.NativePeerPairLegClaim, error) {
-		return relayv1.NativePeerPairLegClaim{PairId: proof.PairID, DeliveryGeneration: proof.DeliveryGeneration,
+		return relayv1.NativePeerPairLegClaim{PairId: proof.PairID, DeliveryId: nativeTestDeliveryID, DeliveryGeneration: proof.DeliveryGeneration,
 			ConnectionSlot: proof.ConnectionSlot, SourceIp: source.String(), Key: "test-key", ExpiresAt: time.Now().Add(time.Minute)}, nil
 	})
 	acceptor, owner, hello := nativeAdmissionFixture(t, 1, claim)
 	current := owner.CurrentLease
 	owner.CurrentLease = func() relayv1.RelayLease { lease := current(); lease.Draining = draining.Load(); return lease }
-	session, done, _ := peerNativeHold(t, "quic", acceptor, hello)
+	session, _, done, _ := peerNativeHold(t, "quic", acceptor, hello)
 	draining.Store(true)
 	if err := relayAwait(t, done); err != nil {
 		t.Fatal(err)
@@ -235,6 +241,38 @@ func TestNativeConnectorDrainJoinsHeldSession(t *testing.T) {
 	defer owner.mu.Unlock()
 	if owner.sessions != 0 || len(owner.legs) != 0 {
 		t.Fatal("drain left a native reservation")
+	}
+}
+
+func TestNativeConnectorRejectsMismatchedClaimBeforeReceipt(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*relayv1.NativePeerPairLegClaim)
+	}{
+		{"delivery ID", func(c *relayv1.NativePeerPairLegClaim) { c.DeliveryId = "malformed" }},
+		{"pair", func(c *relayv1.NativePeerPairLegClaim) { c.PairId = "npp_abcdefghijklmnopqrstuv" }},
+		{"generation", func(c *relayv1.NativePeerPairLegClaim) { c.DeliveryGeneration++ }},
+		{"slot", func(c *relayv1.NativePeerPairLegClaim) { c.ConnectionSlot = 1 }},
+		{"source", func(c *relayv1.NativePeerPairLegClaim) { c.SourceIp = "192.0.2.10" }},
+		{"expiry", func(c *relayv1.NativePeerPairLegClaim) { c.ExpiresAt = time.Now().Add(-time.Second) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			claim := nativeClaimFunc(func(_ context.Context, _ relayv1.RelayLease, source netip.Addr, proof tunnelv1.NativePairLegProof, _ []byte) (relayv1.NativePeerPairLegClaim, error) {
+				result := relayv1.NativePeerPairLegClaim{PairId: proof.PairID, DeliveryId: nativeTestDeliveryID,
+					DeliveryGeneration: proof.DeliveryGeneration, ConnectionSlot: proof.ConnectionSlot,
+					SourceIp: source.String(), Key: "private-key", ExpiresAt: time.Now().Add(time.Minute)}
+				test.change(&result)
+				return result, nil
+			})
+			acceptor, owner, hello := nativeAdmissionFixture(t, 1, claim)
+			dialErr, acceptErr := peerNativeDial(t, "quic", acceptor, hello, nativeTestDeliveryID, false)
+			peerNativeAssertDenied(t, dialErr, acceptErr)
+			owner.mu.Lock()
+			defer owner.mu.Unlock()
+			if owner.sessions != 0 || len(owner.legs) != 0 {
+				t.Fatal("invalid claim retained a native reservation")
+			}
+		})
 	}
 }
 
@@ -269,13 +307,13 @@ func TestNativeConnectorReservesBeforeClaimAndReleasesDenial(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		defer workers.Done()
-		_, err := owner.admit(t.Context(), socketIdentityOnly{}, *hello.NativePairLegProof)
+		_, _, err := owner.admit(t.Context(), socketIdentityOnly{}, *hello.NativePairLegProof)
 		done <- err
 	}()
 	t.Cleanup(func() { stop(); workers.Wait() })
 	relayAwait(t, entered)
 	start := time.Now()
-	_, err := owner.admit(t.Context(), socketIdentityOnly{}, *hello.NativePairLegProof)
+	_, _, err := owner.admit(t.Context(), socketIdentityOnly{}, *hello.NativePairLegProof)
 	var rejected *tunnel.ProtocolError
 	if !errors.As(err, &rejected) || rejected.Code != tunnelv1.CapacityExceeded || time.Since(start) > time.Second || calls.Load() != 1 {
 		t.Fatalf("pending claim did not reserve first: %v, calls=%d", err, calls.Load())

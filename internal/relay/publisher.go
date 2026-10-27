@@ -86,20 +86,26 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 	var private *privateClaim
 	var nativeRelease func()
 	nativeAttempt, publisherAttempt := false, false
-	session, hello, err := tunnel.Accept(ctx, transport, func(authCtx context.Context, message tunnelv1.Message) error {
+	session, hello, err := tunnel.AcceptWithResult(ctx, transport, func(authCtx context.Context, message tunnelv1.Message) (*tunnelv1.NativePairLegAccepted, error) {
 		if message.Role == tunnelv1.NativeConnector {
 			nativeAttempt = true
 			if a.native == nil {
-				return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+				return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 			}
-			var err error
-			nativeRelease, err = a.native.admit(authCtx, transport, *message.NativePairLegProof)
-			return err
+			claim, release, err := a.native.admit(authCtx, transport, *message.NativePairLegProof)
+			if err != nil {
+				return nil, err
+			}
+			nativeRelease = release
+			// project only checked claim metadata; never send the pair key.
+			return &tunnelv1.NativePairLegAccepted{PairID: claim.PairId, DeliveryID: claim.DeliveryId,
+				DeliveryGeneration: claim.DeliveryGeneration, ConnectionSlot: claim.ConnectionSlot,
+				SourceIP: claim.SourceIp, ExpiresAt: claim.ExpiresAt}, nil
 		}
 		publisherAttempt = message.Role == tunnelv1.Publisher
 		if message.ServiceConnection != nil {
 			if a.private == nil {
-				return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+				return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 			}
 			var err error
 			private, err = a.private.claim(authCtx, message)
@@ -107,29 +113,29 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 			if errors.As(err, &protocol) && protocol.Code == tunnelv1.CapacityExceeded {
 				a.capacity()
 			}
-			return err
+			return nil, err
 		}
 		if message.Role != tunnelv1.Publisher || message.PublisherConnection == nil {
-			return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+			return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 		}
 		if a.selectTarget != nil {
 			var ok bool
 			control, registry, ok = a.selectTarget(message.PublisherConnection.RelayServiceID)
 			if !ok || control == nil || registry == nil {
-				return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+				return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 			}
 		}
 		claimID, err := opaqueid.New(claimIDPrefix)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		claimed, err = control.ClaimPublisherConnection(
 			authCtx, *message.PublisherConnection, claimID, message.Credential,
 		)
 		if err != nil {
-			return a.controlError(err)
+			return nil, a.controlError(err)
 		}
-		return nil
+		return nil, nil
 	})
 	if private != nil {
 		return errors.Join(err, private.serve(ctx, session, a, finishAdmission))
