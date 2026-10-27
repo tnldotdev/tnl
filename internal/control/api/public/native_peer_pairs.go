@@ -141,3 +141,37 @@ func (h *handler) PrepareNativePeerPair(w http.ResponseWriter, r *http.Request, 
 func (h *handler) RenewNativePeerPair(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, pairID string) {
 	h.nativePair(w, r, serviceID, pairID)
 }
+
+func (h *handler) DeliverNativePeerPair(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID, pairID string) {
+	w.Header().Set("Cache-Control", "no-store")
+	var body controlv1.DeliverNativePeerPairJSONRequestBody
+	if decodeJSONLimited(w, r, &body, 1024) != nil || body.DeliveryGeneration < 1 {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid native peer pair delivery request")
+		return
+	}
+	token, ok := requestBearerToken(r)
+	if !ok {
+		writeBearerProblem(w)
+		return
+	}
+	store, ok := h.store.(interface {
+		DeliverNativePeerPair(context.Context, string, string, string, int64, string, time.Time) (controlstate.NativePeerPairDelivery, error)
+	})
+	if !ok {
+		writeProblem(w, 503, controlv1.Unavailable, "native peer pair delivery is unavailable")
+		return
+	}
+	delivery, err := store.DeliverNativePeerPair(r.Context(), serviceID, runID, pairID, body.DeliveryGeneration, token, time.Now())
+	if err != nil {
+		// an absent claim, changed source, or revoked parent never discloses key material.
+		serviceRunProblem(w, "deliver native peer pair", err)
+		return
+	}
+	writeJSON(w, 200, controlv1.NativePeerPairDelivery{
+		PairId: delivery.PairID, ServiceId: delivery.ServiceID, ServiceRunId: delivery.ServiceRunID,
+		RunNumber: delivery.RunNumber, PublisherIdentityId: delivery.PublisherIdentityID,
+		Subject: visitorsubject.Wire(delivery.Subject), DeliveryGeneration: delivery.DeliveryGeneration,
+		DeliveryId: base64.RawURLEncoding.EncodeToString(delivery.DeliveryID[:]), Key: delivery.Key,
+		SourceIp: delivery.SourceIP.String(), Relays: nativePairRelays(delivery.Relays), ObservedAt: delivery.ObservedAt, ExpiresAt: delivery.ExpiresAt,
+	})
+}

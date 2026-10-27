@@ -7,10 +7,10 @@ DELETE FROM control.native_peer_pairs WHERE id=sqlc.arg(id);
 
 -- name: InsertNativePeerPair :one
 INSERT INTO control.native_peer_pairs(id,service_id,service_run_id,run_number,publisher_identity_id,
-    subject_kind,subject_id,idempotency_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,
+    subject_kind,subject_id,parent_control_session_id,idempotency_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,
     delivery_generation,created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at)
 VALUES (sqlc.arg(id),sqlc.arg(service_id),sqlc.arg(service_run_id),sqlc.arg(run_number),sqlc.arg(publisher_identity_id),
-    sqlc.arg(subject_kind),sqlc.arg(subject_id),sqlc.arg(idempotency_key),sqlc.arg(request_digest),sqlc.arg(key_digest),sqlc.arg(key_ciphertext),sqlc.arg(delivery_id),
+    sqlc.arg(subject_kind),sqlc.arg(subject_id),sqlc.narg(parent_control_session_id),sqlc.arg(idempotency_key),sqlc.arg(request_digest),sqlc.arg(key_digest),sqlc.arg(key_ciphertext),sqlc.arg(delivery_id),
     sqlc.arg(storage_key_id),convert_from(sqlc.arg(slots)::bytea,'UTF8')::jsonb,nextval('control.native_peer_delivery_generation'),
     sqlc.arg(now),sqlc.arg(now),sqlc.arg(request_at),sqlc.arg(request_at)::timestamptz+interval '5 minutes',sqlc.arg(expires_at))
 ON CONFLICT ON CONSTRAINT native_peer_pairs_delivery_id_key DO NOTHING RETURNING *;

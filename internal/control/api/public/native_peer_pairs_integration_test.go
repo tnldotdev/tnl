@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"reflect"
 	"testing"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
@@ -64,7 +68,8 @@ func TestIntegrationNativePeerPairPublicDevice(t *testing.T) {
 	leases := map[string]controlstate.RelayLease{}
 	for _, id := range []string{"native-a", "native-b"} {
 		runID, _ := opaqueid.New(opaqueid.RelayRunPrefix)
-		lease, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayServiceID: id, RelayID: id, RelayRunID: runID, ProtocolVersion: tunnelv1.Version, RelayAddress: id + ".example.test:443", TLSServerName: id + ".example.test", InternalRelayAddress: "127.0.0.1:8443", ConnectionCapacity: 20, StreamCapacity: 20}, now, time.Hour)
+		seed := sha256.Sum256([]byte(runID))
+		lease, err := d.RegisterRelay(ctx, controlstate.RelayRegistration{RelayServiceID: id, RelayID: id, RelayRunID: runID, ProtocolVersion: tunnelv1.Version, RelayAddress: id + ".example.test:443", TLSServerName: id + ".example.test", InternalRelayAddress: "127.0.0.1:8443", ConnectionCapacity: 20, StreamCapacity: 20, PeerSigningPublicKey: ed25519.NewKeyFromSeed(seed[:]).Public().(ed25519.PublicKey)}, now, time.Hour)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -210,6 +215,140 @@ func TestIntegrationNativePeerPairPublicDevice(t *testing.T) {
 	if delivered, err := api.PrepareDeviceNativePeerPair(ctx, service.ID, device.ID, request); err != nil || delivered.PairId != pair.PairId || delivered.Key != pair.Key || delivered.DeliveryId != pair.DeliveryId {
 		t.Fatal("device client lost signed delivery", err)
 	}
+	deliveryPath := "/v1/services/" + service.ID + "/runs/" + run.RunID + "/native-peer-pairs/" + pair.PairId + "/delivery"
+	deliver := func(bearer string, generation int64) *httptest.ResponseRecorder {
+		t.Helper()
+		return call(deliveryPath, bearer, map[string]int64{"delivery_generation": generation})
+	}
+	assertDenied := func(bearer string, generation int64) {
+		t.Helper()
+		w := deliver(bearer, generation)
+		if w.Code == 200 || bytes.Contains(w.Body.Bytes(), []byte(pair.Key)) {
+			t.Fatal("unclaimed or unauthorized delivery exposed pair key", w.Code, w.Body.String())
+		}
+	}
+	assertDenied(run.Token, pair.DeliveryGeneration) // no relay leg has claimed the pair
+	assertDenied(owner.AccessToken.String(), pair.DeliveryGeneration)
+	assertDenied("not-a-run-token", pair.DeliveryGeneration)
+	assertDenied(run.Token, pair.DeliveryGeneration+1)
+	otherService, err := d.CreateServiceAt(ctx, team, identity, "unrelated-pair", "unrelated-pair", controlstate.ServicePlacement{}, now, controlstate.ServiceMetadata{Protocol: "tcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherEnrollment, err := d.IssuePublisherEnrollment(ctx, controlstate.CreatePublisherEnrollmentRequest{Scope: controlstate.PublisherScope{TeamID: team, Kind: "service", ServiceID: otherService.ID}, Name: "other-native-pair", Kind: "installed", EditorID: identity, EditorMembershipID: member.ID, PolicyRevision: uint64(currentTeam.PolicyRevision), Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherPublic, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherPublisher, err := d.RedeemPublisherEnrollment(ctx, otherEnrollment.Key, otherPublic, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherPrepared, err := d.PrepareServiceRun(ctx, otherService.ID, otherPublisher, "other-native-pair", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherRun, err := d.StartServiceRun(ctx, otherService.ID, otherPrepared.RunID, otherPrepared.RunNumber, otherPublisher, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertDenied(otherRun.Token, pair.DeliveryGeneration)
+	var before int
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM control.native_peer_pairs`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	claim := func(slot int, source netip.Addr) {
+		t.Helper()
+		leg := pair.Relays[slot]
+		proof := tunnelv1.NativePairLegProof{PairID: pair.PairId, DeliveryGeneration: pair.DeliveryGeneration,
+			ServiceID: service.ID, ServiceRunID: run.RunID, RunNumber: run.RunNumber,
+			PublisherIdentityID: publisher.ID, ConnectionSlot: slot, PublisherConnectionID: leg.PublisherConnectionId,
+			AssignmentRevision: leg.AssignmentRevision, RelayServiceID: leg.RelayLease.RelayServiceId,
+			RelayID: leg.RelayLease.RelayId, RelayRunID: leg.RelayLease.RelayRunId,
+			RelayLeaseRevision: uint64(leg.RelayLease.RelayLeaseRevision), RequestedAt: time.Now().UTC().Truncate(time.Microsecond), Nonce: make([]byte, 32)}
+		if _, err := rand.Read(proof.Nonce); err != nil {
+			t.Fatal(err)
+		}
+		message, err := proof.Message()
+		if err != nil {
+			t.Fatal(err)
+		}
+		proof.Signature = ed25519.Sign(key, message)
+		relayMessage, err := proof.RelayClaimMessage(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed := sha256.Sum256([]byte(proof.RelayRunID))
+		if _, err := d.ClaimNativePeerPairLeg(ctx, leases[leg.RelayLease.RelayServiceId].RelayLeaseIdentity, source, proof, ed25519.Sign(ed25519.NewKeyFromSeed(seed[:]), relayMessage), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := netip.MustParseAddr("192.0.2.10")
+	claim(0, source)
+	assertDenied(run.Token, pair.DeliveryGeneration) // one claim is insufficient
+	claim(1, source)
+	if w := deliver(run.Token, pair.DeliveryGeneration); w.Code != 200 {
+		t.Fatal("two matching relay claims did not deliver", w.Code, w.Body.String())
+	} else {
+		var delivery controlv1.NativePeerPairDelivery
+		if err := json.Unmarshal(w.Body.Bytes(), &delivery); err != nil || delivery.Key != pair.Key || delivery.DeliveryId != pair.DeliveryId || delivery.SourceIp != source.String() || delivery.ServiceRunId != run.RunID || delivery.PublisherIdentityId != publisher.ID || !reflect.DeepEqual(delivery.Subject, pair.Subject) || len(delivery.Relays) != 2 {
+			t.Fatal("delivery did not bind the exact source and run", err)
+		}
+		formatted := controlstate.NativePeerPairDelivery{Key: pair.Key}
+		if bytes.Contains([]byte(formatted.String()+formatted.GoString()), []byte(pair.Key)) {
+			t.Fatal("delivery formatter leaked key")
+		}
+	}
+	if delivered, err := api.DeliverNativePeerPair(ctx, service.ID, run.RunID, pair.PairId, pair.DeliveryGeneration, credentials.ServiceRunToken(run.Token)); err != nil || delivered.Key != pair.Key {
+		t.Fatal("run-token client lost delivery", err)
+	}
+	assertDenied(otherRun.Token, pair.DeliveryGeneration)
+	assertDenied(owner.AccessToken.String(), pair.DeliveryGeneration)
+	if _, err := conn.Exec(ctx, `UPDATE control.native_peer_pair_leg_claims SET source_ip='192.0.2.11' WHERE pair_id=$1 AND connection_slot=1`, pair.PairId); err != nil {
+		t.Fatal(err)
+	}
+	assertDenied(run.Token, pair.DeliveryGeneration) // do not guess a shared origin
+	if _, err := conn.Exec(ctx, `UPDATE control.native_peer_pair_leg_claims SET source_ip=$2 WHERE pair_id=$1 AND connection_slot=1`, pair.PairId, source); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `UPDATE control.service_connection_slots SET connection_assignment_revision=connection_assignment_revision+1 WHERE publisher_connection_id=$1`, run.Connections[0].PublisherConnectionID); err != nil {
+		t.Fatal(err)
+	}
+	assertDenied(run.Token, pair.DeliveryGeneration)
+	if _, err := conn.Exec(ctx, `UPDATE control.service_connection_slots SET connection_assignment_revision=connection_assignment_revision-1 WHERE publisher_connection_id=$1`, run.Connections[0].PublisherConnectionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `UPDATE control.relay_leases SET relay_lease_revision=relay_lease_revision+1 WHERE relay_id=$1`, pair.Relays[0].RelayLease.RelayId); err != nil {
+		t.Fatal(err)
+	}
+	assertDenied(run.Token, pair.DeliveryGeneration)
+	if _, err := conn.Exec(ctx, `UPDATE control.relay_leases SET relay_lease_revision=relay_lease_revision-1 WHERE relay_id=$1`, pair.Relays[0].RelayLease.RelayId); err != nil {
+		t.Fatal(err)
+	}
+	var after int
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM control.native_peer_pairs`).Scan(&after); err != nil || after != before {
+		t.Fatal("delivery created another key", after, before, err)
+	}
+	if _, err := conn.Exec(ctx, `UPDATE control.control_sessions SET revoked_at=$2,revoked_by='test' WHERE id=(SELECT parent_control_session_id FROM control.native_peer_pairs WHERE id=$1)`, pair.PairId, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	assertDenied(run.Token, pair.DeliveryGeneration)
+	if _, err := conn.Exec(ctx, `UPDATE control.control_sessions SET revoked_at=NULL,revoked_by=NULL WHERE id=(SELECT parent_control_session_id FROM control.native_peer_pairs WHERE id=$1)`, pair.PairId); err != nil {
+		t.Fatal(err)
+	}
+	if w := deliver(run.Token, pair.DeliveryGeneration); w.Code != 200 {
+		t.Fatal("parent restoration did not restore delivery", w.Code)
+	}
+	if _, err := conn.Exec(ctx, `UPDATE control.native_peer_pairs SET expires_at=last_authorized_at+interval '1 microsecond' WHERE id=$1`, pair.PairId); err != nil {
+		t.Fatal(err)
+	}
+	assertDenied(run.Token, pair.DeliveryGeneration)
+	if _, err := conn.Exec(ctx, `UPDATE control.native_peer_pairs SET expires_at=$2 WHERE id=$1`, pair.PairId, pair.ExpiresAt); err != nil {
+		t.Fatal(err)
+	}
 	bad := request
 	bad.Signature = base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))
 	if w := call(path, owner.AccessToken.String(), bad); w.Code != 403 || bytes.Contains(w.Body.Bytes(), []byte(pair.Key)) {
@@ -260,6 +399,7 @@ func TestIntegrationNativePeerPairPublicDevice(t *testing.T) {
 			t.Fatal("replacement response changed durable header bytes", err)
 		}
 	}
+	assertDenied(run.Token, pair.DeliveryGeneration) // replaced pair and claims cannot deliver
 	if w := call(path, owner.AccessToken.String(), request); w.Code != 409 {
 		t.Fatal("old delivery replay succeeded", w.Code)
 	}

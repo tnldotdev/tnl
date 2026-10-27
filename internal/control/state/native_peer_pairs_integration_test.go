@@ -231,6 +231,14 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 		t.Fatal("pair escaped its exact ready run and two distinct leases")
 	}
 	assertNativeDeliveryID(t, d, first)
+	otherSession := newOIDCSession(t, d, now)
+	if otherSession.Identity.Identity.ID != principal.IdentityID || otherSession.SessionID == principal.SessionID {
+		t.Fatal("second session did not preserve the enrolled identity")
+	}
+	otherPrincipal := WithControlPrincipal(ctx, ControlPrincipal{IdentityID: principal.IdentityID, SessionID: otherSession.SessionID})
+	if _, err := d.PrepareNativePeerPair(otherPrincipal, request, now); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("retry silently changed the pair's parent session", err)
+	}
 	// the database refuses reused or zero header identifiers independently of
 	// the saved pair ID, even when the remaining fields are valid.
 	for _, duplicate := range [][]byte{first.DeliveryID[:], make([]byte, 16)} {
@@ -238,8 +246,8 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = d.pool.Exec(ctx, `INSERT INTO control.native_peer_pairs (id,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,subject_id,idempotency_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,delivery_generation,created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at)
-		SELECT $2,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,$3,idempotency_key,request_digest,key_digest,key_ciphertext,$4,storage_key_id,slots,nextval('control.native_peer_delivery_generation'),created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at FROM control.native_peer_pairs WHERE id=$1`, first.ID, id, fmt.Sprintf("collision-%s", id), duplicate)
+		_, err = d.pool.Exec(ctx, `INSERT INTO control.native_peer_pairs (id,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,subject_id,parent_control_session_id,idempotency_key,request_digest,key_digest,key_ciphertext,delivery_id,storage_key_id,slots,delivery_generation,created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at)
+		SELECT $2,service_id,service_run_id,run_number,publisher_identity_id,subject_kind,$3,parent_control_session_id,idempotency_key,request_digest,key_digest,key_ciphertext,$4,storage_key_id,slots,nextval('control.native_peer_delivery_generation'),created_at,last_authorized_at,last_request_at,replay_fence_until,expires_at FROM control.native_peer_pairs WHERE id=$1`, first.ID, id, fmt.Sprintf("collision-%s", id), duplicate)
 		if err == nil {
 			t.Fatal("database accepted duplicate or zero delivery identifier")
 		}
@@ -336,6 +344,12 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.native_peer_pair_leg_claims WHERE pair_id=$1`, first.ID).Scan(&claimCount); err != nil || claimCount != 2 {
 		t.Fatal("claim retries exceeded one stored nonce per relay leg", claimCount, err)
 	}
+	if delivered, err := d.DeliverNativePeerPair(ctx, service.ID, run.RunID, first.ID, first.DeliveryGeneration, run.Token, now); err != nil || delivered.Key != first.Key || delivered.DeliveryID != first.DeliveryID || delivered.Subject != first.Subject || delivered.SourceIP != sourceIP || delivered.Relays != first.Relays || delivered.ExpiresAt.After(first.ExpiresAt) {
+		t.Fatal("current publisher did not receive the exact claimed binding", err)
+	}
+	if _, err := d.DeliverNativePeerPair(ctx, service.ID, run.RunID, first.ID, first.DeliveryGeneration, "wrong", now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("wrong run token recovered pair key", err)
+	}
 	again, err := d.PrepareNativePeerPair(visitor, request, now)
 	if err != nil || again.ID != first.ID || again.Key != first.Key || again.DeliveryID != first.DeliveryID || again.DeliveryGeneration != first.DeliveryGeneration || !again.ExpiresAt.Equal(first.ExpiresAt) {
 		t.Fatal("uncertain response retry changed the exact delivery", err)
@@ -392,6 +406,9 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	if _, err := d.pool.Exec(ctx, `UPDATE control.publisher_grants SET revoked_at=$2 WHERE id=$1`, publisher.GrantID, now); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := d.DeliverNativePeerPair(ctx, service.ID, run.RunID, first.ID, first.DeliveryGeneration, run.Token, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("revoked publisher recovered claimed key", err)
+	}
 	if _, err := d.PrepareNativePeerPair(visitor, request, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked publisher grant recovered pair", err)
 	}
@@ -436,6 +453,12 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	assertNativeDeliveryID(t, d, second)
 	if claim, err := testClaimNativePeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP, testNativeLegProof(t, second, 0, replacement.RequestedAt, private), replacement.RequestedAt); err != nil || claim.Key != second.Key {
 		t.Fatal("new delivery could not claim its own leg", err)
+	}
+	if _, err := d.DeliverNativePeerPair(ctx, service.ID, run.RunID, first.ID, first.DeliveryGeneration, run.Token, replacement.RequestedAt); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("replaced pair recovered key", err)
+	}
+	if _, err := d.DeliverNativePeerPair(ctx, service.ID, run.RunID, second.ID, second.DeliveryGeneration, run.Token, replacement.RequestedAt); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("one relay claim delivered replacement key", err)
 	}
 	var oldClaims int
 	if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.native_peer_pair_leg_claims WHERE pair_id=$1`, first.ID).Scan(&oldClaims); err != nil || oldClaims != 0 {
@@ -594,6 +617,16 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 	}
 	if claim, err := testClaimNativePeerPairLeg(t, d, ctx, pair.Relays[0].RelayLease, netip.MustParseAddr("192.0.2.10"), proof, now); err != nil || claim.Key != pair.Key {
 		t.Fatal("allowed observed source lost delivery", err)
+	}
+	if _, err := d.DeliverNativePeerPair(ctx, serviceID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("one workload leg prepared a publisher binding", err)
+	}
+	allowedSource := netip.MustParseAddr("192.0.2.10")
+	if _, err := testClaimNativePeerPairLeg(t, d, ctx, pair.Relays[1].RelayLease, allowedSource, testNativeLegProof(t, pair, 1, now, private), now); err != nil {
+		t.Fatal("second workload leg did not claim allowed source", err)
+	}
+	if binding, err := d.DeliverNativePeerPair(ctx, serviceID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, now); err != nil || binding.Key != pair.Key || binding.SourceIP != allowedSource || binding.ExpiresAt.After(workload.LeaseExpiresAt) {
+		t.Fatal("publisher did not get IP-allowed workload binding", err)
 	}
 	for _, lease := range leases {
 		if _, err := d.RenewRelay(ctx, RelayRenewal{RelayLeaseIdentity: lease.RelayLeaseIdentity}, now.Add(9*time.Second), time.Hour); err != nil {

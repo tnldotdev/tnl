@@ -31,6 +31,11 @@ func (c *serviceBoundaryControl) RedeemServiceBrowserHandoff(_ context.Context, 
 	return controlv1.BrowserHandoffResponse{}, nil
 }
 
+func (c *serviceBoundaryControl) DeliverNativePeerPair(_ context.Context, _, _, _ string, _ int64, token credentials.ServiceRunToken) (controlv1.NativePeerPairDelivery, error) {
+	c.token, c.calls = token, c.calls+1
+	return controlv1.NativePeerPairDelivery{}, nil
+}
+
 func TestServiceControlBindsRunTokenAndExactScope(t *testing.T) {
 	n, _ := privateScopeFixture(t)
 	c := &serviceBoundaryControl{}
@@ -48,5 +53,11 @@ func TestServiceControlBindsRunTokenAndExactScope(t *testing.T) {
 	}
 	if _, err := n.RedeemServiceBrowserHandoff(t.Context(), "another-service", "run", token, controlv1.ServiceBrowserRequest{}); !errors.Is(err, ErrScope) || c.calls != 2 {
 		t.Fatal("service control escaped its grant", err)
+	}
+	if _, err := n.DeliverNativePeerPair(t.Context(), service, "run", "pair", 1, token); err != nil || c.token != token || c.calls != 3 {
+		t.Fatal("native peer delivery changed its run token", err)
+	}
+	if _, err := n.DeliverNativePeerPair(t.Context(), "another-service", "run", "pair", 1, token); !errors.Is(err, ErrScope) || c.calls != 3 {
+		t.Fatal("native peer delivery escaped its service grant", err)
 	}
 }

@@ -2407,6 +2407,31 @@ type NativePeerPair struct {
 	Subject VisitorSubject `json:"subject"`
 }
 
+// NativePeerPairDelivery Existing pair delivery for the authenticated publisher run only; never grants an application stream.
+type NativePeerPairDelivery struct {
+	DeliveryGeneration int64     `json:"delivery_generation"`
+	DeliveryId         string    `json:"delivery_id"`
+	ExpiresAt          time.Time `json:"expires_at"`
+
+	// Key Secret for this delivery; do not log or persist.
+	Key string `json:"key"`
+
+	// ObservedAt Control time for this authority observation; the publisher subtracts request delay when installing its local deadline.
+	ObservedAt          time.Time             `json:"observed_at"`
+	PairId              string                `json:"pair_id"`
+	PublisherIdentityId string                `json:"publisher_identity_id"`
+	Relays              []NativePeerPairRelay `json:"relays"`
+	RunNumber           int64                 `json:"run_number"`
+	ServiceId           ServiceID             `json:"service_id"`
+	ServiceRunId        ServiceRunID          `json:"service_run_id"`
+
+	// SourceIp Canonical source observed by both relays.
+	SourceIp string `json:"source_ip"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject VisitorSubject `json:"subject"`
+}
+
 // NativePeerPairReady A short-lived, credential-free snapshot for signing an exact pair request. It never grants a relay claim.
 type NativePeerPairReady struct {
 	PublisherIdentityId string                `json:"publisher_identity_id"`
@@ -4205,6 +4230,11 @@ type CreateServiceCertificateIssuanceParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// DeliverNativePeerPairJSONBody defines parameters for DeliverNativePeerPair.
+type DeliverNativePeerPairJSONBody struct {
+	DeliveryGeneration int64 `json:"delivery_generation"`
+}
+
 // StartServiceRunJSONBody defines parameters for StartServiceRun.
 type StartServiceRunJSONBody struct {
 	// PreferredRegions Ordered tnl region codes or provider:region names. Control normalizes known sites, rejects duplicates and unknown names, and tries another live region when preferred capacity is unavailable.
@@ -4453,6 +4483,9 @@ type MarkServiceCertificateInstalledJSONRequestBody = ServiceCertificateInstalle
 
 // CreateServiceCertificateIssuanceJSONRequestBody defines body for CreateServiceCertificateIssuance for application/json ContentType.
 type CreateServiceCertificateIssuanceJSONRequestBody = CreateServiceCertificateIssuanceRequest
+
+// DeliverNativePeerPairJSONRequestBody defines body for DeliverNativePeerPair for application/json ContentType.
+type DeliverNativePeerPairJSONRequestBody DeliverNativePeerPairJSONBody
 
 // StartServiceRunJSONRequestBody defines body for StartServiceRun for application/json ContentType.
 type StartServiceRunJSONRequestBody StartServiceRunJSONBody
@@ -5590,6 +5623,18 @@ type ClientInterface interface {
 
 	// GetServiceCertificateIssuance performs a GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId) request.
 	GetServiceCertificateIssuance(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeliverNativePeerPairWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+	DeliverNativePeerPairWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeliverNativePeerPair performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+	DeliverNativePeerPair(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StartServiceRunWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
 	// with any type of body and a specified content type.
@@ -8480,6 +8525,38 @@ func (c *Client) CreateServiceCertificateIssuance(ctx context.Context, serviceId
 // GetServiceCertificateIssuance performs a GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId) request.
 func (c *Client) GetServiceCertificateIssuance(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetServiceCertificateIssuanceRequest(c.Server, serviceId, serviceRunId, issuanceId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeliverNativePeerPairWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request,
+// with any type of body and a specified content type.
+//
+// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+func (c *Client) DeliverNativePeerPairWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeliverNativePeerPairRequestWithBody(c.Server, serviceId, serviceRunId, pairId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeliverNativePeerPair performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+func (c *Client) DeliverNativePeerPair(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeliverNativePeerPairRequest(c.Server, serviceId, serviceRunId, pairId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -14476,6 +14553,67 @@ func NewGetServiceCertificateIssuanceRequest(server string, serviceId ServiceID,
 	return req, nil
 }
 
+// NewDeliverNativePeerPairRequest calls the generic DeliverNativePeerPair builder with application/json body
+func NewDeliverNativePeerPairRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverNativePeerPairJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDeliverNativePeerPairRequestWithBody(server, serviceId, serviceRunId, pairId, "application/json", bodyReader)
+}
+
+// NewDeliverNativePeerPairRequestWithBody constructs an http.Request for the DeliverNativePeerPair method, with any body, and a specified content type
+func NewDeliverNativePeerPairRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "pair_id", pairId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/native-peer-pairs/%s/delivery", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewStartServiceRunRequest calls the generic StartServiceRun builder with application/json body
 func NewStartServiceRunRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body StartServiceRunJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -16755,6 +16893,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	GetServiceCertificateIssuanceWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*GetServiceCertificateIssuanceResponse, error)
+
+	// DeliverNativePeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	DeliverNativePeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeliverNativePeerPairResponse, error)
+
+	// DeliverNativePeerPairWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+	DeliverNativePeerPairWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*DeliverNativePeerPairResponse, error)
 
 	// StartServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
 	// with any type of body and a specified content type.
@@ -22273,6 +22425,54 @@ func (r GetServiceCertificateIssuanceResponse) ContentType() string {
 	return ""
 }
 
+type DeliverNativePeerPairResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *NativePeerPairDelivery
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeliverNativePeerPairResponse) GetJSON200() *NativePeerPairDelivery {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeliverNativePeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DeliverNativePeerPairResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeliverNativePeerPairResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeliverNativePeerPairResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeliverNativePeerPairResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type StartServiceRunResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -25645,6 +25845,32 @@ func (c *ClientWithResponses) GetServiceCertificateIssuanceWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseGetServiceCertificateIssuanceResponse(rsp)
+}
+
+// DeliverNativePeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request,
+// with any type of body and a specified content type.
+//
+// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) DeliverNativePeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeliverNativePeerPairResponse, error) {
+	rsp, err := c.DeliverNativePeerPairWithBody(ctx, serviceId, serviceRunId, pairId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeliverNativePeerPairResponse(rsp)
+}
+
+// DeliverNativePeerPairWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+func (c *ClientWithResponses) DeliverNativePeerPairWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*DeliverNativePeerPairResponse, error) {
+	rsp, err := c.DeliverNativePeerPair(ctx, serviceId, serviceRunId, pairId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeliverNativePeerPairResponse(rsp)
 }
 
 // StartServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
@@ -29741,6 +29967,39 @@ func ParseGetServiceCertificateIssuanceResponse(rsp *http.Response) (*GetService
 	return response, nil
 }
 
+// ParseDeliverNativePeerPairResponse parses an HTTP response from a DeliverNativePeerPairWithResponse call
+func ParseDeliverNativePeerPairResponse(rsp *http.Response) (*DeliverNativePeerPairResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeliverNativePeerPairResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NativePeerPairDelivery
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseStartServiceRunResponse parses an HTTP response from a StartServiceRunWithResponse call
 func ParseStartServiceRunResponse(rsp *http.Response) (*StartServiceRunResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -30918,6 +31177,9 @@ type ServerInterface interface {
 
 	// (GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id})
 	GetServiceCertificateIssuance(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID)
+
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery)
+	DeliverNativePeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, pairId string)
 
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/start)
 	StartServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
@@ -34811,6 +35073,50 @@ func (siw *ServerInterfaceWrapper) GetServiceCertificateIssuance(w http.Response
 	handler.ServeHTTP(w, r)
 }
 
+// DeliverNativePeerPair operation middleware
+func (siw *ServerInterfaceWrapper) DeliverNativePeerPair(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_run_id" -------------
+	var serviceRunId ServiceRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pair_id" -------------
+	var pairId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pair_id", r.PathValue("pair_id"), &pairId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pair_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeliverNativePeerPair(w, r, serviceId, serviceRunId, pairId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // StartServiceRun operation middleware
 func (siw *ServerInterfaceWrapper) StartServiceRun(w http.ResponseWriter, r *http.Request) {
 
@@ -35658,6 +35964,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/browser/session", wrapper.CheckServiceBrowserSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/services/{service}", wrapper.GetProjectService)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/start", wrapper.StartServiceRun)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery", wrapper.DeliverNativePeerPair)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-issuances", wrapper.CreateServiceCertificateIssuance)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id}", wrapper.GetServiceCertificateIssuance)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-installed", wrapper.MarkServiceCertificateInstalled)

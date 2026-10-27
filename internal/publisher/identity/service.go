@@ -141,6 +141,21 @@ func (n *Native) CloseServiceRun(ctx context.Context, serviceID, runID string, t
 	return control.CloseServiceRun(ctx, serviceID, runID, token)
 }
 
+// DeliverNativePeerPair keeps the optional delivery capability inside the
+// selected service grant; control still authenticates the exact run token.
+func (n *Native) DeliverNativePeerPair(ctx context.Context, serviceID, runID, pairID string, generation int64, token credentials.ServiceRunToken) (controlv1.NativePeerPairDelivery, error) {
+	if n == nil || n.identity.kind != authorityv1.Service || n.identity.serviceID != serviceID {
+		return controlv1.NativePeerPairDelivery{}, ErrScope
+	}
+	control, ok := n.NativeControl.(interface {
+		DeliverNativePeerPair(context.Context, string, string, string, int64, credentials.ServiceRunToken) (controlv1.NativePeerPairDelivery, error)
+	})
+	if !ok {
+		return controlv1.NativePeerPairDelivery{}, ErrScope
+	}
+	return control.DeliverNativePeerPair(ctx, serviceID, runID, pairID, generation, token)
+}
+
 // SavedService reads only the exact service selected by this signing
 // identity. a public URL or namespace grant cannot discover services.
 func (n *Native) SavedService(ctx context.Context) (controlv1.Service, error) {

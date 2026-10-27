@@ -613,27 +613,28 @@ type ControlMemberSlugReservation struct {
 }
 
 type ControlNativePeerPair struct {
-	ID                  string
-	ServiceID           string
-	ServiceRunID        string
-	RunNumber           int64
-	PublisherIdentityID string
-	SubjectKind         string
-	SubjectID           string
-	IdempotencyKey      string
-	RequestDigest       []byte
-	LastRenewalDigest   []byte
-	KeyDigest           []byte
-	KeyCiphertext       []byte
-	DeliveryID          []byte
-	StorageKeyID        string
-	Slots               []byte
-	DeliveryGeneration  int64
-	CreatedAt           pgtype.Timestamptz
-	LastAuthorizedAt    pgtype.Timestamptz
-	LastRequestAt       pgtype.Timestamptz
-	ReplayFenceUntil    pgtype.Timestamptz
-	ExpiresAt           pgtype.Timestamptz
+	ID                     string
+	ServiceID              string
+	ServiceRunID           string
+	RunNumber              int64
+	PublisherIdentityID    string
+	SubjectKind            string
+	SubjectID              string
+	ParentControlSessionID pgtype.Text
+	IdempotencyKey         string
+	RequestDigest          []byte
+	LastRenewalDigest      []byte
+	KeyDigest              []byte
+	KeyCiphertext          []byte
+	DeliveryID             []byte
+	StorageKeyID           string
+	Slots                  []byte
+	DeliveryGeneration     int64
+	CreatedAt              pgtype.Timestamptz
+	LastAuthorizedAt       pgtype.Timestamptz
+	LastRequestAt          pgtype.Timestamptz
+	ReplayFenceUntil       pgtype.Timestamptz
+	ExpiresAt              pgtype.Timestamptz
 }
 
 type ControlNativePeerPairLegClaim struct {

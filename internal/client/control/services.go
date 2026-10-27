@@ -171,3 +171,11 @@ func (c *Client) CloseServiceRun(ctx context.Context, serviceID, runID string, t
 	})
 	return err
 }
+
+// DeliverNativePeerPair uses only the exact service run token; it never tries
+// the person's session or the visitor's source credential.
+func (c *Client) DeliverNativePeerPair(ctx context.Context, serviceID, runID, pairID string, generation int64, token credentials.ServiceRunToken) (controlv1.NativePeerPairDelivery, error) {
+	return request[controlv1.NativePeerPairDelivery](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.DeliverNativePeerPair(ctx, serviceID, runID, pairID, controlv1.DeliverNativePeerPairJSONRequestBody{DeliveryGeneration: generation}, editors...)
+	})
+}

@@ -5,6 +5,47 @@ schemas:
   ServiceRunID:
     type: string
     pattern: "^srun_[A-Za-z0-9]{22}$"
+  NativePeerPairDelivery:
+    type: object
+    additionalProperties: false
+    description: Existing pair delivery for the authenticated publisher run only; never grants an application stream.
+    required:
+      [
+        pair_id,
+        service_id,
+        service_run_id,
+        run_number,
+        publisher_identity_id,
+        subject,
+        delivery_id,
+        delivery_generation,
+        key,
+        source_ip,
+        relays,
+        observed_at,
+        expires_at,
+      ]
+    properties:
+      pair_id: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      publisher_identity_id: { type: string, pattern: "^pub_[A-Za-z0-9]{22}$" }
+      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
+      delivery_id: { type: string, pattern: "^[A-Za-z0-9_-]{21}[AQgw]$" }
+      delivery_generation: { type: integer, format: int64, minimum: 1 }
+      key: { type: string, description: Secret for this delivery; do not log or persist. }
+      source_ip: { type: string, description: Canonical source observed by both relays. }
+      observed_at:
+        type: string
+        format: date-time
+        description: Control time for this authority observation; the publisher subtracts request delay when installing its local deadline.
+      relays:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairRelay" }
+      expires_at: { type: string, format: date-time }
   CreateServiceCertificateIssuanceRequest:
     type: object
     additionalProperties: false

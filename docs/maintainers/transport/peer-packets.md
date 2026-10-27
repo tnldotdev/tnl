@@ -188,6 +188,10 @@ stays in the private control claim. [native dialing](../../../internal/transport
 requires the delivery ID from the prepared pair and rejects a missing, expired,
 or mismatched receipt before returning the session. acknowledged native sessions
 do not accept further streams until a peer owner can enforce the pair lifetime.
+the publisher's run-token-only delivery request requires two current relay claims
+with the same source before it returns the existing pair key. publisher
+preparation converts control's observation and expiry to a local request-start
+deadline; it cannot add serving time for a slow response or clock skew.
 [connector preparation](../../../internal/connector/stream/peer_preparation.go)
 can sign, recover, and renew a pair in background work using the enrolled device
 or workload key. its test-only opt-in denies the existing ingress application

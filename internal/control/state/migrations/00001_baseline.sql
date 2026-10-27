@@ -1955,6 +1955,7 @@ CREATE TABLE control.native_peer_pairs (
     publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE RESTRICT,
     subject_kind text NOT NULL CHECK (subject_kind IN ('human_device','workload_session')),
     subject_id text NOT NULL,
+    parent_control_session_id text REFERENCES control.control_sessions(id),
     idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
     last_renewal_digest bytea CHECK (last_renewal_digest IS NULL OR octet_length(last_renewal_digest)=32),
@@ -1974,6 +1975,7 @@ CREATE TABLE control.native_peer_pairs (
     CONSTRAINT native_peer_pairs_delivery_id_key UNIQUE (delivery_id),
     CHECK (last_authorized_at>=created_at AND expires_at>last_authorized_at
         AND expires_at<=last_authorized_at+interval '5 minutes'),
+    CHECK ((subject_kind='human_device') = (parent_control_session_id IS NOT NULL)),
     CHECK (replay_fence_until=last_request_at+interval '5 minutes')
 );
 CREATE INDEX native_peer_pairs_expiry ON control.native_peer_pairs(expires_at);

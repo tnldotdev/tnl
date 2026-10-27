@@ -149,6 +149,14 @@ func (d *Database) authorizeNativePeerPair(ctx context.Context, r NativePeerPair
 		return result, ErrServiceAccess
 	}
 	q := controlstatedb.New(tx)
+	var parentSession pgtype.Text
+	if subject.Kind == tunnelv1.VisitorHumanDevice {
+		principal, _ := ctx.Value(controlPrincipalKey{}).(ControlPrincipal)
+		if principal.SessionID == "" {
+			return result, ErrServiceAccess
+		}
+		parentSession = text(principal.SessionID)
+	}
 	run, err := q.LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: r.ServiceRunID, ServiceID: r.ServiceID})
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
@@ -239,12 +247,12 @@ func (d *Database) authorizeNativePeerPair(ctx context.Context, r NativePeerPair
 		}
 		switch r.Action {
 		case "create":
-			if !row.ExpiresAt.Time.After(now) || previous != result.Relays || !bytes.Equal(row.RequestDigest, requestDigest[:]) {
+			if row.ParentControlSessionID != parentSession || !row.ExpiresAt.Time.After(now) || previous != result.Relays || !bytes.Equal(row.RequestDigest, requestDigest[:]) {
 				return NativePeerPair{}, ErrServiceConflict
 			}
 			row, err = q.LimitNativePeerPair(ctx, controlstatedb.LimitNativePeerPairParams{ID: row.ID, Now: timestamptz(now), AuthorityExpiresAt: timestamptz(deadline)})
 		case "renew":
-			if !row.ExpiresAt.Time.After(now) || previous != result.Relays || row.ID != r.PreviousPairID ||
+			if row.ParentControlSessionID != parentSession || !row.ExpiresAt.Time.After(now) || previous != result.Relays || row.ID != r.PreviousPairID ||
 				row.DeliveryGeneration != r.PreviousGeneration || row.IdempotencyKey != r.IdempotencyKey {
 				return NativePeerPair{}, ErrServiceAccess
 			}
@@ -320,7 +328,8 @@ func (d *Database) authorizeNativePeerPair(ctx context.Context, r NativePeerPair
 			row, err = q.InsertNativePeerPair(ctx, controlstatedb.InsertNativePeerPairParams{
 				ID: id, ServiceID: r.ServiceID, ServiceRunID: run.ID, RunNumber: run.RunNumber, PublisherIdentityID: run.PublisherIdentityID,
 				SubjectKind: string(subject.Kind), SubjectID: nativePairSubjectID(subject), IdempotencyKey: r.IdempotencyKey,
-				RequestDigest: requestDigest[:], KeyDigest: digest[:], KeyCiphertext: sealed, DeliveryID: deliveryID[:], StorageKeyID: d.storageKey.CurrentID(),
+				ParentControlSessionID: parentSession,
+				RequestDigest:          requestDigest[:], KeyDigest: digest[:], KeyCiphertext: sealed, DeliveryID: deliveryID[:], StorageKeyID: d.storageKey.CurrentID(),
 				Slots: encoded, Now: timestamptz(now), RequestAt: timestamptz(requestAt), ExpiresAt: timestamptz(deadline),
 			})
 			if !errors.Is(err, pgx.ErrNoRows) {
