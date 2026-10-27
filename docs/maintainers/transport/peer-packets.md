@@ -136,6 +136,27 @@ relay and standalone answer STUN Binding requests on their existing QUIC socket.
 the server bounds request size and response rate and ignores ICE-authenticated
 requests intended for a peer. its operational counter has fixed result labels.
 
+the relay's opt-in native connector admission checks a `native_connector` hello
+on the first authenticated control stream of a real accepted QUIC or TLS/yamux
+session. only an explicitly configured direct-socket acceptor uses the accepted
+socket's remote IP. it matches the current relay process lease and signing key,
+signs that source with the process key, and calls control's checked pair-leg
+claim before acknowledging. before the control claim, its local owner reserves
+one of 64 native sessions by default, with at most two reservations per exact
+pair, generation, and leg. the reservation covers claims in progress and the
+acknowledged session; denial, close, cancellation, relay drain (checked every
+100 ms), and the ten-second idle limit release it. it does not use
+publisher connection capacity. the relay then closes the session: there is no
+peer key registration or owner for application visitor streams yet. production
+relay listeners do not configure this admission, so native connector hellos
+fail closed.
+
+a relay behind a load balancer sees the balancer's address on its socket. that
+socket cannot prove the connector source. a future PROXY source mode needs an
+explicitly trusted listener and verified metadata before it can be wired to
+native admission; SNI, connector frames, STUN/ICE and HTTP forwarded-IP headers
+are not source authorities.
+
 `CarrierSlot` accepts a late ICE result or a replacement relay carrier while
 the logical endpoint keeps serving. installing a carrier fences old queued
 packets and invalidates the previous path's probe evidence. the new carrier must
@@ -148,5 +169,5 @@ visitor access, ready publisher run and two distinct relay assignments. its
 stored deadline advances only after a fresh authorized renewal; an uncertain
 response repeats the same key and delivery generation. the transport binding
 is not a publisher grant or permission to open an application stream. the role
-migration still needs to bind the signed relay claim to an accepted connector
-socket, enforce fixed deadlines at connected owners, and forward peer frames.
+migration still needs an authenticated owner for registered pair keys, fixed
+deadlines at connected owners, and peer frame forwarding.

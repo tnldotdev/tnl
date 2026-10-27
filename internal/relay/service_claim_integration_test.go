@@ -232,7 +232,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 		controller := &Controller{client: client, now: time.Now, lease: relayv1.RelayLease{RelayServiceId: lease.RelayServiceID, RelayId: lease.RelayID, RelayRunId: lease.RelayRunID,
 			RelayLeaseRevision: int64(lease.RelayLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt, ConnectionCapacity: 1}}
 		registry := NewServiceRegistry()
-		acceptor, err := NewPublisherAcceptor(PublisherAcceptorConfig{Control: controller, Registry: NewRegistry(), Private: &ServicePublisherAcceptor{Select: func(string) (ServicePublisherTarget, bool) {
+		acceptor, err := NewPublisherAcceptor(PublisherAcceptorConfig{Control: controller, Registry: NewRegistry(), Native: &NativeConnectorAcceptor{}, Private: &ServicePublisherAcceptor{Select: func(string) (ServicePublisherTarget, bool) {
 			return ServicePublisherTarget{Control: controller, Registry: registry}, true
 		}}})
 		if err != nil {
@@ -282,6 +282,20 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 		assertOwner("ready")
 		if count, _ := registry.Load(); count != 1 {
 			t.Fatal("duplicate changed local ownership")
+		}
+		// an unconfigured native source owner must not affect the already
+		// authenticated service publisher on a sibling outer session.
+		proof := tunnelv1.NativePairLegProof{PairID: "npp_1234567890123456789012", DeliveryGeneration: 1,
+			ServiceID: service.ID, ServiceRunID: run.RunID, RunNumber: run.RunNumber, PublisherIdentityID: publisher.ID,
+			ConnectionSlot: int(slot.ConnectionSlot), PublisherConnectionID: slot.PublisherConnectionID,
+			AssignmentRevision: slot.Revision, RelayServiceID: lease.RelayServiceID, RelayID: lease.RelayID,
+			RelayRunID: lease.RelayRunID, RelayLeaseRevision: lease.RelayLeaseRevision,
+			RequestedAt: now, Nonce: make([]byte, 32), Signature: make([]byte, ed25519.SignatureSize)}
+		if _, done, err := dialPrivateClaim(t, acceptor, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version,
+			Role: tunnelv1.NativeConnector, NativePairLegProof: &proof}); err == nil {
+			t.Fatal("unconfigured native source admitted a connector")
+		} else {
+			_ = relayAwait(t, done)
 		}
 		select {
 		case <-session.Done():

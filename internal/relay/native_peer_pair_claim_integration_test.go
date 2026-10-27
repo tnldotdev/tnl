@@ -412,4 +412,111 @@ func TestIntegrationNativePeerPairRelayClaimHTTPDirect(t *testing.T) {
 	if _, err := httpClient.ClaimNativePeerPairLegFromAcceptedSocket(ctx, lease1, source, proof1, signed1); err == nil {
 		t.Fatal("HTTP sibling replay recovered key")
 	}
+	// replace the consumed pair with a new delivery generation for real
+	// outer-session admission.
+	request.Action = "replace"
+	request.PreviousPairId = &pair.PairId
+	request.PreviousGeneration = &pair.DeliveryGeneration
+	request.IdempotencyKey = "accepted-socket"
+	message, err = controlv1.NativePeerPairProofMessage(service.ID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(deviceKey, message))
+	created = publicCall("/v1/services/"+service.ID+"/native-peer-pairs", request)
+	if created.Code != http.StatusOK || json.Unmarshal(created.Body.Bytes(), &pair) != nil || pair.Key == "" {
+		t.Fatalf("prepare accepted-socket pair: %d %s", created.Code, created.Body.String())
+	}
+	lease0, proof0, _ = proofFor(0)
+	lease1, proof1, _ = proofFor(1)
+	wiredLease := func(lease relayv1.RelayLease) relayv1.RelayLease {
+		key := base64.RawURLEncoding.EncodeToString(keys[lease.RelayServiceId].Public().(ed25519.PublicKey))
+		lease.PeerSigningPublicKey = &key
+		return lease
+	}
+	nativeOwner := &NativeConnectorAcceptor{SourceMode: NativeConnectorDirectSocket, CurrentLease: func() relayv1.RelayLease { return wiredLease(lease0) },
+		SigningKey: keys[lease0.RelayServiceId], Claim: direct, Now: func() time.Time { return now }}
+	acceptor, err := NewPublisherAcceptor(PublisherAcceptorConfig{Select: func(string) (PublisherConnectionController, *Registry, bool) {
+		return nil, nil, false
+	}, Native: nativeOwner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.NativeConnector, NativePairLegProof: &proof0}
+	for _, kind := range []string{"quic", "tls_yamux"} {
+		t.Run("no source owner "+kind, func(t *testing.T) {
+			previous := nativeOwner.SourceMode
+			nativeOwner.SourceMode = NativeConnectorNoSource
+			defer func() { nativeOwner.SourceMode = previous }()
+			dialErr, acceptErr := peerNativeDial(t, kind, acceptor, hello, false)
+			peerNativeAssertDenied(t, dialErr, acceptErr)
+		})
+		t.Run("missing accepted peer "+kind, func(t *testing.T) {
+			dialErr, acceptErr := peerNativeDial(t, kind, acceptor, hello, true)
+			peerNativeAssertDenied(t, dialErr, acceptErr)
+		})
+	}
+	t.Run("no configured native owner", func(t *testing.T) {
+		ordinary, err := NewPublisherAcceptor(PublisherAcceptorConfig{Select: func(string) (PublisherConnectionController, *Registry, bool) { return nil, nil, false }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		dialErr, acceptErr := peerNativeDial(t, "quic", ordinary, hello, false)
+		peerNativeAssertDenied(t, dialErr, acceptErr)
+	})
+	t.Run("wrong source hint", func(t *testing.T) {
+		_, acceptErr := peerNativeDial(t, "quic", acceptor, hello, false, "192.0.2.10")
+		if acceptErr == nil || !strings.Contains(acceptErr.Error(), "unknown field") {
+			t.Fatal("untrusted connector source hint reached claim")
+		}
+	})
+	t.Run("stale relay process", func(t *testing.T) {
+		nativeOwner.CurrentLease = func() relayv1.RelayLease { l := wiredLease(lease0); l.RelayRunId = "previous-run"; return l }
+		defer func() { nativeOwner.CurrentLease = func() relayv1.RelayLease { return wiredLease(lease0) } }()
+		dialErr, acceptErr := peerNativeDial(t, "quic", acceptor, hello, false)
+		peerNativeAssertDenied(t, dialErr, acceptErr)
+	})
+	t.Run("wrong signing key", func(t *testing.T) {
+		nativeOwner.SigningKey = keys[lease1.RelayServiceId]
+		defer func() { nativeOwner.SigningKey = keys[lease0.RelayServiceId] }()
+		dialErr, acceptErr := peerNativeDial(t, "tls_yamux", acceptor, hello, false)
+		peerNativeAssertDenied(t, dialErr, acceptErr)
+	})
+	t.Run("wrong pair", func(t *testing.T) {
+		bad := proof0
+		bad.PairID = "npp_0123456789ABCDEFGHIJKL"
+		msg, err := bad.Message()
+		if err != nil {
+			t.Fatal(err)
+		}
+		bad.Signature = ed25519.Sign(deviceKey, msg)
+		dialErr, acceptErr := peerNativeDial(t, "quic", acceptor, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.NativeConnector, NativePairLegProof: &bad}, false)
+		peerNativeAssertDenied(t, dialErr, acceptErr)
+	})
+	for _, test := range []struct {
+		kind  string
+		lease relayv1.RelayLease
+		proof tunnelv1.NativePairLegProof
+	}{
+		{"quic", lease0, proof0}, {"tls_yamux", lease1, proof1},
+	} {
+		t.Run("accepted "+test.kind, func(t *testing.T) {
+			nativeOwner.CurrentLease = func() relayv1.RelayLease { return wiredLease(test.lease) }
+			nativeOwner.SigningKey = keys[test.lease.RelayServiceId]
+			leg := test.proof
+			acceptedHello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.NativeConnector, NativePairLegProof: &leg}
+			session, done, _ := peerNativeHold(t, test.kind, acceptor, acceptedHello)
+			dialErr, acceptErr := peerNativeDial(t, test.kind, acceptor, acceptedHello, false)
+			peerNativeAssertDenied(t, dialErr, acceptErr)
+			select {
+			case <-session.Done():
+				t.Fatal("replay closed the accepted native session")
+			default:
+			}
+			_ = session.Close()
+			if err := relayAwait(t, done); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }

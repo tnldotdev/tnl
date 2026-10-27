@@ -20,6 +20,15 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 			ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1",
 		},
 	}, WriteControl, ReadControl)
+	assertGoldenFrame(t, "control-native-hello", Message{
+		Type: Hello, ProtocolVersion: Version, Role: NativeConnector,
+		NativePairLegProof: &NativePairLegProof{PairID: "npp_1234567890123456789012", DeliveryGeneration: 3,
+			ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 2,
+			PublisherIdentityID: "pub_1234567890123456789012", ConnectionSlot: 0,
+			PublisherConnectionID: "pc_1234567890123456789012", AssignmentRevision: 5,
+			RelayServiceID: "relay-a", RelayID: "node-a", RelayRunID: "process-a", RelayLeaseRevision: 3,
+			RequestedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Nonce: make([]byte, 32), Signature: make([]byte, 64)},
+	}, WriteControl, ReadControl)
 	assertGoldenFrame(t, "visitor-stream-header", VisitorStreamHeader{
 		ProtocolVersion: Version, Kind: VisitorStream, VisitorConnectionID: "visitor_connection_1",
 		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
@@ -62,6 +71,9 @@ func TestInvalidFixtures(t *testing.T) {
 		read func(io.Reader) error
 	}{
 		{"invalid-control-unknown-field", readControl},
+		{"invalid-native-publisher-role", readControl},
+		{"invalid-native-credential", readControl},
+		{"invalid-native-missing-proof", readControl},
 		{"invalid-visitor-missing-field", readVisitor},
 		{"invalid-admission-missing-relay", readAdmission},
 	} {

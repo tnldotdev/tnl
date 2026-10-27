@@ -33,9 +33,10 @@ type PublisherAcceptorConfig struct {
 	Report                func(error)
 	Observer              OperationObserver
 	Private               *ServicePublisherAcceptor
+	Native                *NativeConnectorAcceptor
 }
 
-// PublisherAcceptor authenticates and owns publisher connections.
+// PublisherAcceptor owns publisher connections and optional checked native admission.
 type PublisherAcceptor struct {
 	control          PublisherConnectionController
 	registry         *Registry
@@ -46,6 +47,7 @@ type PublisherAcceptor struct {
 	report           func(error)
 	observer         OperationObserver
 	private          *ServicePublisherAcceptor
+	native           *NativeConnectorAcceptor
 }
 
 func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, error) {
@@ -71,6 +73,7 @@ func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, e
 		capacity: config.CapacityRejected, report: config.Report,
 		observer: config.Observer,
 		private:  config.Private,
+		native:   config.Native,
 	}, nil
 }
 
@@ -81,8 +84,23 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 	ready := false
 	control, registry := a.control, a.registry
 	var private *privateClaim
+	var nativeRelease func()
+	nativeAttempt, publisherAttempt := false, false
 	session, hello, err := tunnel.Accept(ctx, transport, func(authCtx context.Context, message tunnelv1.Message) error {
+		if message.Role == tunnelv1.NativeConnector {
+			nativeAttempt = true
+			if a.native == nil {
+				return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+			}
+			var err error
+			nativeRelease, err = a.native.admit(authCtx, transport, *message.NativePairLegProof)
+			return err
+		}
+		publisherAttempt = message.Role == tunnelv1.Publisher
 		if message.ServiceConnection != nil {
+			if a.private == nil {
+				return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+			}
 			var err error
 			private, err = a.private.claim(authCtx, message)
 			var protocol *tunnel.ProtocolError
@@ -116,11 +134,41 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 	if private != nil {
 		return errors.Join(err, private.serve(ctx, session, a, finishAdmission))
 	}
+	if nativeAttempt {
+		if nativeRelease != nil {
+			defer nativeRelease()
+		}
+		if err != nil {
+			return err
+		}
+		// no delivery owner is installed yet. keep the acknowledged control
+		// stream alive briefly so the client can read hello_accepted before the
+		// transport closes; never accept another stream on this session.
+		defer session.Close()
+		deadline := time.NewTimer(10 * time.Second)
+		defer deadline.Stop()
+		leaseCheck := time.NewTicker(100 * time.Millisecond)
+		defer leaseCheck.Stop()
+		for {
+			select {
+			case <-session.Done():
+				return nil
+			case <-ctx.Done():
+				return nil
+			case <-deadline.C:
+				return nil
+			case <-leaseCheck.C:
+				if _, current := a.native.currentLease(*hello.NativePairLegProof, a.native.now()); !current {
+					return nil
+				}
+			}
+		}
+	}
 	registered := false
 	// a successful claim must be disconnected with its exact identity, even if
 	// registration or readiness fails. remove locally before notifying control.
 	defer func() {
-		if !ready {
+		if !ready && publisherAttempt {
 			finishAdmission(retErr)
 		}
 		if ready {

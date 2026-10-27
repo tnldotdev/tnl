@@ -41,8 +41,9 @@ const (
 type PeerRole string
 
 const (
-	Publisher PeerRole = "publisher"
-	Ingress   PeerRole = "ingress"
+	Publisher       PeerRole = "publisher"
+	Ingress         PeerRole = "ingress"
+	NativeConnector PeerRole = "native_connector"
 )
 
 type ErrorCode string
@@ -101,6 +102,7 @@ type Message struct {
 	Credential          string                         `json:"credential,omitempty"`
 	PublisherConnection *PublisherConnectionRef        `json:"publisher_connection,omitempty"`
 	ServiceConnection   *ServicePublisherConnectionRef `json:"service_connection,omitempty"`
+	NativePairLegProof  *NativePairLegProof            `json:"native_pair_leg_proof,omitempty"`
 	Code                ErrorCode                      `json:"code,omitempty"`
 }
 
@@ -178,8 +180,31 @@ func WriteControl(writer io.Writer, message Message) error {
 }
 
 func ReadControl(reader io.Reader) (Message, error) {
+	payload, err := readFramePayload(reader, MaxControlBytes)
+	if err != nil {
+		return Message{}, err
+	}
+	// a native hello cannot smuggle even empty or null publisher credentials
+	// and other roles cannot carry even a null native proof.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return Message{}, err
+	}
+	var role PeerRole
+	if err := json.Unmarshal(fields["role"], &role); err != nil && len(fields["role"]) != 0 {
+		return Message{}, err
+	}
+	if role == NativeConnector {
+		for _, name := range []string{"credential", "publisher_connection", "service_connection"} {
+			if _, present := fields[name]; present {
+				return Message{}, errors.New("tunnelv1: invalid native connector fields")
+			}
+		}
+	} else if _, present := fields["native_pair_leg_proof"]; present {
+		return Message{}, errors.New("tunnelv1: native proof on another role")
+	}
 	var message Message
-	if err := readJSONFrame(reader, &message, MaxControlBytes); err != nil {
+	if err := decodeJSONPayload(payload, &message); err != nil {
 		return Message{}, err
 	}
 	if err := message.Validate(); err != nil {
@@ -261,25 +286,26 @@ func (m Message) Validate() error {
 	}
 	switch m.Type {
 	case Hello:
-		publisherHello := m.Role == Publisher && validCredential(m.Credential) && (m.PublisherConnection != nil) != (m.ServiceConnection != nil)
-		ingressHello := m.Role == Ingress && validCredential(m.Credential) && m.PublisherConnection == nil && m.ServiceConnection == nil
-		if (!publisherHello && !ingressHello) || m.RequestID != "" || m.Code != "" {
+		publisherHello := m.Role == Publisher && validCredential(m.Credential) && (m.PublisherConnection != nil) != (m.ServiceConnection != nil) && m.NativePairLegProof == nil
+		ingressHello := m.Role == Ingress && validCredential(m.Credential) && m.PublisherConnection == nil && m.ServiceConnection == nil && m.NativePairLegProof == nil
+		nativeHello := m.Role == NativeConnector && m.Credential == "" && m.PublisherConnection == nil && m.ServiceConnection == nil && m.NativePairLegProof != nil
+		if nativeHello && m.NativePairLegProof.Validate() != nil || (!publisherHello && !ingressHello && !nativeHello) || m.RequestID != "" || m.Code != "" {
 			return errors.New("tunnelv1: invalid hello")
 		}
 	case HelloAccepted:
-		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.Code != "" {
+		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.NativePairLegProof != nil || m.Code != "" {
 			return errors.New("tunnelv1: invalid hello_accepted")
 		}
 	case Ping, Pong, Drain, Draining, Drained:
-		if !validIdentifier(m.RequestID) || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.Code != "" {
+		if !validIdentifier(m.RequestID) || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.NativePairLegProof != nil || m.Code != "" {
 			return fmt.Errorf("tunnelv1: invalid %s", m.Type)
 		}
 	case GoAway:
-		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || !validErrorCode(m.Code) {
+		if m.RequestID != "" || m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.NativePairLegProof != nil || !validErrorCode(m.Code) {
 			return errors.New("tunnelv1: invalid goaway")
 		}
 	case Error:
-		if m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || !validErrorCode(m.Code) {
+		if m.Role != "" || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.NativePairLegProof != nil || !validErrorCode(m.Code) {
 			return errors.New("tunnelv1: invalid error")
 		}
 	default:
@@ -403,6 +429,10 @@ func readJSONFrame(reader io.Reader, value any, limit int) error {
 	if err != nil {
 		return err
 	}
+	return decodeJSONPayload(payload, value)
+}
+
+func decodeJSONPayload(payload []byte, value any) error {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {

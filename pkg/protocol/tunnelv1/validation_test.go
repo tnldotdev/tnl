@@ -41,6 +41,43 @@ func TestControlMessages(t *testing.T) {
 	}
 }
 
+func TestPeerNativeHelloRoleSeparation(t *testing.T) {
+	native, err := ReadControl(bytes.NewReader(goldenWire(t, "control-native-hello")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*Message)
+	}{
+		{"ingress proof", func(m *Message) { m.Role = Ingress; m.Credential = "secret" }},
+		{"service connection", func(m *Message) { m.ServiceConnection = &ServicePublisherConnectionRef{} }},
+		{"publisher connection", func(m *Message) { m.PublisherConnection = &PublisherConnectionRef{} }},
+		{"credential", func(m *Message) { m.Credential = "secret" }},
+		{"response proof", func(m *Message) { m.Type = HelloAccepted; m.Role = "" }},
+		{"error proof", func(m *Message) { m.Type = Error; m.Role = ""; m.Code = Unauthenticated }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			bad := native
+			test.mutate(&bad)
+			if err := bad.Validate(); err == nil {
+				t.Fatal("accepted a proof outside a native connector hello")
+			}
+		})
+	}
+	nativeJSON := string(readFixture(t, "control-native-hello.json"))
+	for _, field := range []string{`"credential":""`, `"publisher_connection":null`, `"service_connection":null`} {
+		if err := readControl(frame(strings.Replace(nativeJSON, `"role": "native_connector",`, `"role": "native_connector",`+field+`,`, 1))); err == nil {
+			t.Fatalf("native hello accepted forbidden field %s", field)
+		}
+	}
+	for _, kind := range []string{`"role":"ingress","credential":"secret"`, `"role":"publisher","credential":"secret"`} {
+		if err := readControl(frame(`{"type":"hello","protocol_version":1,` + kind + `,"native_pair_leg_proof":null}`)); err == nil {
+			t.Fatalf("non-native role accepted null proof: %s", kind)
+		}
+	}
+}
+
 func TestDeniedPolicyMarkerSurvivesBothStreamHeaders(t *testing.T) {
 	visitor, err := ReadVisitorStreamHeader(bytes.NewReader(goldenWire(t, "visitor-stream-header")))
 	if err != nil {
