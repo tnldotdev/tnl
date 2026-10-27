@@ -146,7 +146,13 @@ func retryVisitorPreparation[T any](ctx context.Context, now time.Time, work fun
 		}
 		result, err = work(now)
 		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || pgErr.Code != "40001" && pgErr.Code != "40P01" || !time.Now().Before(deadline) {
+		if !errors.As(err, &pgErr) || !time.Now().Before(deadline) {
+			return result, err
+		}
+		// concurrent first issuers may collide on the one-active-key index;
+		// restart with current authority and the key created by the winner.
+		retryable := pgErr.Code == "40001" || pgErr.Code == "40P01" || pgErr.Code == "23505" && pgErr.ConstraintName == "visitor_token_one_signing_key"
+		if !retryable {
 			return result, err
 		}
 		backoff := min(time.Duration(1<<min(attempt, 5))*5*time.Millisecond, time.Until(deadline))

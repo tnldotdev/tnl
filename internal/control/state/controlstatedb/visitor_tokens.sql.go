@@ -13,7 +13,7 @@ import (
 
 const createVisitorTokenSigningKey = `-- name: CreateVisitorTokenSigningKey :one
 INSERT INTO control.visitor_token_keys(id,public_key,seed_ciphertext,storage_key_id,created_at,retain_until)
-VALUES($1,$2,$3,$4,$5,$5) RETURNING id, public_key, seed_ciphertext, storage_key_id, created_at, retain_until, retired_at, revoked_at
+VALUES($1,$2,$3,$4,$5,$6) RETURNING id, public_key, seed_ciphertext, storage_key_id, created_at, retain_until, retired_at, revoked_at
 `
 
 type CreateVisitorTokenSigningKeyParams struct {
@@ -22,6 +22,7 @@ type CreateVisitorTokenSigningKeyParams struct {
 	SeedCiphertext []byte
 	StorageKeyID   string
 	Now            pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
 }
 
 func (q *Queries) CreateVisitorTokenSigningKey(ctx context.Context, arg CreateVisitorTokenSigningKeyParams) (ControlVisitorTokenKey, error) {
@@ -31,6 +32,7 @@ func (q *Queries) CreateVisitorTokenSigningKey(ctx context.Context, arg CreateVi
 		arg.SeedCiphertext,
 		arg.StorageKeyID,
 		arg.Now,
+		arg.RetainUntil,
 	)
 	var i ControlVisitorTokenKey
 	err := row.Scan(
@@ -67,38 +69,18 @@ func (q *Queries) EnsureVisitorTokenIssuer(ctx context.Context, issuer string) (
 	return issuer_2, err
 }
 
-const lockVisitorTokenSigningKey = `-- name: LockVisitorTokenSigningKey :one
-SELECT id, public_key, seed_ciphertext, storage_key_id, created_at, retain_until, retired_at, revoked_at FROM control.visitor_token_keys WHERE retired_at IS NULL AND revoked_at IS NULL FOR UPDATE
-`
-
-func (q *Queries) LockVisitorTokenSigningKey(ctx context.Context) (ControlVisitorTokenKey, error) {
-	row := q.db.QueryRow(ctx, lockVisitorTokenSigningKey)
-	var i ControlVisitorTokenKey
-	err := row.Scan(
-		&i.ID,
-		&i.PublicKey,
-		&i.SeedCiphertext,
-		&i.StorageKeyID,
-		&i.CreatedAt,
-		&i.RetainUntil,
-		&i.RetiredAt,
-		&i.RevokedAt,
-	)
-	return i, err
-}
-
 const retainVisitorTokenSigningKey = `-- name: RetainVisitorTokenSigningKey :execrows
 UPDATE control.visitor_token_keys SET retain_until=GREATEST(retain_until,$1)
-WHERE id=$2 AND retired_at IS NULL AND revoked_at IS NULL
+WHERE retired_at IS NULL AND revoked_at IS NULL AND retain_until<$2
 `
 
 type RetainVisitorTokenSigningKeyParams struct {
-	ExpiresAt pgtype.Timestamptz
-	ID        string
+	RetainUntil pgtype.Timestamptz
+	ExpiresAt   pgtype.Timestamptz
 }
 
 func (q *Queries) RetainVisitorTokenSigningKey(ctx context.Context, arg RetainVisitorTokenSigningKeyParams) (int64, error) {
-	result, err := q.db.Exec(ctx, retainVisitorTokenSigningKey, arg.ExpiresAt, arg.ID)
+	result, err := q.db.Exec(ctx, retainVisitorTokenSigningKey, arg.RetainUntil, arg.ExpiresAt)
 	if err != nil {
 		return 0, err
 	}
@@ -123,6 +105,37 @@ WHERE revoked_at IS NULL
 func (q *Queries) RevokeVisitorTokenSigningKeys(ctx context.Context, now pgtype.Timestamptz) error {
 	_, err := q.db.Exec(ctx, revokeVisitorTokenSigningKeys, now)
 	return err
+}
+
+const shareVisitorTokenIssuer = `-- name: ShareVisitorTokenIssuer :one
+SELECT issuer FROM control.visitor_token_issuer WHERE id FOR SHARE
+`
+
+func (q *Queries) ShareVisitorTokenIssuer(ctx context.Context) (string, error) {
+	row := q.db.QueryRow(ctx, shareVisitorTokenIssuer)
+	var issuer string
+	err := row.Scan(&issuer)
+	return issuer, err
+}
+
+const shareVisitorTokenSigningKey = `-- name: ShareVisitorTokenSigningKey :one
+SELECT id, public_key, seed_ciphertext, storage_key_id, created_at, retain_until, retired_at, revoked_at FROM control.visitor_token_keys WHERE retired_at IS NULL AND revoked_at IS NULL FOR SHARE
+`
+
+func (q *Queries) ShareVisitorTokenSigningKey(ctx context.Context) (ControlVisitorTokenKey, error) {
+	row := q.db.QueryRow(ctx, shareVisitorTokenSigningKey)
+	var i ControlVisitorTokenKey
+	err := row.Scan(
+		&i.ID,
+		&i.PublicKey,
+		&i.SeedCiphertext,
+		&i.StorageKeyID,
+		&i.CreatedAt,
+		&i.RetainUntil,
+		&i.RetiredAt,
+		&i.RevokedAt,
+	)
+	return i, err
 }
 
 const visitorTokenVerificationKeys = `-- name: VisitorTokenVerificationKeys :many

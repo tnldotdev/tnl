@@ -34,8 +34,8 @@ func (d *Database) PrepareVisitorSigningKeys(ctx context.Context, issuer string,
 	if err := ensureVisitorIssuer(ctx, q, issuer); err != nil {
 		return err
 	}
-	if _, err := q.LockVisitorTokenSigningKey(ctx); errors.Is(err, pgx.ErrNoRows) {
-		if _, err := d.createVisitorSigningKey(ctx, q, now); err != nil {
+	if _, err := q.ShareVisitorTokenSigningKey(ctx); errors.Is(err, pgx.ErrNoRows) {
+		if _, err := d.createVisitorSigningKey(ctx, q, now, now); err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -45,7 +45,8 @@ func (d *Database) PrepareVisitorSigningKeys(ctx context.Context, issuer string,
 }
 
 // startup and rotation establish one issuer for every control replica.
-// issuance reads that value and locks the signing key after resource authority.
+// issuance shares the issuer lock before checking retention so rotation cannot
+// replace the signing key between that check and signing.
 func ensureVisitorIssuer(ctx context.Context, q *controlstatedb.Queries, issuer string) error {
 	canonical, err := naming.CanonicalControlURL(issuer)
 	if err != nil || canonical != issuer || len(issuer) > 256 {
@@ -66,7 +67,7 @@ func currentVisitorIssuer(ctx context.Context, q *controlstatedb.Queries, issuer
 	if err != nil || canonical != issuer || len(issuer) > 256 {
 		return ErrVisitorSigningKey
 	}
-	stored, err := q.ReadVisitorTokenIssuer(ctx)
+	stored, err := q.ShareVisitorTokenIssuer(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrVisitorSigningKey
 	}
@@ -79,7 +80,7 @@ func currentVisitorIssuer(ctx context.Context, q *controlstatedb.Queries, issuer
 	return nil
 }
 
-func (d *Database) createVisitorSigningKey(ctx context.Context, q *controlstatedb.Queries, now time.Time) (controlstatedb.ControlVisitorTokenKey, error) {
+func (d *Database) createVisitorSigningKey(ctx context.Context, q *controlstatedb.Queries, now, retainUntil time.Time) (controlstatedb.ControlVisitorTokenKey, error) {
 	var zero controlstatedb.ControlVisitorTokenKey
 	keys, err := q.VisitorTokenVerificationKeys(ctx, timestamptz(now))
 	if err != nil {
@@ -101,7 +102,7 @@ func (d *Database) createVisitorSigningKey(ctx context.Context, q *controlstated
 	if err != nil {
 		return zero, err
 	}
-	return q.CreateVisitorTokenSigningKey(ctx, controlstatedb.CreateVisitorTokenSigningKeyParams{ID: id, PublicKey: public, SeedCiphertext: sealed, StorageKeyID: d.storageKey.CurrentID(), Now: timestamptz(now)})
+	return q.CreateVisitorTokenSigningKey(ctx, controlstatedb.CreateVisitorTokenSigningKeyParams{ID: id, PublicKey: public, SeedCiphertext: sealed, StorageKeyID: d.storageKey.CurrentID(), Now: timestamptz(now), RetainUntil: timestamptz(retainUntil)})
 }
 
 // signVisitorPermission is called only after the new permission model has
@@ -115,14 +116,31 @@ func (d *Database) signVisitorPermission(ctx context.Context, tx pgx.Tx, issuer 
 	if err := currentVisitorIssuer(ctx, q, issuer); err != nil {
 		return "", err
 	}
-	row, err := q.LockVisitorTokenSigningKey(ctx)
+	retainUntil := permission.ExpiresAt
+	if permission.ExpiresAt.Sub(now) <= visitortoken.RenewableLifetime {
+		// reserve a little future retention for short renewable permissions.
+		// the predicate below still avoids writes while expiry is covered.
+		retainUntil = retainUntil.Add(30 * time.Second)
+	}
+	// take an exclusive lock only if expiry exceeds current retention. do this
+	// before the shared read: upgrading FOR SHARE after a concurrent first wave
+	// would deadlock or abort repeatable-read transactions.
+	if _, err := q.RetainVisitorTokenSigningKey(ctx, controlstatedb.RetainVisitorTokenSigningKeyParams{
+		RetainUntil: timestamptz(retainUntil), ExpiresAt: timestamptz(permission.ExpiresAt),
+	}); err != nil {
+		return "", err
+	}
+	row, err := q.ShareVisitorTokenSigningKey(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
-		row, err = d.createVisitorSigningKey(ctx, q, now)
+		// the shared issuer lock already fences rotation. do not upgrade it:
+		// concurrent first issuers would deadlock. a unique-index collision
+		// instead retries the whole repeatable-read authority decision.
+		row, err = d.createVisitorSigningKey(ctx, q, now, retainUntil)
 	}
 	if err != nil {
 		return "", err
 	}
-	if row.CreatedAt.Time.After(now) {
+	if row.CreatedAt.Time.After(now) || row.RetainUntil.Time.Before(permission.ExpiresAt) {
 		return "", ErrVisitorSigningKey
 	}
 	seed, _, err := d.storageKey.Open(row.StorageKeyID, visitorSigningKeyContext(row.ID), row.SeedCiphertext)
@@ -141,22 +159,6 @@ func (d *Database) signVisitorPermission(ctx context.Context, tx pgx.Tx, issuer 
 	token, err := visitortoken.Sign(issuer, row.ID, private, permission, now)
 	if err != nil {
 		return "", err
-	}
-	if row.RetainUntil.Time.Before(permission.ExpiresAt) {
-		retainUntil := permission.ExpiresAt
-		if permission.ExpiresAt.Sub(now) <= visitortoken.RenewableLifetime {
-			// reserve a little future retention for short renewable permissions.
-			// otherwise every issuance updates this shared key and conflicts with
-			// concurrent repeatable-read authorization decisions.
-			retainUntil = retainUntil.Add(30 * time.Second)
-		}
-		changed, err := q.RetainVisitorTokenSigningKey(ctx, controlstatedb.RetainVisitorTokenSigningKeyParams{ID: row.ID, ExpiresAt: timestamptz(retainUntil)})
-		if err != nil {
-			return "", err
-		}
-		if changed != 1 {
-			return "", ErrVisitorSigningKey
-		}
 	}
 	return token, nil
 }
@@ -186,7 +188,7 @@ func (d *Database) RotateVisitorSigningKey(ctx context.Context, issuer string, e
 	if err := q.DeleteExpiredVisitorTokenSigningKeys(ctx, timestamptz(now)); err != nil {
 		return err
 	}
-	if _, err := d.createVisitorSigningKey(ctx, q, now); err != nil {
+	if _, err := d.createVisitorSigningKey(ctx, q, now, now); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

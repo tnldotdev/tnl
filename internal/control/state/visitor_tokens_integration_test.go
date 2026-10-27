@@ -70,9 +70,17 @@ func TestIntegrationVisitorTokenIssuanceUsesCurrentScopeAndParentDeadlines(t *te
 	}
 }
 
-func TestIntegrationConcurrentVisitorTokenIssuanceRetriesSerialization(t *testing.T) {
+func TestIntegrationConcurrentVisitorTokenIssuanceAfterRetentionHorizon(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "visitor_token_concurrent")
-	prepareVisitorTokenKeys(t, d, now)
+	aged := now.Add(-6 * time.Minute)
+	prepareVisitorTokenKeys(t, d, aged)
+	if _, err := signStateTestPermission(t.Context(), d, testVisitorIssuer, signingTestPermission(aged), aged); err != nil {
+		t.Fatal(err)
+	}
+	var previousHorizon time.Time
+	if err := d.pool.QueryRow(t.Context(), `SELECT retain_until FROM control.visitor_token_keys WHERE retired_at IS NULL`).Scan(&previousHorizon); err != nil || !previousHorizon.Before(now) {
+		t.Fatalf("signing key retention did not age before concurrent issuance: %s, %v", previousHorizon, err)
+	}
 	request := oidcRouteRequest(t, d, now)
 	url := createTestPublicURL(t, d, request, now)
 	session := newOIDCSession(t, d, now)
@@ -80,17 +88,39 @@ func TestIntegrationConcurrentVisitorTokenIssuanceRetriesSerialization(t *testin
 	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}
 	start := make(chan struct{})
 	var workers sync.WaitGroup
-	for range 8 {
+	type issuance struct {
+		issued IssuedVisitorToken
+		err    error
+	}
+	results := make(chan issuance, 12)
+	for range 12 {
 		workers.Go(func() {
 			<-start
 			issued, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, BrowserTokenSource{}, now)
-			if err != nil || issued.Token == "" {
-				t.Errorf("concurrent visitor token issuance failed: %v", err)
-			}
+			results <- issuance{issued, err}
 		})
 	}
 	close(start)
 	workers.Wait()
+	close(results)
+	keys := stateTestVisitorKeys(t, d, now)
+	var latestExpiry time.Time
+	for result := range results {
+		if result.err != nil || result.issued.Token == "" {
+			t.Fatalf("concurrent visitor token issuance failed after bounded retry: %v", result.err)
+		}
+		permission := result.issued.Permission
+		if _, err := visitortoken.VerifyBearer(result.issued.Token, stateTestVisitorView(permission, keys, now), now); err != nil {
+			t.Fatalf("concurrently issued token did not verify: %v", err)
+		}
+		if permission.ExpiresAt.After(latestExpiry) {
+			latestExpiry = permission.ExpiresAt
+		}
+	}
+	var retained time.Time
+	if err := d.pool.QueryRow(t.Context(), `SELECT retain_until FROM control.visitor_token_keys WHERE retired_at IS NULL`).Scan(&retained); err != nil || retained.Before(latestExpiry) || !retained.After(previousHorizon) {
+		t.Fatalf("concurrent issuances lost signing-key retention: %s, latest expiry %s, %v", retained, latestExpiry, err)
+	}
 }
 
 func TestIntegrationConcurrentVisitorGrantAndCertificatePreparation(t *testing.T) {

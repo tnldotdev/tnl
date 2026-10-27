@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -61,6 +63,24 @@ func TestIntegrationShortVisitorPermissionsShareSigningKeyRetention(t *testing.T
 	}
 	if !retained().Equal(first) {
 		t.Fatal("adjacent short token issuance rewrote the shared signing key")
+	}
+	// a second repeatable-read issuance inside the retained horizon must finish
+	// while the first transaction still holds its signing-key lock.
+	tx, err := d.pool.BeginTx(t.Context(), pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err := d.signVisitorPermission(t.Context(), tx, testVisitorIssuer, permission, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	if _, err := signStateTestPermission(ctx, d, testVisitorIssuer, permission, now.Add(time.Second)); err != nil {
+		t.Fatalf("issuance within retained horizon waited for another signing-key reader: %v", err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -142,17 +162,180 @@ func TestIntegrationVisitorSigningKeysAreEncryptedSharedAndIssuerBound(t *testin
 	}
 }
 
+func TestIntegrationConcurrentVisitorSigningKeyCreation(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "visitor_signing_unprepared")
+	prepareVisitorTokenKeys(t, d, now)
+	request := oidcRouteRequest(t, d, now)
+	u := createTestPublicURL(t, d, request, now)
+	session := newOIDCSession(t, d, now)
+	ctx := WithControlPrincipal(t.Context(), ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID})
+	if _, err := d.pool.Exec(ctx, `DELETE FROM control.visitor_token_keys`); err != nil {
+		t.Fatal(err)
+	}
+	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: u.ID}
+	start := make(chan struct{})
+	type issuance struct {
+		issued IssuedVisitorToken
+		err    error
+	}
+	results := make(chan issuance, 8)
+	var workers sync.WaitGroup
+	for range 8 {
+		workers.Go(func() {
+			<-start
+			issued, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, BrowserTokenSource{}, now)
+			results <- issuance{issued, err}
+		})
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	verifiedAt := time.Now().UTC()
+	keys := stateTestVisitorKeys(t, d, verifiedAt)
+	if len(keys) != 1 {
+		t.Fatalf("concurrent issuance created %d signing keys, want one", len(keys))
+	}
+	for result := range results {
+		if result.err != nil || result.issued.Token == "" {
+			t.Fatalf("concurrent unprepared signing key creation failed: %v", result.err)
+		}
+		if _, err := visitortoken.VerifyBearer(result.issued.Token, stateTestVisitorView(result.issued.Permission, keys, verifiedAt), verifiedAt); err != nil {
+			t.Fatalf("token from unprepared signing key did not verify: %v", err)
+		}
+	}
+}
+
+type pausedVisitorRetentionTx struct {
+	pgx.Tx
+	paused chan<- struct{}
+	resume <-chan struct{}
+}
+
+func (tx pausedVisitorRetentionTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(sql, "UPDATE control.visitor_token_keys SET retain_until") {
+		close(tx.paused)
+		select {
+		case <-tx.resume:
+		case <-ctx.Done():
+			return pgconn.CommandTag{}, ctx.Err()
+		}
+	}
+	return tx.Tx.Exec(ctx, sql, args...)
+}
+
+func TestIntegrationVisitorSigningKeyRotationWaitsBeforeKeyShare(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "visitor_signing_rotation_before_share")
+	prepareVisitorTokenKeys(t, d, now)
+	permission := signingTestPermission(now)
+	if _, err := signStateTestPermission(t.Context(), d, testVisitorIssuer, permission, now); err != nil {
+		t.Fatal(err)
+	}
+	permission.ExpiresAt = permission.ExpiresAt.Add(time.Second)
+	tx, err := d.pool.BeginTx(t.Context(), pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	var blocker int32
+	if err := tx.QueryRow(t.Context(), `SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
+		t.Fatal(err)
+	}
+	paused := make(chan struct{})
+	resume := make(chan struct{})
+	defer func() {
+		select {
+		case <-resume:
+		default:
+			close(resume)
+		}
+	}()
+	type signingResult struct {
+		token visitortoken.Token
+		err   error
+	}
+	signed := make(chan signingResult, 1)
+	go func() {
+		token, err := d.signVisitorPermission(t.Context(), pausedVisitorRetentionTx{Tx: tx, paused: paused, resume: resume}, testVisitorIssuer, permission, now)
+		signed <- signingResult{token, err}
+	}()
+	select {
+	case <-paused:
+	case <-time.After(3 * time.Second):
+		t.Fatal("signer did not reach retention check")
+	}
+	rotation := make(chan error, 1)
+	go func() {
+		rotation <- d.RotateVisitorSigningKey(t.Context(), testVisitorIssuer, false, now.Add(time.Minute))
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	// rotation must wait on the issuer row before the signer even reads the key.
+	waitForPostgresBlock(t, ctx, d, blocker, rotation)
+	close(resume)
+	var result signingResult
+	select {
+	case result = <-signed:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("signer did not finish after retention check resumed")
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-rotation:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("rotation did not finish after signer committed")
+	}
+	keys := stateTestVisitorKeys(t, d, now.Add(time.Minute))
+	if len(keys) != 2 {
+		t.Fatal("rotation did not retain the issued token key")
+	}
+	if _, err := visitortoken.VerifyBearer(result.token, stateTestVisitorView(permission, keys, now.Add(time.Minute)), now.Add(time.Minute)); err != nil {
+		t.Fatalf("token signed before rotation did not verify: %v", err)
+	}
+}
+
 func TestIntegrationVisitorSigningKeyRotationRetainsLongCredentialsAndRevokesEmergency(t *testing.T) {
 	d, _, now := newControlStateIntegrationDatabaseWithURL(t, "visitor_signing_rotation")
 	prepareVisitorTokenKeys(t, d, now)
 	permission := signingTestPermission(now)
 	permission.ExpiresAt = now.Add(24 * time.Hour)
-	token, err := signStateTestPermission(t.Context(), d, testVisitorIssuer, permission, now)
+	tx, err := d.pool.BeginTx(t.Context(), pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.RotateVisitorSigningKey(t.Context(), testVisitorIssuer, false, now.Add(time.Minute)); err != nil {
+	defer tx.Rollback(t.Context())
+	token, err := d.signVisitorPermission(t.Context(), tx, testVisitorIssuer, permission, now)
+	if err != nil {
 		t.Fatal(err)
+	}
+	var blocker int32
+	if err := tx.QueryRow(t.Context(), `SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
+		t.Fatal(err)
+	}
+	rotation := make(chan error, 1)
+	go func() {
+		rotation <- d.RotateVisitorSigningKey(t.Context(), testVisitorIssuer, false, now.Add(time.Minute))
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	waitForPostgresBlock(t, ctx, d, blocker, rotation)
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-rotation:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("rotation did not finish after the signing-key reader committed")
 	}
 	keys := stateTestVisitorKeys(t, d, now.Add(time.Minute))
 	if len(keys) != 2 {
