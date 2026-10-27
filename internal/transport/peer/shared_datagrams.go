@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	quic "github.com/quic-go/quic-go"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -90,7 +91,7 @@ func (w *replayWindow) accept(frame []byte) bool {
 // closes the connection. only this owner reads its datagrams; other protocols
 // cannot concurrently consume them. callers join Close before retiring it.
 type SharedDatagrams struct {
-	conn           *quic.Conn
+	conn           muxsession.DatagramSession
 	ctx            context.Context
 	cancel         context.CancelFunc
 	mu             sync.Mutex
@@ -107,8 +108,8 @@ type SharedDatagrams struct {
 	once           sync.Once
 }
 
-func NewSharedDatagrams(parent context.Context, conn *quic.Conn) (*SharedDatagrams, error) {
-	if conn == nil || !conn.ConnectionState().SupportsDatagrams.Remote {
+func NewSharedDatagrams(parent context.Context, conn muxsession.DatagramSession) (*SharedDatagrams, error) {
+	if conn == nil || !conn.SupportsDatagrams() {
 		return nil, ErrConfiguration
 	}
 	ctx, cancel := context.WithCancel(parent)

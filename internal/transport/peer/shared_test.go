@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -40,6 +41,80 @@ func sharedQUICPair(t *testing.T, ctx context.Context, serverTLS, clientTLS *tls
 	}
 	t.Cleanup(func() { _ = left.CloseWithError(0, ""); _ = right.CloseWithError(0, "") })
 	return left, right
+}
+
+type rawDatagramSession struct{ *quic.Conn }
+
+func (s rawDatagramSession) SupportsDatagrams() bool {
+	supported := s.Conn.ConnectionState().SupportsDatagrams
+	return supported.Local && supported.Remote
+}
+
+func TestPeerSharedDatagramsUseOptedInMuxsession(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(strconv.FormatBool(enabled), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			serverTLS, clientTLS := peerTLS(t)
+			config := muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: enabled}}
+			listener, err := muxsession.ListenConnectorQUIC("127.0.0.1:0", serverTLS, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = listener.Close() })
+			client, err := (muxsession.ConnectorQUIC{TLSConfig: clientTLS, Config: config}).Connect(ctx,
+				muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "peer.test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			server, err := listener.Accept(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
+			outbound, clientOK := client.(muxsession.DatagramSession)
+			inbound, serverOK := server.(muxsession.DatagramSession)
+			if !clientOK || !serverOK || outbound.SupportsDatagrams() != enabled || inbound.SupportsDatagrams() != enabled {
+				t.Fatal("muxsession datagram negotiation did not match opt-in")
+			}
+			if !enabled {
+				if _, err := NewSharedDatagrams(ctx, outbound); !errors.Is(err, ErrConfiguration) {
+					t.Fatal("shared carrier accepted an ordinary QUIC session", err)
+				}
+				return
+			}
+			writer, err := NewSharedDatagrams(ctx, outbound)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader, err := NewSharedDatagrams(ctx, inbound)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = writer.Close(); _ = reader.Close() })
+			a, b := sharedBinding(t, 1, RelayA)
+			sender, err := writer.Register(a)
+			if err != nil {
+				t.Fatal(err)
+			}
+			receiver, err := reader.Register(b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			frame := signedFrame(t, a)
+			if err := sender.Send(ctx, frame); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := receiver.Receive(ctx); err != nil || !bytes.Equal(got, frame) {
+				t.Fatal("shared QUIC session lost its packet", err)
+			}
+			_ = writer.Close()
+			_ = reader.Close()
+			if client.Err() != nil || server.Err() != nil {
+				t.Fatal("shared packet owner closed its muxsession")
+			}
+		})
+	}
 }
 
 func sharedTLSPair(t *testing.T, ctx context.Context, serverTLS, clientTLS *tls.Config) (muxsession.Session, muxsession.Session) {
@@ -115,11 +190,11 @@ func TestPeerSharedDatagramsAcceptOutOfOrderFragmentsOnce(t *testing.T) {
 	defer cancel()
 	serverTLS, clientTLS := peerTLS(t)
 	left, right := sharedQUICPair(t, ctx, serverTLS, clientTLS)
-	client, err := NewSharedDatagrams(ctx, left)
+	client, err := NewSharedDatagrams(ctx, rawDatagramSession{left})
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := NewSharedDatagrams(ctx, right)
+	server, err := NewSharedDatagrams(ctx, rawDatagramSession{right})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,11 +238,11 @@ func TestPeerSharedDatagramsFenceUnknownStaleAndBackpressure(t *testing.T) {
 	defer cancel()
 	serverTLS, clientTLS := peerTLS(t)
 	left, right := sharedQUICPair(t, ctx, serverTLS, clientTLS)
-	client, err := NewSharedDatagrams(ctx, left)
+	client, err := NewSharedDatagrams(ctx, rawDatagramSession{left})
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := NewSharedDatagrams(ctx, right)
+	server, err := NewSharedDatagrams(ctx, rawDatagramSession{right})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,11 +387,11 @@ func TestPeerSharedDatagramsSameKeyCannotRelabelOrReplay(t *testing.T) {
 	defer cancel()
 	serverTLS, clientTLS := peerTLS(t)
 	left, right := sharedQUICPair(t, ctx, serverTLS, clientTLS)
-	client, err := NewSharedDatagrams(ctx, left)
+	client, err := NewSharedDatagrams(ctx, rawDatagramSession{left})
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := NewSharedDatagrams(ctx, right)
+	server, err := NewSharedDatagrams(ctx, rawDatagramSession{right})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -549,7 +624,7 @@ func TestPeerSharedDatagramsBoundRegistrations(t *testing.T) {
 	defer cancel()
 	serverTLS, clientTLS := peerTLS(t)
 	left, _ := sharedQUICPair(t, ctx, serverTLS, clientTLS)
-	owner, err := NewSharedDatagrams(ctx, left)
+	owner, err := NewSharedDatagrams(ctx, rawDatagramSession{left})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -742,11 +817,11 @@ func TestPeerSharedMixedCarrierKeepsInnerStreamAndSibling(t *testing.T) {
 	defer cancel()
 	serverTLS, clientTLS := peerTLS(t)
 	left, right := sharedQUICPair(t, ctx, serverTLS, clientTLS)
-	client, err := NewSharedDatagrams(ctx, left)
+	client, err := NewSharedDatagrams(ctx, rawDatagramSession{left})
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := NewSharedDatagrams(ctx, right)
+	server, err := NewSharedDatagrams(ctx, rawDatagramSession{right})
 	if err != nil {
 		t.Fatal(err)
 	}

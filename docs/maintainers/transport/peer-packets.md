@@ -59,8 +59,8 @@ deadline prevent one backpressured TCP carrier from blocking its sibling.
 TCP still orders bytes within that carrier and therefore has head-of-line delay.
 canceling the endpoint interrupts all carriers and joins every worker.
 
-`SharedDatagrams` borrows one authenticated outer QUIC connection (with DATAGRAMs
-enabled) and exclusively reads its datagrams. the role owner registers each
+`SharedDatagrams` borrows one authenticated outer QUIC session (with DATAGRAMs
+opted in on both sides) and exclusively reads its datagrams. the role owner registers each
 exact introduction with a pair ID, increasing delivery generation, key,
 direction, and path. each v1 envelope includes a 25-byte header and an
 independent 32-byte tag over the header and complete inner frame, including

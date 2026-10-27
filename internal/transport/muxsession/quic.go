@@ -16,7 +16,8 @@ const defaultQUICKeepAlivePeriod = 30 * time.Second
 
 const compatibleQUICPacketSize = 1200
 
-// QUICConfig configures the QUIC transport.
+// QUICConfig configures the QUIC transport. peer-capable role owners opt in to
+// DATAGRAMs with Config.EnableDatagrams; ordinary sessions keep the default off.
 type QUICConfig struct {
 	Config *quic.Config
 }
@@ -214,7 +215,6 @@ func quicConfig(config *quic.Config) *quic.Config {
 		config = config.Clone()
 	}
 	config.Allow0RTT = false
-	config.EnableDatagrams = false
 	if config.MaxIncomingStreams == 0 {
 		config.MaxIncomingStreams = defaultMaxIncomingStreams
 	}
@@ -226,6 +226,24 @@ func quicConfig(config *quic.Config) *quic.Config {
 
 type quicSession struct {
 	connection *quic.Conn
+}
+
+// DatagramSession is an opted-in QUIC session's bounded packet delivery
+// boundary. the caller must own datagram reception exclusively; stream
+// acceptance and the session lifetime remain with the role owner.
+type DatagramSession interface {
+	SendDatagram([]byte) error
+	ReceiveDatagram(context.Context) ([]byte, error)
+	SupportsDatagrams() bool
+}
+
+func (s *quicSession) SendDatagram(b []byte) error { return s.connection.SendDatagram(b) }
+func (s *quicSession) ReceiveDatagram(ctx context.Context) ([]byte, error) {
+	return s.connection.ReceiveDatagram(ctx)
+}
+func (s *quicSession) SupportsDatagrams() bool {
+	supported := s.connection.ConnectionState().SupportsDatagrams
+	return supported.Local && supported.Remote
 }
 
 func (s *quicSession) LocalAddr() net.Addr  { return s.connection.LocalAddr() }
