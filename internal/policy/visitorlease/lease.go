@@ -132,6 +132,11 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 		}
 	}
 	update.Allocations = maps.Clone(update.Allocations)
+	if update.IP != nil {
+		// detach the caller's policy value; its private maps are immutable.
+		ip := *update.IP
+		update.IP = &ip
+	}
 	view.ControlTime = view.ObservedAt
 	view.ObservedAt, view.ValidUntil = request.StartedAt, request.StartedAt.Add(duration)
 	update.View, update.Events = view, nil

@@ -10,6 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
@@ -175,6 +176,139 @@ func TestPolicyLeaseRejectsUnverifiedEvidence(t *testing.T) {
 	if guard != nil || !errors.Is(err, visitortoken.ErrPolicy) {
 		t.Fatal("zero verified evidence bound a visitor guard", err)
 	}
+}
+
+func TestPolicyLeaseOwnsAppliedIPValue(t *testing.T) {
+	lease, update, key := fixture(t)
+	var hashKey [32]byte
+	hashKey[0] = 1
+	policy := func(prefix string) ippolicy.Policy {
+		t.Helper()
+		entry, err := ippolicy.Hash(hashKey, netip.MustParsePrefix(prefix))
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err := ippolicy.New(hashKey, []ippolicy.Entry{entry})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	caller := policy("192.0.2.0/24")
+	update.IP = &caller
+	if err := lease.Apply(lease.Begin(), update); err != nil {
+		t.Fatal(err)
+	}
+	permission := admission(t, lease, key, "first", time.Now().Add(time.Minute))
+	var stopped atomic.Int64
+	guard, err := lease.Bind(permission, netip.MustParseAddr("192.0.2.1"), func() { stopped.Add(1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Close()
+	if outside, err := lease.Bind(permission, netip.MustParseAddr("198.51.100.1"), func() {}); outside != nil || !errors.Is(err, visitortoken.ErrPolicy) {
+		t.Fatal("initial restricted policy admitted an outside source")
+	}
+	caller = policy("198.51.100.0/24")
+	allowed, err := lease.Bind(permission, netip.MustParseAddr("192.0.2.1"), func() {})
+	if err != nil {
+		t.Fatal("caller replaced the installed IP allowlist", err)
+	}
+	allowed.Close()
+	outside, err := lease.Bind(permission, netip.MustParseAddr("198.51.100.1"), func() {})
+	if outside != nil || !errors.Is(err, visitortoken.ErrPolicy) {
+		t.Fatal("caller broadened installed IP policy")
+	}
+	if stopped.Load() != 0 {
+		t.Fatal("caller mutation canceled installed traffic")
+	}
+	// only a new authenticated application replaces the snapshot and cancels
+	// admissions no longer allowed by that observation.
+	if err := lease.Apply(lease.Begin(), update); err != nil {
+		t.Fatal(err)
+	}
+	if stopped.Load() != 1 {
+		t.Fatal("authenticated IP replacement did not cancel affected traffic once")
+	}
+	outside, err = lease.Bind(permission, netip.MustParseAddr("198.51.100.1"), func() {})
+	if err != nil {
+		t.Fatal("new authenticated policy did not take effect", err)
+	}
+	outside.Close()
+}
+
+func TestPolicyLeaseIPNilAndEmptyRemainDistinct(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		t.Run(map[bool]string{false: "no filter", true: "empty deny all"}[empty], func(t *testing.T) {
+			lease, update, key := fixture(t)
+			if empty {
+				var hashKey [32]byte
+				hashKey[0] = 1
+				value, err := ippolicy.New(hashKey, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				update.IP = &value
+			}
+			if err := lease.Apply(lease.Begin(), update); err != nil {
+				t.Fatal(err)
+			}
+			guard, err := lease.Bind(admission(t, lease, key, "first", time.Now().Add(time.Minute)), netip.MustParseAddr("192.0.2.1"), func() {})
+			if empty {
+				if guard != nil || !errors.Is(err, visitortoken.ErrPolicy) {
+					t.Fatal("empty policy did not deny traffic")
+				}
+			} else {
+				if err != nil {
+					t.Fatal("nil IP policy installed a filter", err)
+				}
+				guard.Close()
+			}
+		})
+	}
+}
+
+func TestPolicyLeaseCallerIPReplacementAfterApplyDoesNotRaceBind(t *testing.T) {
+	lease, update, key := fixture(t)
+	var hashKey [32]byte
+	hashKey[0] = 1
+	entry, err := ippolicy.Hash(hashKey, netip.MustParsePrefix("192.0.2.0/24"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := ippolicy.New(hashKey, []ippolicy.Entry{entry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deny, err := ippolicy.New(hashKey, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := original
+	update.IP = &caller
+	if err := lease.Apply(lease.Begin(), update); err != nil {
+		t.Fatal(err)
+	}
+	permission := admission(t, lease, key, "first", time.Now().Add(time.Minute))
+	start, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		<-start // caller owns its value again only after Apply has returned.
+		for range 1000 {
+			caller = deny
+			caller = original
+		}
+	}()
+	close(start)
+	for range 1000 {
+		guard, err := lease.Bind(permission, netip.MustParseAddr("192.0.2.1"), func() {})
+		if err != nil {
+			t.Error("caller mutation changed installed admission")
+			break
+		}
+		guard.Close()
+	}
+	<-done
 }
 
 func TestPolicyClockSkewAndSlowRepliesDoNotExtendExpiry(t *testing.T) {
