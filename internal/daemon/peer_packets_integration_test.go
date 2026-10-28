@@ -157,7 +157,7 @@ func TestIntegrationPeerPacketsKeepNativeTargetAcrossRelayPacketLoss(t *testing.
 				{"tcp-tcp-lose-b", [2]bool{true, true}, 1},
 			} {
 				t.Run(carriers.name, func(t *testing.T) {
-					exerciseNativePacketContinuity(t, publisher, carriers.tcp, carriers.loseTCP, false, false)
+					exerciseNativePacketContinuity(t, publisher, carriers.tcp, carriers.loseTCP, false, false, false)
 				})
 			}
 		})
@@ -166,14 +166,14 @@ func TestIntegrationPeerPacketsKeepNativeTargetAcrossRelayPacketLoss(t *testing.
 
 func TestIntegrationPeerPacketsRenewNativeClaimsWithoutReopeningTarget(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	exerciseNativePacketContinuity(t, "quic", [2]bool{false, true}, 1, true, false)
+	exerciseNativePacketContinuity(t, "quic", [2]bool{false, true}, 1, true, false, false)
 }
 
 func TestIntegrationPeerPacketsReconnectBothNativeCarriersWithoutReopeningTarget(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	for _, publisher := range []string{"quic", "tls-tcp"} {
 		t.Run(publisher, func(t *testing.T) {
-			exerciseNativePacketContinuity(t, publisher, [2]bool{true, true}, -2, false, false)
+			exerciseNativePacketContinuity(t, publisher, [2]bool{true, true}, -2, false, false, false)
 		})
 	}
 }
@@ -182,23 +182,42 @@ func TestIntegrationPeerPacketsUpgradeNativeTargetToDirectUDP(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	for _, publisher := range []string{"default", "tls-tcp"} {
 		t.Run(publisher, func(t *testing.T) {
-			exerciseNativePacketContinuity(t, publisher, [2]bool{}, -1, false, true)
+			exerciseNativePacketContinuity(t, publisher, [2]bool{}, -1, false, true, false)
 		})
 	}
 }
 
-func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool, loseTCP int, renew, direct bool) {
+func TestIntegrationPeerPacketsRetryICEWithoutReopeningTarget(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	exerciseNativePacketContinuity(t, "default", [2]bool{}, -1, false, true, true)
+}
+
+func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool, loseTCP int, renew, direct, restart bool) {
 	t.Helper()
 	f, issuer := newWorkloadTransportFixtureTopology(t, nil, serviceRuntimeTopologyOptions{nativePeers: true})
 	var directReady [2]atomic.Bool
+	var checks [2]atomic.Uint64
 	iceGate := make(chan struct{})
+	firstFailure := make(chan struct{})
+	var failed sync.Once
+	releaseFailure := func() { failed.Do(func() { close(firstFailure) }) }
+	defer releaseFailure()
 	var release sync.Once
 	releaseICE := func() { release.Do(func() { close(iceGate) }) }
 	defer releaseICE()
 	connectivity := func(side int) peer.ConnectivityOptions {
 		return peer.ConnectivityOptions{DisableDirect: !direct, IncludeLoopback: true, Observe: func(state peer.ConnectivityState) {
 			if state == peer.ConnectivityChecking {
+				attempt := checks[side].Add(1)
 				<-iceGate
+				if restart && side == 1 && attempt == 1 {
+					// withhold the first publisher's ICE checks until the connector
+					// has abandoned that attempt. relay application traffic stays live.
+					<-firstFailure
+				}
+			}
+			if restart && side == 0 && state == peer.ConnectivityRelay {
+				releaseFailure()
 			}
 			directReady[side].Store(state == peer.ConnectivityDirect)
 		}}
@@ -297,6 +316,7 @@ func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool,
 	}()
 	defer func() {
 		releaseICE()
+		releaseFailure()
 		cancel()
 		select {
 		case err := <-done:
@@ -355,9 +375,22 @@ func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool,
 			t.Fatal("ICE gate did not keep startup relay-first")
 		}
 		releaseICE()
-		privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+		timeout := 10 * time.Second
+		if restart {
+			timeout = 25 * time.Second
+		}
+		lastExchange := time.Now()
+		privateWait(t, timeout, func(context.Context) (bool, error) {
+			if restart && time.Since(lastExchange) >= time.Second {
+				counter++
+				check(counter)
+				lastExchange = time.Now()
+			}
 			return directReady[0].Load() && directReady[1].Load(), nil
 		})
+		if restart && (checks[0].Load() < 2 || checks[1].Load() < 2) {
+			t.Fatal("direct path did not require a second ICE attempt")
+		}
 		// both relay UDP deliveries are unavailable: only the selected ICE path
 		// can carry the retained inner connection's application bytes.
 		for _, fault := range faults {

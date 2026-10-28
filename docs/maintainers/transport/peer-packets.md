@@ -156,7 +156,8 @@ an opt-in native publisher run shares one socket across its two relay connection
 and peer agents. the connector shares its socket across both relay attempts and
 its peer agent. after the inner QUIC connection starts over relay delivery,
 [connectivity preparation](../../../internal/transport/peer/connectivity.go)
-exchanges one bounded message on a dedicated unidirectional stream each way.
+exchanges one bounded message per attempt on a dedicated unidirectional stream
+each way. a single reader per endpoint bounds queued signaling to one message.
 the exact pair and delivery bind at most 32 IP-only UDP candidates and short-lived
 ICE credentials. neither endpoint accepts source authority, application permission,
 or a serving deadline from that message.
@@ -164,9 +165,16 @@ or a serving deadline from that message.
 gathering and consent run outside application admission. successful ICE consent
 installs a direct carrier; fresh packet MAC probes must succeed before selection.
 consent loss removes that carrier while the inner QUIC connection retains its
-streams over relay delivery. cancellation interrupts partial signaling and joins
-the agent before releasing the shared socket. this initial negotiation does not
-yet restart ICE after network changes or a failed setup.
+streams over relay delivery. the connector retries failed setup, lost consent,
+or a path that stops passing packet probes after a five-second pause. each attempt
+gathers current candidates and fresh credentials; the publisher joins its previous
+agent before accepting the next installation. both sides reject reused attempt
+numbers and mismatched pair/delivery fields. publisher agent creation is also
+limited to once per five seconds, including when offers arrive in a burst.
+
+attempt numbers belong only to the existing inner connection. they cannot renew
+serving authority or survive endpoint-owner replacement. cancellation interrupts
+partial signaling, joins its reader and agent, and then releases the shared socket.
 
 relay and standalone answer STUN Binding requests on their existing QUIC socket.
 the server bounds request size and response rate and ignores ICE-authenticated
@@ -352,5 +360,5 @@ production publishers and connectors do not enable `NativePeers` yet, and
 production relays leave native admission disabled. a relay hello receipt proves
 its own checked claim, not publisher installation or application permission.
 pair renewal does not bypass the separate checked relay renewal. assignment/source
-rebinding, deployed listener source handling, and ICE restart remain required
+rebinding and deployed listener source handling remain required
 before enabling the native path.

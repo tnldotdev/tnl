@@ -12,7 +12,7 @@ import (
 
 func connectivityFixture() NativePeerConnectivity {
 	return NativePeerConnectivity{ProtocolVersion: Version, Kind: "native_peer_connectivity",
-		PairID: "npp_1234567890123456789012", DeliveryID: "AQEBAQEBAQEBAQEBAQEBAQ", DeliveryGeneration: 1,
+		PairID: "npp_1234567890123456789012", DeliveryID: "AQEBAQEBAQEBAQEBAQEBAQ", DeliveryGeneration: 1, Attempt: 1,
 		UsernameFragment: "abcd", Password: "abcdefghijklmnopqrstuv", Candidates: []string{"1 1 udp 2130706431 192.0.2.1 4443 typ host"}}
 }
 
@@ -37,6 +37,7 @@ func TestNativePeerConnectivityRejectsInvalidAndBounds(t *testing.T) {
 		"pair":                 func(m *NativePeerConnectivity) { m.PairID = "npp_invalid" },
 		"delivery":             func(m *NativePeerConnectivity) { m.DeliveryID = strings.Repeat("A", 22) },
 		"generation":           func(m *NativePeerConnectivity) { m.DeliveryGeneration = 0 },
+		"attempt":              func(m *NativePeerConnectivity) { m.Attempt = 0 },
 		"ufrag-short":          func(m *NativePeerConnectivity) { m.UsernameFragment = "abc" },
 		"ufrag-oversize":       func(m *NativePeerConnectivity) { m.UsernameFragment = strings.Repeat("a", 257) },
 		"password-short":       func(m *NativePeerConnectivity) { m.Password = "short" },

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ type connectivityFixture struct {
 
 func newConnectivityFixture(t *testing.T) *connectivityFixture {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 35*time.Second)
 	t.Cleanup(cancel)
 	f := &connectivityFixture{ctx: ctx, binding: ConnectivityBinding{
 		PairID: "npp_1234567890123456789012", DeliveryID: "AQEBAQEBAQEBAQEBAQEBAQ", Generation: 1,
@@ -76,10 +77,8 @@ func newConnectivityFixture(t *testing.T) *connectivityFixture {
 	return f
 }
 
-func TestNativePeerConnectivityUpgradesAndFallsBackOnSameStream(t *testing.T) {
-	f := newConnectivityFixture(t)
-	relayExchange := sharedSocketQUICExchange(t, f.ctx, f.sockets[1])
-	relayExchange()
+func connectivityCounter(t *testing.T, f *connectivityFixture) func() {
+	t.Helper()
 	stream, err := f.connections[0].OpenStreamSync(f.ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +137,7 @@ func TestNativePeerConnectivityUpgradesAndFallsBackOnSameStream(t *testing.T) {
 		workers.Wait()
 	})
 	var counter uint64
-	exchange := func() {
+	return func() {
 		t.Helper()
 		if err := stream.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
 			t.Fatal(err)
@@ -155,6 +154,13 @@ func TestNativePeerConnectivityUpgradesAndFallsBackOnSameStream(t *testing.T) {
 			t.Fatal("target socket was replaced or bytes replayed")
 		}
 	}
+}
+
+func TestNativePeerConnectivityUpgradesAndFallsBackOnSameStream(t *testing.T) {
+	f := newConnectivityFixture(t)
+	relayExchange := sharedSocketQUICExchange(t, f.ctx, f.sockets[1])
+	relayExchange()
+	exchange := connectivityCounter(t, f)
 	exchange()
 	if f.packets[0].ActivePath() == Direct {
 		t.Fatal("application did not start over a relay")
@@ -181,6 +187,23 @@ func TestNativePeerConnectivityUpgradesAndFallsBackOnSameStream(t *testing.T) {
 	})
 	// signaling is still waiting on STUN, while the application remains usable.
 	exchange()
+	awaitPath(t, f.ctx, f.packets[0], f.packets[1], Direct)
+	exchange()
+	relayExchange()
+	old := [2]uint64{f.slots[0].Generation(), f.slots[1].Generation()}
+	if err := f.slots[0].Install(nil); err != nil {
+		t.Fatal(err)
+	}
+	// losing one ICE agent must trigger new credentials on both sides. application
+	// bytes continue on relays while the controlling endpoint waits and retries.
+	exchange()
+	for f.slots[0].Generation() <= old[0]+1 || f.slots[1].Generation() <= old[1]+1 {
+		select {
+		case <-f.ctx.Done():
+			t.Fatal("ICE was not restarted")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 	awaitPath(t, f.ctx, f.packets[0], f.packets[1], Direct)
 	exchange()
 	relayExchange()
@@ -251,6 +274,161 @@ func sharedSocketQUICExchange(t *testing.T, ctx context.Context, socket *Socket)
 			t.Fatal("shared relay socket read", err)
 		}
 	}
+}
+
+func TestNativePeerConnectivityRetriesFailedSetupWithoutReopeningTarget(t *testing.T) {
+	f := newConnectivityFixture(t)
+	exchange := connectivityCounter(t, f)
+	exchange()
+	ctx, cancel := context.WithCancel(f.ctx)
+	results := make(chan error, 2)
+	started := 1
+	go func() {
+		results <- ServeConnectivity(ctx, f.sockets[0], f.connections[0], f.packets[0], f.slots[0], f.binding, true, ConnectivityOptions{IncludeLoopback: true})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		for range started {
+			select {
+			case err := <-results:
+				if err != nil && !errors.Is(err, context.Canceled) {
+					t.Error(err)
+				}
+			case <-time.After(time.Second):
+				t.Error("failed-attempt cleanup did not join")
+			}
+		}
+	})
+	first, err := readConnectivitySignal(f.ctx, f.connections[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Attempt != 1 {
+		t.Fatal("wrong first attempt")
+	}
+	// an unreachable but correctly bound answer consumes only this attempt.
+	first.UsernameFragment, first.Password = "unreachable", strings.Repeat("x", 22)
+	first.Candidates = []string{"1 1 udp 2130706431 127.0.0.1 9 typ host"}
+	if err := writeConnectivitySignal(f.ctx, f.connections[1], first); err != nil {
+		t.Fatal(err)
+	}
+	started++
+	go func() {
+		results <- ServeConnectivity(ctx, f.sockets[1], f.connections[1], f.packets[1], f.slots[1], f.binding, false, ConnectivityOptions{IncludeLoopback: true})
+	}()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for f.slots[0].Generation() == 0 || f.slots[1].Generation() == 0 {
+		select {
+		case <-f.ctx.Done():
+			t.Fatal("failed ICE setup never retried")
+		case <-ticker.C:
+			exchange()
+		}
+	}
+	awaitPath(t, f.ctx, f.packets[0], f.packets[1], Direct)
+	exchange()
+}
+
+func TestNativePeerConnectivityRejectsReusedAttempt(t *testing.T) {
+	f := newConnectivityFixture(t)
+	ctx, cancel := context.WithCancel(f.ctx)
+	output := make(chan connectivitySignal, 1)
+	done := make(chan struct{})
+	go func() { defer close(done); readConnectivitySignals(ctx, f.connections[1], f.binding, output) }()
+	t.Cleanup(func() { cancel(); <-done })
+	message := tunnelv1.NativePeerConnectivity{ProtocolVersion: tunnelv1.Version, Kind: "native_peer_connectivity", PairID: f.binding.PairID, DeliveryID: f.binding.DeliveryID, DeliveryGeneration: f.binding.Generation, Attempt: 7,
+		UsernameFragment: "abcd", Password: strings.Repeat("a", 22), Candidates: []string{"1 1 udp 2130706431 127.0.0.1 1234 typ host"}}
+	if err := writeConnectivitySignal(ctx, f.connections[0], message); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nextConnectivitySignal(ctx, output); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeConnectivitySignal(ctx, f.connections[0], message); err != nil {
+		t.Fatal(err)
+	}
+	_, err := nextConnectivitySignal(ctx, output)
+	var classified *ConnectivityError
+	if !errors.As(err, &classified) || classified == nil || classified.Code != tunnelv1.InvalidMessage {
+		t.Fatal("replayed ICE attempt was accepted", err)
+	}
+}
+
+func TestNativePeerConnectivityAcceptsChangedPeerUDPAddressOnSameInnerConnection(t *testing.T) {
+	f := newConnectivityFixture(t)
+	exchange := connectivityCounter(t, f)
+	ctx, cancel := context.WithCancel(f.ctx)
+	var results [2]chan error
+	var stop [2]context.CancelFunc
+	var replacement *Socket
+	start := func(side int, socket *Socket) {
+		life, finish := context.WithCancel(ctx)
+		stop[side] = finish
+		results[side] = make(chan error, 1)
+		result := results[side]
+		go func() {
+			result <- ServeConnectivity(life, socket, f.connections[side], f.packets[side], f.slots[side], f.binding, side == 0, ConnectivityOptions{IncludeLoopback: true})
+		}()
+	}
+	start(0, f.sockets[0])
+	start(1, f.sockets[1])
+	t.Cleanup(func() {
+		cancel()
+		for _, result := range results {
+			if result == nil {
+				continue
+			}
+			select {
+			case err := <-result:
+				if err != nil && !errors.Is(err, context.Canceled) {
+					t.Error(err)
+				}
+			case <-time.After(time.Second):
+				t.Error("remapped peer did not join")
+			}
+		}
+		if replacement != nil {
+			_ = replacement.Close()
+		}
+	})
+	exchange()
+	awaitPath(t, f.ctx, f.packets[0], f.packets[1], Direct)
+	exchange()
+	stop[1]()
+	select {
+	case err := <-results[1]:
+		results[1] = nil
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("old UDP agent did not join")
+	}
+	// only the remote UDP mapping changes. retain the exact inner connection,
+	// packet endpoint, delivery binding and already-open target socket.
+	var err error
+	replacement, err = ListenSocket(ctx, "udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.LocalAddr().String() == f.sockets[1].LocalAddr().String() {
+		t.Fatal("UDP address did not change")
+	}
+	start(1, replacement)
+	if err := f.slots[0].Install(nil); err != nil {
+		t.Fatal(err)
+	}
+	exchange()
+	for f.slots[1].Generation() < 3 {
+		select {
+		case <-f.ctx.Done():
+			t.Fatal("changed UDP address did not install")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	awaitPath(t, f.ctx, f.packets[0], f.packets[1], Direct)
+	exchange()
 }
 
 func TestNativePeerConnectivityRejectsCrossBindingAndBadCandidates(t *testing.T) {
