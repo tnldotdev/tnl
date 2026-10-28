@@ -139,7 +139,9 @@ func retryVisitorPreparation[T any](ctx context.Context, now time.Time, work fun
 		}
 		result, err = work(now)
 		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || pgErr.Code != "40001" && pgErr.Code != "40P01" || attempt == 7 {
+		// the first PostgreSQL match owns classification. a malformed nil match
+		// never permits retry, even if a later joined cause is retryable.
+		if !errors.As(err, &pgErr) || pgErr == nil || pgErr.Code != "40001" && pgErr.Code != "40P01" || attempt == 7 {
 			return result, err
 		}
 		timer := time.NewTimer(time.Duration(attempt+1) * 5 * time.Millisecond)
