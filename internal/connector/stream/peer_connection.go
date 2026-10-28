@@ -27,6 +27,7 @@ type peerConnection struct {
 	socket    *peer.Socket
 	legs      [2]*peerRelayLeg
 	paths     [2]*peer.CarrierSlot
+	direct    *peer.CarrierSlot
 	packets   *peer.Endpoint
 	transport *quic.Transport
 	session   muxsession.Session
@@ -130,7 +131,8 @@ func preparePeerConnection(ctx context.Context, config Config, prepared *prepare
 	var packetKey [32]byte
 	copy(packetKey[:], key)
 	clear(key)
-	paths := [3]peer.Carrier{p.paths[0], p.paths[1]}
+	p.direct = peer.NewCarrierSlot()
+	paths := [3]peer.Carrier{p.paths[0], p.paths[1], p.direct}
 	p.packets, err = peer.New(life, peer.Config{Kind: peer.NativePeer, Role: 0, Key: packetKey, Paths: paths})
 	clear(packetKey[:])
 	if err != nil {
@@ -142,7 +144,7 @@ func preparePeerConnection(ctx context.Context, config Config, prepared *prepare
 	connection, err := p.transport.Dial(startup, p.packets.RemoteAddr(), verification, &quic.Config{
 		InitialPacketSize: tunnelv1.MaxPeerPacketBytes, DisablePathMTUDiscovery: true,
 		MaxIdleTimeout: 30 * time.Second, KeepAlivePeriod: 10 * time.Second,
-		MaxIncomingStreams: -1, MaxIncomingUniStreams: -1,
+		MaxIncomingStreams: -1, MaxIncomingUniStreams: 1,
 	})
 	if err != nil {
 		return nil, err
@@ -151,6 +153,12 @@ func preparePeerConnection(ctx context.Context, config Config, prepared *prepare
 	if err != nil {
 		return nil, err
 	}
+	p.renewals.Go(func() {
+		_ = peer.ServeConnectivity(life, p.socket, connection, p.packets, p.direct, peer.ConnectivityBinding{
+			PairID: initial.pair.PairId, DeliveryID: initial.pair.DeliveryId, Generation: initial.pair.DeliveryGeneration,
+			RelayAddresses: [2]string{initial.pair.Relays[0].RelayAddress, initial.pair.Relays[1].RelayAddress},
+		}, true, config.PeerConnectivity)
+	})
 	go p.watch()
 	return p, nil
 }
@@ -204,6 +212,9 @@ func (p *peerConnection) closeResources() {
 		}
 	}
 	if p.socket != nil {
+		if p.direct != nil {
+			_ = p.direct.Close()
+		}
 		_ = p.socket.Close()
 	}
 }

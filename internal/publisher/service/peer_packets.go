@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"sync"
 	"time"
@@ -48,6 +49,12 @@ func (p *PeerSession) servePackets(ctx context.Context, prepare func(PeerBinding
 		return err
 	}
 	defer closePeerCarriers(paths)
+	var direct *peer.CarrierSlot
+	if p.bound.peerSocket != nil {
+		direct = peer.NewCarrierSlot()
+		paths[peer.Direct] = direct
+		defer direct.Close()
+	}
 	packets, err := peer.New(life, peer.Config{Kind: peer.NativePeer, Key: binding.key, Role: 1, Paths: paths})
 	if err != nil {
 		return err
@@ -62,7 +69,7 @@ func (p *PeerSession) servePackets(ctx context.Context, prepare func(PeerBinding
 			}
 			return p.bound.prepared.currentCertificate()
 		}}, &quic.Config{InitialPacketSize: tunnelv1.MaxPeerPacketBytes, DisablePathMTUDiscovery: true,
-		MaxIncomingStreams: 64, MaxIncomingUniStreams: -1, MaxIdleTimeout: 30 * time.Second, KeepAlivePeriod: 10 * time.Second})
+		MaxIncomingStreams: 64, MaxIncomingUniStreams: 1, MaxIdleTimeout: 30 * time.Second, KeepAlivePeriod: 10 * time.Second})
 	if err != nil {
 		return err
 	}
@@ -85,6 +92,14 @@ func (p *PeerSession) servePackets(ctx context.Context, prepare func(PeerBinding
 	closed := make(chan struct{})
 	stopSession := context.AfterFunc(life, func() { _ = session.Close(); close(closed) })
 	var workers sync.WaitGroup
+	if direct != nil {
+		workers.Go(func() {
+			_ = peer.ServeConnectivity(life, p.bound.peerSocket, connection, packets, direct, peer.ConnectivityBinding{
+				PairID: binding.pairID, DeliveryID: base64.RawURLEncoding.EncodeToString(binding.deliveryID[:]), Generation: binding.generation,
+				RelayAddresses: [2]string{binding.relays[0].RelayAddress, binding.relays[1].RelayAddress},
+			}, false, p.bound.peerConnectivity)
+		})
+	}
 	slots := make(chan struct{}, 64)
 	defer func() {
 		cancel()

@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
+	"github.com/tnldotdev/tnl/internal/transport/peer"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -38,7 +39,16 @@ func startNativePacketFaultSocket(t *testing.T, address, target string) *atomic.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		var client *net.UDPAddr
+		// preserve each sender's UDP mapping. the default publisher and connector
+		// both use this advertised address; a last-sender proxy mixes their QUIC.
+		upstreams := make(map[string]*net.UDPConn)
+		var readers sync.WaitGroup
+		defer func() {
+			for _, upstream := range upstreams {
+				_ = upstream.Close()
+			}
+			readers.Wait()
+		}()
 		packet := make([]byte, 64*1024)
 		for {
 			n, source, err := socket.ReadFromUDP(packet)
@@ -48,14 +58,30 @@ func startNativePacketFaultSocket(t *testing.T, address, target string) *atomic.
 			if drop.Load() {
 				continue
 			}
-			if source.String() == remote.String() {
-				if client != nil {
-					_, _ = socket.WriteToUDP(packet[:n], client)
+			upstream := upstreams[source.String()]
+			if upstream == nil {
+				if len(upstreams) == 64 {
+					continue
 				}
-			} else {
-				client = source
-				_, _ = socket.WriteToUDP(packet[:n], remote)
+				upstream, err = net.DialUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}, remote)
+				if err != nil {
+					return
+				}
+				upstreams[source.String()] = upstream
+				readers.Go(func() {
+					response := make([]byte, 64*1024)
+					for {
+						n, err := upstream.Read(response)
+						if err != nil {
+							return
+						}
+						if !drop.Load() {
+							_, _ = socket.WriteToUDP(response[:n], source)
+						}
+					}
+				})
 			}
+			_, _ = upstream.Write(packet[:n])
 		}
 	}()
 	t.Cleanup(func() { _ = socket.Close(); <-done })
@@ -131,7 +157,7 @@ func TestIntegrationPeerPacketsKeepNativeTargetAcrossRelayPacketLoss(t *testing.
 				{"tcp-tcp-lose-b", [2]bool{true, true}, 1},
 			} {
 				t.Run(carriers.name, func(t *testing.T) {
-					exerciseNativePacketContinuity(t, publisher, carriers.tcp, carriers.loseTCP, false)
+					exerciseNativePacketContinuity(t, publisher, carriers.tcp, carriers.loseTCP, false, false)
 				})
 			}
 		})
@@ -140,21 +166,44 @@ func TestIntegrationPeerPacketsKeepNativeTargetAcrossRelayPacketLoss(t *testing.
 
 func TestIntegrationPeerPacketsRenewNativeClaimsWithoutReopeningTarget(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	exerciseNativePacketContinuity(t, "quic", [2]bool{false, true}, 1, true)
+	exerciseNativePacketContinuity(t, "quic", [2]bool{false, true}, 1, true, false)
 }
 
 func TestIntegrationPeerPacketsReconnectBothNativeCarriersWithoutReopeningTarget(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	for _, publisher := range []string{"quic", "tls-tcp"} {
 		t.Run(publisher, func(t *testing.T) {
-			exerciseNativePacketContinuity(t, publisher, [2]bool{true, true}, -2, false)
+			exerciseNativePacketContinuity(t, publisher, [2]bool{true, true}, -2, false, false)
 		})
 	}
 }
 
-func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool, loseTCP int, renew bool) {
+func TestIntegrationPeerPacketsUpgradeNativeTargetToDirectUDP(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	for _, publisher := range []string{"default", "tls-tcp"} {
+		t.Run(publisher, func(t *testing.T) {
+			exerciseNativePacketContinuity(t, publisher, [2]bool{}, -1, false, true)
+		})
+	}
+}
+
+func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool, loseTCP int, renew, direct bool) {
 	t.Helper()
 	f, issuer := newWorkloadTransportFixtureTopology(t, nil, serviceRuntimeTopologyOptions{nativePeers: true})
+	var directReady [2]atomic.Bool
+	iceGate := make(chan struct{})
+	var release sync.Once
+	releaseICE := func() { release.Do(func() { close(iceGate) }) }
+	defer releaseICE()
+	connectivity := func(side int) peer.ConnectivityOptions {
+		return peer.ConnectivityOptions{DisableDirect: !direct, IncludeLoopback: true, Observe: func(state peer.ConnectivityState) {
+			if state == peer.ConnectivityChecking {
+				<-iceGate
+			}
+			directReady[side].Store(state == peer.ConnectivityDirect)
+		}}
+	}
+	f.peerConnectivity = connectivity(1)
 	// health probes may connect and close, but only a socket that receives
 	// application bytes gets an ID. a reopened target cannot restart its counter.
 	target := serviceRuntimeListener(t)
@@ -243,10 +292,11 @@ func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool,
 	defer cancel()
 	ready, done := make(chan struct{}), make(chan error, 1)
 	go func() {
-		done <- connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, NativePeers: true, ServiceID: run.ServiceID, Protocol: run.Protocol,
+		done <- connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, NativePeers: true, PeerConnectivity: connectivity(0), ServiceID: run.ServiceID, Protocol: run.Protocol,
 			TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, TransportTLS: f.roots, ServiceTLS: f.visitorRoots, Ready: func() error { close(ready); return nil }})
 	}()
 	defer func() {
+		releaseICE()
 		cancel()
 		select {
 		case err := <-done:
@@ -300,6 +350,25 @@ func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool,
 	}
 	check(1)
 	counter := uint64(1)
+	if direct {
+		if directReady[0].Load() || directReady[1].Load() {
+			t.Fatal("ICE gate did not keep startup relay-first")
+		}
+		releaseICE()
+		privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+			return directReady[0].Load() && directReady[1].Load(), nil
+		})
+		// both relay UDP deliveries are unavailable: only the selected ICE path
+		// can carry the retained inner connection's application bytes.
+		for _, fault := range faults {
+			fault.Store(true)
+		}
+		counter++
+		check(counter)
+		for _, fault := range faults {
+			fault.Store(false)
+		}
+	}
 	if renew {
 		var original, firstClaim time.Time
 		if err := f.inspect.QueryRowContext(t.Context(), `SELECT expires_at FROM control.native_peer_pairs WHERE service_id=$1`, run.ServiceID).Scan(&original); err != nil {
@@ -342,7 +411,7 @@ func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool,
 		t.Logf("one target survived the original pair deadline; both relay claims advanced by at least %s", lastClaim.Sub(firstClaim).Round(time.Millisecond))
 	}
 	for slot := range 2 {
-		if tcp[slot] {
+		if tcp[slot] || direct {
 			continue
 		}
 		faults[slot].Store(true)

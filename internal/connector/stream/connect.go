@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -90,7 +91,8 @@ type Config struct {
 	CleanupContext func() context.Context `json:"-"`
 	// NativePeers requires prepared relay packet delivery. it never falls back
 	// to ingress; production owners leave it off until rollout qualification.
-	NativePeers bool
+	NativePeers      bool
+	PeerConnectivity peer.ConnectivityOptions
 }
 
 func (Config) String() string   { return "private connector configuration" }

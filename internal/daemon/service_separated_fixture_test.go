@@ -30,6 +30,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/peer"
 )
 
 const serviceRuntimeClusterSecret = "0123456789abcdef0123456789abcdef"
@@ -62,6 +63,7 @@ type privateSeparatedFixture struct {
 	visitorRootPEM              []byte
 	processContext              func(string) context.Context
 	nativePeers                 bool
+	peerConnectivity            peer.ConnectivityOptions
 	relays                      []*daemon
 	nativePacketDrops           map[string]*atomic.Bool
 	nativeTCPListeners          map[string]*nativeTrackedListener

@@ -152,6 +152,22 @@ and eligible local host candidates come from that mux. closing an ICE agent
 leaves sibling agents and relay QUIC alive. library logging is disabled; role
 owners report bounded outcomes through the existing observability boundary.
 
+an opt-in native publisher run shares one socket across its two relay connections
+and peer agents. the connector shares its socket across both relay attempts and
+its peer agent. after the inner QUIC connection starts over relay delivery,
+[connectivity preparation](../../../internal/transport/peer/connectivity.go)
+exchanges one bounded message on a dedicated unidirectional stream each way.
+the exact pair and delivery bind at most 32 IP-only UDP candidates and short-lived
+ICE credentials. neither endpoint accepts source authority, application permission,
+or a serving deadline from that message.
+
+gathering and consent run outside application admission. successful ICE consent
+installs a direct carrier; fresh packet MAC probes must succeed before selection.
+consent loss removes that carrier while the inner QUIC connection retains its
+streams over relay delivery. cancellation interrupts partial signaling and joins
+the agent before releasing the shared socket. this initial negotiation does not
+yet restart ICE after network changes or a failed setup.
+
 relay and standalone answer STUN Binding requests on their existing QUIC socket.
 the server bounds request size and response rate and ignores ICE-authenticated
 requests intended for a peer. its operational counter has fixed result labels.
@@ -326,6 +342,9 @@ and its monotonic application counter intact. the reconnect case replaces each
 TCP carrier, then closes both replacements together and requires recovery on
 the same target. this fixture does not qualify
 load-balancer source handling or assignment replacement.
+relay-fault cases explicitly disable direct delivery. a separate direct case
+holds ICE until the first target reply, then upgrades and serves through a loss
+of both relay UDP paths. it includes the default publisher socket-sharing dialer.
 the renewal case also retains that target past the original pair deadline,
 checks that both durable leg claims advanced, then applies the carrier faults.
 
@@ -333,5 +352,5 @@ production publishers and connectors do not enable `NativePeers` yet, and
 production relays leave native admission disabled. a relay hello receipt proves
 its own checked claim, not publisher installation or application permission.
 pair renewal does not bypass the separate checked relay renewal. assignment/source
-rebinding, deployed listener source handling, and ICE integration remain required
+rebinding, deployed listener source handling, and ICE restart remain required
 before enabling the native path.

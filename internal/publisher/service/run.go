@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -82,8 +83,10 @@ func (p *Prepared) currentCertificate() (*tls.Certificate, error) {
 type Bound struct {
 	prepared *Prepared
 	*boundState
-	streamCapacity int
-	nativePeers    bool
+	streamCapacity   int
+	nativePeers      bool
+	peerSocket       *peer.Socket
+	peerConnectivity peer.ConnectivityOptions
 }
 
 type boundState struct {
@@ -274,7 +277,11 @@ func (b *Bound) ConnectSlotWithPreference(ctx context.Context, slot uint8, prefe
 	if b.nativePeers {
 		config.Config = &quic.Config{EnableDatagrams: true}
 	}
-	return b.ConnectSlotWithTransports(ctx, slot, preferTCP, muxsession.QUICConnector{TLSConfig: roots, Config: config}, muxsession.TLSYamuxConnector{TLSConfig: roots})
+	var dialer muxsession.QUICDialer
+	if b.peerSocket != nil {
+		dialer = b.peerSocket
+	}
+	return b.ConnectSlotWithTransports(ctx, slot, preferTCP, muxsession.QUICConnector{TLSConfig: roots, Config: config, Dialer: dialer}, muxsession.TLSYamuxConnector{TLSConfig: roots})
 }
 
 // ConnectSlotWithTransports retains the production claim and stale-assignment

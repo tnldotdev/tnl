@@ -21,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -65,7 +66,8 @@ type RunConfig struct {
 	ObserveReadiness  func(RunStatus)
 	// NativePeers opts this run into background pair discovery and guarded
 	// packet serving. server-side admission must be prepared independently.
-	NativePeers bool
+	NativePeers      bool
+	PeerConnectivity peer.ConnectivityOptions
 }
 
 // RunStatus separates current readiness from the one-time Ready notification.
@@ -259,9 +261,19 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if err != nil {
 		return err
 	}
+	// all native pairs and both relay connections borrow this run-owned socket.
+	// invalidate joins their packet work before the physical socket is closed.
+	if config.NativePeers {
+		bound.peerSocket, err = peer.ListenSocket(ctx, "udp", ":0")
+		if err != nil {
+			return err
+		}
+		defer bound.peerSocket.Close()
+	}
 	defer bound.Invalidate()
 	bound.streamCapacity = int(config.StreamCapacity)
 	bound.nativePeers = config.NativePeers
+	bound.peerConnectivity = config.PeerConnectivity
 	policy, err := visitorpolicy.Prepare(ctx, managedControl, visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId}, setup.ServiceRunId, setup.RunNumber, setup.RunToken, nil)
 	if err != nil {
 		return err
