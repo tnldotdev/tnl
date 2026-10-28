@@ -375,14 +375,19 @@ func TestNativePeerConnectivityAcceptsChangedPeerUDPAddressOnSameInnerConnection
 	start(1, f.sockets[1])
 	t.Cleanup(func() {
 		cancel()
-		for _, result := range results {
+		for side, result := range results {
 			if result == nil {
 				continue
 			}
 			select {
 			case err := <-result:
 				if err != nil && !errors.Is(err, context.Canceled) {
-					t.Error(err)
+					var failure *ConnectivityError
+					if errors.As(err, &failure) && failure != nil {
+						t.Errorf("remapped peer side=%d code=%s cause=%T: %v", side, failure.Code, failure.Cause, failure.Cause)
+					} else {
+						t.Error(err)
+					}
 				}
 			case <-time.After(time.Second):
 				t.Error("remapped peer did not join")

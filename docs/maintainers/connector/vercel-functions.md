@@ -44,10 +44,11 @@ the check asserts:
 - four concurrent cold HTTP invocations start one live owner from the packaged
   native executable; PostgreSQL has no preparation requests yet;
 - concurrent HTTP and real pg queries subsequently share that same owner;
-- four warm preparation pairs use eight direct IPC requests, zero helper
-  processes, and zero control requests;
-- warm application traffic adds only current-run checks for new visitor
-  connections: four for pg, plus up to four for HTTP if its pool opens sockets;
+- idle background preparation refreshes the current run and its visitor token;
+- with control requests held at the fixture proxy, four warm preparation pairs
+  use eight direct IPC requests and zero helper processes;
+- warm application traffic reaches both targets while control remains held,
+  using the owner's last confirmed preparation within its existing deadline;
 - assertion rotation adds one identity helper and retains the owner and session;
 - another cold isolate gets its own owner and key-bound workload session;
 - missing, expired, and signed wrong-project assertions fail on cold and warm
@@ -60,7 +61,8 @@ the check asserts:
 
 the request adapter records actual helper launches, IPC operations, and live
 native PIDs without replacing their implementations. the Go HTTPS front records
-actual authority/control requests and forwards responses unchanged. the target
+actual authority/control requests. a joined gate holds background preparation
+during the warm checks, then resumes normal forwarding. the target
 counter includes HTTP requests and PostgreSQL startup packets; publisher health
 probes are excluded. full counters are retained in the invocation evidence.
 

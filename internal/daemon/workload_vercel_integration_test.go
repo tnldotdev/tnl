@@ -103,12 +103,29 @@ func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 	}
 	var mu sync.Mutex
 	calls := map[string]int{}
+	blocked := map[string]int{}
+	var paused chan struct{}
+	var inFlight int
+	changed := make(chan struct{})
+	notify := func() { close(changed); changed = make(chan struct{}) }
 	prepared := map[string]bool{}
 	sessions := map[string]authorityv1.WorkloadSession{}
 	origin, _ := url.Parse(f.controlConfig.ControlOrigin())
 	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(origin) }}
 	proxy.Transport = splitACMERoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		mu.Lock()
+		if gate := paused; gate != nil {
+			blocked[r.Method+" "+r.URL.Path]++
+			notify()
+			mu.Unlock()
+			select {
+			case <-r.Context().Done():
+				return nil, r.Context().Err()
+			case <-gate:
+			}
+			mu.Lock()
+		}
+		inFlight++
 		calls[r.Method+" "+r.URL.Path]++
 		for id, name := range services {
 			if strings.Contains(r.URL.Path, "/"+id+"/") {
@@ -116,6 +133,12 @@ func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 			}
 		}
 		mu.Unlock()
+		defer func() {
+			mu.Lock()
+			inFlight--
+			notify()
+			mu.Unlock()
+		}()
 		return f.publicHTTP.Transport.RoundTrip(r)
 	})
 	proxy.ModifyResponse = func(r *http.Response) error {
@@ -189,14 +212,53 @@ func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 	controller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
+		wait := func(ready func() bool) bool {
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			defer cancel()
+			for !ready() {
+				update := changed
+				mu.Unlock()
+				select {
+				case <-ctx.Done():
+				case <-update:
+				}
+				mu.Lock()
+				if ctx.Err() != nil {
+					http.Error(w, "background preparation did not complete", http.StatusGatewayTimeout)
+					return false
+				}
+			}
+			return true
+		}
 		switch r.URL.Path {
+		case "/background-refresh":
+			before := calls["POST /v1/visitor-tokens"]
+			if wait(func() bool { return calls["POST /v1/visitor-tokens"] > before && inFlight == 0 }) {
+				w.WriteHeader(http.StatusNoContent)
+			}
+		case "/pause":
+			if paused != nil {
+				w.WriteHeader(http.StatusConflict)
+				return
+			}
+			paused = make(chan struct{})
+			blocked = map[string]int{}
+			if wait(func() bool { return inFlight == 0 && len(blocked) > 0 }) {
+				w.WriteHeader(http.StatusNoContent)
+			}
+		case "/resume":
+			if paused != nil {
+				close(paused)
+				paused = nil
+			}
+			w.WriteHeader(http.StatusNoContent)
 		case "/stats":
 			var names []string
 			for name := range prepared {
 				names = append(names, name)
 			}
 			slices.Sort(names)
-			_ = json.NewEncoder(w).Encode(map[string]any{"sessions": len(sessions), "prepared": names, "targets": targets.Load(), "calls": calls})
+			_ = json.NewEncoder(w).Encode(map[string]any{"sessions": len(sessions), "prepared": names, "targets": targets.Load(), "calls": calls, "blocked": blocked})
 		case "/revoke":
 			client, err := clientauthority.New(f.controlConfig.ControlOrigin(), f.publicHTTP, "")
 			if err == nil {

@@ -44,6 +44,7 @@ const statsSchema = z.object({
   prepared: z.array(z.string()),
   targets: z.number().int(),
   calls: z.record(z.string(), z.number().int()),
+  blocked: z.record(z.string(), z.number().int()),
 });
 interface Host {
   child: ChildProcess;
@@ -89,30 +90,36 @@ try {
   const prepared = await stats();
   assert.equal(prepared.sessions, 1);
   assert.deepEqual(prepared.prepared, ["api", "database"]);
+  // observe periodic run-plus-token preparation without application arrivals,
+  // then hold all control requests through the warm IPC and target exchanges.
+  await controlCall("background-refresh");
+  const idle = await stats();
+  assert(
+    (idle.calls["POST /v1/visitor-tokens"] ?? 0) > (prepared.calls["POST /v1/visitor-tokens"] ?? 0),
+  );
+  assert(
+    Object.entries(idle.calls).some(
+      ([key, count]) => key.endsWith("/run") && count > (prepared.calls[key] ?? 0),
+    ),
+  );
+  await controlCall("pause");
+  const paused = await stats();
   const warmAgain = await Promise.all(Array.from({ length: 4 }, () => request(warm, "prepare")));
   assert(warmAgain.every((result) => result.ok));
   const warmBudget = await evidence(warm);
   assert.deepEqual(warmBudget.helpers, first.helpers);
   assert.deepEqual(
     (await stats()).calls,
-    prepared.calls,
-    "verified warm IPC must add no control work",
+    paused.calls,
+    "verified warm IPC must complete while control is held",
   );
   assert.equal(warmBudget.ipc.length - both.ipc.length, 8);
   const warmTraffic = await Promise.all(Array.from({ length: 4 }, () => request(warm, "both")));
   assert(warmTraffic.every((result) => result.ok));
-  const trafficCalls = (await stats()).calls;
-  let streamControlDelta = 0;
-  for (const [key, count] of Object.entries(trafficCalls)) {
-    const delta = count - (prepared.calls[key] ?? 0);
-    // warm visitors use prepared local selection. background run refresh may
-    // overlap these requests, but each visitor opens without a control call.
-    if (key.endsWith("/run")) {
-      assert(delta >= 0 && delta <= 4);
-      streamControlDelta += delta;
-    } else assert.equal(delta, 0, `unexpected warm control work: ${key}`);
-  }
-  assert(streamControlDelta <= 4, "warm visitor traffic triggered excess control work");
+  const traffic = await stats();
+  assert.deepEqual(traffic.calls, paused.calls, "warm traffic must complete while control is held");
+  assert(traffic.targets > paused.targets, "warm traffic must reach the real targets");
+  await controlCall("resume");
 
   const rotated = await request(warm, "both", tokens.rotated);
   assert.equal(rotated.ok, true);
@@ -204,7 +211,8 @@ try {
     coldHelpers: first.helpers,
     warmHelperDelta: warmBudget.helpers.length - first.helpers.length,
     warmPrepareControlDelta: 0,
-    warmStreamControlDelta: streamControlDelta,
+    warmStreamControlDelta: 0,
+    warmBlockedControl: traffic.blocked,
     warmIPCDelta: warmBudget.ipc.length - both.ipc.length,
     rotationHelperDelta: rotation.helpers.length - warmBudget.helpers.length,
     ownersPerIsolate: [first.owners.length, second.owners.length],
@@ -213,7 +221,9 @@ try {
     controlBudgets: {
       coldHTTP: incremental.calls,
       both: prepared.calls,
-      warmTraffic: trafficCalls,
+      idleRefresh: idle.calls,
+      paused: paused.calls,
+      warmTraffic: traffic.calls,
     },
     concurrentContextIsolation: true,
     negatives,
@@ -227,6 +237,7 @@ try {
 } catch (error) {
   errors.push(error);
 } finally {
+  await controlCall("resume").catch((error: unknown) => errors.push(error));
   for (const host of hosts) {
     try {
       await fetch(`${host.url}/__fixture/shutdown`, { method: "POST" }).catch(() => {});
