@@ -417,17 +417,38 @@ func waitRuntimeTime(t *testing.T, at time.Time) {
 }
 
 type workloadRuntimePaths struct {
-	connections []net.Conn
-	clients     []*http.Client
-	urls        []string
-	streams     []io.ReadCloser
-	streamDone  []<-chan error
-	database    *pgx.Conn
+	label             string
+	httpServices      []string
+	authorityEvidence func(*testing.T)
+	connections       []net.Conn
+	clients           []*http.Client
+	urls              []string
+	streams           []io.ReadCloser
+	streamDone        []<-chan error
+	database          *pgx.Conn
 }
 
 func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.Client, services map[string]string, pg *pgx.ConnConfig, label string) *workloadRuntimePaths {
 	t.Helper()
-	p := &workloadRuntimePaths{}
+	session, err := job.Session()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &workloadRuntimePaths{label: label}
+	p.authorityEvidence = func(t *testing.T) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		var revoked bool
+		var observed, lease, expires time.Time
+		if err := f.inspect.QueryRowContext(ctx, `SELECT now(),revoked_at IS NOT NULL,lease_expires_at,expires_at FROM control.workload_sessions WHERE id=$1`, session.Id).Scan(&observed, &revoked, &lease, &expires); err != nil {
+			t.Log("workload denial authority snapshot unavailable")
+			return
+		}
+		// only deadlines and revocation state: no credential, key, claims, or URL.
+		t.Logf("workload denial authority session=%s observed=%s revoked=%t lease_deadline=%s fixed_deadline=%s", label,
+			observed.UTC().Format(time.RFC3339Nano), revoked, lease.UTC().Format(time.RFC3339Nano), expires.UTC().Format(time.RFC3339Nano))
+	}
 	for _, name := range []string{"private-tcp", "private-http", "public-tcp", "public-http", "db"} {
 		service := services[name]
 		control, err := connectorstream.NewWorkloadControl(job)
@@ -499,6 +520,7 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			client := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 			endpoint := "https://" + net.JoinHostPort(run.Endpoint.Hostname, strconv.Itoa(run.Endpoint.Port))
 			p.clients, p.urls = append(p.clients, client), append(p.urls, endpoint)
+			p.httpServices = append(p.httpServices, name)
 			streamClient := *client
 			streamClient.Timeout = 0
 			response, err := streamClient.Get(endpoint + "/stream")
@@ -579,7 +601,8 @@ func (p *workloadRuntimePaths) denied(t *testing.T, bound time.Duration) {
 		if err == nil {
 			_ = response.Body.Close()
 			if response.StatusCode == 200 || response.StatusCode >= 300 && response.StatusCode < 400 {
-				t.Fatal("denied workload fell back to browser approval or target")
+				p.authorityEvidence(t)
+				t.Fatalf("denied workload fell back to browser approval or target: session=%s service=%s status=%d", p.label, p.httpServices[i], response.StatusCode)
 			}
 		}
 	}
