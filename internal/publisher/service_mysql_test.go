@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"syscall"
 	"testing"
 	"time"
 
@@ -79,6 +80,7 @@ func testManagedMySQLNativeAuthSwitch(t *testing.T, password string) {
 			return
 		}
 		secured := tls.Server(connection, &tls.Config{Certificates: []tls.Certificate{certificate}})
+		defer secured.Close()
 		if err = secured.HandshakeContext(ctx); err != nil {
 			backendDone <- err
 			return
@@ -122,7 +124,19 @@ func testManagedMySQLNativeAuthSwitch(t *testing.T, password string) {
 			return
 		}
 		_, err = secured.Write(nativeMySQLPacket(1, []byte{0, 0, 0, 2, 0, 0, 0}))
-		backendDone <- err
+		if err != nil {
+			backendDone <- err
+			return
+		}
+		// the driver sends COM_QUIT on Close. consume it before closing the
+		// backend so fixture teardown cannot reset a successful connection with
+		// unread client bytes, then let TLS send its normal close notification.
+		quit, err := targettransport.ReadMySQLPacket(secured, 32)
+		if err != nil || len(quit) != 5 || quit[3] != 0 || quit[4] != 0x01 {
+			backendDone <- fmt.Errorf("native quit sequence: %v", err)
+			return
+		}
+		backendDone <- nil
 	}()
 	front, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -157,18 +171,66 @@ func testManagedMySQLNativeAuthSwitch(t *testing.T, password string) {
 	if err := database.PingContext(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := <-backendDone; err != nil {
 		t.Fatal(err)
 	}
-	_ = database.Close()
 	cancel()
 	select {
 	case err := <-forwardDone:
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
+		// the fixture deliberately cancels after the verified query. keep
+		// unexpected joined causes visible instead of matching one benign leaf.
+		if err != nil && (ctx.Err() != context.Canceled || !onlyMySQLFixtureCloseCauses(err)) {
 			t.Fatal(err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("native adapter did not join")
+	}
+}
+
+func onlyMySQLFixtureCloseCauses(err error) bool {
+	switch err {
+	case net.ErrClosed, context.Canceled, io.EOF:
+		return true
+	}
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		causes := wrapped.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !onlyMySQLFixtureCloseCauses(cause) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		return onlyMySQLFixtureCloseCauses(wrapped.Unwrap())
+	default:
+		return false
+	}
+}
+
+func TestMySQLFixtureCloseCausesDoNotHideJoinedFailures(t *testing.T) {
+	unexpected := errors.New("unexpected copy failure")
+	for _, test := range []struct {
+		err  error
+		want bool
+	}{
+		{net.ErrClosed, true},
+		{errors.Join(net.ErrClosed, context.Canceled, io.EOF), true},
+		{fmt.Errorf("close: %w", net.ErrClosed), true},
+		{errors.Join(net.ErrClosed, unexpected), false},
+		{errors.Join(io.EOF, unexpected), false},
+		{errors.Join(io.EOF, syscall.ECONNRESET), false},
+		{unexpected, false},
+	} {
+		if got := onlyMySQLFixtureCloseCauses(test.err); got != test.want {
+			t.Fatalf("fixture shutdown classification=%t; want %t for %v", got, test.want, test.err)
+		}
 	}
 }
 

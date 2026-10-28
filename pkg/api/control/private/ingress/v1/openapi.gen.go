@@ -304,6 +304,9 @@ type IngressRegistration struct {
 	// ConnectorAddress Direct reachable endpoint for this ingress process; required for private visitor placement.
 	ConnectorAddress *string `json:"connector_address,omitempty"`
 
+	// ConnectorOnly process serves private connectors but has no public URL listener.
+	ConnectorOnly *bool `json:"connector_only,omitempty"`
+
 	// ConnectorTlsServerName Infrastructure TLS identity presented on the direct connector endpoint.
 	ConnectorTlsServerName *string    `json:"connector_tls_server_name,omitempty"`
 	IngressId              Identifier `json:"ingress_id"`

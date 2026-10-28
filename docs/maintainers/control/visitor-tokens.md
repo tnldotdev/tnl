@@ -18,12 +18,14 @@ credential kind has its own fixed set of fields.
 A visitor token permits visits. It does not identify a verified feedback author,
 authorize management or publishing, or reserve connection capacity.
 
-The authority layer supplies issuance, policy, and allocation APIs plus their
-local verification owners. The existing serving paths keep their current
-authorization until the prepared-publication layer composes those owners. This
-is a review boundary in one coordinated fresh-database cutover, not permission
-to deploy issuance or capacity without its serving consumer. The schema and HTTP
-contracts remain version 1, and the tunnel version and ALPN remain unchanged.
+Public URL serving composes these owners for local signed HTTP verification and
+source-bound stream reservations. Managed-service prepared admission and native
+consumers remain separate work; public URL checks do not qualify those paths.
+This is a review boundary in one coordinated fresh-database cutover, not permission
+to deploy issuance or capacity without its serving consumer. The PostgreSQL
+baseline is `tnl-control-fresh-v1-public-reservations`; an n02 database is rejected
+before serving because it lacks the required encrypted reservation keys. Schema
+and HTTP contracts remain version 1, and tunnel version and ALPN remain unchanged.
 
 Only verification constructs `VerifiedPermission`; signing input cannot bind a
 visitor guard. Policy views publish independent private key/lease maps once and

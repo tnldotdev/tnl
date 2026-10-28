@@ -124,6 +124,7 @@ func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
 		"tnl-control-fresh-v1-services-oidc-company-service-http-dns-egress-deployment-workload-visitors",
 		"tnl-control-fresh-v1-services-oidc-company-service-http-dns-egress-deployment-provider-workloads",
 		"tnl-control-fresh-v1-services-platform-access",
+		"tnl-control-fresh-v1-relay-peer-keys",
 	} {
 		t.Run(previous, func(t *testing.T) {
 			if _, err := d.pool.Exec(ctx, `UPDATE control.schema_identity SET baseline_id=$1 WHERE id=1`, previous); err != nil {

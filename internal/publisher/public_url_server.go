@@ -12,6 +12,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -43,6 +44,8 @@ type PublicURLServerConfig struct {
 	Feedback              *feedbackRuntime
 	Limits                ApplicationLimits
 	StreamCapacity        int
+	VisitorPolicy         *visitorlease.Lease
+	VisitorTokens         *browserTokens
 	OnTargetFailure       func()
 	ObserveSummary        inspection.Observer
 	PromoteVisitor        PromoteVisitor
@@ -55,34 +58,33 @@ type PublicURLServerConfig struct {
 }
 
 type PublicURLServer struct {
-	hostname              string
-	certificatePlan       controlv1.CertificatePlan
-	tls                   *tls.Config
-	certificate           atomic.Pointer[tls.Certificate]
-	certificateTimer      *time.Timer
-	certificateExpired    chan struct{}
-	queue                 *publicURLListener
-	http                  *http.Server
-	bodyTimeout           time.Duration
-	mu                    sync.Mutex
-	started               bool
-	closed                bool
-	draining              bool
-	streams               map[net.Conn]struct{}
-	streamCapacity        int
-	visitorPolicyRevision int64
-	handlers              sync.WaitGroup
-	httpDone              chan error
-	closeOnce             sync.Once
-	closeErr              error
-	admission             *applicationAdmission
-	run                   PublishRunIdentity
-	promote               PromoteVisitor
-	defaultPromote        PromoteVisitor
-	guard                 AdmitVisitor
-	life                  context.Context
-	cancel                context.CancelFunc
-	sessions              [publisherConnectionCount]*livePublisherSession
+	hostname           string
+	certificatePlan    controlv1.CertificatePlan
+	tls                *tls.Config
+	certificate        atomic.Pointer[tls.Certificate]
+	certificateTimer   *time.Timer
+	certificateExpired chan struct{}
+	queue              *publicURLListener
+	http               *http.Server
+	bodyTimeout        time.Duration
+	mu                 sync.Mutex
+	started            bool
+	closed             bool
+	draining           bool
+	streams            map[net.Conn]struct{}
+	streamCapacity     int
+	policy             *visitorlease.Lease
+	handlers           sync.WaitGroup
+	httpDone           chan error
+	closeOnce          sync.Once
+	closeErr           error
+	admission          *applicationAdmission
+	run                PublishRunIdentity
+	promote            PromoteVisitor
+	guard              AdmitVisitor
+	life               context.Context
+	cancel             context.CancelFunc
+	sessions           [publisherConnectionCount]*livePublisherSession
 }
 
 // Start starts publisher TLS termination and local HTTP forwarding.
@@ -116,28 +118,6 @@ func (r *PublicURLServer) stopAdmissions() {
 	r.draining = true
 	r.mu.Unlock()
 	r.http.SetKeepAlivesEnabled(false)
-}
-
-// invalidateVisitorPolicy closes existing application streams, including HTTP
-// upgrades. the run and publisher connections continue admitting fresh visitors.
-func (r *PublicURLServer) invalidateVisitorPolicy(revision int64) {
-	r.mu.Lock()
-	if revision <= r.visitorPolicyRevision {
-		r.mu.Unlock()
-		return
-	}
-	previous := r.visitorPolicyRevision
-	r.visitorPolicyRevision = revision
-	var streams []net.Conn
-	if previous > 0 {
-		for stream := range r.streams {
-			streams = append(streams, stream)
-		}
-	}
-	r.mu.Unlock()
-	for _, stream := range streams {
-		_ = stream.Close()
-	}
 }
 
 func (r *PublicURLServer) Close() error {

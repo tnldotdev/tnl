@@ -536,6 +536,7 @@ type ControlIngressLease struct {
 	ProtocolVersion        int64
 	ConnectionCapacity     int64
 	IngressPoolID          string
+	ConnectorOnly          bool
 	ServicePorts           []int32
 	ConnectorAddress       string
 	ConnectorTlsServerName string
@@ -1495,6 +1496,8 @@ type ControlSharePublicUrl struct {
 
 type ControlStreamCapacityAllocation struct {
 	PublisherObservedAt  pgtype.Timestamptz
+	ProofKeyCiphertext   []byte
+	ProofKeyStorageKeyID string
 	ID                   string
 	ResourceKind         string
 	ResourceID           string

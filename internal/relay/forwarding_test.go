@@ -82,25 +82,25 @@ func testForwardingHeaderIsolation(t *testing.T, malformed bool) {
 		if _, err := stalledClient.Write([]byte{0, 0, 0, 0}); err != nil {
 			t.Fatal(err)
 		}
-		response, err := tunnelv1.ReadStreamResponse(stalledClient)
-		if err != nil || response.Type != tunnelv1.StreamRejected || response.Code != tunnelv1.InvalidMessage {
+		response, err := tunnelv1.ReadReturnFrame(stalledClient)
+		if err != nil || response.Kind != tunnelv1.ReturnRejected || response.Code != tunnelv1.InvalidMessage {
 			t.Fatalf("malformed stream response = %+v, %v", response, err)
 		}
 	}
 	// a stalled or malformed first stream must not prevent the next stream from
 	// receiving a relay response before the first stream's setup deadline.
 	_ = healthyClient.SetDeadline(time.Now().Add(time.Second))
-	if err := tunnelv1.WriteInternalForwardingHeader(healthyClient, tunnelv1.InternalForwardingHeader{
+	if _, err := tunnelv1.WriteForwardingOpening(healthyClient, tunnelv1.InternalForwardingHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.InternalForwardingStream,
 		VisitorConnectionID: "visitor", PublicURLID: "public_url", PublishRunID: "publish_run", PublishRunNumber: 1,
 		PublisherConnectionID: "publisher_connection", ConnectionSlot: 0, ConnectionAssignmentRevision: 1,
 		RelayServiceID: "relay_service", RelayID: "relay", RelayRunID: "relay_run", RelayLeaseRevision: 1,
 		PublicUrlExpiresAt: time.Now().Add(time.Minute), LeaseExpiresAt: time.Now().Add(time.Minute),
-	}); err != nil {
+	}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	response, err := tunnelv1.ReadStreamResponse(healthyClient)
-	if err != nil || response.Type != tunnelv1.StreamRejected || response.Code != tunnelv1.StaleConnectionAssignment {
+	response, err := tunnelv1.ReadReturnFrame(healthyClient)
+	if err != nil || response.Kind != tunnelv1.ReturnRejected || response.Code != tunnelv1.StaleConnectionAssignment {
 		t.Fatalf("healthy stream response = %+v, %v", response, err)
 	}
 	cancel()
@@ -163,13 +163,14 @@ func testForwardingRejectionMetrics(t *testing.T, cancelRejection bool) {
 
 	headerResult := relayWorker(t, func() { _ = forwardClient.Close() }, func() error {
 		now := time.Now()
-		return tunnelv1.WriteInternalForwardingHeader(forwardClient, tunnelv1.InternalForwardingHeader{
+		_, err := tunnelv1.WriteForwardingOpening(forwardClient, tunnelv1.InternalForwardingHeader{
 			ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.InternalForwardingStream,
 			VisitorConnectionID: "visitor", PublicURLID: "route", PublishRunID: "session", PublishRunNumber: 1,
 			PublisherConnectionID: "connection", ConnectionSlot: 0, ConnectionAssignmentRevision: 1,
 			RelayServiceID: "relay-service", RelayID: "relay", RelayRunID: "relay-run", RelayLeaseRevision: 1,
 			PublicUrlExpiresAt: now.Add(time.Minute), LeaseExpiresAt: now.Add(time.Minute),
-		})
+		}, nil, nil)
+		return err
 	})
 	if err := relayAwait(t, headerResult); err != nil {
 		t.Fatal(err)
@@ -181,8 +182,8 @@ func testForwardingRejectionMetrics(t *testing.T, cancelRejection bool) {
 	}
 
 	if !cancelRejection {
-		response, err := tunnelv1.ReadStreamResponse(forwardClient)
-		if err != nil || response.Type != tunnelv1.StreamRejected || response.Code != tunnelv1.StaleConnectionAssignment {
+		response, err := tunnelv1.ReadReturnFrame(forwardClient)
+		if err != nil || response.Kind != tunnelv1.ReturnRejected || response.Code != tunnelv1.StaleConnectionAssignment {
 			t.Fatalf("rejection response=%+v err=%v", response, err)
 		}
 		relayAwait(t, observer.done)

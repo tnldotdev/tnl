@@ -356,7 +356,7 @@ verification before dialing.
 ## verify
 
 the fresh PostgreSQL baseline and control's matching identity are
-`tnl-control-fresh-v1-relay-peer-keys`.
+`tnl-control-fresh-v1-public-reservations`.
 its connector constraint allows workload auth material through six hours;
 current authorization remains bounded by the renewable lease. it requires the
 same fresh-database, coordinated-baseline rollout as the assembled services work.

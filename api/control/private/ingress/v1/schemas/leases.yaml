@@ -23,6 +23,10 @@ schemas:
           type: integer
           minimum: 1024
           maximum: 65535
+      connector_only:
+        type: boolean
+        default: false
+        description: process serves private connectors but has no public URL listener.
       connector_address:
         type: string
         maxLength: 512

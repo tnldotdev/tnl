@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-relay-peer-keys')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-public-reservations')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-relay-peer-keys');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-public-reservations');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -705,6 +705,7 @@ CREATE TABLE control.ingress_leases (
     protocol_version bigint NOT NULL CHECK (protocol_version >= 1),
     connection_capacity bigint NOT NULL CHECK (connection_capacity >= 0),
     ingress_pool_id text NOT NULL DEFAULT '',
+    connector_only boolean NOT NULL DEFAULT false,
     service_ports integer[] NOT NULL DEFAULT '{}' CHECK (cardinality(service_ports)<=256),
     connector_address text NOT NULL DEFAULT '',
     connector_tls_server_name text NOT NULL DEFAULT '',
@@ -2884,6 +2885,8 @@ CREATE TRIGGER visitor_key_changed AFTER UPDATE ON control.visitor_token_keys FO
 -- never shortens a grant: another owner cannot spend it until valid_until.
 CREATE TABLE control.stream_capacity_allocations (
     publisher_observed_at timestamptz,
+    proof_key_ciphertext bytea NOT NULL,
+    proof_key_storage_key_id text NOT NULL,
     id text PRIMARY KEY CHECK (id ~ '^salloc_[A-Za-z0-9]{22}$'),
     resource_kind text NOT NULL CHECK (resource_kind IN ('public_url','service')),
     resource_id text NOT NULL,

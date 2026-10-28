@@ -4,6 +4,7 @@
 package visitorlease
 
 import (
+	"bytes"
 	"errors"
 	"maps"
 	"net/netip"
@@ -81,10 +82,13 @@ func (l *Lease) Apply(request Request, update Update) error {
 	err := l.applyLocked(request, update, now)
 	if err == nil {
 		for guard := range l.guards {
-			if !l.allowedLocked(guard.permission, guard.source, now) {
+			if !guard.allowedLocked(now) {
 				delete(l.guards, guard)
 				stopped = append(stopped, guard)
 			} else {
+				if guard.anonymous || guard.permission.Facts().VisitorPolicyRevision == l.update.View.VisitorPolicyRevision {
+					guard.confirmedUntil = l.update.View.ValidUntil
+				}
 				guard.resetLocked()
 			}
 		}
@@ -132,6 +136,10 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 		}
 	}
 	update.Allocations = maps.Clone(update.Allocations)
+	for id, allocation := range update.Allocations {
+		allocation.ReservationKey = bytes.Clone(allocation.ReservationKey)
+		update.Allocations[id] = allocation
+	}
 	if update.IP != nil {
 		// detach the caller's policy value; its private maps are immutable.
 		ip := *update.IP
@@ -179,6 +187,9 @@ func (l *Lease) validateReservationLocked(reservation tunnelv1.StreamReservation
 		a.RunId != reservation.RunID || uint64(a.RunNumber) != reservation.RunNumber || a.IngressId != reservation.IngressID || a.IngressRunId != reservation.IngressRunID || uint64(a.IngressLeaseRevision) != reservation.IngressLeaseRevision {
 		return ErrUpdate
 	}
+	if visitortoken.VerifyReservation(a.ReservationKey, reservation) != nil {
+		return ErrUpdate
+	}
 	return nil
 }
 
@@ -187,29 +198,57 @@ func (l *Lease) allowedLocked(permission visitortoken.VerifiedPermission, source
 }
 
 type Guard struct {
-	lease      *Lease
-	permission visitortoken.VerifiedPermission
-	source     netip.Addr
-	stop       func()
-	once       sync.Once
-	timer      *time.Timer
+	lease          *Lease
+	permission     visitortoken.VerifiedPermission
+	source         netip.Addr
+	stop           func()
+	once           sync.Once
+	timer          *time.Timer
+	anonymous      bool
+	renewable      bool
+	confirmedUntil time.Time
+}
+
+func (g *Guard) allowedLocked(now time.Time) bool {
+	l := g.lease
+	if g.anonymous {
+		return l.current && l.update.Enabled && l.update.Anonymous && now.Before(l.update.View.ValidUntil) && (l.update.IP == nil || l.update.IP.Allows(g.source))
+	}
+	if l.allowedLocked(g.permission, g.source, now) {
+		return true
+	}
+	if !g.renewable || !l.current || !l.update.Enabled || !now.Before(g.confirmedUntil) || g.permission.Facts().VisitorPolicyRevision == l.update.View.VisitorPolicyRevision ||
+		(l.update.IP != nil && !l.update.IP.Allows(g.source)) {
+		return false
+	}
+	prior := l.update.View
+	prior.VisitorPolicyRevision = g.permission.Facts().VisitorPolicyRevision
+	return visitortoken.CheckCurrent(g.permission, prior, now) == nil
 }
 
 // Bind follows signature and possession verification. each HTTP request binds
 // separately so cancellation never closes unrelated HTTP/2 request streams.
 func (l *Lease) Bind(permission visitortoken.VerifiedPermission, source netip.Addr, stop func()) (*Guard, error) {
+	return l.bind(permission, false, source, stop)
+}
+
+func (l *Lease) BindAnonymous(source netip.Addr, stop func()) (*Guard, error) {
+	return l.bind(visitortoken.VerifiedPermission{}, true, source, stop)
+}
+
+func (l *Lease) bind(permission visitortoken.VerifiedPermission, anonymous bool, source netip.Addr, stop func()) (*Guard, error) {
 	if stop == nil {
 		return nil, ErrUpdate
 	}
 	l.mu.Lock()
 	now := l.now()
 	stopped := l.expireLocked(now)
-	if !l.allowedLocked(permission, source, now) {
+	guard := &Guard{lease: l, permission: permission, source: source, stop: stop, anonymous: anonymous, confirmedUntil: l.update.View.ValidUntil}
+	if !guard.allowedLocked(now) {
 		l.mu.Unlock()
 		stopGuards(stopped)
 		return nil, visitortoken.ErrPolicy
 	}
-	guard := &Guard{lease: l, permission: permission, source: source, stop: stop}
 	l.guards[guard] = struct{}{}
 	guard.resetLocked()
 	l.mu.Unlock()
@@ -220,7 +259,13 @@ func (l *Lease) Bind(permission visitortoken.VerifiedPermission, source netip.Ad
 func (g *Guard) resetLocked() {
 	view := g.lease.update.View
 	facts := g.permission.Facts()
-	until := view.LocalDeadline(facts.ExpiresAt)
+	until := view.ValidUntil
+	if !g.anonymous {
+		until = view.LocalDeadline(facts.ExpiresAt)
+		if g.renewable && facts.VisitorPolicyRevision != view.VisitorPolicyRevision {
+			until = earlier(until, g.confirmedUntil)
+		}
+	}
 	subject := facts.Subject
 	if certificate, ok := subject.(visitortoken.Certificate); ok {
 		subject = certificate.Source
@@ -241,7 +286,7 @@ func (g *Guard) expire() {
 	l := g.lease
 	l.mu.Lock()
 	_, found := l.guards[g]
-	if found && !l.allowedLocked(g.permission, g.source, l.now()) {
+	if found && !g.allowedLocked(l.now()) {
 		delete(l.guards, g)
 	} else {
 		found = false
@@ -263,6 +308,52 @@ func (g *Guard) Close() {
 	}
 	l.mu.Unlock()
 	g.once.Do(func() {})
+}
+
+// Renew follows local verification of a newly issued token for the same source.
+// it cannot change the admitted subject or revive an expired/canceled request.
+func (g *Guard) Renew(permission visitortoken.VerifiedPermission) error {
+	l := g.lease
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	if _, active := l.guards[g]; !active || g.anonymous || !permission.SameIdentity(g.permission) || !g.allowedLocked(now) || !l.allowedLocked(permission, g.source, now) {
+		return visitortoken.ErrPolicy
+	}
+	g.permission = permission
+	g.confirmedUntil = l.update.View.ValidUntil
+	g.resetLocked()
+	return nil
+}
+
+// AllowRenewal records an explicit credential owner's responsibility to obtain
+// fresh permission. a changed revision can retain only the last confirmed
+// policy deadline; unrelated policy renewals never extend that allowance.
+func (g *Guard) AllowRenewal() error {
+	l := g.lease
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, active := l.guards[g]; !active || g.anonymous || !l.allowedLocked(g.permission, g.source, l.now()) {
+		return visitortoken.ErrPolicy
+	}
+	g.renewable = true
+	return nil
+}
+
+// Revoke stops this one admission when its credential owner learns a terminal
+// authority result. it does not affect siblings sharing the visitor connection.
+func (g *Guard) Revoke() {
+	l := g.lease
+	l.mu.Lock()
+	_, active := l.guards[g]
+	delete(l.guards, g)
+	if g.timer != nil {
+		g.timer.Stop()
+	}
+	l.mu.Unlock()
+	if active {
+		g.abort()
+	}
 }
 
 func (l *Lease) expireLocked(now time.Time) []*Guard {

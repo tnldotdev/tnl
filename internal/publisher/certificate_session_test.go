@@ -178,7 +178,7 @@ func TestRunDoesNotReuseCertificateFromIncompatibleSessionPlan(t *testing.T) {
 			config := startCertificateTLSYamuxHarness(t, control)
 			test.change(&control.setup.CertificatePlan)
 			control.setup.PublishRun.PublishRunNumber++
-			control.setup.PublishRun.Id = "publish_run_22222222222222222222222222222222"
+			control.setup.PublishRun.Id = "pr_2222222222222222222222"
 			submitted := false
 			control.create = func(csr []byte, _ string) (controlv1.CertificateIssuance, error) {
 				submitted = true
@@ -223,9 +223,9 @@ func TestRunSharesNamespaceMaterialWithoutHoldingTransactionLock(t *testing.T) {
 	}
 	second := newCertificateTestControl(t, "second.member.example", namespaceCertificateTestPlan())
 	second.store = first.store
-	second.setup.PublicUrl.Id = "public_url_22222222222222222222222222222222"
+	second.setup.PublicUrl.Id = "url_2222222222222222222222"
 	second.setup.PublishRun.PublicUrlId = second.setup.PublicUrl.Id
-	second.setup.PublishRun.Id = "publish_run_22222222222222222222222222222222"
+	second.setup.PublishRun.Id = "pr_2222222222222222222222"
 	secondConfig := startCertificateTLSYamuxHarness(t, second)
 	second.create = func([]byte, string) (controlv1.CertificateIssuance, error) {
 		return controlv1.CertificateIssuance{}, errors.New("second route requested another namespace certificate")
@@ -269,8 +269,8 @@ func TestConcurrentNamespaceCertificateLifecycle(t *testing.T) {
 				var original clientstate.Material
 				for slot := range controls {
 					control := newCertificateTestControl(t, fmt.Sprintf("app%d.member.example", slot), namespaceCertificateTestPlan())
-					control.setup.PublicUrl.Id = fmt.Sprintf("public_url_%032x", slot+1)
-					control.setup.PublishRun.Id = fmt.Sprintf("publish_run_%032x", slot+1)
+					control.setup.PublicUrl.Id = fmt.Sprintf("url_%022x", slot+1)
+					control.setup.PublishRun.Id = fmt.Sprintf("pr_%022x", slot+1)
 					control.setup.PublishRun.PublicUrlId = control.setup.PublicUrl.Id
 					control.store = store
 					controls[slot] = control
@@ -446,9 +446,9 @@ func TestRunReusesCompatibleCertificateAfterRouteRecreation(t *testing.T) {
 	}
 	// a recreated public URL has a new identity but may share the same
 	// server-authorized certificate cache key and plan.
-	control.setup.PublicUrl.Id = "public_url_22222222222222222222222222222222"
+	control.setup.PublicUrl.Id = "url_2222222222222222222222"
 	control.setup.PublishRun.PublicUrlId = control.setup.PublicUrl.Id
-	control.setup.PublishRun.Id = "publish_run_22222222222222222222222222222222"
+	control.setup.PublishRun.Id = "pr_2222222222222222222222"
 	config := startCertificateTLSYamuxHarness(t, control)
 	control.create = func([]byte, string) (controlv1.CertificateIssuance, error) {
 		return controlv1.CertificateIssuance{}, errors.New("recreated route requested issuance instead of reusing compatible cached material")

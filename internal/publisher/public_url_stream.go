@@ -1,14 +1,17 @@
 package publisher
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -80,6 +83,17 @@ func (r *PublicURLServer) ServePublisherConnection(
 }
 
 func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tunnel.IncomingVisitorStream, ref tunnelv1.PublisherConnectionRef) error {
+	var prepared *preparedVisitorProxy
+	if incoming.Header.ConfirmBeforeBytes {
+		// confirmed openings contain only ingress-owned metadata. reject a bad
+		// source before the relay permits ingress to send any visitor bytes.
+		header, reader, err := proxyproto.Decode(bytes.NewReader(incoming.TakeInitial()))
+		if err != nil {
+			_ = incoming.Reject(tunnelv1.InvalidMessage)
+			return nil
+		}
+		prepared = &preparedVisitorProxy{header: header, reader: io.MultiReader(reader, incoming.Stream)}
+	}
 	code := r.validateIncomingPublicURL(incoming.Header, ref)
 	r.mu.Lock()
 	if r.closed || r.draining {
@@ -87,6 +101,17 @@ func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tu
 	}
 	if code == "" && len(r.streams) >= r.streamCapacity {
 		code = tunnelv1.CapacityExceeded
+	}
+	var reservation *visitorlease.ReservationGuard
+	if code == "" {
+		var err error
+		reservation, err = r.policy.BindReservation(incoming.Header.Reservation, func() { _ = incoming.Stream.Close() })
+		if err != nil {
+			code = tunnelv1.Unauthenticated
+		} else if prepared != nil && reservation.BindSource(prepared.header.Source.Addr()) != nil {
+			reservation.Close()
+			code = tunnelv1.Unauthenticated
+		}
 	}
 	if code != "" {
 		r.mu.Unlock()
@@ -97,20 +122,25 @@ func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tu
 	r.handlers.Add(1)
 	r.mu.Unlock()
 	if err := incoming.Accept(); err != nil {
+		_ = incoming.Stream.Close()
+		reservation.Close()
 		r.mu.Lock()
 		delete(r.streams, incoming.Stream)
 		r.mu.Unlock()
 		r.handlers.Done()
-		return err
+		// a confirmation write may fail after the peer closes this stream. keep
+		// the publisher connection and its unrelated visitors alive.
+		return nil
 	}
 	go func() {
+		defer reservation.Close()
 		defer r.handlers.Done()
 		defer func() {
 			r.mu.Lock()
 			delete(r.streams, incoming.Stream)
 			r.mu.Unlock()
 		}()
-		r.handleVisitorHeaderContext(incoming.Context(), incoming.Stream, incoming.Header.AccessPending, incoming.Header)
+		r.handleVisitorPreparedContext(incoming.Context(), incoming.Stream, incoming.Header.AccessPending, incoming.Header, reservation, prepared)
 	}()
 	return nil
 }
@@ -127,6 +157,13 @@ func (r *PublicURLServer) validateIncomingPublicURL(
 		header.ConnectionAssignmentRevision != ref.ConnectionAssignmentRevision {
 		return tunnelv1.StaleConnectionAssignment
 	}
+	reservation := header.Reservation
+	if reservation.ResourceKind != "public_url" || reservation.ResourceID != header.PublicURLID || reservation.RunID != header.PublishRunID || reservation.RunNumber != header.PublishRunNumber || reservation.VisitorConnectionID != header.VisitorConnectionID {
+		return tunnelv1.InvalidMessage
+	}
+	if r.policy == nil || r.policy.ValidateReservation(reservation) != nil {
+		return tunnelv1.Unauthenticated
+	}
 	return ""
 }
 
@@ -139,10 +176,19 @@ func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
 }
 
 func (r *PublicURLServer) handleVisitorHeader(connection net.Conn, denied bool, streamHeader tunnelv1.VisitorStreamHeader) {
-	r.handleVisitorHeaderContext(r.life, connection, denied, streamHeader)
+	r.handleVisitorHeaderContext(r.life, connection, denied, streamHeader, nil)
 }
 
-func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, connection net.Conn, denied bool, streamHeader tunnelv1.VisitorStreamHeader) {
+func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, connection net.Conn, denied bool, streamHeader tunnelv1.VisitorStreamHeader, reservation *visitorlease.ReservationGuard) {
+	r.handleVisitorPreparedContext(parent, connection, denied, streamHeader, reservation, nil)
+}
+
+type preparedVisitorProxy struct {
+	header proxyproto.Header
+	reader io.Reader
+}
+
+func (r *PublicURLServer) handleVisitorPreparedContext(parent context.Context, connection net.Conn, denied bool, streamHeader tunnelv1.VisitorStreamHeader, reservation *visitorlease.ReservationGuard, prepared *preparedVisitorProxy) {
 	defer connection.Close()
 	if parent == nil {
 		parent = context.Background()
@@ -158,14 +204,29 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 	stopClose := context.AfterFunc(life, func() { _ = connection.Close() })
 	defer stopClose()
 	_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
-	header, replay, err := proxyproto.Decode(connection)
-	if err != nil {
-		visitorErr = err
-		return
+	var header proxyproto.Header
+	var replay io.Reader
+	if prepared != nil {
+		header, replay = prepared.header, prepared.reader
+	} else {
+		var err error
+		header, replay, err = proxyproto.Decode(connection)
+		if err != nil {
+			visitorErr = err
+			return
+		}
+		if reservation != nil {
+			if err := reservation.BindSource(header.Source.Addr()); err != nil {
+				visitorErr = err
+				return
+			}
+		}
 	}
 	promote := r.promote
-	if promote == nil && streamHeader.PublisherConnectionID != "" {
-		promote = r.defaultPromote
+	if promote == nil && streamHeader.PublisherConnectionID != "" && denied {
+		promote = func(ctx context.Context, visitor Visitor) error {
+			return r.promoteVisitorStream(ctx, visitor, connection)
+		}
 	}
 	streamHeader.AccessPending = denied
 	session := &visitorSession{visitor: Visitor{Run: r.run, Header: streamHeader, Source: header.Source, Destination: header.Destination}, promote: promote, guard: r.guard, life: life, cancel: cancel}
@@ -189,7 +250,7 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 	ctx, cancelHandshake := context.WithTimeout(life, 10*time.Second)
 	ctx = observability.WithVisitor(ctx, streamHeader.VisitorConnectionID)
 	ctx, finish := observability.PublisherOperation(ctx, "visitor_tls")
-	err = secured.HandshakeContext(ctx)
+	err := secured.HandshakeContext(ctx)
 	visitorErr = err
 	observability.PublisherTLS(ctx, "visitor", secured.ConnectionState(), err)
 	finish(err)

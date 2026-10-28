@@ -16,6 +16,7 @@ schemas:
         valid_until,
         retired,
         publisher_observed,
+        reservation_key,
       ]
     properties:
       id: { type: string, pattern: "^salloc_[A-Za-z0-9]{22}$" }
@@ -30,3 +31,8 @@ schemas:
       valid_until: { type: string, format: date-time }
       retired: { type: boolean }
       publisher_observed: { type: boolean }
+      reservation_key:
+        type: string
+        format: byte
+        maxLength: 44
+        description: private key shared only with the assigned ingress and publisher for signed visitor reservations.

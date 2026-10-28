@@ -92,6 +92,43 @@ func TestPolicyLeaseOutageExpiresTrafficAndFencesDelayedRenewal(t *testing.T) {
 	})
 }
 
+func TestPolicyRenewableGuardCannotExtendItsLastConfirmedRevisionDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		lease, update, key := fixture(t)
+		if err := lease.Apply(lease.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+		var stopped atomic.Int64
+		guard, err := lease.Bind(admission(t, lease, key, "first", time.Now().Add(time.Minute)), netip.MustParseAddr("192.0.2.1"), func() { stopped.Add(1) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer guard.Close()
+		if err := guard.AllowRenewal(); err != nil {
+			t.Fatal(err)
+		}
+		for range 4 {
+			time.Sleep(2 * time.Second)
+			update.View.VisitorPolicyRevision = 2
+			update.View.ObservedAt, update.View.ValidUntil = time.Now(), time.Now().Add(10*time.Second)
+			if err := lease.Apply(lease.Begin(), update); err != nil {
+				t.Fatal(err)
+			}
+			if stopped.Load() != 0 {
+				t.Fatal("revision refresh canceled an explicitly renewing request before its prior deadline")
+			}
+		}
+		time.Sleep(2 * time.Second)
+		synctest.Wait()
+		if stopped.Load() != 1 {
+			t.Fatal("unrelated fresh policy extended an old permission beyond ten seconds")
+		}
+		if err := guard.AllowRenewal(); err == nil {
+			t.Fatal("expired admission was revived by registering renewal")
+		}
+	})
+}
+
 func TestPolicyLeaseRejectsMissingAndOutOfOrderUpdates(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		lease, update, _ := fixture(t)

@@ -8,13 +8,25 @@ WHERE resource_kind=sqlc.arg(resource_kind) AND resource_id=sqlc.arg(resource_id
 SELECT COALESCE(sum(capacity),0)::bigint FROM control.stream_capacity_allocations
 WHERE resource_kind=sqlc.arg(resource_kind) AND resource_id=sqlc.arg(resource_id) AND run_id=sqlc.arg(run_id) AND valid_until>sqlc.arg(now);
 
+-- name: CountEligibleIngressesByPool :one
+SELECT count(*) FROM control.ingress_leases
+WHERE ingress_pool_id=sqlc.arg(ingress_pool_id) AND lease_expires_at>sqlc.arg(now)
+    AND NOT draining AND protocol_version=sqlc.arg(protocol_version) AND connection_capacity>0
+    AND (sqlc.arg(resource_kind)::text<>'public_url' OR NOT connector_only);
+
+-- name: SumOwnedStreamCapacityAllocations :one
+SELECT COALESCE(sum(capacity),0)::bigint FROM control.stream_capacity_allocations
+WHERE resource_kind=sqlc.arg(resource_kind) AND resource_id=sqlc.arg(resource_id) AND run_id=sqlc.arg(run_id)
+    AND ingress_id=sqlc.arg(ingress_id) AND ingress_run_id=sqlc.arg(ingress_run_id)
+    AND ingress_lease_revision=sqlc.arg(ingress_lease_revision) AND valid_until>sqlc.arg(now);
+
 -- name: CountStreamCapacityAllocations :one
 SELECT count(*) FROM control.stream_capacity_allocations
 WHERE resource_kind=sqlc.arg(resource_kind) AND resource_id=sqlc.arg(resource_id) AND valid_until>sqlc.arg(now);
 
 -- name: CreateStreamCapacityAllocation :one
-INSERT INTO control.stream_capacity_allocations(id,resource_kind,resource_id,run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,request_id,capacity,issued_at,renewed_at,valid_until)
-VALUES(sqlc.arg(id),sqlc.arg(resource_kind),sqlc.arg(resource_id),sqlc.arg(run_id),sqlc.arg(run_number),sqlc.arg(ingress_id),sqlc.arg(ingress_run_id),sqlc.arg(ingress_lease_revision),sqlc.arg(request_id),sqlc.arg(capacity),sqlc.arg(now),sqlc.arg(now),sqlc.arg(valid_until)) RETURNING *;
+INSERT INTO control.stream_capacity_allocations(id,resource_kind,resource_id,run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,request_id,capacity,proof_key_ciphertext,proof_key_storage_key_id,issued_at,renewed_at,valid_until)
+VALUES(sqlc.arg(id),sqlc.arg(resource_kind),sqlc.arg(resource_id),sqlc.arg(run_id),sqlc.arg(run_number),sqlc.arg(ingress_id),sqlc.arg(ingress_run_id),sqlc.arg(ingress_lease_revision),sqlc.arg(request_id),sqlc.arg(capacity),sqlc.arg(proof_key_ciphertext),sqlc.arg(proof_key_storage_key_id),sqlc.arg(now),sqlc.arg(now),sqlc.arg(valid_until)) RETURNING *;
 
 -- name: RenewStreamCapacityAllocation :one
 UPDATE control.stream_capacity_allocations SET renewed_at=sqlc.arg(now),valid_until=sqlc.arg(valid_until)

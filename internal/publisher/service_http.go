@@ -87,7 +87,7 @@ func (f ServiceHTTP) Forward(ctx context.Context, client *tls.Conn, target Servi
 					serviceHTTPDenied(w, http.StatusBadRequest)
 					return
 				}
-				if browser.handle(w, r, false) {
+				if browser.handle(w, r) {
 					return
 				}
 				if sharePath(r.URL.Path) && r.Method == http.MethodGet {
@@ -295,7 +295,7 @@ func (a serviceBrowserClient) request(run string, number uint64, secret string, 
 	}
 	return controlv1.ServiceBrowserRequest{RunNumber: f.Number, Secret: secret}, nil
 }
-func (a serviceBrowserClient) RedeemBrowserHandoff(ctx context.Context, run string, number uint64, secret string, token credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+func (a serviceBrowserClient) RedeemBrowserHandoff(ctx context.Context, run string, number uint64, secret, _, _ string, token credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
 	input, err := a.request(run, number, secret, token)
 	if err != nil {
 		return controlv1.BrowserHandoffResponse{}, err

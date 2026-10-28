@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -54,6 +55,7 @@ type streamCapacity struct {
 	until     time.Time
 	mu        sync.Mutex
 	id        string
+	ready     bool
 	cancel    context.CancelFunc
 	done      chan struct{}
 	closeOnce sync.Once
@@ -114,23 +116,32 @@ func (c *streamCapacity) refresh(ctx context.Context) error {
 		a.IngressId != c.owner.IngressId || a.IngressRunId != c.owner.IngressRunId || a.IngressLeaseRevision != c.owner.IngressLeaseRevision {
 		return ErrStreamReservation
 	}
+	if len(a.ReservationKey) != 32 {
+		return ErrStreamReservation
+	}
 	allocation := streamAllocation{ID: a.Id, ResourceKind: string(a.Resource.Kind), ResourceID: a.Resource.Id, RunID: a.RunId, RunNumber: uint64(a.RunNumber),
 		IngressID: a.IngressId, IngressRunID: a.IngressRunId, IngressLeaseRevision: uint64(a.IngressLeaseRevision), Capacity: a.Capacity, ObservedAt: a.ObservedAt, ValidUntil: a.ValidUntil}
+	copy(allocation.ProofKey[:], a.ReservationKey)
 	if err := c.pool.apply(allocation, started); err != nil {
 		return err
 	}
 	c.until = started.Add(a.ValidUntil.Sub(a.ObservedAt))
 	c.mu.Lock()
 	c.id = a.Id
+	c.ready = a.PublisherObserved
 	c.mu.Unlock()
 	return nil
 }
 
-func (c *streamCapacity) reserve(visitorID string, stop func()) (*streamReservation, error) {
+func (c *streamCapacity) reserve(visitorID string, source netip.Addr, stop func()) (*streamReservation, error) {
 	c.mu.Lock()
 	id := c.id
+	ready := c.ready
 	c.mu.Unlock()
-	return c.pool.reserve(id, visitorID, stop)
+	if !ready {
+		return nil, ErrStreamReservation
+	}
+	return c.pool.reserve(id, visitorID, source, stop)
 }
 
 func (c *streamCapacity) Close(ctx context.Context) error {

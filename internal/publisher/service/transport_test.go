@@ -126,7 +126,7 @@ func TestPrivatePublisherProductionSlotQUICAndTLSNoReplayAfterPathLoss(t *testin
 			done := make(chan error, 1)
 			go func() { done <- claimed.Serve(ctx) }()
 			header := privateHeader(t, ref)
-			stream, err := relay.OpenServiceForwardingStream(ctx, header)
+			stream, err := relay.StartServiceForwardingStream(ctx, header, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

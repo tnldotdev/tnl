@@ -15,7 +15,6 @@ type PublisherConnection struct {
 	ref     tunnelv1.PublisherConnectionRef
 	claimed relayv1.ClaimedPublisherConnection
 	*streamLifetime
-	pending map[string]*pendingForwarding
 }
 
 func NewPublisherConnection(
@@ -34,35 +33,47 @@ func NewPublisherConnection(
 	}
 	c := &PublisherConnection{
 		ref: ref, claimed: claimed, streamLifetime: newStreamLifetime(session),
-		pending: make(map[string]*pendingForwarding),
 	}
-	go func() {
-		_ = session.ServeAdmissions(context.Background(), tunnelv1.PublisherAdmissionStream, c.promoteVisitor)
-	}()
 	return c, nil
 }
 
 func (c *PublisherConnection) Ref() tunnelv1.PublisherConnectionRef { return c.ref }
 
 func (c *PublisherConnection) OpenVisitor(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
-	return c.openVisitor(ctx, visitorConnectionID, false)
+	return c.StartVisitor(ctx, visitorConnectionID, false, tunnelv1.StreamReservation{}, nil, nil)
 }
 
 func (c *PublisherConnection) OpenPendingVisitor(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
-	return c.openVisitor(ctx, visitorConnectionID, true)
+	return c.StartVisitor(ctx, visitorConnectionID, true, tunnelv1.StreamReservation{}, nil, nil)
 }
 
-func (c *PublisherConnection) openVisitor(ctx context.Context, visitorConnectionID string, denied bool) (net.Conn, error) {
+func (c *PublisherConnection) StartVisitor(ctx context.Context, visitorConnectionID string, denied bool, reservation tunnelv1.StreamReservation, initial []byte, events *tunnel.ReturnEvents) (net.Conn, error) {
+	return c.startVisitor(ctx, visitorConnectionID, denied, reservation, initial, events, false)
+}
+
+func (c *PublisherConnection) StartConfirmedVisitor(ctx context.Context, visitorConnectionID string, denied bool, reservation tunnelv1.StreamReservation, proxy []byte, events *tunnel.ReturnEvents) (net.Conn, error) {
+	return c.startVisitor(ctx, visitorConnectionID, denied, reservation, proxy, events, true)
+}
+
+func (c *PublisherConnection) startVisitor(ctx context.Context, visitorConnectionID string, denied bool, reservation tunnelv1.StreamReservation, initial []byte, events *tunnel.ReturnEvents, confirm bool) (net.Conn, error) {
 	if err := c.beginOpen(); err != nil {
 		return nil, err
 	}
-	stream, err := c.session.OpenVisitorStream(ctx, tunnelv1.VisitorStreamHeader{
+	header := tunnelv1.VisitorStreamHeader{
+		Reservation:     reservation,
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
 		VisitorConnectionID: visitorConnectionID, PublicURLID: c.ref.PublicURLID,
 		PublishRunID: c.ref.PublishRunID, PublishRunNumber: c.ref.PublishRunNumber,
 		PublisherConnectionID:        c.ref.PublisherConnectionID,
 		ConnectionAssignmentRevision: c.ref.ConnectionAssignmentRevision,
 		AccessPending:                denied,
-	})
+	}
+	var stream net.Conn
+	var err error
+	if confirm {
+		stream, err = c.session.StartConfirmedVisitorStream(ctx, header, initial, events)
+	} else {
+		stream, err = c.session.StartVisitorStream(ctx, header, initial, events)
+	}
 	return c.finishOpen(stream, err)
 }

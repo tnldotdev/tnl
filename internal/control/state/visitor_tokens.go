@@ -50,6 +50,12 @@ func (ShareTokenSource) visitorTokenSource() {}
 func (ShareTokenSource) String() string      { return "share visitor token source" }
 func (ShareTokenSource) GoString() string    { return "share visitor token source" }
 
+type ShareSessionTokenSource struct{ ShareID, Secret string }
+
+func (ShareSessionTokenSource) visitorTokenSource() {}
+func (ShareSessionTokenSource) String() string      { return "share session token source" }
+func (ShareSessionTokenSource) GoString() string    { return "share session token source" }
+
 type GrantTokenSource struct{ Credential string }
 
 func (GrantTokenSource) visitorTokenSource() {}
@@ -287,11 +293,19 @@ func (d *Database) visitorPermissionForSource(ctx context.Context, tx pgx.Tx, sc
 			return result, err
 		}
 		subject = visitortoken.Workload{SessionID: workloadID, KeySHA256: digest}
-	case ShareTokenSource:
-		if scope.Kind != visitorscope.PublicURL || !opaqueid.Valid(supplied.ShareID, opaqueid.SharePrefix) || len(supplied.Secret) != 43 {
+	case ShareTokenSource, ShareSessionTokenSource:
+		var shareID, sourceSecret string
+		var session bool
+		switch value := supplied.(type) {
+		case ShareTokenSource:
+			shareID, sourceSecret = value.ShareID, value.Secret
+		case ShareSessionTokenSource:
+			shareID, sourceSecret, session = value.ShareID, value.Secret, true
+		}
+		if scope.Kind != visitorscope.PublicURL || !opaqueid.Valid(shareID, opaqueid.SharePrefix) || len(sourceSecret) != 43 {
 			return result, ErrVisitorPermission
 		}
-		secret, err := base64.RawURLEncoding.Strict().DecodeString(supplied.Secret)
+		secret, err := base64.RawURLEncoding.Strict().DecodeString(sourceSecret)
 		if err != nil || len(secret) != 32 {
 			return result, ErrVisitorPermission
 		}
@@ -301,11 +315,19 @@ func (d *Database) visitorPermissionForSource(ctx context.Context, tx pgx.Tx, sc
 		err = tx.QueryRow(ctx, `SELECT share.secret_digest,share.expires_at,share.created_by_identity_id,COALESCE(share.guest_id,'') FROM control.shares share
 		    JOIN control.share_public_urls included ON included.share_id=share.id AND included.public_url_id=$2
 		    WHERE share.id=$1 AND share.revoked_at IS NULL AND share.expires_at>$3
-		    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$3)) FOR SHARE OF share`, supplied.ShareID, scope.ID, now).Scan(&stored, &until, &issuerID, &guestID)
+		    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$3)) FOR SHARE OF share`, shareID, scope.ID, now).Scan(&stored, &until, &issuerID, &guestID)
 		if err != nil {
 			return result, publisherLookupError(err, ErrVisitorPermission)
 		}
-		if subtle.ConstantTimeCompare(stored, digest[:]) != 1 {
+		if session {
+			var deadline time.Time
+			err := tx.QueryRow(ctx, `SELECT expires_at FROM control.share_cookies
+			    WHERE token_digest=$1 AND share_id=$2 AND public_url_id=$3 AND expires_at>$4 FOR SHARE`, digest[:], shareID, scope.ID, now).Scan(&deadline)
+			if err != nil {
+				return result, publisherLookupError(err, ErrVisitorPermission)
+			}
+			until = minTime(until, deadline)
+		} else if subtle.ConstantTimeCompare(stored, digest[:]) != 1 {
 			return result, ErrVisitorPermission
 		}
 		if guestID == "" {
@@ -333,7 +355,7 @@ func (d *Database) visitorPermissionForSource(ctx context.Context, tx pgx.Tx, sc
 			}
 			until = minTime(until, deadline)
 		}
-		subject = visitortoken.Share{ShareID: supplied.ShareID}
+		subject = visitortoken.Share{ShareID: shareID}
 	case GrantTokenSource:
 		if scope.Kind != visitorscope.Service {
 			return result, ErrVisitorPermission

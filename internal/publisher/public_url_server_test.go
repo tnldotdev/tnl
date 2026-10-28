@@ -2,8 +2,10 @@ package publisher
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
@@ -23,8 +25,11 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -32,11 +37,10 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// testVisitorControl simulates a current control decision for transport tests;
-// policy-specific tests supply their own browserAccess client instead.
-type testVisitorControl struct{ shares *shareAccess }
+// testVisitorControl supplies explicit browser operations for transport fixtures.
+type testVisitorControl struct{}
 
-func (*testVisitorControl) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+func (*testVisitorControl) RedeemBrowserHandoff(context.Context, string, uint64, string, string, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
 	return controlv1.BrowserHandoffResponse{}, errors.New("browser handoff is unavailable")
 }
 
@@ -48,23 +52,66 @@ func (*testVisitorControl) RevokeBrowserAccess(context.Context, string, uint64, 
 	return nil
 }
 
-func (c *testVisitorControl) AuthorizeHTTPVisitor(ctx context.Context, _ string, input controlv1.HTTPVisitorRequest, _ credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
-	allowed := ctx.Value(denialContextKey{}) != true
-	if !allowed && c.shares != nil && input.ShareId != nil && input.ShareCookieSecret != nil {
-		request := httptest.NewRequest(http.MethodGet, "https://route.example/", nil)
-		request.Header.Set("Cookie", shareCookieName+"="+*input.ShareId+"."+*input.ShareCookieSecret)
-		_, allowed = c.shares.permission(request)
+func newTestPublicURLServer(t *testing.T, config PublicURLServerConfig) (*PublicURLServer, error) {
+	t.Helper()
+	if config.PublicURLID == "" {
+		config.PublicURLID = certificateTestPublicURLID
 	}
-	until := time.Now().Add(time.Minute)
-	return controlv1.HTTPVisitorResponse{VisitAllowed: allowed, ValidUntil: &until}, nil
-}
-
-func newTestPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) {
+	if config.VisitorPolicy == nil {
+		run := config.PublishRunID
+		if run == "" {
+			run = "pr_0123456789abcdefghijkl"
+		}
+		policy, err := prepareVisitorPolicy(t.Context(), testHTTPPolicyClient{hostname: config.Hostname, anonymous: config.AccessMode != "restricted"}, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: config.PublicURLID}, run, max(1, int64(config.PublishRunNumber)), "fixture-run-token", nil)
+		if err != nil {
+			return nil, err
+		}
+		t.Cleanup(policy.Close)
+		config.VisitorPolicy = policy.lease
+	}
 	if (config.ServiceProtocol == "" || config.ServiceProtocol == controlv1.Http) && config.BrowserAccess == nil {
-		config.BrowserAccess = &browserAccess{client: &testVisitorControl{shares: config.ShareAccess}, publicURLID: config.PublicURLID,
+		config.BrowserAccess = &browserAccess{client: &testVisitorControl{}, publicURLID: config.PublicURLID,
 			runID: config.PublishRunID, version: config.PublishRunNumber}
 	}
 	return NewPublicURLServer(config)
+}
+
+type testHTTPPolicyClient struct {
+	hostname  string
+	anonymous bool
+}
+
+func (f testHTTPPolicyClient) ReadPublisherVisitorPolicy(_ context.Context, body controlv1.PublisherVisitorPolicyRequest, _ string) (controlv1.VisitorPolicyUpdate, error) {
+	now := time.Now()
+	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("v", 32)))
+	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
+		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Issuer: "https://control.example.test", Hostname: f.hostname, Port: 443,
+			ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: f.anonymous, VisitorPolicyRevision: 1, KeyRevision: 1,
+			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "fixture", PublicKey: key.Public().(ed25519.PublicKey)}},
+			WorkloadLeases:   []controlv1.VisitorWorkloadLease{}, StreamAllocations: testPublicAllocations(body, now)}}, nil
+}
+
+func testPublicAllocations(body controlv1.PublisherVisitorPolicyRequest, now time.Time) []controlv1.StreamCapacityAllocation {
+	allocations := []controlv1.StreamCapacityAllocation{}
+	if opaqueid.Valid(body.RunId, opaqueid.PublishRunPrefix) {
+		allocations = append(allocations, controlv1.StreamCapacityAllocation{Id: "salloc_0123456789abcdefghijkl", Resource: body.Resource, RunId: body.RunId, RunNumber: body.RunNumber,
+			IngressId: "fixture-ingress", IngressRunId: "fixture-process", IngressLeaseRevision: 1, Capacity: 1024, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true, ReservationKey: []byte(strings.Repeat("k", 32))})
+	}
+	return allocations
+}
+
+func testPublicStreamReservation(ref tunnelv1.PublisherConnectionRef, slot uint32, sources ...string) tunnelv1.StreamReservation {
+	reservation := tunnelv1.StreamReservation{ID: "sres_0123456789abcdefghijkl", AllocationID: "salloc_0123456789abcdefghijkl", Slot: slot, Sequence: 1,
+		ResourceKind: "public_url", ResourceID: ref.PublicURLID, RunID: ref.PublishRunID, RunNumber: ref.PublishRunNumber,
+		VisitorConnectionID: "vc_" + fmt.Sprintf("%022d", slot), IngressID: "fixture-ingress", IngressRunID: "fixture-process", IngressLeaseRevision: 1}
+	source := "192.0.2.1"
+	if len(sources) != 0 {
+		source = sources[0]
+	}
+	if err := visitortoken.SignReservation([]byte(strings.Repeat("k", 32)), &reservation, netip.MustParseAddr(source)); err != nil {
+		panic(err)
+	}
+	return reservation
 }
 
 func TestRouteServerTerminatesTLSAndProxiesLocalHTTP(t *testing.T) {
@@ -126,7 +173,14 @@ func TestDeniedVisitorCompletesTLSButCannotReachLocalService(t *testing.T) {
 		response.WriteHeader(http.StatusOK)
 	}))
 	defer upstream.Close()
-	route := startHTTPTestRouteServer(t, upstream.URL)
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, AccessMode: "restricted", Certificate: publicURLTestCertificate(t, "route.example")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := route.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = route.Close() })
 	ingress, publisher := net.Pipe()
 	_ = ingress.SetDeadline(time.Now().Add(5 * time.Second))
 	handled := make(chan struct{})
@@ -224,7 +278,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	defer upstream.Close()
 
 	publicURLCertificate := publicURLTestCertificate(t, "route.example")
-	route, err := newTestPublicURLServer(PublicURLServerConfig{
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", Target: upstream.URL, Certificate: publicURLCertificate,
 	})
 	if err != nil {
@@ -287,7 +341,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	})
 
 	ref := tunnelv1.PublisherConnectionRef{
-		PublishRunID: "publish_run_1", PublicURLID: "public_url_1", PublishRunNumber: 1,
+		PublishRunID: "pr_0123456789abcdefghijkl", PublicURLID: certificateTestPublicURLID, PublishRunNumber: 1,
 		PublisherConnectionID: "connection_1", ConnectionSlot: 0,
 		ConnectionAssignmentRevision: 1, RelayServiceID: "relay_service_1",
 	}
@@ -330,13 +384,14 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	// the same publisher connection.
 	openCtx, stopOpen := context.WithTimeout(ctx, 2*time.Second)
 	defer stopOpen()
-	stream, err := acceptedRelay.session.OpenVisitorStream(openCtx, tunnelv1.VisitorStreamHeader{
+	stream, err := acceptedRelay.session.StartVisitorStream(openCtx, tunnelv1.VisitorStreamHeader{
+		Reservation:     testPublicStreamReservation(ref, 0, "192.0.2.10"),
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
-		VisitorConnectionID: "visitor_connection_1", PublicURLID: ref.PublicURLID,
+		VisitorConnectionID: testPublicStreamReservation(ref, 0, "192.0.2.10").VisitorConnectionID, PublicURLID: ref.PublicURLID,
 		PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber,
 		PublisherConnectionID:        ref.PublisherConnectionID,
 		ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
-	})
+	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,9 +408,23 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	if _, err := malformed.Write([]byte{0, 0, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
-	badResponse, err := tunnelv1.ReadStreamResponse(malformed)
-	if err != nil || badResponse.Type != tunnelv1.StreamRejected || badResponse.Code != tunnelv1.InvalidMessage {
+	badResponse, err := tunnelv1.ReadReturnFrame(malformed)
+	if err != nil || badResponse.Kind != tunnelv1.ReturnRejected || badResponse.Code != tunnelv1.InvalidMessage {
 		t.Fatalf("malformed stream response = %+v, %v", badResponse, err)
+	}
+	// publisher must reject malformed ingress-owned PROXY metadata before
+	// acknowledging a confirmed opening and committing visitor TLS bytes.
+	confirmedReservation := testPublicStreamReservation(ref, 1)
+	_, err = acceptedRelay.session.StartConfirmedVisitorStream(openCtx, tunnelv1.VisitorStreamHeader{
+		Reservation: confirmedReservation, ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
+		VisitorConnectionID: confirmedReservation.VisitorConnectionID, PublicURLID: ref.PublicURLID,
+		PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber,
+		PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
+	}, bytes.Repeat([]byte("x"), 64), nil)
+	var opening *tunnel.OpeningError
+	var rejected *tunnel.ProtocolError
+	if !errors.As(err, &opening) || opening.Committed || !errors.As(err, &rejected) || rejected.Code != tunnelv1.InvalidMessage {
+		t.Fatalf("malformed source committed visitor bytes: %v", err)
 	}
 	if err := stream.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
@@ -447,7 +516,7 @@ func TestRouteServerNegotiatesHTTP2AndProxiesLocalHTTP(t *testing.T) {
 
 func TestIntegrationURLHandlerSeesTrustedVisitorSourceAndRejectsOtherAuthorities(t *testing.T) {
 	sources := make(chan string, 1)
-	url, err := newTestPublicURLServer(PublicURLServerConfig{
+	url, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", Target: "http://127.0.0.1:1",
 		Certificate: publicURLTestCertificate(t, "route.example"),
 		Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -495,7 +564,7 @@ func TestIntegrationURLHandlerSeesTrustedVisitorSourceAndRejectsOtherAuthorities
 
 func startHTTPTestRouteServer(t *testing.T, target string) *PublicURLServer {
 	t.Helper()
-	route, err := newTestPublicURLServer(PublicURLServerConfig{
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", Target: target, Certificate: publicURLTestCertificate(t, "route.example"),
 	})
 	if err != nil {

@@ -172,23 +172,25 @@ func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		return incoming.Reject(tunnelv1.StaleConnectionAssignment)
 	}
-	openVisitor := connection.OpenVisitor
+	events := &tunnel.ReturnEvents{Rejected: incoming.ForwardRejection}
 	if incoming.Header.AccessPending {
-		remove, ok := connection.registerPending(incoming.Header, ingressSession, func() bool {
-			// ingress rechecks the current projection on promotion. a copied
-			// deadline from stream open may have been extended by a refresh.
-			current, ok := a.registry.candidate(incoming.Header, a.currentLease(), a.now(), false)
-			return ok && current == connection
-		})
-		if !ok {
-			a.streamRejected("stale_assignment")
-			rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
-			return incoming.Reject(tunnelv1.StaleConnectionAssignment)
+		want := incoming.Header.Admission()
+		want.Kind, want.RelayID, want.RelayRunID, want.RelayLeaseRevision = tunnelv1.PublisherAdmissionStream, "", "", 0
+		events.Promoted = func(h tunnelv1.AdmissionHeader) error {
+			current, valid := a.registry.candidate(incoming.Header, a.currentLease(), a.now(), false)
+			if ctx.Err() != nil || h != want || !valid || current != connection {
+				return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+			}
+			return incoming.Promote(incoming.Header.Admission())
 		}
-		defer remove()
-		openVisitor = connection.OpenPendingVisitor
 	}
-	publisher, err := openVisitor(ctx, incoming.Header.VisitorConnectionID)
+	var publisher net.Conn
+	var err error
+	if incoming.Header.ConfirmBeforeBytes {
+		publisher, err = connection.StartConfirmedVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, incoming.Header.Reservation, incoming.TakeInitial(), events)
+	} else {
+		publisher, err = connection.StartVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, incoming.Header.Reservation, incoming.TakeInitial(), events)
+	}
 	if err != nil {
 		a.streamRejected("publisher_unavailable")
 		code := tunnelv1.Unavailable
