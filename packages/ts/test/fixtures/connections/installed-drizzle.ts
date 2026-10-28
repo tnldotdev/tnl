@@ -178,9 +178,11 @@ try {
     }
   `,
     );
+    stage = "sdk synchronous options";
     await run(process.execPath, [verification], { cwd: consumer, timeout: 60_000 });
     // drizzle kit loads this ordinary typescript config through its commonjs
     // loader. there is no module cache injection, custom loader or top-level await.
+    stage = "drizzle migration";
     await run("pnpm", ["exec", "drizzle-kit", "migrate"], {
       cwd: consumer,
       timeout: 60_000,
@@ -209,12 +211,25 @@ try {
     }
   `,
     );
+    stage = "drizzle migration query";
     await run(process.execPath, [verification], { cwd: consumer, timeout: 60_000 });
   }
   process.stdout.write("installed package connection checks passed\n");
-} catch {
+} catch (cause) {
   // driver and subprocess output may contain application account details.
-  throw new Error(`installed pnpm package verification failed during ${stage}`);
+  const status = z
+    .object({
+      code: z.union([z.number().int(), z.string().regex(/^[A-Z0-9_]{1,64}$/)]).optional(),
+      signal: z.enum(["SIGTERM", "SIGKILL", "SIGABRT", "SIGSEGV", "SIGINT"]).nullable().optional(),
+      killed: z.boolean().optional(),
+    })
+    .safeParse(cause);
+  const failure = new Error(
+    `installed pnpm package verification failed during ${stage}: ${JSON.stringify(status.success ? status.data : {})}`,
+    { cause },
+  );
+  process.stderr.write(failure.message + "\n");
+  process.exitCode = 1;
 } finally {
   await rm(directory, { recursive: true, force: true });
 }
