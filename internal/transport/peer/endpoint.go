@@ -320,6 +320,17 @@ func (e *Endpoint) chooseLocked() {
 			return
 		}
 	}
+	// bound relays can carry encrypted data while their probes recover. do not
+	// retain an unhealthy direct path when one of those carriers is available;
+	// choosing a relay does not mark it healthy or change its binding.
+	for _, index := range []int{RelayA, RelayB} {
+		if p := e.paths[index]; p != nil && !p.failed {
+			e.active = index
+			return
+		}
+	}
+	// without an eligible relay, retain only the last index for observation.
+	// enqueue still drops failed carriers and unhealthy direct data.
 }
 
 func (e *Endpoint) probeLoop() {
