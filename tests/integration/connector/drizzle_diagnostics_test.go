@@ -48,6 +48,12 @@ func drizzleFixtureFailure(output []byte) string {
 		}
 	}
 	for key, value := range keys {
+		// encoding/json accepts case-insensitive names; this record does not.
+		switch key {
+		case "code", "stage", "elapsed_ms", "cause_status", "error_code", "exit_code", "errno", "signal", "killed":
+		default:
+			return encode(unknown)
+		}
 		if key != "elapsed_ms" && bytes.Equal(value, []byte("null")) {
 			return encode(unknown)
 		}
