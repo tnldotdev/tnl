@@ -21,10 +21,13 @@ import (
 )
 
 func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
-	for _, fault := range []string{"maximum", "keys", "workloads", "allocations", "prefixes", "events", "bytes"} {
+	for _, fault := range []string{"maximum", "keys", "workloads", "allocations", "prefixes", "events", "nil key", "short key", "overlong key", "bytes"} {
 		t.Run(fault, func(t *testing.T) {
 			body, private := policyfixture.Maximum(t, time.Now().UTC())
 			body.Policy.VisitorPolicyRevision = math.MaxInt64 - 256
+			if _, err := visitorlease.Decode(body); err != nil {
+				t.Fatal("maximum base is invalid before applying the boundary fault", err)
+			}
 			switch fault {
 			case "keys":
 				body.Policy.VerificationKeys = append(body.Policy.VerificationKeys, body.Policy.VerificationKeys[0])
@@ -36,6 +39,12 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 				body.Policy.Ip.Prefixes = append(body.Policy.Ip.Prefixes, body.Policy.Ip.Prefixes[0])
 			case "events":
 				body.Revisions = make([]int64, 257)
+			case "nil key":
+				body.Policy.StreamAllocations[0].ReservationKey = nil
+			case "short key":
+				body.Policy.StreamAllocations[0].ReservationKey = make([]byte, 31)
+			case "overlong key":
+				body.Policy.StreamAllocations[0].ReservationKey = make([]byte, 33)
 			}
 			raw, err := json.Marshal(body)
 			if err != nil {

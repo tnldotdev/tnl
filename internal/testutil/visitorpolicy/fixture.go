@@ -4,6 +4,7 @@ package visitorpolicy
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"fmt"
 	"math"
 	"net/netip"
@@ -54,10 +55,12 @@ func Maximum(t testing.TB, now time.Time) (controlv1.VisitorPolicyUpdate, ed2551
 	hashKey[0] = 1
 	policy.Ip = &controlv1.VisitorPolicyIP{Key: hashKey[:], Prefixes: make([]controlv1.HashedIPPrefix, 2048)}
 	for i, id := range ObservationIDs() {
+		reservationKey := sha256.Sum256([]byte(id))
 		policy.StreamAllocations[i] = controlv1.StreamCapacityAllocation{
 			Id: id, Resource: scope, RunId: "srun_" + strings.Repeat("B", 22), RunNumber: math.MaxInt64,
 			IngressId: strings.Repeat("\x01", 128), IngressRunId: strings.Repeat("\x02", 128), IngressLeaseRevision: math.MaxInt64,
 			Capacity: 1 << 20, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true,
+			ReservationKey: reservationKey[:],
 		}
 		entry, err := ippolicy.Hash(hashKey, netip.PrefixFrom(netip.AddrFrom4([4]byte{192, 0, byte(i >> 8), byte(i)}), 32))
 		if err != nil {

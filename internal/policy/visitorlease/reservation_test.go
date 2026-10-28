@@ -260,6 +260,43 @@ func TestReservationSnapshotOwnsAllocationValues(t *testing.T) {
 	})
 }
 
+func TestReservationSnapshotOwnsAllocationKeyBytes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		l, update, header := allocationFixture(t)
+		callerKey := update.Allocations[header.AllocationID].ReservationKey
+		if err := l.Apply(l.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+		replacement := bytes.Repeat([]byte{2}, 32)
+		copy(callerKey, replacement)
+		if err := l.ValidateReservation(header); err != nil {
+			t.Fatal("caller changed an installed allocation key", err)
+		}
+		changed := header
+		signReservationFixture(t, replacement, &changed, header.SourceIP)
+		if err := l.ValidateReservation(changed); !errors.Is(err, ErrUpdate) {
+			t.Fatal("caller replacement became authenticated allocation authority", err)
+		}
+		start, done := make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(done)
+			<-start // caller mutation starts only after Apply has copied its input.
+			for range 1000 {
+				clear(callerKey)
+				copy(callerKey, replacement)
+			}
+		}()
+		close(start)
+		for range 1000 {
+			if err := l.ValidateReservation(header); err != nil {
+				t.Error("caller key mutation changed installed reservation validation", err)
+				break
+			}
+		}
+		<-done
+	})
+}
+
 func TestReservationOlderControlObservationCannotForgetSpentSlots(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		l, update, h := allocationFixture(t)
