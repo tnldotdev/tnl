@@ -1,14 +1,19 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/tnldotdev/tnl/internal/failure"
 )
 
 func TestRoute53CredentialReadiness(t *testing.T) {
@@ -58,6 +63,63 @@ func TestDaemonSupervisesAndJoinsComponents(t *testing.T) {
 	case <-joined:
 	case <-time.After(5 * time.Second):
 		t.Fatal("component shutdown blocked on a result")
+	}
+}
+
+func TestDaemonComponentFailureKeepsClassificationCauseAndSafeReport(t *testing.T) {
+	for _, specific := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unclassified", true: "specific"}[specific], func(t *testing.T) {
+			cause := &pgconn.PgError{Code: "40001", Message: "private-test-secret"}
+			var original error = cause
+			want, retry := failure.ServerComponentFailed, failure.NoRetry
+			if specific {
+				want, retry = failure.DatabaseUnavailable, failure.RetryLater
+				original = failure.Wrap("renew database authority", want, cause)
+			}
+			var output bytes.Buffer
+			previous := log.Writer()
+			log.SetOutput(&output)
+			defer log.SetOutput(previous)
+			d := &daemon{ctx: t.Context(), componentDone: make(chan error, 1)}
+			calls := 0
+			d.start("run ingress control", func() error { calls++; return original })
+			err := <-d.componentDone
+			d.components.Wait()
+			reportComponentFailure(t.Context(), err)
+			reason, definition, ok := failure.Describe(err)
+			if !ok || reason != want || definition.Class != failure.Unavailable || definition.Retry != retry {
+				t.Fatal("component exit lost its classification or retry policy", reason, definition)
+			}
+			typed, ok := failure.Of(err)
+			if !ok || typed.Operation() != "run ingress control" || errors.Unwrap(err) != original || !errors.Is(err, cause) || calls != 1 {
+				t.Fatal("component exit lost its cause, operation, or no-restart boundary", err, calls)
+			}
+			for _, safe := range []string{output.String(), failure.SafeMessage(err, failure.ServerStartupFailed)} {
+				if strings.Contains(safe, "private-test-secret") {
+					t.Fatal("component reporting exposed a provider cause")
+				}
+			}
+			if !strings.Contains(output.String(), "run ingress control reason="+string(want)) || !strings.Contains(output.String(), "sqlstate=40001") {
+				t.Fatal("component report omitted its operation, reason, or approved SQLSTATE", output.String())
+			}
+		})
+	}
+}
+
+func TestDaemonComponentCancellationDoesNotReportFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	defer log.SetOutput(previous)
+	d := &daemon{ctx: ctx, componentDone: make(chan error, 1)}
+	d.start("stop ingress control", func() error { return context.Canceled })
+	err := <-d.componentDone
+	d.components.Wait()
+	reportComponentFailure(ctx, err)
+	if !errors.Is(err, context.Canceled) || output.Len() != 0 {
+		t.Fatal("canceled component lost its cause or emitted an operational failure", err, output.String())
 	}
 }
 

@@ -209,6 +209,7 @@
         "server.certificate_rejected",
         "server.cluster_secret_invalid",
         "server.command_invalid",
+        "server.component_failed",
         "server.config_file_invalid",
         "server.config_invalid",
         "server.connection_failed",

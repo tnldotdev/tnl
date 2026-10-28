@@ -225,6 +225,7 @@ func serveRuntime(ctx context.Context, cfg daemonconfig.Config, options runtimeO
 	case <-ctx.Done():
 		return nil
 	case err := <-d.componentDone:
+		reportComponentFailure(ctx, err)
 		return err
 	}
 }

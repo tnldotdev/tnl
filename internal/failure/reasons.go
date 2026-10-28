@@ -172,6 +172,7 @@ const (
 	DirectDatabaseURLMissing              Reason = "server.direct_database_url_missing"
 	ServerMigrationFailed                 Reason = "server.migration_failed"
 	ServerStartupFailed                   Reason = "server.startup_failed"
+	ServerComponentFailed                 Reason = "server.component_failed"
 	ServerOutputUnavailable               Reason = "server.output_unavailable"
 	ServerWorkerFailed                    Reason = "server.worker_failed"
 	ServerIngressFailed                   Reason = "server.ingress_failed"
@@ -778,6 +779,10 @@ var definitions = map[Reason]Definition{
 	ServerStartupFailed: {
 		Class: Unavailable, Message: "tnld could not start the configured role",
 		Action: "check role listeners, control reachability, and required credentials", Retry: RetryAfterChange,
+	},
+	ServerComponentFailed: {
+		Class: Unavailable, Message: "a required role component stopped",
+		Action: "check the named component and its diagnostics before restarting the process", Retry: NoRetry,
 	},
 	ServerOutputUnavailable: {
 		Class: Unavailable, Message: "tnld could not write the command output",
