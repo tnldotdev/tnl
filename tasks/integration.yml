@@ -240,8 +240,10 @@ tasks:
   service-claims:
     dir: "{{.ROOT_DIR}}"
     desc: Check committed private claims, mixed process capacity, and certificate deadlines in disposable PostgreSQL
+    vars:
+      RUN: '{{default "^TestIntegrationPrivate(ClaimCommittedResponseLoss|ClaimExpiredResponseRecovery|MixedProcessClaimCapacity|VisitorCertificateDeadline)$" .RUN}}'
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/relay -run='^TestIntegrationPrivate(ClaimCommittedResponseLoss|ClaimExpiredResponseRecovery|MixedProcessClaimCapacity|VisitorCertificateDeadline)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/relay -run='{{.RUN}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   ingress:
     dir: "{{.ROOT_DIR}}"

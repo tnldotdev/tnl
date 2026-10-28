@@ -686,6 +686,46 @@ type ControlMemberSlugReservation struct {
 	ReleasedAt           pgtype.Timestamptz
 }
 
+type ControlNativePeerPair struct {
+	ID                     string
+	ServiceID              string
+	ServiceRunID           string
+	RunNumber              int64
+	PublisherIdentityID    string
+	SubjectKind            string
+	SubjectID              string
+	ParentControlSessionID pgtype.Text
+	OwnerKey               string
+	IdempotencyKey         string
+	RequestDigest          []byte
+	LastRenewalDigest      []byte
+	PublisherPreparedUntil pgtype.Timestamptz
+	KeyDigest              []byte
+	KeyCiphertext          []byte
+	DeliveryID             []byte
+	StorageKeyID           string
+	Slots                  []byte
+	DeliveryGeneration     int64
+	CreatedAt              pgtype.Timestamptz
+	LastAuthorizedAt       pgtype.Timestamptz
+	LastRequestAt          pgtype.Timestamptz
+	ReplayFenceUntil       pgtype.Timestamptz
+	ExpiresAt              pgtype.Timestamptz
+}
+
+type ControlNativePeerPairLegClaim struct {
+	PairID             string
+	ConnectionSlot     int16
+	RequestedAt        pgtype.Timestamptz
+	CheckedAt          pgtype.Timestamptz
+	ConfirmedUntil     pgtype.Timestamptz
+	NonceDigest        []byte
+	SourceIp           netip.Addr
+	RelayID            string
+	RelayRunID         string
+	RelayLeaseRevision int64
+}
+
 type ControlOidcAssertionExchange struct {
 	ID              int64
 	AssertionDigest []byte
@@ -1153,6 +1193,7 @@ type ControlRelayCertificateOrder struct {
 }
 
 type ControlRelayLease struct {
+	PeerSigningPublicKey []byte
 	ID                   int64
 	RelayID              string
 	RelayServiceID       string
@@ -1171,6 +1212,13 @@ type ControlRelayLease struct {
 	RegisteredAt         pgtype.Timestamptz
 	RenewedAt            pgtype.Timestamptz
 	LeaseExpiresAt       pgtype.Timestamptz
+}
+
+type ControlRelayRunSigningKey struct {
+	RelayID              string
+	RelayRunID           string
+	PeerSigningPublicKey []byte
+	SupersededAt         pgtype.Timestamptz
 }
 
 type ControlRelayService struct {

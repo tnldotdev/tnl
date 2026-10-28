@@ -1,0 +1,54 @@
+schemas:
+  NativePeerPairLegClaimRequest:
+    type: object
+    additionalProperties: false
+    required: [relay_lease, observed_source_ip, proof_frame, relay_signature]
+    properties:
+      relay_lease: { $ref: "../openapi.yaml#/components/schemas/RelayLeaseIdentity" }
+      observed_source_ip:
+        type: string
+        maxLength: 45
+        description: IP of the accepted connector socket as observed and signed by the relay process; never an HTTP header or connector-supplied value.
+      proof_frame:
+        type: string
+        minLength: 1
+        maxLength: 5467
+        pattern: "^[A-Za-z0-9_-]+$"
+        description: unpadded base64url of exactly one frame from tunnelv1.WriteNativePairLegProof, including its four-byte length prefix. the framed payload is limited to 4096 bytes.
+      relay_signature:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{85}[AQgw]$"
+        description: unpadded base64url Ed25519 signature of proof.RelayClaimMessage(observed_source_ip) from the exact current relay process.
+  NativePeerPairLegClaim:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        pair_id,
+        delivery_id,
+        delivery_generation,
+        connection_slot,
+        key,
+        source_ip,
+        observed_at,
+        expires_at,
+      ]
+    properties:
+      pair_id: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
+      delivery_id:
+        {
+          type: string,
+          pattern: "^[A-Za-z0-9_-]{21}[AQgw]$",
+          description: Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.,
+        }
+      delivery_generation: { type: integer, format: int64, minimum: 1 }
+      connection_slot: { type: integer, minimum: 0, maximum: 1 }
+      key: { type: string, minLength: 1, description: secret pair key; never log. }
+      source_ip:
+        type: string
+        description: canonical socket-observed source IP bound to the relay signature.
+      observed_at:
+        type: string
+        format: date-time
+        description: control observation time; convert the remaining duration using the local request start, never response arrival.
+      expires_at: { type: string, format: date-time }

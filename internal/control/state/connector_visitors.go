@@ -253,6 +253,13 @@ type ServiceSelection struct {
 	ServiceID, ServiceRunID, IdentityID, DeviceID string
 	RunNumber                                     int64
 	ExpiresAt                                     time.Time
+	PairReady                                     *NativePeerPairReady
+}
+
+// NativePeerPairReady is a credential-free signing hint, never delivery authority.
+type NativePeerPairReady struct {
+	PublisherIdentityID string
+	Relays              [2]NativePeerPairRelay
 }
 
 // access is evaluated inside the team/service admission lock. the deadline
@@ -317,6 +324,10 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	result.Subject = subject
 	result.ExpiresAt = minTime(result.ExpiresAt, until)
 	result.ServiceMetadata, err = checkedServiceMetadata(service)
+	if err != nil {
+		return result, err
+	}
+	result.PairReady, err = nativePairReadySelection(ctx, tx, result.ServiceRunID, serviceID, result.RunNumber, now)
 	if err != nil {
 		return result, err
 	}
