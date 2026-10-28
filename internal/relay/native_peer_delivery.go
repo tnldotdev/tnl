@@ -83,23 +83,23 @@ func (p *nativePacketSession) Close() {
 }
 
 type nativePairDelivery struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	stopPublisher   func() bool
-	publisher       *nativePacketSession
-	connector       *nativePacketSession
-	towardPublisher peer.Carrier
-	towardConnector peer.Carrier
-	connection      *serviceConnection
-	transport       muxsession.Session
-	done            chan struct{}
-	mu              sync.Mutex
-	closed, serving bool
-	workers         sync.WaitGroup
-	once            sync.Once
-	deadline        time.Time
-	changed         chan struct{}
-	authorityDone   chan struct{}
+	ctx                        context.Context
+	cancel                     context.CancelFunc
+	stopPublisher              func() bool
+	publisher                  *nativePacketSession
+	connector                  *nativePacketSession
+	towardPublisher            peer.Carrier
+	towardConnector            peer.Carrier
+	connection                 *serviceConnection
+	transport                  muxsession.Session
+	done                       chan struct{}
+	mu                         sync.Mutex
+	closed, serving, activated bool
+	workers                    sync.WaitGroup
+	once                       sync.Once
+	deadline                   time.Time
+	changed                    chan struct{}
+	authorityDone              chan struct{}
 }
 
 func (*nativePairDelivery) String() string   { return "native pair packet delivery" }
@@ -159,10 +159,6 @@ func (a *NativeConnectorAcceptor) prepareDelivery(setup, lifetime context.Contex
 	}()
 	binding := peer.PairBinding{Delivery: tunnelv1.PeerDelivery{Pair: id, Generation: uint64(claim.receipt.DeliveryGeneration)},
 		Key: claim.key, Kind: peer.NativePeer, Path: uint8(claim.receipt.ConnectionSlot), Role: 0}
-	d.towardPublisher, err = d.publisher.register(setup, binding, true)
-	if err != nil {
-		return nil, errors.Join(err, &tunnel.ProtocolError{Code: tunnelv1.Unavailable})
-	}
 	d.connector, err = newNativePacketSession(ctx, transport)
 	if err != nil {
 		return nil, errors.Join(err, &tunnel.ProtocolError{Code: tunnelv1.Unavailable})
@@ -188,24 +184,11 @@ func (d *nativePairDelivery) serve(a *NativeConnectorAcceptor, session *tunnel.S
 	d.serving = true
 	finished := make(chan error, 3)
 	d.workers.Go(func() {
-		finished <- session.HandleNativeLegRenewals(d.ctx, func(ctx context.Context, proof tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
+		finished <- session.HandleNativeLegControl(d.ctx, func(ctx context.Context) error {
+			return d.activate(ctx, a, proof, claim, finished)
+		}, func(ctx context.Context, proof tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
 			return d.renewClaim(ctx, a, d.transport, proof, claim)
 		})
-	})
-	connectorReady := make(chan struct{})
-	d.workers.Go(func() {
-		finished <- forwardNativePackets(d.ctx, d.towardConnector, d.towardPublisher, connectorReady)
-	})
-	d.workers.Go(func() {
-		// a publisher probe must not spend a send timeout waiting for the
-		// connector's first tagged TLS/yamux introduction. the connector can
-		// still be preparing its other leg after reading hello_accepted.
-		select {
-		case <-connectorReady:
-			finished <- forwardNativePackets(d.ctx, d.towardPublisher, d.towardConnector, nil)
-		case <-d.ctx.Done():
-			finished <- d.ctx.Err()
-		}
 	})
 	d.mu.Unlock()
 	leaseCheck := time.NewTicker(100 * time.Millisecond)
@@ -231,6 +214,48 @@ func (d *nativePairDelivery) serve(a *NativeConnectorAcceptor, session *tunnel.S
 			}
 		}
 	}
+}
+
+// only the explicitly selected carrier may install publisher registration state.
+// closing an authenticated but unselected candidate cannot spend its tombstone
+// or displace a sibling's live replay state. reconnect handoff is separate.
+func (d *nativePairDelivery) activate(ctx context.Context, a *NativeConnectorAcceptor, proof tunnelv1.NativePairLegProof, claim nativeConnectorClaim, finished chan<- error) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed || d.activated || d.ctx.Err() != nil || ctx.Err() != nil || !d.deadline.After(a.now()) {
+		return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+	}
+	lease, valid := a.currentLease(proof, a.now())
+	if current, present := a.Publishers.nativeCandidate(claim.ref, lease, a.now()); !valid || !present || current != d.connection {
+		return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+	}
+	id, err := tunnelv1.ParsePeerDeliveryIdentifier(claim.receipt.DeliveryID)
+	if err != nil {
+		return errors.Join(&tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}, err)
+	}
+	binding := peer.PairBinding{Delivery: tunnelv1.PeerDelivery{Pair: id, Generation: uint64(claim.receipt.DeliveryGeneration)},
+		Key: claim.key, Kind: peer.NativePeer, Path: uint8(claim.receipt.ConnectionSlot), Role: 0}
+	d.towardPublisher, err = d.publisher.register(ctx, binding, true)
+	if err != nil {
+		return errors.Join(&tunnel.ProtocolError{Code: tunnelv1.Unavailable}, err)
+	}
+	d.activated = true
+	connectorReady := make(chan struct{})
+	d.workers.Go(func() {
+		finished <- forwardNativePackets(d.ctx, d.towardConnector, d.towardPublisher, connectorReady)
+	})
+	d.workers.Go(func() {
+		// a publisher probe must not spend a send timeout waiting for the
+		// connector's first tagged TLS/yamux introduction. the connector can
+		// still be preparing its other leg after reading hello_accepted.
+		select {
+		case <-connectorReady:
+			finished <- forwardNativePackets(d.ctx, d.towardPublisher, d.towardConnector, nil)
+		case <-d.ctx.Done():
+			finished <- d.ctx.Err()
+		}
+	})
+	return nil
 }
 
 func forwardNativePackets(ctx context.Context, source, destination peer.Carrier, ready chan<- struct{}) error {

@@ -252,6 +252,9 @@ func TestNativePeerDeliveryCrossTransportAndPairIsolation(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					if err := session.ActivateNativeLeg(t.Context(), "activate"); err != nil {
+						t.Fatal(err)
+					}
 					binding.Role = 0
 					connected := nativeTestPacketOwner(t, transport).register(t, binding, true)
 					return path{session: session, done: done, connector: connected, publisher: published, binding: binding}
@@ -298,9 +301,14 @@ func TestNativePeerDeliveryCrossTransportAndPairIsolation(t *testing.T) {
 				// even a fresh control claim cannot reopen the retired generation
 				// on this outer publisher session.
 				retry, retryDone := nativePacketTransport(t, connectorKind, acceptor)
-				if _, _, err := tunnel.DialNative(t.Context(), retry, hello, nativeTestDeliveryID); err == nil {
+				retried, _, err := tunnel.DialNative(t.Context(), retry, hello, nativeTestDeliveryID)
+				if err != nil {
+					t.Fatal("retired candidate should remain passive until selection", err)
+				}
+				if err := retried.ActivateNativeLeg(t.Context(), "retired"); err == nil {
 					t.Fatal("retired generation reopened")
 				}
+				_ = retried.Close()
 				if err := relayAwait(t, retryDone); err == nil {
 					t.Fatal("retired generation was not rejected")
 				}
@@ -358,9 +366,37 @@ func TestNativePeerDeliveryLateCrossTransportClaimKeepsCurrentRegistration(t *te
 					t.Fatal(err)
 				}
 				t.Cleanup(func() { _ = session.Close() })
+				loserKind := map[string]string{"quic": "tls_yamux", "tls_yamux": "quic"}[winnerKind]
+				passiveTransport, passiveDone := nativePacketTransport(t, loserKind, acceptor)
+				passiveHello, passiveProof := hello, *hello.NativePairLegProof
+				passiveProof.Nonce = bytes.Repeat([]byte{1}, 32)
+				passiveHello.NativePairLegProof = &passiveProof
+				passive, _, err := tunnel.DialNative(ctx, passiveTransport, passiveHello, nativeTestDeliveryID)
+				if err != nil {
+					t.Fatal("second authenticated hello could not remain passive", err)
+				}
+				// both hellos succeeded without spending publisher registration state.
+				// closing an unselected candidate must leave the winner installable.
+				owner.Publishers.mu.Lock()
+				for _, connection := range owner.Publishers.connections {
+					connection.packets.mu.Lock()
+					for job := range connection.packets.jobs {
+						job.mu.Lock()
+						if job.activated || job.towardPublisher != nil {
+							t.Error("passive hello installed publisher packet state")
+						}
+						job.mu.Unlock()
+					}
+					connection.packets.mu.Unlock()
+				}
+				owner.Publishers.mu.Unlock()
+				_ = passive.Close()
+				_ = relayAwait(t, passiveDone)
+				if err := session.ActivateNativeLeg(ctx, "winner"); err != nil {
+					t.Fatal("unselected cleanup retired the winner's generation", err)
+				}
 				binding.Role = 0
 				connected := nativeTestPacketOwner(t, winner).register(t, binding, true)
-				loserKind := map[string]string{"quic": "tls_yamux", "tls_yamux": "quic"}[winnerKind]
 				loser, loserDone := nativePacketTransport(t, loserKind, acceptor)
 				lateHello, lateProof := hello, *hello.NativePairLegProof
 				lateProof.Nonce = bytes.Repeat([]byte{2}, 32)
@@ -368,9 +404,13 @@ func TestNativePeerDeliveryLateCrossTransportClaimKeepsCurrentRegistration(t *te
 				lateResult := relayWorker(t, func() { cancel(); release(); _ = loser.Close() }, func() error {
 					late, _, err := tunnel.DialNative(ctx, loser, lateHello, nativeTestDeliveryID)
 					if late != nil {
-						_ = late.Close()
+						defer late.Close()
 					}
-					return err
+					if err != nil {
+						t.Error("late authenticated candidate should remain passive", err)
+						return err
+					}
+					return late.ActivateNativeLeg(ctx, "duplicate")
 				})
 				select {
 				case <-lateStarted:
@@ -614,6 +654,9 @@ func TestNativePeerDeliveryPublisherProbeWaitsForConnectorPreparation(t *testing
 			native, done := nativePacketTransport(t, "tls_yamux", acceptor)
 			session, _, err := tunnel.DialNative(t.Context(), native, hello, nativeTestDeliveryID)
 			if err != nil {
+				t.Fatal(err)
+			}
+			if err := session.ActivateNativeLeg(t.Context(), "activate"); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)

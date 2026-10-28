@@ -261,6 +261,24 @@ func racePeerRelayCandidates(ctx, life context.Context, connectors [2]muxsession
 		}
 	}
 	if winner != nil {
+		winner.mu.Lock()
+		until, retired := winner.until, winner.retired
+		winner.mu.Unlock()
+		if retired || ctx.Err() != nil || winner.ctx.Err() != nil || !until.After(time.Now()) {
+			winner.Close()
+			return nil, errors.Join(context.Cause(ctx), ErrSelectionExpired)
+		}
+		activation, finish := context.WithDeadline(ctx, until)
+		err := winner.session.ActivateNativeLeg(activation, "activate")
+		finish()
+		if err != nil {
+			winner.Close()
+			return nil, err
+		}
+		if ctx.Err() != nil || winner.ctx.Err() != nil || !until.After(time.Now()) {
+			winner.Close()
+			return nil, errors.Join(context.Cause(ctx), ErrSelectionExpired)
+		}
 		return winner, nil
 	}
 	return nil, errors.Join(ErrServiceConnection, context.Cause(ctx), errors.Join(failures...))

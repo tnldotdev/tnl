@@ -27,17 +27,19 @@ const (
 type MessageType string
 
 const (
-	Hello            MessageType = "hello"
-	HelloAccepted    MessageType = "hello_accepted"
-	Ping             MessageType = "ping"
-	Pong             MessageType = "pong"
-	Drain            MessageType = "drain"
-	Draining         MessageType = "draining"
-	Drained          MessageType = "drained"
-	GoAway           MessageType = "goaway"
-	Error            MessageType = "error"
-	NativeLegRenew   MessageType = "native_leg_renew"
-	NativeLegRenewed MessageType = "native_leg_renewed"
+	Hello              MessageType = "hello"
+	HelloAccepted      MessageType = "hello_accepted"
+	Ping               MessageType = "ping"
+	Pong               MessageType = "pong"
+	Drain              MessageType = "drain"
+	Draining           MessageType = "draining"
+	Drained            MessageType = "drained"
+	GoAway             MessageType = "goaway"
+	Error              MessageType = "error"
+	NativeLegRenew     MessageType = "native_leg_renew"
+	NativeLegRenewed   MessageType = "native_leg_renewed"
+	NativeLegActivate  MessageType = "native_leg_activate"
+	NativeLegActivated MessageType = "native_leg_activated"
 )
 
 type PeerRole string
@@ -106,6 +108,7 @@ type Message struct {
 	ServiceConnection     *ServicePublisherConnectionRef `json:"service_connection,omitempty"`
 	NativePairLegProof    *NativePairLegProof            `json:"native_pair_leg_proof,omitempty"`
 	NativePairLegAccepted *NativePairLegAccepted         `json:"native_pair_leg_accepted,omitempty"`
+	NativeLegBinding      *NativeLegBinding              `json:"native_leg_binding,omitempty"`
 	Code                  ErrorCode                      `json:"code,omitempty"`
 }
 
@@ -197,6 +200,23 @@ func ReadControl(reader io.Reader) (Message, error) {
 	if err := json.Unmarshal(fields["role"], &role); err != nil && len(fields["role"]) != 0 {
 		return Message{}, err
 	}
+	var kind MessageType
+	if err := json.Unmarshal(fields["type"], &kind); err != nil {
+		return Message{}, err
+	}
+	if kind == NativeLegActivate || kind == NativeLegActivated {
+		for name := range fields {
+			switch name {
+			case "type", "protocol_version", "request_id", "native_leg_binding":
+			case "role":
+				if kind != NativeLegActivate {
+					return Message{}, ErrNativeLegBinding
+				}
+			default:
+				return Message{}, ErrNativeLegBinding
+			}
+		}
+	}
 	if role == NativeConnector {
 		for _, name := range []string{"credential", "publisher_connection", "service_connection"} {
 			if _, present := fields[name]; present {
@@ -207,9 +227,13 @@ func ReadControl(reader io.Reader) (Message, error) {
 		return Message{}, errors.New("tunnelv1: native proof on another role")
 	}
 	if _, present := fields["native_pair_leg_accepted"]; present {
-		var kind MessageType
 		if err := json.Unmarshal(fields["type"], &kind); err != nil || (kind != HelloAccepted && kind != NativeLegRenewed) || role != "" || bytes.Equal(bytes.TrimSpace(fields["native_pair_leg_accepted"]), []byte("null")) {
 			return Message{}, errors.New("tunnelv1: native receipt outside hello_accepted")
+		}
+	}
+	if binding, present := fields["native_leg_binding"]; present {
+		if err := json.Unmarshal(fields["type"], &kind); err != nil || (kind != NativeLegActivate && kind != NativeLegActivated) || bytes.Equal(bytes.TrimSpace(binding), []byte("null")) {
+			return Message{}, ErrNativeLegBinding
 		}
 	}
 	var message Message
@@ -293,7 +317,18 @@ func (m Message) Validate() error {
 	if m.RequestID != "" && !validIdentifier(m.RequestID) {
 		return errors.New("tunnelv1: invalid request ID")
 	}
+	if m.NativeLegBinding != nil && m.Type != NativeLegActivate && m.Type != NativeLegActivated {
+		return ErrNativeLegBinding
+	}
 	switch m.Type {
+	case NativeLegActivate, NativeLegActivated:
+		expectedRole := NativeConnector
+		if m.Type == NativeLegActivated {
+			expectedRole = ""
+		}
+		if !validIdentifier(m.RequestID) || m.Role != expectedRole || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.NativePairLegProof != nil || m.NativePairLegAccepted != nil || m.Code != "" || m.NativeLegBinding == nil || m.NativeLegBinding.Validate() != nil {
+			return ErrNativeLegBinding
+		}
 	case Hello:
 		if m.NativePairLegAccepted != nil {
 			return errors.New("tunnelv1: native receipt on hello")

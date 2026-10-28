@@ -116,6 +116,27 @@ can prove ownership of the original backend key; see
 
 ## streaming and connection replacement
 
+the opt-in native packet path keeps authenticated transport candidates passive:
+
+```text
+connector                  relay                   publisher
+    |-- signed hello ------->|                         |
+    |<-- checked claim ------|                         |
+    |  join losing attempts  |                         |
+    |-- activate(hello nonce)|                         |
+    |                        |-- register delivery --->|
+    |<-- activated ----------|                         |
+```
+
+the hello nonce selects one exact candidate; activation adds no signature,
+control request, authority time, or application admission. the relay rechecks its
+current process lease, publisher assignment, and claim deadline before installing
+packet forwarding. closing a passive loser cannot retire the winner's publisher
+registration. a duplicate activation cannot replace a live registration or reopen
+a retired delivery generation. this is startup selection, not reconnect handoff:
+closing the active outer session still retires that registration. production
+native admission remains disabled until its source authority is qualified.
+
 `httpstream` enables HTTP/1 full duplex before target responses and bounds the
 upload, including trickles, to 30 seconds. Body completion ends the read deadline;
 SSE and upgraded responses have no upload-derived total lifetime. HTTP/2 deadlines

@@ -55,6 +55,7 @@ type Session struct {
 	serviceConnection   *tunnelv1.ServicePublisherConnectionRef
 	nativeLeg           *tunnelv1.NativePairLegProof
 	nativeControl       sync.Mutex
+	nativeActivated     bool
 
 	closeOnce sync.Once
 	closeErr  error

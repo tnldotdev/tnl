@@ -43,6 +43,9 @@ func TestNativePeerDeliveryRenewalKeepsRegistrationsPastOriginalDeadline(t *test
 				t.Fatal(err)
 			}
 			defer session.Close()
+			if err := session.ActivateNativeLeg(t.Context(), "activate"); err != nil {
+				t.Fatal(err)
+			}
 			binding.Role = 0
 			connected := nativeTestPacketOwner(t, transport).register(t, binding, true)
 			exchange := func(sequence uint64) {

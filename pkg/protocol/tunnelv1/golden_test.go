@@ -30,6 +30,11 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 			RequestedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Nonce: make([]byte, 32), Signature: make([]byte, 64)},
 	}
 	assertGoldenFrame(t, "control-native-hello", nativeHello, WriteControl, ReadControl)
+	nativeActivate := Message{Type: NativeLegActivate, ProtocolVersion: Version, RequestID: "activate_1", Role: NativeConnector,
+		NativeLegBinding: &NativeLegBinding{Nonce: make([]byte, 32)}}
+	assertGoldenFrame(t, "control-native-activate", nativeActivate, WriteControl, ReadControl)
+	nativeActivate.Type, nativeActivate.Role = NativeLegActivated, ""
+	assertGoldenFrame(t, "control-native-activated", nativeActivate, WriteControl, ReadControl)
 	nativeRenew := nativeHello
 	nativeRenew.Type, nativeRenew.RequestID = NativeLegRenew, "renew_1"
 	assertGoldenFrame(t, "control-native-renew", nativeRenew, WriteControl, ReadControl)
@@ -92,6 +97,8 @@ func TestInvalidFixtures(t *testing.T) {
 		{"invalid-native-receipt-on-hello", readControl},
 		{"invalid-native-receipt-on-ping", readControl},
 		{"invalid-native-receipt-source", readControl},
+		{"invalid-native-activation-null", readControl},
+		{"invalid-native-activation-foreign-field", readControl},
 		{"invalid-visitor-missing-field", readVisitor},
 		{"invalid-native-peer-unknown-field", readNativePeerVisitor},
 		{"invalid-native-peer-missing-field", readNativePeerVisitor},

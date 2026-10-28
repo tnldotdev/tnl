@@ -46,7 +46,7 @@ func TestNativeLegRenewalUsesExistingControlAndRejectsSubstitution(t *testing.T)
 	defer cancel()
 	calls := 0
 	done := tunnelWorker(t, func() { cancel(); _ = server.Close() }, func() error {
-		return server.HandleNativeLegRenewals(ctx, func(_ context.Context, requested tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
+		return server.HandleNativeLegControl(ctx, nil, func(_ context.Context, requested tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
 			calls++
 			if requested.Nonce[0] != byte(calls) {
 				t.Error("renewal lost fresh nonce")
@@ -88,7 +88,7 @@ func TestNativeLegRenewalRejectsChangedReceiptSource(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := tunnelWorker(t, func() { cancel(); _ = server.Close() }, func() error {
-		return server.HandleNativeLegRenewals(ctx, func(context.Context, tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
+		return server.HandleNativeLegControl(ctx, nil, func(context.Context, tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
 			receipt := initial
 			receipt.SourceIP = "127.0.0.2"
 			return receipt, nil
