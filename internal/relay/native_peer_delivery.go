@@ -183,15 +183,27 @@ func (a *NativeConnectorAcceptor) prepareDelivery(setup, lifetime context.Contex
 	return d, nil
 }
 
-func (d *nativePairDelivery) serve(a *NativeConnectorAcceptor, session *tunnel.Session, proof tunnelv1.NativePairLegProof, claim nativeConnectorClaim) error {
-	defer d.Close()
+func (d *nativePairDelivery) serve(a *NativeConnectorAcceptor, session *tunnel.Session, proof tunnelv1.NativePairLegProof, claim nativeConnectorClaim) (retErr error) {
+	finished := make(chan error, 1)
+	defer func() {
+		d.Close()
+		// session shutdown may win the select after the peer reads a denial.
+		// joining the control owner must retain that completed protocol result.
+		select {
+		case err := <-finished:
+			var protocol *tunnel.ProtocolError
+			if errors.As(err, &protocol) {
+				retErr = errors.Join(retErr, err)
+			}
+		default:
+		}
+	}()
 	d.mu.Lock()
 	if d.closed || d.serving || d.ctx.Err() != nil {
 		d.mu.Unlock()
 		return net.ErrClosed
 	}
 	d.serving = true
-	finished := make(chan error, 3)
 	d.workers.Go(func() {
 		finished <- session.HandleNativeLegControl(d.ctx, func(ctx context.Context, selection tunnelv1.NativeLegBinding) error {
 			return d.activate(ctx, a, proof, claim, selection)
@@ -209,6 +221,10 @@ func (d *nativePairDelivery) serve(a *NativeConnectorAcceptor, session *tunnel.S
 		case <-session.Done():
 			return nil
 		case err := <-finished:
+			var protocol *tunnel.ProtocolError
+			if errors.As(err, &protocol) {
+				return err
+			}
 			if errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
 				return nil
 			}
