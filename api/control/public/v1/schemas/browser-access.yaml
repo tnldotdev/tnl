@@ -1,11 +1,11 @@
 schemas:
-  HTTPAuthorizationSubject:
+  VisitorResourceScope:
     type: object
     additionalProperties: false
     required: [kind, id]
     properties:
       kind: { type: string, enum: [public_url, service] }
-      id: { type: string }
+      id: { type: string, maxLength: 64 }
     description: An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
   CreateServiceHTTPGrantRequest:
     type: object
@@ -19,7 +19,7 @@ schemas:
     additionalProperties: false
     required: [subject, id, kind, secret, expires_at]
     properties:
-      subject: { $ref: "../openapi.yaml#/components/schemas/HTTPAuthorizationSubject" }
+      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
       id: { type: string }
       kind: { type: string, enum: [token, share] }
       secret: { type: string }
@@ -30,7 +30,7 @@ schemas:
     additionalProperties: false
     required: [subject, id, kind, expires_at]
     properties:
-      subject: { $ref: "../openapi.yaml#/components/schemas/HTTPAuthorizationSubject" }
+      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
       id: { type: string, pattern: "^shg_[A-Za-z0-9]{22}$" }
       kind: { type: string, enum: [token, share] }
       expires_at: { type: string, format: date-time }

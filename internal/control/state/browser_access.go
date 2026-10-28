@@ -14,13 +14,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/policy/httpsubject"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 )
 
 const browserSessionLifetime = 24 * time.Hour
 
 type BrowserLoginAttempt struct {
-	Subject       httpsubject.Subject
+	Subject       visitorscope.Scope
 	ServiceRunIDs []string
 	CompanyIntent *CompanyIntentBinding
 	PublishRunID  string
@@ -155,16 +155,16 @@ func (d *Database) ConsumeBrowserLogin(ctx context.Context, state string, browse
 	if err := json.Unmarshal(verifier, &private); err != nil {
 		return BrowserLoginAttempt{}, err
 	}
-	return BrowserLoginAttempt{Subject: httpsubject.Subject{Kind: httpsubject.PublicURL, ID: row.PublicURLID}, PreviewID: row.PreviewID.String, PublicURLID: row.PublicURLID,
+	return BrowserLoginAttempt{Subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: row.PublicURLID}, PreviewID: row.PreviewID.String, PublicURLID: row.PublicURLID,
 		PublishRunID: row.PublishRunID,
 		ReturnPath:   row.ReturnPath, Nonce: row.Nonce, Verifier: private.Verifier, CompanyIntent: private.CompanyIntent}, nil
 }
 
 func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLoginAttempt, session BrowserAccessSession, now time.Time) (BrowserHandoff, error) {
-	if attempt.Subject.Kind == httpsubject.Service {
+	if attempt.Subject.Kind == visitorscope.Service {
 		return d.issueServiceBrowserHandoff(ctx, attempt, session, now)
 	}
-	if attempt.Subject.Kind != "" && (attempt.Subject.Kind != httpsubject.PublicURL || attempt.Subject.ID != attempt.PublicURLID) {
+	if attempt.Subject.Kind != "" && (attempt.Subject.Kind != visitorscope.PublicURL || attempt.Subject.ID != attempt.PublicURLID) {
 		return BrowserHandoff{}, ErrPreviewAccess
 	}
 	if d.storageKey == nil || session.IdentityID == "" || session.DisplayName == "" || session.AccessToken == "" ||

@@ -184,6 +184,10 @@ func runSession(
 			browser.decisions.invalidate(revision)
 		}
 	}
+	streamCapacity := 0
+	if setup.Traffic != nil {
+		streamCapacity = setup.Traffic.Connections
+	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Context:               ctx,
 		AuditSink:             auditSink,
@@ -202,6 +206,7 @@ func runSession(
 		ShareAccess:    shareRuntime,
 		Feedback:       feedback,
 		Limits:         config.Limits,
+		StreamCapacity: streamCapacity,
 		ObserveSummary: config.ObserveSummary,
 		InspectionMode: config.InspectionMode,
 		Handler:        config.Handler,

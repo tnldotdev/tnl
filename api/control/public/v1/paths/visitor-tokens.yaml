@@ -1,0 +1,52 @@
+paths:
+  /v1/visitor-certificates:
+    post:
+      operationId: issueVisitorClientCertificate
+      description: Prepare native visitor TLS credentials. The subjectAltName extension carries the same signed visitor permission in a tnl://visitor-token/<compact-JWS> URI, bound to the CSR key and exact certificate. Caller-supplied names and extensions are discarded.
+      security: [{}, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/VisitorCertificateRequest" }
+      responses:
+        "201":
+          description: Key-bound visitor certificate and public issuer trust
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceClientCertificate" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/visitor-tokens:
+    post:
+      operationId: issueVisitorToken
+      description: Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+      security: [{}, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenRequest" }
+      responses:
+        "200":
+          description: Signed permission, independently bounded by current visitor policy and stream capacity
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenResponse" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/visitor-credentials:
+    post:
+      operationId: createVisitorCredential
+      description: Create an exact-service credential with an explicit deadline. The access token is for visitors; the separately scoped refresh credential is authority-facing only. Neither authorizes management or publishing.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/CreateVisitorCredentialRequest" }
+      responses:
+        "201":
+          description: One-time visitor and refresh credentials
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/VisitorCredential" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

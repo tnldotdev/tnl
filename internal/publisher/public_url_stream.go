@@ -85,6 +85,9 @@ func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tu
 	if r.closed || r.draining {
 		code = tunnelv1.Unavailable
 	}
+	if code == "" && len(r.streams) >= r.streamCapacity {
+		code = tunnelv1.CapacityExceeded
+	}
 	if code != "" {
 		r.mu.Unlock()
 		_ = incoming.Reject(code)

@@ -46,24 +46,6 @@ func (e DirectServiceVisitorStatusState) Valid() bool {
 	}
 }
 
-// Defines values for HashedIPPrefixFamily.
-const (
-	Ipv4 HashedIPPrefixFamily = "ipv4"
-	Ipv6 HashedIPPrefixFamily = "ipv6"
-)
-
-// Valid indicates whether the value is a known member of the HashedIPPrefixFamily enum.
-func (e HashedIPPrefixFamily) Valid() bool {
-	switch e {
-	case Ipv4:
-		return true
-	case Ipv6:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for IngressRoutingTableEntryAccessMode.
 const (
 	Anonymous  IngressRoutingTableEntryAccessMode = "anonymous"
@@ -276,14 +258,7 @@ type DirectServiceVisitorStatus struct {
 type DirectServiceVisitorStatusState string
 
 // HashedIPPrefix defines model for HashedIPPrefix.
-type HashedIPPrefix struct {
-	Digest       string               `json:"digest"`
-	Family       HashedIPPrefixFamily `json:"family"`
-	PrefixLength int                  `json:"prefix_length"`
-}
-
-// HashedIPPrefixFamily defines model for HashedIPPrefix.Family.
-type HashedIPPrefixFamily string
+type HashedIPPrefix = externalRef0.HashedIPPrefix
 
 // Identifier defines model for Identifier.
 type Identifier = string
@@ -481,6 +456,16 @@ type IngressUsageReportBatch struct {
 	Reports              []IngressUsageReport `json:"reports"`
 }
 
+// IngressVisitorPolicyRequest defines model for IngressVisitorPolicyRequest.
+type IngressVisitorPolicyRequest struct {
+	AfterRevision        int64      `json:"after_revision"`
+	IngressLeaseRevision int64      `json:"ingress_lease_revision"`
+	IngressRunId         Identifier `json:"ingress_run_id"`
+
+	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+	Resource externalRef0.VisitorResourceScope `json:"resource"`
+}
+
 // Problem defines model for Problem.
 type Problem struct {
 	Code      ProblemCode             `json:"code"`
@@ -616,6 +601,28 @@ type ServiceVisitorRecheckResult struct {
 	ValidUntil time.Time `json:"valid_until"`
 }
 
+// StreamCapacityAllocation defines model for StreamCapacityAllocation.
+type StreamCapacityAllocation = externalRef0.StreamCapacityAllocation
+
+// StreamCapacityRequest defines model for StreamCapacityRequest.
+type StreamCapacityRequest struct {
+	Capacity             int    `json:"capacity"`
+	IngressLeaseRevision int64  `json:"ingress_lease_revision"`
+	IngressRunId         string `json:"ingress_run_id"`
+	RequestId            string `json:"request_id"`
+
+	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+	Resource  externalRef0.VisitorResourceScope `json:"resource"`
+	RunId     string                            `json:"run_id"`
+	RunNumber int64                             `json:"run_number"`
+}
+
+// StreamCapacityRetirement defines model for StreamCapacityRetirement.
+type StreamCapacityRetirement struct {
+	IngressLeaseRevision int64  `json:"ingress_lease_revision"`
+	IngressRunId         string `json:"ingress_run_id"`
+}
+
 // VisitorConnectionID defines model for VisitorConnectionID.
 type VisitorConnectionID = string
 
@@ -624,6 +631,9 @@ type VisitorNetworkHashKey struct {
 	Key     []byte             `json:"key"`
 	UtcDate openapi_types.Date `json:"utc_date"`
 }
+
+// VisitorPolicyUpdate defines model for VisitorPolicyUpdate.
+type VisitorPolicyUpdate = externalRef0.VisitorPolicyUpdate
 
 // IngressID defines model for IngressID.
 type IngressID = Identifier
@@ -727,11 +737,20 @@ type RecheckServiceVisitorJSONRequestBody = ServiceVisitorRecheck
 // CloseServiceStreamJSONRequestBody defines body for CloseServiceStream for application/json ContentType.
 type CloseServiceStreamJSONRequestBody CloseServiceStreamJSONBody
 
+// AllocateStreamCapacityJSONRequestBody defines body for AllocateStreamCapacity for application/json ContentType.
+type AllocateStreamCapacityJSONRequestBody = StreamCapacityRequest
+
+// RetireStreamCapacityJSONRequestBody defines body for RetireStreamCapacity for application/json ContentType.
+type RetireStreamCapacityJSONRequestBody = StreamCapacityRetirement
+
 // GetIngressTransportCertificateJSONRequestBody defines body for GetIngressTransportCertificate for application/json ContentType.
 type GetIngressTransportCertificateJSONRequestBody GetIngressTransportCertificateJSONBody
 
 // ReportIngressUsageJSONRequestBody defines body for ReportIngressUsage for application/json ContentType.
 type ReportIngressUsageJSONRequestBody = IngressUsageReportBatch
+
+// ReadIngressVisitorPolicyJSONRequestBody defines body for ReadIngressVisitorPolicy for application/json ContentType.
+type ReadIngressVisitorPolicyJSONRequestBody = IngressVisitorPolicyRequest
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -965,6 +984,30 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	CloseServiceStream(ctx context.Context, ingressId IngressID, visitorConnectionId VisitorConnectionID, body CloseServiceStreamJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// AllocateStreamCapacityWithBody performs a POST /internal/v1/ingresses/{ingress_id}/stream-capacity (the `AllocateStreamCapacity` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Allocate or renew a bounded part of one run's connection capacity for this exact ingress process. Reuse request_id on retries. Expired or retired allocations require a new request_id and never recover old reservations.
+	AllocateStreamCapacityWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AllocateStreamCapacity performs a POST /internal/v1/ingresses/{ingress_id}/stream-capacity (the `AllocateStreamCapacity` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Allocate or renew a bounded part of one run's connection capacity for this exact ingress process. Reuse request_id on retries. Expired or retired allocations require a new request_id and never recover old reservations.
+	AllocateStreamCapacity(ctx context.Context, ingressId IngressID, body AllocateStreamCapacityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RetireStreamCapacityWithBody performs a DELETE /internal/v1/ingresses/{ingress_id}/stream-capacity/{allocation_id} (the `RetireStreamCapacity` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Retire this process's exact allocation. Its capacity remains charged until the last granted deadline, so stale owners cannot double-spend reissued capacity.
+	RetireStreamCapacityWithBody(ctx context.Context, ingressId IngressID, allocationId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RetireStreamCapacity performs a DELETE /internal/v1/ingresses/{ingress_id}/stream-capacity/{allocation_id} (the `RetireStreamCapacity` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Retire this process's exact allocation. Its capacity remains charged until the last granted deadline, so stale owners cannot double-spend reissued capacity.
+	RetireStreamCapacity(ctx context.Context, ingressId IngressID, allocationId string, body RetireStreamCapacityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetIngressTransportCertificateWithBody performs a POST /internal/v1/ingresses/{ingress_id}/transport-certificate (the `GetIngressTransportCertificate` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -990,6 +1033,18 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
 	ReportIngressUsage(ctx context.Context, ingressId IngressID, body ReportIngressUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadIngressVisitorPolicyWithBody performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Read current visitor policy for one resource in this ingress lease's pool. Policy freshness has its own fixed deadline; renewing the process lease never extends it.
+	ReadIngressVisitorPolicyWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadIngressVisitorPolicy performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Read current visitor policy for one resource in this ingress lease's pool. Policy freshness has its own fixed deadline; renewing the process lease never extends it.
+	ReadIngressVisitorPolicy(ctx context.Context, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // RegisterIngressWithBody Register one ingress process run
@@ -1450,6 +1505,70 @@ func (c *Client) CloseServiceStream(ctx context.Context, ingressId IngressID, vi
 	return c.Client.Do(req)
 }
 
+// AllocateStreamCapacityWithBody performs a POST /internal/v1/ingresses/{ingress_id}/stream-capacity (the `AllocateStreamCapacity` operationId) request,
+// with any type of body and a specified content type.
+//
+// Allocate or renew a bounded part of one run's connection capacity for this exact ingress process. Reuse request_id on retries. Expired or retired allocations require a new request_id and never recover old reservations.
+func (c *Client) AllocateStreamCapacityWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAllocateStreamCapacityRequestWithBody(c.Server, ingressId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AllocateStreamCapacity performs a POST /internal/v1/ingresses/{ingress_id}/stream-capacity (the `AllocateStreamCapacity` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Allocate or renew a bounded part of one run's connection capacity for this exact ingress process. Reuse request_id on retries. Expired or retired allocations require a new request_id and never recover old reservations.
+func (c *Client) AllocateStreamCapacity(ctx context.Context, ingressId IngressID, body AllocateStreamCapacityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAllocateStreamCapacityRequest(c.Server, ingressId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RetireStreamCapacityWithBody performs a DELETE /internal/v1/ingresses/{ingress_id}/stream-capacity/{allocation_id} (the `RetireStreamCapacity` operationId) request,
+// with any type of body and a specified content type.
+//
+// Retire this process's exact allocation. Its capacity remains charged until the last granted deadline, so stale owners cannot double-spend reissued capacity.
+func (c *Client) RetireStreamCapacityWithBody(ctx context.Context, ingressId IngressID, allocationId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRetireStreamCapacityRequestWithBody(c.Server, ingressId, allocationId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RetireStreamCapacity performs a DELETE /internal/v1/ingresses/{ingress_id}/stream-capacity/{allocation_id} (the `RetireStreamCapacity` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Retire this process's exact allocation. Its capacity remains charged until the last granted deadline, so stale owners cannot double-spend reissued capacity.
+func (c *Client) RetireStreamCapacity(ctx context.Context, ingressId IngressID, allocationId string, body RetireStreamCapacityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRetireStreamCapacityRequest(c.Server, ingressId, allocationId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetIngressTransportCertificateWithBody performs a POST /internal/v1/ingresses/{ingress_id}/transport-certificate (the `GetIngressTransportCertificate` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -1506,6 +1625,38 @@ func (c *Client) ReportIngressUsageWithBody(ctx context.Context, ingressId Ingre
 // Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
 func (c *Client) ReportIngressUsage(ctx context.Context, ingressId IngressID, body ReportIngressUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReportIngressUsageRequest(c.Server, ingressId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadIngressVisitorPolicyWithBody performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
+// with any type of body and a specified content type.
+//
+// Read current visitor policy for one resource in this ingress lease's pool. Policy freshness has its own fixed deadline; renewing the process lease never extends it.
+func (c *Client) ReadIngressVisitorPolicyWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadIngressVisitorPolicyRequestWithBody(c.Server, ingressId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadIngressVisitorPolicy performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Read current visitor policy for one resource in this ingress lease's pool. Policy freshness has its own fixed deadline; renewing the process lease never extends it.
+func (c *Client) ReadIngressVisitorPolicy(ctx context.Context, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadIngressVisitorPolicyRequest(c.Server, ingressId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2465,6 +2616,107 @@ func NewCloseServiceStreamRequestWithBody(server string, ingressId IngressID, vi
 	return req, nil
 }
 
+// NewAllocateStreamCapacityRequest calls the generic AllocateStreamCapacity builder with application/json body
+func NewAllocateStreamCapacityRequest(server string, ingressId IngressID, body AllocateStreamCapacityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAllocateStreamCapacityRequestWithBody(server, ingressId, "application/json", bodyReader)
+}
+
+// NewAllocateStreamCapacityRequestWithBody constructs an http.Request for the AllocateStreamCapacity method, with any body, and a specified content type
+func NewAllocateStreamCapacityRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/stream-capacity", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRetireStreamCapacityRequest calls the generic RetireStreamCapacity builder with application/json body
+func NewRetireStreamCapacityRequest(server string, ingressId IngressID, allocationId string, body RetireStreamCapacityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRetireStreamCapacityRequestWithBody(server, ingressId, allocationId, "application/json", bodyReader)
+}
+
+// NewRetireStreamCapacityRequestWithBody constructs an http.Request for the RetireStreamCapacity method, with any body, and a specified content type
+func NewRetireStreamCapacityRequestWithBody(server string, ingressId IngressID, allocationId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "allocation_id", allocationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/stream-capacity/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetIngressTransportCertificateRequest calls the generic GetIngressTransportCertificate builder with application/json body
 func NewGetIngressTransportCertificateRequest(server string, ingressId IngressID, body GetIngressTransportCertificateJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -2540,6 +2792,53 @@ func NewReportIngressUsageRequestWithBody(server string, ingressId IngressID, co
 	}
 
 	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/usage-reports", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReadIngressVisitorPolicyRequest calls the generic ReadIngressVisitorPolicy builder with application/json body
+func NewReadIngressVisitorPolicyRequest(server string, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReadIngressVisitorPolicyRequestWithBody(server, ingressId, "application/json", bodyReader)
+}
+
+// NewReadIngressVisitorPolicyRequestWithBody constructs an http.Request for the ReadIngressVisitorPolicy method, with any body, and a specified content type
+func NewReadIngressVisitorPolicyRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/visitor-policy", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2787,6 +3086,34 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	CloseServiceStreamWithResponse(ctx context.Context, ingressId IngressID, visitorConnectionId VisitorConnectionID, body CloseServiceStreamJSONRequestBody, reqEditors ...RequestEditorFn) (*CloseServiceStreamResponse, error)
 
+	// AllocateStreamCapacityWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/stream-capacity (the `AllocateStreamCapacity` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Allocate or renew a bounded part of one run's connection capacity for this exact ingress process. Reuse request_id on retries. Expired or retired allocations require a new request_id and never recover old reservations.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	AllocateStreamCapacityWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AllocateStreamCapacityResponse, error)
+
+	// AllocateStreamCapacityWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/stream-capacity (the `AllocateStreamCapacity` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Allocate or renew a bounded part of one run's connection capacity for this exact ingress process. Reuse request_id on retries. Expired or retired allocations require a new request_id and never recover old reservations.
+	AllocateStreamCapacityWithResponse(ctx context.Context, ingressId IngressID, body AllocateStreamCapacityJSONRequestBody, reqEditors ...RequestEditorFn) (*AllocateStreamCapacityResponse, error)
+
+	// RetireStreamCapacityWithBodyWithResponse performs a DELETE /internal/v1/ingresses/{ingress_id}/stream-capacity/{allocation_id} (the `RetireStreamCapacity` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Retire this process's exact allocation. Its capacity remains charged until the last granted deadline, so stale owners cannot double-spend reissued capacity.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RetireStreamCapacityWithBodyWithResponse(ctx context.Context, ingressId IngressID, allocationId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RetireStreamCapacityResponse, error)
+
+	// RetireStreamCapacityWithResponse performs a DELETE /internal/v1/ingresses/{ingress_id}/stream-capacity/{allocation_id} (the `RetireStreamCapacity` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Retire this process's exact allocation. Its capacity remains charged until the last granted deadline, so stale owners cannot double-spend reissued capacity.
+	RetireStreamCapacityWithResponse(ctx context.Context, ingressId IngressID, allocationId string, body RetireStreamCapacityJSONRequestBody, reqEditors ...RequestEditorFn) (*RetireStreamCapacityResponse, error)
+
 	// GetIngressTransportCertificateWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/transport-certificate (the `GetIngressTransportCertificate` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -2814,6 +3141,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
 	ReportIngressUsageWithResponse(ctx context.Context, ingressId IngressID, body ReportIngressUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportIngressUsageResponse, error)
+
+	// ReadIngressVisitorPolicyWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Read current visitor policy for one resource in this ingress lease's pool. Policy freshness has its own fixed deadline; renewing the process lease never extends it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ReadIngressVisitorPolicyWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadIngressVisitorPolicyResponse, error)
+
+	// ReadIngressVisitorPolicyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Read current visitor policy for one resource in this ingress lease's pool. Policy freshness has its own fixed deadline; renewing the process lease never extends it.
+	ReadIngressVisitorPolicyWithResponse(ctx context.Context, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadIngressVisitorPolicyResponse, error)
 }
 
 type RegisterIngressResponse struct {
@@ -3618,6 +3959,95 @@ func (r CloseServiceStreamResponse) ContentType() string {
 	return ""
 }
 
+type AllocateStreamCapacityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *StreamCapacityAllocation
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AllocateStreamCapacityResponse) GetJSON200() *StreamCapacityAllocation {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AllocateStreamCapacityResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AllocateStreamCapacityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AllocateStreamCapacityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AllocateStreamCapacityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AllocateStreamCapacityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RetireStreamCapacityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RetireStreamCapacityResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RetireStreamCapacityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RetireStreamCapacityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RetireStreamCapacityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RetireStreamCapacityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetIngressTransportCertificateResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3701,6 +4131,54 @@ func (r ReportIngressUsageResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ReportIngressUsageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReadIngressVisitorPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VisitorPolicyUpdate
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReadIngressVisitorPolicyResponse) GetJSON200() *VisitorPolicyUpdate {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReadIngressVisitorPolicyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReadIngressVisitorPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReadIngressVisitorPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReadIngressVisitorPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReadIngressVisitorPolicyResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -4071,6 +4549,58 @@ func (c *ClientWithResponses) CloseServiceStreamWithResponse(ctx context.Context
 	return ParseCloseServiceStreamResponse(rsp)
 }
 
+// AllocateStreamCapacityWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/stream-capacity (the `AllocateStreamCapacity` operationId) request,
+// with any type of body and a specified content type.
+//
+// Allocate or renew a bounded part of one run's connection capacity for this exact ingress process. Reuse request_id on retries. Expired or retired allocations require a new request_id and never recover old reservations.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AllocateStreamCapacityWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AllocateStreamCapacityResponse, error) {
+	rsp, err := c.AllocateStreamCapacityWithBody(ctx, ingressId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAllocateStreamCapacityResponse(rsp)
+}
+
+// AllocateStreamCapacityWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/stream-capacity (the `AllocateStreamCapacity` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Allocate or renew a bounded part of one run's connection capacity for this exact ingress process. Reuse request_id on retries. Expired or retired allocations require a new request_id and never recover old reservations.
+func (c *ClientWithResponses) AllocateStreamCapacityWithResponse(ctx context.Context, ingressId IngressID, body AllocateStreamCapacityJSONRequestBody, reqEditors ...RequestEditorFn) (*AllocateStreamCapacityResponse, error) {
+	rsp, err := c.AllocateStreamCapacity(ctx, ingressId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAllocateStreamCapacityResponse(rsp)
+}
+
+// RetireStreamCapacityWithBodyWithResponse performs a DELETE /internal/v1/ingresses/{ingress_id}/stream-capacity/{allocation_id} (the `RetireStreamCapacity` operationId) request,
+// with any type of body and a specified content type.
+//
+// Retire this process's exact allocation. Its capacity remains charged until the last granted deadline, so stale owners cannot double-spend reissued capacity.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RetireStreamCapacityWithBodyWithResponse(ctx context.Context, ingressId IngressID, allocationId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RetireStreamCapacityResponse, error) {
+	rsp, err := c.RetireStreamCapacityWithBody(ctx, ingressId, allocationId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRetireStreamCapacityResponse(rsp)
+}
+
+// RetireStreamCapacityWithResponse performs a DELETE /internal/v1/ingresses/{ingress_id}/stream-capacity/{allocation_id} (the `RetireStreamCapacity` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Retire this process's exact allocation. Its capacity remains charged until the last granted deadline, so stale owners cannot double-spend reissued capacity.
+func (c *ClientWithResponses) RetireStreamCapacityWithResponse(ctx context.Context, ingressId IngressID, allocationId string, body RetireStreamCapacityJSONRequestBody, reqEditors ...RequestEditorFn) (*RetireStreamCapacityResponse, error) {
+	rsp, err := c.RetireStreamCapacity(ctx, ingressId, allocationId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRetireStreamCapacityResponse(rsp)
+}
+
 // GetIngressTransportCertificateWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/transport-certificate (the `GetIngressTransportCertificate` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -4121,6 +4651,32 @@ func (c *ClientWithResponses) ReportIngressUsageWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseReportIngressUsageResponse(rsp)
+}
+
+// ReadIngressVisitorPolicyWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
+// with any type of body and a specified content type.
+//
+// Read current visitor policy for one resource in this ingress lease's pool. Policy freshness has its own fixed deadline; renewing the process lease never extends it.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ReadIngressVisitorPolicyWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadIngressVisitorPolicyResponse, error) {
+	rsp, err := c.ReadIngressVisitorPolicyWithBody(ctx, ingressId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadIngressVisitorPolicyResponse(rsp)
+}
+
+// ReadIngressVisitorPolicyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Read current visitor policy for one resource in this ingress lease's pool. Policy freshness has its own fixed deadline; renewing the process lease never extends it.
+func (c *ClientWithResponses) ReadIngressVisitorPolicyWithResponse(ctx context.Context, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadIngressVisitorPolicyResponse, error) {
+	rsp, err := c.ReadIngressVisitorPolicy(ctx, ingressId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadIngressVisitorPolicyResponse(rsp)
 }
 
 // ParseRegisterIngressResponse parses an HTTP response from a RegisterIngressWithResponse call
@@ -4679,6 +5235,68 @@ func ParseCloseServiceStreamResponse(rsp *http.Response) (*CloseServiceStreamRes
 	return response, nil
 }
 
+// ParseAllocateStreamCapacityResponse parses an HTTP response from a AllocateStreamCapacityWithResponse call
+func ParseAllocateStreamCapacityResponse(rsp *http.Response) (*AllocateStreamCapacityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AllocateStreamCapacityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest StreamCapacityAllocation
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRetireStreamCapacityResponse parses an HTTP response from a RetireStreamCapacityWithResponse call
+func ParseRetireStreamCapacityResponse(rsp *http.Response) (*RetireStreamCapacityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RetireStreamCapacityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetIngressTransportCertificateResponse parses an HTTP response from a GetIngressTransportCertificateWithResponse call
 func ParseGetIngressTransportCertificateResponse(rsp *http.Response) (*GetIngressTransportCertificateResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -4728,6 +5346,39 @@ func ParseReportIngressUsageResponse(rsp *http.Response) (*ReportIngressUsageRes
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReadIngressVisitorPolicyResponse parses an HTTP response from a ReadIngressVisitorPolicyWithResponse call
+func ParseReadIngressVisitorPolicyResponse(rsp *http.Response) (*ReadIngressVisitorPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReadIngressVisitorPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VisitorPolicyUpdate
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -4795,11 +5446,20 @@ type ServerInterface interface {
 	// (DELETE /internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id})
 	CloseServiceStream(w http.ResponseWriter, r *http.Request, ingressId IngressID, visitorConnectionId VisitorConnectionID)
 
+	// (POST /internal/v1/ingresses/{ingress_id}/stream-capacity)
+	AllocateStreamCapacity(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+
+	// (DELETE /internal/v1/ingresses/{ingress_id}/stream-capacity/{allocation_id})
+	RetireStreamCapacity(w http.ResponseWriter, r *http.Request, ingressId IngressID, allocationId string)
+
 	// (POST /internal/v1/ingresses/{ingress_id}/transport-certificate)
 	GetIngressTransportCertificate(w http.ResponseWriter, r *http.Request, ingressId IngressID)
 	// ReportIngressUsage Store cumulative public URL usage from one ingress process run
 	// (POST /internal/v1/ingresses/{ingress_id}/usage-reports)
 	ReportIngressUsage(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+
+	// (POST /internal/v1/ingresses/{ingress_id}/visitor-policy)
+	ReadIngressVisitorPolicy(w http.ResponseWriter, r *http.Request, ingressId IngressID)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -5456,6 +6116,67 @@ func (siw *ServerInterfaceWrapper) CloseServiceStream(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// AllocateStreamCapacity operation middleware
+func (siw *ServerInterfaceWrapper) AllocateStreamCapacity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AllocateStreamCapacity(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RetireStreamCapacity operation middleware
+func (siw *ServerInterfaceWrapper) RetireStreamCapacity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "allocation_id" -------------
+	var allocationId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "allocation_id", r.PathValue("allocation_id"), &allocationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "allocation_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RetireStreamCapacity(w, r, ingressId, allocationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetIngressTransportCertificate operation middleware
 func (siw *ServerInterfaceWrapper) GetIngressTransportCertificate(w http.ResponseWriter, r *http.Request) {
 
@@ -5499,6 +6220,32 @@ func (siw *ServerInterfaceWrapper) ReportIngressUsage(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ReportIngressUsage(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReadIngressVisitorPolicy operation middleware
+func (siw *ServerInterfaceWrapper) ReadIngressVisitorPolicy(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReadIngressVisitorPolicy(w, r, ingressId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5628,6 +6375,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/stream-capacity", wrapper.AllocateStreamCapacity)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/stream-capacity/{allocation_id}", wrapper.RetireStreamCapacity)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/visitor-policy", wrapper.ReadIngressVisitorPolicy)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/direct-services/admit", wrapper.AdmitDirectServiceVisitor)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/direct-services/status", wrapper.DirectServiceVisitorStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/direct-services/promote", wrapper.PromoteDirectServiceVisitor)

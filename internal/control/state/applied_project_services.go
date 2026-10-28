@@ -62,7 +62,7 @@ func (d *Database) createAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	if err != nil {
 		return "", err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO control.service_grants(id,service_id,team_id,kind,identity_id,auto_owner,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'identity',$4,true,$4,$5,$6,$7)`, grant, id, r.TeamID, r.ActorID, "applied-owner/"+id, digest[:], r.Now)
+	_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,service_id,team_id,kind,identity_id,auto_owner,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'identity',$4,true,$4,$5,$6,$7)`, grant, id, r.TeamID, r.ActorID, "applied-owner/"+id, digest[:], r.Now)
 	return id, err
 }
 
@@ -261,7 +261,7 @@ func (d *Database) retireProjectResource(ctx context.Context, tx pgx.Tx, q *cont
 		if _, err := q.DeleteService(ctx, controlstatedb.DeleteServiceParams{ID: s.ServiceID.String, TeamID: s.TeamID, Now: timestamptz(now)}); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE control.service_grants SET revoked_at=COALESCE(revoked_at,$2) WHERE service_id=$1`, s.ServiceID.String, now); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE control.visitor_grants SET revoked_at=COALESCE(revoked_at,$2) WHERE service_id=$1`, s.ServiceID.String, now); err != nil {
 			return err
 		}
 		if err := serviceRoutingTombstone(ctx, q, s.ServiceID.String, now); err != nil {
@@ -309,7 +309,7 @@ func reconcileProjectVisitorGrant(ctx context.Context, tx pgx.Tx, s controlstate
 		}
 		table := "control.visitor_grants"
 		if s.ServiceID.Valid {
-			table = "control.service_grants"
+			table = "control.visitor_grants"
 		}
 		if _, err := tx.Exec(ctx, `UPDATE `+table+` SET revoked_at=COALESCE(revoked_at,$2) WHERE id=$1`, grant, now); err != nil {
 			return "", err
@@ -329,7 +329,7 @@ func reconcileProjectVisitorGrant(ctx context.Context, tx pgx.Tx, s controlstate
 	}
 	digest := sha256.Sum256([]byte("applied-team/" + id))
 	if s.ServiceID.Valid {
-		_, err = tx.Exec(ctx, `INSERT INTO control.service_grants(id,service_id,team_id,kind,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'team',$4,$1,$5,$6)`, id, s.ServiceID.String, s.TeamID, actor, digest[:], now)
+		_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,service_id,team_id,kind,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'team',$4,$1,$5,$6)`, id, s.ServiceID.String, s.TeamID, actor, digest[:], now)
 	} else {
 		_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,public_url_id,team_id,kind,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'team',$4,$1,$5,$6)`, id, s.PublicURLID.String, s.TeamID, actor, digest[:], now)
 	}

@@ -250,6 +250,29 @@ tasks:
       - go test ./internal/naming -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime='{{.TIME}}'
       - go test ./internal/naming -run='^$' -fuzz='^FuzzDomainPolicy$' -fuzztime='{{.TIME}}'
       - go test ./internal/clioutput -run='^$' -fuzz='^FuzzRender$' -fuzztime='{{.TIME}}'
+      - task: test:fuzz:visitors
+        vars:
+          TIME: "{{.TIME}}"
+
+  test:visitor-policy:
+    dir: "{{.ROOT_DIR}}"
+    desc: Verify signed visitor permissions and local policy deadlines without external infrastructure
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/security/visitortoken ./internal/policy/visitorlease ./internal/publisher ./internal/ingress -run='^Test(PolicyLease|PolicyKey|PolicyClock|PublisherVisitorPolicy|IngressVisitorPolicy|VisitorTokens|Token|NativeProof|VerificationEvidence|BearerRenewal)' -count=1
+
+  test:fuzz:visitors:
+    dir: "{{.ROOT_DIR}}"
+    desc: Fuzz bounded signed visitor token parsing and verification
+    vars:
+      TIME: '{{default "15s" .TIME}}'
+    cmds:
+      - go test ./internal/security/visitortoken -run='^$' -fuzz='^FuzzVisitorTokenVerification$' -fuzztime='{{.TIME}}' -parallel=2
+
+  test:stream-capacity:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check delegated connection slots, renewal deadlines, replay protection, and both publisher connections
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/ingress ./internal/policy/visitorlease ./internal/publisher ./internal/publisher/service ./pkg/protocol/tunnelv1 -run='^Test(StreamReservation|StreamCapacity|PublisherStreamCapacity|PublicURLStreamCapacity|Reservation)' -count=1
 
   test:fuzz:publisher-observability:
     dir: "{{.ROOT_DIR}}"

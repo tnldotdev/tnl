@@ -71,6 +71,9 @@ func (d *daemon) startControlWorkers(
 	if cfg.StorageKeyPrevious != "" {
 		log.Printf("stored secrets re-encrypted with the current storage key")
 	}
+	if err := database.PrepareVisitorSigningKeys(ctx, cfg.ControlOrigin(), time.Now()); err != nil {
+		return fmt.Errorf("prepare visitor signing keys: %w", err)
+	}
 	var dnsProvider interface {
 		dns.Provider
 		dns.ChallengeProvider

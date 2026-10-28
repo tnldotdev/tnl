@@ -5,13 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tnldotdev/tnl/internal/policy/httpsubject"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestServiceHTTPRunCredentialBoundary(t *testing.T) {
-	run := ServiceHTTPRun{Subject: httpsubject.Subject{Kind: httpsubject.Service, ID: "svc_" + strings.Repeat("A", 22)}, RunID: "srun_" + strings.Repeat("A", 22), Number: 1, Token: credentials.ServiceRunToken(strings.Repeat("A", 43))}
+	run := ServiceHTTPRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_" + strings.Repeat("A", 22)}, RunID: "srun_" + strings.Repeat("A", 22), Number: 1, Token: credentials.ServiceRunToken(strings.Repeat("A", 43))}
 	if !run.valid() {
 		t.Fatal("canonical managed run credential was rejected")
 	}
@@ -27,7 +27,7 @@ func TestServiceHTTPRunCredentialBoundary(t *testing.T) {
 		}
 	}
 	public := run
-	public.Subject = httpsubject.Subject{Kind: httpsubject.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
+	public.Subject = visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
 	if public.valid() {
 		t.Fatal("managed token authorized a public URL subject")
 	}

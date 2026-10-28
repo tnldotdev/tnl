@@ -1,6 +1,15 @@
 version: "3"
 
 tasks:
+  visitor-authority:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check visitor issuance, policy, allocation and fresh-baseline authority with disposable PostgreSQL
+    vars:
+      RUN: '{{default "^TestIntegration(Visitor|ConcurrentVisitor|StreamCapacity|MigrationRejects|PublisherFreshBaseline|PublisherVisitorPolicy|ServiceHTTP|ServiceActor)" .RUN}}'
+      FLAGS: '{{default "" .FLAGS}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test {{.FLAGS}} -race -v ./internal/control/state ./internal/control/api/public -run='{{.RUN}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
   live-authorization:
     dir: "{{.ROOT_DIR}}"
     desc: Check browser and alias authorization in disposable PostgreSQL

@@ -1,6 +1,7 @@
 -- name: VisitorPermission :one
-SELECT reason::text, expires_at::timestamptz FROM control.visitor_permission(
-    sqlc.arg(public_url_id)::text, sqlc.arg(identity_id)::text, sqlc.arg(preview_id)::text, sqlc.arg(now)::timestamptz);
+SELECT reason::text, expires_at::timestamptz FROM control.visitor_identity_permission(
+    sqlc.arg(resource_kind)::text,sqlc.arg(resource_id)::text,sqlc.arg(identity_id)::text,
+    sqlc.arg(control_session_id)::text,sqlc.arg(preview_id)::text,sqlc.arg(now)::timestamptz);
 
 -- name: LockVisitorIdentity :one
 SELECT * FROM control.identities WHERE id = $1 AND disabled_at IS NULL FOR SHARE;
@@ -15,7 +16,7 @@ SELECT * FROM control.control_sessions WHERE id = $1 FOR SHARE;
 SELECT u.id, u.team_id, t.display_name AS team_name, u.canonical_hostname, u.service_protocol,
     permission.reason::text AS visitor_access
 FROM control.public_urls u JOIN control.teams t ON t.id = u.team_id
-CROSS JOIN LATERAL control.visitor_permission(u.id, sqlc.arg(identity_id)::text,
+CROSS JOIN LATERAL control.visitor_identity_permission('public_url',u.id,sqlc.arg(identity_id)::text,sqlc.arg(control_session_id)::text,
     COALESCE((SELECT p.id FROM control.previews p JOIN control.preview_public_urls included ON included.preview_id = p.id
       WHERE included.public_url_id = u.id AND p.team_access_enabled AND p.demo_publish_run_id IS NULL ORDER BY p.id LIMIT 1), ''),
     sqlc.arg(now)::timestamptz) permission
@@ -27,7 +28,7 @@ ORDER BY u.id LIMIT 101;
 INSERT INTO control.visitor_grants(id, public_url_id, team_id, kind, identity_id, created_by_identity_id,
     idempotency_key, request_digest, created_at, expires_at)
 VALUES ($1, $2, $3, $4, sqlc.narg(identity_id), $5, $6, $7, $8, sqlc.narg(expires_at))
-ON CONFLICT (created_by_identity_id, kind, idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING *;
+ON CONFLICT (resource_kind,created_by_identity_id,kind,idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING *;
 
 -- name: ListVisitorGrants :many
 SELECT * FROM control.visitor_grants WHERE public_url_id = $1 ORDER BY id;

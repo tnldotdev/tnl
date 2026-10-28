@@ -10,6 +10,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
@@ -141,7 +142,7 @@ func TestRoutingTableAcceptsLargePublicURLIPPolicy(t *testing.T) {
 			t.Fatal(err)
 		}
 		entry.AllowedIpHashes = append(entry.AllowedIpHashes, ingressv1.HashedIPPrefix{
-			Family: ingressv1.HashedIPPrefixFamily(hashed.Family), PrefixLength: hashed.Bits, Digest: hashed.Digest,
+			Family: controlv1.HashedIPPrefixFamily(hashed.Family), PrefixLength: hashed.Bits, Digest: hashed.Digest,
 		})
 	}
 	event := ingressv1.IngressRoutingTableEvent{
