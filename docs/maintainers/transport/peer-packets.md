@@ -186,8 +186,22 @@ deadline from request start plus the observed remaining duration, at most five
 minutes, rejecting a response already expired in transit. it cannot restart this
 deadline when delivery begins. publisher replacement, drain, close, cancellation,
 or claim expiry interrupt and join the packet workers and partial introductions.
-closing one pair removes its live registration while retaining the generation
-tombstone; it leaves sibling pairs and the borrowed publisher session alive.
+connector socket loss detaches its carrier while the relay bridge retains the
+publisher registration, replay history, and last confirmed deadline. bridge
+expiry removes the registration and keeps its generation tombstone; sibling pairs
+and the borrowed publisher session stay alive.
+
+`native_leg_handoff` selects a new signed hello nonce and names the exact previous
+selected nonce. the relay requires the same pair, delivery, source, assignment,
+and process lease, consumes the predecessor once, and clips selection to both
+existing deadlines. it retains at most 64 selected candidate nonces per bridge;
+a consumed nonce cannot return as a later candidate. an ordinary
+`native_leg_activate` cannot perform this handoff or reopen a retired generation.
+the connector joins the failed leg and its renewal work before preparing a
+replacement. setup failures may retry before selection; an ambiguous handoff
+response stops recovery of that slot. replacing either carrier preserves the
+inner QUIC connection and target sockets. assignment, source, and endpoint
+replacement still fence the existing pair rather than inherit its authority.
 
 pair renewal alone never advances an existing relay claim. connector background
 work sends a fresh `native_leg_renew` proof on the existing native control
@@ -308,7 +322,9 @@ the control-backed continuity proof runs with
 it uses disposable PostgreSQL, two real direct-socket relays, and no ingress.
 QUIC and TLS/TCP publishers each serve all connector carrier combinations.
 UDP packet loss and closing a native outer TCP session leave one target socket
-and its monotonic application counter intact. this fixture does not qualify
+and its monotonic application counter intact. the reconnect case replaces each
+TCP carrier, then closes both replacements together and requires recovery on
+the same target. this fixture does not qualify
 load-balancer source handling or assignment replacement.
 the renewal case also retains that target past the original pair deadline,
 checks that both durable leg claims advanced, then applies the carrier faults.

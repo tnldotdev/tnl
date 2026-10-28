@@ -52,7 +52,7 @@ func (s *Session) RenewNativeLeg(ctx context.Context, requestID string, proof tu
 // HandleNativeLegControl owns the accepted native control stream until it
 // stops. the callback must check current authority without reviving an expired
 // owner. packet stream/datagram readers stay with their existing role owner.
-func (s *Session) HandleNativeLegControl(ctx context.Context, activate func(context.Context) error, authorize func(context.Context, tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error)) (err error) {
+func (s *Session) HandleNativeLegControl(ctx context.Context, activate func(context.Context, tunnelv1.NativeLegBinding) error, authorize func(context.Context, tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error)) (err error) {
 	if s == nil || s.role != tunnelv1.NativeConnector || s.nativeLeg == nil || authorize == nil {
 		return &ProtocolError{Code: tunnelv1.Unauthenticated}
 	}
@@ -68,12 +68,12 @@ func (s *Session) HandleNativeLegControl(ctx context.Context, activate func(cont
 		if err != nil {
 			return err
 		}
-		if request.Type == tunnelv1.NativeLegActivate {
+		if request.Type == tunnelv1.NativeLegActivate || request.Type == tunnelv1.NativeLegHandoff {
 			var authErr error
 			if activate == nil || s.nativeActivated || request.NativeLegBinding == nil || !request.NativeLegBinding.Matches(*s.nativeLeg) {
 				authErr = &ProtocolError{Code: tunnelv1.Unauthenticated}
 			} else {
-				authErr = activate(ctx)
+				authErr = activate(ctx, *request.NativeLegBinding)
 				if authErr == nil {
 					authErr = context.Cause(ctx)
 				}
@@ -88,7 +88,11 @@ func (s *Session) HandleNativeLegControl(ctx context.Context, activate func(cont
 				return errors.Join(authErr, writeErr)
 			}
 			s.nativeActivated = true
-			if err := tunnelv1.WriteControl(s.control, tunnelv1.Message{Type: tunnelv1.NativeLegActivated, ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID, NativeLegBinding: request.NativeLegBinding}); err != nil {
+			accepted := tunnelv1.NativeLegActivated
+			if request.Type == tunnelv1.NativeLegHandoff {
+				accepted = tunnelv1.NativeLegHandedOff
+			}
+			if err := tunnelv1.WriteControl(s.control, tunnelv1.Message{Type: accepted, ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID, NativeLegBinding: request.NativeLegBinding}); err != nil {
 				return err
 			}
 			continue

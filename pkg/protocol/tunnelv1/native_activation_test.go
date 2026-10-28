@@ -19,7 +19,7 @@ func TestNativeLegActivationClosedUnionAndExactNonce(t *testing.T) {
 	if binding.Matches(*hello.NativePairLegProof) {
 		t.Fatal("foreign hello nonce selected this candidate")
 	}
-	for _, name := range []string{"control-native-activate", "control-native-activated"} {
+	for _, name := range []string{"control-native-activate", "control-native-activated", "control-native-handoff", "control-native-handed-off"} {
 		var original map[string]json.RawMessage
 		if err := json.Unmarshal(readFixture(t, name+".json"), &original); err != nil {
 			t.Fatal(err)

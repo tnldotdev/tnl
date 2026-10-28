@@ -133,9 +133,13 @@ control request, authority time, or application admission. the relay rechecks it
 current process lease, publisher assignment, and claim deadline before installing
 packet forwarding. closing a passive loser cannot retire the winner's publisher
 registration. a duplicate activation cannot replace a live registration or reopen
-a retired delivery generation. this is startup selection, not reconnect handoff:
-closing the active outer session still retires that registration. production
-native admission remains disabled until its source authority is qualified.
+a retired delivery generation. startup selection and reconnect handoff have
+separate control messages. `native_leg_handoff` binds the new signed hello to
+the previous selected nonce while retaining the publisher registration and its
+replay state. connector loss detaches the carrier; the bridge retains only its
+last confirmed deadline. rejected or ambiguous handoffs cannot retry selection,
+and expiry still retires the registration. production native admission remains
+disabled until its source authority is qualified.
 
 `httpstream` enables HTTP/1 full duplex before target responses and bounds the
 upload, including trickles, to 30 seconds. Body completion ends the read deadline;

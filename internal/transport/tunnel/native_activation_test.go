@@ -19,7 +19,7 @@ func TestNativeLegActivationSelectsOriginalHelloAfterPassiveRenewal(t *testing.T
 	defer cancel()
 	var activations, renewals atomic.Int32
 	done := tunnelWorker(t, func() { cancel(); _ = server.Close() }, func() error {
-		return server.HandleNativeLegControl(ctx, func(context.Context) error {
+		return server.HandleNativeLegControl(ctx, func(context.Context, tunnelv1.NativeLegBinding) error {
 			activations.Add(1)
 			return nil
 		}, func(context.Context, tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
@@ -62,7 +62,7 @@ func TestNativeLegActivationRejectsForeignCandidate(t *testing.T) {
 	defer cancel()
 	var calls atomic.Int32
 	done := tunnelWorker(t, func() { cancel(); _ = server.Close() }, func() error {
-		return server.HandleNativeLegControl(ctx, func(context.Context) error { calls.Add(1); return nil },
+		return server.HandleNativeLegControl(ctx, func(context.Context, tunnelv1.NativeLegBinding) error { calls.Add(1); return nil },
 			func(context.Context, tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
 				t.Error("selection renewed authority")
 				return tunnelv1.NativePairLegAccepted{}, nil
@@ -92,7 +92,7 @@ func TestNativeLegActivationKeepsCallbackClassificationCauseAndSafeWire(t *testi
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			done := tunnelWorker(t, func() { cancel(); _ = server.Close() }, func() error {
-				return server.HandleNativeLegControl(ctx, func(context.Context) error {
+				return server.HandleNativeLegControl(ctx, func(context.Context, tunnelv1.NativeLegBinding) error {
 					return errors.Join(classification, cause)
 				}, func(context.Context, tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
 					t.Error("selection renewed authority")

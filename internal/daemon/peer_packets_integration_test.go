@@ -143,6 +143,15 @@ func TestIntegrationPeerPacketsRenewNativeClaimsWithoutReopeningTarget(t *testin
 	exerciseNativePacketContinuity(t, "quic", [2]bool{false, true}, 1, true)
 }
 
+func TestIntegrationPeerPacketsReconnectBothNativeCarriersWithoutReopeningTarget(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	for _, publisher := range []string{"quic", "tls-tcp"} {
+		t.Run(publisher, func(t *testing.T) {
+			exerciseNativePacketContinuity(t, publisher, [2]bool{true, true}, -2, false)
+		})
+	}
+}
+
 func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool, loseTCP int, renew bool) {
 	t.Helper()
 	f, issuer := newWorkloadTransportFixtureTopology(t, nil, serviceRuntimeTopologyOptions{nativePeers: true})
@@ -354,6 +363,31 @@ func exerciseNativePacketContinuity(t *testing.T, publisher string, tcp [2]bool,
 		}
 		counter++
 		check(counter)
+	}
+	if loseTCP == -2 {
+		// require each recovered socket before closing both successors together.
+		// no surviving old carrier can hide a failed handoff on either slot.
+		for round := range 2 {
+			for slot := range 2 {
+				connections := listeners[slot].after(accepted[slot])
+				if len(connections) != 1 {
+					t.Fatal("reconnect fault did not select one exact native socket", slot, len(connections))
+				}
+				accepted[slot] = listeners[slot].snapshot()
+				if err := connections[0].Close(); err != nil {
+					t.Fatal(err)
+				}
+				if round == 0 {
+					privateWait(t, 5*time.Second, func(context.Context) (bool, error) {
+						return len(listeners[slot].after(accepted[slot])) == 1, nil
+					})
+					counter++
+					check(counter)
+				}
+			}
+			counter++
+			check(counter)
+		}
 	}
 	counter++
 	check(counter)

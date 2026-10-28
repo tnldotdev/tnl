@@ -25,12 +25,13 @@ type nativePacketSession struct {
 	mu        sync.Mutex
 	closed    bool
 	jobs      map[*nativePairDelivery]struct{}
+	bridges   map[[16]byte]*nativePairBridge
 	once      sync.Once
 }
 
 func newNativePacketSession(parent context.Context, transport muxsession.Session) (*nativePacketSession, error) {
 	ctx, cancel := context.WithCancel(parent)
-	p := &nativePacketSession{ctx: ctx, cancel: cancel, jobs: make(map[*nativePairDelivery]struct{})}
+	p := &nativePacketSession{ctx: ctx, cancel: cancel, jobs: make(map[*nativePairDelivery]struct{}), bridges: make(map[[16]byte]*nativePairBridge)}
 	var err error
 	if datagrams, ok := transport.(muxsession.DatagramSession); ok {
 		// a QUIC session must have negotiated datagrams on both sides; do not
@@ -68,6 +69,10 @@ func (p *nativePacketSession) Close() {
 		for job := range p.jobs {
 			jobs = append(jobs, job)
 		}
+		bridges := make([]*nativePairBridge, 0, len(p.bridges))
+		for _, bridge := range p.bridges {
+			bridges = append(bridges, bridge)
+		}
 		p.mu.Unlock()
 		p.cancel()
 		if p.datagrams != nil {
@@ -78,6 +83,9 @@ func (p *nativePacketSession) Close() {
 		}
 		for _, job := range jobs {
 			<-job.done
+		}
+		for _, bridge := range bridges {
+			<-bridge.done
 		}
 	})
 }
@@ -100,6 +108,7 @@ type nativePairDelivery struct {
 	deadline                   time.Time
 	changed                    chan struct{}
 	authorityDone              chan struct{}
+	bridge                     *nativePairBridge
 }
 
 func (*nativePairDelivery) String() string   { return "native pair packet delivery" }
@@ -184,8 +193,8 @@ func (d *nativePairDelivery) serve(a *NativeConnectorAcceptor, session *tunnel.S
 	d.serving = true
 	finished := make(chan error, 3)
 	d.workers.Go(func() {
-		finished <- session.HandleNativeLegControl(d.ctx, func(ctx context.Context) error {
-			return d.activate(ctx, a, proof, claim, finished)
+		finished <- session.HandleNativeLegControl(d.ctx, func(ctx context.Context, selection tunnelv1.NativeLegBinding) error {
+			return d.activate(ctx, a, proof, claim, selection)
 		}, func(ctx context.Context, proof tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
 			return d.renewClaim(ctx, a, d.transport, proof, claim)
 		})
@@ -218,8 +227,8 @@ func (d *nativePairDelivery) serve(a *NativeConnectorAcceptor, session *tunnel.S
 
 // only the explicitly selected carrier may install publisher registration state.
 // closing an authenticated but unselected candidate cannot spend its tombstone
-// or displace a sibling's live replay state. reconnect handoff is separate.
-func (d *nativePairDelivery) activate(ctx context.Context, a *NativeConnectorAcceptor, proof tunnelv1.NativePairLegProof, claim nativeConnectorClaim, finished chan<- error) error {
+// or displace a sibling's live replay state. handoff selects an exact predecessor.
+func (d *nativePairDelivery) activate(ctx context.Context, a *NativeConnectorAcceptor, proof tunnelv1.NativePairLegProof, claim nativeConnectorClaim, selection tunnelv1.NativeLegBinding) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed || d.activated || d.ctx.Err() != nil || ctx.Err() != nil || !d.deadline.After(a.now()) {
@@ -233,28 +242,12 @@ func (d *nativePairDelivery) activate(ctx context.Context, a *NativeConnectorAcc
 	if err != nil {
 		return errors.Join(&tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}, err)
 	}
-	binding := peer.PairBinding{Delivery: tunnelv1.PeerDelivery{Pair: id, Generation: uint64(claim.receipt.DeliveryGeneration)},
-		Key: claim.key, Kind: peer.NativePeer, Path: uint8(claim.receipt.ConnectionSlot), Role: 0}
-	d.towardPublisher, err = d.publisher.register(ctx, binding, true)
+	d.bridge, err = d.publisher.selectNativeBridge(ctx, a, d, proof, claim, id, selection)
 	if err != nil {
-		return errors.Join(&tunnel.ProtocolError{Code: tunnelv1.Unavailable}, err)
+		return err
 	}
+	d.towardPublisher = d.bridge.publisher
 	d.activated = true
-	connectorReady := make(chan struct{})
-	d.workers.Go(func() {
-		finished <- forwardNativePackets(d.ctx, d.towardConnector, d.towardPublisher, connectorReady)
-	})
-	d.workers.Go(func() {
-		// a publisher probe must not spend a send timeout waiting for the
-		// connector's first tagged TLS/yamux introduction. the connector can
-		// still be preparing its other leg after reading hello_accepted.
-		select {
-		case <-connectorReady:
-			finished <- forwardNativePackets(d.ctx, d.towardPublisher, d.towardConnector, nil)
-		case <-d.ctx.Done():
-			finished <- d.ctx.Err()
-		}
-	})
 	return nil
 }
 
@@ -285,8 +278,8 @@ func (d *nativePairDelivery) Close() {
 		d.cancel()
 		d.stopPublisher()
 		<-d.authorityDone
-		if d.towardPublisher != nil {
-			_ = d.towardPublisher.Close()
+		if d.bridge != nil {
+			d.bridge.detach(d)
 		}
 		if d.towardConnector != nil {
 			_ = d.towardConnector.Close()

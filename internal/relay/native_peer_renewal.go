@@ -69,6 +69,11 @@ func (d *nativePairDelivery) renewClaim(ctx context.Context, a *NativeConnectorA
 	if d.closed || d.ctx.Err() != nil || !d.deadline.After(a.now()) || !next.receipt.ExpiresAt.After(a.now()) {
 		return tunnelv1.NativePairLegAccepted{}, denied
 	}
+	if d.bridge != nil {
+		if err := d.bridge.renew(d, next.receipt.ExpiresAt, a.now()); err != nil {
+			return tunnelv1.NativePairLegAccepted{}, err
+		}
+	}
 	d.deadline = next.receipt.ExpiresAt
 	close(d.changed)
 	d.changed = make(chan struct{})

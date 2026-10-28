@@ -26,6 +26,7 @@ type peerConnection struct {
 	source    string
 	socket    *peer.Socket
 	legs      [2]*peerRelayLeg
+	paths     [2]*peer.CarrierSlot
 	packets   *peer.Endpoint
 	transport *quic.Transport
 	session   muxsession.Session
@@ -47,6 +48,7 @@ type peerRelayLeg struct {
 	until   time.Time
 	changed chan struct{}
 	retired bool
+	nonce   [32]byte
 }
 
 func (l *peerRelayLeg) Close() {
@@ -81,7 +83,7 @@ func preparePeerConnection(ctx context.Context, config Config, prepared *prepare
 	results := make(chan result, 2)
 	for slot := range 2 {
 		go func() {
-			leg, err := racePeerRelayLeg(startup, life, config, p.socket, initial, signer, slot)
+			leg, err := racePeerRelayLeg(startup, life, config, p.socket, initial, signer, slot, nil)
 			results <- result{slot, leg, err}
 		}()
 	}
@@ -102,7 +104,9 @@ func preparePeerConnection(ctx context.Context, config Config, prepared *prepare
 	}
 	p.source = p.legs[0].receipt.SourceIP
 	for slot, leg := range p.legs {
-		p.renewals.Go(func() { leg.renewPrepared(prepared, initial, signer, slot) })
+		p.paths[slot] = peer.NewCarrierSlot()
+		_ = p.paths[slot].Install(leg.carrier)
+		p.renewals.Go(func() { p.maintainRelayLeg(config, slot) })
 	}
 	// both relay claims can now be discovered by the publisher. do not start
 	// even packet probes until it has installed its independent registrations.
@@ -126,7 +130,7 @@ func preparePeerConnection(ctx context.Context, config Config, prepared *prepare
 	var packetKey [32]byte
 	copy(packetKey[:], key)
 	clear(key)
-	paths := [3]peer.Carrier{p.legs[0].carrier, p.legs[1].carrier}
+	paths := [3]peer.Carrier{p.paths[0], p.paths[1]}
 	p.packets, err = peer.New(life, peer.Config{Kind: peer.NativePeer, Role: 0, Key: packetKey, Paths: paths})
 	clear(packetKey[:])
 	if err != nil {
@@ -169,7 +173,7 @@ func (p *peerConnection) watch() {
 			return
 		case <-ticker.C:
 			_, err := p.prepared.peerRunForRenewal(p.initial)
-			if err != nil || p.legs[0].ctx.Err() != nil && p.legs[1].ctx.Err() != nil {
+			if err != nil {
 				p.cancel(ErrSelectionExpired)
 				return
 			}
@@ -188,12 +192,17 @@ func (p *peerConnection) closeResources() {
 	if p.packets != nil {
 		_ = p.packets.Close()
 	}
+	p.renewals.Wait()
 	for _, leg := range p.legs {
 		if leg != nil {
 			leg.Close()
 		}
 	}
-	p.renewals.Wait()
+	for _, path := range p.paths {
+		if path != nil {
+			_ = path.Close()
+		}
+	}
 	if p.socket != nil {
 		_ = p.socket.Close()
 	}
@@ -205,13 +214,13 @@ func (p *peerConnection) Close() {
 
 // the race joins both attempts, including a late authenticated loser. each
 // attempt gets its own signed nonce so it cannot replay a consumed leg proof.
-func racePeerRelayLeg(ctx, life context.Context, config Config, socket *peer.Socket, binding preparedPeer, signer Signer, slot int) (*peerRelayLeg, error) {
+func racePeerRelayLeg(ctx, life context.Context, config Config, socket *peer.Socket, binding preparedPeer, signer Signer, slot int, previous *peerLegPredecessor) (*peerRelayLeg, error) {
 	quicConnector := muxsession.QUICConnector{TLSConfig: config.TransportTLS, Dialer: socket, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}
 	tcpConnector := muxsession.TLSYamuxConnector{TLSConfig: config.TransportTLS}
-	return racePeerRelayCandidates(ctx, life, [2]muxsession.Connector{quicConnector, tcpConnector}, binding, signer, slot)
+	return racePeerRelayCandidates(ctx, life, [2]muxsession.Connector{quicConnector, tcpConnector}, binding, signer, slot, previous)
 }
 
-func racePeerRelayCandidates(ctx, life context.Context, connectors [2]muxsession.Connector, binding preparedPeer, signer Signer, slot int) (*peerRelayLeg, error) {
+func racePeerRelayCandidates(ctx, life context.Context, connectors [2]muxsession.Connector, binding preparedPeer, signer Signer, slot int, previous *peerLegPredecessor) (*peerRelayLeg, error) {
 	call, cancel := context.WithCancel(ctx)
 	defer cancel()
 	type result struct {
@@ -264,21 +273,41 @@ func racePeerRelayCandidates(ctx, life context.Context, connectors [2]muxsession
 		winner.mu.Lock()
 		until, retired := winner.until, winner.retired
 		winner.mu.Unlock()
+		if previous != nil {
+			until = minSelectionTime(until, previous.until)
+			if winner.receipt.SourceIP != previous.source {
+				winner.Close()
+				return nil, ErrServiceConnection
+			}
+		}
 		if retired || ctx.Err() != nil || winner.ctx.Err() != nil || !until.After(time.Now()) {
 			winner.Close()
 			return nil, errors.Join(context.Cause(ctx), ErrSelectionExpired)
 		}
 		activation, finish := context.WithDeadline(ctx, until)
-		err := winner.session.ActivateNativeLeg(activation, "activate")
+		var err error
+		if previous == nil {
+			err = winner.session.ActivateNativeLeg(activation, "activate")
+		} else {
+			err = winner.session.HandoffNativeLeg(activation, "handoff", previous.nonce[:])
+		}
 		finish()
 		if err != nil {
 			winner.Close()
+			if previous != nil {
+				err = errors.Join(errPeerHandoffConsumed, err)
+			}
 			return nil, err
 		}
 		if ctx.Err() != nil || winner.ctx.Err() != nil || !until.After(time.Now()) {
 			winner.Close()
-			return nil, errors.Join(context.Cause(ctx), ErrSelectionExpired)
+			return nil, errors.Join(errPeerHandoffConsumed, context.Cause(ctx), ErrSelectionExpired)
 		}
+		winner.mu.Lock()
+		winner.until = until
+		close(winner.changed)
+		winner.changed = make(chan struct{})
+		winner.mu.Unlock()
 		return winner, nil
 	}
 	return nil, errors.Join(ErrServiceConnection, context.Cause(ctx), errors.Join(failures...))
@@ -352,6 +381,8 @@ func dialPeerRelayLeg(ctx, lifetime context.Context, connector muxsession.Connec
 		return nil, err
 	}
 	leg := &peerRelayLeg{session: session, carrier: carrier, receipt: receipt, ctx: life, cancel: cancel, done: make(chan struct{}), until: until, changed: make(chan struct{})}
+	leg.carrier = &peerRelayCarrier{Carrier: carrier, stop: cancel}
+	copy(leg.nonce[:], proof.Nonce)
 	go func() {
 		defer close(leg.done)
 		leg.watchAuthority()

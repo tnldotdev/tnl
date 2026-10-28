@@ -40,6 +40,7 @@ type peerTestSession struct {
 	packets     atomic.Int32
 	activations atomic.Int32
 	activate    func() error
+	selection   func(tunnelv1.NativeLegBinding)
 }
 
 func newPeerTestSession(t *testing.T, datagrams bool, open func(muxsession.Stream)) *peerTestSession {
@@ -153,8 +154,11 @@ func peerHelloSession(t *testing.T, binding preparedPeer, signer Signer, change 
 			if err != nil {
 				return
 			}
-			if request.Type == tunnelv1.NativeLegActivate && request.NativeLegBinding != nil && request.NativeLegBinding.Matches(proof) {
+			if (request.Type == tunnelv1.NativeLegActivate || request.Type == tunnelv1.NativeLegHandoff) && request.NativeLegBinding != nil && request.NativeLegBinding.Matches(proof) {
 				session.activations.Add(1)
+				if session.selection != nil {
+					session.selection(*request.NativeLegBinding)
+				}
 				if session.activate != nil {
 					if err := session.activate(); err != nil {
 						_ = tunnelv1.WriteControl(stream, tunnelv1.Message{Type: tunnelv1.Error, ProtocolVersion: tunnelv1.Version,
@@ -162,7 +166,11 @@ func peerHelloSession(t *testing.T, binding preparedPeer, signer Signer, change 
 						return
 					}
 				}
-				if err := tunnelv1.WriteControl(stream, tunnelv1.Message{Type: tunnelv1.NativeLegActivated, ProtocolVersion: tunnelv1.Version,
+				accepted := tunnelv1.NativeLegActivated
+				if request.Type == tunnelv1.NativeLegHandoff {
+					accepted = tunnelv1.NativeLegHandedOff
+				}
+				if err := tunnelv1.WriteControl(stream, tunnelv1.Message{Type: accepted, ProtocolVersion: tunnelv1.Version,
 					RequestID: request.RequestID, NativeLegBinding: request.NativeLegBinding}); err != nil {
 					return
 				}
@@ -260,7 +268,7 @@ func TestNativePeerRelayRaceJoinsCanceledLateConnect(t *testing.T) {
 		}
 		done := make(chan *peerRelayLeg, 1)
 		go func() {
-			leg, err := racePeerRelayCandidates(t.Context(), t.Context(), connectors, binding, owner.signer, 0)
+			leg, err := racePeerRelayCandidates(t.Context(), t.Context(), connectors, binding, owner.signer, 0, nil)
 			if err != nil {
 				t.Error(err)
 			}
@@ -323,7 +331,7 @@ func TestNativePeerRelayActivationFailureClosesWinnerWithoutRetry(t *testing.T) 
 				}
 				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 				defer cancel()
-				leg, err := racePeerRelayCandidates(ctx, t.Context(), connectors, binding, signer, 0)
+				leg, err := racePeerRelayCandidates(ctx, t.Context(), connectors, binding, signer, 0, nil)
 				if leg != nil || err == nil || primary.activations.Load() != 1 || connects.Load() != 1 || signatures.Load() != 1 {
 					t.Fatal("activation failure retried setup or admitted a carrier", err)
 				}
@@ -360,7 +368,7 @@ func TestNativePeerRelayOverlappingHellosActivateOnlySelectedCandidate(t *testin
 			muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return primary, nil }),
 			muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return fallback, nil }),
 		}
-		leg, err := racePeerRelayCandidates(t.Context(), t.Context(), connectors, binding, signer, 0)
+		leg, err := racePeerRelayCandidates(t.Context(), t.Context(), connectors, binding, signer, 0, nil)
 		if err != nil || leg == nil {
 			t.Fatal("overlapping native hellos did not select a winner", err)
 		}
@@ -407,7 +415,7 @@ func TestNativePeerRelayWinnerExpiryWhileJoiningDoesNotActivate(t *testing.T) {
 		}
 		done := make(chan error, 1)
 		go func() {
-			leg, err := racePeerRelayCandidates(t.Context(), t.Context(), connectors, binding, owner.signer, 0)
+			leg, err := racePeerRelayCandidates(t.Context(), t.Context(), connectors, binding, owner.signer, 0, nil)
 			if leg != nil {
 				leg.Close()
 				t.Error("expired winner was returned")
@@ -558,7 +566,7 @@ func TestNativePeerPacketStartupRequiresMatchingSourcesAndPublisherConfirmation(
 					accepted <- struct{}{}
 					controlDone := make(chan error, 1)
 					go func() {
-						controlDone <- session.HandleNativeLegControl(ctx, func(context.Context) error { return nil },
+						controlDone <- session.HandleNativeLegControl(ctx, func(context.Context, tunnelv1.NativeLegBinding) error { return nil },
 							func(context.Context, tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
 								t.Error("startup unexpectedly renewed authority")
 								return tunnelv1.NativePairLegAccepted{}, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}

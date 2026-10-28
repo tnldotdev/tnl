@@ -35,6 +35,11 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 	assertGoldenFrame(t, "control-native-activate", nativeActivate, WriteControl, ReadControl)
 	nativeActivate.Type, nativeActivate.Role = NativeLegActivated, ""
 	assertGoldenFrame(t, "control-native-activated", nativeActivate, WriteControl, ReadControl)
+	nativeHandoff := Message{Type: NativeLegHandoff, ProtocolVersion: Version, RequestID: "handoff_1", Role: NativeConnector,
+		NativeLegBinding: &NativeLegBinding{Nonce: bytes.Repeat([]byte{1}, 32), PreviousNonce: make([]byte, 32)}}
+	assertGoldenFrame(t, "control-native-handoff", nativeHandoff, WriteControl, ReadControl)
+	nativeHandoff.Type, nativeHandoff.Role = NativeLegHandedOff, ""
+	assertGoldenFrame(t, "control-native-handed-off", nativeHandoff, WriteControl, ReadControl)
 	nativeRenew := nativeHello
 	nativeRenew.Type, nativeRenew.RequestID = NativeLegRenew, "renew_1"
 	assertGoldenFrame(t, "control-native-renew", nativeRenew, WriteControl, ReadControl)

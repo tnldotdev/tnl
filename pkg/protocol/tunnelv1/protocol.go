@@ -40,6 +40,8 @@ const (
 	NativeLegRenewed   MessageType = "native_leg_renewed"
 	NativeLegActivate  MessageType = "native_leg_activate"
 	NativeLegActivated MessageType = "native_leg_activated"
+	NativeLegHandoff   MessageType = "native_leg_handoff"
+	NativeLegHandedOff MessageType = "native_leg_handed_off"
 )
 
 type PeerRole string
@@ -204,12 +206,12 @@ func ReadControl(reader io.Reader) (Message, error) {
 	if err := json.Unmarshal(fields["type"], &kind); err != nil {
 		return Message{}, err
 	}
-	if kind == NativeLegActivate || kind == NativeLegActivated {
+	if kind == NativeLegActivate || kind == NativeLegActivated || kind == NativeLegHandoff || kind == NativeLegHandedOff {
 		for name := range fields {
 			switch name {
 			case "type", "protocol_version", "request_id", "native_leg_binding":
 			case "role":
-				if kind != NativeLegActivate {
+				if kind != NativeLegActivate && kind != NativeLegHandoff {
 					return Message{}, ErrNativeLegBinding
 				}
 			default:
@@ -232,7 +234,15 @@ func ReadControl(reader io.Reader) (Message, error) {
 		}
 	}
 	if binding, present := fields["native_leg_binding"]; present {
-		if err := json.Unmarshal(fields["type"], &kind); err != nil || (kind != NativeLegActivate && kind != NativeLegActivated) || bytes.Equal(bytes.TrimSpace(binding), []byte("null")) {
+		if err := json.Unmarshal(fields["type"], &kind); err != nil || (kind != NativeLegActivate && kind != NativeLegActivated && kind != NativeLegHandoff && kind != NativeLegHandedOff) || bytes.Equal(bytes.TrimSpace(binding), []byte("null")) {
+			return Message{}, ErrNativeLegBinding
+		}
+		var selection map[string]json.RawMessage
+		if err := json.Unmarshal(binding, &selection); err != nil {
+			return Message{}, ErrNativeLegBinding
+		}
+		_, previous := selection["previous_nonce"]
+		if previous != (kind == NativeLegHandoff || kind == NativeLegHandedOff) {
 			return Message{}, ErrNativeLegBinding
 		}
 	}
@@ -317,16 +327,19 @@ func (m Message) Validate() error {
 	if m.RequestID != "" && !validIdentifier(m.RequestID) {
 		return errors.New("tunnelv1: invalid request ID")
 	}
-	if m.NativeLegBinding != nil && m.Type != NativeLegActivate && m.Type != NativeLegActivated {
+	if m.NativeLegBinding != nil && m.Type != NativeLegActivate && m.Type != NativeLegActivated && m.Type != NativeLegHandoff && m.Type != NativeLegHandedOff {
 		return ErrNativeLegBinding
 	}
 	switch m.Type {
-	case NativeLegActivate, NativeLegActivated:
+	case NativeLegActivate, NativeLegActivated, NativeLegHandoff, NativeLegHandedOff:
 		expectedRole := NativeConnector
-		if m.Type == NativeLegActivated {
+		if m.Type == NativeLegActivated || m.Type == NativeLegHandedOff {
 			expectedRole = ""
 		}
 		if !validIdentifier(m.RequestID) || m.Role != expectedRole || m.Credential != "" || m.PublisherConnection != nil || m.ServiceConnection != nil || m.NativePairLegProof != nil || m.NativePairLegAccepted != nil || m.Code != "" || m.NativeLegBinding == nil || m.NativeLegBinding.Validate() != nil {
+			return ErrNativeLegBinding
+		}
+		if (len(m.NativeLegBinding.PreviousNonce) == 32) != (m.Type == NativeLegHandoff || m.Type == NativeLegHandedOff) {
 			return ErrNativeLegBinding
 		}
 	case Hello:
