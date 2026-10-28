@@ -1,0 +1,10 @@
+{
+  "type": "native_leg_handoff",
+  "protocol_version": 1,
+  "request_id": "handoff_1",
+  "role": "native_connector",
+  "native_leg_binding": {
+    "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+    "previous_nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  }
+}

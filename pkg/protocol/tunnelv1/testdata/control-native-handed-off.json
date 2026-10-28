@@ -1,0 +1,9 @@
+{
+  "type": "native_leg_handed_off",
+  "protocol_version": 1,
+  "request_id": "handoff_1",
+  "native_leg_binding": {
+    "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+    "previous_nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  }
+}

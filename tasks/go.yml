@@ -212,6 +212,26 @@ tasks:
     cmds:
       - go test {{.CLI_ARGS}} ./internal/ingress/... ./internal/daemon ./internal/daemon/config ./cmd/tnld -run='{{.RUN}}' -count=1 -timeout=5m
 
+  test:peer-transport:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check native packet carriers, shared socket isolation, wire frames and claimed stream dispatch
+    cmds:
+      - go test {{.CLI_ARGS}} -v ./internal/transport/peer ./pkg/protocol/tunnelv1 -run='^Test(Peer|Native|OpeningNative|SocketICE|GoldenJSONAndFramedWireFixtures|InvalidFixtures|FramedWireFixturesRejectEveryTruncation)' -count=1 -timeout=3m
+      - go test {{.CLI_ARGS}} -v ./internal/transport/muxsession -run='^Test(QUICDatagramSender|PeerNonQUIC)' -count=1 -timeout=1m
+      - go test {{.CLI_ARGS}} -v ./internal/transport/tunnel -run='^Test(Native|PublisherAndIngressRejectNative|ServiceDispatcher|ServicePublisherTransport)' -count=1 -timeout=1m
+
+  test:fuzz:peer-transport:
+    dir: "{{.ROOT_DIR}}"
+    desc: Fuzz native packet, delivery, signaling, opening and permission frames
+    vars:
+      TIME: '{{default "15s" .TIME}}'
+    cmds:
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzPeerPackets$' -fuzztime='{{.TIME}}' -parallel=2
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzPeerDelivery$' -fuzztime='{{.TIME}}' -parallel=2
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzNativePeerConnectivity$' -fuzztime='{{.TIME}}' -parallel=2
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzPeerNativeVisitorOpening$' -fuzztime='{{.TIME}}' -parallel=2
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzNativeRequestFrames$' -fuzztime='{{.TIME}}' -parallel=2
+
   test:publisher-identity:
     dir: "{{.ROOT_DIR}}"
     desc: Check owned native identities, enrollment retries and portable group credentials
@@ -281,7 +301,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Check combined openings, exact byte commitment, ordered notifications, TLS isolation, and drain
     cmds:
-      - go test {{.CLI_ARGS}} ./pkg/protocol/tunnelv1 ./internal/transport/tunnel ./internal/ingress ./internal/relay ./internal/publisher ./internal/publisher/service -run='^Test(Opening|ReturnFrame|SessionMaximum|ForwardingRequest|IngressRetry|AuthenticatedPromotion|AutomaticPromotion|PublicURLStopAdmissions|Confirmed|FailedConfirmed|PublicForwarding)' -count=1
+      - go test {{.CLI_ARGS}} ./pkg/protocol/tunnelv1 ./internal/transport/tunnel ./internal/ingress ./internal/relay ./internal/publisher ./internal/publisher/service -run='^Test(Opening|NativeOpening|NativeRequest|ReturnFrame|SessionMaximum|ForwardingRequest|IngressRetry|AuthenticatedPromotion|AutomaticPromotion|PublicURLStopAdmissions|Confirmed|FailedConfirmed|PublicForwarding)' -count=1
 
   test:fuzz:stream-opening:
     dir: "{{.ROOT_DIR}}"
@@ -290,6 +310,7 @@ tasks:
       TIME: '{{default "15s" .TIME}}'
     cmds:
       - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzReadOpeningsAndReturnFrames$' -fuzztime='{{.TIME}}' -parallel=2
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzNativeRequestFrames$' -fuzztime='{{.TIME}}' -parallel=2
 
   test:fuzz:publisher-observability:
     dir: "{{.ROOT_DIR}}"

@@ -15,6 +15,7 @@ authorization.
 | `internal/relay`                                        | Cohesive lease/claim registry, authenticated publisher sessions, stream admission/accounting, and drain                       |
 | `internal/transport/tunnel`                             | Shared tunnel handshakes, accepted peers, slots, and transport races                                                          |
 | `internal/transport/muxsession`                         | QUIC and TLS/TCP-yamux multiplexed byte streams                                                                               |
+| `internal/transport/peer`                               | Native-only retained packet endpoints, shared carriers, UDP socket dispatch and ICE connectivity                              |
 | `internal/transport/{proxyproto,streamcopy,httpstream}` | PROXY v2, joined bidirectional copies/half-close, and HTTP body/trailer ownership                                             |
 | `internal/transport/targettransport`                    | Protocol-aware publisher-to-target TLS preflight and handshake                                                                |
 | `pkg/protocol/tunnelv1`                                 | Sole handwritten frame/message wire contract                                                                                  |
@@ -119,6 +120,10 @@ can prove ownership of the original backend key; see
 [database cancellation](../publisher/database-cancellation.md).
 
 ## streaming and connection replacement
+
+The [native packet owner](peer-packets.md) supplies retained inner QUIC transport,
+not application readiness or visitor authority. Its local transport matrix does
+not qualify default CLI/SDK preparation or authorized source/assignment recovery.
 
 `httpstream` enables HTTP/1 full duplex before target responses and bounds the
 upload, including trickles, to 30 seconds. Body completion ends the read deadline;
