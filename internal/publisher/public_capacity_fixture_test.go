@@ -31,6 +31,7 @@ type publicCapacityFixture struct {
 type publicCapacityStream struct {
 	muxsession.Stream
 	metadata []byte
+	header   tunnelv1.VisitorStreamHeader
 }
 
 func (f *publicCapacityFixture) metadataFor(stream net.Conn) []byte {
@@ -91,7 +92,7 @@ func (f *publicCapacityFixture) open(index int, denied bool, claimed ...int) (mu
 			_ = stream.Close()
 			return nil, sourceErr
 		}
-		stream = &publicCapacityStream{Stream: stream, metadata: metadata}
+		stream = &publicCapacityStream{Stream: stream, metadata: metadata, header: header}
 		_ = stream.SetDeadline(time.Now().Add(5 * time.Second))
 		f.t.Cleanup(func() { _ = stream.Close() })
 	}

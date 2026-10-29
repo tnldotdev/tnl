@@ -160,6 +160,12 @@ ingress's run sequence, so repeated delegation cannot reopen consumed evidence.
 These checks do not replace current visitor permission or change ingress's
 first-byte retry boundary.
 
+An unexpired source delegation may predate the publisher's installed policy, as
+when share redemption advances policy before ingress renews. It still proves
+origin, not access: HTTP permission and IP checks use the publisher's newer
+policy. Its signed revision cannot be rewritten and its original deadline does
+not move. A delegation newer than installed publisher policy is rejected.
+
 ## integration urls and aliases
 
 `integrations` elects one worker per saved project integration URL using shared
