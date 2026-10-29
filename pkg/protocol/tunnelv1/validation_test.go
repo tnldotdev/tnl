@@ -30,12 +30,12 @@ func TestControlMessages(t *testing.T) {
 			t.Fatalf("%s: got %#v, %v", message.Type, got, err)
 		}
 	}
-	for _, response := range []StreamResponse{{Type: StreamAccepted}, {Type: StreamRejected, Code: StaleConnectionAssignment}} {
+	for _, response := range []ReturnFrame{{Kind: ReturnAccepted}, {Kind: ReturnRejected, Code: StaleConnectionAssignment}} {
 		var wire bytes.Buffer
-		if err := WriteStreamResponse(&wire, response); err != nil {
+		if err := WriteReturnFrame(&wire, response); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := ReadStreamResponse(&wire); err != nil || got != response {
+		if got, err := ReadReturnFrame(&wire); err != nil || !reflect.DeepEqual(got, response) {
 			t.Fatalf("response=%+v, %v", got, err)
 		}
 	}
@@ -84,8 +84,6 @@ func TestReadersRejectInvalidMessages(t *testing.T) {
 		{"legacy connection", `{"type":"hello","protocol_version":1,"role":"publisher","credential":"secret","link":{"publish_run_id":"session"}}`, readControl},
 		{"unknown publisher field", `{"protocol_version":1,"kind":"visitor","visitor_connection_id":"visitor","public_url_id":"route","publish_run_id":"session","publish_run_number":1,"publisher_connection_id":"connection","connection_assignment_revision":1,"extra":true}`, readVisitor},
 		{"legacy hops", `{"protocol_version":1,"kind":"visitor","visitor_connection_id":"visitor","public_url_id":"route","publish_run_id":"session","publish_run_number":1,"publisher_connection_id":"connection","connection_assignment_revision":1,"forward_hops":0}`, readVisitor},
-		{"stream accepted with code", `{"type":"accepted","code":"internal"}`, readResponse},
-		{"rejected without code", `{"type":"rejected"}`, readResponse},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := test.read(frame(test.payload)); err == nil {

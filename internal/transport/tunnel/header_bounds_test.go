@@ -47,7 +47,7 @@ func TestSessionMaximumForwardingHeaders(t *testing.T) {
 					want := h
 					want.TraceContext = tunnelv1.TraceContext{TraceParent: boundsTraceParent}
 					checkMaximumTransfer(t, want, tunnelv1.MaxHeaderBytes,
-						func() (net.Conn, error) { return client.OpenInternalForwardingStream(ctx, h) },
+						func() (net.Conn, error) { return client.OpenInternalForwardingStream(ctx, h, ReturnEvents{}) },
 						func() (muxsession.Stream, any, func() error, error) {
 							v, err := peer.AcceptInternalForwardingStream(ctx)
 							if err != nil {
@@ -254,8 +254,8 @@ func TestSessionForwardingBoundsRejectMalformedStreams(t *testing.T) {
 			if _, err := stream.Write(input); err != nil {
 				t.Fatal(err)
 			}
-			response, err := tunnelv1.ReadStreamResponse(stream)
-			if err != nil || response.Type != tunnelv1.StreamRejected || response.Code != tunnelv1.InvalidMessage {
+			response, err := tunnelv1.ReadReturnFrame(stream)
+			if err != nil || response.Kind != tunnelv1.ReturnRejected || response.Code != tunnelv1.InvalidMessage {
 				t.Fatalf("malformed stream response = %v, %v", response, err)
 			}
 			var headerErr *StreamHeaderError
@@ -268,7 +268,9 @@ func TestSessionForwardingBoundsRejectMalformedStreams(t *testing.T) {
 	h := maximumPublicHeader(strings.Repeat("r", 256))
 	want := h
 	want.TraceContext = tunnelv1.TraceContext{TraceParent: boundsTraceParent}
-	checkMaximumTransfer(t, want, tunnelv1.MaxHeaderBytes, func() (net.Conn, error) { return client.OpenInternalForwardingStream(headerBoundsContext(t), h) }, func() (muxsession.Stream, any, func() error, error) {
+	checkMaximumTransfer(t, want, tunnelv1.MaxHeaderBytes, func() (net.Conn, error) {
+		return client.OpenInternalForwardingStream(headerBoundsContext(t), h, ReturnEvents{})
+	}, func() (muxsession.Stream, any, func() error, error) {
 		v, err := peer.AcceptInternalForwardingStream(ctx)
 		if err != nil {
 			return nil, nil, nil, err

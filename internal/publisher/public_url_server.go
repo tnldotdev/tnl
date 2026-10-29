@@ -94,7 +94,6 @@ type PublicURLServer struct {
 	admission          *applicationAdmission
 	run                PublishRunIdentity
 	promote            PromoteVisitor
-	defaultPromote     PromoteVisitor
 	guard              AdmitVisitor
 	life               context.Context
 	cancel             context.CancelFunc

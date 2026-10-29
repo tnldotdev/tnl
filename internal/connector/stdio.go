@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"os"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
@@ -65,14 +67,23 @@ type nopWriteCloser struct{ io.Writer }
 func (nopWriteCloser) Close() error { return nil }
 
 type connectStdio struct {
-	input  *os.File
-	output io.WriteCloser
+	input     *os.File
+	output    io.WriteCloser
+	readEnded atomic.Bool
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (c *connectStdio) Read(p []byte) (int, error) {
 	n, err := c.input.Read(p)
 	if errors.Is(err, os.ErrClosed) {
-		err = net.ErrClosed
+		if c.readEnded.Load() {
+			// only the owner's deliberate remote-EOF transition ends stdin
+			// cleanly. cancellation and failed writes retain their close causes.
+			err = io.EOF
+		} else {
+			err = net.ErrClosed
+		}
 	}
 	return n, err
 }
@@ -83,12 +94,15 @@ func (c *connectStdio) Write(p []byte) (int, error) {
 	}
 	return n, err
 }
-func (c *connectStdio) Close() error { return errors.Join(c.input.Close(), c.output.Close()) }
+func (c *connectStdio) Close() error {
+	c.closeOnce.Do(func() { c.closeErr = errors.Join(c.input.Close(), c.output.Close()) })
+	return c.closeErr
+}
 func (c *connectStdio) CloseWrite() error {
 	// the remote stream has ended. stop waiting for an ssh process that may
 	// keep its input pipe open until its ProxyCommand exits.
-	_ = c.Close()
-	return nil
+	c.readEnded.Store(true)
+	return c.Close()
 }
 func (*connectStdio) LocalAddr() net.Addr  { return stdioAddress{} }
 func (*connectStdio) RemoteAddr() net.Addr { return stdioAddress{} }

@@ -34,18 +34,6 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 		RelayRunID: "relay_run_1", RelayLeaseRevision: 4,
 		PublicUrlExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(time.Minute),
 	}, WriteInternalForwardingHeader, ReadInternalForwardingHeader)
-	assertGoldenFrame(t, "stream-response", StreamResponse{
-		Type: StreamRejected, Code: StaleConnectionAssignment,
-	}, WriteStreamResponse, ReadStreamResponse)
-	h := AdmissionHeader{ProtocolVersion: Version, Kind: PublisherAdmissionStream, VisitorConnectionID: "v", PublicURLID: "u", PublishRunID: "r", PublishRunNumber: 2,
-		PublisherConnectionID: "p", ConnectionSlot: 1, ConnectionAssignmentRevision: 3, RelayServiceID: "s"}
-	assertGoldenFrame(t, "publisher-admission-header", h, WriteAdmissionHeader, ReadAdmissionHeader)
-	h.Kind = IngressAdmissionStream
-	h.RelayID = "relay"
-	h.RelayRunID = "run"
-	h.RelayLeaseRevision = 4
-	assertGoldenFrame(t, "ingress-admission-header", h, WriteAdmissionHeader, ReadAdmissionHeader)
-	assertGoldenFrame(t, "admission-result", AdmissionResult{Type: StreamAccepted}, WriteAdmissionResult, ReadAdmissionResult)
 }
 
 func TestInvalidFixtures(t *testing.T) {
@@ -55,7 +43,6 @@ func TestInvalidFixtures(t *testing.T) {
 	}{
 		{"invalid-control-unknown-field", readControl},
 		{"invalid-visitor-missing-field", readVisitor},
-		{"invalid-admission-missing-relay", readAdmission},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := test.read(frame(string(readFixture(t, test.name+".json")))); err == nil {

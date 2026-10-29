@@ -341,12 +341,12 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 		}
 		if err := incoming.Accept(); err != nil {
 			<-capacity
-			return err
+			continue
 		}
 		workers.Go(func() {
 			defer func() { <-capacity }()
 			defer incoming.Stream().Close()
-			_ = c.bound.serveBody(incoming.Context(), c.ref, incoming.Stream(), incoming.Header)
+			_ = c.bound.serveBody(incoming.Context(), c.ref, incoming.Stream(), incoming.Header, incoming.CloseWrite)
 		})
 	}
 }
@@ -369,7 +369,7 @@ func (b *Bound) Invalidate() {
 	}
 }
 
-func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConnectionRef, stream net.Conn, header tunnelv1.ServiceForwardingHeader) error {
+func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConnectionRef, stream net.Conn, header tunnelv1.ServiceForwardingHeader, endStream func(context.Context) error) error {
 	ctx = observability.ExtractWireTrace(ctx, header.TraceContext)
 	ctx = observability.WithVisitor(ctx, header.VisitorConnectionID)
 	if b == nil || stream == nil || !b.current(ref) ||
@@ -414,7 +414,11 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	managed := publisher.ServiceStream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, HTTPRequests: b.prepared.serviceHTTPRequests,
 		Authority: authority,
 		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: b.prepared.managedVisitor(header)}
-	return managed.Forward(ctx, &replayConn{Conn: stream, reader: replay})
+	connection := &replayConn{Conn: stream, reader: replay}
+	if endStream != nil {
+		connection.endStream = func() error { return endStream(ctx) }
+	}
+	return managed.Forward(ctx, connection)
 }
 
 func headerMatches(ref tunnelv1.ServicePublisherConnectionRef, h tunnelv1.ServiceForwardingHeader, now time.Time) bool {
@@ -427,7 +431,21 @@ func headerMatches(ref tunnelv1.ServicePublisherConnectionRef, h tunnelv1.Servic
 
 type replayConn struct {
 	net.Conn
-	reader io.Reader
+	reader    io.Reader
+	endStream func() error
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (c *replayConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+
+func (c *replayConn) Close() error {
+	c.closeOnce.Do(func() {
+		var err error
+		if c.endStream != nil {
+			err = c.endStream()
+		}
+		c.closeErr = errors.Join(err, c.Conn.Close())
+	})
+	return c.closeErr
+}

@@ -94,6 +94,15 @@ func TestPendingPromotionRechecksRunAssignmentAndCapacity(t *testing.T) {
 	}
 }
 
+func TestPendingPromotionRejectsClosedVisitor(t *testing.T) {
+	s, v, h, _ := pendingAdmissionFixture(t)
+	v.close()
+	result := s.PromotePendingAdmission(t.Context(), h)
+	if result.Type != tunnelv1.StreamRejected || result.Code != tunnelv1.StalePublishRunNumber || s.Load() != 0 {
+		t.Fatal("closed visitor acquired ordinary capacity", result, s.Load())
+	}
+}
+
 func TestPendingBytesAndTimeFailClosedWithoutOrdinaryCapacity(t *testing.T) {
 	s, v, h, _ := pendingAdmissionFixture(t)
 	if err := v.beforeWrite(t.Context(), true, int(s.config.Pending.UploadBytes)+1); err == nil {

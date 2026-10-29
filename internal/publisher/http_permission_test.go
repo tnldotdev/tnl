@@ -26,13 +26,24 @@ import (
 )
 
 func httpPermissionFixture(t *testing.T, anonymous bool) (*visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
+	t.Helper()
 	return httpPermissionScopeFixture(t, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}, "preview.example.test", 443, anonymous)
+}
+
+func httpPermissionFixtureClock(t *testing.T, anonymous bool, clock func() time.Time) (*visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
+	t.Helper()
+	return httpPermissionScopeFixtureClock(t, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}, "preview.example.test", 443, anonymous, clock)
 }
 
 func httpPermissionScopeFixture(t *testing.T, scope visitorscope.Scope, hostname string, port uint16, anonymous bool) (*visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
 	t.Helper()
+	return httpPermissionScopeFixtureClock(t, scope, hostname, port, anonymous, nil)
+}
+
+func httpPermissionScopeFixtureClock(t *testing.T, scope visitorscope.Scope, hostname string, port uint16, anonymous bool, clock func() time.Time) (*visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
+	t.Helper()
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("h", 32)))
-	policy, err := visitorlease.New(scope, nil)
+	policy, err := visitorlease.New(scope, clock)
 	if err != nil {
 		t.Fatal(err)
 	}

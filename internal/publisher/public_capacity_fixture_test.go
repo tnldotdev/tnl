@@ -26,6 +26,7 @@ type publicCapacityFixture struct {
 	relays   [2]*tunnel.Session
 	finished [2]<-chan error
 	sequence atomic.Int64
+	events   tunnel.ReturnEvents
 }
 
 type publicCapacityStream struct {
@@ -94,7 +95,7 @@ func (f *publicCapacityFixture) openFrom(index int, denied bool, source netip.Ad
 	header := tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
 		VisitorConnectionID: fmt.Sprintf("visitor-%d", sequence), PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID,
 		PublishRunNumber: ref.PublishRunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, AccessPending: denied}
-	stream, err := f.relays[index].OpenVisitorStream(f.ctx, header)
+	stream, err := f.relays[index].OpenVisitorStream(f.ctx, header, f.events)
 	if err == nil {
 		// ingress signs canonical addresses; PROXY v2 requires one address family.
 		source = source.Unmap()

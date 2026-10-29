@@ -152,7 +152,7 @@ func (s *Server) PromotePendingAdmission(ctx context.Context, h tunnelv1.Admissi
 	reject := func(code tunnelv1.ErrorCode) tunnelv1.AdmissionResult {
 		return tunnelv1.AdmissionResult{Type: tunnelv1.StreamRejected, Code: code}
 	}
-	if h.Validate() != nil || h.Kind != tunnelv1.IngressAdmissionStream {
+	if h.Validate() != nil || h.Kind != tunnelv1.IngressPromotion {
 		return reject(tunnelv1.InvalidMessage)
 	}
 	s.mu.Lock()
