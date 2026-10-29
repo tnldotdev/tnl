@@ -23,8 +23,7 @@ func TestIntegrationSplitPublishAndVisit(t *testing.T) {
 	cleanupIntegrationHTTPServer(t, target, fixture.owner)
 	quicConnector, tcpConnector := fixture.connectors()
 	handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
-	ready := fixture.waitReady(t, handle)
-	assertSplitRoutePlacement(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
+	ready := waitForPublisherReady(t, handle)
 
 	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/through-split?source=integration", nil)
 	if err != nil {
@@ -35,6 +34,7 @@ func TestIntegrationSplitPublishAndVisit(t *testing.T) {
 		t.Fatalf("split visitor response = %s, headers %#v, body %q", response.Status, response.Header, body)
 	}
 	assertIntegrationPublicURLCertificate(t, response, fixture.identity.hostname)
+	assertSplitRoutePlacement(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
 	assertRuntimeOperations(t, []*integrationProcess{fixture.relayA.process, fixture.relayB.process}, map[string]uint64{
 		"RelayRegister": 2, "RelayRenewLease": 1, "RelayAdmitPublisherConnection": 2, "RelayOpenVisitorStream": 1,
 	})

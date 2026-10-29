@@ -344,9 +344,7 @@ func TestIntegrationRoutingRetentionContinuesPublishing(t *testing.T) {
 	for slot := range f.setup.PublisherConnections {
 		claimTestConnection(t, f, slot, f.now)
 	}
-	if _, err := database.MarkPublishRunReady(t.Context(), f.authentication(), f.now); err != nil {
-		t.Fatal(err)
-	}
+	readyTestServingRun(t, f, f.now)
 	snapshot, err = database.ReadIngressRoutingTableSnapshot(t.Context(), ingress.IngressLeaseIdentity, f.now)
 	if err != nil || len(snapshot.Entries) != 1 || snapshot.Entries[0].PublishRunNumber != f.setup.PublishRunNumber || f.setup.PublishRunNumber <= uint64(key.PublishRunNumber) {
 		t.Fatalf("republished hostname did not select the new publish run number: %v", err)

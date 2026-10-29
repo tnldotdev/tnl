@@ -71,6 +71,30 @@ schemas:
             type: integer
             format: int64
             minimum: 0
+          prepared_public_runs:
+            type: array
+            maxItems: 1000
+            description: Installed routing and policy, bounded by their current deadlines; never a promise to install the response.
+            items:
+              $ref: "../openapi.yaml#/components/schemas/IngressPublicRunObservation"
+  IngressPublicRunObservation:
+    type: object
+    additionalProperties: false
+    required: [publish_run_id, publish_run_number, entry_revision, valid_until]
+    properties:
+      publish_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      publish_run_number:
+        type: integer
+        format: int64
+        minimum: 1
+      entry_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      valid_until:
+        type: string
+        format: date-time
   IngressDrainRequest:
     unevaluatedProperties: false
     allOf:

@@ -1,0 +1,19 @@
+paths:
+  /internal/v1/ingresses/{ingress_id}/visitor-policy:
+    post:
+      operationId: readIngressVisitorPolicy
+      description: Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/IngressID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/IngressVisitorPolicyRequest" }
+      responses:
+        "200":
+          description: Scoped policy and verification keys
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicyUpdate" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

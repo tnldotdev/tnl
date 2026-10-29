@@ -3,7 +3,7 @@ version: "3"
 tasks:
   go:test:load:database:
     dir: "{{.ROOT_DIR}}"
-    desc: Run database load tests (DELAY=0ms/5ms/20ms, PUBLIC_URLS=1000, HISTORY=1 event/route, RUN=^TestLoad)
+    desc: Run database load tests (DELAY=0ms/5ms/20ms, PUBLIC_URLS=1000, HISTORY=1 ready event/url plus preparation, RUN=^TestLoad)
     vars:
       DELAY: '{{default "0ms" .DELAY}}'
       PUBLIC_URLS: '{{default "1000" .PUBLIC_URLS}}'
