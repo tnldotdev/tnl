@@ -461,8 +461,11 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	}
 	bad = request
 	bad.Subject.DeviceID = device.ID[:len(device.ID)-1] + "0"
-	if _, err := d.PrepareNativePeerPair(visitor, bad, now); err == nil {
-		t.Fatal("wrong enrolled subject obtained pair")
+	if bad.Subject.DeviceID == device.ID {
+		bad.Subject.DeviceID = device.ID[:len(device.ID)-1] + "1"
+	}
+	if _, err := d.PrepareNativePeerPair(visitor, bad, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("wrong enrolled subject obtained pair", err)
 	}
 	replacement := request
 	replacement.Action = "replace"
@@ -739,8 +742,17 @@ func TestIntegrationNativePeerPairWorkloadCredentialAndSelectedService(t *testin
 	if err := d.pool.QueryRow(ctx, `SELECT last_authorized_at FROM control.native_peer_pairs WHERE id=$1`, pair.ID).Scan(&lastAuthorized); err != nil || !lastAuthorized.Equal(renew.RequestedAt) || secondRenewal.ExpiresAt.After(lastAuthorized.Add(5*time.Minute)) {
 		t.Fatal("pair outlived its last successful authorization", err)
 	}
-	if _, err := d.PrepareNativePeerPair(ctx, request, now.Add(31*time.Second)); !errors.Is(err, ErrServiceConflict) {
+	beforeRetry := nativePairSavedAuthority(t, d, pair.ID)
+	// the workload renewed at +62s. a rollback before that point is denied by
+	// its source owner before the pair's own +64s authorization fence is reached.
+	if _, err := d.PrepareNativePeerPair(ctx, request, now.Add(31*time.Second)); !errors.Is(err, ErrWorkloadDenied) {
+		t.Fatal("workload clock rollback bypassed source authorization", err)
+	}
+	if _, err := d.PrepareNativePeerPair(ctx, request, now.Add(63*time.Second)); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("delayed retry from before fresh authorization rolled back the deadline", err)
+	}
+	if afterRetry := nativePairSavedAuthority(t, d, pair.ID); !bytes.Equal(beforeRetry, afterRetry) {
+		t.Fatal("rejected workload or pair rollback changed stored authority")
 	}
 	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(90*time.Second)); err != nil {
 		t.Fatal(err)

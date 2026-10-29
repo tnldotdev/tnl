@@ -217,7 +217,7 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 				VisitorPolicyRevision: 1, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: true,
 				VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "publishing-fixture", PublicKey: key.Public().(ed25519.PublicKey)}},
 				WorkloadLeases:   []controlv1.VisitorWorkloadLease{}, StreamAllocations: []controlv1.StreamCapacityAllocation{{Id: "salloc_" + strings.TrimPrefix(body.Resource.Id, "url_"), Resource: body.Resource, RunId: body.RunId, RunNumber: body.RunNumber,
-					IngressId: "fixture-ingress", IngressRunId: "fixture-process", IngressLeaseRevision: 1, Capacity: 1024, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true, ReservationKey: bytes.Repeat([]byte{0x42}, 32)}}}})
+					IngressId: "fixture-ingress", IngressRunId: "fixture-process", IngressLeaseRevision: 1, Capacity: 1024, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true, PublisherObservedUntil: new(now.Add(10 * time.Second)), ReservationKey: bytes.Repeat([]byte{0x42}, 32)}}}})
 		return
 	}
 	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/publish-runs/") && strings.HasSuffix(r.URL.Path, "/visitor-access") {

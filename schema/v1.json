@@ -2823,14 +2823,6 @@
           "type": "boolean",
           "description": "Allow limited anonymous tnl publish --demo runs."
         },
-        "public_url_usage_url": {
-          "type": "string",
-          "description": "Public URL usage receiver base URL."
-        },
-        "public_url_usage_token": {
-          "type": "string",
-          "description": "Service token for the public URL usage receiver."
-        },
         "email_url": {
           "type": "string",
           "description": "HTTPS origin of the invitation email receiver."
@@ -2884,7 +2876,7 @@
         },
         "traffic_default_connections": {
           "type": "integer",
-          "description": "Default concurrent visitor connections per public URL publish run on each ingress process.",
+          "description": "Default run-global authorized visitor connections per public URL publish run. Publisher setup is bounded separately.",
           "default": 32
         },
         "traffic_default_rate": {
@@ -2929,7 +2921,7 @@
         },
         "traffic_max_connections": {
           "type": "integer",
-          "description": "Maximum selected concurrent visitor connections per publish run.",
+          "description": "Maximum selected run-global authorized visitor connections per publish run. Publisher setup is bounded separately.",
           "default": 128
         },
         "traffic_max_rate": {

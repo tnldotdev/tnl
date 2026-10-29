@@ -40,6 +40,8 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusConflict, controlv1.NameUnavailable, "public URL hostname is unavailable")
 	case errors.Is(err, controlstate.ErrPublishRunOpen):
 		writeProblem(response, http.StatusConflict, controlv1.PublishRunOpen, "public URL has an open publish run")
+	case errors.Is(err, controlstate.ErrPublishRunNotReady):
+		writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL is not ready; retry after serving preparation completes")
 	case errors.Is(err, controlstate.ErrPublicURLNotEnabled):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "public URL is not enabled")
 	case errors.Is(err, controlstate.ErrShareLimit):

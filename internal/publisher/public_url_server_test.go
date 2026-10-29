@@ -95,7 +95,7 @@ func testPublicAllocations(body controlv1.PublisherVisitorPolicyRequest, now tim
 	allocations := []controlv1.StreamCapacityAllocation{}
 	if opaqueid.Valid(body.RunId, opaqueid.PublishRunPrefix) {
 		allocations = append(allocations, controlv1.StreamCapacityAllocation{Id: "salloc_0123456789abcdefghijkl", Resource: body.Resource, RunId: body.RunId, RunNumber: body.RunNumber,
-			IngressId: "fixture-ingress", IngressRunId: "fixture-process", IngressLeaseRevision: 1, Capacity: 1024, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true, ReservationKey: []byte(strings.Repeat("k", 32))})
+			IngressId: "fixture-ingress", IngressRunId: "fixture-process", IngressLeaseRevision: 1, Capacity: 1024, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true, PublisherObservedUntil: new(now.Add(10 * time.Second)), ReservationKey: []byte(strings.Repeat("k", 32))})
 	}
 	return allocations
 }

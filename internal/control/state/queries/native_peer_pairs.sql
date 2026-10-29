@@ -58,6 +58,19 @@ DELETE FROM control.native_peer_pairs victim WHERE victim.id IN (
     ORDER BY candidate.expires_at,candidate.id LIMIT sqlc.arg(batch_size) FOR UPDATE OF candidate SKIP LOCKED
 );
 
+-- name: RebindNativePeerPairRelays :one
+-- a fresh owner-signed renewal may replace delivery carriers, not the pair key,
+-- generation or source history. new claims must precede publisher installation.
+UPDATE control.native_peer_pairs SET slots=convert_from(sqlc.arg(slots)::bytea,'UTF8')::jsonb,
+    publisher_prepared_until=NULL WHERE id=sqlc.arg(id) RETURNING *;
+
+-- name: FenceReplacedNativePeerPairLeg :exec
+-- retain the last source, timestamp and nonce. a new process must prove a fresh
+-- claim from that same source; assignment replacement never changes IP policy.
+UPDATE control.native_peer_pair_leg_claims SET relay_id=sqlc.arg(relay_id),relay_run_id=sqlc.arg(relay_run_id),
+    relay_lease_revision=sqlc.arg(relay_lease_revision),confirmed_until=sqlc.arg(now)
+WHERE pair_id=sqlc.arg(pair_id) AND connection_slot=sqlc.arg(connection_slot);
+
 -- name: LockNativePeerPairForLegClaim :one
 SELECT * FROM control.native_peer_pairs WHERE id=sqlc.arg(id) FOR UPDATE;
 

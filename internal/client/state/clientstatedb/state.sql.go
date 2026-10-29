@@ -142,6 +142,22 @@ func (q *Queries) GetTelemetryEnabled(ctx context.Context) (int64, error) {
 	return telemetry_enabled, err
 }
 
+const getTelemetryPreference = `-- name: GetTelemetryPreference :one
+SELECT telemetry_enabled, telemetry_epoch FROM installation_settings WHERE id = 1
+`
+
+type GetTelemetryPreferenceRow struct {
+	TelemetryEnabled int64
+	TelemetryEpoch   int64
+}
+
+func (q *Queries) GetTelemetryPreference(ctx context.Context) (GetTelemetryPreferenceRow, error) {
+	row := q.db.QueryRowContext(ctx, getTelemetryPreference)
+	var i GetTelemetryPreferenceRow
+	err := row.Scan(&i.TelemetryEnabled, &i.TelemetryEpoch)
+	return i, err
+}
+
 const getWorktreeHashSalt = `-- name: GetWorktreeHashSalt :one
 SELECT coalesce(worktree_hash_salt, x'') AS worktree_hash_salt
 FROM installation_settings

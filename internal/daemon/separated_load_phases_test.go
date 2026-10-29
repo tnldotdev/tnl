@@ -286,8 +286,7 @@ func verifySeparatedShutdown(t *testing.T, database *sql.DB, routes int) {
 	if got := separatedCAOrders(t); got != int64(routes) {
 		t.Errorf("certificate issuance changed during workload: got %d want %d", got, routes)
 	}
-	// stop ingress while control and PostgreSQL remain available. its production
-	// reporter flushes final checkpoints and marks this process run complete.
+	// stop ingress while control and PostgreSQL remain available.
 	stoppingIngress := time.Now()
 	ingressStopTimeout := 10 * time.Second
 	if *runtimeLoadCapacityOnly {
@@ -300,29 +299,5 @@ func verifySeparatedShutdown(t *testing.T, database *sql.DB, routes int) {
 	ingressStopElapsed := time.Since(stoppingIngress)
 	t.Logf("separated_ingress_shutdown elapsed=%s", ingressStopElapsed)
 	separatedResult(t, "ingress-shutdown", map[string]any{"elapsed": ingressStopElapsed.String()})
-	var buckets, coveredPublicURLs, attempts, successes, ingressBytes, egressBytes int64
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*), count(DISTINCT public_url_id), coalesce(sum(connection_attempts),0),
-		coalesce(sum(successful_streams),0), coalesce(sum(ingress_bytes),0), coalesce(sum(egress_bytes),0) FROM control.public_url_usage_buckets`).Scan(&buckets, &coveredPublicURLs, &attempts, &successes, &ingressBytes, &egressBytes); err != nil {
-		t.Fatal(err)
-	}
-	if coveredPublicURLs != int64(routes) || successes == 0 || egressBytes == 0 {
-		t.Error("real visitor usage was not persisted")
-	}
-	var incomplete, mismatches int
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT count(*) FROM control.ingress_usage_runs WHERE NOT coverage_complete`).Scan(&incomplete); err != nil || incomplete != 0 {
-		t.Fatalf("ingress usage completion: incomplete=%d error=%v", incomplete, err)
-	}
-	if err := database.QueryRowContext(integrationOperationContext(t), `WITH latest AS (
-		SELECT DISTINCT ON (ingress_id, ingress_run_id, public_url_id, publish_run_number, bucket_start) *
-		FROM control.ingress_usage_reports ORDER BY ingress_id, ingress_run_id, public_url_id, publish_run_number, bucket_start, report_revision DESC
-	), totals AS (
-		SELECT public_url_id, publish_run_number, bucket_start, sum(connection_attempts) AS attempts,
-		sum(successful_streams) AS successes, sum(ingress_bytes) AS ingress_bytes, sum(egress_bytes) AS egress_bytes
-		FROM latest GROUP BY public_url_id, publish_run_number, bucket_start
-	) SELECT count(*) FROM totals t FULL JOIN control.public_url_usage_buckets b USING (public_url_id, publish_run_number, bucket_start)
-	WHERE t.attempts IS DISTINCT FROM b.connection_attempts OR t.successes IS DISTINCT FROM b.successful_streams
-	OR t.ingress_bytes IS DISTINCT FROM b.ingress_bytes OR t.egress_bytes IS DISTINCT FROM b.egress_bytes`).Scan(&mismatches); err != nil || mismatches != 0 {
-		t.Fatalf("final usage accounting: mismatches=%d error=%v", mismatches, err)
-	}
-	t.Logf("separated_verified routes=%d active_sessions=0 active_connections=0 reservations=0 usage_buckets=%d attempts=%d successes=%d ingress_bytes=%d egress_bytes=%d", routes, buckets, attempts, successes, ingressBytes, egressBytes)
+	t.Logf("separated_verified routes=%d active_sessions=0 active_connections=0 reservations=0", routes)
 }

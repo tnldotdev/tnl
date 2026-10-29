@@ -88,6 +88,8 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 			(SELECT jsonb_agg(jsonb_build_object('state', state, 'public_url_id', public_url_id, 'version', publish_run_number, 'expires_at', publisher_expires_at)) FROM control.publish_runs),
 			'orders', (SELECT jsonb_agg(jsonb_build_object('state', state, 'public_url_id', public_url_id, 'attempts', attempts, 'available_at', available_at, 'claimed', work_owner IS NOT NULL, 'last_error', last_error)) FROM control.acme_orders))::text`).Scan(&states)
 		t.Logf("separated_failure_state=%s error=%v", states, err)
+		serving, servingErr := readIntegrationServingPreparation(ctx, database)
+		t.Logf("separated_serving_preparation=%s error=%v", serving, servingErr)
 	}()
 	for _, name := range append(append(separatedServerRoles(), separatedAppComponents()...), "pebble") {
 		separatedWait(t, name+".ready", 30*time.Second, nil)

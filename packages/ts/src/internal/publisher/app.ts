@@ -10,6 +10,7 @@ import {
   type EndpointSelection,
 } from "./local.js";
 import { listeningTarget, isBunServer, type LocalHTTPServer } from "./register.js";
+import { readTelemetryDisabled } from "./telemetry.js";
 import {
   exactKeys,
   parseProjectRuntime,
@@ -78,14 +79,19 @@ type Framework = "node" | "bun" | "vite" | "next";
 export function prepareService(
   options: PrepareOptions = {},
   framework: Framework = "node",
+  telemetryDisabled: boolean = readTelemetryDisabled(process.env.TNL_NO_TELEMETRY),
 ): Promise<PreparedService> {
   validateOptions(options);
   const directory = path.resolve(options.directory ?? process.cwd());
-  const key = `${directory}\0${options.service ?? ""}\0${options.stateDir ?? process.env.TNL_STATE_DIR ?? ""}\0${process.env.TNL_APP_ENDPOINT ?? ""}\0${framework}`;
+  const key = `${directory}\0${options.service ?? ""}\0${options.stateDir ?? process.env.TNL_STATE_DIR ?? ""}\0${process.env.TNL_APP_ENDPOINT ?? ""}\0${framework}\0${telemetryDisabled}`;
   const existing = preparations.get(key);
   if (existing !== undefined) return existing;
-  const prepared = createPreparedService(options, framework, defaultDependencies, () =>
-    preparations.delete(key),
+  const prepared = createPreparedService(
+    options,
+    framework,
+    defaultDependencies,
+    () => preparations.delete(key),
+    telemetryDisabled,
   );
   preparations.set(key, prepared);
   void prepared.catch(() => preparations.delete(key));
@@ -97,9 +103,10 @@ export function createPreparedService(
   framework: Framework,
   dependencies: Dependencies,
   onClose: () => void = () => {},
+  telemetryDisabled: boolean = readTelemetryDisabled(process.env.TNL_NO_TELEMETRY),
 ): Promise<PreparedService> {
   return operation("sdk.prepare", () =>
-    createPreparedServiceUntraced(options, framework, dependencies, onClose),
+    createPreparedServiceUntraced(options, framework, dependencies, onClose, telemetryDisabled),
   );
 }
 
@@ -108,6 +115,7 @@ async function createPreparedServiceUntraced(
   framework: Framework,
   dependencies: Dependencies,
   onClose: () => void,
+  telemetryDisabled: boolean,
 ): Promise<PreparedService> {
   validateOptions(options);
   const directory = path.resolve(options.directory ?? process.cwd());
@@ -123,6 +131,7 @@ async function createPreparedServiceUntraced(
     framework,
     owner,
     pid: process.pid,
+    telemetry_disabled: telemetryDisabled,
   };
   let endpoint = await dependencies.start(directory, undefined, selection);
   let assignment = parseAssignment(await dependencies.request(endpoint, "prepare", prepareRequest));

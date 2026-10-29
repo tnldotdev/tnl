@@ -215,24 +215,6 @@ func (c *HTTPControlClient) GetIngressRoutingTableEvents(
 	return ingressv1.IngressRoutingTablePage{}, ingressHTTPProblem(response.StatusCode(), problem)
 }
 
-func (c *HTTPControlClient) ReportIngressUsage(
-	ctx context.Context,
-	ingressID ingressv1.IngressID,
-	body ingressv1.IngressUsageReportBatch,
-) error {
-	response, err := c.client.ReportIngressUsageWithResponse(ctx, ingressID, body)
-	if err != nil {
-		return err
-	}
-	if response == nil {
-		return ingressHTTPProblem(0, nil)
-	}
-	if response.StatusCode() != http.StatusNoContent {
-		return ingressHTTPProblem(response.StatusCode(), response.ApplicationproblemJSONDefault)
-	}
-	return nil
-}
-
 func (c *HTTPControlClient) ObservePublicURLRecovery(
 	ctx context.Context,
 	ingressID ingressv1.IngressID,

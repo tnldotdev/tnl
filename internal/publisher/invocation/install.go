@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
@@ -19,6 +20,7 @@ type InstallationOptions struct {
 }
 
 func InstallHTTP(ctx context.Context, flags InstallationOptions, presentation setup.Presentation) error {
+	flags.TelemetryDisabled = clienttelemetry.InstallationDisabled(ctx, flags.StateDir, flags.TelemetryDisabled)
 	address, err := target.NormalizePublicAddress(flags.Target, controlv1.Http)
 	if err != nil {
 		return err
@@ -64,6 +66,6 @@ func InstallHTTP(ctx context.Context, flags InstallationOptions, presentation se
 	if name == "" {
 		name = flags.Name
 	}
-	job := supervisor.Job{Name: name, Target: address, TargetTLSName: flags.TargetTLSName, Limits: flags.Limits, ReadinessPath: flags.ReadinessPath}
+	job := supervisor.Job{Name: name, Target: address, TargetTLSName: flags.TargetTLSName, Limits: flags.Limits, ReadinessPath: flags.ReadinessPath, TelemetryDisabled: flags.TelemetryDisabled}
 	return setup.InstallPublication(ctx, setup.Publication{Database: database, Server: server, Route: publicURL, Control: authenticated.Control, Options: flags.Installation, Job: job, TargetCAFile: flags.TargetCAFile, ServerCAFile: flags.ServerCAFile, ProjectRoot: flags.ProjectRoot}, presentation)
 }

@@ -85,10 +85,8 @@ type Config struct {
 	RefreshTokenLifetime  time.Duration     `name:"refresh-token-lifetime" env:"TNLD_REFRESH_TOKEN_LIFETIME" default:"720h" help:"Absolute lifetime of newly issued control sessions."`
 	GuestDemoEnabled      bool              `name:"guest-demo-enabled" env:"TNLD_GUEST_DEMO_ENABLED" help:"Allow limited anonymous tnl publish --demo runs."`
 
-	PublicURLUsageURL   string `name:"public-url-usage-url" env:"TNLD_PUBLIC_URL_USAGE_URL" help:"Public URL usage receiver base URL."`
-	PublicURLUsageToken string `name:"public-url-usage-token" env:"TNLD_PUBLIC_URL_USAGE_TOKEN" help:"Service token for the public URL usage receiver."`
-	EmailURL            string `name:"email-url" env:"TNLD_EMAIL_URL" help:"HTTPS origin of the invitation email receiver."`
-	WebhookSecret       string `name:"webhook-secret" env:"TNLD_WEBHOOK_SECRET" help:"Shared secret for invitation email delivery."`
+	EmailURL      string `name:"email-url" env:"TNLD_EMAIL_URL" help:"HTTPS origin of the invitation email receiver."`
+	WebhookSecret string `name:"webhook-secret" env:"TNLD_WEBHOOK_SECRET" help:"Shared secret for invitation email delivery."`
 
 	Route53Region        string   `name:"route53-region" env:"TNLD_ROUTE53_REGION" default:"us-east-1" help:"AWS region used to sign Route 53 requests."`
 	Route53ManagedZoneID string   `name:"route53-managed-zone-id" env:"TNLD_ROUTE53_MANAGED_ZONE_ID" help:"Existing Route 53 hosted zone ID for the managed domain; enables DNS automation."`
@@ -101,7 +99,7 @@ type Config struct {
 	StorageKey            string `name:"storage-key" env:"TNLD_STORAGE_KEY" help:"Unpadded base64url AES-256 key used to encrypt recoverable PostgreSQL secrets."`
 	StorageKeyPrevious    string `name:"storage-key-previous" env:"TNLD_STORAGE_KEY_PREVIOUS" help:"Previous storage key retained only during re-encryption."`
 
-	TrafficDefaultConnections        int           `name:"traffic-default-connections" env:"TNLD_TRAFFIC_DEFAULT_CONNECTIONS" default:"32" help:"Default concurrent visitor connections per public URL publish run on each ingress process."`
+	TrafficDefaultConnections        int           `name:"traffic-default-connections" env:"TNLD_TRAFFIC_DEFAULT_CONNECTIONS" default:"32" help:"Default run-global authorized visitor connections per public URL publish run. Publisher setup is bounded separately."`
 	TrafficDefaultRate               int           `name:"traffic-default-rate" env:"TNLD_TRAFFIC_DEFAULT_RATE" default:"20" help:"Default new visitor connections per traffic rate period."`
 	TrafficDefaultRatePer            time.Duration `name:"traffic-default-rate-per" env:"TNLD_TRAFFIC_DEFAULT_RATE_PER" default:"1s" help:"Default visitor connection rate period."`
 	TrafficDefaultBurst              int           `name:"traffic-default-burst" env:"TNLD_TRAFFIC_DEFAULT_BURST" default:"40" help:"Default new visitor connection burst."`
@@ -110,7 +108,7 @@ type Config struct {
 	TrafficDefaultTotalConnections   int64         `name:"traffic-default-total-connections" env:"TNLD_TRAFFIC_DEFAULT_TOTAL_CONNECTIONS" default:"0" help:"Default total visitor connections per publish run and ingress process; 0 is unlimited."`
 	TrafficDefaultTotalUploadBytes   int64         `name:"traffic-default-total-upload-bytes" env:"TNLD_TRAFFIC_DEFAULT_TOTAL_UPLOAD_BYTES" default:"0" help:"Default total encrypted upload bytes per publish run and ingress process; 0 is unlimited."`
 	TrafficDefaultTotalDownloadBytes int64         `name:"traffic-default-total-download-bytes" env:"TNLD_TRAFFIC_DEFAULT_TOTAL_DOWNLOAD_BYTES" default:"0" help:"Default total encrypted download bytes per publish run and ingress process; 0 is unlimited."`
-	TrafficMaxConnections            int           `name:"traffic-max-connections" env:"TNLD_TRAFFIC_MAX_CONNECTIONS" default:"128" help:"Maximum selected concurrent visitor connections per publish run."`
+	TrafficMaxConnections            int           `name:"traffic-max-connections" env:"TNLD_TRAFFIC_MAX_CONNECTIONS" default:"128" help:"Maximum selected run-global authorized visitor connections per publish run. Publisher setup is bounded separately."`
 	TrafficMaxRate                   int           `name:"traffic-max-rate" env:"TNLD_TRAFFIC_MAX_RATE" default:"100" help:"Maximum selected new visitor connections per maximum traffic rate period."`
 	TrafficMaxRatePer                time.Duration `name:"traffic-max-rate-per" env:"TNLD_TRAFFIC_MAX_RATE_PER" default:"1s" help:"Rate period used by the operator connection rate ceiling."`
 	TrafficMaxBurst                  int           `name:"traffic-max-burst" env:"TNLD_TRAFFIC_MAX_BURST" default:"200" help:"Maximum selected visitor connection burst."`

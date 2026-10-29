@@ -40,10 +40,7 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 	if _, err := control.RenamePublisherGroup(t.Context(), "detached", "production", controlv1.RenamePublisherGroupRequest{TeamId: team, Name: "live", ExpectedRevision: applied.Revision}); err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "tnl")
-	if output, err := exec.CommandContext(t.Context(), "go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
-		t.Fatalf("build detached CLI: %v %s", err, output)
-	}
+	binary := workflowExecutable(t)
 	task := f.state(t, "detached-task")
 	caFile := filepath.Join(t.TempDir(), "root.pem")
 	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.issuer.Raw}), 0600); err != nil {

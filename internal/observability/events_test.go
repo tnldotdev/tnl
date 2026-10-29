@@ -53,11 +53,9 @@ func TestBackgroundLabelsAreClosed(t *testing.T) {
 	metrics.ObserveDNSWork("secret", "provider", "error", time.Second)
 	metrics.ObserveDNSWork("authority", "secret", "error", time.Second)
 	metrics.ObserveDNSTransition("authority", "secret")
-	metrics.ObserveUsageWork("secret", "error")
 	metrics.ObserveVisitor("private-hostname-secret")
 	metrics.ObserveRelayStreamRejection("private-connection-secret")
 	metrics.ObserveDNSWork("authority", "verify", "pending", time.Millisecond)
-	metrics.ObserveUsageWork("finalize", "error")
 	metrics.ObserveCleanup("routing_prune", 0, true, nil)
 	families, err := metrics.Gather()
 	if err != nil {

@@ -9,18 +9,18 @@ storage-key, DNS, ACME, mailer, and authority settings.
 
 Paths below are relative to `internal/control`.
 
-| Owner                                                       | Responsibility                                                                     |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `api/public`                                                | Public control handlers, authentication adapters, and safe HTTP problems           |
-| `api/authority`                                             | Built-in identity/session/team/domain/company/workload authority                   |
-| `api/private/{ingress,relay}`                               | Authenticated leases, routing, claims, admission, usage, and process coordination  |
-| `api/serviceaccess`                                         | Signed-human exact-service management projection                                   |
-| `state`, `state/controlstatedb`                             | Authoritative transactions and generated PostgreSQL access                         |
-| `certificates`, `certificates/acme`, `certificates/visitor` | Durable issuance work, ACME adapter, and key-bound visitor certificate issuer      |
-| `dns`                                                       | DNS authority, owned records/challenges, propagation, and cleanup                  |
-| `oidc`, `proxy`, `storagekey`                               | Issuer proof, trusted public control proxy, and recoverable-secret encryption      |
-| `email`, `usage`, `webhooks`                                | Leased mail delivery, usage finalization/delivery, bounded sender-feed catalog     |
-| `maintenance`                                               | Bounded expiry, cleanup, routing retention, usage/audit and pool maintenance loops |
+| Owner                                                       | Responsibility                                                                |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `api/public`                                                | Public control handlers, authentication adapters, and safe HTTP problems      |
+| `api/authority`                                             | Built-in identity/session/team/domain/company/workload authority              |
+| `api/private/{ingress,relay}`                               | Authenticated leases, routing, claims, admission, and process coordination    |
+| `api/serviceaccess`                                         | Signed-human exact-service management projection                              |
+| `state`, `state/controlstatedb`                             | Authoritative transactions and generated PostgreSQL access                    |
+| `certificates`, `certificates/acme`, `certificates/visitor` | Durable issuance work, ACME adapter, and key-bound visitor certificate issuer |
+| `dns`                                                       | DNS authority, owned records/challenges, propagation, and cleanup             |
+| `oidc`, `proxy`, `storagekey`                               | Issuer proof, trusted public control proxy, and recoverable-secret encryption |
+| `email`, `webhooks`                                         | Leased mail delivery and bounded sender-feed catalog                          |
+| `maintenance`                                               | Bounded expiry, cleanup, routing retention, audit and pool maintenance loops  |
 
 HTTP adapters depend on state/service operations and generated contracts. State
 never imports handlers. Keep transaction bodies and lock scopes cohesive even
@@ -45,7 +45,7 @@ Transactions own current policy, complete run/assignment identity, idempotency,
 capacity, and audit facts together. Routing revisions become visible in commit
 order; cleanup cannot make a superseded projection current. Missing routing data
 does not establish run closure. See [control-state invariants](control-state.md)
-for lock order, reservations, retention, usage atomicity, and certificate states.
+for lock order, reservations, retention, and certificate states.
 
 ## policy and secrets
 
@@ -70,8 +70,7 @@ storage key. Guest trials reserve their namespace transactionally and retain a
 keyed issuing-IP digest, never the address; the credential lasts 72 hours.
 Ingress receives only the purpose-specific public URL verifier over authenticated
 coordination. PostgreSQL routing events contain hashed prefixes, not raw CIDRs
-or that verifier. An IP match is only a filter, never visitor credentials. Usage
-network estimates are a separate nonauthorizing sketch. Ingress/relay never hold
+or that verifier. An IP match is only a filter, never visitor credentials. Ingress/relay never hold
 the storage key. Relay transport private keys are retrievable only under the
 current relay lease and remain in memory there.
 
@@ -94,5 +93,5 @@ through issuance and cleanup after a move.
 - [applied projects](applied-projects.md): revisions, groups, local identity, endpoint ownership, and durable restoration
 - [services](services.md): run preparation, claims, admission, grants, and publisher/connector handoffs
 - [human authentication](oidc.md), [company access](company-access.md), and [workload sessions](workload-sessions.md)
-- [hosted integration](hosted-integration.md), [signed-human service access](service-access.md), and [website usage](team-usage.md)
+- [hosted integration](hosted-integration.md) and [signed-human service access](service-access.md)
 - [HTTP contract map](../architecture.md#own-each-http-surface) and [server readiness](../development/server-readiness.md)

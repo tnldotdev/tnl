@@ -48,6 +48,7 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 	}
 	prepared := &Prepared{Preparation: preparation, target: target, managedHostname: approved.Endpoint.Hostname, servicePort: uint16(approved.Endpoint.Port), managedProtocol: serviceconfig.ProtocolName(approved.Protocol), clock: time.Now, preparedCertificate: &preparedCertificate{}}
 	prepared.managedPublic = approved.Endpoint.Public
+	prepared.metadataRevision = approved.TrustRevision
 	prepared.targetResolver = cfg.TargetResolver
 	if prepared.managedProtocol == serviceconfig.ProtocolHTTP || prepared.managedProtocol == serviceconfig.ProtocolKubernetes {
 		prepared.serviceHTTPRequests, err = publisher.NewServiceHTTPRequestLimits(approved.HttpLimits)

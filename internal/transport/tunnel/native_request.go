@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -15,8 +16,8 @@ import (
 // on the outer native request stream. return bytes remain owned by its caller.
 type NativeRequestWriter struct {
 	net.Conn
-	mu      sync.Mutex
-	renewMu sync.Mutex
+	mu      chan struct{}
+	renewMu chan struct{}
 	ended   bool
 	err     error
 	opening func([]byte) error
@@ -25,14 +26,16 @@ type NativeRequestWriter struct {
 var _ net.Conn = (*NativeRequestWriter)(nil)
 
 func NewNativeRequestWriter(conn net.Conn) *NativeRequestWriter {
-	return &NativeRequestWriter{Conn: conn}
+	return &NativeRequestWriter{Conn: conn, mu: make(chan struct{}, 1), renewMu: make(chan struct{}, 1)}
 }
 
 // NewNativeOpeningWriter sends one signed opening with the first bounded data
 // block. it never waits for return bytes before forwarding the request. callers
 // with server-first protocols send an empty opening before constructing a writer.
 func NewNativeOpeningWriter(conn net.Conn, opening func([]byte) error) *NativeRequestWriter {
-	return &NativeRequestWriter{Conn: conn, opening: opening}
+	writer := NewNativeRequestWriter(conn)
+	writer.opening = opening
+	return writer
 }
 
 func (s *NativeRequestWriter) startLocked(initial []byte) error {
@@ -45,8 +48,8 @@ func (s *NativeRequestWriter) startLocked(initial []byte) error {
 }
 
 func (s *NativeRequestWriter) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu <- struct{}{}
+	defer func() { <-s.mu }()
 	if s.ended {
 		return 0, io.ErrClosedPipe
 	}
@@ -74,10 +77,48 @@ func (s *NativeRequestWriter) Write(p []byte) (int, error) {
 }
 
 func (s *NativeRequestWriter) Renew(permission tunnelv1.NativeVisitorPermission) error {
-	s.renewMu.Lock()
-	defer s.renewMu.Unlock()
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	return s.renew(permission, time.Time{})
+}
+
+// RenewUntil bounds the entire renewal write and restores the outer deadline
+// under the same gates as application writes and TLS half-close. the deadline
+// belongs to this refresh, not a new budget for each active stream.
+func (s *NativeRequestWriter) RenewUntil(permission tunnelv1.NativeVisitorPermission, until time.Time) error {
+	if until.IsZero() || !until.After(time.Now()) {
+		return os.ErrDeadlineExceeded
+	}
+	return s.renew(permission, until)
+}
+
+func (s *NativeRequestWriter) renew(permission tunnelv1.NativeVisitorPermission, until time.Time) (result error) {
+	// both gates share the refresh deadline. a stalled application write or TLS
+	// half-close cannot make permission refresh wait beyond its original budget.
+	for _, gate := range []chan struct{}{s.renewMu, s.mu} {
+		if until.IsZero() {
+			gate <- struct{}{}
+		} else {
+			if !until.After(time.Now()) {
+				return os.ErrDeadlineExceeded
+			}
+			timer := time.NewTimer(time.Until(until))
+			select {
+			case gate <- struct{}{}:
+				timer.Stop()
+			case <-timer.C:
+				return os.ErrDeadlineExceeded
+			}
+		}
+		defer func() { <-gate }()
+	}
+	if !until.IsZero() {
+		if !until.After(time.Now()) {
+			return os.ErrDeadlineExceeded
+		}
+		if err := s.Conn.SetWriteDeadline(until); err != nil {
+			return err
+		}
+		defer func() { result = errors.Join(result, s.Conn.SetWriteDeadline(time.Time{})) }()
+	}
 	if err := s.startLocked(nil); err != nil {
 		return err
 	}
@@ -89,15 +130,15 @@ func (s *NativeRequestWriter) Renew(permission tunnelv1.NativeVisitorPermission)
 // crypto/tls sets the underlying write deadline to now when it sends the alert;
 // serialize that transition with renewals and restore the outer stream deadline.
 func (s *NativeRequestWriter) CloseTLSWrite(secured interface{ CloseWrite() error }) error {
-	s.renewMu.Lock()
-	defer s.renewMu.Unlock()
+	s.renewMu <- struct{}{}
+	defer func() { <-s.renewMu }()
 	err := secured.CloseWrite()
 	return errors.Join(err, s.Conn.SetWriteDeadline(time.Time{}))
 }
 
 func (s *NativeRequestWriter) CloseWrite() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu <- struct{}{}
+	defer func() { <-s.mu }()
 	if s.ended {
 		return s.err
 	}
@@ -125,6 +166,12 @@ type NativeRequestReader struct {
 	payload     []byte
 	payloadRead int
 	afterEnd    sync.Once
+	lifeMu      sync.Mutex
+	finished    bool
+	renewDone   chan struct{}
+	renewErr    error
+	closeOnce   sync.Once
+	closeErr    error
 }
 
 var _ net.Conn = (*NativeRequestReader)(nil)
@@ -136,6 +183,12 @@ func NewNativeRequestReader(conn net.Conn, initial []byte, renew func(tunnelv1.N
 func (s *NativeRequestReader) Read(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.lifeMu.Lock()
+	finished := s.finished
+	s.lifeMu.Unlock()
+	if finished {
+		return 0, net.ErrClosed
+	}
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -177,25 +230,69 @@ func (s *NativeRequestReader) Read(p []byte) (int, error) {
 // this only after the TLS reader reports EOF; it must own the raw reader until
 // then. no further TLS data may follow close_notify.
 func (s *NativeRequestReader) ContinueAfterTLSCloseNotify() {
+	s.lifeMu.Lock()
+	defer s.lifeMu.Unlock()
+	if s.finished {
+		return
+	}
 	s.afterEnd.Do(func() {
-		if s.initial.Len() != 0 || s.remaining != nil && s.remaining.Len() != 0 {
-			_ = s.Conn.Close()
-			return
-		}
-		go s.renewAfterEnd()
+		s.renewDone = make(chan struct{})
+		go func() {
+			defer close(s.renewDone)
+			err := s.renewAfterEnd()
+			s.lifeMu.Lock()
+			s.renewErr = err
+			s.lifeMu.Unlock()
+			_ = s.Close()
+		}()
 	})
 }
 
 // after the local application sees EOF, only signed permission frames may
 // arrive. a failed renewal closes this visitor stream, not its mux session.
-func (s *NativeRequestReader) renewAfterEnd() {
+func (s *NativeRequestReader) renewAfterEnd() error {
+	if s.initial.Len() != 0 || s.remaining != nil && s.remaining.Len() != 0 {
+		return tunnelv1.ErrNativeRequest
+	}
 	for {
 		frame, err := s.readFrame()
-		if err != nil || frame.Kind != tunnelv1.NativeRequestPermission || s.renew == nil || s.renew(frame.Permission) != nil {
-			_ = s.Conn.Close()
-			return
+		if err != nil {
+			return err
+		}
+		if frame.Kind != tunnelv1.NativeRequestPermission || s.renew == nil {
+			return tunnelv1.ErrNativeRequest
+		}
+		if err := s.renew(frame.Permission); err != nil {
+			return err
 		}
 	}
+}
+
+// Close interrupts physical I/O but never waits for the renewal worker, which
+// may itself be the closer. the owning stream tail joins through Finish.
+func (s *NativeRequestReader) Close() error {
+	s.closeOnce.Do(func() { s.closeErr = s.Conn.Close() })
+	return s.closeErr
+}
+
+// Finish prevents a later continuation, interrupts and joins raw reads and the
+// actually started renewal worker. call it only from the stream's owning tail.
+func (s *NativeRequestReader) Finish() error {
+	s.lifeMu.Lock()
+	s.finished = true
+	done := s.renewDone
+	s.lifeMu.Unlock()
+	err := s.Close()
+	if done != nil {
+		<-done
+	}
+	// renewal owns raw reads after EOF without taking mu. join it first, then
+	// retain the ordinary read gate while collecting the final result.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lifeMu.Lock()
+	defer s.lifeMu.Unlock()
+	return errors.Join(err, s.renewErr)
 }
 
 // net/http interrupts idle reads with deadlines when hijacking an upgraded

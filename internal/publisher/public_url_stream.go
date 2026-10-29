@@ -46,6 +46,7 @@ func (r *PublicURLServer) ServePublisherConnection(
 		cancel()
 		_ = session.Close()
 		readers.Wait()
+		live.visitors.Wait()
 	}()
 	results := make(chan error, headerReaders)
 	for range headerReaders {
@@ -64,7 +65,7 @@ func (r *PublicURLServer) ServePublisherConnection(
 					_ = incoming.Stream.Close()
 					return
 				}
-				if err := r.acceptVisitorContext(acceptCtx, incoming, ref); err != nil {
+				if err := r.acceptVisitorForSession(acceptCtx, incoming, live); err != nil {
 					results <- err
 					return
 				}
@@ -83,6 +84,18 @@ func (r *PublicURLServer) ServePublisherConnection(
 }
 
 func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tunnel.IncomingVisitorStream, ref tunnelv1.PublisherConnectionRef) error {
+	r.mu.Lock()
+	live := r.sessions[ref.ConnectionSlot]
+	r.mu.Unlock()
+	return r.acceptVisitorForSession(ctx, incoming, live)
+}
+
+func (r *PublicURLServer) acceptVisitorForSession(ctx context.Context, incoming *tunnel.IncomingVisitorStream, live *livePublisherSession) error {
+	if live == nil || ctx.Err() != nil {
+		_ = incoming.Reject(tunnelv1.Unavailable)
+		return nil
+	}
+	ref := live.ref
 	var prepared *preparedVisitorProxy
 	if incoming.Header.ConfirmBeforeBytes {
 		// confirmed openings contain only ingress-owned metadata. reject a bad
@@ -99,13 +112,16 @@ func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tu
 	if r.closed || r.draining {
 		code = tunnelv1.Unavailable
 	}
-	if code == "" && len(r.streams) >= r.streamCapacity {
-		code = tunnelv1.CapacityExceeded
+	r.mu.Unlock()
+	var admission *publicVisitorAdmission
+	if code == "" {
+		admission, code = r.reservePublicSetup(live, incoming.Stream)
 	}
 	var reservation *visitorlease.ReservationGuard
 	if code == "" {
 		var err error
-		reservation, err = r.policy.BindReservation(incoming.Header.Reservation, func() { _ = incoming.Stream.Close() })
+		reservation, err = r.policy.PrepareReservation(incoming.Header.Reservation, func() { _ = incoming.Stream.Close() })
+		admission.reservation = reservation
 		if err != nil {
 			code = tunnelv1.Unauthenticated
 		} else if prepared != nil && reservation.BindSource(prepared.header.Source.Addr()) != nil {
@@ -114,33 +130,22 @@ func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tu
 		}
 	}
 	if code != "" {
-		r.mu.Unlock()
+		if admission != nil {
+			admission.close()
+		}
 		_ = incoming.Reject(code)
 		return nil
 	}
-	r.streams[incoming.Stream] = struct{}{}
-	r.handlers.Add(1)
-	r.mu.Unlock()
 	if err := incoming.Accept(); err != nil {
-		_ = incoming.Stream.Close()
-		reservation.Close()
-		r.mu.Lock()
-		delete(r.streams, incoming.Stream)
-		r.mu.Unlock()
-		r.handlers.Done()
+		_ = admission.connection.Close()
+		admission.close()
 		// a confirmation write may fail after the peer closes this stream. keep
 		// the publisher connection and its unrelated visitors alive.
 		return nil
 	}
 	go func() {
-		defer reservation.Close()
-		defer r.handlers.Done()
-		defer func() {
-			r.mu.Lock()
-			delete(r.streams, incoming.Stream)
-			r.mu.Unlock()
-		}()
-		r.handleVisitorPreparedContext(incoming.Context(), incoming.Stream, incoming.Header.AccessPending, incoming.Header, reservation, prepared)
+		defer admission.close()
+		r.handleVisitorPreparedContext(incoming.Context(), incoming.Stream, incoming.Header.AccessPending, incoming.Header, reservation, prepared, admission)
 	}()
 	return nil
 }
@@ -180,7 +185,7 @@ func (r *PublicURLServer) handleVisitorHeader(connection net.Conn, denied bool, 
 }
 
 func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, connection net.Conn, denied bool, streamHeader tunnelv1.VisitorStreamHeader, reservation *visitorlease.ReservationGuard) {
-	r.handleVisitorPreparedContext(parent, connection, denied, streamHeader, reservation, nil)
+	r.handleVisitorPreparedContext(parent, connection, denied, streamHeader, reservation, nil, nil)
 }
 
 type preparedVisitorProxy struct {
@@ -188,7 +193,13 @@ type preparedVisitorProxy struct {
 	reader io.Reader
 }
 
-func (r *PublicURLServer) handleVisitorPreparedContext(parent context.Context, connection net.Conn, denied bool, streamHeader tunnelv1.VisitorStreamHeader, reservation *visitorlease.ReservationGuard, prepared *preparedVisitorProxy) {
+func (r *PublicURLServer) handleVisitorPreparedContext(parent context.Context, connection net.Conn, denied bool, streamHeader tunnelv1.VisitorStreamHeader, reservation *visitorlease.ReservationGuard, prepared *preparedVisitorProxy, admission *publicVisitorAdmission) {
+	promotionConnection := connection
+	if admission != nil {
+		// all close owners, including TLS cancellation and drain, join the same
+		// physical close. promotion still uses the original framed stream.
+		connection = admission.connection
+	}
 	defer connection.Close()
 	if parent == nil {
 		parent = context.Background()
@@ -201,8 +212,18 @@ func (r *PublicURLServer) handleVisitorPreparedContext(parent context.Context, c
 	life, endVisitor := observability.Start(life, "publisher.visitor")
 	var visitorErr error
 	defer func() { endVisitor(visitorErr) }()
-	stopClose := context.AfterFunc(life, func() { _ = connection.Close() })
-	defer stopClose()
+	closeDone := make(chan struct{})
+	stopClose := context.AfterFunc(life, func() {
+		defer close(closeDone)
+		_ = connection.Close()
+	})
+	defer func() {
+		// a concurrent Close may return before the callback's Close finishes.
+		// retain admission and worker ownership until that exact callback joins.
+		if !stopClose() {
+			<-closeDone
+		}
+	}()
 	_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
 	var header proxyproto.Header
 	var replay io.Reader
@@ -225,14 +246,17 @@ func (r *PublicURLServer) handleVisitorPreparedContext(parent context.Context, c
 	promote := r.promote
 	if promote == nil && streamHeader.PublisherConnectionID != "" && denied {
 		promote = func(ctx context.Context, visitor Visitor) error {
-			return r.promoteVisitorStream(ctx, visitor, connection)
+			return r.promoteVisitorStream(ctx, visitor, promotionConnection)
 		}
 	}
 	streamHeader.AccessPending = denied
 	session := &visitorSession{visitor: Visitor{Run: r.run, Header: streamHeader, Source: header.Source, Destination: header.Destination}, promote: promote, guard: r.guard, life: life, cancel: cancel}
+	if admission != nil {
+		session.capacity = admission.commit
+	}
 	defer session.close()
 	var pendingTimer *time.Timer
-	if denied {
+	if denied || admission != nil {
 		pendingTimer = time.AfterFunc(visitorPromotionTimeout, cancel)
 		defer pendingTimer.Stop()
 	}

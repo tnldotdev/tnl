@@ -15,6 +15,9 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/filelock"
+	clientserver "github.com/tnldotdev/tnl/internal/client/server"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
@@ -26,6 +29,7 @@ import (
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	api "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 type ClientFactory func(Job) (publisheridentity.NativeControl, publisheridentity.EnrollmentAuthority, error)
@@ -53,12 +57,13 @@ type Engine struct {
 	Registry *Registry
 	// UserJobs lets the user-login supervisor host another job kind with its
 	// own registry and credentials. the system publisher service leaves it empty.
-	UserJobs []UserJobRunner
-	Clients  ClientFactory
-	Publish  func(context.Context, publisher.Config) error
-	Connect  func(context.Context, Job, func() error) error
-	Group    func(context.Context, Job, func(int64, bool) error) error
-	Observe  func(Job, Status) error
+	UserJobs  []UserJobRunner
+	Clients   ClientFactory
+	Publish   func(context.Context, publisher.Config) error
+	Connect   func(context.Context, Job, func() error) error
+	Group     func(context.Context, Job, func(int64, bool) error) error
+	Observe   func(Job, Status) error
+	Telemetry func() *clienttelemetry.Collector
 	// Initialize runs local desired-state setup while holding service.lock,
 	// before any worker starts. it must not contact remote services.
 	Initialize   func(context.Context) error
@@ -123,6 +128,25 @@ func (e Engine) Serve(ctx context.Context) error {
 		if runner == nil {
 			return ErrScope
 		}
+	}
+	if e.Telemetry == nil {
+		var current atomic.Pointer[clienttelemetry.Collector]
+		e.Telemetry = current.Load
+		telemetryCtx, stop := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			collector, err := clienttelemetry.New(telemetryCtx, clienttelemetry.Config{Root: e.Registry.Root(), Protection: clientstate.ProtectionFile})
+			if err != nil || collector == nil {
+				return
+			}
+			current.Store(collector)
+			<-telemetryCtx.Done()
+			cleanup, cancel := context.WithTimeout(context.Background(), clienttelemetry.RequestTimeout)
+			defer cancel()
+			collector.Close(cleanup)
+		}()
+		defer func() { stop(); <-done }()
 	}
 	userCtx, cancelUser := context.WithCancel(ctx)
 	userDone := make(chan error, len(e.UserJobs))
@@ -373,11 +397,16 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 		cfg.BrowserLoginAvailable = server.BrowserLoginAvailable != nil && *server.BrowserLoginAvailable
 	}
 	cfg.PublisherIdentityID = native.PublisherIdentityID()
+	var telemetry *clienttelemetry.Collector
+	if e.Telemetry != nil && !job.TelemetryDisabled {
+		telemetry = e.Telemetry()
+	}
 	transportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
 	cfg.QUICConnector = muxsession.QUICConnector{TLSConfig: transportTLS}
 	cfg.TCPConnector = muxsession.TLSYamuxConnector{TLSConfig: transportTLS}
 	var mu sync.Mutex
 	ready := false
+	lastTelemetryReady := uint64(0)
 	cfg.Observe = func(event publisher.Event) error {
 		status := Status{State: JobProvisioning, Attempts: attempts, RunNumber: event.PublishRunNumber, PublicURL: event.PublicURL}
 		switch event.Type {
@@ -396,7 +425,18 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 		}
 		observationCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return e.Registry.status(observationCtx, job.ID, job.Revision, status)
+		if err := e.Registry.status(observationCtx, job.ID, job.Revision, status); err != nil {
+			return err
+		}
+		if telemetry != nil && event.Type == publisher.EventReady && event.PublishRunNumber > lastTelemetryReady {
+			lastTelemetryReady = event.PublishRunNumber
+			kind := api.SelfHosted
+			if job.Server == clientserver.DefaultURL {
+				kind = api.Hosted
+			}
+			telemetry.Report(clienttelemetry.Observation{Event: clienttelemetry.PublicationReady, ServerKind: kind, PublishMode: api.App})
+		}
+		return nil
 	}
 	if job.VerifyReadiness {
 		VerifyPublicationReadiness(ctx, &cfg, job.ReadinessPath)

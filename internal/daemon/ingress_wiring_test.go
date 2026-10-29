@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oapi-codegen/runtime/types"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -41,7 +41,7 @@ func (c *wiringControl) AllocateStreamCapacity(_ context.Context, id string, bod
 	defer c.mu.Unlock()
 	now := time.Now()
 	allocation := controlv1.StreamCapacityAllocation{Id: "salloc_" + strings.TrimPrefix(body.RunId, "pr_"), Resource: body.Resource, RunId: body.RunId, RunNumber: body.RunNumber,
-		IngressId: id, IngressRunId: body.IngressRunId, IngressLeaseRevision: body.IngressLeaseRevision, Capacity: body.Capacity, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true, ReservationKey: []byte(strings.Repeat("k", 32))}
+		IngressId: id, IngressRunId: body.IngressRunId, IngressLeaseRevision: body.IngressLeaseRevision, Capacity: body.Capacity, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true, PublisherObservedUntil: new(now.Add(10 * time.Second)), ReservationKey: []byte(strings.Repeat("k", 32))}
 	if c.allocations == nil {
 		c.allocations = make(map[string]controlv1.StreamCapacityAllocation)
 	}
@@ -73,9 +73,6 @@ func (c *wiringControl) RegisterIngress(_ context.Context, r ingressv1.IngressRe
 	now := time.Now()
 	l := ingressv1.IngressLease{IngressId: r.IngressId, IngressRunId: r.IngressRunId, IngressLeaseRevision: 1, ProtocolVersion: r.ProtocolVersion,
 		ConnectionCapacity: r.ConnectionCapacity, RegisteredAt: now, RenewedAt: now, LeaseExpiresAt: now.Add(time.Hour)}
-	for i := range 2 {
-		l.VisitorNetworkHashKeys = append(l.VisitorNetworkHashKeys, ingressv1.VisitorNetworkHashKey{UtcDate: types.Date{Time: now.UTC().Truncate(24*time.Hour).AddDate(0, 0, i)}, Key: make([]byte, 32)})
-	}
 	c.mu.Lock()
 	c.lease = l
 	c.mu.Unlock()
@@ -94,9 +91,6 @@ func (c *wiringControl) GetIngressRoutingTableSnapshot(context.Context, ingressv
 func (c *wiringControl) GetIngressRoutingTableEvents(ctx context.Context, _ ingressv1.IngressID, _ ingressv1.GetIngressRoutingTableEventsParams) (ingressv1.IngressRoutingTablePage, error) {
 	<-ctx.Done()
 	return ingressv1.IngressRoutingTablePage{}, ctx.Err()
-}
-func (c *wiringControl) ReportIngressUsage(context.Context, ingressv1.IngressID, ingressv1.IngressUsageReportBatch) error {
-	return nil
 }
 func (c *wiringControl) IngestServiceObservations(_ context.Context, _ controlstate.IngressLeaseIdentity, batch serviceaudit.Batch) (controlstate.ServiceObservationResult, error) {
 	return controlstate.ServiceObservationResult{Accepted: len(batch.Events)}, nil
@@ -263,8 +257,8 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 			}
 			control.mu.Lock()
 			for _, allocation := range control.allocations {
-				if allocation.Capacity >= 32 {
-					t.Error("initial preparation took the complete default run limit")
+				if allocation.Capacity != trafficlimits.Default().Connections {
+					t.Error("initial preparation did not retain the full ingress-local setup bound")
 				}
 			}
 			control.mu.Unlock()

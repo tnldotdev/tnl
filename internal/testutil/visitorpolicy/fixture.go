@@ -25,6 +25,15 @@ func ObservationIDs() []string {
 	return ids
 }
 
+func Observations(run string, number int64, until time.Time) []controlv1.StreamCapacityObservation {
+	until = until.UTC()
+	observed := make([]controlv1.StreamCapacityObservation, 2048)
+	for index, id := range ObservationIDs() {
+		observed[index] = controlv1.StreamCapacityObservation{AllocationId: id, RunId: run, RunNumber: number, ValidUntil: until}
+	}
+	return observed
+}
+
 func Maximum(t testing.TB, now time.Time) (controlv1.VisitorPolicyUpdate, ed25519.PrivateKey) {
 	t.Helper()
 	private := ed25519.NewKeyFromSeed([]byte(strings.Repeat("k", 32)))
@@ -59,7 +68,7 @@ func Maximum(t testing.TB, now time.Time) (controlv1.VisitorPolicyUpdate, ed2551
 		policy.StreamAllocations[i] = controlv1.StreamCapacityAllocation{
 			Id: id, Resource: scope, RunId: "srun_" + strings.Repeat("B", 22), RunNumber: math.MaxInt64,
 			IngressId: strings.Repeat("\x01", 128), IngressRunId: strings.Repeat("\x02", 128), IngressLeaseRevision: math.MaxInt64,
-			Capacity: 1 << 20, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true,
+			Capacity: 1 << 20, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true, PublisherObservedUntil: new(now.Add(10 * time.Second)),
 			ReservationKey: reservationKey[:],
 		}
 		entry, err := ippolicy.Hash(hashKey, netip.PrefixFrom(netip.AddrFrom4([4]byte{192, 0, byte(i >> 8), byte(i)}), 32))

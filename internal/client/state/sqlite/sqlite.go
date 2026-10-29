@@ -40,10 +40,19 @@ func Open(ctx context.Context, path string, migrations fs.FS) (*sql.DB, error) {
 // OpenReadOnly opens an existing database without migrating it. callers check
 // which of their own schema versions they can read.
 func OpenReadOnly(ctx context.Context, path string) (*sql.DB, error) {
+	return openReadOnly(ctx, path, 5000)
+}
+
+// OpenReadOnlyNowait reads optional state without waiting for a sqlite writer.
+func OpenReadOnlyNowait(ctx context.Context, path string) (*sql.DB, error) {
+	return openReadOnly(ctx, path, 0)
+}
+
+func openReadOnly(ctx context.Context, path string, busyTimeoutMS int) (*sql.DB, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, fmt.Errorf("sqlite: stat database: %w", err)
 	}
-	db, err := sql.Open("sqlite", dataSourceName(path, true))
+	db, err := sql.Open("sqlite", dataSourceNameWithBusyTimeout(path, true, busyTimeoutMS))
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: open database read-only: %w", err)
 	}
@@ -66,9 +75,13 @@ func IsContention(err error) bool {
 }
 
 func dataSourceName(path string, readOnly bool) string {
+	return dataSourceNameWithBusyTimeout(path, readOnly, 5000)
+}
+
+func dataSourceNameWithBusyTimeout(path string, readOnly bool, busyTimeoutMS int) string {
 	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
 	query := u.Query()
-	query.Set("_busy_timeout", "5000")
+	query.Set("_busy_timeout", fmt.Sprint(busyTimeoutMS))
 	query.Set("_foreign_keys", "on")
 	if readOnly {
 		query.Set("mode", "ro")

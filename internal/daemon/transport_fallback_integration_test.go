@@ -121,10 +121,9 @@ func TestIntegrationPublisherFallsBackAfterQUICConnectionFails(t *testing.T) {
 	waitForReadyPublisherConnections(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, fixture.inspect, 2)
 	fixture.visitor.transport.CloseIdleConnections()
-	waitForPreparedPublicVisitor(t, fixture.visitor, ready.PublicURL)
 	after, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/after", nil)
 	if err != nil || after.StatusCode != http.StatusOK || string(body) != "after recovery" {
-		t.Fatalf("visitor after recovery = %v, %q, %v", after, body, err)
+		t.Fatalf("visitor after recovery = %v, %q, %v%s", after, body, err, fixture.diagnostics())
 	}
 	if count := heldRequests.Load(); count != 1 {
 		t.Fatalf("interrupted visitor stream reached the local service %d times; want once", count)

@@ -7,21 +7,20 @@ authorization.
 
 ## implementation map
 
-| Owner                                                   | Responsibility                                                                                                                |
-| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `internal/ingress`                                      | Public/private dispatch, routing projection, pool selection, admission/promotion, live guards, usage, and forwarding lifetime |
-| `internal/ingress/clienthello`                          | Bounded ClientHello hostname inspection                                                                                       |
-| `internal/ingress/backend`, `internal/ingress/pool`     | Forwarding interface/projections and shared pool identity                                                                     |
-| `internal/relay`                                        | Cohesive lease/claim registry, authenticated publisher sessions, stream admission/accounting, and drain                       |
-| `internal/transport/tunnel`                             | Shared tunnel handshakes, accepted peers, slots, and transport races                                                          |
-| `internal/transport/muxsession`                         | QUIC and TLS/TCP-yamux multiplexed byte streams                                                                               |
-| `internal/transport/peer`                               | Native-only retained packet endpoints, shared carriers, UDP socket dispatch and ICE connectivity                              |
-| `internal/transport/{proxyproto,streamcopy,httpstream}` | PROXY v2, joined bidirectional copies/half-close, and HTTP body/trailer ownership                                             |
-| `internal/transport/targettransport`                    | Protocol-aware publisher-to-target TLS preflight and handshake                                                                |
-| `pkg/protocol/tunnelv1`                                 | Sole handwritten frame/message wire contract                                                                                  |
+| Owner                                                   | Responsibility                                                                                                         |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `internal/ingress`                                      | Public/private dispatch, routing projection, pool selection, admission/promotion, live guards, and forwarding lifetime |
+| `internal/ingress/clienthello`                          | Bounded ClientHello hostname inspection                                                                                |
+| `internal/ingress/backend`, `internal/ingress/pool`     | Forwarding interface/projections and shared pool identity                                                              |
+| `internal/relay`                                        | Cohesive lease/claim registry, authenticated publisher sessions, stream admission/accounting, and drain                |
+| `internal/transport/tunnel`                             | Shared tunnel handshakes, accepted peers, slots, and transport races                                                   |
+| `internal/transport/muxsession`                         | QUIC and TLS/TCP-yamux multiplexed byte streams                                                                        |
+| `internal/transport/peer`                               | Native-only retained packet endpoints, shared carriers, UDP socket dispatch and ICE connectivity                       |
+| `internal/transport/{proxyproto,streamcopy,httpstream}` | PROXY v2, joined bidirectional copies/half-close, and HTTP body/trailer ownership                                      |
+| `internal/transport/targettransport`                    | Protocol-aware publisher-to-target TLS preflight and handshake                                                         |
+| `pkg/protocol/tunnelv1`                                 | Sole handwritten frame/message wire contract                                                                           |
 
-Routing, admission, usage, and visitor state remain cohesive in the ingress root;
-the draft `ingress/{routing,admission,usage}` packages were not created. Relay also
+Routing, admission, and visitor state remain cohesive in the ingress root. Relay also
 retains one cohesive implementation. Children do not call a parent orchestrator
 for mutable state. Neither role imports control's PostgreSQL package. Source
 organization is not a reason to split a shared lifetime or weaken stale-state
@@ -66,7 +65,7 @@ The routing table copies relay process identity and last advertised lease
 deadline. A renewal need not publish a new URL projection. The connected relay
 checks its current lease and exact process/assignment identity before accepting
 a stream; a copied deadline is not proof of current expiration. Expired ingress
-lease/routing state fails closed. Run-lifetime usage survives tombstones,
+lease/routing state fails closed. Run-lifetime traffic limits survive tombstones,
 resnapshots, and projection expiry; only explicit `publish_run_closed` evidence
 permits retirement. The 100,000-key traffic bound fails closed rather than
 discarding an unknown run because a newer sibling exists.

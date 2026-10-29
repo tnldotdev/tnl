@@ -43,6 +43,9 @@ func publishRunTrafficDigest(base [32]byte, selection *trafficlimits.Selection) 
 }
 
 func resolvePublishRunTraffic(request PublishRunRequest) ([]byte, error) {
+	if request.GuestID != "" {
+		return json.Marshal(trafficlimits.Guest())
+	}
 	defaults, ceiling := request.TrafficDefaults, request.TrafficCeiling
 	if defaults == (trafficlimits.Limits{}) {
 		defaults = trafficlimits.Default()

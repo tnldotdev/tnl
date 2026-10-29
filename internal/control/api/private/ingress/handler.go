@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	openapi_types "github.com/oapi-codegen/runtime/types"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
@@ -24,7 +23,6 @@ type Store interface {
 	BeginIngressDrain(context.Context, controlstate.IngressLeaseIdentity, time.Time, time.Time) (controlstate.IngressLease, error)
 	ReadIngressRoutingTableSnapshot(context.Context, controlstate.IngressLeaseIdentity, time.Time) (controlstate.IngressRoutingTableSnapshot, error)
 	ReadIngressRoutingTableEvents(context.Context, controlstate.IngressLeaseIdentity, uint64, int, time.Time) (controlstate.IngressRoutingTablePage, error)
-	ReportIngressUsage(context.Context, controlstate.IngressLeaseIdentity, controlstate.IngressUsageBatch, time.Time) error
 	ObservePublicURLRecovery(context.Context, controlstate.IngressLeaseIdentity, string, uint64, uint64, time.Time) (controlstate.PublicURLRecoveryObservation, error)
 }
 
@@ -148,17 +146,6 @@ func (h *handler) routingTableEvents(
 	serviceapi.WriteJSON(response, http.StatusOK, page)
 }
 
-func (h *handler) reportUsage(response http.ResponseWriter, request *http.Request, ingressID ingressv1.IngressID) {
-	var body ingressv1.IngressUsageReportBatch
-	if !serviceapi.DecodeJSON(response, request, &body) {
-		return
-	}
-	if h.writeServiceError(response, request, h.service.ReportIngressUsage(request.Context(), ingressID, body)) {
-		return
-	}
-	response.WriteHeader(http.StatusNoContent)
-}
-
 func (h *handler) observeRecovery(
 	response http.ResponseWriter,
 	request *http.Request,
@@ -198,16 +185,6 @@ func storeProblem(err error, report func(error)) (status int, kind, detail strin
 		return http.StatusServiceUnavailable, "unavailable", "ingress transport certificate is unavailable"
 	case errors.Is(err, controlstate.ErrPublicURLRecoveryEpisodeStale):
 		return http.StatusConflict, "recovery_episode_stale", "The public URL recovery episode is no longer current"
-	case errors.Is(err, controlstate.ErrIngressUsageReportInvalid):
-		return http.StatusBadRequest, "invalid_usage_report", "The ingress usage report is invalid"
-	case errors.Is(err, controlstate.ErrIngressUsagePublicURLNotFound):
-		return http.StatusNotFound, "usage_route_not_found", "The reported publish run number was not found"
-	case errors.Is(err, controlstate.ErrIngressUsageReportStale):
-		return http.StatusConflict, "stale_usage_report", "The ingress usage report revision is stale"
-	case errors.Is(err, controlstate.ErrIngressUsageReportConflict):
-		return http.StatusConflict, "usage_report_conflict", "The ingress usage report conflicts with stored state"
-	case errors.Is(err, controlstate.ErrPublicURLUsageBucketFinalized):
-		return http.StatusConflict, "usage_bucket_finalized", "The public URL usage bucket is already finalized"
 	default:
 		report(err)
 		return http.StatusInternalServerError, "internal", "The ingress service request failed"
@@ -227,60 +204,14 @@ func ingressLeaseIdentity(
 	}, true
 }
 
-func ingressUsageBatch(value ingressv1.IngressUsageReportBatch) (controlstate.IngressUsageBatch, bool) {
-	if len(value.Reports) > 256 || value.Complete && value.ObservedThrough == nil ||
-		len(value.Reports) == 0 && value.ObservedThrough == nil ||
-		value.ObservedThrough != nil && value.ObservedThrough.IsZero() {
-		return controlstate.IngressUsageBatch{}, false
-	}
-	reports := make([]controlstate.IngressUsageReport, len(value.Reports))
-	for index, report := range value.Reports {
-		publishRunNumber, routeOK := serviceapi.Positive(report.PublishRunNumber)
-		reportRevision, revisionOK := serviceapi.Positive(report.ReportRevision)
-		connectionAttempts, attemptsOK := serviceapi.Nonnegative(report.ConnectionAttempts)
-		policyDenials, policyOK := serviceapi.Nonnegative(report.PolicyDenials)
-		capacityDenials, capacityOK := serviceapi.Nonnegative(report.CapacityDenials)
-		visitorStreamOpenFailures, failuresOK := serviceapi.Nonnegative(report.VisitorStreamOpenFailures)
-		successfulStreams, streamsOK := serviceapi.Nonnegative(report.SuccessfulStreams)
-		connectionNanoseconds, nanosecondsOK := serviceapi.Nonnegative(report.ConnectionNanoseconds)
-		ingressBytes, ingressOK := serviceapi.Nonnegative(report.IngressBytes)
-		egressBytes, egressOK := serviceapi.Nonnegative(report.EgressBytes)
-		if !serviceapi.ValidIdentifiers(report.PublicUrlId) || !routeOK || !revisionOK ||
-			!attemptsOK || !policyOK || !capacityOK || !failuresOK || !streamsOK ||
-			!nanosecondsOK || !ingressOK || !egressOK || report.BucketStart.IsZero() ||
-			!report.BucketEnd.After(report.BucketStart) || report.ObservedThrough.Before(report.BucketStart) ||
-			report.ObservedThrough.After(report.BucketEnd) || value.Complete && !report.Final {
-			return controlstate.IngressUsageBatch{}, false
-		}
-		reports[index] = controlstate.IngressUsageReport{
-			PublicURLID: report.PublicUrlId, PublishRunNumber: publishRunNumber, BucketStart: report.BucketStart,
-			BucketEnd: report.BucketEnd, ObservedThrough: report.ObservedThrough, ReportRevision: reportRevision,
-			ConnectionAttempts: connectionAttempts, PolicyDenials: policyDenials,
-			CapacityDenials: capacityDenials, VisitorStreamOpenFailures: visitorStreamOpenFailures,
-			SuccessfulStreams: successfulStreams, ConnectionNanoseconds: connectionNanoseconds,
-			IngressBytes: ingressBytes, EgressBytes: egressBytes,
-			HistogramData: report.HistogramData, Final: report.Final,
-		}
-	}
-	return controlstate.IngressUsageBatch{
-		Reports: reports, ObservedThrough: value.ObservedThrough, Complete: value.Complete,
-	}, true
-}
-
 func ingressLease(lease controlstate.IngressLease) ingressv1.IngressLease {
-	visitorNetworkHashKeys := make([]ingressv1.VisitorNetworkHashKey, len(lease.VisitorNetworkHashKeys))
-	for index, key := range lease.VisitorNetworkHashKeys {
-		visitorNetworkHashKeys[index] = ingressv1.VisitorNetworkHashKey{
-			UtcDate: openapi_types.Date{Time: key.UTCDate}, Key: key.Key[:],
-		}
-	}
 	return ingressv1.IngressLease{
 		IngressId: lease.IngressID, IngressRunId: lease.IngressRunID,
 		IngressLeaseRevision: int64(lease.IngressLeaseRevision), ProtocolVersion: int64(lease.ProtocolVersion),
 		ConnectionCapacity: int64(lease.ConnectionCapacity), ReportedConnections: int64(lease.ReportedConnections),
-		RoutingTableRevision: int64(lease.RoutingTableRevision), VisitorNetworkHashKeys: visitorNetworkHashKeys,
-		Draining:      lease.Draining,
-		DrainDeadline: lease.DrainDeadline, RegisteredAt: lease.RegisteredAt,
+		RoutingTableRevision: int64(lease.RoutingTableRevision),
+		Draining:             lease.Draining,
+		DrainDeadline:        lease.DrainDeadline, RegisteredAt: lease.RegisteredAt,
 		RenewedAt: lease.RenewedAt, LeaseExpiresAt: lease.LeaseExpiresAt,
 	}
 }
@@ -358,8 +289,9 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		protocol = &value
 	}
 	return ingressv1.IngressRoutingTableEntry{
-		PublishRunClosed: &projection.PublishRunClosed,
-		PublishRunId:     projection.PublishRunID, PublicUrlId: projection.PublicURLID,
+		PublishRunClosed:  &projection.PublishRunClosed,
+		PublishRunReadyAt: projection.PublishRunReadyAt,
+		PublishRunId:      projection.PublishRunID, PublicUrlId: projection.PublicURLID,
 		PublishRunNumber: int64(projection.PublishRunNumber), CanonicalHostname: projection.CanonicalHostname,
 		IngressPoolId: poolID, ServiceProtocol: protocol,
 		PolicyRevision:  int64(projection.PolicyRevision),

@@ -32,14 +32,13 @@ func (m *Metrics) ObserveOperationContext(ctx context.Context, operation string,
 	switch operation {
 	case "CreatePublishRun", "HeartbeatPublishRun", "ClosePublishRun", "ReadIngressRoutingTableSnapshot", "RefreshPortPoolMetrics",
 		"AdvanceIngressRoutingRetention", "PruneIngressRoutingHistory",
-		"ReadIngressRoutingTableEvents", "ReportIngressUsage", "RenewIngress",
+		"ReadIngressRoutingTableEvents", "RenewIngress",
 		"ClaimPublisherConnection", "MarkPublisherConnectionReady":
 		histogram = m.controlOperations
 	case "IngressRegister", "IngressFetchSnapshot", "IngressFetchEvents", "IngressRenewLease",
 		"IngressApplySnapshot", "IngressApplyEvents",
 		"IngressRelayConnect", "IngressForwardingAck", "IngressForwardingCleanup",
-		"IngressBackendAttempt", "IngressBackendCleanup", "IngressFallback",
-		"IngressUsagePage", "IngressUsageFinalFlush":
+		"IngressBackendAttempt", "IngressBackendCleanup", "IngressFallback":
 		histogram = m.ingressOperations
 	case "RelayRegister", "RelayRenewLease", "RelayBeginDrain", "RelayDrain",
 		"RelayAdmitPublisherConnection", "RelayOpenVisitorStream", "RelayDisconnectPublisherConnection":

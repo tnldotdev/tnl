@@ -48,7 +48,7 @@ func TestPublisherVisitorPolicyHTTPClientMaximum(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := client.ReadPublisherVisitorPolicy(t.Context(), controlv1.PublisherVisitorPolicyRequest{Resource: body.Policy.Resource, RunId: body.Policy.StreamAllocations[0].RunId, RunNumber: math.MaxInt64, ObservedAllocations: []string{}}, "fixture-run-secret")
+	result, err := client.ReadPublisherVisitorPolicy(t.Context(), controlv1.PublisherVisitorPolicyRequest{Resource: body.Policy.Resource, RunId: body.Policy.StreamAllocations[0].RunId, RunNumber: math.MaxInt64, ObservedAllocations: []controlv1.StreamCapacityObservation{}}, "fixture-run-secret")
 	if err != nil {
 		t.Fatal("real policy client rejected the maximum combined response", err)
 	}

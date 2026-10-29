@@ -404,7 +404,6 @@ func (h *handler) HeartbeatPublishRun(response http.ResponseWriter, request *htt
 	writeJSON(response, http.StatusOK, controlv1.PublishRunHeartbeat{
 		PublishRun:            publishRunResponse(setup),
 		PublisherConnections:  connectionAssignmentResponses(setup.PublisherConnections),
-		PolicyDenials:         int64(setup.PolicyDenials),
 		VisitorPolicyRevision: setup.VisitorPolicyRevision,
 	})
 }
@@ -459,6 +458,10 @@ func (h *handler) MarkPublishRunReady(response http.ResponseWriter, request *htt
 			age = time.Since(notReady.CreatedAt)
 		} else if err != nil {
 			outcome = readiness.Error
+		}
+		if errors.Is(err, controlstate.ErrPublishRunNotReady) && notReady == nil {
+			// serving preparation is pending, not an internal control failure.
+			outcome = readiness.ConnectionsMissing
 		}
 		h.config.Metrics.ObservePublishRunReadiness(outcome, time.Since(started), age)
 	}

@@ -1,8 +1,11 @@
 package publisher
 
 import (
+	"bufio"
 	"crypto/tls"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/netip"
 	"testing"
@@ -60,17 +63,40 @@ func TestPublicURLStreamCapacityIsSharedAcrossRelaySlots(t *testing.T) {
 	if err := visitor.HandshakeContext(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	request := func(client *tls.Conn) int {
+		t.Helper()
+		if _, err := fmt.Fprint(client, "GET / HTTP/1.1\r\nHost: route.example\r\n\r\n"); err != nil {
+			t.Fatal(err)
+		}
+		response, err := http.ReadResponse(bufio.NewReader(client), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		return response.StatusCode
+	}
+	if status := request(visitor); status != http.StatusNotFound {
+		t.Fatal("first authorized visitor was not served", status)
+	}
 	extra, err := open(1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = extra.Read(make([]byte, 1))
-	_ = extra.Close()
-	var rejected *tunnel.ProtocolError
-	if !errors.As(err, &rejected) || rejected.Code != tunnelv1.CapacityExceeded {
-		t.Fatal("second relay exceeded the shared run capacity or changed its rejection", err)
+	if _, err := extra.Write(proxy); err != nil {
+		t.Fatal(err)
 	}
-	// a partial setup owns its slot until it closes, without reaching a target.
+	extraTLS := tls.Client(extra, &tls.Config{ServerName: "route.example", RootCAs: rootsForCertificate(t, certificate)})
+	if err := extraTLS.HandshakeContext(t.Context()); err != nil {
+		t.Fatal("independent relay could not finish bounded setup", err)
+	}
+	if status := request(extraTLS); status != http.StatusServiceUnavailable {
+		t.Fatal("second relay exceeded the shared authorized run capacity", status)
+	}
+	_ = extraTLS.Close()
+	var rejected *tunnel.ProtocolError
+	// connection capacity is spent only after current visitor permission. setup
+	// on the other relay is independent; admitted overflow still fails globally.
 	_ = visitor.Close()
 	r.handlers.Wait()
 	replayed, err := open(1, 0)
@@ -92,6 +118,9 @@ func TestPublicURLStreamCapacityIsSharedAcrossRelaySlots(t *testing.T) {
 	replacementTLS := tls.Client(replacement, &tls.Config{ServerName: "route.example", RootCAs: rootsForCertificate(t, certificate)})
 	if err := replacementTLS.HandshakeContext(t.Context()); err != nil {
 		t.Fatal("fresh reservation did not recover the released run slot", err)
+	}
+	if status := request(replacementTLS); status != http.StatusNotFound {
+		t.Fatal("fresh authorized visitor did not recover shared capacity", status)
 	}
 	_ = replacementTLS.Close()
 }

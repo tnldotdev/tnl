@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -15,6 +16,22 @@ type ControlConfig struct {
 	Release      func(context.Context, string) error
 	Close        func() error
 	CloseContext func(context.Context) error
+	Pair         func(context.Context, string, controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error)
+	Permission   func(context.Context, string) (controlv1.VisitorTokenResponse, error)
+}
+
+func (c *configuredControl) PrepareNativePeerPair(ctx context.Context, service string, body controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error) {
+	if c.config.Pair == nil {
+		return controlv1.NativePeerPair{}, ErrServiceConnection
+	}
+	return c.config.Pair(ctx, service, body)
+}
+
+func (c *configuredControl) VisitorPermission(ctx context.Context, service string) (controlv1.VisitorTokenResponse, error) {
+	if c.config.Permission == nil {
+		return controlv1.VisitorTokenResponse{}, ErrServiceConnection
+	}
+	return c.config.Permission(ctx, service)
 }
 
 func (ControlConfig) String() string   { return "private connector control configuration" }

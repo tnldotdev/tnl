@@ -150,7 +150,7 @@ func TestReservationSlotsPreventReplayAcrossRelayConnections(t *testing.T) {
 func TestReservationObservedAllocationsMatchInstalledRunAndDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		lease, update, header := allocationFixture(t)
-		if ids := lease.ObservedAllocations(header.RunID); len(ids) != 0 {
+		if ids := lease.BoundedAllocations(header.RunID); len(ids) != 0 {
 			t.Fatal("publisher acknowledged an uninstalled allocation", ids)
 		}
 		first := update.Allocations[header.AllocationID]
@@ -171,17 +171,17 @@ func TestReservationObservedAllocationsMatchInstalledRunAndDeadline(t *testing.T
 		if err := lease.Apply(lease.Begin(), update); err != nil {
 			t.Fatal(err)
 		}
-		ids := lease.ObservedAllocations(header.RunID)
-		if len(ids) != 2 || ids[0] != first.Id || ids[1] != second.Id {
+		ids := lease.BoundedAllocations(header.RunID)
+		if len(ids) != 2 || ids[0].AllocationId != first.Id || ids[1].AllocationId != second.Id {
 			t.Fatal("observed allocations were unordered, retired or from another run", ids)
 		}
 		time.Sleep(4 * time.Second)
-		ids = lease.ObservedAllocations(header.RunID)
-		if len(ids) != 1 || ids[0] != second.Id {
+		ids = lease.BoundedAllocations(header.RunID)
+		if len(ids) != 1 || ids[0].AllocationId != second.Id {
 			t.Fatal("publisher acknowledged expired allocation authority", ids)
 		}
 		time.Sleep(6 * time.Second)
-		if ids := lease.ObservedAllocations(header.RunID); len(ids) != 0 {
+		if ids := lease.BoundedAllocations(header.RunID); len(ids) != 0 {
 			t.Fatal("publisher acknowledged allocations after local policy expiry", ids)
 		}
 	})

@@ -14,7 +14,6 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/observability/publicurlusage"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
@@ -110,7 +109,7 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 		metrics := observability.New("ingress")
 		controller, err := ingress.NewController(ingress.ControllerConfig{
 			Client: client, RoutingTable: new(ingress.RoutingTable),
-			Registration:    ingressv1.IngressRegistration{IngressId: fmt.Sprintf("cadence-ingress-%d", index), IngressRunId: "cadence-run", ProtocolVersion: 1, ConnectionCapacity: int64(f.routes)},
+			Registration:    ingressv1.IngressRegistration{IngressId: fmt.Sprintf("cadence-ingress-%d", index), IngressRunId: "cadence-run", ProtocolVersion: 1, ConnectionCapacity: int64(f.routes), IngressPoolId: PrimaryIngressPoolID, ServicePorts: []int{}},
 			RenewalInterval: cadenceRenewalInterval, RetryInterval: time.Second, RoutingWait: 25 * time.Second,
 			Now: now, Observer: metrics, Report: func(err error) { fail(fmt.Errorf("ingress control: %w", err)) },
 		})
@@ -145,9 +144,9 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 	if err := f.database.pool.QueryRow(ctx, `SELECT pg_database_size(current_database()), pg_current_wal_lsn()::text`).Scan(&databaseBytesBefore, &walStart); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("cadence_setup_elapsed=%s routes=%d heartbeat_interval=%s publisher_lease=%s process_lease=%s renewal_interval=%s duration=%s usage=one_connection_per_route_per_minute", time.Since(setupStarted), f.routes, cadenceHeartbeatInterval, cadencePublisherLease, cadenceProcessLease, cadenceRenewalInterval, duration)
+	t.Logf("cadence_setup_elapsed=%s routes=%d heartbeat_interval=%s publisher_lease=%s process_lease=%s renewal_interval=%s duration=%s", time.Since(setupStarted), f.routes, cadenceHeartbeatInterval, cadencePublisherLease, cadenceProcessLease, cadenceRenewalInterval, duration)
 	started := time.Now()
-	var scheduled, completed, renewed, pages, replays, late, repaired atomic.Int64
+	var scheduled, completed, renewed, late, repaired atomic.Int64
 	var maximumQueueDelay atomic.Int64
 	var pruned, scanned atomic.Int64
 	var retentionFloor atomic.Uint64
@@ -164,7 +163,7 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 		if retention > 0 {
 			t.Logf("retention=%s floor=%d scanned=%d deleted=%d", retention, retentionFloor.Load(), scanned.Load(), pruned.Load())
 		}
-		t.Logf("cadence_elapsed=%s scheduled=%d completed=%d expected=%d pending=%d late=%d max_scheduler_queue_delay=%s lease_renewals=%d usage_pages=%d replays=%d recovered=%d/%d", time.Since(started), scheduled.Load(), completed.Load(), int64(f.routes)*int64(duration/cadenceHeartbeatInterval), scheduled.Load()-completed.Load(), late.Load(), time.Duration(maximumQueueDelay.Load()), renewed.Load(), pages.Load(), replays.Load(), repaired.Load(), affected)
+		t.Logf("cadence_elapsed=%s scheduled=%d completed=%d expected=%d pending=%d late=%d max_scheduler_queue_delay=%s lease_renewals=%d recovered=%d/%d", time.Since(started), scheduled.Load(), completed.Load(), int64(f.routes)*int64(duration/cadenceHeartbeatInterval), scheduled.Load()-completed.Load(), late.Load(), time.Duration(maximumQueueDelay.Load()), renewed.Load(), repaired.Load(), affected)
 		f.logStats(t)
 		for index, metrics := range ingressMetrics {
 			families, err := metrics.Gather()
@@ -202,7 +201,7 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 	}
 	jobs := make(chan job, f.routes)
 	var work sync.WaitGroup
-	work.Add(64 + 1 + len(leases) + len(controllers))
+	work.Add(64 + 1 + len(leases))
 	if retention > 0 {
 		work.Add(len(f.controls))
 		for _, control := range f.controls {
@@ -438,57 +437,6 @@ func RunCadenceLoad(t *testing.T, newClient func(*Database, func() time.Time, <-
 			}
 		})
 	}
-	for ingressIndex, controller := range controllers {
-		actors.Go(func() {
-			defer work.Done()
-			for tick := 1; time.Duration(tick)*10*time.Second <= duration; tick++ {
-				due := started.Add(time.Duration(tick) * 10 * time.Second)
-				if waitCadence(ctx, due) != nil {
-					return
-				}
-				// one accounted connection per public URL per minute, divided between
-				// two ingresses and six ten-second reporting checkpoints.
-				at := f.now.Add(due.Sub(clockStarted)).Add(-time.Microsecond)
-				bucket := at.Truncate(time.Minute)
-				var reports []IngressUsageReport
-				for index := ingressIndex; index < f.routes; index += 2 {
-					if (index/2)%6 != (tick-1)%6 {
-						continue
-					}
-					session := sessions[index]
-					reports = append(reports, IngressUsageReport{PublicURLID: session.setup.PublicURLID, PublishRunNumber: session.setup.PublishRunNumber,
-						BucketStart: bucket, BucketEnd: bucket.Add(time.Minute), ObservedThrough: at, ReportRevision: 1,
-						ConnectionAttempts: 1, SuccessfulStreams: 1, IngressBytes: 100, EgressBytes: 200,
-						HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary()})
-				}
-				identity := controller.Lease()
-				lease := IngressLeaseIdentity{IngressID: identity.IngressId, IngressRunID: identity.IngressRunId, IngressLeaseRevision: uint64(identity.IngressLeaseRevision)}
-				for offset := 0; offset < max(1, len(reports)); offset += 16 {
-					batch := IngressUsageBatch{Reports: reports[offset:min(offset+16, len(reports))]}
-					if offset+16 >= len(reports) {
-						batch.ObservedThrough = &at
-					}
-					attempts := 1
-					if offset == 0 && len(reports) > 0 {
-						attempts = 2
-					}
-					for attempt := range attempts {
-						callCtx, stop := context.WithDeadline(ctx, due.Add(10*time.Second))
-						err := f.controls[ingressIndex].ReportIngressUsage(callCtx, lease, batch, now())
-						stop()
-						if err != nil {
-							fail(fmt.Errorf("usage checkpoint=%d ingress=%d offset=%d: %w", tick, ingressIndex, offset, err))
-							return
-						}
-						pages.Add(1)
-						if attempt != 0 {
-							replays.Add(1)
-						}
-					}
-				}
-			}
-		})
-	}
 	workDone := make(chan struct{})
 	actors.Go(func() { work.Wait(); close(workDone) })
 	progress := time.NewTicker(30 * time.Second)
@@ -511,7 +459,7 @@ waiting:
 				if err := f.database.pool.QueryRow(ctx, `SELECT pg_total_relation_size('control.ingress_routing_table_events'), n_dead_tup, autovacuum_count FROM pg_stat_user_tables WHERE schemaname = 'control' AND relname = 'ingress_routing_table_events'`).Scan(&relationBytes, &deadTuples, &vacuums); err != nil {
 					fail(err)
 				} else {
-					t.Logf("retention_progress floor=%d deleted=%d approximate_rows=%d relation_bytes=%d estimated_dead_tuples=%d autovacuums=%d", retentionFloor.Load(), pruned.Load(), int64(f.routes)*int64(f.history)+completed.Load()+repaired.Load()-pruned.Load(), relationBytes, deadTuples, vacuums)
+					t.Logf("retention_progress floor=%d deleted=%d approximate_rows=%d relation_bytes=%d estimated_dead_tuples=%d autovacuums=%d", retentionFloor.Load(), pruned.Load(), int64(f.routes)*int64(f.history+1)+completed.Load()+repaired.Load()-pruned.Load(), relationBytes, deadTuples, vacuums)
 				}
 			}
 		}
@@ -525,14 +473,14 @@ waiting:
 	}
 	verifyCtx, stopVerification := context.WithTimeout(ctx, 10*time.Second)
 	defer stopVerification()
-	// all publishing and reporting has stopped. drain routing consumers to a
+	// all publisher heartbeats have stopped. drain routing consumers to a
 	// final production snapshot while their normal lease renewals continue.
 	identity := controllers[0].Lease()
 	final, err := f.database.ReadIngressRoutingTableSnapshot(verifyCtx, IngressLeaseIdentity{IngressID: identity.IngressId, IngressRunID: identity.IngressRunId, IngressLeaseRevision: uint64(identity.IngressLeaseRevision)}, now())
 	if err != nil || len(final.Entries) != f.routes {
 		t.Fatalf("final snapshot routes=%d want=%d: %v", len(final.Entries), f.routes, err)
 	}
-	wantRevision := uint64(f.routes)*uint64(f.history) + uint64(completed.Load()) + uint64(repaired.Load())
+	wantRevision := uint64(f.routes)*uint64(f.history+1) + uint64(completed.Load()) + uint64(repaired.Load())
 	if final.RoutingTableRevision != wantRevision {
 		t.Fatalf("final revision=%d want=%d", final.RoutingTableRevision, wantRevision)
 	}
@@ -569,20 +517,14 @@ waiting:
 		}
 		t.Logf("ingress=%d final_applied=%d known_backlog=%d last_check_age=%s resnapshots=%d failures=%d", ingressIndex, status.AppliedRevision, status.LatestRevision-status.AppliedRevision, now().Sub(status.LastSuccessfulCheck), status.Resnapshots, status.UpdateFailures)
 	}
-	expectedUsage := make(map[string]PublishRunSetup, f.routes)
+	expectedRuns := make(map[string]PublishRunSetup, f.routes)
 	for _, session := range sessions {
-		expectedUsage[session.setup.PublicURLID] = session.setup
+		expectedRuns[session.setup.PublicURLID] = session.setup
 	}
 	rows, err := f.database.pool.Query(verifyCtx, `
-		SELECT b.public_url_id, b.publish_run_number, s.id,
-		 (count(*) = $1 AND sum(b.connection_attempts) = $1 AND sum(b.successful_streams) = $1
-		  AND sum(b.policy_denials) = 0 AND sum(b.capacity_denials) = 0
-		  AND sum(b.visitor_stream_open_failures) = 0 AND sum(b.connection_nanoseconds) = 0
-		  AND sum(b.ingress_bytes) = $1 * 100 AND sum(b.egress_bytes) = $1 * 200
-		  AND bool_and(s.policy_denials = 0 AND s.closed_at IS NULL AND s.publisher_expires_at > $2)) IS TRUE
-		FROM control.public_url_usage_buckets AS b
-		LEFT JOIN control.publish_runs AS s USING (public_url_id, publish_run_number)
-		GROUP BY b.public_url_id, b.publish_run_number, s.id`, int64(duration/time.Minute), now())
+		SELECT public_url_id, publish_run_number, id,
+		    (closed_at IS NULL AND publisher_expires_at > $1) IS TRUE
+		FROM control.publish_runs`, now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -594,14 +536,14 @@ waiting:
 		if err := rows.Scan(&publicURLID, &version, &sessionID, &matches); err != nil {
 			t.Fatal(err)
 		}
-		expected, ok := expectedUsage[publicURLID]
+		expected, ok := expectedRuns[publicURLID]
 		if !ok || !matches || version != expected.PublishRunNumber || sessionID != expected.PublishRunID {
-			t.Fatalf("unexpected usage route=%s version=%d values_match=%t", publicURLID, version, matches)
+			t.Fatalf("unexpected run public_url_id=%s number=%d values_match=%t", publicURLID, version, matches)
 		}
-		delete(expectedUsage, publicURLID)
+		delete(expectedRuns, publicURLID)
 	}
-	if err := rows.Err(); err != nil || len(expectedUsage) != 0 {
-		t.Fatalf("missing usage routes=%d: %v", len(expectedUsage), err)
+	if err := rows.Err(); err != nil || len(expectedRuns) != 0 {
+		t.Fatalf("missing runs=%d: %v", len(expectedRuns), err)
 	}
 	assertAssignmentTotals(t, f.database.pool, int64(f.routes)*2)
 	var databaseBytesAfter, historyBytesAfter, walBytes int64
@@ -610,7 +552,7 @@ waiting:
 	}
 	t.Logf("database_bytes_before=%d database_bytes_after=%d routing_history_bytes_after=%d", databaseBytesBefore, databaseBytesAfter, historyBytesAfter)
 	t.Logf("postgres_cluster_wal_bytes=%d (includes all concurrent database activity and vacuum)", walBytes)
-	t.Logf("cadence_verified_routes=%d usage_buckets=%d final_revision=%d", f.routes, f.routes*int(duration/time.Minute), final.RoutingTableRevision)
+	t.Logf("cadence_verified_routes=%d final_revision=%d", f.routes, final.RoutingTableRevision)
 	cancel()
 	actors.Wait()
 	if firstErr != nil {

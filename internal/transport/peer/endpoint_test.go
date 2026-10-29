@@ -85,7 +85,7 @@ func TestPeerNativeFrameMACCompatibility(t *testing.T) {
 	key := [32]byte{1}
 	endpoint := &Endpoint{config: Config{Key: key}}
 	endpoint.paths[RelayB] = &path{queue: make(chan queuedFrame, 1)}
-	endpoint.enqueue(RelayB, tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: 42, Total: 3, Payload: []byte("abc")})
+	endpoint.enqueue(RelayB, tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: 42, Total: 3, Payload: []byte("abc")}, 0)
 	select {
 	case got := <-endpoint.paths[RelayB].queue:
 		if !bytes.Equal(got.data, native) {
@@ -169,30 +169,30 @@ func TestPeerRejectsWrongKeyDirectionPathAndReplay(t *testing.T) {
 }
 
 func TestPeerFragmentReorderingDuplicationAndBounds(t *testing.T) {
-	e := &Endpoint{input: make(chan []byte, packetQueue)}
+	e := &Endpoint{input: make(chan queuedPacket, packetQueue)}
 	p := new(path)
 	data := bytes.Repeat([]byte("p"), tunnelv1.MaxPeerPacketBytes)
 	first := tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: 1, Total: uint16(len(data)), Payload: data[:tunnelv1.PeerFragmentBytes]}
 	second := first
 	second.Fragment, second.Payload = 1, data[tunnelv1.PeerFragmentBytes:]
-	e.assemble(p, second)
-	e.assemble(p, second)
-	e.assemble(p, first)
-	if got := <-e.input; !bytes.Equal(got, data) {
+	e.assemble(p, second, 0)
+	e.assemble(p, second, 0)
+	e.assemble(p, first, 0)
+	if got := <-e.input; !bytes.Equal(got.data, data) {
 		t.Fatal("fragment reordering changed encrypted packet")
 	}
-	e.assemble(p, first)
-	e.assemble(p, second)
+	e.assemble(p, first, 0)
+	e.assemble(p, second, 0)
 	if len(e.input) != 0 {
 		t.Fatal("duplicate fragments emitted another packet")
 	}
 	for seq := uint64(2); seq < 10000; seq++ {
 		first.Sequence = seq
-		e.assemble(p, first)
+		e.assemble(p, first, 0)
 	}
 	// expired fragments cannot reoccupy a ring slot or complete an old packet.
 	second.Sequence = 1
-	e.assemble(p, second)
+	e.assemble(p, second, 0)
 	if len(e.input) != 0 || p.highest != 9999 {
 		t.Fatal("old incomplete packet survived the bounded window")
 	}
@@ -228,7 +228,7 @@ func TestPeerBlockedTCPCarrierCannotBlockAlternateRelay(t *testing.T) {
 	// force enough packets through the unread socket to fill both its kernel
 	// buffers and our fixed queue before the warm sibling is selected.
 	for range 10000 {
-		left.enqueue(RelayA, tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: left.seq.Add(1), Total: 1000, Payload: bytes.Repeat([]byte{7}, 1000)})
+		left.enqueue(RelayA, tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: left.seq.Add(1), Total: 1000, Payload: bytes.Repeat([]byte{7}, 1000)}, 0)
 	}
 	awaitPath(t, ctx, left, right, RelayB)
 	stats := left.Stats(RelayA)

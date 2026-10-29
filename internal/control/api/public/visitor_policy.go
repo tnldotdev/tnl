@@ -12,13 +12,12 @@ import (
 )
 
 type publisherVisitorPolicyStore interface {
-	ReadPublisherVisitorPolicy(context.Context, visitorscope.Scope, string, int64, string, int64, []string, time.Time) (controlv1.VisitorPolicyUpdate, error)
+	ReadPublisherVisitorPolicy(context.Context, visitorscope.Scope, string, int64, string, int64, []controlv1.StreamCapacityObservation, time.Time) (controlv1.VisitorPolicyUpdate, error)
 }
 
-// the authored request allows 2048 unique 29-character allocation IDs: 32 B
-// each with quotes/comma. another 1 KiB covers the envelope, scope, int64s and
-// run_id (64 characters at up to six JSON bytes each). even 64 KiB is too small.
-const maxPublisherVisitorPolicyRequestBytes = 2048*32 + 1024
+// each observation includes a 29-character ID, a bounded escaped run ID,
+// int64 run number and timestamp. retain room for the scoped envelope too.
+const maxPublisherVisitorPolicyRequestBytes = 2048*640 + 1024
 
 func (h *handler) ReadPublisherVisitorPolicy(w http.ResponseWriter, r *http.Request) {
 	observed := time.Now()
@@ -39,9 +38,10 @@ func (h *handler) ReadPublisherVisitorPolicy(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	seen := make(map[string]struct{}, len(body.ObservedAllocations))
-	for _, id := range body.ObservedAllocations {
+	for _, observation := range body.ObservedAllocations {
+		id := observation.AllocationId
 		_, duplicate := seen[id]
-		if !opaqueid.Valid(id, "salloc_") || duplicate {
+		if !opaqueid.Valid(id, "salloc_") || duplicate || observation.RunId != body.RunId || observation.RunNumber != body.RunNumber || observation.ValidUntil.IsZero() {
 			writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher policy observations")
 			return
 		}

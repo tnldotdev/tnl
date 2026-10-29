@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -27,6 +29,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher/localapi"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
+	api "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 type Options struct {
@@ -200,11 +203,12 @@ func Endpoint(ctx context.Context, options Options, service, invocationID string
 }
 
 type appPreparation struct {
-	configuration publisherapp.Configuration
-	project       clientproject.Project
-	framework     publisherprotocol.Framework
-	assignment    publisherprotocol.Assignment
-	invocation    *publisherprotocol.Invocation
+	configuration     publisherapp.Configuration
+	project           clientproject.Project
+	framework         publisherprotocol.Framework
+	assignment        publisherprotocol.Assignment
+	invocation        *publisherprotocol.Invocation
+	telemetryDisabled bool
 }
 
 type appRuntime struct {
@@ -213,6 +217,7 @@ type appRuntime struct {
 	capabilities   *publisherprotocol.Capabilities
 	project        clientproject.Project
 	state          *clientstate.Database
+	telemetry      atomic.Pointer[clienttelemetry.Collector]
 	TargetResolver target.TargetResolver
 	mu             sync.Mutex
 	preparing      map[string]*appPreparationGate
@@ -292,6 +297,23 @@ func Serve(ctx context.Context, options Options) (result error) {
 	}
 	defer state.Close()
 	a := &appRuntime{project: project, state: state, capabilities: capabilities, prepared: map[string]appPreparation{}, TargetResolver: options.TargetResolver, AttachPublication: options.AttachPublication}
+	// optional telemetry state opens independently; it cannot delay the local
+	// API, app readiness, or a shared owner's other publications.
+	telemetryCtx, cancelTelemetry := context.WithCancel(ctx)
+	telemetryDone := make(chan struct{})
+	go func() {
+		defer close(telemetryDone)
+		collector, err := clienttelemetry.New(telemetryCtx, clienttelemetry.Config{Root: root})
+		if err != nil || collector == nil {
+			return
+		}
+		a.telemetry.Store(collector)
+		<-telemetryCtx.Done()
+		shutdown, cancel := context.WithTimeout(context.Background(), clienttelemetry.RequestTimeout)
+		defer cancel()
+		collector.Close(shutdown)
+	}()
+	defer func() { cancelTelemetry(); <-telemetryDone }()
 	a.workers = &publisherapp.Workers{Database: state, Configure: a.workerConfiguration, AutomaticReadiness: true}
 	a.manager, err = publisherapp.New(observability.Independent(ctx), project.Root, state, publisherapp.ConfiguredServices(project), a.workers.Run)
 	if err != nil {
@@ -370,6 +392,7 @@ func (a *appRuntime) register(ctx context.Context, request publisherprotocol.Reg
 }
 
 func (a *appRuntime) prepare(ctx context.Context, request publisherprotocol.Prepare) (publisherprotocol.Assignment, error) {
+	telemetryDisabled := request.TelemetryDisabled != nil && *request.TelemetryDisabled
 	if request.Version != 1 || !publisherprotocol.ValidOwner(request.Owner) || request.PID <= 0 || !request.Framework.Valid() {
 		return publisherprotocol.Assignment{}, errors.New("invalid app preparation")
 	}
@@ -398,12 +421,13 @@ func (a *appRuntime) prepare(ctx context.Context, request publisherprotocol.Prep
 	}
 	assignment := publisherprotocol.Assignment{Version: 1, RegistrationID: id, Service: name, Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{project: a.project, framework: request.Framework, assignment: assignment}
+	a.prepared[id] = appPreparation{project: a.project, framework: request.Framework, assignment: assignment, telemetryDisabled: telemetryDisabled}
 	a.mu.Unlock()
 	return assignment, nil
 }
 
 func (a *appRuntime) acquire(ctx context.Context, request publisherprotocol.Lease) (publisherprotocol.Registration, error) {
+	telemetryDisabled := request.TelemetryDisabled != nil && *request.TelemetryDisabled
 	_, digest, err := a.project.Snapshot()
 	if err != nil {
 		return publisherprotocol.Registration{}, err
@@ -436,7 +460,7 @@ func (a *appRuntime) acquire(ctx context.Context, request publisherprotocol.Leas
 		return publisherprotocol.Registration{}, failure.Wrap("reserve named service", failure.ClientStateUnavailable, err)
 	}
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{project: a.project}
+	a.prepared[id] = appPreparation{project: a.project, telemetryDisabled: telemetryDisabled}
 	a.mu.Unlock()
 	registration := publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: string(*resolved.Target)}
 	if err := a.manager.RegisterContext(ctx, id, request.Owner, registration.Target, ""); err != nil {
@@ -453,13 +477,27 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service publishera
 	if !found {
 		return publisherapp.Configuration{}, publisherapp.ErrRegistrationStale
 	}
+	var configuration publisherapp.Configuration
+	var err error
 	if definition, configured := preparation.project.Config.Services[service.Name]; configured && !config.IsPublicService(definition) {
-		return a.operations(preparation.project).ServiceConfiguration(ctx, service)
+		configuration, err = a.operations(preparation.project).ServiceConfiguration(ctx, service)
+	} else if preparation.configuration.Publisher.Control != nil {
+		configuration = preparation.configuration
+	} else {
+		configuration, err = a.operations(preparation.project).PublicConfiguration(ctx, service)
 	}
-	if preparation.configuration.Publisher.Control != nil {
-		return preparation.configuration, nil
+	if err != nil {
+		return publisherapp.Configuration{}, err
 	}
-	return a.operations(preparation.project).PublicConfiguration(ctx, service)
+	configuration.Telemetry = a.telemetry.Load()
+	configuration.TelemetryDisabled = preparation.telemetryDisabled
+	framework := api.PublicationReadyFramework(preparation.framework)
+	if framework.Valid() {
+		configuration.TelemetryFramework = framework
+	} else if preparation.framework != "" {
+		configuration.TelemetryFramework = api.PublicationReadyFrameworkOther
+	}
+	return configuration, nil
 }
 
 func (a *appRuntime) operations(project clientproject.Project) *invocation.ProjectRuntime {

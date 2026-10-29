@@ -141,7 +141,6 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	t.Cleanup(unblock)
 	backend := &completionBackend{pendingTLSBackend: pendingTLSBackend{connection: gate}}
 	metrics := &completionMetrics{testMetrics: testMetrics{visitorOutcomes: make(chan string, 2)}}
-	usage := newUsageRecorder()
 	cleanup := &completionCleanup{result: make(chan error, 2)}
 	failures := make(chan error, 2)
 	var failureCalls atomic.Int32
@@ -152,7 +151,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 		url.AccessMode = "restricted"
 		return url, reason
 	}
-	config.Metrics, config.Observer, config.OpenUsage = metrics, cleanup, usage.Open
+	config.Metrics, config.Observer = metrics, cleanup
 	config.OnError = func(err error) {
 		failureCalls.Add(1)
 		select {
@@ -223,8 +222,6 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	}
 	completionAwait(t, ctx, peerDone)
 	outcome := completionAwait(t, ctx, metrics.visitorOutcomes)
-	u := completionAwait(t, ctx, usage.opened)
-	completionAwait(t, ctx, u.closed)
 	if err := server.Drain(ctx); err != nil {
 		t.Fatal("ingress completion did not join")
 	}
@@ -254,7 +251,7 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	metrics.forwardedMu.Lock()
 	upload, download := metrics.forwardedBytes["visitor_to_publisher"], metrics.forwardedBytes["publisher_to_visitor"]
 	metrics.forwardedMu.Unlock()
-	if upload <= 4 || download <= 4 || upload != u.ingressBytes || download != u.egressBytes || u.publisherFailures != 0 || u.streams != 1 {
+	if upload <= 4 || download <= 4 {
 		t.Fatal("completed TLS byte/open accounting changed")
 	}
 	server.mu.Lock()

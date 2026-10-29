@@ -15,7 +15,7 @@ func TestTelemetryOutboxSurvivesOpenAndOptOutClears(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := "tev_0123456789abcdefghijkl"
-	if err := state.QueueTelemetryEvent(context.Background(), id, json.RawMessage(`{"event_id":"tev_0123456789abcdefghijkl"}`)); err != nil {
+	if err := state.QueueTelemetryEvent(context.Background(), id, json.RawMessage(`{"event_id":"tev_0123456789abcdefghijkl"}`), json.RawMessage(`{}`), 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := state.Close(); err != nil {
@@ -48,7 +48,7 @@ func TestTelemetryOutboxDeletesAcknowledgedEventsTogether(t *testing.T) {
 	defer state.Close()
 	ids := []string{"tev_0123456789abcdefghijkl", "tev_abcdefghijklmnopqrstuv", "tev_ABCDEFGHIJKLMNOPQRSTUV"}
 	for _, id := range ids {
-		if err := state.QueueTelemetryEvent(ctx, id, json.RawMessage(`{"name":"command.started"}`)); err != nil {
+		if err := state.QueueTelemetryEvent(ctx, id, json.RawMessage(`{"name":"command.outcome"}`), json.RawMessage(`{}`), 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -68,8 +68,8 @@ func TestTelemetryQueueRollsBackWhenPruningFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer state.Close()
-	if _, err := state.db.ExecContext(ctx, `INSERT INTO telemetry_outbox (event_id, created_at, event_json) VALUES (?, ?, ?)`,
-		"tev_abcdefghijklmnopqrstuv", time.Now().Add(-8*24*time.Hour).UnixNano(), `{"name":"old"}`); err != nil {
+	if _, err := state.db.ExecContext(ctx, `INSERT INTO telemetry_outbox (event_id, created_at, event_json, client_json) VALUES (?, ?, ?, ?)`,
+		"tev_abcdefghijklmnopqrstuv", time.Now().Add(-8*24*time.Hour).UnixNano(), `{"name":"old"}`, `{}`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := state.db.ExecContext(ctx, `CREATE TRIGGER fail_telemetry_prune BEFORE DELETE ON telemetry_outbox
@@ -77,11 +77,64 @@ func TestTelemetryQueueRollsBackWhenPruningFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := "tev_0123456789abcdefghijkl"
-	if err := state.QueueTelemetryEvent(ctx, id, json.RawMessage(`{"name":"command.started"}`)); err == nil {
+	if err := state.QueueTelemetryEvent(ctx, id, json.RawMessage(`{"name":"command.outcome"}`), json.RawMessage(`{}`), 0); err == nil {
 		t.Fatal("queue succeeded after pruning failed")
 	}
 	var count int
 	if err := state.db.QueryRowContext(ctx, `SELECT count(*) FROM telemetry_outbox`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("outbox count after rollback = %d, %v", count, err)
+	}
+}
+
+func TestTelemetryPreferenceEpochFencesLateWritesAcrossReenable(t *testing.T) {
+	ctx := t.Context()
+	root := filepath.Join(t.TempDir(), "state")
+	writer, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	preference, err := writer.TelemetryPreference(ctx)
+	if err != nil || !preference.Enabled {
+		t.Fatalf("initial preference = %+v, %v", preference, err)
+	}
+	admin, err := Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	queue := func(id string, epoch int64) {
+		t.Helper()
+		if err := writer.QueueTelemetryEvent(ctx, id, json.RawMessage(`{"name":"command.outcome"}`), json.RawMessage(`{}`), epoch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queue("tev_0123456789abcdefghijkl", preference.Epoch)
+	if err := admin.SetTelemetryEnabled(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	queue("tev_abcdefghijklmnopqrstuv", preference.Epoch)
+	if pending, err := writer.PendingTelemetryEvents(ctx, 25); err != nil || len(pending) != 0 {
+		t.Fatalf("late writer repopulated disabled queue: %+v, %v", pending, err)
+	}
+	if err := admin.SetTelemetryEnabled(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	current, err := writer.TelemetryPreference(ctx)
+	if err != nil || !current.Enabled || current.Epoch <= preference.Epoch {
+		t.Fatalf("re-enabled preference = %+v, %v", current, err)
+	}
+	queue("tev_abcdefghijklmnopqrstuv", preference.Epoch)
+	queue("tev_ABCDEFGHIJKLMNOPQRSTUV", current.Epoch)
+	pending, err := writer.PendingTelemetryEvents(ctx, 25)
+	if err != nil || len(pending) != 1 || pending[0].ID != "tev_ABCDEFGHIJKLMNOPQRSTUV" {
+		t.Fatalf("re-enable admitted disabled-period data: %+v, %v", pending, err)
+	}
+	if err := admin.SetTelemetryEnabled(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	unchanged, err := writer.TelemetryPreference(ctx)
+	if err != nil || unchanged != current {
+		t.Fatalf("unchanged preference fenced current collection: %+v, %v", unchanged, err)
 	}
 }

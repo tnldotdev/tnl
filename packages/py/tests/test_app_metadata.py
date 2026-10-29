@@ -12,8 +12,9 @@ from typing import cast
 import pytest
 
 import tnl
+from tnl._app import _read_telemetry_disabled
 from tnl._native import NativeRuntime
-from tnl._protocol import Endpoint, InvalidResponse, parse_endpoint
+from tnl._protocol import Endpoint, InvalidResponse, RegistrationLost, TnlError, parse_endpoint
 
 
 class AssignmentRuntime(NativeRuntime):
@@ -21,6 +22,8 @@ class AssignmentRuntime(NativeRuntime):
         self.assignment = assignment
         self.endpoint = Endpoint("http://127.0.0.1:1234", "b" * 64, "a" * 32, "app", service)
         self.operations: list[str] = []
+        self.starts = 0
+        self.preparations: list[dict[str, object]] = []
 
     async def start(
         self,
@@ -30,6 +33,7 @@ class AssignmentRuntime(NativeRuntime):
         invocation_id: str | None = None,
         state_dir: str | None = None,
     ) -> Endpoint:
+        self.starts += 1
         return self.endpoint
 
     async def request(
@@ -39,9 +43,128 @@ class AssignmentRuntime(NativeRuntime):
         assert endpoint == self.endpoint
         assert payload is not None
         if operation == "prepare":
+            self.preparations.append(dict(payload))
             return self.assignment
         assert payload["registration_id"] == self.assignment["registration_id"]
         return None
+
+
+@pytest.mark.parametrize(
+    ("value", "disabled"),
+    [
+        (None, False),
+        ("1", True),
+        ("true", True),
+        ("True", True),
+        ("TRUE", True),
+        ("TrUe", True),
+        ("yes", True),
+        ("YES", True),
+        ("YeS", True),
+        ("0", False),
+        ("false", False),
+        ("False", False),
+        ("FALSE", False),
+        ("FaLsE", False),
+        ("no", False),
+        ("NO", False),
+        ("nO", False),
+    ],
+)
+def test_telemetry_setting_matches_kong(value: str | None, disabled: bool) -> None:
+    assert _read_telemetry_disabled(value) is disabled
+
+
+@pytest.mark.parametrize(("value", "disabled"), [("true", True), ("YeS", True), ("false", False)])
+def test_telemetry_setting_reaches_prepare(
+    native_app_assignment: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+    disabled: bool,
+) -> None:
+    monkeypatch.setenv("TNL_NO_TELEMETRY", value)
+    native = AssignmentRuntime(native_app_assignment)
+    monkeypatch.setattr("tnl._app.NativeRuntime", lambda: native)
+
+    async def scenario() -> None:
+        publication = await tnl.prepare(directory="/project", service="web")
+        try:
+            assert native.preparations[0]["telemetry_disabled"] is disabled
+        finally:
+            await publication.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "value", ["", "t", "T", "f", "F", "private-invalid-setting", " true", "true "]
+)
+def test_invalid_telemetry_setting_fails_safely_before_native_start(
+    native_app_assignment: dict[str, object], monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("TNL_NO_TELEMETRY", value)
+    native = AssignmentRuntime(native_app_assignment)
+    monkeypatch.setattr("tnl._app.NativeRuntime", lambda: native)
+
+    async def scenario() -> None:
+        publication = None
+        try:
+            with pytest.raises(TnlError) as caught:
+                publication = await tnl.prepare(directory="/project", service="web")
+            assert caught.value.code == "sdk.configuration_invalid"
+            assert str(caught.value) == "TNL_NO_TELEMETRY must be a boolean"
+            assert native.starts == 0
+            assert native.operations == []
+        finally:
+            if publication is not None:
+                await publication.close()
+
+    asyncio.run(scenario())
+
+
+def test_telemetry_snapshot_survives_async_start_and_registration_recovery(
+    native_app_assignment: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TNL_NO_TELEMETRY", "1")
+
+    class RestartingRuntime(AssignmentRuntime):
+        failed = False
+
+        async def start(
+            self,
+            directory: str,
+            *,
+            service: str | None = None,
+            invocation_id: str | None = None,
+            state_dir: str | None = None,
+        ) -> Endpoint:
+            await asyncio.sleep(0)
+            monkeypatch.setenv("TNL_NO_TELEMETRY", "false")
+            return await super().start(
+                directory, service=service, invocation_id=invocation_id, state_dir=state_dir
+            )
+
+        async def request(
+            self, endpoint: Endpoint, operation: str, payload: dict[str, object] | None = None
+        ) -> object:
+            if operation == "register" and not self.failed:
+                self.failed = True
+                raise RegistrationLost()
+            return await super().request(endpoint, operation, payload)
+
+    native = RestartingRuntime(native_app_assignment)
+    monkeypatch.setattr("tnl._app.NativeRuntime", lambda: native)
+
+    async def scenario() -> None:
+        publication = await tnl.prepare(directory="/project", service="web")
+        try:
+            await publication.register("http://127.0.0.1:8000")
+            assert native.starts == 2
+            assert [item["telemetry_disabled"] for item in native.preparations] == [True, True]
+        finally:
+            await publication.close()
+
+    asyncio.run(scenario())
 
 
 def test_native_assignment_is_http_only_for_selected_app(

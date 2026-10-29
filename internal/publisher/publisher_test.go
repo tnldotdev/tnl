@@ -3,6 +3,8 @@ package publisher
 import (
 	"context"
 	"errors"
+	"net/http"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -185,6 +188,42 @@ func TestCreatePublishRunClassifiesLifecycleConflict(t *testing.T) {
 	}
 }
 
+type replacementDeniedControl struct {
+	*certificateTestControl
+	attempts int
+	denied   error
+}
+
+func (c *replacementDeniedControl) CreatePublishRun(ctx context.Context, id, key string) (controlv1.PublishRunSetup, error) {
+	c.attempts++
+	if c.attempts > 1 {
+		return controlv1.PublishRunSetup{}, c.denied
+	}
+	return c.certificateTestControl.CreatePublishRun(ctx, id, key)
+}
+
+func TestRunRetainsCutoffWhenReplacementIsDenied(t *testing.T) {
+	base := newCertificateTestControl(t, "route.example", publicURLCertificateTestPlan())
+	base.setup.PublicUrl.Target = "http://127.0.0.1:3000"
+	base.routes = []controlv1.PublicURL{base.setup.PublicUrl}
+	base.heartbeat = func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
+		return controlv1.PublishRunHeartbeat{}, clientcontrol.ErrStatusConflict
+	}
+	denied := errors.New("replacement source is no longer authorized")
+	control := &replacementDeniedControl{certificateTestControl: base, denied: denied}
+	config := testRunConfig(control, base.setup)
+	config.Target, config.Handler = base.setup.PublicUrl.Target, http.NotFoundHandler()
+	config.State = certificateTestStore(t, filepath.Join(t.TempDir(), "state"))
+	config.QUICConnector, config.TCPConnector = muxsession.QUICConnector{}, muxsession.TLSYamuxConnector{}
+	err := Run(t.Context(), config)
+	if !errors.Is(err, denied) || !errors.Is(err, clientcontrol.ErrStatusConflict) {
+		t.Fatal("replacement denial lost the original publish run cutoff", err)
+	}
+	if control.attempts != 2 || len(base.closedSessions) != 1 {
+		t.Fatal("cutoff retry skipped joined run cleanup or repeated denied work", control.attempts, len(base.closedSessions))
+	}
+}
+
 func TestCreateOrLoadRouteCreatesTeamScopedPublicURL(t *testing.T) {
 	control := &publisherControlStub{allowed: []string{"lookup", "create"}}
 	allowed := []string{"2001:db8::1/64", "192.0.2.9/24"}
@@ -229,14 +268,14 @@ func TestCreateOrLoadRoutePreservesConcurrentCreationConflict(t *testing.T) {
 	}
 }
 
-func TestHeartbeatFallbackSkipsPolicyDenialObservation(t *testing.T) {
+func TestHeartbeatFallbackDoesNotObserveRenewal(t *testing.T) {
 	control := &publisherControlStub{heartbeat: func(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
 		return controlv1.PublishRunHeartbeat{}, clientcontrol.ErrUnavailable
 	}}
 	response, observed, err := heartbeatResponseOnce(
 		t.Context(), heartbeatTestAuthority(control, "session_1", "session-token"), time.Now().Add(time.Minute),
 	)
-	if err != nil || observed || response.PolicyDenials != 0 {
+	if err != nil || observed {
 		t.Fatalf("fallback = %#v, observed = %t, error = %v", response, observed, err)
 	}
 }
@@ -361,7 +400,7 @@ func TestHeartbeatIgnoresUpdateFailureAfterCancellation(t *testing.T) {
 					close(updateStarted)
 					<-releaseUpdate
 					return errors.New("connection manager is draining")
-				}, nil, 0,
+				}, 0,
 			)
 		}()
 		t.Cleanup(func() { cancel(); release(); awaitPublisherTest(t, joined) })
@@ -456,32 +495,6 @@ func TestObserveProvisioningStallFiresOnceAndCancels(t *testing.T) {
 	}
 	if len(events) != 1 {
 		t.Fatalf("canceled warning emitted events = %#v", events)
-	}
-}
-
-func TestObserveHeartbeatPolicyDenialsReportsCumulativeIncreases(t *testing.T) {
-	var events []Event
-	config := Config{Observe: func(event Event) error {
-		events = append(events, event)
-		return nil
-	}}
-	setup := controlv1.PublishRunSetup{
-		PublicUrl:  controlv1.PublicURL{Id: "public_url_1", CanonicalHostname: "demo.example"},
-		PublishRun: controlv1.PublishRun{PublishRunNumber: 3},
-	}
-	var previous uint64
-	for _, count := range []int64{0, 2, 2, 5} {
-		if err := observeHeartbeatPolicyDenials(config, setup, count, &previous); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(events) != 2 || events[0].PolicyDenials != 2 || events[1].PolicyDenials != 5 ||
-		events[1].Type != EventIPPolicyDenials || events[1].PublishRunNumber != 3 {
-		t.Fatalf("policy denial events = %#v", events)
-	}
-	decreased := int64(4)
-	if err := observeHeartbeatPolicyDenials(config, setup, decreased, &previous); err == nil {
-		t.Fatal("decreased policy denial count was accepted")
 	}
 }
 

@@ -8,11 +8,14 @@ import (
 	"sync"
 	"time"
 
+	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
+	api "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 type Configuration struct {
@@ -26,8 +29,11 @@ type Configuration struct {
 	TargetBinding    *target.TargetBinding
 	// cleanup owns resources allocated before the worker starts, including when
 	// target capture or local tunnel creation fails. it runs after drain/join.
-	Cleanup func() error
-	Attach  func(context.Context, *clientstate.Tunnel, *publisher.Config) (func(), error)
+	Cleanup            func() error
+	Attach             func(context.Context, *clientstate.Tunnel, *publisher.Config) (func(), error)
+	Telemetry          *clienttelemetry.Collector
+	TelemetryDisabled  bool
+	TelemetryFramework api.PublicationReadyFramework
 }
 
 type proofEntry struct {
@@ -66,6 +72,31 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 		return w.runPrivate(ctx, service, configuration, observe)
 	}
 	cfg := configuration.Publisher
+	// readiness is an observed outcome, not a carrier measurement. do not
+	// allocate a path-aggregation scope until a real carrier supplies samples.
+	if configuration.Telemetry != nil && !configuration.TelemetryDisabled {
+		previous := cfg.Observe
+		lastReady := uint64(0)
+		cfg.Observe = func(event publisher.Event) error {
+			if previous != nil {
+				if err := previous(event); err != nil {
+					return err
+				}
+			}
+			if event.Type == publisher.EventReady && event.PublishRunNumber > lastReady {
+				lastReady = event.PublishRunNumber
+				kind := api.SelfHosted
+				if cfg.ControlURL == clientserver.DefaultURL {
+					kind = api.Hosted
+				}
+				configuration.Telemetry.Report(clienttelemetry.Observation{
+					Event: clienttelemetry.PublicationReady, ServerKind: kind,
+					PublishMode: api.App, Framework: configuration.TelemetryFramework,
+				})
+			}
+			return nil
+		}
+	}
 	var captured target.TargetSnapshot
 	if configuration.TargetBinding != nil {
 		previous := configuration.TargetBinding.Changed

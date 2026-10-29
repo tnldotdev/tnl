@@ -17,6 +17,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/client/team"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -143,10 +144,11 @@ func InstallEnrolled(ctx context.Context, flags BackgroundOptions, selection Enr
 }
 
 func InstallBackgroundJob(ctx context.Context, registry *supervisor.Registry, flags BackgroundOptions, selection EnrolledSelection, background BackgroundSettings, input io.Reader, clients supervisor.ClientFactory, installedID *string) error {
+	flags.TelemetryDisabled = clienttelemetry.InstallationDisabled(ctx, flags.StateDir, flags.TelemetryDisabled)
 	if err := ValidateBackground(flags, selection, background); err != nil {
 		return err
 	}
-	job := supervisor.Job{Kind: supervisor.KindPublicURL, Name: background.ServiceName, Server: flags.ServerURL, Target: flags.Target, Protocol: config.ProtocolName(flags.Protocol), TargetTLSName: flags.TargetTLSName}
+	job := supervisor.Job{Kind: supervisor.KindPublicURL, Name: background.ServiceName, Server: flags.ServerURL, Target: flags.Target, Protocol: config.ProtocolName(flags.Protocol), TargetTLSName: flags.TargetTLSName, TelemetryDisabled: flags.TelemetryDisabled}
 	job.ReadinessPath = flags.ReadinessPath
 	job.Limits = flags.Limits
 	var err error

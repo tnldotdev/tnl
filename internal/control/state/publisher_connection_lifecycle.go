@@ -181,6 +181,20 @@ func lockAuthenticatedPublishRun(
 	authentication PublishRunAuthentication,
 	now time.Time,
 ) (controlstatedb.ControlPublicUrl, controlstatedb.ControlPublishRun, error) {
+	route, session, err := lockAuthenticatedPublishRunIdentity(ctx, queries, authentication)
+	if err == nil && (!session.PublisherExpiresAt.Valid || !session.PublisherExpiresAt.Time.After(now)) {
+		err = ErrPublishRunStale
+	}
+	return route, session, err
+}
+
+// heartbeat must authenticate the exact owner before settling an exhausted guest
+// interval, even when that interval's hard bound is also its publisher expiry.
+func lockAuthenticatedPublishRunIdentity(
+	ctx context.Context,
+	queries *controlstatedb.Queries,
+	authentication PublishRunAuthentication,
+) (controlstatedb.ControlPublicUrl, controlstatedb.ControlPublishRun, error) {
 	route, err := queries.LockPublicURLForRun(ctx, authentication.PublicURLID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return controlstatedb.ControlPublicUrl{}, controlstatedb.ControlPublishRun{}, ErrPublishRunStale
@@ -203,8 +217,7 @@ func lockAuthenticatedPublishRun(
 		return route, session, ErrPublisherIdentity
 	}
 	if PublicURLLifecycleState(route.LifecycleState) != PublicURLLifecycleEnabled || session.PublicURLID != authentication.PublicURLID ||
-		!matchesPositiveInt64(session.PublishRunNumber, authentication.PublishRunNumber) || session.ClosedAt.Valid ||
-		!session.PublisherExpiresAt.Valid || !session.PublisherExpiresAt.Time.After(now) {
+		!matchesPositiveInt64(session.PublishRunNumber, authentication.PublishRunNumber) || session.ClosedAt.Valid {
 		return controlstatedb.ControlPublicUrl{}, controlstatedb.ControlPublishRun{}, ErrPublishRunStale
 	}
 	tokenID, tokenHash, err := credentials.ParsePublishRunToken(authentication.PublishRunToken)

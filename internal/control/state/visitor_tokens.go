@@ -99,6 +99,20 @@ func lockVisitorResource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scop
 		if row.ExpiresAt.Valid {
 			resource.ExpiresAt = row.ExpiresAt.Time
 		}
+		deadline, err := q.GuestPublicURLServingDeadline(ctx, controlstatedb.GuestPublicURLServingDeadlineParams{PublicURLID: row.ID, Now: timestamptz(now)})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return resource, err
+		}
+		if err == nil {
+			if !deadline.Valid || !deadline.Time.After(now) {
+				return resource, ErrVisitorPermission
+			}
+			if resource.ExpiresAt.IsZero() {
+				resource.ExpiresAt = deadline.Time
+			} else {
+				resource.ExpiresAt = minTime(resource.ExpiresAt, deadline.Time)
+			}
+		}
 	case visitorscope.Service:
 		if err := lockServiceAdmission(ctx, tx, scope.ID); err != nil {
 			return resource, err
@@ -348,12 +362,6 @@ func (d *Database) visitorPermissionForSource(ctx context.Context, tx pgx.Tx, sc
 			if !authorized {
 				return result, ErrVisitorPermission
 			}
-		} else {
-			var deadline time.Time
-			if err := tx.QueryRow(ctx, `SELECT expires_at FROM control.guest_trials WHERE id=$1`, guestID).Scan(&deadline); err != nil {
-				return result, err
-			}
-			until = minTime(until, deadline)
 		}
 		subject = visitortoken.Share{ShareID: shareID}
 	case GrantTokenSource:

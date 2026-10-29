@@ -53,7 +53,7 @@ func newControlLoadFixture(t *testing.T) *controlLoadFixture {
 			request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname,
 			target, public_url_scope, purpose, policy_revision, ip_policy,
 			lifecycle_state, dns_state, created_at, updated_at)
-		SELECT 'public_url_load_' || n, team_id, domain_id, created_by_identity_id, 'load-' || n,
+		SELECT 'url_' || lpad(n::text,22,'0'), team_id, domain_id, created_by_identity_id, 'load-' || n,
 			request_digest_ciphertext, request_digest_storage_key_id, 'load-' || n || '.example.test',
 			target, public_url_scope, purpose, policy_revision,
 			ip_policy, lifecycle_state, dns_state, created_at, updated_at
@@ -112,7 +112,7 @@ func newControlLoadFixture(t *testing.T) *controlLoadFixture {
 
 func (f *controlLoadFixture) request(index int) PublishRunRequest {
 	request := f.base
-	request.PublicURLID = fmt.Sprintf("public_url_load_%d", index)
+	request.PublicURLID = fmt.Sprintf("url_%022d", index)
 	request.CertificateIdentifiers = []string{fmt.Sprintf("load-%d.example.test", index)}
 	request.CertificateCacheKey = request.CertificateIdentifiers[0]
 	return request

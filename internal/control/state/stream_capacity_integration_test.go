@@ -12,6 +12,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -40,7 +41,7 @@ func publicCapacityFixture(t *testing.T, connections int) (*Database, time.Time,
 	return d, now, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}, run
 }
 
-func TestIntegrationPublicCapacitySharesFiveServingIngresses(t *testing.T) {
+func TestIntegrationPublicCapacityPreparesEachServingIngress(t *testing.T) {
 	d, now, scope, run := publicCapacityFixture(t, 32)
 	var owners []IngressLeaseIdentity
 	for index := range 6 {
@@ -62,13 +63,61 @@ func TestIntegrationPublicCapacitySharesFiveServingIngresses(t *testing.T) {
 			}
 			continue
 		}
-		want := int32(7)
-		if index == 4 {
-			want = 4
-		}
+		want := int32(8)
 		if err != nil || allocation.Capacity != want {
 			t.Fatalf("ingress %d received %d slots; want %d: %v", index, allocation.Capacity, want, err)
 		}
+	}
+}
+
+func TestIntegrationPublicCapacityOnePreparesBothIngressesAndJoin(t *testing.T) {
+	d, now, scope, run := publicCapacityFixture(t, 1)
+	var first StreamCapacityAllocation
+	var firstRequest StreamCapacityRequest
+	for index := range 3 {
+		at := now.Add(time.Duration(index) * time.Second)
+		lease, err := d.RegisterIngress(t.Context(), IngressRegistration{IngressID: fmt.Sprintf("public-one-%d", index), IngressRunID: fmt.Sprintf("process-%d", index),
+			ProtocolVersion: tunnelv1.Version, ConnectionCapacity: 8, IngressPoolID: PrimaryIngressPoolID}, at, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := StreamCapacityRequest{Owner: lease.IngressLeaseIdentity, Scope: scope, RunID: run.PublishRunID, RunNumber: int64(run.PublishRunNumber), RequestID: "public-setup", Capacity: 8}
+		allocation, err := d.AllocateStreamCapacity(t.Context(), request, at)
+		if err != nil || allocation.Capacity != 1 || allocation.PublisherObserved {
+			t.Fatal("a public ingress could not independently prepare its one setup slot", allocation, err)
+		}
+		if index == 0 {
+			first, firstRequest = allocation, request
+		} else if allocation.ID == first.ID || allocation.ProofKey == first.ProofKey || allocation.Owner == first.Owner {
+			t.Fatal("independent ingress reused another process's setup proof")
+		}
+		if index != 0 {
+			if err := d.RetireStreamCapacity(t.Context(), lease.IngressLeaseIdentity, first.ID, at); !errors.Is(err, ErrStreamCapacity) {
+				t.Fatal("another ingress retired the original process's public setup", err)
+			}
+		}
+		request.RequestID = "extra-setup"
+		if _, err := d.AllocateStreamCapacity(t.Context(), request, at); !errors.Is(err, ErrStreamCapacity) {
+			t.Fatal("one process exceeded its local setup bound", err)
+		}
+	}
+	renewed, err := d.AllocateStreamCapacity(t.Context(), firstRequest, now.Add(3*time.Second))
+	if err != nil || renewed.ID != first.ID || renewed.ProofKey != first.ProofKey || renewed.Capacity != 1 {
+		t.Fatal("joining ingress invalidated the original setup binding", renewed, err)
+	}
+	if err := d.RetireStreamCapacity(t.Context(), firstRequest.Owner, first.ID, now.Add(4*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AllocateStreamCapacity(t.Context(), firstRequest, now.Add(4*time.Second)); !errors.Is(err, ErrStreamCapacity) {
+		t.Fatal("retired public setup binding was renewed", err)
+	}
+	firstRequest.RequestID = "replacement-setup"
+	if _, err := d.AllocateStreamCapacity(t.Context(), firstRequest, now.Add(4*time.Second)); !errors.Is(err, ErrStreamCapacity) {
+		t.Fatal("retiring setup proof was forgotten before its deadline", err)
+	}
+	replacement, err := d.AllocateStreamCapacity(t.Context(), firstRequest, renewed.ValidUntil)
+	if err != nil || replacement.ID == first.ID || replacement.ProofKey == first.ProofKey {
+		t.Fatal("expired setup proof did not receive a fresh identity", replacement, err)
 	}
 }
 
@@ -265,17 +314,21 @@ func TestIntegrationStreamCapacityPublisherObservationIsRunBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.ReadPublisherVisitorPolicy(t.Context(), request.Scope, run.RunID, run.RunNumber, run.Token, 0, nil, f.now); err != nil {
+	wire, err := d.ReadPublisherVisitorPolicy(t.Context(), request.Scope, run.RunID, run.RunNumber, run.Token, 0, nil, f.now)
+	if err != nil {
 		t.Fatal(err)
 	}
 	stillPending, err := d.AllocateStreamCapacity(t.Context(), request, f.now)
 	if err != nil || stillPending.PublisherObserved {
 		t.Fatal("returning a snapshot claimed it was already installed", err)
 	}
-	if _, err := d.ReadPublisherVisitorPolicy(t.Context(), request.Scope, run.RunID, run.RunNumber, "wrong-token", 0, []string{first.ID}, f.now); err == nil {
+	installed := installServingTestPolicy(t, request.Scope, wire, f.now)
+	observations := installed.BoundedAllocations(run.RunID)
+	if _, err := d.ReadPublisherVisitorPolicy(t.Context(), request.Scope, run.RunID, run.RunNumber, "wrong-token", wire.Policy.VisitorPolicyRevision, observations, f.now); err == nil {
 		t.Fatal("wrong run credential confirmed capacity")
 	}
-	if _, err := d.ReadPublisherVisitorPolicy(t.Context(), request.Scope, run.RunID, run.RunNumber, run.Token, 0, []string{first.ID, other.ID}, f.now); err != nil {
+	observations = append(observations, controlv1.StreamCapacityObservation{AllocationId: other.ID, RunId: run.RunID, RunNumber: run.RunNumber, ValidUntil: other.ValidUntil})
+	if _, err := d.ReadPublisherVisitorPolicy(t.Context(), request.Scope, run.RunID, run.RunNumber, run.Token, wire.Policy.VisitorPolicyRevision, observations, f.now); err != nil {
 		t.Fatal(err)
 	}
 	observed, err := d.AllocateStreamCapacity(t.Context(), request, f.now)

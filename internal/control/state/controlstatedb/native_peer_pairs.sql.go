@@ -85,6 +85,35 @@ func (q *Queries) CountNativePeerPairOwners(ctx context.Context, arg CountNative
 	return count, err
 }
 
+const fenceReplacedNativePeerPairLeg = `-- name: FenceReplacedNativePeerPairLeg :exec
+UPDATE control.native_peer_pair_leg_claims SET relay_id=$1,relay_run_id=$2,
+    relay_lease_revision=$3,confirmed_until=$4
+WHERE pair_id=$5 AND connection_slot=$6
+`
+
+type FenceReplacedNativePeerPairLegParams struct {
+	RelayID            string
+	RelayRunID         string
+	RelayLeaseRevision int64
+	Now                pgtype.Timestamptz
+	PairID             string
+	ConnectionSlot     int16
+}
+
+// retain the last source, timestamp and nonce. a new process must prove a fresh
+// claim from that same source; assignment replacement never changes IP policy.
+func (q *Queries) FenceReplacedNativePeerPairLeg(ctx context.Context, arg FenceReplacedNativePeerPairLegParams) error {
+	_, err := q.db.Exec(ctx, fenceReplacedNativePeerPairLeg,
+		arg.RelayID,
+		arg.RelayRunID,
+		arg.RelayLeaseRevision,
+		arg.Now,
+		arg.PairID,
+		arg.ConnectionSlot,
+	)
+	return err
+}
+
 const getNativePeerPairForOwner = `-- name: GetNativePeerPairForOwner :one
 SELECT id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at FROM control.native_peer_pairs WHERE subject_kind=$1
     AND subject_id=$2 AND service_run_id=$3
@@ -463,6 +492,50 @@ func (q *Queries) ReadNativePeerObservationRelayBounds(ctx context.Context, arg 
 		return nil, err
 	}
 	return items, nil
+}
+
+const rebindNativePeerPairRelays = `-- name: RebindNativePeerPairRelays :one
+UPDATE control.native_peer_pairs SET slots=convert_from($1::bytea,'UTF8')::jsonb,
+    publisher_prepared_until=NULL WHERE id=$2 RETURNING id, service_id, service_run_id, run_number, publisher_identity_id, subject_kind, subject_id, parent_control_session_id, owner_key, idempotency_key, request_digest, last_renewal_digest, publisher_prepared_until, key_digest, key_ciphertext, delivery_id, storage_key_id, slots, delivery_generation, created_at, last_authorized_at, last_request_at, replay_fence_until, expires_at
+`
+
+type RebindNativePeerPairRelaysParams struct {
+	Slots []byte
+	ID    string
+}
+
+// a fresh owner-signed renewal may replace delivery carriers, not the pair key,
+// generation or source history. new claims must precede publisher installation.
+func (q *Queries) RebindNativePeerPairRelays(ctx context.Context, arg RebindNativePeerPairRelaysParams) (ControlNativePeerPair, error) {
+	row := q.db.QueryRow(ctx, rebindNativePeerPairRelays, arg.Slots, arg.ID)
+	var i ControlNativePeerPair
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.ServiceRunID,
+		&i.RunNumber,
+		&i.PublisherIdentityID,
+		&i.SubjectKind,
+		&i.SubjectID,
+		&i.ParentControlSessionID,
+		&i.OwnerKey,
+		&i.IdempotencyKey,
+		&i.RequestDigest,
+		&i.LastRenewalDigest,
+		&i.PublisherPreparedUntil,
+		&i.KeyDigest,
+		&i.KeyCiphertext,
+		&i.DeliveryID,
+		&i.StorageKeyID,
+		&i.Slots,
+		&i.DeliveryGeneration,
+		&i.CreatedAt,
+		&i.LastAuthorizedAt,
+		&i.LastRequestAt,
+		&i.ReplayFenceUntil,
+		&i.ExpiresAt,
+	)
+	return i, err
 }
 
 const renewNativePeerPair = `-- name: RenewNativePeerPair :one

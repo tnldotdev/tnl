@@ -57,7 +57,7 @@ func (q *Queries) CountStreamCapacityAllocations(ctx context.Context, arg CountS
 
 const createStreamCapacityAllocation = `-- name: CreateStreamCapacityAllocation :one
 INSERT INTO control.stream_capacity_allocations(id,resource_kind,resource_id,run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,request_id,capacity,proof_key_ciphertext,proof_key_storage_key_id,issued_at,renewed_at,valid_until)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,$14) RETURNING publisher_observed_at, proof_key_ciphertext, proof_key_storage_key_id, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,$14) RETURNING publisher_observed_until, ingress_observed_until, proof_key_ciphertext, proof_key_storage_key_id, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at
 `
 
 type CreateStreamCapacityAllocationParams struct {
@@ -96,7 +96,8 @@ func (q *Queries) CreateStreamCapacityAllocation(ctx context.Context, arg Create
 	)
 	var i ControlStreamCapacityAllocation
 	err := row.Scan(
-		&i.PublisherObservedAt,
+		&i.PublisherObservedUntil,
+		&i.IngressObservedUntil,
 		&i.ProofKeyCiphertext,
 		&i.ProofKeyStorageKeyID,
 		&i.ID,
@@ -118,7 +119,7 @@ func (q *Queries) CreateStreamCapacityAllocation(ctx context.Context, arg Create
 }
 
 const findStreamCapacityAllocation = `-- name: FindStreamCapacityAllocation :one
-SELECT publisher_observed_at, proof_key_ciphertext, proof_key_storage_key_id, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at FROM control.stream_capacity_allocations
+SELECT publisher_observed_until, ingress_observed_until, proof_key_ciphertext, proof_key_storage_key_id, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at FROM control.stream_capacity_allocations
 WHERE resource_kind=$1 AND resource_id=$2 AND run_id=$3
     AND ingress_id=$4 AND ingress_run_id=$5 AND ingress_lease_revision=$6
     AND request_id=$7 FOR UPDATE
@@ -146,7 +147,8 @@ func (q *Queries) FindStreamCapacityAllocation(ctx context.Context, arg FindStre
 	)
 	var i ControlStreamCapacityAllocation
 	err := row.Scan(
-		&i.PublisherObservedAt,
+		&i.PublisherObservedUntil,
+		&i.IngressObservedUntil,
 		&i.ProofKeyCiphertext,
 		&i.ProofKeyStorageKeyID,
 		&i.ID,
@@ -167,36 +169,173 @@ func (q *Queries) FindStreamCapacityAllocation(ctx context.Context, arg FindStre
 	return i, err
 }
 
-const observePublisherStreamAllocations = `-- name: ObservePublisherStreamAllocations :exec
-UPDATE control.stream_capacity_allocations SET publisher_observed_at=$1
-WHERE resource_kind=$2 AND resource_id=$3
-    AND run_id=$4 AND run_number=$5
-    AND id=ANY($6::text[]) AND retired_at IS NULL AND valid_until>$1
+const observeIngressStreamAllocation = `-- name: ObserveIngressStreamAllocation :execrows
+UPDATE control.stream_capacity_allocations allocation
+SET ingress_observed_until=LEAST($1,allocation.valid_until)
+WHERE allocation.resource_kind=$2 AND allocation.resource_id=$3
+    AND allocation.resource_kind='public_url'
+    AND allocation.id=$4 AND allocation.run_id=$5 AND allocation.run_number=$6
+    AND allocation.ingress_id=$7 AND allocation.ingress_run_id=$8
+    AND allocation.ingress_lease_revision=$9
+    AND allocation.retired_at IS NULL AND allocation.valid_until>$10
+    AND allocation.publisher_observed_until>$10
+    AND $1::timestamptz>$10
+    AND EXISTS (
+        SELECT 1 FROM control.publish_runs run JOIN control.public_urls url ON url.id=run.public_url_id
+        WHERE run.id=allocation.run_id AND run.public_url_id=allocation.resource_id
+            AND run.publish_run_number=allocation.run_number AND run.state IN ('starting','ready')
+            AND run.closed_at IS NULL AND run.publisher_expires_at>$10
+            AND url.lifecycle_state='enabled' AND (url.expires_at IS NULL OR url.expires_at>$10)
+    )
 `
 
-type ObservePublisherStreamAllocationsParams struct {
-	Now          pgtype.Timestamptz
+type ObserveIngressStreamAllocationParams struct {
+	ValidUntil           pgtype.Timestamptz
+	ResourceKind         string
+	ResourceID           string
+	ID                   string
+	RunID                string
+	RunNumber            int64
+	IngressID            string
+	IngressRunID         string
+	IngressLeaseRevision int64
+	Now                  pgtype.Timestamptz
+}
+
+func (q *Queries) ObserveIngressStreamAllocation(ctx context.Context, arg ObserveIngressStreamAllocationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, observeIngressStreamAllocation,
+		arg.ValidUntil,
+		arg.ResourceKind,
+		arg.ResourceID,
+		arg.ID,
+		arg.RunID,
+		arg.RunNumber,
+		arg.IngressID,
+		arg.IngressRunID,
+		arg.IngressLeaseRevision,
+		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const observePublisherStreamAllocation = `-- name: ObservePublisherStreamAllocation :execrows
+UPDATE control.stream_capacity_allocations SET publisher_observed_until=LEAST($1,valid_until)
+WHERE resource_kind=$2 AND resource_id=$3
+    AND run_id=$4 AND run_number=$5
+    AND id=$6 AND retired_at IS NULL AND valid_until>$7
+    AND $1::timestamptz>$7
+`
+
+type ObservePublisherStreamAllocationParams struct {
+	ValidUntil   pgtype.Timestamptz
 	ResourceKind string
 	ResourceID   string
 	RunID        string
 	RunNumber    int64
-	Ids          []string
+	ID           string
+	Now          pgtype.Timestamptz
 }
 
-func (q *Queries) ObservePublisherStreamAllocations(ctx context.Context, arg ObservePublisherStreamAllocationsParams) error {
-	_, err := q.db.Exec(ctx, observePublisherStreamAllocations,
-		arg.Now,
+func (q *Queries) ObservePublisherStreamAllocation(ctx context.Context, arg ObservePublisherStreamAllocationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, observePublisherStreamAllocation,
+		arg.ValidUntil,
 		arg.ResourceKind,
 		arg.ResourceID,
 		arg.RunID,
 		arg.RunNumber,
-		arg.Ids,
+		arg.ID,
+		arg.Now,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const publishRunServingPrepared = `-- name: PublishRunServingPrepared :one
+WITH selected AS (
+    SELECT run.id, run.publish_run_number, url.id AS public_url_id, url.ingress_pool_id,
+        (SELECT max(event.id) FROM control.ingress_routing_table_events event
+         WHERE event.public_url_id=url.id AND event.publish_run_number=run.publish_run_number) AS revision
+    FROM control.publish_runs run JOIN control.public_urls url ON url.id=run.public_url_id
+    WHERE run.id=$2 AND run.publish_run_number=$3
+        AND run.state IN ('starting','ready') AND run.closed_at IS NULL AND run.publisher_expires_at>$1
+        AND run.certificate_not_after>$1 AND url.lifecycle_state='enabled'
+        AND (url.expires_at IS NULL OR url.expires_at>$1)
+), receivers AS (
+    SELECT ingress.id, ingress.ingress_id, ingress.ingress_run_id, ingress.ingress_lease_revision, ingress.protocol_version, ingress.connection_capacity, ingress.ingress_pool_id, ingress.connector_only, ingress.service_ports, ingress.connector_address, ingress.connector_tls_server_name, ingress.reported_connections, ingress.routing_table_revision, ingress.draining, ingress.drain_deadline, ingress.registered_at, ingress.renewed_at, ingress.lease_expires_at, selected.id AS run_id, selected.publish_run_number,
+        selected.public_url_id, selected.revision
+    FROM selected JOIN control.ingress_leases ingress ON ingress.ingress_pool_id=selected.ingress_pool_id
+    WHERE ingress.lease_expires_at>$1 AND NOT ingress.draining AND NOT ingress.connector_only
+        AND ingress.protocol_version=$4 AND ingress.connection_capacity>0
+)
+SELECT CASE WHEN EXISTS(SELECT 1 FROM receivers)
+    AND NOT EXISTS (
+        SELECT 1 FROM receivers receiver
+        WHERE receiver.revision IS NULL OR receiver.routing_table_revision<receiver.revision
+            OR NOT EXISTS (
+                SELECT 1 FROM control.stream_capacity_allocations allocation
+                WHERE allocation.resource_kind='public_url' AND allocation.resource_id=receiver.public_url_id
+                    AND allocation.run_id=receiver.run_id AND allocation.run_number=receiver.publish_run_number
+                    AND allocation.ingress_id=receiver.ingress_id AND allocation.ingress_run_id=receiver.ingress_run_id
+                    AND allocation.ingress_lease_revision=receiver.ingress_lease_revision
+                    AND allocation.retired_at IS NULL AND allocation.valid_until>$1
+                    AND allocation.publisher_observed_until>$1
+                    AND allocation.ingress_observed_until>$1
+            )
+    ) THEN true ELSE false END AS prepared
+`
+
+type PublishRunServingPreparedParams struct {
+	Now             pgtype.Timestamptz
+	RunID           string
+	RunNumber       int64
+	ProtocolVersion int64
+}
+
+// routing installation and per-URL preparation are independent observations.
+func (q *Queries) PublishRunServingPrepared(ctx context.Context, arg PublishRunServingPreparedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, publishRunServingPrepared,
+		arg.Now,
+		arg.RunID,
+		arg.RunNumber,
+		arg.ProtocolVersion,
+	)
+	var prepared bool
+	err := row.Scan(&prepared)
+	return prepared, err
+}
+
+const readPublishRunPreparationRouting = `-- name: ReadPublishRunPreparationRouting :one
+SELECT event.id, event.entry_revision FROM control.ingress_routing_table_events event
+WHERE event.id=(SELECT max(history.id) FROM control.ingress_routing_table_events history
+    WHERE history.public_url_id=$1 AND history.publish_run_number=$2)
+    AND event.event_kind='public_url_upsert' AND event.public_url_expires_at>$3
+`
+
+type ReadPublishRunPreparationRoutingParams struct {
+	PublicURLID string
+	RunNumber   int64
+	Now         pgtype.Timestamptz
+}
+
+type ReadPublishRunPreparationRoutingRow struct {
+	ID            int64
+	EntryRevision int64
+}
+
+func (q *Queries) ReadPublishRunPreparationRouting(ctx context.Context, arg ReadPublishRunPreparationRoutingParams) (ReadPublishRunPreparationRoutingRow, error) {
+	row := q.db.QueryRow(ctx, readPublishRunPreparationRouting, arg.PublicURLID, arg.RunNumber, arg.Now)
+	var i ReadPublishRunPreparationRoutingRow
+	err := row.Scan(&i.ID, &i.EntryRevision)
+	return i, err
 }
 
 const readStreamCapacityAllocations = `-- name: ReadStreamCapacityAllocations :many
-SELECT publisher_observed_at, proof_key_ciphertext, proof_key_storage_key_id, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at FROM control.stream_capacity_allocations
+SELECT publisher_observed_until, ingress_observed_until, proof_key_ciphertext, proof_key_storage_key_id, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at FROM control.stream_capacity_allocations
 WHERE resource_kind=$1 AND resource_id=$2 AND valid_until>$3
 ORDER BY id LIMIT 2049
 `
@@ -217,7 +356,8 @@ func (q *Queries) ReadStreamCapacityAllocations(ctx context.Context, arg ReadStr
 	for rows.Next() {
 		var i ControlStreamCapacityAllocation
 		if err := rows.Scan(
-			&i.PublisherObservedAt,
+			&i.PublisherObservedUntil,
+			&i.IngressObservedUntil,
 			&i.ProofKeyCiphertext,
 			&i.ProofKeyStorageKeyID,
 			&i.ID,
@@ -247,7 +387,7 @@ func (q *Queries) ReadStreamCapacityAllocations(ctx context.Context, arg ReadStr
 
 const renewStreamCapacityAllocation = `-- name: RenewStreamCapacityAllocation :one
 UPDATE control.stream_capacity_allocations SET renewed_at=$1,valid_until=$2
-WHERE id=$3 AND retired_at IS NULL AND valid_until>$1 AND renewed_at<=$1 RETURNING publisher_observed_at, proof_key_ciphertext, proof_key_storage_key_id, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at
+WHERE id=$3 AND retired_at IS NULL AND valid_until>$1 AND renewed_at<=$1 RETURNING publisher_observed_until, ingress_observed_until, proof_key_ciphertext, proof_key_storage_key_id, id, resource_kind, resource_id, run_id, run_number, ingress_id, ingress_run_id, ingress_lease_revision, request_id, capacity, issued_at, renewed_at, valid_until, retired_at
 `
 
 type RenewStreamCapacityAllocationParams struct {
@@ -260,7 +400,8 @@ func (q *Queries) RenewStreamCapacityAllocation(ctx context.Context, arg RenewSt
 	row := q.db.QueryRow(ctx, renewStreamCapacityAllocation, arg.Now, arg.ValidUntil, arg.ID)
 	var i ControlStreamCapacityAllocation
 	err := row.Scan(
-		&i.PublisherObservedAt,
+		&i.PublisherObservedUntil,
+		&i.IngressObservedUntil,
 		&i.ProofKeyCiphertext,
 		&i.ProofKeyStorageKeyID,
 		&i.ID,

@@ -8,6 +8,11 @@ schemas:
       directory: { type: string, maxLength: 4096 }
       service: { type: string, maxLength: 63, x-go-type-skip-optional-pointer: true }
       framework: { type: string, enum: [node, bun, vite, next, python] }
+      telemetry_disabled:
+        {
+          type: boolean,
+          description: Disable telemetry for this app registration in a shared publisher owner.,
+        }
       owner: { type: string, pattern: "^[a-f0-9]{32}$" }
       pid: { type: integer, minimum: 1, x-go-name: PID }
   Assignment:

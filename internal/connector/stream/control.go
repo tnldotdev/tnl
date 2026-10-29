@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"sort"
 	"sync"
@@ -295,5 +296,31 @@ func (c *controlAdapter) ResolveService(ctx context.Context, service string) (Ru
 		return Run{}, ErrServiceConnection
 	}
 	return Run{ServiceID: service, ServiceRunID: selected.ServiceRunId, RunNumber: uint64(selected.RunNumber),
-		ValidUntil: selected.ExpiresAt, Protocol: string(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: selected.Endpoint}, nil
+		ValidUntil: selected.ExpiresAt, Protocol: string(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: selected.Endpoint, PairReady: selected.PairReady}, nil
+}
+
+func (c *controlAdapter) PrepareNativePeerPair(ctx context.Context, service string, body controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error) {
+	signer, err := c.ConnectorSigner(ctx, c.identityID)
+	if err != nil {
+		return controlv1.NativePeerPair{}, err
+	}
+	if !visitorsubject.Equal(body.Subject, signer.Subject) {
+		return controlv1.NativePeerPair{}, ErrServiceConnection
+	}
+	if body.Action == "renew" && body.PreviousPairId != nil {
+		return c.client.RenewDeviceNativePeerPair(ctx, service, *body.PreviousPairId, signer.Subject.DeviceID, body)
+	}
+	return c.client.PrepareDeviceNativePeerPair(ctx, service, signer.Subject.DeviceID, body)
+}
+
+func (c *controlAdapter) VisitorPermission(ctx context.Context, service string) (controlv1.VisitorTokenResponse, error) {
+	signer, err := c.ConnectorSigner(ctx, c.identityID)
+	if err != nil {
+		return controlv1.VisitorTokenResponse{}, err
+	}
+	source, err := json.Marshal(controlv1.VisitorTokenDeviceSource{Kind: controlv1.VisitorTokenDevice, DeviceId: signer.Subject.DeviceID})
+	if err != nil {
+		return controlv1.VisitorTokenResponse{}, err
+	}
+	return c.client.IssueVisitorToken(ctx, controlv1.VisitorTokenRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: service}, Source: source})
 }

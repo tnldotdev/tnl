@@ -7,6 +7,7 @@ import {
   type ProjectMetadata,
 } from "./internal/project/runtime.js";
 import { TnlError } from "./errors.js";
+import { readTelemetryDisabled } from "./internal/publisher/telemetry.js";
 import type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
 import type { AdHocTunnel, OpenOptions } from "./internal/publisher/open.js";
 import type { LocalHTTPServer } from "./internal/publisher/register.js";
@@ -67,6 +68,7 @@ declare const process:
         readonly BUN_PORT?: string;
         readonly PORT?: string;
         readonly NODE_PORT?: string;
+        readonly TNL_NO_TELEMETRY?: string;
       };
     }
   | undefined;
@@ -90,16 +92,20 @@ export const tnl = Object.freeze({
   dev: runtime?.dev ?? false,
   async prepare(options: PrepareOptions = {}): Promise<PreparedService> {
     if (typeof process === "undefined") throw new TnlError("sdk.configuration_invalid");
+    const telemetryDisabled = readTelemetryDisabled(process.env?.TNL_NO_TELEMETRY);
     const { prepareService } = await import("./internal/publisher/app.js");
-    return prepareService(options, "Bun" in globalThis ? "bun" : "node");
+    return prepareService(options, "Bun" in globalThis ? "bun" : "node", telemetryDisabled);
   },
   async open(
     server: LocalHTTPServer | FetchHandler,
     options: OpenOptions = {},
   ): Promise<AdHocTunnel> {
     if (typeof process === "undefined") throw new TnlError("sdk.configuration_invalid");
+    const telemetryDisabled = readTelemetryDisabled(process.env?.TNL_NO_TELEMETRY);
     const { openServer, openFetch } = await import("./internal/publisher/open.js");
-    return typeof server === "function" ? openFetch(server, options) : openServer(server, options);
+    return typeof server === "function"
+      ? openFetch(server, options, undefined, telemetryDisabled)
+      : openServer(server, options, undefined, telemetryDisabled);
   },
   connect(name: string) {
     if (typeof process === "undefined" || typeof process.versions?.node !== "string")

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -11,12 +12,17 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,6 +32,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/demo"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -208,6 +215,15 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 }
 
 func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
+	testIntegrationGuestDemo(t, false)
+}
+
+func TestIntegrationGuestDemoDeadlineClosesConnectionsWithoutControl(t *testing.T) {
+	testIntegrationGuestDemo(t, true)
+}
+
+func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
+	t.Helper()
 	databaseURL, inspect := standaloneTestDatabase(t)
 	publicListener := serviceRuntimeListener(t)
 	publicAddress, relayUDPAddress := publicListener.Addr().String(), unusedUDPAddress(t)
@@ -227,13 +243,36 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	}
 	publicControl := unusedTCPAddress(t)
 	startIntegrationControlProxy(t, owner, publicControl, cfg.ControlListen, controlTLS)
+	var controlOffline atomic.Bool
+	var rejectedControlCalls atomic.Int64
+	publisherClosing := make(chan struct{})
+	notePublisherClosing := sync.OnceFunc(func() { close(publisherClosing) })
+	withControlOutage := func(client *http.Client) *http.Client {
+		base := client.Transport
+		if base == nil {
+			base = http.DefaultTransport
+		}
+		client.Transport = splitACMERoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if controlOffline.Load() {
+				rejectedControlCalls.Add(1)
+				if request.Method == http.MethodDelete && strings.HasPrefix(request.URL.Path, "/v1/publish-runs/") {
+					notePublisherClosing()
+				}
+				return nil, clientcontrol.ErrUnavailable
+			}
+			return base.RoundTrip(request)
+		})
+		return client
+	}
 	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{
 		dns: dns, listeners: listeners,
-		acmeHTTPClient: pebble.httpClient,
-		relayClientTLS: &tls.Config{RootCAs: pebble.roots, MinVersion: tls.VersionTLS13}, owner: owner,
+		acmeHTTPClient:    pebble.httpClient,
+		serviceHTTPClient: withControlOutage(&http.Client{Timeout: 2 * time.Second}),
+		relayClientTLS:    &tls.Config{RootCAs: pebble.roots, MinVersion: tls.VersionTLS13}, owner: owner,
 	})
 	waitForProcessReady(t, process)
 	controlHTTP, _ := newIntegrationHTTPSClient(t, ca.roots, publicControl, false, owner)
+	withControlOutage(controlHTTP)
 	serverURL := "https://" + cfg.ServerHostname()
 	control, err := clientcontrol.New(serverURL, controlHTTP, "")
 	if err != nil {
@@ -242,6 +281,11 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	issued, err := control.CreateGuestDemo(t.Context())
 	if err != nil {
 		t.Fatalf("guest credential without sign-in: %v", err)
+	}
+	if deadlineProof {
+		if _, err := inspect.Exec(`UPDATE control.guest_trials SET used_ready_ns=$2 WHERE id=$1`, issued.GuestId, int64(controlstate.GuestReadyAllowance-8*time.Second)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	clientstate, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
@@ -332,6 +376,14 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 		QUICConnector: quic, TCPConnector: tcp,
 	}, func() string { return integrationPublisherDiagnostics(inspect, pebble.logPath) })
 	ready := waitForPublisherReady(t, handle)
+	var trafficJSON []byte
+	if err := inspect.QueryRow(`SELECT traffic_limits FROM control.publish_runs WHERE public_url_id=$1 AND publish_run_number=$2`, ready.PublicURLID, ready.PublishRunNumber).Scan(&trafficJSON); err != nil {
+		t.Fatal(err)
+	}
+	var traffic trafficlimits.Limits
+	if err := json.Unmarshal(trafficJSON, &traffic); err != nil || traffic != trafficlimits.Guest() {
+		t.Fatalf("guest traffic limits = %+v, %v", traffic, err)
+	}
 	var firstReadyAt time.Time
 	if err := inspect.QueryRow(`SELECT first_ready_at FROM control.guest_trials WHERE id = $1`, issued.GuestId).Scan(&firstReadyAt); err != nil || firstReadyAt.IsZero() {
 		t.Fatalf("guest trial did not record its first ready run: %v", err)
@@ -340,6 +392,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	waitForIngressRoutingCurrent(t, inspect, 2)
 	localDemo.SetPublicURL(ready.PublicURL)
 	visitor := newIntegrationVisitor(t, pebble.roots, publicAddress, owner)
+	logIntegrationPublishRunAuthority(t, inspect, ready.PublicURLID, ready.PublishRunNumber, "guest-routing-acknowledged")
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
 		t.Fatal(err)
@@ -389,6 +442,88 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	page.Body.Close()
 	if err != nil || !strings.Contains(string(html), "/__tnl/feedback/toolbar.") || !strings.Contains(page.Header.Get("Content-Security-Policy"), "style-src 'unsafe-inline'") {
 		t.Fatalf("demo toolbar or original styles missing: %v", err)
+	}
+	for _, font := range []string{"fira-code-latin-wght-normal.woff2", "fira-code-symbols2-wght-normal.woff2"} {
+		response, err := visitor.client.Get(ready.PublicURL + "/fonts/" + font)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bytes, err := io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		if err != nil || response.StatusCode != http.StatusOK || bytes == 0 {
+			t.Fatalf("demo font under guest limits = %d, %d bytes, %v", response.StatusCode, bytes, err)
+		}
+	}
+	if deadlineProof {
+		var deadline time.Time
+		if err := inspect.QueryRow(`SELECT ready_deadline FROM control.guest_trials WHERE id=$1`, issued.GuestId).Scan(&deadline); err != nil {
+			t.Fatal(err)
+		}
+		held, err := tls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second}, "tcp", publicAddress, &tls.Config{RootCAs: pebble.roots, ServerName: hostname, MinVersion: tls.VersionTLS13})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer held.Close()
+		if err := held.SetDeadline(deadline.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		origin, err := url.Parse(ready.PublicURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request, err := http.NewRequest(http.MethodGet, ready.PublicURL+"/state", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, cookie := range jar.Cookies(origin) {
+			request.AddCookie(cookie)
+		}
+		if err := request.Write(held); err != nil {
+			t.Fatal(err)
+		}
+		reader := bufio.NewReader(held)
+		response, err := http.ReadResponse(reader, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, readErr := io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		if readErr != nil || response.StatusCode != http.StatusOK || !time.Now().Before(deadline) {
+			t.Fatalf("held guest connection before deadline = %d, %v", response.StatusCode, readErr)
+		}
+		controlOffline.Store(true)
+		defer controlOffline.Store(false)
+		if _, err := reader.ReadByte(); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("guest connection survived its offline ready deadline: %v", err)
+		}
+		if time.Now().After(deadline.Add(time.Second)) || rejectedControlCalls.Load() == 0 {
+			t.Fatal("guest closure did not occur within the hard deadline during a control outage")
+		}
+		// serving has already stopped within the hard bound above. process
+		// cleanup has its separate ordinary bounded drain, not serving authority.
+		// do not cancel this owner before observing its own expiry: an earlier
+		// policy/ingress cutoff can close the connection before the publisher's
+		// last issued deadline, and parent cancellation would hide that cause.
+		if err := waitForDoneWithin(publisherClosing, max(0, time.Until(deadline))+10*time.Second); err != nil {
+			t.Fatal("guest publisher did not reach cleanup after its own deadline", err)
+		}
+		// only restore control after the owner has reached run-close itself.
+		// offline serving must not depend on audit flush or remote close success.
+		controlOffline.Store(false)
+		if err := waitForDoneWithin(handle.done, 10*time.Second); err != nil {
+			t.Fatal("guest publisher cleanup did not join", err)
+		}
+		if err := handle.result(); !errors.Is(err, clientcontrol.ErrStatusConflict) {
+			t.Fatalf("guest publisher cutoff result = %v", err)
+		} else {
+			t.Logf("expected guest publisher cutoff: %v", err)
+		}
+		// acknowledge only the asserted terminal cutoff, as the ingress-restart
+		// fixture does for its expected lease loss. cleanup still joins this run.
+		handle.mu.Lock()
+		handle.err = nil
+		handle.mu.Unlock()
+		return
 	}
 	reportRequest, err := http.NewRequest(http.MethodPost, ready.PublicURL+"/__tnl/feedback", strings.NewReader(`{"schema_version":1,"text":"Demo suggestion","display_name":"Sam","page_path":"/","evidence":{"schema_version":1,"actions":[],"failed_requests":[]}}`))
 	if err != nil {

@@ -58,7 +58,6 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.relay_services WHERE transport_private_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.relay_certificate_orders WHERE private_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.guest_retry_keys WHERE guest_retry_master_key_storage_key_id = $1) +
-			(SELECT count(*) FROM control.visitor_network_hash_keys WHERE visitor_network_hash_master_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.public_urls WHERE allowed_ip_policy_storage_key_id = $1) +
 			(SELECT count(*) FROM control.public_urls WHERE request_digest_storage_key_id = $1) +
 			(SELECT count(*) FROM control.publish_runs WHERE request_digest_storage_key_id = $1) +
@@ -303,28 +302,6 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		return err
 	}); err != nil {
 		return 0, fmt.Errorf("controlstate: rotate guest retry master key: %w", err)
-	}
-
-	if err := rotate(`
-		SELECT ctid::text, visitor_network_hash_master_key_ciphertext
-		FROM control.visitor_network_hash_keys
-		WHERE visitor_network_hash_master_key_storage_key_id = $1
-		FOR UPDATE SKIP LOCKED
-		LIMIT $2
-	`, func(rows pgx.Rows) (string, string, []byte, error) {
-		var rowID string
-		var ciphertext []byte
-		err := rows.Scan(&rowID, &ciphertext)
-		return rowID, visitorNetworkHashMasterKeyContext(), ciphertext, err
-	}, func(rowID, keyID string, ciphertext []byte) error {
-		_, err := tx.Exec(ctx, `
-			UPDATE control.visitor_network_hash_keys
-			SET visitor_network_hash_master_key_ciphertext = $1, visitor_network_hash_master_key_storage_key_id = $2
-			WHERE ctid = $3::tid AND visitor_network_hash_master_key_storage_key_id = $4
-		`, ciphertext, keyID, rowID, previousKeyID)
-		return err
-	}); err != nil {
-		return 0, fmt.Errorf("controlstate: rotate visitor network hash key: %w", err)
 	}
 
 	for _, source := range []struct {

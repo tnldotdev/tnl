@@ -125,6 +125,10 @@ SELECT EXISTS(
 SELECT guest_id FROM control.guest_public_urls
 WHERE public_url_id = sqlc.arg(public_url_id);
 
+-- name: GuestPublicURLServingDeadline :one
+SELECT control.guest_serving_deadline(guest_id, sqlc.arg(now)::timestamptz)::timestamptz AS deadline
+FROM control.guest_public_urls WHERE public_url_id = sqlc.arg(public_url_id);
+
 -- name: BeginGuestPublishRun :execrows
 UPDATE control.guest_trials AS guest
 SET active_publish_run_id = sqlc.arg(publish_run_id), updated_at = sqlc.arg(started_at)
@@ -133,74 +137,62 @@ WHERE guest.id = (
     WHERE public_url_id = sqlc.arg(public_url_id)
 )
   AND guest.active_publish_run_id IS NULL
+  AND (guest.serving_until IS NULL OR guest.serving_until <= sqlc.arg(started_at))
   AND guest.expires_at > sqlc.arg(started_at)
-  AND guest.used_ready_ns < 900000000000
-  AND guest.used_bytes < 5242880;
+  AND guest.used_ready_ns < 1200000000000;
 
 -- name: MarkGuestRunReady :execrows
 UPDATE control.guest_trials
 SET active_ready_at = sqlc.arg(ready_at), updated_at = sqlc.arg(ready_at),
+    ready_deadline = LEAST(expires_at, sqlc.arg(ready_at)::timestamptz +
+        ((1200000000000 - used_ready_ns)::double precision / 1000000000) * interval '1 second'),
     first_ready_at = COALESCE(first_ready_at, sqlc.arg(ready_at))
 WHERE active_publish_run_id = sqlc.arg(publish_run_id)
   AND active_ready_at IS NULL
-  AND expires_at > sqlc.arg(ready_at);
+  AND expires_at > sqlc.arg(ready_at)
+  AND used_ready_ns < 1200000000000;
+
+-- name: UpdateGuestServingAuthority :one
+-- retain the latest issued serving horizon, including after the run closes.
+-- a replacement cannot reuse this time while an offline owner may still serve.
+UPDATE control.guest_trials AS guest
+SET serving_until = CASE WHEN guest.active_ready_at IS NULL THEN guest.serving_until
+        ELSE GREATEST(guest.serving_until, LEAST(guest.expires_at, guest.ready_deadline, run.publisher_expires_at)) END
+FROM control.publish_runs AS run
+WHERE run.id = sqlc.arg(publish_run_id) AND guest.active_publish_run_id = run.id
+RETURNING control.guest_serving_deadline(guest.id, sqlc.arg(now)::timestamptz)::timestamptz AS deadline;
+
+-- name: LimitGuestPublishRunExpiry :one
+UPDATE control.publish_runs
+SET publisher_expires_at = LEAST(publisher_expires_at, sqlc.arg(deadline)::timestamptz)
+WHERE id = sqlc.arg(publish_run_id)
+RETURNING *;
 
 -- name: FinishGuestPublishRun :execrows
 UPDATE control.guest_trials
-SET used_ready_ns = used_ready_ns + CASE
+SET used_ready_ns = LEAST(1200000000000, used_ready_ns + CASE
         WHEN active_ready_at IS NULL THEN 0
-        ELSE GREATEST(0, (EXTRACT(EPOCH FROM (sqlc.arg(closed_at)::timestamptz - active_ready_at)) * 1000000000)::bigint)
-    END,
+        ELSE GREATEST(0, (EXTRACT(EPOCH FROM (LEAST(ready_deadline,
+            COALESCE(serving_until, sqlc.arg(closed_at)::timestamptz)) - active_ready_at)) * 1000000000)::bigint)
+    END),
     end_reason = COALESCE(end_reason, CASE
         WHEN sqlc.arg(close_reason)::text = 'guest_expired' OR expires_at <= sqlc.arg(closed_at)::timestamptz THEN 'expired'
-        WHEN sqlc.arg(close_reason)::text = 'guest_transfer_limit' OR used_bytes >= 5242880 THEN 'transfer_limit'
-        WHEN sqlc.arg(close_reason)::text = 'guest_ready_limit' OR used_ready_ns + CASE
-            WHEN active_ready_at IS NULL THEN 0
-            ELSE GREATEST(0, (EXTRACT(EPOCH FROM (sqlc.arg(closed_at)::timestamptz - active_ready_at)) * 1000000000)::bigint)
-        END >= 900000000000 THEN 'ready_limit'
+        WHEN ready_deadline <= COALESCE(serving_until, sqlc.arg(closed_at)::timestamptz) THEN 'ready_limit'
     END),
     ended_at = COALESCE(ended_at, CASE
         WHEN sqlc.arg(close_reason)::text = 'guest_expired' OR expires_at <= sqlc.arg(closed_at)::timestamptz THEN expires_at
-        WHEN sqlc.arg(close_reason)::text IN ('guest_transfer_limit', 'guest_ready_limit') OR used_bytes >= 5242880
-            OR used_ready_ns + CASE WHEN active_ready_at IS NULL THEN 0 ELSE
-                GREATEST(0, (EXTRACT(EPOCH FROM (sqlc.arg(closed_at)::timestamptz - active_ready_at)) * 1000000000)::bigint)
-            END >= 900000000000 THEN sqlc.arg(closed_at)::timestamptz
+        WHEN ready_deadline <= COALESCE(serving_until, sqlc.arg(closed_at)::timestamptz) THEN ready_deadline
     END),
     active_ready_at = NULL,
+    ready_deadline = NULL,
     active_publish_run_id = NULL,
     updated_at = sqlc.arg(closed_at)
 WHERE active_publish_run_id = sqlc.arg(publish_run_id);
 
--- name: UpdateGuestTransferredBytes :execrows
-WITH observed AS (
-    SELECT routes.guest_id, COALESCE(SUM(buckets.ingress_bytes + buckets.egress_bytes), 0)::bigint AS bytes
-    FROM control.guest_public_urls AS routes
-    LEFT JOIN control.public_url_usage_buckets AS buckets ON buckets.public_url_id = routes.public_url_id
-    WHERE routes.guest_id = (
-        SELECT owned.guest_id FROM control.guest_public_urls AS owned WHERE owned.public_url_id = sqlc.arg(guest_route_id)
-    )
-    GROUP BY routes.guest_id
-)
-UPDATE control.guest_trials AS guest
-SET used_bytes = GREATEST(guest.used_bytes, observed.bytes),
-    end_reason = COALESCE(guest.end_reason, CASE
-        WHEN guest.expires_at <= sqlc.arg(observed_at)::timestamptz THEN 'expired'
-        WHEN GREATEST(guest.used_bytes, observed.bytes) >= 5242880 THEN 'transfer_limit'
-    END),
-    ended_at = COALESCE(guest.ended_at, CASE
-        WHEN guest.expires_at <= sqlc.arg(observed_at)::timestamptz THEN guest.expires_at
-        WHEN GREATEST(guest.used_bytes, observed.bytes) >= 5242880 THEN sqlc.arg(observed_at)::timestamptz
-    END),
-    updated_at = GREATEST(guest.updated_at, sqlc.arg(observed_at))
-FROM observed WHERE guest.id = observed.guest_id;
-
 -- name: GuestRunAllowanceSpent :one
 SELECT CASE
     WHEN expires_at <= sqlc.arg(now)::timestamptz THEN 'guest_expired'
-    WHEN used_bytes >= 5242880 THEN 'guest_transfer_limit'
-    WHEN used_ready_ns + CASE WHEN active_ready_at IS NULL THEN 0
-        ELSE GREATEST(0, (EXTRACT(EPOCH FROM (sqlc.arg(now)::timestamptz - active_ready_at)) * 1000000000)::bigint)
-    END >= 900000000000 THEN 'guest_ready_limit'
+    WHEN used_ready_ns >= 1200000000000 OR ready_deadline <= sqlc.arg(now)::timestamptz THEN 'guest_ready_limit'
     ELSE ''
 END::text AS reason
 FROM control.guest_trials
@@ -212,6 +204,5 @@ SELECT
     count(*) FILTER (WHERE first_demo_allocated_at >= sqlc.arg(since))::bigint AS allocated,
     count(*) FILTER (WHERE first_ready_at >= sqlc.arg(since))::bigint AS ready,
     count(*) FILTER (WHERE end_reason = 'expired' AND ended_at >= sqlc.arg(since))::bigint AS expired,
-    count(*) FILTER (WHERE end_reason = 'ready_limit' AND ended_at >= sqlc.arg(since))::bigint AS ready_limit,
-    count(*) FILTER (WHERE end_reason = 'transfer_limit' AND ended_at >= sqlc.arg(since))::bigint AS transfer_limit
+    count(*) FILTER (WHERE end_reason = 'ready_limit' AND ended_at >= sqlc.arg(since))::bigint AS ready_limit
 FROM control.guest_trials;

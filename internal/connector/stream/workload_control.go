@@ -46,7 +46,7 @@ func NewWorkloadControl(client *workload.Client) (Control, error) {
 		return nil, err
 	}
 	c := &workloadControl{client: client, subject: subject, pairs: make(map[string]*workloadAssignmentPair), owned: make(map[string]bool)}
-	return NewControlWithConfig(ControlConfig{Signer: c.signer, Assignment: c.assignment, Resolve: c.resolve, Release: c.release, Close: c.close, CloseContext: c.closeContext})
+	return NewControlWithConfig(ControlConfig{Signer: c.signer, Assignment: c.assignment, Resolve: c.resolve, Release: c.release, Close: c.close, CloseContext: c.closeContext, Pair: client.PrepareNativePeerPair, Permission: client.VisitorPermission})
 }
 
 func (c *workloadControl) signer(_ context.Context, identity string) (Signer, error) {
@@ -235,5 +235,5 @@ func (c *workloadControl) resolve(ctx context.Context, service string) (Run, err
 	if r.ServiceId != service || !visitorsubject.Equal(r.Subject, c.subject) || !opaqueid.Valid(r.ServiceRunId, opaqueid.ServiceRunPrefix) || r.RunNumber < 1 || r.TrustRevision < 1 || !validProtocol(string(r.Protocol)) || !r.ExpiresAt.After(time.Now()) || r.Endpoint == nil {
 		return Run{}, ErrServiceConnection
 	}
-	return Run{ServiceID: service, ServiceRunID: r.ServiceRunId, RunNumber: uint64(r.RunNumber), ValidUntil: r.ExpiresAt, Protocol: string(r.Protocol), TrustRevision: r.TrustRevision, Endpoint: r.Endpoint}, nil
+	return Run{ServiceID: service, ServiceRunID: r.ServiceRunId, RunNumber: uint64(r.RunNumber), ValidUntil: r.ExpiresAt, Protocol: string(r.Protocol), TrustRevision: r.TrustRevision, Endpoint: r.Endpoint, PairReady: r.PairReady}, nil
 }

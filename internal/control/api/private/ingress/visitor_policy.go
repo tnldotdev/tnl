@@ -13,7 +13,7 @@ import (
 )
 
 type visitorPolicyStore interface {
-	ReadIngressVisitorPolicy(context.Context, controlstate.IngressLeaseIdentity, visitorscope.Scope, int64, time.Time) (controlv1.VisitorPolicyUpdate, error)
+	ReadIngressVisitorPolicy(context.Context, controlstate.IngressLeaseIdentity, visitorscope.Scope, int64, time.Time, ...controlstate.IngressStreamAllocationObservation) (controlv1.VisitorPolicyUpdate, error)
 }
 
 func (s *service) ReadIngressVisitorPolicy(ctx context.Context, id string, body ingressv1.IngressVisitorPolicyRequest) (controlv1.VisitorPolicyUpdate, error) {
@@ -26,7 +26,15 @@ func (s *service) ReadIngressVisitorPolicy(ctx context.Context, id string, body 
 	if !ok {
 		return controlv1.VisitorPolicyUpdate{}, serviceapi.NewProblemError(http.StatusServiceUnavailable, "unavailable", "visitor policy is unavailable")
 	}
-	result, err := store.ReadIngressVisitorPolicy(ctx, identity, scope, body.AfterRevision, s.now())
+	var observed []controlstate.IngressStreamAllocationObservation
+	if body.ObservedAllocations != nil {
+		for _, observation := range *body.ObservedAllocations {
+			observed = append(observed, controlstate.IngressStreamAllocationObservation{
+				AllocationID: observation.AllocationId, RunID: observation.RunId, RunNumber: observation.RunNumber, ValidUntil: observation.ValidUntil,
+			})
+		}
+	}
+	result, err := store.ReadIngressVisitorPolicy(ctx, identity, scope, body.AfterRevision, s.now(), observed...)
 	return result, s.privateStateError(ctx, err)
 }
 

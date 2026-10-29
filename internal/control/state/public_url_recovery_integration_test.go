@@ -120,7 +120,7 @@ func TestIntegrationRouteRoutingTableLifecycle(t *testing.T) {
 	// is skipped. entry revisions remain contiguous within this publish run number.
 	var cursor uint64
 	var events int
-	wantKinds := []IngressRoutingTableEventKind{IngressPublicURLUpsert, IngressPublicURLUpsert, IngressPublicURLTombstone}
+	wantKinds := []IngressRoutingTableEventKind{IngressPublicURLUpsert, IngressPublicURLUpsert, IngressPublicURLUpsert, IngressPublicURLTombstone}
 	for {
 		page, err := database.ReadIngressRoutingTableEvents(t.Context(), ingress.IngressLeaseIdentity, cursor, 1, now.Add(3*time.Second))
 		if err != nil || page.ResnapshotRequired || len(page.Events) != 1 || page.NextRevision <= cursor {
@@ -133,6 +133,9 @@ func TestIntegrationRouteRoutingTableLifecycle(t *testing.T) {
 		}
 		if event.PublicURLID != f.setup.PublicURLID || event.PublishRunNumber != f.setup.PublishRunNumber {
 			t.Fatalf("event identity = %#v", event)
+		}
+		if events <= 2 && (event.Projection.PublishRunReadyAt != nil) != (events == 2) {
+			t.Fatal("preparation and final-ready projections lost their distinct ready_at facts")
 		}
 		cursor = page.NextRevision
 		if !page.More {

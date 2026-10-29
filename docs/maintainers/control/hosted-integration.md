@@ -19,10 +19,6 @@ identity and personal team. website requests do not create control sessions.
 the website must obtain subject and verified email from its own session, never
 browser form fields. an absent verified email clears previously saved email facts.
 
-the website remembers a selected team as a preference. before returning usage,
-it reads current identity context and checks the selected team against those
-memberships. control does not store the selected team or website billing state.
-
 identity context is membership metadata, not company-sign-in provenance. required
 company operations use a control session carrying verified company context.
 the website's directory integration can call `POST /v1/service/company-eligibility`

@@ -33,6 +33,7 @@ type PublisherAcceptorConfig struct {
 	Report                func(error)
 	Observer              OperationObserver
 	Private               *ServicePublisherAcceptor
+	Native                func(string) (*NativeConnectorAcceptor, bool)
 }
 
 // PublisherAcceptor authenticates and owns publisher connections.
@@ -46,6 +47,7 @@ type PublisherAcceptor struct {
 	report           func(error)
 	observer         OperationObserver
 	private          *ServicePublisherAcceptor
+	native           func(string) (*NativeConnectorAcceptor, bool)
 }
 
 func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, error) {
@@ -71,6 +73,7 @@ func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, e
 		capacity: config.CapacityRejected, report: config.Report,
 		observer: config.Observer,
 		private:  config.Private,
+		native:   config.Native,
 	}, nil
 }
 
@@ -81,7 +84,34 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 	ready := false
 	control, registry := a.control, a.registry
 	var private *privateClaim
-	session, hello, err := tunnel.Accept(ctx, transport, func(authCtx context.Context, message tunnelv1.Message) error {
+	var native *NativeConnectorAcceptor
+	var nativeClaim nativeConnectorClaim
+	var releaseNative func()
+	defer func() {
+		if releaseNative != nil {
+			releaseNative()
+		}
+	}()
+	session, hello, err := tunnel.AcceptWithResult(ctx, transport, func(authCtx context.Context, message tunnelv1.Message) (*tunnelv1.NativePairLegAccepted, error) {
+		if message.Role == tunnelv1.NativeConnector {
+			if a.native == nil || message.NativePairLegProof == nil {
+				return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+			}
+			var ok bool
+			native, ok = a.native(message.NativePairLegProof.RelayServiceID)
+			if !ok || native == nil {
+				return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+			}
+			var err error
+			releaseNative, err = native.reserve(*message.NativePairLegProof)
+			if err == nil {
+				nativeClaim, err = native.claim(authCtx, transport, *message.NativePairLegProof)
+			}
+			if err != nil {
+				return nil, err
+			}
+			return &nativeClaim.receipt, nil
+		}
 		if message.ServiceConnection != nil {
 			var err error
 			private, err = a.private.claim(authCtx, message)
@@ -89,32 +119,40 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 			if errors.As(err, &protocol) && protocol.Code == tunnelv1.CapacityExceeded {
 				a.capacity()
 			}
-			return err
+			return nil, err
 		}
 		if message.Role != tunnelv1.Publisher || message.PublisherConnection == nil {
-			return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+			return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 		}
 		if a.selectTarget != nil {
 			var ok bool
 			control, registry, ok = a.selectTarget(message.PublisherConnection.RelayServiceID)
 			if !ok || control == nil || registry == nil {
-				return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+				return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 			}
 		}
 		claimID, err := opaqueid.New(claimIDPrefix)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		claimed, err = control.ClaimPublisherConnection(
 			authCtx, *message.PublisherConnection, claimID, message.Credential,
 		)
 		if err != nil {
-			return a.controlError(err)
+			return nil, a.controlError(err)
 		}
-		return nil
+		return nil, nil
 	})
+	if native != nil {
+		finishAdmission(err)
+		if err != nil {
+			return err
+		}
+		defer session.Close()
+		return native.serve(ctx, transport, session, *hello.NativePairLegProof, nativeClaim)
+	}
 	if private != nil {
-		return errors.Join(err, private.serve(ctx, session, a, finishAdmission))
+		return errors.Join(err, private.serve(ctx, session, transport, a, finishAdmission))
 	}
 	registered := false
 	// a successful claim must be disconnected with its exact identity, even if

@@ -229,20 +229,26 @@ type separatedPublishers struct {
 func separatedPublisherIndexes(count, shard int) []int {
 	shards := len(separatedPublisherComponents())
 	indexes := make([]int, 0, (count+shards-1)/shards)
-	for i := 2 * shard; i < count; i += 2 * shards {
-		indexes = append(indexes, i)
-		if i+1 < count {
-			indexes = append(indexes, i+1)
+	// spread the first wave across every publisher. swap adjacent owners in the
+	// next wave so each process still receives both QUIC and TLS/TCP cohorts.
+	for start := 0; start < count; start += 2 * shards {
+		for _, index := range []int{start + shard, start + shards + (shard ^ 1)} {
+			if index < count {
+				indexes = append(indexes, index)
+			}
 		}
 	}
 	return indexes
 }
 
 func TestSeparatedPublisherIndexesCoverRoutesAndTransports(t *testing.T) {
-	for _, total := range []int{4, 8, 17, 3000} {
+	for _, total := range []int{1, 2, 3, 4, 5, 8, 17, 3000} {
 		seen := make([]bool, total)
 		for shard := range separatedPublisherComponents() {
 			indexes := separatedPublisherIndexes(total, shard)
+			if len(indexes) > (total+len(separatedPublisherComponents())-1)/len(separatedPublisherComponents()) {
+				t.Fatalf("total=%d shard=%d has %d routes while other publishers are idle", total, shard, len(indexes))
+			}
 			for _, index := range indexes {
 				if index < 0 || index >= total || seen[index] {
 					t.Fatalf("total=%d shard=%d duplicate/invalid index=%d", total, shard, index)

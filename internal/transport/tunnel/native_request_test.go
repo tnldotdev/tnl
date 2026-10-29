@@ -127,6 +127,89 @@ func nativeRequestPermissionFixture() tunnelv1.NativeVisitorPermission {
 	return tunnelv1.NativeVisitorPermission{Token: "signed-visitor-token", PublicKey: strings.Repeat("A", 43), Signature: strings.Repeat("A", 86)}
 }
 
+type nativeDeadlineConn struct {
+	net.Conn
+	deadlines chan time.Time
+	writes    chan struct{}
+}
+
+func (c *nativeDeadlineConn) Write(p []byte) (int, error) {
+	c.writes <- struct{}{}
+	return c.Conn.Write(p)
+}
+
+func (c *nativeDeadlineConn) SetWriteDeadline(at time.Time) error {
+	c.deadlines <- at
+	return c.Conn.SetWriteDeadline(at)
+}
+
+func TestNativeRequestRenewalDeadlineDoesNotInterruptApplicationWrite(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	tracked := &nativeDeadlineConn{Conn: client, deadlines: make(chan time.Time, 4), writes: make(chan struct{}, 8)}
+	writer := NewNativeRequestWriter(tracked)
+	written := make(chan error, 1)
+	go func() { _, err := writer.Write([]byte("application")); written <- err }()
+	<-tracked.writes // the application's framed write owns the writer gate.
+	until := time.Now().Add(time.Second)
+	renewed := make(chan error, 1)
+	go func() { renewed <- writer.RenewUntil(nativeRequestPermissionFixture(), until) }()
+	select {
+	case <-tracked.deadlines:
+		t.Fatal("renewal changed an entered application write's deadline")
+	case <-time.After(20 * time.Millisecond):
+	}
+	frame, err := tunnelv1.ReadNativeRequestFrame(server)
+	if err != nil || string(frame.Data) != "application" {
+		t.Fatal("application write was interrupted", err)
+	}
+	if err := <-written; err != nil {
+		t.Fatal(err)
+	}
+	frame, err = tunnelv1.ReadNativeRequestFrame(server)
+	if err != nil || frame.Kind != tunnelv1.NativeRequestPermission {
+		t.Fatal("renewal lost its frame", err)
+	}
+	if err := <-renewed; err != nil {
+		t.Fatal(err)
+	}
+	if at := <-tracked.deadlines; !at.Equal(until) {
+		t.Fatal("renewal reset its original deadline")
+	}
+	if at := <-tracked.deadlines; !at.IsZero() {
+		t.Fatal("renewal left its deadline on application writes")
+	}
+}
+
+func TestNativeRequestRenewalCannotResetExpiredBudget(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	tracked := &nativeDeadlineConn{Conn: client, deadlines: make(chan time.Time, 4), writes: make(chan struct{}, 8)}
+	writer := NewNativeRequestWriter(tracked)
+	written := make(chan error, 1)
+	go func() { _, err := writer.Write([]byte("application")); written <- err }()
+	<-tracked.writes
+	renewed := make(chan error, 1)
+	until := time.Now().Add(20 * time.Millisecond)
+	go func() { renewed <- writer.RenewUntil(nativeRequestPermissionFixture(), until) }()
+	select {
+	case err := <-renewed:
+		if !errors.Is(err, os.ErrDeadlineExceeded) || len(tracked.deadlines) != 0 {
+			t.Fatal("waiting renewal reset its expired budget", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("renewal waited for the application write beyond its budget")
+	}
+	if _, err := tunnelv1.ReadNativeRequestFrame(server); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-written; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestNativeOpeningCarriesBoundedInitialDataWithoutReturnAcceptance(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()

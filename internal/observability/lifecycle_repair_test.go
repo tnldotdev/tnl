@@ -114,3 +114,29 @@ func TestOwnerLifecycleErrorsRetainAllDrainCauses(t *testing.T) {
 		t.Fatal("shutdown causes lost or exposed", err)
 	}
 }
+
+func TestProviderWorkRetainsCancellationAfterProvidersJoin(t *testing.T) {
+	providerFailure := errors.New("secret provider failure")
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded, errors.New("secret caller failure")} {
+		for _, completedFailure := range []error{nil, providerFailure} {
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+			var joined atomic.Int64
+			err := providerWork(ctx, func(context.Context) error {
+				cancel(cause)
+				joined.Add(1)
+				return nil
+			}, func(ctx context.Context) error {
+				<-ctx.Done()
+				joined.Add(1)
+				return completedFailure
+			})
+			if joined.Load() != 2 || !errors.Is(err, cause) || completedFailure != nil && !errors.Is(err, completedFailure) {
+				t.Fatal("joined providers lost the caller or completed failure", err)
+			}
+			if err.Error() != "observability provider operation failed" {
+				t.Fatal("provider cancellation exposed an internal cause", err)
+			}
+		}
+	}
+}

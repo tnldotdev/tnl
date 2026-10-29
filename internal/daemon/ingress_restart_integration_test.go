@@ -44,6 +44,10 @@ func TestIntegrationExpiredIngressRestartsAndRecoversVisitors(t *testing.T) {
 	if after.runID == before.runID || after.revision != before.revision+1 {
 		t.Fatalf("restart lease: before=%+v after=%+v", before, after)
 	}
+	logIntegrationPublishRunAuthority(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, "restarted-ingress-routing-acknowledged")
+	// the new lease fences the retired run, but routing acknowledgment does not
+	// prepare the new run's policy and capacity. use the existing TLS-only gate;
+	// never retry the application request or prepare it from visitor arrival.
 	response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL, nil)
 	if err != nil {
 		t.Fatal(err)

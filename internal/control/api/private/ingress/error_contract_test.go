@@ -14,11 +14,6 @@ func TestIngressStoreProblemsUseDeclaredCodes(t *testing.T) {
 		controlstate.ErrIngressAlreadyRunning,
 		controlstate.ErrIngressLeaseStale,
 		controlstate.ErrPublicURLRecoveryEpisodeStale,
-		controlstate.ErrIngressUsageReportInvalid,
-		controlstate.ErrIngressUsagePublicURLNotFound,
-		controlstate.ErrIngressUsageReportStale,
-		controlstate.ErrIngressUsageReportConflict,
-		controlstate.ErrPublicURLUsageBucketFinalized,
 		errors.New("unexpected database error"),
 	} {
 		status, code, detail := storeProblem(err, func(error) {})

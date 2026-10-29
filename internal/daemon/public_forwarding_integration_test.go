@@ -143,7 +143,6 @@ func TestIntegrationPublicForwardingScalesIngressWithoutPublisherAttachments(t *
 		})
 		waitForProcessReady(t, process)
 		visitor := newIntegrationVisitor(t, f.pebble.roots, config.IngressListen, f.owner)
-		waitForPreparedPublicVisitor(t, visitor, ready.PublicURL)
 		return process, visitor
 	}
 	secondProcess, secondVisitor := startIngress("ingress-public-second")
@@ -168,7 +167,7 @@ func TestIntegrationPublicForwardingScalesIngressWithoutPublisherAttachments(t *
 			ON l.ingress_id=a.ingress_id AND l.ingress_run_id=a.ingress_run_id
 			AND l.ingress_lease_revision=a.ingress_lease_revision
 			WHERE a.resource_kind='public_url' AND a.resource_id=$1 AND a.run_number=$2
-			AND a.publisher_observed_at IS NOT NULL AND a.retired_at IS NULL
+			AND a.publisher_observed_until>now() AND a.retired_at IS NULL
 			AND a.valid_until>now() AND NOT l.draining AND l.lease_expires_at>now()`,
 			ready.PublicURLID, ready.PublishRunNumber).Scan(&observed)
 		return err == nil && observed == 3, err

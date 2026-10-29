@@ -53,22 +53,6 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	visitorLease, err := database.RegisterIngress(ctx, IngressRegistration{
-		IngressID: "ingress_original_key", IngressRunID: "run_original_key", ProtocolVersion: 1, ConnectionCapacity: 10,
-	}, now, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var visitorCiphertext []byte
-	var visitorKeyID string
-	if err := database.pool.QueryRow(ctx, `SELECT visitor_network_hash_master_key_ciphertext,
-		visitor_network_hash_master_key_storage_key_id FROM control.visitor_network_hash_keys`).Scan(&visitorCiphertext, &visitorKeyID); err != nil {
-		t.Fatal(err)
-	}
-	visitorKey, _, err := database.openSecret(visitorKeyID, visitorNetworkHashMasterKeyContext(), visitorCiphertext)
-	if err != nil || len(visitorKey) != 32 {
-		t.Fatalf("invalid visitor network hash key before rotation: %v", err)
-	}
 	stores := []struct {
 		table, ciphertextColumn, keyColumn string
 		plaintext                          []byte
@@ -78,7 +62,6 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 		{"relay_services", "transport_private_key_ciphertext", "transport_private_key_storage_key_id", privateKey},
 		{"relay_certificate_orders", "private_key_ciphertext", "private_key_storage_key_id", order.PrivateKeyPEM},
 		{"guest_retry_keys", "guest_retry_master_key_ciphertext", "guest_retry_master_key_storage_key_id", masterKey[:]},
-		{"visitor_network_hash_keys", "visitor_network_hash_master_key_ciphertext", "visitor_network_hash_master_key_storage_key_id", visitorKey},
 	}
 	before := make(map[string][]byte)
 	oldKeyID := database.storageKey.CurrentID()
@@ -167,11 +150,5 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 	recoveredMaster, err := reopened.EnsureGuestPrincipal(ctx, guest.ID, now)
 	if err != nil || recoveredMaster != masterKey {
 		t.Fatalf("recover external retry master key: %v", err)
-	}
-	recoveredVisitorLease, err := reopened.RegisterIngress(ctx, IngressRegistration{
-		IngressID: "ingress_rotated_key", IngressRunID: "run_rotated_key", ProtocolVersion: 1, ConnectionCapacity: 10,
-	}, now, time.Minute)
-	if err != nil || recoveredVisitorLease.VisitorNetworkHashKeys != visitorLease.VisitorNetworkHashKeys {
-		t.Fatalf("recover visitor network hash keys after rotation: %v", err)
 	}
 }

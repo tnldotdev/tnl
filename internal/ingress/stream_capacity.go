@@ -45,53 +45,32 @@ func (c *HTTPControlClient) RetireStreamCapacity(ctx context.Context, id, alloca
 	return nil
 }
 
-// streamCapacity renews delegated slots for one exact run. the serving path
-// calls reserve using local state only; it never requests capacity on demand.
+// streamCapacity renews source-bound slots for one exact run. public URL slots
+// bound local setup, not the publisher's authorized stream count. service slots
+// retain their delegated capacity. the serving path uses prepared local state
+// only; it never requests capacity on demand.
 type streamCapacity struct {
-	client    streamCapacityClient
-	pool      *streamReservations
-	owner     ingressv1.IngressLease
-	body      ingressv1.StreamCapacityRequest
-	until     time.Time
-	mu        sync.Mutex
-	id        string
-	ready     bool
-	cancel    context.CancelFunc
-	done      chan struct{}
-	closeOnce sync.Once
-	closeErr  error
+	client         streamCapacityClient
+	pool           *streamReservations
+	owner          ingressv1.IngressLease
+	body           ingressv1.StreamCapacityRequest
+	until          time.Time
+	mu             sync.Mutex
+	id             string
+	ready          bool
+	publisherUntil time.Time
+	renewAfter     time.Duration
+	closeOnce      sync.Once
+	closeErr       error
 }
 
-func prepareStreamCapacity(ctx context.Context, client streamCapacityClient, owner ingressv1.IngressLease, body ingressv1.StreamCapacityRequest, report func(error)) (*streamCapacity, error) {
+func newStreamCapacity(client streamCapacityClient, owner ingressv1.IngressLease, body ingressv1.StreamCapacityRequest) (*streamCapacity, error) {
 	if client == nil || owner.Draining || owner.IngressLeaseRevision < 1 || !owner.LeaseExpiresAt.After(time.Now()) {
 		return nil, ErrStreamReservation
 	}
 	body.IngressRunId, body.IngressLeaseRevision = owner.IngressRunId, owner.IngressLeaseRevision
 	body.RequestId = ""
-	c := &streamCapacity{client: client, owner: owner, body: body, pool: newStreamReservations(nil), done: make(chan struct{})}
-	if err := c.refresh(ctx); err != nil {
-		c.pool.Close()
-		return nil, err
-	}
-	life, cancel := context.WithCancel(ctx)
-	c.cancel = cancel
-	go func() {
-		defer close(c.done)
-		defer c.pool.Close()
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-life.Done():
-				return
-			case <-ticker.C:
-				if err := c.refresh(life); err != nil && life.Err() == nil && report != nil {
-					report(err)
-				}
-			}
-		}
-	}()
-	return c, nil
+	return &streamCapacity{client: client, owner: owner, body: body, pool: newStreamReservations(nil)}, nil
 }
 
 func (c *streamCapacity) refresh(ctx context.Context) error {
@@ -128,15 +107,28 @@ func (c *streamCapacity) refresh(ctx context.Context) error {
 	c.until = started.Add(a.ValidUntil.Sub(a.ObservedAt))
 	c.mu.Lock()
 	c.id = a.Id
-	c.ready = a.PublisherObserved
+	// leave several observation rounds within short process/guest horizons.
+	// retain this cadence during outages; time remaining must not drive a spin.
+	c.renewAfter = min(2*time.Second, max(100*time.Millisecond, a.ValidUntil.Sub(a.ObservedAt)/4))
+	c.ready = a.PublisherObserved && a.PublisherObservedUntil != nil
+	c.publisherUntil = time.Time{}
+	if a.PublisherObservedUntil != nil {
+		c.publisherUntil = started.Add(a.PublisherObservedUntil.Sub(a.ObservedAt))
+	}
 	c.mu.Unlock()
 	return nil
+}
+
+func (c *streamCapacity) refreshInterval() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.renewAfter
 }
 
 func (c *streamCapacity) reserve(visitorID string, source netip.Addr, stop func()) (*streamReservation, error) {
 	c.mu.Lock()
 	id := c.id
-	ready := c.ready
+	ready := c.ready && c.pool.now().Before(c.publisherUntil)
 	c.mu.Unlock()
 	if !ready {
 		return nil, ErrStreamReservation
@@ -146,8 +138,10 @@ func (c *streamCapacity) reserve(visitorID string, source netip.Addr, stop func(
 
 func (c *streamCapacity) Close(ctx context.Context) error {
 	c.closeOnce.Do(func() {
-		c.cancel()
-		<-c.done
+		c.pool.Close()
+		if c.id == "" {
+			return
+		}
 		call, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		c.closeErr = c.client.RetireStreamCapacity(call, c.owner.IngressId, c.id, ingressv1.StreamCapacityRetirement{IngressRunId: c.owner.IngressRunId, IngressLeaseRevision: c.owner.IngressLeaseRevision})

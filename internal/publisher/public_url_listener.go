@@ -94,6 +94,7 @@ func (c *metadataConn) Close() error {
 
 func (c *publicURLReaderConn) CloseWrite() error { return closeWrite(c.Conn) }
 func (c *metadataConn) CloseWrite() error        { return closeWrite(c.Conn) }
+func (c *doneConn) CloseWrite() error            { return closeWrite(c.Conn) }
 
 func closeWrite(conn net.Conn) error {
 	if half, ok := conn.(interface{ CloseWrite() error }); ok {
@@ -111,8 +112,9 @@ func tcpAddress(endpoint netip.AddrPort) net.Addr {
 
 type doneConn struct {
 	net.Conn
-	done chan struct{}
-	once sync.Once
+	done     chan struct{}
+	once     sync.Once
+	closeErr error
 }
 
 func newDoneConn(connection net.Conn) *doneConn {
@@ -120,7 +122,11 @@ func newDoneConn(connection net.Conn) *doneConn {
 }
 
 func (c *doneConn) Close() error {
-	err := c.Conn.Close()
-	c.once.Do(func() { close(c.done) })
-	return err
+	// TLS handshake cancellation and net/http may close concurrently. neither
+	// may signal completion before the first close finishes retiring the stream.
+	c.once.Do(func() {
+		c.closeErr = c.Conn.Close()
+		close(c.done)
+	})
+	return c.closeErr
 }

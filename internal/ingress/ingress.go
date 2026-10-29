@@ -54,18 +54,6 @@ type PublicURL struct {
 // are fixed labels, never hostnames, identifiers, or error text.
 type LookupFunc func(string) (PublicURL, LookupReason)
 
-type UsageConnection interface {
-	PolicyDenied(time.Time)
-	CapacityDenied(time.Time)
-	VisitorStreamOpening(time.Time)
-	VisitorStreamOpened(time.Time)
-	VisitorStreamOpenFailed(time.Time)
-	StreamOpened(time.Time)
-	AddIngress(int64, time.Time)
-	AddEgress(int64, time.Time)
-	Close(time.Time)
-}
-
 type Metrics interface {
 	IncCapacityRejection(string)
 	IncInspectionFailure(string)
@@ -101,7 +89,6 @@ type Config struct {
 	OpenTimeout               time.Duration
 	Metrics                   Metrics
 	Observer                  OperationObserver
-	OpenUsage                 func(string, uint64, netip.Addr, time.Time) UsageConnection
 	ObserveRecovery           func(string, uint64, uint64, time.Time)
 	OnError                   func(error)
 	OnForwardingFailure       func(string, uint64, string, ForwardingFailureReason, int)

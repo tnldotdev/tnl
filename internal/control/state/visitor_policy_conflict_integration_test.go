@@ -25,6 +25,11 @@ func TestIntegrationPublisherVisitorPolicyRetriesAllocationConflicts(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
+			wire, err := d.ReadPublisherVisitorPolicy(ctx, request.Scope, run.RunID, run.RunNumber, run.Token, 0, nil, f.now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			installed := installServingTestPolicy(t, request.Scope, wire, f.now)
 			gate, err := d.pool.Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -39,7 +44,7 @@ func TestIntegrationPublisherVisitorPolicyRetriesAllocationConflicts(t *testing.
 			done := make(chan error, 1)
 			workers.Go(func() {
 				var err error
-				result, err = d.ReadPublisherVisitorPolicy(ctx, request.Scope, run.RunID, run.RunNumber, run.Token, 0, []string{allocation.ID}, f.now)
+				result, err = d.ReadPublisherVisitorPolicy(ctx, request.Scope, run.RunID, run.RunNumber, run.Token, wire.Policy.VisitorPolicyRevision, installed.BoundedAllocations(run.RunID), f.now)
 				done <- err
 			})
 			waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), done)
@@ -61,7 +66,7 @@ func TestIntegrationPublisherVisitorPolicyRetriesAllocationConflicts(t *testing.
 				t.Fatal("rolled-back observation did not recover with a complete policy", err)
 			}
 			var observed bool
-			if err := d.pool.QueryRow(ctx, `SELECT publisher_observed_at IS NOT NULL FROM control.stream_capacity_allocations WHERE id=$1`, allocation.ID).Scan(&observed); err != nil {
+			if err := d.pool.QueryRow(ctx, `SELECT publisher_observed_until IS NOT NULL FROM control.stream_capacity_allocations WHERE id=$1`, allocation.ID).Scan(&observed); err != nil {
 				t.Fatal(err)
 			}
 			if observed == revoke {

@@ -202,6 +202,71 @@ func TestInvocationWorkerPublicationAndLimits(t *testing.T) {
 	}
 }
 
+func TestInvocationCapturesTelemetryBeforeHookAndKeepsSiblings(t *testing.T) {
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	a, _, body, f := invocationRuntime(t)
+	a.workers.RunPublisher = readyInvocation
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request publisherprotocol.Invocation
+	if err := json.Unmarshal(encoded, &request); err != nil {
+		t.Fatal(err)
+	}
+	captured := map[string]bool{}
+	for index, choice := range []string{"disabled", "enabled", "absent"} {
+		if index != 0 {
+			request.InvocationId, err = opaqueid.New(opaqueid.InvocationPrefix)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		want := choice == "disabled"
+		input := want
+		request.TelemetryDisabled = &input
+		if choice == "absent" {
+			request.TelemetryDisabled = nil
+		}
+		a.AttachPublication = func(context.Context, publisherapp.Service, *publisher.Config) error {
+			input = !want
+			return nil
+		}
+		registration, err := a.invocation(t.Context(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		captured[registration.RegistrationID] = want
+		a.mu.Lock()
+		for id, want := range captured {
+			preparation := a.prepared[id]
+			if preparation.telemetryDisabled != want || preparation.invocation.TelemetryDisabled == nil || *preparation.invocation.TelemetryDisabled != want {
+				a.mu.Unlock()
+				t.Fatalf("invocation %s lost its immutable decision: %+v", id, preparation)
+			}
+		}
+		a.mu.Unlock()
+		configuration, err := a.workerConfiguration(t.Context(), publisherapp.Service{Name: request.InvocationId, RegistrationID: registration.RegistrationID, Target: request.Target})
+		if err != nil || configuration.TelemetryDisabled != want {
+			t.Fatalf("worker lost %s decision: disabled=%t err=%v", choice, configuration.TelemetryDisabled, err)
+		}
+		// retries compare the captured value, not the caller's mutated pointer;
+		// absent and explicit false have the same opt-out decision.
+		request.TelemetryDisabled = &want
+		repeated, err := a.invocation(t.Context(), request)
+		if err != nil || repeated != registration || f.Allocations.Load() != int32(index+1) {
+			t.Fatalf("retry changed invocation ownership: %+v %v", repeated, err)
+		}
+		conflicting := !want
+		request.TelemetryDisabled = &conflicting
+		if _, err := a.invocation(t.Context(), request); !errors.Is(err, publisherapp.ErrOwnerConflict) {
+			t.Fatalf("changed invocation decision replaced accepted work: %v", err)
+		}
+	}
+}
+
 func TestInvocationLimitsValidation(t *testing.T) {
 	if !testutil.IsolatedPublishingTest(t) {
 		return

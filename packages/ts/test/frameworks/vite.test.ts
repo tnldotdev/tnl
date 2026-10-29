@@ -103,7 +103,7 @@ describe("tnl", () => {
   test("prepares public metadata before normal framework startup", async () => {
     const project = await createProjectFixture("tnl-vite-project-");
     const bootstrap = await startTestBootstrap();
-    await withProcessEnvironment(bootstrap.environment, async () =>
+    await withProcessEnvironment({ ...bootstrap.environment, TNL_NO_TELEMETRY: "TRUE" }, async () =>
       withCurrentDirectory(project.serviceDirectory, async () => {
         const result = await runConfigHook(tnl(), { server: { host: "0.0.0.0", port: 5200 } });
         expect(result).toEqual({
@@ -111,6 +111,10 @@ describe("tnl", () => {
           server: { allowedHosts: ["api.member.example"] },
         });
         expect(bootstrap.requests[0]?.body).not.toHaveProperty("service");
+        expect(bootstrap.requests[0]?.body).toMatchObject({
+          framework: "vite",
+          telemetry_disabled: true,
+        });
       }),
     );
   });

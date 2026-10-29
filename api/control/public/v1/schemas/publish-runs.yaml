@@ -50,7 +50,7 @@ schemas:
   TrafficLimits:
     type: object
     additionalProperties: false
-    description: Resolved limits for one exact public URL and publish run. Connections are bounded across ingress allocations and both publisher connections. Rate, byte, and lifetime totals are enforced independently on each ingress process. Omitted totals are unlimited.
+    description: Resolved limits for one exact public URL and publish run. Connections cap authorized visitor streams across both publisher connections. Each exact ingress process independently prepares up to that many local setup slots; these slots do not grant additional authorized capacity. Publisher setup is separate, with at most four unproven decoded setups per assigned relay domain, eight in total. Header readers, transport buffers, and retiring workers have separate bounds; connections is not a process file-descriptor limit. Rate, byte, and lifetime totals are enforced independently on each ingress process. Omitted totals are unlimited.
     required: [connections, rate, rate_per_ns, burst, upload_bytes, download_bytes]
     properties:
       connections:
@@ -228,7 +228,7 @@ schemas:
     type: object
     additionalProperties: false
     description: Each HTTP publisher becomes ready independently after DNS, its installed public URL certificate, and two ready publisher connections.
-    required: [publish_run, publisher_connections, policy_denials, visitor_policy_revision]
+    required: [publish_run, publisher_connections, visitor_policy_revision]
     properties:
       visitor_policy_revision:
         type: integer
@@ -243,11 +243,6 @@ schemas:
         maxItems: 2
         items:
           $ref: "../openapi.yaml#/components/schemas/ConnectionAssignment"
-      policy_denials:
-        description: Total IP policy denials reported so far for this publish run number. The total may lag.
-        type: integer
-        format: int64
-        minimum: 0
   CertificateInstalledRequest:
     type: object
     additionalProperties: false

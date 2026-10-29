@@ -1,7 +1,7 @@
 # control-state invariants
 
 Audience: tnl maintainers working on `internal/control/state`, routing
-publication, usage aggregation, or recovery. Product and operator documentation
+publication or recovery. Product and operator documentation
 does not depend on these implementation details.
 
 ## start from a fresh baseline
@@ -11,6 +11,11 @@ stop/start of control, ingress, and relay roles. `tnld migrate` uses the direct
 database URL. Serving processes require the exact embedded migration version
 and the stored baseline identity; another version-1 database cannot be reused.
 Later compatible changes must add schema before switching serving code to it.
+
+this guest-authority reconstruction has its own incompatible intermediate
+identity, not the final native relay-peer-key baseline. see
+[guest ready-time authority](guest-demos.md). ingress accepted-run fences remain
+after runtime lease rows disappear; all three schema entrypoints require them.
 
 The baseline creates ingress pools before teams and public URLs. It seeds
 `ingress-a` disabled until the operator verifies its addresses and ports. A
@@ -28,9 +33,8 @@ boundaries on reads and writes. A slot keeps its `id` and
 count open, assigned slots and use an advisory guard during placement. Historical
 process-run IDs do not require live ingress or relay lease rows.
 
-Control stores the guest retry key in `control.guest_retry_keys` and the visitor
-network hash key in `control.visitor_network_hash_keys`. Both are encrypted with
-the storage key and must participate in key rotation. IP-policy and request
+Control stores the guest retry key in `control.guest_retry_keys`, encrypted with
+the storage key and included in key rotation. IP-policy and request
 digests elsewhere retain their own ciphertext and storage-key IDs.
 
 storage-key rotation claims every recoverable encrypted row, including visitor
@@ -85,13 +89,18 @@ pair renewal never renews claims; a report records installation, not a grant.
 one valid claim in either slot stays pending. stale process/source/parent facts
 remain denials, and current parent growth cannot revive an expired claim/report.
 
-the explicit intermediate identity remains
-`tnl-control-fresh-v1-public-reservations`. migration repeat, open and readiness
-also compare the native preparation catalog's types, full constraint definitions,
-validation, indexes and enabled enforcement against
-[`native_preparation_shape.go`](../../../internal/control/state/native_preparation_shape.go).
-an incompatible same-name database is rejected, never converted or repaired.
-this foundation does not activate native carriers or ordinary native defaults.
+the fresh baseline identity is `tnl-control-fresh-v1-practical-cutover`, at
+version 1. migration repeat, open and readiness require that exact version and
+identity, not a runtime catalog fingerprint. schema constraints and enforcement
+are checked by the database tests. this does not activate native carriers or
+ordinary native defaults.
+
+the earlier `tnl-control-fresh-v1-public-reservations` and
+`tnl-control-fresh-v1-relay-peer-keys` identities are rejected. the latter already
+labels incompatible donor schemas without stable-owner and fixed claim-deadline
+guards; it cannot identify this cutover. never relabel or repair an existing
+database to pass the checks. initialize a fresh database and stop/start all
+serving roles together; client state is unchanged by this server baseline.
 
 ## acquire locks in one order
 
@@ -191,7 +200,7 @@ Both retain the clock through commit. Revision visibility therefore follows
 commit order without another round trip in the common single-event path.
 
 Session operations use `NO KEY UPDATE` route guards. Route identity is
-immutable, and usage's `KEY SHARE` references can coexist with heartbeats. Public URL
+immutable, and foreign-key `KEY SHARE` references can coexist with heartbeats. Public URL
 mutations still conflict.
 
 ## publish member namespace dns
@@ -246,25 +255,6 @@ lock. It does not take the publication clock or route and placement guards.
 Concurrent publication can make an anchor unnecessary, but cannot make a
 superseded event current again. Failed batches retain their scan cursor. Sweeps
 advance past anchors even when a batch deletes nothing.
-
-## process usage in stable order
-
-Usage pages hold ingress and process-run guards while prefetching bounded latest
-report metadata. Reports are processed in route, version, bucket, and revision
-order.
-
-Page-local history advances after each successful fresh report. Multiple
-revisions for one key therefore preserve cumulative and replay behavior.
-Histogram payloads are loaded only for an exact replay or for the aggregate
-being updated.
-
-Fresh usage combines its route reference and session guards in one statement,
-with the route guard materialized first. The later bucket read can see a bucket
-created by another ingress while the session lock was waiting.
-
-The immutable report insertion, aggregate delta, and optional session denial
-update use one dependent write statement. A rejected write rolls back the whole
-page.
 
 ## coordinate certificate challenges
 

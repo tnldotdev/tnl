@@ -27,6 +27,18 @@ from ._protocol import (
 )
 
 
+def _read_telemetry_disabled(value: str | None) -> bool:
+    """match the native cli's pinned kong boolean environment grammar, without trimming."""
+    if value is None:
+        return False
+    normalized = value.lower()
+    if normalized in ("true", "yes", "1"):
+        return True
+    if normalized in ("false", "no", "0"):
+        return False
+    raise TnlError("sdk.configuration_invalid", "TNL_NO_TELEMETRY must be a boolean")
+
+
 def _service_metadata(name: str, value: object) -> dict[str, object]:
     item = object_value(
         value, {"protocol", "namespace", "hostname", "port", "public", "url", "paths"}
@@ -74,6 +86,7 @@ class PreparedService:
         self._service = service
         self._state_dir = state_dir
         self._native = native
+        self._telemetry_disabled = _read_telemetry_disabled(os.environ.get("TNL_NO_TELEMETRY"))
         self._owner = secrets.token_hex(16)
         self._endpoint: Endpoint | None = None
         self._registration_id = ""
@@ -95,6 +108,7 @@ class PreparedService:
             "framework": "python",
             "owner": self._owner,
             "pid": os.getpid(),
+            "telemetry_disabled": self._telemetry_disabled,
         }
         if self._service is not None:
             payload["service"] = self._service

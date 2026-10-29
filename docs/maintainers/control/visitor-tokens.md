@@ -23,9 +23,10 @@ source-bound stream reservations. Managed-service prepared admission and native
 consumers remain separate work; public URL checks do not qualify those paths.
 This is a review boundary in one coordinated fresh-database cutover, not permission
 to deploy issuance or capacity without its serving consumer. The PostgreSQL
-baseline is `tnl-control-fresh-v1-public-reservations`; an n02 database is rejected
-before serving because it lacks the required encrypted reservation keys. Schema
-and HTTP contracts remain version 1, and tunnel version and ALPN remain unchanged.
+baseline is `tnl-control-fresh-v1-practical-cutover`; earlier baselines are rejected
+before serving, including schemas without encrypted reservation keys or native
+preparation guards. Schema and HTTP contracts remain version 1, and tunnel version
+and ALPN remain unchanged.
 
 Only verification constructs `VerifiedPermission`; signing input cannot bind a
 visitor guard. Policy views publish independent private key/lease maps once and
@@ -91,10 +92,12 @@ observation. Credential redemption and application admission are never replayed.
 
 ## stream capacity
 
-A visitor token grants permission, not capacity. Control delegates bounded
-portions of a run's connection limit to exact ingress process leases. Each
-allocation lasts at most ten seconds and is renewed in the background. Retiring
-or restarting an owner does not make its slots available before that deadline.
+A visitor token grants permission, not capacity. For public URLs, control bounds
+setup independently at each exact ingress process lease. The publisher alone
+enforces the run's authorized stream limit across both publisher connections.
+Service allocations retain their shared run limit and fair shares. Each allocation
+lasts at most ten seconds and is renewed in the background. Retiring or restarting
+an owner does not make its slots available before that deadline.
 
 The prepared serving consumer reserves a local slot before forwarding. Each use
 has a new reservation ID and an increasing slot sequence. The publisher checks the current allocation

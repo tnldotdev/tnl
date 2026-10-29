@@ -29,9 +29,6 @@ func TestPublishOutputNDJSONLifecycle(t *testing.T) {
 	if err := output.provisioning("demo.example", 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := output.blockedVisitors(1, 3); err != nil {
-		t.Fatal(err)
-	}
 	if err := output.ready("https://demo.example", 1); err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +172,7 @@ func TestGuestDemoReadyExplainsTrialAndSignIn(t *testing.T) {
 	if err := output.ready("https://demo-1.guest-01234567.tnl.dev", 1); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stderr.String(), "15 min / about 5 MiB across runs") ||
+	if !strings.Contains(stderr.String(), "20 ready min across runs, including idle") ||
 		!strings.Contains(stderr.String(), "tnl auth login to publish your app") ||
 		!strings.Contains(stderr.String(), "demo-1.guest-01234567") {
 		t.Fatalf("guest ready output = %q", stderr.String())
@@ -570,7 +567,7 @@ func TestPublishOutputNDJSONFramesConnectionDisruption(t *testing.T) {
 	}
 }
 
-func TestPublishOutputHumanProvisioningAndAggregateDenials(t *testing.T) {
+func TestPublishOutputHumanProvisioning(t *testing.T) {
 	var stderr bytes.Buffer
 	output, err := newPublishOutput("human", "tnl publish", io.Discard, &stderr, nil)
 	if err != nil {
@@ -584,16 +581,9 @@ func TestPublishOutputHumanProvisioningAndAggregateDenials(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, total := range []uint64{2, 2, 5} {
-		if err := output.blockedVisitors(3, total); err != nil {
-			t.Fatal(err)
-		}
-	}
 	got := stderr.String()
-	if strings.Count(got, "]-- provisioning ") != 2 || strings.Count(got, "]-- ip address not allowed ") != 2 ||
+	if strings.Count(got, "]-- provisioning ") != 2 ||
 		!strings.Contains(got, "certificate and publisher connections") ||
-		!strings.Contains(got, "newly blocked") || !strings.Contains(got, "total blocked") ||
-		!strings.Contains(got, "TNL_IP_POLICY_DENIED") || !strings.Contains(got, "https://tnl.dev/e/ip-policy-denied") ||
 		strings.Contains(got, "192.0.2") || strings.ContainsRune(got, '\x1b') {
 		t.Fatalf("human lifecycle output = %q", got)
 	}

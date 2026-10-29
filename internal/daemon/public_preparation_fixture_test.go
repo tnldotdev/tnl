@@ -2,40 +2,23 @@ package daemon
 
 import (
 	"context"
-	"crypto/tls"
 	"database/sql"
-	"net"
-	"net/url"
 	"testing"
 	"time"
 )
 
-// readiness and routing precede background policy and capacity preparation.
-// verify visitor TLS without contacting the local application.
-func waitForPreparedPublicVisitor(t *testing.T, visitor *integrationVisitor, address string) {
-	t.Helper()
-	endpoint, err := url.Parse(address)
-	if err != nil {
-		t.Fatal(err)
-	}
-	waitForIntegrationCondition(t, 15*time.Second, func(ctx context.Context) (bool, error) {
-		target := net.JoinHostPort(endpoint.Hostname(), "443")
-		dial := visitor.transport.DialContext
-		if dial == nil {
-			dial = new(net.Dialer).DialContext
-		}
-		connection, err := dial(ctx, "tcp", target)
-		if err != nil {
-			return false, err
-		}
-		defer connection.Close()
-		configuration := visitor.transport.TLSClientConfig.Clone()
-		configuration.ServerName = endpoint.Hostname()
-		secured := tls.Client(connection, configuration)
-		defer secured.Close()
-		err = secured.HandshakeContext(ctx)
-		return err == nil, err
-	})
+func readIntegrationServingPreparation(ctx context.Context, database *sql.DB) (string, error) {
+	var snapshot string
+	err := database.QueryRowContext(ctx, `SELECT jsonb_build_object(
+		'observed_at',clock_timestamp(),
+		'runs',(SELECT jsonb_agg(facts) FROM (SELECT id,public_url_id,publish_run_number,state,publisher_expires_at,ready_at,certificate_installed_at,certificate_not_after FROM control.publish_runs ORDER BY created_at DESC LIMIT 16) facts),
+		'slots',(SELECT jsonb_agg(facts) FROM (SELECT publish_run_id,publisher_connection_id,state,session_open,connected_relay_id,connected_relay_run_id,connected_relay_lease_revision FROM control.publish_run_connection_slots ORDER BY publisher_connection_id LIMIT 32) facts),
+		'allocations',(SELECT jsonb_agg(facts) FROM (SELECT id,resource_id,run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,valid_until,publisher_observed_until,ingress_observed_until,retired_at FROM control.stream_capacity_allocations ORDER BY id LIMIT 32) facts),
+		'ingresses',(SELECT jsonb_agg(facts) FROM (SELECT ingress_id,ingress_run_id,ingress_lease_revision,ingress_pool_id,connector_only,draining,protocol_version,connection_capacity,routing_table_revision,lease_expires_at FROM control.ingress_leases ORDER BY ingress_id LIMIT 16) facts),
+		'relays',(SELECT jsonb_agg(facts) FROM (SELECT relay_id,relay_run_id,relay_lease_revision,draining,lease_expires_at FROM control.relay_leases ORDER BY relay_id LIMIT 16) facts),
+		'routing_revision',(SELECT max(id) FROM control.ingress_routing_table_events)
+	)::text`).Scan(&snapshot)
+	return snapshot, err
 }
 
 // process leases and allocations renew independently. retain both deadlines
@@ -51,7 +34,7 @@ func logIntegrationPublishRunAuthority(t *testing.T, database *sql.DB, publicURL
 			'id',id,'ingress_id',ingress_id,'ingress_run_id',ingress_run_id,
 			'ingress_lease_revision',ingress_lease_revision,'capacity',capacity,
 			'renewed_at',renewed_at,'valid_until',valid_until,
-			'publisher_observed_at',publisher_observed_at,'retired_at',retired_at
+			'publisher_observed_until',publisher_observed_until,'retired_at',retired_at
 		) ORDER BY id) FROM control.stream_capacity_allocations
 			WHERE run_id=(SELECT id FROM control.publish_runs WHERE public_url_id=$1 AND publish_run_number=$2)),'[]'::jsonb),
 		'ingress_leases',COALESCE((SELECT jsonb_agg(jsonb_build_object(

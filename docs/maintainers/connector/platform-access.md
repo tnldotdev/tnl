@@ -175,7 +175,7 @@ remain run-bound and use the configured readiness path. see
 [compose publisher](../../../deploy/publisher/compose/readme.md).
 
 the PostgreSQL baseline identity is
-`tnl-control-fresh-v1-public-reservations`, at version 1. it adds verified
+`tnl-control-fresh-v1-practical-cutover`, at version 1. it includes verified
 session bindings and removes the former HTTP-only credential storage. use a
 fresh database and coordinated baseline rollout.
 

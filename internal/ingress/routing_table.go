@@ -292,6 +292,10 @@ func cloneRoutingTableEntry(source ingressv1.IngressRoutingTableEntry) ingressv1
 		closed := *source.PublishRunClosed
 		result.PublishRunClosed = &closed
 	}
+	if source.PublishRunReadyAt != nil {
+		readyAt := *source.PublishRunReadyAt
+		result.PublishRunReadyAt = &readyAt
+	}
 	if source.Traffic != nil {
 		traffic := *source.Traffic
 		if traffic.TotalConnections != nil {

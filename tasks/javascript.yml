@@ -1,6 +1,13 @@
 version: "3"
 
 tasks:
+  test:telemetry:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check SDK opt-out capture and per-publication IPC choices
+    deps: [":js:build"]
+    cmds:
+      - pnpm exec vitest run packages/ts/test/publisher/telemetry.test.ts packages/ts/test/publisher/public-telemetry.test.ts packages/ts/test/publisher/app-runtime.test.ts packages/ts/test/publisher/adhoc-open.test.ts packages/ts/test/frameworks/vite.test.ts
+
   test:client-tracing:
     dir: "{{.ROOT_DIR}}"
     desc: Check SDK and framework tracing, native carriers and lifecycle cleanup

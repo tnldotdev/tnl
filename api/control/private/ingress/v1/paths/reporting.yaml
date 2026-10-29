@@ -41,23 +41,6 @@ paths:
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /internal/v1/ingresses/{ingress_id}/usage-reports:
-    post:
-      operationId: reportIngressUsage
-      summary: Store cumulative public URL usage from one ingress process run
-      parameters:
-        - $ref: "../openapi.yaml#/components/parameters/IngressID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "../openapi.yaml#/components/schemas/IngressUsageReportBatch"
-      responses:
-        "204":
-          description: Usage reports committed or replayed
-        default:
-          $ref: "../openapi.yaml#/components/responses/Problem"
   /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed:
     post:
       operationId: observePublicURLRecovery

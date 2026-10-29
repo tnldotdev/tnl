@@ -24,7 +24,7 @@ func RunGuestPrivateStateCleanup(ctx context.Context, store guestPrivateStateSto
 		stats, err := store.RecentGuestTrialStats(ctx, now)
 		if err == nil {
 			metrics.SetGuestTrialStats(stats.Issued, stats.Allocated, stats.Ready,
-				stats.Expired, stats.ReadyLimit, stats.TransferLimit)
+				stats.Expired, stats.ReadyLimit)
 		}
 		return count, err
 	}, func(count int, err error) {

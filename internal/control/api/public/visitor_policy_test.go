@@ -20,10 +20,10 @@ import (
 type publisherPolicyStoreFixture struct {
 	Store
 	calls    int
-	observed []string
+	observed []controlv1.StreamCapacityObservation
 }
 
-func (s *publisherPolicyStoreFixture) ReadPublisherVisitorPolicy(_ context.Context, _ visitorscope.Scope, _ string, _ int64, _ string, _ int64, observed []string, _ time.Time) (controlv1.VisitorPolicyUpdate, error) {
+func (s *publisherPolicyStoreFixture) ReadPublisherVisitorPolicy(_ context.Context, _ visitorscope.Scope, _ string, _ int64, _ string, _ int64, observed []controlv1.StreamCapacityObservation, _ time.Time) (controlv1.VisitorPolicyUpdate, error) {
 	s.calls++
 	s.observed = observed
 	return controlv1.VisitorPolicyUpdate{}, nil
@@ -40,7 +40,7 @@ func TestPublisherVisitorPolicyGeneratedMaximumRequest(t *testing.T) {
 	body := controlv1.PublisherVisitorPolicyRequest{
 		Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: "url_" + strings.Repeat("A", 22)},
 		RunId:    strings.Repeat("\x01", 64), RunNumber: math.MaxInt64, AfterRevision: math.MaxInt64,
-		ObservedAllocations: policyfixture.ObservationIDs(),
+		ObservedAllocations: policyfixture.Observations(strings.Repeat("\x01", 64), math.MaxInt64, time.Now().Add(time.Second)),
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -78,12 +78,16 @@ func TestPublisherVisitorPolicyRejectsInvalidBodiesBeforeBackend(t *testing.T) {
 		{"at byte limit", empty + strings.Repeat(" ", maxPublisherVisitorPolicyRequestBytes-len(empty)), true},
 		{"over byte limit", empty + strings.Repeat(" ", maxPublisherVisitorPolicyRequestBytes+1-len(empty)), false},
 		{"over item limit", func() string {
-			ids := append(policyfixture.ObservationIDs(), "salloc_"+strings.Repeat("Z", 22))
+			ids := append(policyfixture.Observations("run", 1, time.Now().Add(time.Second)), controlv1.StreamCapacityObservation{AllocationId: "salloc_" + strings.Repeat("Z", 22), RunId: "run", RunNumber: 1, ValidUntil: time.Now().Add(time.Second)})
 			raw, _ := json.Marshal(ids)
 			return base + `,"observed_allocations":` + string(raw) + `}`
 		}(), false},
 		{"invalid observation ID", base + `,"observed_allocations":["private-request-body"]}`, false},
-		{"duplicate observations", base + `,"observed_allocations":["salloc_` + strings.Repeat("A", 22) + `","salloc_` + strings.Repeat("A", 22) + `"]}`, false},
+		{"duplicate observations", func() string {
+			observation := controlv1.StreamCapacityObservation{AllocationId: "salloc_" + strings.Repeat("A", 22), RunId: "run", RunNumber: 1, ValidUntil: time.Now().Add(time.Second)}
+			raw, _ := json.Marshal([]controlv1.StreamCapacityObservation{observation, observation})
+			return base + `,"observed_allocations":` + string(raw) + `}`
+		}(), false},
 		{"unknown field", base + `,"observed_allocations":[],"private-request-body":true}`, false},
 		{"trailing JSON", empty + ` {}`, false},
 		{"malformed JSON", base + `,"observed_allocations":[}`, false},

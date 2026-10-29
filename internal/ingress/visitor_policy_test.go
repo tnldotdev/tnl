@@ -10,7 +10,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -28,32 +27,47 @@ func (f *ingressPolicyFixture) ReadIngressVisitorPolicy(_ context.Context, id st
 	if f.fail.Load() {
 		return controlv1.VisitorPolicyUpdate{}, errors.New("control unavailable")
 	}
+	return ingressPolicyResponse(body), nil
+}
+
+func ingressPolicyResponse(body ingressv1.IngressVisitorPolicyRequest) controlv1.VisitorPolicyUpdate {
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("i", 32)))
 	now := time.Now()
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
 		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "preview.example.test", Port: 443, Issuer: "https://control.example.test", VisitorPolicyRevision: 1, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: true,
-			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "key", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil
+			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "key", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}
+}
+
+type ingressPolicyCapacityFixture struct {
+	ingressPolicyFixture
+	capacityClientFixture
+}
+
+func (f *ingressPolicyCapacityFixture) ReadIngressVisitorPolicy(ctx context.Context, id string, body ingressv1.IngressVisitorPolicyRequest) (controlv1.VisitorPolicyUpdate, error) {
+	return f.ingressPolicyFixture.ReadIngressVisitorPolicy(ctx, id, body)
 }
 
 func TestIngressVisitorPolicyExpiresWhileProcessLeaseRemainsLive(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		client := &ingressPolicyFixture{}
+		client := &ingressPolicyCapacityFixture{}
 		process := ingressv1.IngressLease{IngressId: "ingress-one", IngressRunId: "run-one", IngressLeaseRevision: 3, LeaseExpiresAt: time.Now().Add(time.Minute)}
-		policy, err := prepareVisitorPolicy(t.Context(), client, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}, func() ingressv1.IngressLease { return process }, nil)
+		run, err := preparePublicVisitorRun(t.Context(), client, func() ingressv1.IngressLease { return process }, ingressv1.IngressRoutingTableEntry{
+			PublicUrlId: "url_" + strings.Repeat("A", 22), PublishRunId: "pr_" + strings.Repeat("B", 22), PublishRunNumber: 1,
+		}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer policy.Close()
-		client.fail.Store(true)
+		defer run.close(context.Background())
+		client.ingressPolicyFixture.fail.Store(true)
 		time.Sleep(10 * time.Second)
 		synctest.Wait()
 		if !process.LeaseExpiresAt.After(time.Now()) {
 			t.Fatal("fixture expired the process lease")
 		}
-		if _, enabled, anonymous := policy.lease.Current(); enabled || anonymous {
+		if _, enabled, anonymous := run.policy.lease.Current(); enabled || anonymous {
 			t.Fatal("process renewal substituted for expired visitor policy")
 		}
-		if client.calls.Load() < 2 {
+		if client.ingressPolicyFixture.calls.Load() < 2 {
 			t.Fatal("background policy renewal never ran")
 		}
 	})

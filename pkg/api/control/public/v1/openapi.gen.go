@@ -2864,8 +2864,6 @@ type PublishRun struct {
 
 // PublishRunHeartbeat Each HTTP publisher becomes ready independently after DNS, its installed public URL certificate, and two ready publisher connections.
 type PublishRunHeartbeat struct {
-	// PolicyDenials Total IP policy denials reported so far for this publish run number. The total may lag.
-	PolicyDenials        int64                  `json:"policy_denials"`
 	PublishRun           PublishRun             `json:"publish_run"`
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
 
@@ -2890,7 +2888,7 @@ type PublishRunSetup struct {
 	PublishRunToken      string                 `json:"publish_run_token"`
 	PublisherConnections []ConnectionAssignment `json:"publisher_connections"`
 
-	// Traffic Resolved limits for one exact public URL and publish run. Connections are bounded across ingress allocations and both publisher connections. Rate, byte, and lifetime totals are enforced independently on each ingress process. Omitted totals are unlimited.
+	// Traffic Resolved limits for one exact public URL and publish run. Connections cap authorized visitor streams across both publisher connections. Each exact ingress process independently prepares up to that many local setup slots; these slots do not grant additional authorized capacity. Publisher setup is separate, with at most four unproven decoded setups per assigned relay domain, eight in total. Header readers, transport buffers, and retiring workers have separate bounds; connections is not a process file-descriptor limit. Rate, byte, and lifetime totals are enforced independently on each ingress process. Omitted totals are unlimited.
 	Traffic *TrafficLimits `json:"traffic,omitempty"`
 }
 
@@ -3173,7 +3171,7 @@ type PublisherVisitorPolicyRequest struct {
 	AfterRevision int64 `json:"after_revision"`
 
 	// ObservedAllocations allocations installed from an earlier successful local policy update.
-	ObservedAllocations []string `json:"observed_allocations"`
+	ObservedAllocations []StreamCapacityObservation `json:"observed_allocations"`
 
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
 	Resource  VisitorResourceScope `json:"resource"`
@@ -3749,13 +3747,14 @@ type SourceState struct {
 
 // StreamCapacityAllocation defines model for StreamCapacityAllocation.
 type StreamCapacityAllocation struct {
-	Capacity             int       `json:"capacity"`
-	Id                   string    `json:"id"`
-	IngressId            string    `json:"ingress_id"`
-	IngressLeaseRevision int64     `json:"ingress_lease_revision"`
-	IngressRunId         string    `json:"ingress_run_id"`
-	ObservedAt           time.Time `json:"observed_at"`
-	PublisherObserved    bool      `json:"publisher_observed"`
+	Capacity               int        `json:"capacity"`
+	Id                     string     `json:"id"`
+	IngressId              string     `json:"ingress_id"`
+	IngressLeaseRevision   int64      `json:"ingress_lease_revision"`
+	IngressRunId           string     `json:"ingress_run_id"`
+	ObservedAt             time.Time  `json:"observed_at"`
+	PublisherObserved      bool       `json:"publisher_observed"`
+	PublisherObservedUntil *time.Time `json:"publisher_observed_until,omitempty"`
 
 	// ReservationKey private key shared only with the assigned ingress and publisher for signed visitor reservations.
 	ReservationKey []byte `json:"reservation_key"`
@@ -3768,10 +3767,20 @@ type StreamCapacityAllocation struct {
 	ValidUntil time.Time            `json:"valid_until"`
 }
 
+// StreamCapacityObservation defines model for StreamCapacityObservation.
+type StreamCapacityObservation struct {
+	AllocationId string `json:"allocation_id"`
+	RunId        string `json:"run_id"`
+	RunNumber    int64  `json:"run_number"`
+
+	// ValidUntil Deadline of the already-installed allocation and policy, never a renewed database expiry.
+	ValidUntil time.Time `json:"valid_until"`
+}
+
 // TeamID defines model for TeamID.
 type TeamID = ResourceID
 
-// TrafficLimits Resolved limits for one exact public URL and publish run. Connections are bounded across ingress allocations and both publisher connections. Rate, byte, and lifetime totals are enforced independently on each ingress process. Omitted totals are unlimited.
+// TrafficLimits Resolved limits for one exact public URL and publish run. Connections cap authorized visitor streams across both publisher connections. Each exact ingress process independently prepares up to that many local setup slots; these slots do not grant additional authorized capacity. Publisher setup is separate, with at most four unproven decoded setups per assigned relay domain, eight in total. Header readers, transport buffers, and retiring workers have separate bounds; connections is not a process file-descriptor limit. Rate, byte, and lifetime totals are enforced independently on each ingress process. Omitted totals are unlimited.
 type TrafficLimits struct {
 	Burst              int    `json:"burst"`
 	Connections        int    `json:"connections"`
@@ -3880,8 +3889,11 @@ type VisitorPolicySnapshot struct {
 	Ip          *VisitorPolicyIP `json:"ip,omitempty"`
 	Issuer      string           `json:"issuer"`
 	KeyRevision int64            `json:"key_revision"`
-	ObservedAt  time.Time        `json:"observed_at"`
-	Port        int              `json:"port"`
+
+	// MetadataRevision current service trust revision; zero for public URLs.
+	MetadataRevision int64     `json:"metadata_revision"`
+	ObservedAt       time.Time `json:"observed_at"`
+	Port             int       `json:"port"`
 
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
 	Resource              VisitorResourceScope       `json:"resource"`

@@ -51,8 +51,6 @@ paths:
     $ref: "./paths/routing.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1routing-table~1snapshot"
   /internal/v1/ingresses/{ingress_id}/routing-table/events:
     $ref: "./paths/routing.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1routing-table~1events"
-  /internal/v1/ingresses/{ingress_id}/usage-reports:
-    $ref: "./paths/reporting.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1usage-reports"
   /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed:
     $ref: "./paths/reporting.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1public-url-recovery~1{recovery_episode_id}~1observed"
 components:
@@ -78,6 +76,8 @@ components:
       $ref: "../../../public/v1/openapi.yaml#/components/schemas/StreamCapacityAllocation"
     IngressVisitorPolicyRequest:
       $ref: "./schemas/visitor-policy.yaml#/schemas/IngressVisitorPolicyRequest"
+    IngressStreamAllocationObservation:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/IngressStreamAllocationObservation"
     VisitorPolicyUpdate:
       $ref: "../../../public/v1/openapi.yaml#/components/schemas/VisitorPolicyUpdate"
     IngressTransportCertificate:
@@ -142,12 +142,6 @@ components:
       $ref: "./schemas/routing.yaml#/schemas/IngressRoutingTableSnapshot"
     IngressRoutingTablePage:
       $ref: "./schemas/routing.yaml#/schemas/IngressRoutingTablePage"
-    IngressUsageReport:
-      $ref: "./schemas/reporting.yaml#/schemas/IngressUsageReport"
-    VisitorNetworkHashKey:
-      $ref: "./schemas/leases.yaml#/schemas/VisitorNetworkHashKey"
-    IngressUsageReportBatch:
-      $ref: "./schemas/reporting.yaml#/schemas/IngressUsageReportBatch"
     PublicURLRecoveryObservationRequest:
       $ref: "./schemas/reporting.yaml#/schemas/PublicURLRecoveryObservationRequest"
     PublicURLRecoveryObservation:
