@@ -77,7 +77,9 @@ func TestIntegrationOperationMetricsExport(t *testing.T) {
 	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "ListIngressRoutingTableSnapshot", "success", 3)
 	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockLocalTeamForSession", "success", 1)
 	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockRelayServicesForPlacement", "success", 1)
-	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockIngressLease", "success", 1)
+	// serving preparation locks once for capacity and twice for policy installation,
+	// in addition to the explicit guard above.
+	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockIngressLease", "success", 4)
 	var placements float64
 	for _, family := range families {
 		if family.GetName() != "tnl_control_placement_decisions_total" {

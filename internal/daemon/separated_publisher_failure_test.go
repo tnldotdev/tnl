@@ -47,13 +47,19 @@ func captureSeparatedPublisherFailure(database *sql.DB, index int) error {
 		return err
 	}
 	result := struct {
-		CapturedAt time.Time       `json:"captured_at"`
-		Index      int             `json:"index"`
-		PublicURL  json.RawMessage `json:"route,omitempty"`
+		CapturedAt  time.Time       `json:"captured_at"`
+		Index       int             `json:"index"`
+		PublicURL   json.RawMessage `json:"route,omitempty"`
+		Preparation json.RawMessage `json:"serving_preparation,omitempty"`
 	}{CapturedAt: time.Now(), Index: index}
 	if err == nil {
 		result.PublicURL = json.RawMessage(state)
 	}
+	preparation, err := readIntegrationServingPreparation(ctx, database)
+	if err != nil {
+		return err
+	}
+	result.Preparation = json.RawMessage(preparation)
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return err

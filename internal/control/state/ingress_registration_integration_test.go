@@ -15,7 +15,7 @@ func TestIntegrationExpiredIngressRunRequiresNewRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed := registration
-	changed.IngressPoolID = "other-pool"
+	changed.IngressPoolID = PrimaryIngressPoolID
 	if _, err := database.RegisterIngress(t.Context(), changed, now.Add(time.Second), time.Minute); !errors.Is(err, ErrIngressAlreadyRunning) {
 		t.Fatal("live run changed pinned facts", err)
 	}
@@ -58,7 +58,7 @@ func TestIntegrationRetiredIngressRunCannotRegisterAfterReplacementExpires(t *te
 		t.Fatal("live retry changed identity", err)
 	}
 	b := a
-	b.IngressRunID, b.ConnectionCapacity, b.IngressPoolID, b.ConnectorOnly = "run-b", 20, "replacement-pool", true
+	b.IngressRunID, b.ConnectionCapacity, b.IngressPoolID, b.ConnectorOnly = "run-b", 20, PrimaryIngressPoolID, true
 	b.ServicePorts, b.ConnectorAddress, b.ConnectorTLSServerName = []int32{8443, 9443}, "127.0.0.1:9443", "replacement.example.test"
 	if _, err := database.RegisterIngress(t.Context(), b, now.Add(2*time.Second), time.Minute); !errors.Is(err, ErrIngressAlreadyRunning) {
 		t.Fatal("contender replaced live owner", err)

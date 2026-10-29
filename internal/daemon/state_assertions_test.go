@@ -97,16 +97,7 @@ func integrationPublisherDiagnostics(database *sql.DB, pebbleLogPath string) str
 		)::text
 		FROM control.acme_orders AS orders ORDER BY created_at DESC, id LIMIT 1
 	`).Scan(&order)
-	var serving string
-	servingErr := database.QueryRowContext(ctx, `SELECT jsonb_build_object(
-		'observed_at',clock_timestamp(),
-		'runs',(SELECT jsonb_agg(facts) FROM (SELECT id,public_url_id,publish_run_number,state,publisher_expires_at,ready_at,certificate_installed_at,certificate_not_after FROM control.publish_runs ORDER BY created_at DESC LIMIT 16) facts),
-		'slots',(SELECT jsonb_agg(facts) FROM (SELECT publish_run_id,publisher_connection_id,state,session_open,connected_relay_id,connected_relay_run_id,connected_relay_lease_revision FROM control.publish_run_connection_slots ORDER BY publisher_connection_id LIMIT 32) facts),
-		'allocations',(SELECT jsonb_agg(facts) FROM (SELECT id,resource_id,run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,valid_until,publisher_observed_until,ingress_observed_until,retired_at FROM control.stream_capacity_allocations ORDER BY id LIMIT 32) facts),
-		'ingresses',(SELECT jsonb_agg(facts) FROM (SELECT ingress_id,ingress_run_id,ingress_lease_revision,ingress_pool_id,connector_only,draining,protocol_version,connection_capacity,routing_table_revision,lease_expires_at FROM control.ingress_leases ORDER BY ingress_id LIMIT 16) facts),
-		'relays',(SELECT jsonb_agg(facts) FROM (SELECT relay_id,relay_run_id,relay_lease_revision,draining,lease_expires_at FROM control.relay_leases ORDER BY relay_id LIMIT 16) facts),
-		'routing_revision',(SELECT max(id) FROM control.ingress_routing_table_events)
-	)::text`).Scan(&serving)
+	serving, servingErr := readIntegrationServingPreparation(ctx, database)
 	pebbleLog, _ := os.ReadFile(pebbleLogPath)
 	return fmt.Sprintf("; latest certificate order = %s, query error = %v; serving preparation = %s, query error = %v\n%s", order, queryErr, serving, servingErr, pebbleLog)
 }

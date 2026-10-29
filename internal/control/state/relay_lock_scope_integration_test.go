@@ -360,18 +360,20 @@ func relayServiceProgressSessionsWithSharedTeam(t *testing.T, sharedTeam bool) (
 	var fixtures [5]publishRunFixture
 	for index := range fixtures {
 		suffix := fmt.Sprintf("relayprogress%d", index)
-		seedControlPublicURL(t, database, now, suffix)
+		// bulk closure proofs depend on fixture order matching URL lock order.
+		publicURLID := fmt.Sprintf("url_%022d", index)
+		seedControlPublicURL(t, database, now, suffix, publicURLID)
 		if sharedTeam && index == 1 {
 			// build a second, valid public URL in the first team before its run exists.
 			if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls
 				SET team_id = $2, domain_id = $3, created_by_identity_id = $4, idempotency_key = $5
-				WHERE id = $1`, "public_url_"+suffix, "team_relayprogress0", "domain_relayprogress0",
+				WHERE id = $1`, publicURLID, "team_relayprogress0", "domain_relayprogress0",
 				"identity_relayprogress0", "seed-"+suffix); err != nil {
 				t.Fatal(err)
 			}
 		}
 		request := PublishRunRequest{
-			PublicURLID: "public_url_" + suffix, TeamID: "team_" + suffix, ActingIdentityID: "identity_" + suffix,
+			PublicURLID: publicURLID, TeamID: "team_" + suffix, ActingIdentityID: "identity_" + suffix,
 			MembershipID: "membership_" + suffix,
 			RetrySecret:  bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")),
 			PolicyRevision: 1, ExpectedMutationRevision: 1, CertificateCacheKey: suffix, CertificateScope: "route",

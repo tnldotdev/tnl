@@ -96,7 +96,8 @@ func TestIntegrationCLIWorkflowForwardsPreparedVisitorReservation(t *testing.T) 
 	    JOIN control.public_urls u ON u.id=r.public_url_id
 	    WHERE u.canonical_hostname=$1 AND a.resource_kind='public_url'
 	        AND r.closed_at IS NULL AND a.retired_at IS NULL
-	        AND a.valid_until>clock_timestamp() AND a.publisher_observed_at IS NOT NULL
+	        AND a.valid_until>clock_timestamp()
+	        AND a.publisher_observed_until>clock_timestamp() AND a.ingress_observed_until>clock_timestamp()
 	)`, hostname).Scan(&observed); err != nil {
 		t.Fatal("workflow prepared allocation facts could not be read")
 	}
