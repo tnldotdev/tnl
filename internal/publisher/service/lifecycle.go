@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -27,6 +28,8 @@ import (
 // prepares and starts runs, and only the run token can renew or close one.
 type RunControl interface {
 	ManagedControl
+	nativePolicyControl
+	NativePeerControl
 	GetPublisherService(context.Context, string) (controlv1.Service, error)
 	PrepareServiceRun(context.Context, string, string, string, controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error)
 	HeartbeatServiceRunHealth(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error)
@@ -222,6 +225,11 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	}
 	defer bound.Invalidate()
 	bound.streamCapacity = int(config.StreamCapacity)
+	bound.peerSocket, err = peer.ListenSocket(ctx, "udp", ":0")
+	if err != nil {
+		return err
+	}
+	defer bound.peerSocket.Close()
 	var certificateDone <-chan error
 	{
 		maintain, cancel, err := configureServiceRun(ctx, config, prepared, setup, managedControl, config.State)
@@ -259,7 +267,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			}
 		}()
 		bound.mu.Lock()
-		active := len(bound.active)
+		active := bound.reservedStreams
 		bound.mu.Unlock()
 		status.TargetHealthy = config.Healthy(ctx)
 		state, err = config.Control.HeartbeatServiceRunHealth(ctx, config.ServiceID, setup.ServiceRunId, runToken,
@@ -276,6 +284,18 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if err != nil {
 		return errors.Join(ErrPrivateStream, err)
 	}
+	if err := bound.PrepareNativePolicy(ctx, config.Control, runToken); err != nil {
+		return err
+	}
+	peers, stopPeers := context.WithCancel(ctx)
+	peersDone := make(chan error, 1)
+	go func() { peersDone <- bound.ServeNativePeers(peers, config.Control, runToken) }()
+	defer func() {
+		stopPeers()
+		if peersDone != nil {
+			result = errors.Join(result, <-peersDone)
+		}
+	}()
 	paths, err := tunnel.NewSlots(context.WithoutCancel(ctx), tunnel.SlotsConfig{SingleUse: true, Connect: func(ctx context.Context, slot uint8, preferTCP bool) (tunnel.SlotSession, error) {
 		if config.Connect != nil {
 			return config.Connect(ctx, bound, slot)
@@ -327,6 +347,13 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		}
 		expires := time.NewTimer(time.Until(state.PublisherExpiresAt))
 		select {
+		case err := <-peersDone:
+			expires.Stop()
+			peersDone = nil
+			if ctx.Err() != nil {
+				return nil
+			}
+			return errors.Join(ErrPrivateStream, err)
 		case err := <-certificateDone:
 			expires.Stop()
 			certificateDone = nil

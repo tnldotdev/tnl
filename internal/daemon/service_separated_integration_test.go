@@ -165,9 +165,10 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 }
 
 type privateEchoTarget struct {
-	address  string
-	mu       sync.Mutex
-	received map[string]int
+	address    string
+	mu         sync.Mutex
+	received   map[string]int
+	receivedOn map[string]net.Conn
 }
 
 func startPrivateEchoTarget(t *testing.T) *privateEchoTarget {
@@ -177,7 +178,7 @@ func startPrivateEchoTarget(t *testing.T) *privateEchoTarget {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	target := &privateEchoTarget{address: listener.Addr().String(), received: make(map[string]int)}
+	target := &privateEchoTarget{address: listener.Addr().String(), received: make(map[string]int), receivedOn: make(map[string]net.Conn)}
 	var workers sync.WaitGroup
 	workers.Go(func() {
 		for {
@@ -197,6 +198,7 @@ func startPrivateEchoTarget(t *testing.T) *privateEchoTarget {
 					}
 					target.mu.Lock()
 					target.received[line]++
+					target.receivedOn[line] = connection
 					target.mu.Unlock()
 					if _, err := io.WriteString(connection, line); err != nil {
 						return

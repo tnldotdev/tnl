@@ -7,48 +7,23 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-type assignmentConflictControl struct {
-	*connectorFixture
-	conflict atomic.Bool
-	attempts atomic.Int32
-	retried  chan struct{}
-	once     sync.Once
-}
-
-func (c *assignmentConflictControl) ConnectorAssignment(ctx context.Context, service string, subject tunnelv1.VisitorSubject, slot uint8) (Assignment, error) {
-	if slot == 0 && c.conflict.Load() {
-		if c.attempts.Add(1) >= 2 {
-			c.once.Do(func() { close(c.retried) })
-		}
-		return Assignment{}, clientcontrol.ErrStatusConflict
-	}
-	return c.connectorFixture.ConnectorAssignment(ctx, service, subject, slot)
-}
-
 func TestConnectorAssignmentConflictKeepsHealthyOtherPath(t *testing.T) {
-	var control *assignmentConflictControl
-	f := newConfiguredConnectorFixture(t, "tls-tcp", "", func(f *connectorFixture, config *Config) {
-		control = &assignmentConflictControl{connectorFixture: f, retried: make(chan struct{})}
-		config.Control = control
-	})
-	healthy := f.local(t) // the first visitor uses slot one.
+	f := newConnectorFixture(t, "tls-tcp")
+	healthy := f.local(t)
 	if _, err := healthy.Write([]byte("before")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := io.ReadFull(healthy, make([]byte, 6)); err != nil {
 		t.Fatal(err)
 	}
-	control.conflict.Store(true)
+	f.activationConflict[0].Store(true)
 	f.mu.Lock()
 	lost := append([]muxsession.Session{}, f.sessions[0]...)
 	siblings := len(f.sessions[1])
@@ -56,12 +31,17 @@ func TestConnectorAssignmentConflictKeepsHealthyOtherPath(t *testing.T) {
 	for _, path := range lost {
 		_ = path.Close()
 	}
-	select {
-	case <-control.retried:
-	case <-f.finished:
-		t.Fatal("recoverable assignment 409 canceled the healthy path", f.serveErr)
-	case <-time.After(2 * time.Second):
-		t.Fatal("assignment conflict was not retried")
+	deadline := time.Now().Add(2 * time.Second)
+	for f.rejected[0].Load() < 2 {
+		select {
+		case <-f.finished:
+			t.Fatal("recoverable native candidate conflict canceled the healthy path", f.serveErr)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("native candidate conflict was not retried")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if _, err := healthy.Write([]byte("after")); err != nil {
 		t.Fatal(err)

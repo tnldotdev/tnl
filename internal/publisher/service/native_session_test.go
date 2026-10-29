@@ -161,7 +161,7 @@ func TestNativeServicePeerConsumerForwardsAndRejectsReplayLocally(t *testing.T) 
 		}
 		return tls.Client(tunnel.NewNativeRequestWriter(raw), verification)
 	}
-	prepared, err := connectorstream.PrepareNativeTCP(ctx, client, connectorstream.Run{ServiceID: first.ServiceID, ServiceRunID: first.ServiceRunID, RunNumber: first.RunNumber, Protocol: "tcp", TrustRevision: int64(first.MetadataRevision), ValidUntil: time.Now().Add(time.Minute), Endpoint: &controlv1.ServiceEndpoint{Hostname: verification.ServerName, Port: int(b.prepared.servicePort)}, ServiceTLS: verification}, first)
+	prepared, err := connectorstream.PrepareNative(ctx, client, connectorstream.Run{ServiceID: first.ServiceID, ServiceRunID: first.ServiceRunID, RunNumber: first.RunNumber, Protocol: "tcp", TrustRevision: int64(first.MetadataRevision), ValidUntil: time.Now().Add(time.Minute), Endpoint: &controlv1.ServiceEndpoint{Hostname: verification.ServerName, Port: int(b.prepared.servicePort)}, ServiceTLS: verification}, first)
 	if err != nil {
 		t.Fatal("real native preparation rejected", err)
 	}
@@ -650,7 +650,7 @@ func TestNativePreparationCannotPublishAfterSetupCancellation(t *testing.T) {
 	entry := opening("L")
 	done := make(chan error, 1)
 	go func() {
-		prepared, err := connectorstream.PrepareNativeTCP(ctx, gate, connectorstream.Run{ServiceID: entry.ServiceID, ServiceRunID: entry.ServiceRunID, RunNumber: entry.RunNumber, Protocol: "tcp", TrustRevision: int64(entry.MetadataRevision), ValidUntil: time.Now().Add(time.Minute), Endpoint: &controlv1.ServiceEndpoint{Hostname: verification.ServerName, Port: int(b.prepared.servicePort)}, ServiceTLS: verification}, entry)
+		prepared, err := connectorstream.PrepareNative(ctx, gate, connectorstream.Run{ServiceID: entry.ServiceID, ServiceRunID: entry.ServiceRunID, RunNumber: entry.RunNumber, Protocol: "tcp", TrustRevision: int64(entry.MetadataRevision), ValidUntil: time.Now().Add(time.Minute), Endpoint: &controlv1.ServiceEndpoint{Hostname: verification.ServerName, Port: int(b.prepared.servicePort)}, ServiceTLS: verification}, entry)
 		if prepared != nil {
 			prepared.Close()
 		}

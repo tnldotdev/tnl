@@ -11,6 +11,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -23,20 +24,27 @@ const maxNativePeerStreams = 64
 // neither a carrier change nor a sibling connector changes this owner. a new
 // pair/run needs a new owner; it cannot transfer the old owner's admissions.
 type PeerSession struct {
-	bound       *Bound
-	binding     PeerBinding
-	ctx         context.Context
-	cancel      context.CancelFunc
-	closed      bool
-	seen        map[string]struct{}
-	streams     map[*nativeAdmission]struct{}
-	session     muxsession.Session
-	started     bool
-	serve       sync.WaitGroup
-	workers     sync.WaitGroup
-	watchDone   chan struct{}
-	changed     chan struct{}
-	replayUntil time.Time
+	bound         *Bound
+	binding       PeerBinding
+	ctx           context.Context
+	cancel        context.CancelFunc
+	closed        bool
+	seen          map[string]struct{}
+	streams       map[*nativeAdmission]struct{}
+	session       muxsession.Session
+	started       bool
+	serve         sync.WaitGroup
+	workers       sync.WaitGroup
+	watchDone     chan struct{}
+	changed       chan struct{}
+	replayUntil   time.Time
+	packetStarted bool
+	packetReady   chan struct{}
+	packets       sync.WaitGroup
+	prepared      bool
+	carriersMu    sync.Mutex
+	carriers      [3]*peer.CarrierSlot
+	packetOwners  [2]*Claimed
 }
 
 func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession, error) {
@@ -45,7 +53,7 @@ func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if !b.peerCurrentLocked(binding) {
+	if !b.peerCurrentLocked(binding) || !b.peerRelaysCurrentLocked(binding) {
 		return nil, ErrPrivateStream
 	}
 	for id, old := range b.nativePeers {
@@ -60,7 +68,7 @@ func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession
 		b.nativePeers = make(map[string]*PeerSession)
 	}
 	life, cancel := context.WithCancel(ctx)
-	p := &PeerSession{bound: b, binding: binding, ctx: life, cancel: cancel, seen: make(map[string]struct{}), streams: make(map[*nativeAdmission]struct{}), watchDone: make(chan struct{}), changed: make(chan struct{})}
+	p := &PeerSession{bound: b, binding: binding, ctx: life, cancel: cancel, seen: make(map[string]struct{}), streams: make(map[*nativeAdmission]struct{}), watchDone: make(chan struct{}), changed: make(chan struct{}), packetReady: make(chan struct{})}
 	b.nativePeers[binding.pairID] = p
 	go p.watch()
 	return p, nil
@@ -74,18 +82,48 @@ func (p *PeerSession) Renew(binding PeerBinding) error {
 		return ErrPrivateStream
 	}
 	b := p.bound
+	p.carriersMu.Lock()
+	defer p.carriersMu.Unlock()
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	old := p.binding
-	if !p.currentLocked() || !b.peerCurrentLocked(binding) ||
-		binding.pairID != old.pairID || binding.serviceID != old.serviceID || binding.runID != old.runID ||
-		binding.publisherID != old.publisherID || binding.number != old.number || binding.generation != old.generation ||
-		binding.delivery != old.delivery || binding.key != old.key || binding.source != old.source || binding.subject != old.subject {
+	valid := p.currentLocked() && b.peerCurrentLocked(binding) && b.peerRelaysCurrentLocked(binding) &&
+		binding.pairID == old.pairID && binding.serviceID == old.serviceID && binding.runID == old.runID &&
+		binding.publisherID == old.publisherID && binding.number == old.number && binding.generation == old.generation &&
+		binding.delivery == old.delivery && binding.key == old.key && binding.source == old.source && binding.subject == old.subject
+	b.mu.Unlock()
+	if !valid {
+		return ErrPrivateStream
+	}
+	var paths [3]peer.Carrier
+	owners := p.packetOwners
+	var err error
+	if p.carriers[0] != nil {
+		paths, owners, err = b.peerCarriers(binding, p.packetOwners)
+		if err != nil {
+			return err
+		}
+	}
+	defer func() { closePeerCarriers(paths) }()
+	b.mu.Lock()
+	if !p.currentLocked() || !b.peerCurrentLocked(binding) || !b.peerRelaysCurrentLocked(binding) || p.carriers[0] != nil && b.packetSlots != owners {
+		b.mu.Unlock()
 		return ErrPrivateStream
 	}
 	p.binding = binding
 	close(p.changed)
 	p.changed = make(chan struct{})
+	b.mu.Unlock()
+	for slot, carrier := range paths {
+		if carrier != nil {
+			err := p.carriers[slot].Install(carrier)
+			paths[slot] = nil // Install takes ownership even if the slot is closed.
+			if err != nil {
+				p.stop()
+				return err
+			}
+		}
+	}
+	p.packetOwners = owners
 	return nil
 }
 
@@ -149,6 +187,7 @@ func (p *PeerSession) stop() {
 func (p *PeerSession) Close() {
 	p.stop()
 	<-p.watchDone
+	p.packets.Wait()
 	p.serve.Wait()
 	p.workers.Wait()
 }

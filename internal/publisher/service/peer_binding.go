@@ -25,6 +25,7 @@ type PeerBinding struct {
 	subject                               tunnelv1.VisitorSubject
 	relays                                [2]controlv1.NativePeerPairRelay
 	until                                 time.Time
+	authorityUntil                        time.Time
 }
 
 func (PeerBinding) String() string   { return "native peer binding" }
@@ -57,7 +58,7 @@ func PreparePeerBinding(ctx context.Context, control peerDeliveryControl, servic
 		return PeerBinding{}, ErrPrivateStream
 	}
 	b := PeerBinding{pairID: pairID, serviceID: serviceID, runID: runID, publisherID: d.PublisherIdentityId,
-		generation: generation, number: uint64(d.RunNumber), delivery: id, source: source, subject: subject, until: started.Add(duration)}
+		generation: generation, number: uint64(d.RunNumber), delivery: id, source: source, subject: subject, until: started.Add(duration), authorityUntil: d.ExpiresAt}
 	copy(b.key[:], key)
 	copy(b.relays[:], d.Relays)
 	if b.key == [32]byte{} || b.relays[0].PublisherConnectionId == b.relays[1].PublisherConnectionId || b.relays[0].RelayLease.RelayServiceId == b.relays[1].RelayLease.RelayServiceId {
@@ -83,6 +84,12 @@ func (b *Bound) peerCurrentLocked(binding PeerBinding) bool {
 		binding.serviceID != b.prepared.Preparation.ServiceId || binding.runID != b.prepared.Preparation.ServiceRunId || binding.number != uint64(b.prepared.Preparation.RunNumber) || binding.publisherID != b.prepared.Preparation.PublisherIdentityId {
 		return false
 	}
+	return true
+}
+
+// delivery changes are checked when installing carriers, not when entering an
+// already admitted stream. the pair's existing bound still limits that stream.
+func (b *Bound) peerRelaysCurrentLocked(binding PeerBinding) bool {
 	for slot, relay := range binding.relays {
 		current := b.connections[slot]
 		if current.PublisherConnectionId != relay.PublisherConnectionId || current.ConnectionAssignmentRevision != relay.AssignmentRevision || current.RelayServiceId != relay.RelayLease.RelayServiceId || current.RelayAddress != relay.RelayAddress || current.TlsServerName != relay.TlsServerName {

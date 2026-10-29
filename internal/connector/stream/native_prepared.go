@@ -10,17 +10,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// PreparedNativeTCP owns one already opened, signed and TLS-verified native TCP
-// stream. it is single-use: local arrival cannot select a run, sign, perform ICE,
+// PreparedNative owns one already signed native opening and its stream. opaque TCP
+// completes visitor TLS here; other protocols retain application-owned negotiation.
+// it is single-use: local arrival cannot select a run, sign, perform ICE,
 // call control, reset setup time, or replace the target after live bytes fail.
 // the pair/session owner must close these children before replacing its run.
-type PreparedNativeTCP struct {
+type PreparedNative struct {
 	ctx          context.Context
 	conn         net.Conn
 	mu           sync.Mutex
@@ -33,13 +35,21 @@ type PreparedNativeTCP struct {
 	closeOnce    sync.Once
 	closeErr     error
 	work         sync.WaitGroup
+	writer       *tunnel.NativeRequestWriter
 }
 
-// PrepareNativeTCP consumes a source-prepared opening outside local arrival.
+// PrepareNative consumes a source-prepared opening without RPC, signing or ICE.
 // this is not a publisher permission constructor: the publisher independently
 // checks the signed token, exact relay-attested pair, current policy and C.
-func PrepareNativeTCP(ctx context.Context, session muxsession.Session, run Run, entry tunnelv1.NativePeerVisitorEntry) (*PreparedNativeTCP, error) {
-	if ctx == nil || ctx.Err() != nil || session == nil || run.Protocol != "tcp" || run.Endpoint == nil || run.ServiceTLS == nil || run.ServiceTLS.InsecureSkipVerify || len(run.ServiceTLS.Certificates) != 0 || run.ServiceTLS.GetClientCertificate != nil || !run.ValidUntil.After(time.Now()) ||
+func PrepareNative(ctx context.Context, session muxsession.Session, run Run, entry tunnelv1.NativePeerVisitorEntry) (*PreparedNative, error) {
+	return prepareNative(ctx, ctx, session, run, entry)
+}
+
+// setup retains the caller's original preparation deadline; lifetime owns the
+// promoted stream after preparation succeeds. stopping setup cannot close it.
+func prepareNative(lifetime, setup context.Context, session muxsession.Session, run Run, entry tunnelv1.NativePeerVisitorEntry) (*PreparedNative, error) {
+	ctx := lifetime
+	if ctx == nil || ctx.Err() != nil || session == nil || !validProtocol(run.Protocol) || run.Endpoint == nil || run.ServiceTLS == nil || run.ServiceTLS.InsecureSkipVerify || len(run.ServiceTLS.Certificates) != 0 || run.ServiceTLS.GetClientCertificate != nil || !run.ValidUntil.After(time.Now()) ||
 		run.ServiceID != entry.ServiceID || run.ServiceRunID != entry.ServiceRunID || run.RunNumber != entry.RunNumber || run.TrustRevision < 1 || uint64(run.TrustRevision) != entry.MetadataRevision {
 		return nil, ErrServiceConnection
 	}
@@ -49,7 +59,7 @@ func PrepareNativeTCP(ctx context.Context, session muxsession.Session, run Run, 
 	if keyErr != nil || signatureErr != nil || messageErr != nil || len(public) != ed25519.PublicKeySize || !ed25519.Verify(public, message, signature) {
 		return nil, ErrServiceConnection
 	}
-	setup, cancel := context.WithTimeout(ctx, 10*time.Second)
+	setup, cancel := context.WithTimeout(setup, 10*time.Second)
 	defer cancel()
 	raw, err := session.OpenStream(setup)
 	if err != nil {
@@ -80,12 +90,16 @@ func PrepareNativeTCP(ctx context.Context, session muxsession.Session, run Run, 
 		return nil, err
 	}
 	writer := tunnel.NewNativeRequestWriter(raw)
-	trust := run.ServiceTLS.Clone()
-	trust.ServerName = run.Endpoint.Hostname
-	trust.MinVersion = max(trust.MinVersion, tls.VersionTLS12)
-	secured := tls.Client(writer, trust)
-	if err := secured.HandshakeContext(setup); err != nil {
-		return nil, err
+	var connection net.Conn = writer
+	if run.Protocol == "tcp" {
+		trust := run.ServiceTLS.Clone()
+		trust.ServerName = run.Endpoint.Hostname
+		trust.MinVersion = max(trust.MinVersion, tls.VersionTLS12)
+		secured := tls.Client(writer, trust)
+		if err := secured.HandshakeContext(setup); err != nil {
+			return nil, failure.Wrap("prepare native visitor TLS", failure.ConnectionTLSRejected, err)
+		}
+		connection = &nativeTLSConn{Conn: secured, writer: writer}
 	}
 	if ctx.Err() != nil || !run.ValidUntil.After(time.Now()) {
 		return nil, ErrServiceConnection
@@ -99,18 +113,18 @@ func PrepareNativeTCP(ctx context.Context, session muxsession.Session, run Run, 
 		return nil, ErrServiceConnection
 	}
 	setupStopped = true
-	p := &PreparedNativeTCP{ctx: ctx, conn: secured, callbackDone: make(chan struct{})}
+	p := &PreparedNative{ctx: ctx, conn: connection, writer: writer, callbackDone: make(chan struct{})}
 	p.stop = context.AfterFunc(ctx, func() { defer close(p.callbackDone); _ = p.closePhysical() })
 	owned = true
 	return p, nil
 }
 
-func (p *PreparedNativeTCP) closePhysical() error {
+func (p *PreparedNative) closePhysical() error {
 	p.physicalOnce.Do(func() { p.physicalErr = p.conn.Close() })
 	return p.physicalErr
 }
 
-func (p *PreparedNativeTCP) finish() {
+func (p *PreparedNative) finish() {
 	p.closeOnce.Do(func() {
 		p.mu.Lock()
 		p.closed = true
@@ -122,7 +136,7 @@ func (p *PreparedNativeTCP) finish() {
 	})
 }
 
-func (p *PreparedNativeTCP) Close() error {
+func (p *PreparedNative) Close() error {
 	if p == nil {
 		return nil
 	}
@@ -134,7 +148,7 @@ func (p *PreparedNativeTCP) Close() error {
 // Forward consumes this one prepared stream and joins both copy directions.
 // failure is final; the session's siblings and packet endpoint remain owned by
 // their existing owner, not by this local connection.
-func (p *PreparedNativeTCP) Forward(ctx context.Context, local net.Conn) (result error) {
+func (p *PreparedNative) Forward(ctx context.Context, local net.Conn) (result error) {
 	if p == nil || local == nil {
 		return ErrServiceConnection
 	}
@@ -160,12 +174,12 @@ func (p *PreparedNativeTCP) Forward(ctx context.Context, local net.Conn) (result
 	return err
 }
 
-var _ interface{ Close() error } = (*PreparedNativeTCP)(nil)
+var _ interface{ Close() error } = (*PreparedNative)(nil)
 
 // the existing prepared owner is the dispatch fence too. no separate stamp or
 // policy mirror is needed, and optimized io.Copy methods cannot escape it.
 type preparedNativeUse struct {
-	owner *PreparedNativeTCP
+	owner *PreparedNative
 	ctx   context.Context
 }
 
@@ -219,3 +233,10 @@ func (c *preparedNativeUse) SetReadDeadline(at time.Time) error {
 func (c *preparedNativeUse) SetWriteDeadline(at time.Time) error {
 	return c.owner.conn.SetWriteDeadline(at)
 }
+
+type nativeTLSConn struct {
+	*tls.Conn
+	writer *tunnel.NativeRequestWriter
+}
+
+func (c *nativeTLSConn) CloseWrite() error { return c.writer.CloseTLSWrite(c.Conn) }

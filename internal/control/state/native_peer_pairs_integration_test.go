@@ -461,8 +461,11 @@ func TestIntegrationNativePeerPairExactAuthority(t *testing.T) {
 	}
 	bad = request
 	bad.Subject.DeviceID = device.ID[:len(device.ID)-1] + "0"
-	if _, err := d.PrepareNativePeerPair(visitor, bad, now); err == nil {
-		t.Fatal("wrong enrolled subject obtained pair")
+	if bad.Subject.DeviceID == device.ID {
+		bad.Subject.DeviceID = device.ID[:len(device.ID)-1] + "1"
+	}
+	if _, err := d.PrepareNativePeerPair(visitor, bad, now); !errors.Is(err, ErrServiceAccess) {
+		t.Fatal("wrong enrolled subject obtained pair", err)
 	}
 	replacement := request
 	replacement.Action = "replace"

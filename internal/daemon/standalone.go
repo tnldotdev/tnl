@@ -140,6 +140,13 @@ func (d *daemon) startStandalone(
 	}
 	publisher, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{
 		Observer: metrics,
+		Native: func(id string) (*relay.NativeConnectorAcceptor, bool) {
+			runtime, ok := targets[id]
+			if !ok {
+				return nil, false
+			}
+			return runtime.native, true
+		},
 		Private: &relay.ServicePublisherAcceptor{Select: func(id string) (relay.ServicePublisherTarget, bool) {
 			runtime, ok := targets[id]
 			if !ok {
@@ -229,11 +236,15 @@ func (d *daemon) startStandalone(
 	}}
 	udpListener, err := muxsession.ListenQUICProtocols(settings.relayUDPListen, sharedTLS, muxsession.QUICConfig{Config: &quic.Config{
 		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
+		EnableDatagrams: true,
 	}})
 	if err != nil {
 		return fmt.Errorf("listen for standalone QUIC infrastructure: %w", err)
 	}
 	d.relays[0].udpListener = udpListener
+	d.start("serve standalone relay discovery", func() error {
+		return relay.ServeSTUN(ctx, udpListener.NonQUICPackets(ctx), nil)
+	})
 	d.start("serve standalone QUIC infrastructure", func() error {
 		return serveQUICSessions(ctx, udpListener, func(ctx context.Context, session muxsession.Session) error {
 			peer, ok := session.(muxsession.AcceptedPeer)

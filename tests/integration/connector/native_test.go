@@ -47,7 +47,7 @@ import (
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
 
-// this runs the built native owner and verifies TLS through its admitted ingress
+// this runs the built native owner and verifies TLS through its native peer
 // streams. no saved human state or service outside these local fixtures participates.
 func TestIntegrationConnectionNativeOwnerHTTP(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
@@ -211,7 +211,7 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 	}
 	port = allocated.Addr().(*net.TCPAddr).Port
 	_ = allocated.Close()
-	assignments, trusts := connectorfixture.Ingress(t, ca, caKey, caPEM, service, sessionID, providerAddress)
+	native := connectorfixture.NewNative(t, ca, caKey, service, serviceRun, sessionID, managedHostname, providerAddress)
 	var revoked atomic.Bool
 	var certificateRequests atomic.Int64
 	var current authorityv1.WorkloadSession
@@ -302,12 +302,28 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 		case r.URL.Path == "/v1/workload/services":
 			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}}}})
 		case strings.HasSuffix(r.URL.Path, "/run"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocol, "trust_revision": 1, "expires_at": time.Now().Add(time.Minute), "subject": current.Subject, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}})
-		case strings.HasSuffix(r.URL.Path, "/ingress-assignments"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"subject": current.Subject, "assignments": assignments})
-		case strings.HasSuffix(r.URL.Path, "/transport-trust"):
-			parts := strings.Split(r.URL.Path, "/")
-			_ = json.NewEncoder(w).Encode(trusts[parts[len(parts)-2]])
+			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocol, "trust_revision": 1, "expires_at": time.Now().Add(time.Minute), "subject": current.Subject, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}, "pair_ready": native.Ready})
+		case strings.Contains(r.URL.Path, "/native-peer-pairs"):
+			var body controlv1.NativePeerPairRequest
+			var source controlv1.VisitorTokenWorkloadSource
+			if json.NewDecoder(r.Body).Decode(&body) != nil || json.Unmarshal(body.Source, &source) != nil || source.Credential != current.Credential || revoked.Load() {
+				w.WriteHeader(403)
+				return
+			}
+			pair, err := native.Prepare(r.Context(), body, clientPublic)
+			if err != nil {
+				w.WriteHeader(403)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(pair)
+		case r.URL.Path == "/v1/visitor-tokens":
+			var body controlv1.VisitorTokenRequest
+			var source controlv1.VisitorTokenWorkloadSource
+			if json.NewDecoder(r.Body).Decode(&body) != nil || json.Unmarshal(body.Source, &source) != nil || source.Credential != current.Credential || body.Resource.Id != service || revoked.Load() {
+				w.WriteHeader(403)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: body.Resource, Hostname: managedHostname, Port: port, VisitorToken: "fixture-native-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
 		case strings.HasSuffix(r.URL.Path, "/client-certificate"):
 			certificateRequests.Add(1)
 			w.WriteHeader(403)

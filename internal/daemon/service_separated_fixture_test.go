@@ -14,6 +14,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -23,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -57,6 +59,7 @@ type privateSeparatedFixture struct {
 	visitorRoots                *tls.Config
 	visitorRootPEM              []byte
 	processContext              func(string) context.Context
+	publisherConnections        chan<- *publisherservice.Claimed
 }
 
 // the topology has one real control database/API, two ingress runtimes and two
@@ -276,7 +279,7 @@ func (f *privateSeparatedFixture) connectors() (muxsession.Connector, muxsession
 			return connector.Connect(ctx, endpoint)
 		})
 	}
-	return redirect(f.quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots}), redirect(f.tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
+	return redirect(f.quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}), redirect(f.tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
 }
 
 func privateDisabledConnector() muxsession.Connector {

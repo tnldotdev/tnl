@@ -13,12 +13,14 @@ import (
 	"sync"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -92,6 +94,8 @@ type boundState struct {
 	reservedStreams int
 	nativePending   int
 	nativePeers     map[string]*PeerSession
+	packetSlots     [2]*Claimed
+	peerSocket      *peer.Socket
 	closePolicy     func()
 }
 
@@ -172,13 +176,7 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 		return ErrPrivateStream
 	}
 	b.mu.Lock()
-	var retired []*PeerSession
-	defer func() {
-		b.mu.Unlock()
-		for _, p := range retired {
-			p.Close()
-		}
-	}()
+	defer b.mu.Unlock()
 	if b.closed {
 		return ErrPrivateStream
 	}
@@ -210,11 +208,6 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 		next[current.ConnectionSlot] = current
 	}
 	b.connections, b.assignments = next, refs
-	for _, p := range b.nativePeers {
-		if !b.peerCurrentLocked(p.binding) {
-			retired = append(retired, p)
-		}
-	}
 	return nil
 }
 
@@ -272,7 +265,11 @@ func (b *Bound) ConnectSlotWithPreference(ctx context.Context, slot uint8, prefe
 	if roots.InsecureSkipVerify {
 		return nil, ErrPrivateStream
 	}
-	return b.ConnectSlotWithTransports(ctx, slot, preferTCP, muxsession.QUICConnector{TLSConfig: roots}, muxsession.TLSYamuxConnector{TLSConfig: roots})
+	var dialer muxsession.QUICDialer
+	if b.peerSocket != nil {
+		dialer = b.peerSocket
+	}
+	return b.ConnectSlotWithTransports(ctx, slot, preferTCP, muxsession.QUICConnector{TLSConfig: roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: dialer}, muxsession.TLSYamuxConnector{TLSConfig: roots})
 }
 
 // ConnectSlotWithTransports retains the production claim and stale-assignment
@@ -282,7 +279,7 @@ func (b *Bound) ConnectSlotWithTransports(ctx context.Context, slot uint8, prefe
 	if err != nil {
 		return nil, err
 	}
-	primary := tunnel.Candidate{Connector: quic, Endpoint: endpoint, Transport: tunnel.TransportQUIC}
+	primary := tunnel.Candidate{Connector: requirePeerDatagrams(quic), Endpoint: endpoint, Transport: tunnel.TransportQUIC}
 	fallback := tunnel.Candidate{Connector: tcp, Endpoint: endpoint, Transport: tunnel.TransportTLSTCP}
 	if preferTCP {
 		primary, fallback = fallback, primary
@@ -298,8 +295,31 @@ func (b *Bound) ConnectSlotWithTransports(ctx context.Context, slot uint8, prefe
 		_ = session.Close()
 		return nil, ErrPrivateStream
 	}
-	return &Claimed{bound: b, ref: *hello.ServiceConnection, session: session, transport: transport,
-		endObservation: observability.PublisherConnectionLifetime(ctx, string(transport), int(slot))}, nil
+	outer, err := session.BorrowServicePublisherTransport()
+	if err != nil {
+		return nil, errors.Join(err, session.Close())
+	}
+	packets, err := peer.NewDispatchedSharedSession(ctx, outer)
+	if err != nil {
+		return nil, errors.Join(err, session.Close())
+	}
+	dispatcher, err := tunnel.NewServiceStreamDispatcher(ctx, session, packets)
+	if err != nil {
+		return nil, errors.Join(err, packets.Close(), session.Close())
+	}
+	claimed := &Claimed{bound: b, ref: *hello.ServiceConnection, session: session, transport: transport,
+		packets: packets, dispatcher: dispatcher,
+		endObservation: observability.PublisherConnectionLifetime(ctx, string(transport), int(slot))}
+	b.mu.Lock()
+	current := !b.closed && b.assignments[claimed.ref.PublisherConnectionID] == claimed.ref
+	if current {
+		b.packetSlots[slot] = claimed
+	}
+	b.mu.Unlock()
+	if !current {
+		return nil, errors.Join(ErrPrivateStream, claimed.Close())
+	}
+	return claimed, nil
 }
 
 // Claimed can only be constructed after a relay accepted the private tunnel
@@ -310,6 +330,10 @@ type Claimed struct {
 	session        *tunnel.Session
 	transport      tunnel.Transport
 	endObservation func(error, bool)
+	packets        *peer.SharedSession
+	dispatcher     *tunnel.ServiceStreamDispatcher
+	closeOnce      sync.Once
+	closeErr       error
 }
 
 func (c *Claimed) Transport() tunnel.Transport { return c.transport }
@@ -326,10 +350,24 @@ func (c *Claimed) Close() error {
 	if c == nil || c.session == nil {
 		return nil
 	}
-	if c.endObservation != nil {
-		c.endObservation(nil, true)
-	}
-	return c.session.Close()
+	c.closeOnce.Do(func() {
+		c.bound.mu.Lock()
+		if c.bound.packetSlots[c.ref.ConnectionSlot] == c {
+			c.bound.packetSlots[c.ref.ConnectionSlot] = nil
+		}
+		c.bound.mu.Unlock()
+		if c.endObservation != nil {
+			c.endObservation(nil, true)
+		}
+		if c.dispatcher != nil {
+			c.closeErr = errors.Join(c.closeErr, c.dispatcher.Close())
+		}
+		if c.packets != nil {
+			c.closeErr = errors.Join(c.closeErr, c.packets.Close())
+		}
+		c.closeErr = errors.Join(c.closeErr, c.session.Close())
+	})
+	return c.closeErr
 }
 
 func (c *Claimed) Serve(ctx context.Context) (result error) {
@@ -351,7 +389,7 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 	var workers sync.WaitGroup
 	defer func() { cancel(); _ = c.session.Close(); workers.Wait(); stop() }()
 	for {
-		incoming, err := c.session.AcceptServiceForwardingStream(ctx)
+		incoming, err := c.session.AcceptDispatchedServiceForwardingStream(ctx, c.dispatcher)
 		if err != nil {
 			var invalid *tunnel.StreamHeaderError
 			if errors.As(err, &invalid) {

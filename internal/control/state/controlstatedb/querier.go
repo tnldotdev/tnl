@@ -171,6 +171,9 @@ type Querier interface {
 	FeedbackEventHighWater(ctx context.Context) (int64, error)
 	FeedbackRunScope(ctx context.Context, arg FeedbackRunScopeParams) (FeedbackRunScopeRow, error)
 	FenceIngressRun(ctx context.Context, arg FenceIngressRunParams) (int64, error)
+	// retain the last source, timestamp and nonce. a new process must prove a fresh
+	// claim from that same source; assignment replacement never changes IP policy.
+	FenceReplacedNativePeerPairLeg(ctx context.Context, arg FenceReplacedNativePeerPairLegParams) error
 	FindInvitationTeamByTokenDigest(ctx context.Context, tokenDigest []byte) (string, error)
 	FindManagedDomain(ctx context.Context) (ControlDomain, error)
 	FindOIDCIdentity(ctx context.Context, arg FindOIDCIdentityParams) (ControlIdentity, error)
@@ -537,6 +540,9 @@ type Querier interface {
 	ReadyBrowserHosts(ctx context.Context, arg ReadyBrowserHostsParams) ([]ReadyBrowserHostsRow, error)
 	ReadyServiceConnectionSlot(ctx context.Context, arg ReadyServiceConnectionSlotParams) (ControlServiceConnectionSlot, error)
 	ReadyServiceRun(ctx context.Context, arg ReadyServiceRunParams) (ControlServiceRun, error)
+	// a fresh owner-signed renewal may replace delivery carriers, not the pair key,
+	// generation or source history. new claims must precede publisher installation.
+	RebindNativePeerPairRelays(ctx context.Context, arg RebindNativePeerPairRelaysParams) (ControlNativePeerPair, error)
 	RecentGuestTrialStats(ctx context.Context, since pgtype.Timestamptz) (RecentGuestTrialStatsRow, error)
 	// revalidate the admitted stream, live device, grant and exact run. identity
 	// and source are bound by ingress, and an outage never extends the deadline.

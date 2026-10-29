@@ -104,7 +104,7 @@ func TestPrivateClaimReservesOwnerBeforeControl(t *testing.T) {
 	client.disconnect = func() { close(disconnecting); <-finish }
 	outer := &PublisherAcceptor{readyDelta: func(int) {}, connectionExited: func(bool) {}}
 	done := make(chan error, 1)
-	go func() { done <- owner.claim.serve(t.Context(), nil, outer, func(error) {}) }()
+	go func() { done <- owner.claim.serve(t.Context(), nil, nil, outer, func(error) {}) }()
 	relayAwait(t, disconnecting)
 	duplicates()
 	unblockDisconnect()

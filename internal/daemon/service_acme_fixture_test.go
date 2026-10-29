@@ -170,6 +170,11 @@ func privateFixtureACME(t *testing.T, d *controlstate.Database, cfg *daemonconfi
 
 func startPrivateFixtureWorkers(t *testing.T, ctx context.Context, process *daemon, d *controlstate.Database, cfg daemonconfig.Config, pebble integrationPebble, provider *privateFixtureDNS) {
 	t.Helper()
+	// match control startup: policy preparation cannot depend on a first visitor
+	// issuing a token to create the issuer and verification key.
+	if err := d.PrepareVisitorSigningKeys(ctx, cfg.ControlOrigin(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	dnsConfig := controldns.Config{WorkerID: "private-fixture-dns", ManagedDomain: cfg.ManagedDomain, ManagedZoneID: cfg.Route53ManagedZoneID, IngressIPv4Addresses: cfg.IngressIPv4Addresses, PollInterval: 20 * time.Millisecond}
 	manager, err := controldns.NewChallengeManager(d, provider, provider, dnsConfig)
 	if err != nil {

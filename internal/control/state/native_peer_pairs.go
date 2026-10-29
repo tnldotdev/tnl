@@ -235,11 +235,29 @@ func (d *Database) authorizeNativePeerPair(ctx context.Context, r NativePeerPair
 			}
 			row, err = q.LimitNativePeerPair(ctx, controlstatedb.LimitNativePeerPairParams{ID: row.ID, Now: timestamptz(now), AuthorityExpiresAt: timestamptz(deadline)})
 		case "renew":
-			if row.ParentControlSessionID != parentSession || !row.ExpiresAt.Time.After(now) || previous != result.Relays || row.ID != r.PreviousPairID ||
+			if row.ParentControlSessionID != parentSession || !row.ExpiresAt.Time.After(now) || row.ID != r.PreviousPairID ||
 				row.DeliveryGeneration != r.PreviousGeneration || row.IdempotencyKey != r.IdempotencyKey {
 				return NativePeerPair{}, ErrServiceAccess
 			}
 			if requestAt.After(row.LastRequestAt.Time) && requestAt.After(row.LastAuthorizedAt.Time) && now.After(row.LastAuthorizedAt.Time) {
+				if previous != result.Relays {
+					encoded, encodeErr := json.Marshal(result.Relays)
+					if encodeErr != nil {
+						return NativePeerPair{}, encodeErr
+					}
+					row, err = q.RebindNativePeerPairRelays(ctx, controlstatedb.RebindNativePeerPairRelaysParams{ID: row.ID, Slots: encoded})
+					if err != nil {
+						return NativePeerPair{}, err
+					}
+					for slot, relay := range result.Relays {
+						if relay == previous[slot] {
+							continue
+						}
+						if err := q.FenceReplacedNativePeerPairLeg(ctx, controlstatedb.FenceReplacedNativePeerPairLegParams{PairID: row.ID, ConnectionSlot: int16(slot), RelayID: relay.RelayLease.RelayID, RelayRunID: relay.RelayLease.RelayRunID, RelayLeaseRevision: int64(relay.RelayLease.RelayLeaseRevision), Now: timestamptz(now)}); err != nil {
+							return NativePeerPair{}, err
+						}
+					}
+				}
 				row, err = q.RenewNativePeerPair(ctx, controlstatedb.RenewNativePeerPairParams{ID: row.ID, Now: timestamptz(now), RequestAt: timestamptz(requestAt), RenewalDigest: requestDigest[:], AuthorityExpiresAt: timestamptz(deadline)})
 			} else if requestAt.Equal(row.LastRequestAt.Time) && bytes.Equal(row.LastRenewalDigest, requestDigest[:]) {
 				row, err = q.LimitNativePeerPair(ctx, controlstatedb.LimitNativePeerPairParams{ID: row.ID, Now: timestamptz(now), AuthorityExpiresAt: timestamptz(deadline)})
