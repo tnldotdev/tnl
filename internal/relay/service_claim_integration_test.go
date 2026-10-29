@@ -240,7 +240,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 		}
 		ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: service.ID, ServiceRunID: run.RunID, RunNumber: uint64(run.RunNumber), PublisherConnectionID: slot.PublisherConnectionID,
 			ConnectionSlot: uint8(slot.ConnectionSlot), ConnectionAssignmentRevision: uint64(slot.Revision), RelayServiceID: slot.RelayServiceID}
-		hello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: 1, Role: tunnelv1.Publisher, Credential: slot.Credential, ServiceConnection: &ref}
+		hello := tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Publisher, Credential: slot.Credential, ServiceConnection: &ref}
 		for attempt := range 2 {
 			if _, done, err := dialPrivateClaim(t, acceptor, hello); err == nil {
 				t.Fatal("committed claim response was not lost")

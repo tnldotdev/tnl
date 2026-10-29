@@ -2,11 +2,13 @@ package daemon
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -22,14 +24,49 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type wiringControl struct {
 	ingress.ControlClient
-	snapshot ingressv1.IngressRoutingTableSnapshot
-	mu       sync.Mutex
-	lease    ingressv1.IngressLease
+	snapshot    ingressv1.IngressRoutingTableSnapshot
+	mu          sync.Mutex
+	lease       ingressv1.IngressLease
+	allocations map[string]controlv1.StreamCapacityAllocation
+}
+
+func (c *wiringControl) AllocateStreamCapacity(_ context.Context, id string, body ingressv1.StreamCapacityRequest) (controlv1.StreamCapacityAllocation, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	allocation := controlv1.StreamCapacityAllocation{Id: "salloc_" + strings.TrimPrefix(body.RunId, "pr_"), Resource: body.Resource, RunId: body.RunId, RunNumber: body.RunNumber,
+		IngressId: id, IngressRunId: body.IngressRunId, IngressLeaseRevision: body.IngressLeaseRevision, Capacity: body.Capacity, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true, ReservationKey: []byte(strings.Repeat("k", 32))}
+	if c.allocations == nil {
+		c.allocations = make(map[string]controlv1.StreamCapacityAllocation)
+	}
+	c.allocations[allocation.Id] = allocation
+	return allocation, nil
+}
+
+func (c *wiringControl) RetireStreamCapacity(context.Context, string, string, ingressv1.StreamCapacityRetirement) error {
+	return nil
+}
+
+func (c *wiringControl) ReadIngressVisitorPolicy(_ context.Context, _ string, body ingressv1.IngressVisitorPolicyRequest) (controlv1.VisitorPolicyUpdate, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("w", 32)))
+	allocations := []controlv1.StreamCapacityAllocation{}
+	for _, allocation := range c.allocations {
+		if allocation.Resource == body.Resource {
+			allocations = append(allocations, allocation)
+		}
+	}
+	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
+		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "pool.example", Port: 443, Issuer: "https://control.example.test", ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: true,
+			VisitorPolicyRevision: 1, KeyRevision: 1, VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "fixture", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}, StreamAllocations: allocations}}, nil
 }
 
 func (c *wiringControl) RegisterIngress(_ context.Context, r ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
@@ -120,6 +157,9 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 								if !ok || request.Header.PublishRunID != fmt.Sprintf("pr_%022d", 444444) {
 									t.Error("selected oldest full run")
 								}
+								if request.Header.Reservation.Validate() != nil || request.Header.Reservation.RunID != request.Header.PublishRunID || request.Header.Reservation.VisitorConnectionID != request.Header.VisitorConnectionID {
+									t.Error("forwarding lost its prepared exact-run reservation")
+								}
 								if incoming.Accept() != nil {
 									return
 								}
@@ -187,7 +227,11 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 				}
 			})
 			deadline := time.Now().Add(2 * time.Second)
-			for !d.ingresses[0].controller.Ready(time.Now()) {
+			for {
+				_, reason := d.ingresses[0].controller.LookupPublicURLs("pool.example", d.ingresses[0].forwarder, time.Now())
+				if reason == ingress.LookupCurrent {
+					break
+				}
 				if time.Now().After(deadline) {
 					t.Fatal("production controller not ready")
 				}
@@ -217,6 +261,13 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 			if count := streams.Load(); count != 1 {
 				t.Fatalf("forwarded streams=%d; want one with no replay", count)
 			}
+			control.mu.Lock()
+			for _, allocation := range control.allocations {
+				if allocation.Capacity >= 32 {
+					t.Error("initial preparation took the complete default run limit")
+				}
+			}
+			control.mu.Unlock()
 		})
 	}
 }

@@ -3,10 +3,12 @@ package ingress
 import (
 	"errors"
 	"math"
+	"net/netip"
 	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -23,6 +25,7 @@ type streamAllocation struct {
 	Capacity                        int
 	ObservedAt, ValidUntil          time.Time
 	Retired                         bool
+	ProofKey                        [32]byte
 }
 
 type streamReservations struct {
@@ -59,7 +62,7 @@ func (s *streamReservations) apply(allocation streamAllocation, started time.Tim
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	duration := allocation.ValidUntil.Sub(allocation.ObservedAt)
-	if s.closed || started.IsZero() || s.now().Before(started) || !opaqueid.Valid(allocation.ID, "salloc_") || allocation.Capacity < 1 || allocation.Capacity > 1<<20 || duration <= 0 || duration > 10*time.Second || !s.now().Before(started.Add(duration)) {
+	if s.closed || started.IsZero() || s.now().Before(started) || !opaqueid.Valid(allocation.ID, "salloc_") || allocation.ProofKey == ([32]byte{}) || allocation.Capacity < 1 || allocation.Capacity > 1<<20 || duration <= 0 || duration > 10*time.Second || !s.now().Before(started.Add(duration)) {
 		return ErrStreamReservation
 	}
 	probe := tunnelv1.StreamReservation{ID: "sres_aaaaaaaaaaaaaaaaaaaaaa", AllocationID: allocation.ID, Sequence: 1, ResourceKind: allocation.ResourceKind, ResourceID: allocation.ResourceID, RunID: allocation.RunID, RunNumber: allocation.RunNumber,
@@ -71,7 +74,7 @@ func (s *streamReservations) apply(allocation streamAllocation, started time.Tim
 	slots := s.allocations[allocation.ID]
 	if slots != nil {
 		old := slots.allocation
-		if !s.now().Before(old.ValidUntil) || old.Retired || allocation.ObservedAt.Before(old.ObservedAt) || old.Capacity != allocation.Capacity || old.ResourceKind != allocation.ResourceKind || old.ResourceID != allocation.ResourceID || old.RunID != allocation.RunID || old.RunNumber != allocation.RunNumber || old.IngressID != allocation.IngressID || old.IngressRunID != allocation.IngressRunID || old.IngressLeaseRevision != allocation.IngressLeaseRevision {
+		if !s.now().Before(old.ValidUntil) || old.Retired || allocation.ObservedAt.Before(old.ObservedAt) || old.ProofKey != allocation.ProofKey || old.Capacity != allocation.Capacity || old.ResourceKind != allocation.ResourceKind || old.ResourceID != allocation.ResourceID || old.RunID != allocation.RunID || old.RunNumber != allocation.RunNumber || old.IngressID != allocation.IngressID || old.IngressRunID != allocation.IngressRunID || old.IngressLeaseRevision != allocation.IngressLeaseRevision {
 			return ErrStreamReservation
 		}
 		slots.allocation = allocation
@@ -84,8 +87,8 @@ func (s *streamReservations) apply(allocation streamAllocation, started time.Tim
 	return nil
 }
 
-func (s *streamReservations) reserve(allocationID, visitorID string, stop func()) (*streamReservation, error) {
-	if !opaqueid.Valid(visitorID, opaqueid.VisitorConnectionPrefix) || stop == nil {
+func (s *streamReservations) reserve(allocationID, visitorID string, source netip.Addr, stop func()) (*streamReservation, error) {
+	if !opaqueid.Valid(visitorID, opaqueid.VisitorConnectionPrefix) || !source.IsValid() || source.Zone() != "" || stop == nil {
 		return nil, ErrStreamReservation
 	}
 	s.mu.Lock()
@@ -109,6 +112,9 @@ func (s *streamReservations) reserve(allocationID, visitorID string, stop func()
 	slots.sequences[slot]++
 	r := &streamReservation{owner: s, slots: slots, stop: stop, header: tunnelv1.StreamReservation{ID: id, AllocationID: a.ID, Slot: slot, Sequence: slots.sequences[slot], ResourceKind: a.ResourceKind, ResourceID: a.ResourceID, RunID: a.RunID, RunNumber: a.RunNumber,
 		VisitorConnectionID: visitorID, IngressID: a.IngressID, IngressRunID: a.IngressRunID, IngressLeaseRevision: a.IngressLeaseRevision}}
+	if err := visitortoken.SignReservation(a.ProofKey[:], &r.header, source); err != nil {
+		return nil, ErrStreamReservation
+	}
 	slots.occupied[slot] = r
 	s.active[visitorID] = r
 	return r, nil

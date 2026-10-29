@@ -6,6 +6,7 @@ INSERT INTO control.ingress_leases (
     protocol_version,
     connection_capacity,
     ingress_pool_id,
+    connector_only,
     service_ports,
     connector_address,
     connector_tls_server_name,
@@ -19,6 +20,7 @@ INSERT INTO control.ingress_leases (
     sqlc.arg(protocol_version),
     sqlc.arg(connection_capacity),
     sqlc.arg(ingress_pool_id),
+    sqlc.arg(connector_only),
     sqlc.arg(service_ports),
     sqlc.arg(connector_address),
     sqlc.arg(connector_tls_server_name),
@@ -37,6 +39,7 @@ ON CONFLICT (ingress_id) DO UPDATE SET
     protocol_version = EXCLUDED.protocol_version,
     connection_capacity = EXCLUDED.connection_capacity,
     ingress_pool_id = EXCLUDED.ingress_pool_id,
+    connector_only = EXCLUDED.connector_only,
     service_ports = EXCLUDED.service_ports,
     connector_address = EXCLUDED.connector_address,
     connector_tls_server_name = EXCLUDED.connector_tls_server_name,
@@ -80,6 +83,7 @@ ON CONFLICT (ingress_id) DO UPDATE SET
     END
 WHERE (control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
     AND control.ingress_leases.ingress_pool_id=EXCLUDED.ingress_pool_id
+    AND control.ingress_leases.connector_only=EXCLUDED.connector_only
     AND control.ingress_leases.service_ports=EXCLUDED.service_ports
     AND control.ingress_leases.connector_address=EXCLUDED.connector_address
     AND control.ingress_leases.connector_tls_server_name=EXCLUDED.connector_tls_server_name)

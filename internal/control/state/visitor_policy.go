@@ -210,7 +210,11 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		return result, ErrVisitorPolicy
 	}
 	for _, allocation := range allocations {
-		policy.StreamAllocations = append(policy.StreamAllocations, allocationRecord(allocation, now).Wire())
+		prepared, err := d.allocationRecord(allocation, now)
+		if err != nil {
+			return result, err
+		}
+		policy.StreamAllocations = append(policy.StreamAllocations, prepared.Wire())
 	}
 	events, err := q.ReadVisitorPolicyEvents(ctx, controlstatedb.ReadVisitorPolicyEventsParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID, AfterRevision: after})
 	if err != nil {

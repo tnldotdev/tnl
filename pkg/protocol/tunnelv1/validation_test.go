@@ -75,7 +75,8 @@ func TestReadersRejectInvalidMessages(t *testing.T) {
 	}{
 		{"unknown control field", `{"type":"hello_accepted","protocol_version":1,"extra":true}`, readControl},
 		{"unknown type", `{"type":"future","protocol_version":1}`, readControl},
-		{"wrong version", `{"type":"hello_accepted","protocol_version":2}`, readControl},
+		{"previous version", `{"type":"hello_accepted","protocol_version":0}`, readControl},
+		{"future version", `{"type":"hello_accepted","protocol_version":2}`, readControl},
 		{"publisher no connection", `{"type":"hello","protocol_version":1,"role":"publisher","credential":"secret"}`, readControl},
 		{"ingress without credential", `{"type":"hello","protocol_version":1,"role":"ingress"}`, readControl},
 		{"accepted with code", `{"type":"hello_accepted","protocol_version":1,"code":"internal"}`, readControl},

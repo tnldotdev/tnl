@@ -103,7 +103,7 @@ func publisherFixture(t *testing.T, id string, revision uint64) (*PublisherConne
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = transport.Close() })
-	publisher, err := tunnel.Dial(ctx, transport, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: 1, Role: tunnelv1.Publisher, Credential: "credential", PublisherConnection: &ref})
+	publisher, err := tunnel.Dial(ctx, transport, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Publisher, Credential: "credential", PublisherConnection: &ref})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func publisherFixture(t *testing.T, id string, revision uint64) (*PublisherConne
 }
 
 func lifecycleHeader(id string, revision uint64) tunnelv1.InternalForwardingHeader {
-	return tunnelv1.InternalForwardingHeader{ProtocolVersion: 1, Kind: tunnelv1.InternalForwardingStream, VisitorConnectionID: "visitor_1", PublicURLID: "public_url_1", PublishRunID: "session_1", PublishRunNumber: 2, PublisherConnectionID: id, ConnectionSlot: 0, ConnectionAssignmentRevision: revision, RelayServiceID: "service_1", RelayID: "relay_1", RelayRunID: "run_1", RelayLeaseRevision: 4, PublicUrlExpiresAt: time.Now().Add(time.Minute), LeaseExpiresAt: time.Now().Add(time.Minute)}
+	return tunnelv1.InternalForwardingHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.InternalForwardingStream, VisitorConnectionID: "visitor_1", PublicURLID: "public_url_1", PublishRunID: "session_1", PublishRunNumber: 2, PublisherConnectionID: id, ConnectionSlot: 0, ConnectionAssignmentRevision: revision, RelayServiceID: "service_1", RelayID: "relay_1", RelayRunID: "run_1", RelayLeaseRevision: 4, PublicUrlExpiresAt: time.Now().Add(time.Minute), LeaseExpiresAt: time.Now().Add(time.Minute)}
 }
 
 func lifecycleLease() relayv1.RelayLease {
@@ -207,7 +207,7 @@ func TestPublisherConnectionDrainWaitsForStreamAndRejectsNewWork(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if incoming.Header != (tunnelv1.VisitorStreamHeader{ProtocolVersion: 1, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor_1", PublicURLID: "public_url_1", PublishRunID: "session_1", PublishRunNumber: 2, PublisherConnectionID: "connection_1", ConnectionAssignmentRevision: 3}) {
+		if incoming.Header != (tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor_1", PublicURLID: "public_url_1", PublishRunID: "session_1", PublishRunNumber: 2, PublisherConnectionID: "connection_1", ConnectionAssignmentRevision: 3}) {
 			_ = incoming.Stream.Close()
 			return errors.New("incorrect visitor header")
 		}
@@ -273,6 +273,7 @@ func TestPublisherConnectionCloseInterruptsPendingOpen(t *testing.T) {
 	result := relayWorker(t, func() { cancel(); _ = connection.session.Close() }, func() error {
 		stream, err := connection.OpenVisitor(ctx, "visitor_pending")
 		if stream != nil {
+			_, err = stream.Read(make([]byte, 1))
 			_ = stream.Close()
 		}
 		return err
@@ -308,6 +309,7 @@ func TestPublisherConnectionDrainCancellationClosesPendingOpen(t *testing.T) {
 	opened := relayWorker(t, func() { cancel(); _ = connection.session.Close() }, func() error {
 		stream, err := connection.OpenVisitor(ctx, "visitor_pending")
 		if stream != nil {
+			_, err = stream.Read(make([]byte, 1))
 			_ = stream.Close()
 		}
 		return err

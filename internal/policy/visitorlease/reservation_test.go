@@ -1,14 +1,18 @@
 package visitorlease
 
 import (
+	"bytes"
 	"errors"
 	"maps"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -18,14 +22,92 @@ func allocationFixture(t *testing.T) (*Lease, Update, tunnelv1.StreamReservation
 	l, update, _ := fixture(t)
 	a := controlv1.StreamCapacityAllocation{Id: "salloc_" + strings.Repeat("A", 22), Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: update.View.Scope.ID},
 		RunId: "pr_" + strings.Repeat("B", 22), RunNumber: 1, IngressId: "ingress", IngressRunId: "process", IngressLeaseRevision: 2,
-		Capacity: 2, ObservedAt: time.Now(), ValidUntil: time.Now().Add(10 * time.Second)}
+		Capacity: 2, ObservedAt: time.Now(), ValidUntil: time.Now().Add(10 * time.Second), ReservationKey: bytes.Repeat([]byte{1}, 32)}
 	update.Allocations = map[string]controlv1.StreamCapacityAllocation{a.Id: a}
 	h := tunnelv1.StreamReservation{ID: "sres_" + strings.Repeat("C", 22), AllocationID: a.Id, Sequence: 1, ResourceKind: "public_url", ResourceID: update.View.Scope.ID,
 		RunID: a.RunId, RunNumber: 1, VisitorConnectionID: "vc_" + strings.Repeat("D", 22), IngressID: a.IngressId, IngressRunID: a.IngressRunId, IngressLeaseRevision: 2}
+	signReservationFixture(t, a.ReservationKey, &h, "192.0.2.1")
 	if err := h.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	return l, update, h
+}
+
+func signReservationFixture(t *testing.T, key []byte, reservation *tunnelv1.StreamReservation, source string) {
+	t.Helper()
+	if err := visitortoken.SignReservation(key, reservation, netip.MustParseAddr(source)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReservationSourceFencesOnlyAffectedTransports(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		lease, update, first := allocationFixture(t)
+		if err := lease.Apply(lease.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+		var stopped [2]atomic.Int64
+		for index, source := range []string{"192.0.2.1", "198.51.100.1"} {
+			header := first
+			header.Slot = uint32(index)
+			header.VisitorConnectionID = "vc_" + strings.Repeat(string(rune('D'+index)), 22)
+			signReservationFixture(t, update.Allocations[header.AllocationID].ReservationKey, &header, source)
+			guard, err := lease.BindReservation(header, func() { stopped[index].Add(1) })
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer guard.Close()
+			if err := guard.BindSource(netip.MustParseAddr(source)); err != nil {
+				t.Fatal(err)
+			}
+			if err := guard.BindSource(netip.MustParseAddr("203.0.113.1")); err == nil {
+				t.Fatal("reservation changed its trusted source")
+			}
+		}
+		var key [32]byte
+		key[0] = 1
+		entry, err := ippolicy.Hash(key, netip.MustParsePrefix("198.51.100.0/24"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ip, err := ippolicy.New(key, []ippolicy.Entry{entry})
+		if err != nil {
+			t.Fatal(err)
+		}
+		update.IP = &ip
+		if err := lease.Apply(lease.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+		if stopped[0].Load() != 1 || stopped[1].Load() != 0 {
+			t.Fatal("IP policy update affected an unrelated transport")
+		}
+	})
+}
+
+func TestReservationRejectsRelayRewritesBeforeVisitorBytes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		lease, update, signed := allocationFixture(t)
+		if err := lease.Apply(lease.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+		for name, change := range map[string]func(*tunnelv1.StreamReservation){
+			"source":   func(r *tunnelv1.StreamReservation) { r.SourceIP = "198.51.100.1" },
+			"slot":     func(r *tunnelv1.StreamReservation) { r.Slot = 1 },
+			"run":      func(r *tunnelv1.StreamReservation) { r.RunID = "pr_" + strings.Repeat("Z", 22) },
+			"sequence": func(r *tunnelv1.StreamReservation) { r.Sequence++ },
+		} {
+			forged := signed
+			change(&forged)
+			if err := lease.ValidateReservation(forged); !errors.Is(err, ErrUpdate) {
+				t.Fatal("relay rewrite reached the publisher", name, err)
+			}
+		}
+		guard, err := lease.BindReservationFrom(signed, netip.MustParseAddr("192.0.2.1"), func() {})
+		if err != nil {
+			t.Fatal("exact ingress proof was rejected", err)
+		}
+		guard.Close()
+	})
 }
 
 func TestReservationSlotsPreventReplayAcrossRelayConnections(t *testing.T) {
@@ -46,6 +128,7 @@ func TestReservationSlotsPreventReplayAcrossRelayConnections(t *testing.T) {
 			t.Fatal("released reservation was spent again", err)
 		}
 		h.Sequence++
+		signReservationFixture(t, update.Allocations[h.AllocationID].ReservationKey, &h, h.SourceIP)
 		replacement, err := l.BindReservation(h, func() {})
 		if err != nil {
 			t.Fatal(err)
@@ -53,6 +136,7 @@ func TestReservationSlotsPreventReplayAcrossRelayConnections(t *testing.T) {
 		defer replacement.Close()
 		first.Close()
 		h.Sequence++
+		signReservationFixture(t, update.Allocations[h.AllocationID].ReservationKey, &h, h.SourceIP)
 		if _, err := l.BindReservation(h, func() {}); !errors.Is(err, ErrUpdate) {
 			t.Fatal("stale release freed the replacement slot", err)
 		}
@@ -173,6 +257,43 @@ func TestReservationSnapshotOwnsAllocationValues(t *testing.T) {
 		if err := l.ValidateReservation(h); err != nil {
 			t.Fatal("caller changed applied allocation authority", err)
 		}
+	})
+}
+
+func TestReservationSnapshotOwnsAllocationKeyBytes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		l, update, header := allocationFixture(t)
+		callerKey := update.Allocations[header.AllocationID].ReservationKey
+		if err := l.Apply(l.Begin(), update); err != nil {
+			t.Fatal(err)
+		}
+		replacement := bytes.Repeat([]byte{2}, 32)
+		copy(callerKey, replacement)
+		if err := l.ValidateReservation(header); err != nil {
+			t.Fatal("caller changed an installed allocation key", err)
+		}
+		changed := header
+		signReservationFixture(t, replacement, &changed, header.SourceIP)
+		if err := l.ValidateReservation(changed); !errors.Is(err, ErrUpdate) {
+			t.Fatal("caller replacement became authenticated allocation authority", err)
+		}
+		start, done := make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(done)
+			<-start // caller mutation starts only after Apply has copied its input.
+			for range 1000 {
+				clear(callerKey)
+				copy(callerKey, replacement)
+			}
+		}()
+		close(start)
+		for range 1000 {
+			if err := l.ValidateReservation(header); err != nil {
+				t.Error("caller key mutation changed installed reservation validation", err)
+				break
+			}
+		}
+		<-done
 	})
 }
 

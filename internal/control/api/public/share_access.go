@@ -9,6 +9,7 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -114,9 +115,15 @@ func (h *handler) RedeemPublishRunShare(response http.ResponseWriter, request *h
 		writeControlStateProblem(response, "redeem share", err)
 		return
 	}
+	permission, err := h.redeemedVisitorPermission(request.Context(), visitorscope.Scope{Kind: visitorscope.PublicURL, ID: auth.PublicURLID}, controlstate.ShareSessionTokenSource{ShareID: result.ShareID, Secret: result.CookieSecret})
+	if err != nil {
+		writeVisitorTokenProblem(response, err)
+		return
+	}
 	writeJSON(response, http.StatusOK, controlv1.ShareRedemption{
 		SchemaVersion: controlstate.ReviewSchemaVersion,
 		ShareId:       result.ShareID, CookieSecret: result.CookieSecret,
 		ExpiresAt: result.ExpiresAt, NextUrl: result.NextURL, Bridge: result.Bridge,
+		Permission: permission,
 	})
 }

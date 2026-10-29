@@ -1,9 +1,12 @@
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"net/netip"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -18,8 +21,9 @@ type capacityClientFixture struct {
 	calls   atomic.Int64
 	retired atomic.Int64
 	fail    atomic.Bool
-	request string
-	id      string
+	pending atomic.Bool
+	mu      sync.Mutex
+	ids     map[string]string
 }
 
 func (c *capacityClientFixture) AllocateStreamCapacity(_ context.Context, owner string, body ingressv1.StreamCapacityRequest) (controlv1.StreamCapacityAllocation, error) {
@@ -27,16 +31,81 @@ func (c *capacityClientFixture) AllocateStreamCapacity(_ context.Context, owner 
 	if c.fail.Load() {
 		return controlv1.StreamCapacityAllocation{}, errors.New("control is unavailable")
 	}
-	if c.request != body.RequestId {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ids == nil {
+		c.ids = make(map[string]string)
+	}
+	if c.ids[body.RequestId] == "" {
 		id, err := opaqueid.New("salloc_")
 		if err != nil {
 			return controlv1.StreamCapacityAllocation{}, err
 		}
-		c.request, c.id = body.RequestId, id
+		c.ids[body.RequestId] = id
 	}
-	return controlv1.StreamCapacityAllocation{Id: c.id, Resource: body.Resource, RunId: body.RunId, RunNumber: body.RunNumber,
+	now := time.Now()
+	return controlv1.StreamCapacityAllocation{Id: c.ids[body.RequestId], Resource: body.Resource, RunId: body.RunId, RunNumber: body.RunNumber,
 		IngressId: owner, IngressRunId: body.IngressRunId, IngressLeaseRevision: body.IngressLeaseRevision, Capacity: body.Capacity,
-		ObservedAt: time.Now(), ValidUntil: time.Now().Add(10 * time.Second)}, nil
+		ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: !c.pending.Load(), ReservationKey: bytes.Repeat([]byte{0x42}, 32)}, nil
+}
+
+func TestStreamCapacityBackgroundExpansionUsesLocalOccupancy(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client := &capacityClientFixture{}
+		capacity := prepareCapacityFixture(t, client)
+		run := &publicVisitorRun{capacity: capacity, limit: 4}
+		defer func() {
+			for _, extra := range run.additional {
+				_ = extra.Close(t.Context())
+			}
+		}()
+		reservation, err := capacity.reserve("vc_"+strings.Repeat("V", 22), netip.MustParseAddr("192.0.2.1"), func() {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer reservation.Close()
+		if client.calls.Load() != 1 {
+			t.Fatal("visitor triggered capacity work")
+		}
+		run.expand(t.Context(), nil)
+		if len(run.additional) != 1 || client.calls.Load() != 2 {
+			t.Fatal("background occupancy did not prepare another portion")
+		}
+		run.expand(t.Context(), nil)
+		if client.calls.Load() != 2 {
+			t.Fatal("expansion exceeded the configured run limit")
+		}
+		another, err := run.additional[0].reserve("vc_"+strings.Repeat("W", 22), netip.MustParseAddr("192.0.2.1"), func() {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer another.Close()
+		if another.header.AllocationID == reservation.header.AllocationID {
+			t.Fatal("another portion reused allocation identity")
+		}
+	})
+}
+
+func TestStreamCapacityWaitsForPublisherBackgroundObservation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client := &capacityClientFixture{}
+		client.pending.Store(true)
+		c := prepareCapacityFixture(t, client)
+		if _, err := c.reserve("vc_"+strings.Repeat("V", 22), netip.MustParseAddr("192.0.2.1"), func() {}); !errors.Is(err, ErrStreamReservation) {
+			t.Fatal("unobserved allocation reached a visitor", err)
+		}
+		client.pending.Store(false)
+		time.Sleep(2*time.Second + time.Millisecond)
+		synctest.Wait()
+		reservation, err := c.reserve("vc_"+strings.Repeat("V", 22), netip.MustParseAddr("192.0.2.1"), func() {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		reservation.Close()
+		if client.calls.Load() != 2 {
+			t.Fatal("visitor started allocation work")
+		}
+	})
 }
 
 func (c *capacityClientFixture) RetireStreamCapacity(context.Context, string, string, ingressv1.StreamCapacityRetirement) error {
@@ -66,7 +135,7 @@ func TestStreamCapacityPreparedReservationsMakeNoControlCalls(t *testing.T) {
 		c := prepareCapacityFixture(t, client)
 		var first, sequence uint64
 		for range 100 {
-			r, err := c.reserve("vc_"+strings.Repeat("V", 22), func() {})
+			r, err := c.reserve("vc_"+strings.Repeat("V", 22), netip.MustParseAddr("192.0.2.1"), func() {})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -87,7 +156,7 @@ func TestStreamCapacityRenewsHeldSlotsAndJoinsOnShutdown(t *testing.T) {
 		client := &capacityClientFixture{}
 		c := prepareCapacityFixture(t, client)
 		var stopped atomic.Int64
-		r, err := c.reserve("vc_"+strings.Repeat("V", 22), func() { stopped.Add(1) })
+		r, err := c.reserve("vc_"+strings.Repeat("V", 22), netip.MustParseAddr("192.0.2.1"), func() { stopped.Add(1) })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -114,7 +183,7 @@ func TestStreamCapacityOutageExpiresAndRecoversWithNewIdentity(t *testing.T) {
 		client := &capacityClientFixture{}
 		c := prepareCapacityFixture(t, client)
 		var stopped atomic.Int64
-		old, err := c.reserve("vc_"+strings.Repeat("V", 22), func() { stopped.Add(1) })
+		old, err := c.reserve("vc_"+strings.Repeat("V", 22), netip.MustParseAddr("192.0.2.1"), func() { stopped.Add(1) })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -124,13 +193,13 @@ func TestStreamCapacityOutageExpiresAndRecoversWithNewIdentity(t *testing.T) {
 		if stopped.Load() != 1 {
 			t.Fatal("control outage left usable reservations after the fixed deadline")
 		}
-		if _, err := c.reserve(old.header.VisitorConnectionID, func() {}); !errors.Is(err, ErrStreamReservation) {
+		if _, err := c.reserve(old.header.VisitorConnectionID, netip.MustParseAddr("192.0.2.1"), func() {}); !errors.Is(err, ErrStreamReservation) {
 			t.Fatal("expired allocation admitted a new connection", err)
 		}
 		client.fail.Store(false)
 		time.Sleep(2 * time.Second)
 		synctest.Wait()
-		next, err := c.reserve(old.header.VisitorConnectionID, func() {})
+		next, err := c.reserve(old.header.VisitorConnectionID, netip.MustParseAddr("192.0.2.1"), func() {})
 		if err != nil {
 			t.Fatal(err)
 		}

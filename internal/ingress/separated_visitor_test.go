@@ -3,22 +3,26 @@ package ingress
 import (
 	"bufio"
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
-	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publisher.PublicURLServerConfig) {
@@ -26,12 +30,40 @@ func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publi
 	c.Hostname = "route.example"
 	c.PublicURLID = f.entry.PublicUrlId
 	c.PublishRunNumber = uint64(f.entry.PublishRunNumber)
-	c.PromoteVisitor = tunnel.NewVisitorPromoter(func(v publisher.Visitor) tunnelv1.VisitorStreamHeader { return v.Header }, func(id string) *tunnel.Session {
-		if id == f.ref.PublisherConnectionID {
-			return f.publisher
-		}
-		return nil
-	})
+	policy, err := visitorlease.New(visitorscope.Scope{Kind: visitorscope.PublicURL, ID: c.PublicURLID}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(policy.Close)
+	request := policy.Begin()
+	now := time.Now()
+	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("s", 32)))
+	allocation := controlv1.StreamCapacityAllocation{Id: "salloc_" + strings.Repeat("C", 22), Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: c.PublicURLID}, RunId: f.entry.PublishRunId, RunNumber: f.entry.PublishRunNumber,
+		IngressId: "fixture-ingress", IngressRunId: "fixture-process", IngressLeaseRevision: 1, Capacity: 32, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), ReservationKey: []byte(strings.Repeat("k", 32))}
+	update := visitorlease.Update{View: visitortoken.View{Issuer: "https://control.example.test", Scope: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: c.PublicURLID},
+		Hostname: c.Hostname, Port: 443, VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second)}.WithVerificationKeys(map[string]ed25519.PublicKey{"fixture": key.Public().(ed25519.PublicKey)}),
+		KeyRevision: 1, Snapshot: true, Enabled: true, Anonymous: true, Allocations: map[string]controlv1.StreamCapacityAllocation{allocation.Id: allocation}}
+	if err := policy.Apply(request, update); err != nil {
+		t.Fatal(err)
+	}
+	c.VisitorPolicy = policy
+	pool := newStreamReservations(nil)
+	var proofKey [32]byte
+	copy(proofKey[:], allocation.ReservationKey)
+	if err := pool.apply(streamAllocation{ID: allocation.Id, ResourceKind: "public_url", ResourceID: c.PublicURLID, RunID: f.entry.PublishRunId, RunNumber: uint64(f.entry.PublishRunNumber),
+		IngressID: allocation.IngressId, IngressRunID: allocation.IngressRunId, IngressLeaseRevision: 1, Capacity: allocation.Capacity, ObservedAt: now, ValidUntil: allocation.ValidUntil, ProofKey: proofKey}, now); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	ingressPolicy, err := visitorlease.New(update.View.Scope, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ingressPolicy.Close)
+	if err := ingressPolicy.Apply(ingressPolicy.Begin(), update); err != nil {
+		t.Fatal(err)
+	}
+	f.prepared = &publicVisitorRun{policy: &visitorPolicy{lease: ingressPolicy}, capacity: &streamCapacity{pool: pool, id: allocation.Id, ready: true}}
 	r, err := publisher.NewPublicURLServer(c)
 	if err != nil {
 		t.Fatal(err)
@@ -56,9 +88,10 @@ func startSeparatedIngress(t *testing.T, f *admissionTransportFixture, port uint
 		if err != nil {
 			return PublicURL{}, LookupInvalidProjection
 		}
+		route.prepared = f.prepared
 		return route, LookupCurrent
 	}
-	s, address := startIngress(t, Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Lookup: func(string) (PublicURL, LookupReason) { return lookup() }})
+	s, address := startIngress(t, Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Lookup: func(string) (PublicURL, LookupReason) { return lookup() }, OnError: func(err error) { t.Logf("separated forwarding: %v", err) }})
 	f.forwarder.SetPromotionHandler(s.PromotePendingAdmission)
 	return s, address
 }

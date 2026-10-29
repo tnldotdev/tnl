@@ -90,6 +90,10 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 	if err = controlstatedb.New(d.pool).CleanupConnectorSessions(ctx, timestamptz(now)); err != nil {
 		return count, err
 	}
+	if _, err = d.pool.Exec(ctx, `DELETE FROM control.stream_capacity_allocations WHERE id IN(
+	    SELECT id FROM control.stream_capacity_allocations WHERE valid_until<$1 ORDER BY valid_until,id LIMIT 1000 FOR UPDATE SKIP LOCKED)`, now.Add(-24*time.Hour)); err != nil {
+		return count, err
+	}
 	if err = controlstatedb.New(d.pool).CleanupConnectorIngressAssignmentRequests(ctx, timestamptz(now)); err != nil {
 		return count, err
 	}

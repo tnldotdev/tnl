@@ -1,7 +1,9 @@
 package tunnelv1
 
 import (
+	"encoding/base64"
 	"errors"
+	"net/netip"
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -24,6 +26,8 @@ type StreamReservation struct {
 	IngressID            string `json:"ingress_id"`
 	IngressRunID         string `json:"ingress_run_id"`
 	IngressLeaseRevision uint64 `json:"ingress_lease_revision"`
+	SourceIP             string `json:"source_ip"`
+	Proof                string `json:"proof"`
 }
 
 func (r StreamReservation) Validate() error {
@@ -32,6 +36,13 @@ func (r StreamReservation) Validate() error {
 	}
 	for _, id := range []string{r.IngressID, r.IngressRunID} {
 		if id == "" || len(id) > 128 || strings.ContainsAny(id, "\x00\r\n\t ") {
+			return ErrInvalidStreamReservation
+		}
+	}
+	if r.SourceIP != "" || r.Proof != "" {
+		address, err := netip.ParseAddr(r.SourceIP)
+		proof, decodeErr := base64.RawURLEncoding.Strict().DecodeString(r.Proof)
+		if err != nil || !address.IsValid() || address.Zone() != "" || address.Unmap().String() != r.SourceIP || decodeErr != nil || len(proof) != 32 {
 			return ErrInvalidStreamReservation
 		}
 	}
@@ -45,6 +56,16 @@ func (r StreamReservation) Validate() error {
 			return ErrInvalidStreamReservation
 		}
 	default:
+		return ErrInvalidStreamReservation
+	}
+	return nil
+}
+
+func (r StreamReservation) validatePublicBinding(resource, run string, number uint64, visitor string) error {
+	if r == (StreamReservation{}) {
+		return nil
+	}
+	if r.Validate() != nil || r.ResourceKind != "public_url" || r.ResourceID != resource || r.RunID != run || r.RunNumber != number || r.VisitorConnectionID != visitor {
 		return ErrInvalidStreamReservation
 	}
 	return nil

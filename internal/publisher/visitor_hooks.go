@@ -32,7 +32,7 @@ type Visitor struct {
 }
 
 // PromoteVisitor overrides ingress application promotion. the engine supplies
-// the exact-session sideband default. readiness never invokes this callback.
+// the exact-stream notification default. readiness never invokes this callback.
 type PromoteVisitor func(context.Context, Visitor) error
 
 // AdmitVisitor checks current application ownership on every use, including

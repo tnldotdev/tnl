@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -16,10 +17,26 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type visitorTokenStore interface {
+type visitorTokenIssuer interface {
 	IssueVisitorToken(context.Context, string, visitorscope.Scope, controlstate.VisitorTokenSource, time.Time) (controlstate.IssuedVisitorToken, error)
+}
+
+type visitorTokenStore interface {
+	visitorTokenIssuer
 	CreateVisitorGrantCredentials(context.Context, string, visitorscope.Scope, string, time.Time, time.Time) (controlstate.VisitorGrantCredentials, error)
 	IssueVisitorClientCertificate(context.Context, string, visitorscope.Scope, controlstate.VisitorTokenSource, []byte, time.Time) (controlstate.ServiceClientCertificate, error)
+}
+
+func (h *handler) redeemedVisitorPermission(ctx context.Context, scope visitorscope.Scope, source controlstate.VisitorTokenSource) (controlv1.VisitorTokenResponse, error) {
+	issuer, ok := h.store.(visitorTokenIssuer)
+	if !ok {
+		return controlv1.VisitorTokenResponse{}, controlstate.ErrVisitorSigningKey
+	}
+	issued, err := issuer.IssueVisitorToken(ctx, h.config.ControlURL, scope, source, time.Now())
+	if err != nil {
+		return controlv1.VisitorTokenResponse{}, err
+	}
+	return visitorTokenResponse(issued), nil
 }
 
 func (h *handler) IssueVisitorClientCertificate(w http.ResponseWriter, r *http.Request) {
@@ -99,6 +116,12 @@ func (h *handler) IssueVisitorToken(w http.ResponseWriter, r *http.Request) {
 	} else if len(r.Header.Values("Authorization")) != 0 {
 		writeProblem(w, 400, controlv1.InvalidRequest, "select one visitor token source")
 		return
+	}
+	if browser, ok := source.(controlstate.BrowserSessionTokenSource); ok && scope.Kind == visitorscope.PublicURL {
+		if _, err := h.refreshBrowserSignIn(ctx, scope.ID, browser.Secret); err != nil {
+			writeVisitorTokenProblem(w, err)
+			return
+		}
 	}
 	result, err := store.IssueVisitorToken(ctx, h.config.ControlURL, scope, source, time.Now())
 	if err != nil {
@@ -205,6 +228,12 @@ func parseVisitorTokenSource(raw json.RawMessage) (controlstate.VisitorTokenSour
 			return nil, false, invalid
 		}
 		return controlstate.GrantTokenSource{Credential: source.Credential}, false, nil
+	case "share_session":
+		var source controlv1.VisitorTokenShareSessionSource
+		if decode(&source) != nil || !opaqueid.Valid(source.ShareId, opaqueid.SharePrefix) || len(source.Secret) != 43 {
+			return nil, false, invalid
+		}
+		return controlstate.ShareSessionTokenSource{ShareID: source.ShareId, Secret: source.Secret}, false, nil
 	default:
 		return nil, false, invalid
 	}
@@ -216,6 +245,8 @@ func writeVisitorTokenProblem(w http.ResponseWriter, err error) {
 		writeProblem(w, 403, controlv1.Forbidden, "visitor access denied")
 	case errors.Is(err, controlstate.ErrVisitorSigningKey), errors.Is(err, controlstate.ErrVisitorPolicy):
 		writeProblem(w, 503, controlv1.Unavailable, "visitor token signing is unavailable; retry preparation")
+	case errors.Is(err, clientauthority.ErrUnavailable):
+		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "browser sign-in refresh is unavailable; retry preparation")
 	default:
 		writeControlStateProblem(w, "issue visitor permission", err)
 	}

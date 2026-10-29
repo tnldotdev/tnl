@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
 
 func TestIngressExactSNIHandoffs(t *testing.T) {
@@ -16,7 +18,7 @@ func TestIngressExactSNIHandoffs(t *testing.T) {
 		name, hostname, alpn string
 	}{
 		{"control", "control.example", ""},
-		{"relay", "relay.example", "tnl-tunnel/1"},
+		{"relay", "relay.example", muxsession.ALPN},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())

@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 )
 
 type committedVisitorStream struct {
@@ -164,6 +165,17 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		if err != nil {
 			return fmt.Errorf("ingress: create visitor connection ID: %w", err)
 		}
+	}
+	if route.prepared != nil {
+		reservation, guard, err := route.prepared.reserve(visitorID, source.Addr(), func() { _ = public.Close() })
+		if err != nil {
+			visitorOutcome = observability.VisitorCapacityDenied
+			s.rejectCapacity("stream_reservation")
+			return err
+		}
+		defer reservation.Close()
+		defer guard.Close()
+		backends = reservedBackends(backends, reservation)
 	}
 	if admission != nil && denied {
 		admission.hostname = hello.ServerName
@@ -319,7 +331,10 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []ingressbacken
 		started := time.Now()
 		var candidate net.Conn
 		var openErr error
-		if kind == pendingConnection {
+		starting, pipelined := backend.(ingressbackend.StartingBackend)
+		if pipelined {
+			candidate, openErr = starting.Start(attemptCtx, visitorID, kind == pendingConnection, header, prefix)
+		} else if kind == pendingConnection {
 			if pendingBackend, ok := backend.(ingressbackend.PendingBackend); ok {
 				candidate, openErr = pendingBackend.OpenPending(attemptCtx, visitorID)
 			} else {
@@ -331,8 +346,13 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []ingressbacken
 		if openErr != nil {
 			stopAttempt()
 			s.observeAttempt(attempt, openErr, started)
-			s.observeRelayAttempt(backend, observability.RelayAttemptOpenFailed)
 			lastErr = fmt.Errorf("ingress: open public_url: %w", openErr)
+			var opening *tunnel.OpeningError
+			if errors.As(openErr, &opening) && opening.Committed {
+				s.observeRelayAttempt(backend, observability.RelayAttemptCommittedFailed)
+				return committedVisitorStream{}, lastErr
+			}
+			s.observeRelayAttempt(backend, observability.RelayAttemptOpenFailed)
 			continue
 		}
 		if usage != nil && !opened {
@@ -345,7 +365,11 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []ingressbacken
 			return committedVisitorStream{}, errBackendTrackingClosed
 		}
 		// a partial ClientHello write crosses the retry boundary even on error.
-		written, writeErr := writeSetup(attemptCtx, candidate, header, prefix)
+		written := int64(len(prefix))
+		var writeErr error
+		if !pipelined {
+			written, writeErr = writeSetup(attemptCtx, candidate, header, prefix)
+		}
 		stopAttempt()
 		s.observeAttempt(attempt, writeErr, started)
 		if writeErr != nil && written == 0 {

@@ -370,6 +370,9 @@ func (t *bearerTransport) RoundTrip(request *http.Request) (*http.Response, erro
 	if request.Header.Get("Authorization") != "" {
 		return t.base.RoundTrip(request)
 	}
+	if clientcontrol.VisitorSourceAuthenticates(request.Context()) {
+		return t.base.RoundTrip(request)
+	}
 	if request.Body != nil {
 		defer request.Body.Close()
 	}

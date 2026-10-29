@@ -38,6 +38,7 @@ type Fixture struct {
 	HTTP                                      *http.Client
 	Enrollments, Allocations, Runs, Deletions atomic.Int32
 	VisitorDecisions                          atomic.Int32
+	visitorSequence                           atomic.Uint32
 	mu                                        sync.Mutex
 	backend                                   *testutil.PublishingFixture
 	seed                                      *clientcontrol.Client
@@ -194,6 +195,29 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 		token := "pta_" + base64.RawURLEncoding.EncodeToString(secret[:])
 		f.tokens[token] = e
 		write(w, authorityv1.PublisherTokenResponse{AccessToken: token, TokenType: "Bearer", GrantId: b.GrantId, ExpiresIn: 300})
+		return
+	}
+	if r.Method == http.MethodPost && r.URL.Path == "/v1/visitor-policy" {
+		var body controlv1.PublisherVisitorPolicyRequest
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		f.mu.Lock()
+		setup, found := f.setups[body.RunId]
+		f.mu.Unlock()
+		if !found || body.Resource.Kind != "public_url" || body.Resource.Id != setup.PublicUrl.Id || body.RunNumber != setup.PublishRun.PublishRunNumber || r.Header.Get("Authorization") != "Bearer "+setup.PublishRunToken {
+			denied(w)
+			return
+		}
+		now := time.Now()
+		key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{17}, 32))
+		write(w, controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
+			Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: setup.PublicUrl.CanonicalHostname, Port: 443, Issuer: f.URL,
+				VisitorPolicyRevision: 1, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: true,
+				VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "publishing-fixture", PublicKey: key.Public().(ed25519.PublicKey)}},
+				WorkloadLeases:   []controlv1.VisitorWorkloadLease{}, StreamAllocations: []controlv1.StreamCapacityAllocation{{Id: "salloc_" + strings.TrimPrefix(body.Resource.Id, "url_"), Resource: body.Resource, RunId: body.RunId, RunNumber: body.RunNumber,
+					IngressId: "fixture-ingress", IngressRunId: "fixture-process", IngressLeaseRevision: 1, Capacity: 1024, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), PublisherObserved: true, ReservationKey: bytes.Repeat([]byte{0x42}, 32)}}}})
 		return
 	}
 	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/publish-runs/") && strings.HasSuffix(r.URL.Path, "/visitor-access") {
