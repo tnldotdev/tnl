@@ -62,7 +62,7 @@ func TestProfileRoutingHistory(t *testing.T) {
 	// no concurrent writers run during these profiles.
 	p := &loadQueryPlan{DBTX: f.database.pool}
 	queries := controlstatedb.New(p)
-	previous := 1
+	previous := 2
 	for _, perPublicURL := range []int{4, 10, 100} {
 		total := seedLoadRoutingHistory(t, f, previous, perPublicURL)
 		// snapshot timing comes from the same production histograms as load runs.
@@ -163,7 +163,7 @@ func TestProfileRoutingRetention(t *testing.T) {
 		t.Fatal("query profiles require DELAY=0ms")
 	}
 	readySteadyLoadSessions(t, f)
-	total := seedLoadRoutingHistory(t, f, 1, f.history)
+	total := seedLoadRoutingHistory(t, f, 2, f.history)
 	tx, err := f.database.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)

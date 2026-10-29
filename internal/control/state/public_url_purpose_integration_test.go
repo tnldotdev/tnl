@@ -65,9 +65,7 @@ func TestIntegrationPublicURLPurposeCountsOnlyFirstReadyTransition(t *testing.T)
 	metrics := observability.New("control")
 	fixture.database.Instrument(metrics)
 	readyTestSession(t, fixture)
-	if _, err := fixture.database.MarkPublishRunReady(t.Context(), fixture.authentication(), fixture.now.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
+	readyTestServingRun(t, fixture, fixture.now.Add(time.Second))
 	metric := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(metric, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if !strings.Contains(metric.Body.String(), `tnl_control_publish_runs_ready_total{tnl_public_url_purpose="app"} 1`) {

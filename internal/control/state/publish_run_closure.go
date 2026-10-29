@@ -171,7 +171,14 @@ func closePublishRun(
 	now time.Time,
 	reason string,
 ) error {
-	if session.ReadyAt.Valid {
+	if err := queries.DeletePublishRunObservations(ctx, session.ID); err != nil {
+		return fmt.Errorf("remove closed public run observations: %w", err)
+	}
+	published, err := publishRunRoutingPublished(ctx, queries, session)
+	if err != nil {
+		return err
+	}
+	if published {
 		// the event and closure commit together. only this terminal path may
 		// authorize ingress to retire lifetime totals for the exact run.
 		session.ClosedAt = timestamptz(now)

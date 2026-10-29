@@ -240,9 +240,9 @@ func TestIntegrationPublishRunReadiness(t *testing.T) {
 		t.Fatalf("wrong issuance acknowledgement: %v", err)
 	}
 	claimTestConnection(t, f, 1, now.Add(time.Second))
-	lifecycle, err = database.MarkPublishRunReady(t.Context(), authentication, now.Add(2*time.Second))
-	if err != nil || lifecycle.ReadyAt == nil || !lifecycle.Routable || lifecycle.ReadyPublisherConnectionCount != 2 {
-		t.Fatalf("ready lifecycle = %#v, %v", lifecycle, err)
+	lifecycle = readyTestServingRun(t, f, now.Add(2*time.Second))
+	if lifecycle.ReadyAt == nil || !lifecycle.Routable || lifecycle.ReadyPublisherConnectionCount != 2 {
+		t.Fatalf("ready lifecycle = %#v", lifecycle)
 	}
 	repeated, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, work.ID, *work.NotAfter, now.Add(3*time.Second))
 	if err != nil || !repeated.Routable || repeated.ReadyAt == nil || !repeated.ReadyAt.Equal(*lifecycle.ReadyAt) {
@@ -293,9 +293,9 @@ func TestIntegrationManagedMemberReadinessWaitsForWildcardDNS(t *testing.T) {
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET dns_state = 'published', dns_available_at = NULL WHERE id = $1`, request.PublicURLID); err != nil {
 		t.Fatal(err)
 	}
-	ready, err := database.MarkPublishRunReady(t.Context(), authentication, now)
-	if err != nil || !ready.Routable {
-		t.Fatalf("ready after wildcard DNS = %#v, %v", ready, err)
+	ready := readyTestServingRun(t, f, now)
+	if !ready.Routable {
+		t.Fatalf("ready after wildcard DNS = %#v", ready)
 	}
 }
 
@@ -331,9 +331,9 @@ func TestIntegrationExactPublicURLReadinessWaitsForDNS(t *testing.T) {
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET dns_state = 'published', dns_available_at = NULL WHERE id = $1`, f.setup.PublicURLID); err != nil {
 		t.Fatal(err)
 	}
-	ready, err := database.MarkPublishRunReady(t.Context(), authentication, now)
-	if err != nil || !ready.Routable {
-		t.Fatalf("exact URL ready after DNS = %#v, %v", ready, err)
+	ready := readyTestServingRun(t, f, now)
+	if !ready.Routable {
+		t.Fatalf("exact URL ready after DNS = %#v", ready)
 	}
 }
 
@@ -502,9 +502,7 @@ func readyTestSession(t *testing.T, f publishRunFixture) []PublisherConnectionCl
 	for slot := range f.setup.PublisherConnections {
 		claims = append(claims, claimTestConnection(t, f, slot, f.now))
 	}
-	if _, err := f.database.MarkPublishRunReady(t.Context(), f.authentication(), f.now); err != nil {
-		t.Fatal(err)
-	}
+	readyTestServingRun(t, f, f.now)
 	return claims
 }
 

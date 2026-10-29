@@ -9,6 +9,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -70,8 +71,14 @@ func confirmPublishRunReady(
 	for {
 		confirmed := false
 		err := route.withValidCertificate(func() error {
+			if !route.visitorPolicyPrepared() {
+				return clientcontrol.ErrUnavailable
+			}
 			if err := authority.markReady(ctx); err != nil {
 				return err
+			}
+			if !route.visitorPolicyPrepared() {
+				return clientcontrol.ErrUnavailable
 			}
 			confirmed = true
 			return ready()
@@ -88,4 +95,12 @@ func confirmPublishRunReady(
 		case <-time.After(activationRetry):
 		}
 	}
+}
+
+func (r *PublicURLServer) visitorPolicyPrepared() bool {
+	if r.policy == nil {
+		return false
+	}
+	view, enabled, _ := r.policy.Current()
+	return enabled && view.Scope == (visitorscope.Scope{Kind: visitorscope.PublicURL, ID: r.run.PublicURLID}) && view.Hostname == r.hostname && view.Port == 443
 }

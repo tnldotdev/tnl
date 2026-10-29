@@ -122,7 +122,11 @@ func (d *Database) HeartbeatPublishRun(
 			return PublishRunSetup{}, err
 		}
 	}
-	if session.ReadyAt.Valid && (leaseExtended && len(connections) > 0 || removedReadyConnection) {
+	published, err := publishRunRoutingPublished(ctx, queries, session)
+	if err != nil {
+		return PublishRunSetup{}, err
+	}
+	if published && (leaseExtended && len(connections) > 0 || removedReadyConnection) {
 		eventKind := publicURLRoutingTableEventKind(len(connections) > 0)
 		if _, err := pendingEvents.addRouteEvent(ctx, queries, route, session, connections, eventKind, now); err != nil {
 			return PublishRunSetup{}, err

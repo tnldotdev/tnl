@@ -128,6 +128,45 @@ service guard after acquiring a row.
 Concurrency tests must show both sides of the contract: conflicting work waits,
 and unrelated work finishes while a controlled blocker remains held.
 
+## publish run serving readiness
+
+The publisher requests ready only after installing its serving state. Control
+first publishes that run's preparation projection. Ingress reports its installed
+entry revision and bounded policy deadline through its existing lease renewal;
+a routing cursor alone proves no policy installation. Control checks each current
+receiver in that URL's pool before committing the first `ready_at`, ready metric,
+and guest ready clock. Heartbeats, connection changes, and closure also maintain
+preparation projections. Ready retries still require current receiver observations;
+the saved first-ready timestamp cannot revive expired installation evidence.
+
+The final transition holds URL/run -> pool membership through routing publication.
+Registration holds pool -> ingress, so a new receiver either participates or sees
+the final ready projection in its first snapshot. Renewal holds ingress only;
+observations deliberately have no run foreign key that could invert this order.
+Closure and renewal remove closed or expired observations.
+
+One renewal owner drains a fixed observation snapshot in requests of at most
+1,000 entries. Each page renews the lease and rechecks local installation; removed,
+replaced, and expired entries are dropped. Coalesced installation notifications
+start the next snapshot after the pending tail, and rechecking never extends a
+snapshot's deadlines. In PostgreSQL, a newer entry revision replaces older
+evidence; retries of the same revision retain its longest installed deadline.
+Process renewal and observation receipt cannot extend policy authority.
+
+A joining ingress prepares existing ready runs before health. After joining,
+selection checks each run's installed state independently. Ingress owns one
+bounded policy lifetime for each exact run and process lease. Discovery prepares
+pending runs without holding visitor lookup or waiting for a sibling's renewal;
+installation wakes the existing observation renewal owner only after the policy
+is visible. Lookup reads installed state and never fetches or begins installation.
+The policy owner checks conservative local expiry and returns the original
+absolute control-clock deadline, never local time plus a renewed TTL. Projection
+`policy_revision` binds the saved public URL policy; the separate signed visitor
+policy revision advances with visitor authority changes. The publisher checks
+its own installed policy before each ready request and again before notification.
+See [control readiness](../../../internal/control/state/publish_run_readiness.go)
+and [ingress readiness](../../../internal/ingress/public_readiness.go).
+
 ## maintain reservation totals
 
 PostgreSQL triggers maintain relay-service reservation totals. Counted

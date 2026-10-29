@@ -150,6 +150,7 @@ const (
 	UsageBucketFinalized           ProblemCode = "usage_bucket_finalized"
 	UsageReportConflict            ProblemCode = "usage_report_conflict"
 	UsageRouteNotFound             ProblemCode = "usage_route_not_found"
+	VisitorPolicyStale             ProblemCode = "visitor_policy_stale"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
@@ -184,6 +185,8 @@ func (e ProblemCode) Valid() bool {
 	case UsageReportConflict:
 		return true
 	case UsageRouteNotFound:
+		return true
+	case VisitorPolicyStale:
 		return true
 	default:
 		return false
@@ -322,6 +325,14 @@ type IngressLeaseIdentity struct {
 	IngressRunId         Identifier `json:"ingress_run_id"`
 }
 
+// IngressPublicRunObservation defines model for IngressPublicRunObservation.
+type IngressPublicRunObservation struct {
+	EntryRevision    int64      `json:"entry_revision"`
+	PublishRunId     Identifier `json:"publish_run_id"`
+	PublishRunNumber int64      `json:"publish_run_number"`
+	ValidUntil       time.Time  `json:"valid_until"`
+}
+
 // IngressRegistration defines model for IngressRegistration.
 type IngressRegistration struct {
 	ConnectionCapacity int64 `json:"connection_capacity"`
@@ -345,8 +356,11 @@ type IngressRenewal struct {
 	IngressId            Identifier `json:"ingress_id"`
 	IngressLeaseRevision int64      `json:"ingress_lease_revision"`
 	IngressRunId         Identifier `json:"ingress_run_id"`
-	ReportedConnections  int64      `json:"reported_connections"`
-	RoutingTableRevision int64      `json:"routing_table_revision"`
+
+	// PreparedPublicRuns Installed routing and policy, bounded by their current deadlines; never a promise to install the response.
+	PreparedPublicRuns   *[]IngressPublicRunObservation `json:"prepared_public_runs,omitempty"`
+	ReportedConnections  int64                          `json:"reported_connections"`
+	RoutingTableRevision int64                          `json:"routing_table_revision"`
 }
 
 // IngressRoutingPublisherConnection defines model for IngressRoutingPublisherConnection.
@@ -380,9 +394,12 @@ type IngressRoutingTableEntry struct {
 	PublicUrlId        Identifier `json:"public_url_id"`
 
 	// PublishRunClosed True only on a tombstone proving this exact publish run is permanently closed. An omitted or false value can mean temporary unroutability and must not retire lifetime traffic totals.
-	PublishRunClosed     *bool                                    `json:"publish_run_closed,omitempty"`
-	PublishRunId         Identifier                               `json:"publish_run_id"`
-	PublishRunNumber     int64                                    `json:"publish_run_number"`
+	PublishRunClosed *bool      `json:"publish_run_closed,omitempty"`
+	PublishRunId     Identifier `json:"publish_run_id"`
+	PublishRunNumber int64      `json:"publish_run_number"`
+
+	// PublishRunReadyAt Existing ready runs must be prepared before a new ingress joins health.
+	PublishRunReadyAt    *time.Time                               `json:"publish_run_ready_at,omitempty"`
 	PublisherConnections []IngressRoutingPublisherConnection      `json:"publisher_connections"`
 	RecoveryEpisodeId    *int64                                   `json:"recovery_episode_id,omitempty"`
 	ServiceProtocol      *IngressRoutingTableEntryServiceProtocol `json:"service_protocol,omitempty"`
@@ -479,6 +496,19 @@ type IngressUsageReportBatch struct {
 	IngressRunId         Identifier           `json:"ingress_run_id"`
 	ObservedThrough      *time.Time           `json:"observed_through,omitempty"`
 	Reports              []IngressUsageReport `json:"reports"`
+}
+
+// IngressVisitorPolicyRequest defines model for IngressVisitorPolicyRequest.
+type IngressVisitorPolicyRequest struct {
+	AfterRevision        int64      `json:"after_revision"`
+	IngressLeaseRevision int64      `json:"ingress_lease_revision"`
+	IngressRunId         Identifier `json:"ingress_run_id"`
+	PolicyRevision       int64      `json:"policy_revision"`
+	PublishRunId         Identifier `json:"publish_run_id"`
+	PublishRunNumber     int64      `json:"publish_run_number"`
+
+	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
+	Resource externalRef0.VisitorResourceScope `json:"resource"`
 }
 
 // Problem defines model for Problem.
@@ -625,6 +655,9 @@ type VisitorNetworkHashKey struct {
 	UtcDate openapi_types.Date `json:"utc_date"`
 }
 
+// VisitorPolicyUpdate defines model for VisitorPolicyUpdate.
+type VisitorPolicyUpdate = externalRef0.VisitorPolicyUpdate
+
 // IngressID defines model for IngressID.
 type IngressID = Identifier
 
@@ -732,6 +765,9 @@ type GetIngressTransportCertificateJSONRequestBody GetIngressTransportCertificat
 
 // ReportIngressUsageJSONRequestBody defines body for ReportIngressUsage for application/json ContentType.
 type ReportIngressUsageJSONRequestBody = IngressUsageReportBatch
+
+// ReadIngressVisitorPolicyJSONRequestBody defines body for ReadIngressVisitorPolicy for application/json ContentType.
+type ReadIngressVisitorPolicyJSONRequestBody = IngressVisitorPolicyRequest
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -990,6 +1026,18 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
 	ReportIngressUsage(ctx context.Context, ingressId IngressID, body ReportIngressUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadIngressVisitorPolicyWithBody performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
+	ReadIngressVisitorPolicyWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadIngressVisitorPolicy performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
+	ReadIngressVisitorPolicy(ctx context.Context, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // RegisterIngressWithBody Register one ingress process run
@@ -1506,6 +1554,38 @@ func (c *Client) ReportIngressUsageWithBody(ctx context.Context, ingressId Ingre
 // Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
 func (c *Client) ReportIngressUsage(ctx context.Context, ingressId IngressID, body ReportIngressUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReportIngressUsageRequest(c.Server, ingressId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadIngressVisitorPolicyWithBody performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
+// with any type of body and a specified content type.
+//
+// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
+func (c *Client) ReadIngressVisitorPolicyWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadIngressVisitorPolicyRequestWithBody(c.Server, ingressId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadIngressVisitorPolicy performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
+func (c *Client) ReadIngressVisitorPolicy(ctx context.Context, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadIngressVisitorPolicyRequest(c.Server, ingressId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2559,6 +2639,53 @@ func NewReportIngressUsageRequestWithBody(server string, ingressId IngressID, co
 	return req, nil
 }
 
+// NewReadIngressVisitorPolicyRequest calls the generic ReadIngressVisitorPolicy builder with application/json body
+func NewReadIngressVisitorPolicyRequest(server string, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReadIngressVisitorPolicyRequestWithBody(server, ingressId, "application/json", bodyReader)
+}
+
+// NewReadIngressVisitorPolicyRequestWithBody constructs an http.Request for the ReadIngressVisitorPolicy method, with any body, and a specified content type
+func NewReadIngressVisitorPolicyRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/visitor-policy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -2814,6 +2941,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/usage-reports (the `ReportIngressUsage` operationId).
 	ReportIngressUsageWithResponse(ctx context.Context, ingressId IngressID, body ReportIngressUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportIngressUsageResponse, error)
+
+	// ReadIngressVisitorPolicyWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ReadIngressVisitorPolicyWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadIngressVisitorPolicyResponse, error)
+
+	// ReadIngressVisitorPolicyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
+	ReadIngressVisitorPolicyWithResponse(ctx context.Context, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadIngressVisitorPolicyResponse, error)
 }
 
 type RegisterIngressResponse struct {
@@ -3707,6 +3848,54 @@ func (r ReportIngressUsageResponse) ContentType() string {
 	return ""
 }
 
+type ReadIngressVisitorPolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VisitorPolicyUpdate
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReadIngressVisitorPolicyResponse) GetJSON200() *VisitorPolicyUpdate {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReadIngressVisitorPolicyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReadIngressVisitorPolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReadIngressVisitorPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReadIngressVisitorPolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReadIngressVisitorPolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // RegisterIngressWithBodyWithResponse Register one ingress process run
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -4121,6 +4310,32 @@ func (c *ClientWithResponses) ReportIngressUsageWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseReportIngressUsageResponse(rsp)
+}
+
+// ReadIngressVisitorPolicyWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request,
+// with any type of body and a specified content type.
+//
+// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ReadIngressVisitorPolicyWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadIngressVisitorPolicyResponse, error) {
+	rsp, err := c.ReadIngressVisitorPolicyWithBody(ctx, ingressId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadIngressVisitorPolicyResponse(rsp)
+}
+
+// ReadIngressVisitorPolicyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/visitor-policy (the `ReadIngressVisitorPolicy` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Prepare current visitor policy for one exact public URL run in this ingress lease's pool. Process renewal never extends installed policy authority.
+func (c *ClientWithResponses) ReadIngressVisitorPolicyWithResponse(ctx context.Context, ingressId IngressID, body ReadIngressVisitorPolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadIngressVisitorPolicyResponse, error) {
+	rsp, err := c.ReadIngressVisitorPolicy(ctx, ingressId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadIngressVisitorPolicyResponse(rsp)
 }
 
 // ParseRegisterIngressResponse parses an HTTP response from a RegisterIngressWithResponse call
@@ -4741,6 +4956,39 @@ func ParseReportIngressUsageResponse(rsp *http.Response) (*ReportIngressUsageRes
 	return response, nil
 }
 
+// ParseReadIngressVisitorPolicyResponse parses an HTTP response from a ReadIngressVisitorPolicyWithResponse call
+func ParseReadIngressVisitorPolicyResponse(rsp *http.Response) (*ReadIngressVisitorPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReadIngressVisitorPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VisitorPolicyUpdate
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// RegisterIngress Register one ingress process run
@@ -4800,6 +5048,9 @@ type ServerInterface interface {
 	// ReportIngressUsage Store cumulative public URL usage from one ingress process run
 	// (POST /internal/v1/ingresses/{ingress_id}/usage-reports)
 	ReportIngressUsage(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+
+	// (POST /internal/v1/ingresses/{ingress_id}/visitor-policy)
+	ReadIngressVisitorPolicy(w http.ResponseWriter, r *http.Request, ingressId IngressID)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -5508,6 +5759,32 @@ func (siw *ServerInterfaceWrapper) ReportIngressUsage(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// ReadIngressVisitorPolicy operation middleware
+func (siw *ServerInterfaceWrapper) ReadIngressVisitorPolicy(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReadIngressVisitorPolicy(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -5628,6 +5905,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/visitor-policy", wrapper.ReadIngressVisitorPolicy)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/direct-services/admit", wrapper.AdmitDirectServiceVisitor)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/direct-services/status", wrapper.DirectServiceVisitorStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/direct-services/promote", wrapper.PromoteDirectServiceVisitor)

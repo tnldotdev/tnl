@@ -55,9 +55,7 @@ func TestIntegrationUsagePagesContainHeartbeatLockFootprint(t *testing.T) {
 				for slot := range setup.PublisherConnections {
 					claimTestConnection(t, fixture, slot, now)
 				}
-				if _, err := observer.MarkPublishRunReady(t.Context(), fixture.authentication(), now); err != nil {
-					t.Fatal(err)
-				}
+				readyTestServingRun(t, fixture, now)
 				fixtures = append(fixtures, fixture)
 				start := now.Truncate(time.Minute)
 				reports = append(reports, IngressUsageReport{PublicURLID: setup.PublicURLID, PublishRunNumber: setup.PublishRunNumber, BucketStart: start, BucketEnd: start.Add(time.Minute), ObservedThrough: now, ReportRevision: 1, ConnectionAttempts: 1, HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary()})

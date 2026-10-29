@@ -63,15 +63,15 @@ func TestIntegrationOperationMetricsExport(t *testing.T) {
 	families := exportedDurationMetrics(t, metrics)
 	for operation, count := range map[string]uint64{
 		"CreatePublishRun": 1, "HeartbeatPublishRun": 1, "ClaimPublisherConnection": 2,
-		"MarkPublisherConnectionReady": 2, "ReadIngressRoutingTableSnapshot": 1,
-		"ReadIngressRoutingTableEvents": 1, "RenewIngress": 1, "ReportIngressUsage": 1,
+		"MarkPublisherConnectionReady": 2, "ReadIngressRoutingTableSnapshot": 3,
+		"ReadIngressRoutingTableEvents": 1, "RenewIngress": 3, "ReportIngressUsage": 1,
 	} {
 		assertDurationCount(t, families, "tnl_control_operation_duration_seconds", operation, "success", count)
 	}
 	for _, outcome := range []string{"error", "canceled", "timeout"} {
 		assertDurationCount(t, families, "tnl_control_operation_duration_seconds", "CreatePublishRun", outcome, 1)
 	}
-	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "ListIngressRoutingTableSnapshot", "success", 1)
+	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "ListIngressRoutingTableSnapshot", "success", 3)
 	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockLocalTeamForSession", "success", 1)
 	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockRelayServicesForPlacement", "success", 1)
 	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockPublishRunForUsage", "success", 1)

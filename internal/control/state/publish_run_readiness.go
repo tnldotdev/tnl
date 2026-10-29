@@ -59,6 +59,46 @@ func (d *Database) MarkPublishRunReady(
 				DNSState: dnsState, CreatedAt: session.CreatedAt.Time,
 			}
 		}
+	}
+	if len(connections) == 0 {
+		return publishRunLifecycle(session, connections, 0, 0), ErrPublishRunNotReady
+	}
+	// expose preparation only after the publisher has installed its serving
+	// state. ingress installs this run independently of its healthy siblings.
+	routing, err := queries.ReadPublishRunPreparationRouting(ctx, controlstatedb.ReadPublishRunPreparationRoutingParams{
+		PublicURLID: route.ID, PublishRunNumber: session.PublishRunNumber,
+	})
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && (routing.EventKind != string(IngressPublicURLUpsert) || !routing.PublicUrlExpiresAt.Time.After(now)) {
+		if _, err := pendingEvents.addRouteEvent(ctx, queries, route, session, connections, IngressPublicURLUpsert, now); err != nil {
+			return PublishRunLifecycle{}, err
+		}
+		if err := pendingEvents.publish(ctx, queries); err != nil {
+			return PublishRunLifecycle{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return PublishRunLifecycle{}, fmt.Errorf("publish preparation routing: %w", err)
+		}
+		return publishRunLifecycle(session, connections, 0, 0), ErrPublishRunNotReady
+	}
+	if err != nil {
+		return PublishRunLifecycle{}, fmt.Errorf("read preparation routing: %w", err)
+	}
+	// registration takes pool -> ingress. keep membership fixed through the
+	// final ready projection, without taking ingress locks beneath run locks.
+	if err := queries.LockIngressPoolMembership(ctx, route.IngressPoolID); err != nil {
+		return PublishRunLifecycle{}, fmt.Errorf("lock readiness pool membership: %w", err)
+	}
+	prepared, err := queries.PublishRunServingPrepared(ctx, controlstatedb.PublishRunServingPreparedParams{
+		IngressPoolID: route.IngressPoolID, PublishRunID: session.ID, PublishRunNumber: session.PublishRunNumber,
+		EntryRevision: routing.EntryRevision, Now: timestamptz(now),
+	})
+	if err != nil {
+		return PublishRunLifecycle{}, fmt.Errorf("check serving preparation: %w", err)
+	}
+	if !prepared.Valid || !prepared.Bool {
+		return publishRunLifecycle(session, connections, routing.ID, routing.EntryRevision), ErrPublishRunNotReady
+	}
+	if !session.ReadyAt.Valid {
 		session, err = queries.MarkPublishRunReady(ctx, controlstatedb.MarkPublishRunReadyParams{
 			ReadyAt: timestamptz(now), PublishRunID: session.ID,
 			PublicURLID: route.ID, PublishRunNumber: session.PublishRunNumber,
@@ -96,4 +136,19 @@ func (d *Database) MarkPublishRunReady(
 		d.activity.metrics.Load().ObservePublishRunReady(route.Purpose)
 	}
 	return publishRunLifecycle(session, connections, routingTableRevision, publicURLEntryRevision), nil
+}
+
+// preparation projections have the same heartbeat, connection and closure
+// owners as ready projections, but must not start ready metrics or guest time.
+func publishRunRoutingPublished(ctx context.Context, queries *controlstatedb.Queries, session controlstatedb.ControlPublishRun) (bool, error) {
+	if session.ReadyAt.Valid {
+		return true, nil
+	}
+	if !session.CertificateInstalledAt.Valid {
+		return false, nil
+	}
+	revision, err := queries.LatestIngressRoutingEntryRevision(ctx, controlstatedb.LatestIngressRoutingEntryRevisionParams{
+		PublicURLID: session.PublicURLID, PublishRunNumber: session.PublishRunNumber,
+	})
+	return revision > 0, err
 }

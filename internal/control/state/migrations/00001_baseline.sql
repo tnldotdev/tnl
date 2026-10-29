@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-permissions-browser-refresh')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-permissions-browser-refresh-serving-readiness')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-permissions-browser-refresh');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-permissions-browser-refresh-serving-readiness');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -724,6 +724,21 @@ CREATE TABLE control.ingress_leases (
 CREATE INDEX ingress_leases_ready
     ON control.ingress_leases (lease_expires_at, ingress_id)
     WHERE NOT draining;
+
+CREATE TABLE control.ingress_public_run_observations (
+    ingress_id text NOT NULL REFERENCES control.ingress_leases(ingress_id) ON DELETE CASCADE,
+    ingress_run_id text NOT NULL,
+    ingress_lease_revision bigint NOT NULL CHECK (ingress_lease_revision > 0),
+    -- renewal owns ingress, while ready owns run -> pool. a run foreign key
+    -- would acquire KEY SHARE beneath ingress and invert that lock order.
+    publish_run_id text NOT NULL CHECK (publish_run_id <> ''),
+    publish_run_number bigint NOT NULL CHECK (publish_run_number > 0),
+    entry_revision bigint NOT NULL CHECK (entry_revision > 0),
+    valid_until timestamptz NOT NULL,
+    PRIMARY KEY (ingress_id, publish_run_id)
+);
+CREATE INDEX ingress_public_run_observations_run
+    ON control.ingress_public_run_observations (publish_run_id);
 
 -- ingress transport has a real control-managed issuer, independent of public
 -- URL WebPKI certificates and publisher-owned visitor TLS keys.

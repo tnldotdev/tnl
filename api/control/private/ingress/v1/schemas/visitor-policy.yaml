@@ -1,0 +1,37 @@
+schemas:
+  IngressVisitorPolicyRequest:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        ingress_run_id,
+        ingress_lease_revision,
+        resource,
+        publish_run_id,
+        publish_run_number,
+        policy_revision,
+        after_revision,
+      ]
+    properties:
+      ingress_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      ingress_lease_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      resource:
+        $ref: "../../../../public/v1/openapi.yaml#/components/schemas/VisitorResourceScope"
+      publish_run_id:
+        $ref: "../openapi.yaml#/components/schemas/Identifier"
+      publish_run_number:
+        type: integer
+        format: int64
+        minimum: 1
+      policy_revision:
+        type: integer
+        format: int64
+        minimum: 1
+      after_revision:
+        type: integer
+        format: int64
+        minimum: 0

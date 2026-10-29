@@ -81,3 +81,14 @@ func (q *Queries) LockIngressPoolForProvision(ctx context.Context, id string) (C
 	)
 	return i, err
 }
+
+const lockIngressPoolMembership = `-- name: LockIngressPoolMembership :exec
+SELECT id FROM control.ingress_pools WHERE id = $1 FOR UPDATE
+`
+
+// registration and the final ready transition serialize membership, without
+// taking ingress lease locks beneath the public URL/run locks.
+func (q *Queries) LockIngressPoolMembership(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, lockIngressPoolMembership, id)
+	return err
+}
