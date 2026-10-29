@@ -163,13 +163,13 @@ func TestIntegrationFinalVisitorLiveIPExpiryAndRunBoundary(t *testing.T) {
 	}
 	check := func(at time.Time, want bool) {
 		t.Helper()
-		p, err := d.HTTPVisitorPermission(t.Context(), auth, HTTPVisitorRequest{SourceIP: "192.0.2.9"}, at)
+		p, err := preparedPublicURLPermission(t.Context(), d, auth, preparedVisitorInput{SourceIP: "192.0.2.9"}, at)
 		if err != nil || p.VisitAllowed != want {
 			t.Fatalf("IP allowed=%t want=%t: %v", p.VisitAllowed, want, err)
 		}
 	}
 	check(f.now, true)
-	if permission, err := d.HTTPVisitorPermission(t.Context(), auth, HTTPVisitorRequest{SourceIP: "192.0.2.9"}, f.now); err != nil || permission.ExpiresAt == nil || !permission.ExpiresAt.Equal(expiry) {
+	if permission, err := preparedPublicURLPermission(t.Context(), d, auth, preparedVisitorInput{SourceIP: "192.0.2.9"}, f.now); err != nil || permission.ExpiresAt == nil || !permission.ExpiresAt.Equal(expiry) {
 		t.Fatalf("cached database decision outlived IP grant: %+v %v", permission, err)
 	}
 	check(expiry, false)
@@ -203,13 +203,13 @@ func TestIntegrationFinalVisitorLiveIPExpiryAndRunBoundary(t *testing.T) {
 	}
 	wrong := auth
 	wrong.PublishRunNumber++
-	if _, err = d.HTTPVisitorPermission(t.Context(), wrong, HTTPVisitorRequest{SourceIP: "192.0.2.9"}, f.now); !errors.Is(err, ErrPublishRunStale) {
+	if _, err = preparedPublicURLPermission(t.Context(), d, wrong, preparedVisitorInput{SourceIP: "192.0.2.9"}, f.now); !errors.Is(err, ErrPublishRunCredential) {
 		t.Fatalf("wrong run number admitted: %v", err)
 	}
 	if err = d.ClosePublishRun(t.Context(), auth.PublishRunID, auth.PublishRunToken, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d.HTTPVisitorPermission(t.Context(), auth, HTTPVisitorRequest{SourceIP: "192.0.2.9"}, f.now); !errors.Is(err, ErrPublishRunStale) {
+	if _, err = preparedPublicURLPermission(t.Context(), d, auth, preparedVisitorInput{SourceIP: "192.0.2.9"}, f.now); !errors.Is(err, ErrPublishRunCredential) {
 		t.Fatalf("closed run admitted: %v", err)
 	}
 }
@@ -392,8 +392,8 @@ func TestIntegrationFinalVisitorHTTPDecisionUsesShareWithoutIPGrant(t *testing.T
 	if _, err := d.MutateVisitorIPs(t.Context(), auth.PublicURLID, f.request.ActingIdentityID, "set", "", nil, f.now); err != nil {
 		t.Fatal(err)
 	}
-	input := HTTPVisitorRequest{SourceIP: "192.0.2.9"}
-	if p, err := d.HTTPVisitorPermission(t.Context(), auth, input, f.now); err != nil || p.VisitAllowed || p.IdentityID != "" {
+	input := preparedVisitorInput{SourceIP: "192.0.2.9"}
+	if p, err := preparedPublicURLPermission(t.Context(), d, auth, input, f.now); err != nil || p.VisitAllowed || p.IdentityID != "" {
 		t.Fatal(p, err)
 	}
 	preview, err := d.CreatePreview(t.Context(), f.request.TeamID, f.request.ActingIdentityID, "visitor-shares", f.now)
@@ -414,13 +414,13 @@ func TestIntegrationFinalVisitorHTTPDecisionUsesShareWithoutIPGrant(t *testing.T
 		t.Fatal(err)
 	}
 	input.ShareID, input.ShareCookieSecret = share.ID, cookie
-	if p, err := d.HTTPVisitorPermission(t.Context(), auth, input, f.now); err != nil || !p.VisitAllowed || p.IdentityID != "" || p.Reason != "anonymous_share" {
+	if p, err := preparedPublicURLPermission(t.Context(), d, auth, input, f.now); err != nil || !p.VisitAllowed || p.IdentityID != "" || p.Reason != "anonymous_share" {
 		t.Fatal(p, err)
 	}
 	if _, err = d.RevokeShare(t.Context(), share.ID, f.request.ActingIdentityID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if p, err := d.HTTPVisitorPermission(t.Context(), auth, input, f.now); err != nil || p.VisitAllowed {
+	if p, err := preparedPublicURLPermission(t.Context(), d, auth, input, f.now); err != nil || p.VisitAllowed {
 		t.Fatal("revoked share admitted", p, err)
 	}
 }
@@ -435,10 +435,10 @@ func TestIntegrationReplaceVisitorAccessChangesLiveRunWithoutIPBypass(t *testing
 	if err := d.pool.QueryRow(t.Context(), `SELECT mutation_revision FROM control.public_urls WHERE id=$1`, auth.PublicURLID).Scan(&revision); err != nil {
 		t.Fatal(err)
 	}
-	input := HTTPVisitorRequest{SourceIP: "192.0.2.9"}
+	input := preparedVisitorInput{SourceIP: "192.0.2.9"}
 	check := func(allowed bool) {
 		t.Helper()
-		permission, err := d.HTTPVisitorPermission(t.Context(), auth, input, f.now)
+		permission, err := preparedPublicURLPermission(t.Context(), d, auth, input, f.now)
 		if err != nil || permission.VisitAllowed != allowed {
 			t.Fatalf("visitor allowed=%t, want %t: %v", permission.VisitAllowed, allowed, err)
 		}
@@ -489,16 +489,16 @@ func TestIntegrationExactURLShareSecretAndCookieAreInterchangeable(t *testing.T)
 	if err != nil || share.Scope != "url" || share.PreviewID != "" || !slices.Equal(share.PublicURLIDs, []string{auth.PublicURLID}) {
 		t.Fatalf("exact URL share: %+v, %v", share, err)
 	}
-	input := HTTPVisitorRequest{SourceIP: "192.0.2.1", ShareID: share.ID, ShareSecret: secret}
+	input := preparedVisitorInput{SourceIP: "192.0.2.1", ShareID: share.ID, ShareSecret: secret}
 	check := func(at time.Time, allowed bool) {
 		t.Helper()
-		decision, err := d.HTTPVisitorPermission(t.Context(), auth, input, at)
+		decision, err := preparedPublicURLPermission(t.Context(), d, auth, input, at)
 		if err != nil || decision.VisitAllowed != allowed {
 			t.Fatalf("share permission = %+v, want %t: %v", decision, allowed, err)
 		}
 	}
 	check(f.now, true)
-	if permission, err := d.HTTPVisitorPermission(t.Context(), auth, input, f.now); err != nil || permission.ExpiresAt == nil || !permission.ExpiresAt.Equal(share.ExpiresAt) {
+	if permission, err := preparedPublicURLPermission(t.Context(), d, auth, input, f.now); err != nil || permission.ExpiresAt == nil || permission.ExpiresAt.After(share.ExpiresAt) {
 		t.Fatalf("HTTP decision outlived its share: %+v %v", permission, err)
 	}
 	cookie := bytes.Repeat([]byte{9}, 32)
@@ -510,7 +510,7 @@ func TestIntegrationExactURLShareSecretAndCookieAreInterchangeable(t *testing.T)
 	}
 	input.ShareSecret, input.ShareCookieSecret = nil, cookie
 	check(f.now, true)
-	if permission, err := d.HTTPVisitorPermission(t.Context(), auth, input, f.now); err != nil || permission.ExpiresAt == nil || !permission.ExpiresAt.Equal(share.ExpiresAt) {
+	if permission, err := preparedPublicURLPermission(t.Context(), d, auth, input, f.now); err != nil || permission.ExpiresAt == nil || permission.ExpiresAt.After(share.ExpiresAt) {
 		t.Fatalf("browser cookie decision outlived its share: %+v %v", permission, err)
 	}
 	if _, err := d.ReplaceVisitorAccess(t.Context(), auth.PublicURLID, f.request.ActingIdentityID, VisitorAccessRestricted, []string{"192.0.2.0/24"}, uint64(revision), f.now); err != nil {

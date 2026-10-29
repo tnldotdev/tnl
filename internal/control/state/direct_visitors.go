@@ -131,31 +131,37 @@ func (d *Database) DirectServiceVisitorStatus(ctx context.Context, lease Ingress
 	if _, err = lockCurrentIngressLease(ctx, q, lease, now); err != nil {
 		return result, err
 	}
-	httpCredential, err := q.ServiceHTTPDirectCredential(ctx, visitor)
+	binding, err := q.ServiceDirectBinding(ctx, visitor)
 	if err != nil {
 		return result, err
 	}
-	if httpCredential.HttpCredentialKind.Valid {
-		credential, err := storedServiceHTTPCredential(httpCredential.HttpCredentialKind.String, httpCredential.HttpCredentialDigest)
+	var protocol string
+	if err := tx.QueryRow(ctx, `SELECT protocol FROM control.services WHERE id=$1`, service).Scan(&protocol); err != nil {
+		return result, err
+	}
+	if protocol == "http" {
+		// HTTP permission terminates at the publisher. this transport lease only
+		// retains the selected run and ingress capacity; it grants no app access.
+		transport, err := q.ServiceHTTPTransportBinding(ctx, controlstatedb.ServiceHTTPTransportBindingParams{ServiceID: service, ServiceRunID: run, RunNumber: number, VisitorConnectionID: visitor, SourceIp: source, DestinationPort: binding.DestinationPort, Now: timestamptz(now)})
 		if err != nil {
+			return result, publisherLookupError(err, ErrServiceAccess)
+		}
+		result.ValidUntil = transport.ValidUntil.Time
+		if !result.ValidUntil.After(now) {
 			return DirectVisitorStatus{State: DirectVisitorDenied, ValidUntil: now}, nil
 		}
-		validity, err := d.recheckServiceHTTPVisitor(ctx, tx, service, run, number, visitor, source, httpCredential.DestinationPort, credential, now)
-		if err != nil && !errors.Is(err, ErrServiceAccess) && !errors.Is(err, ErrVisitorSignIn) {
+		if _, err := tx.Exec(ctx, `UPDATE control.direct_service_visitors SET valid_until=$2 WHERE visitor_connection_id=$1`, visitor, result.ValidUntil); err != nil {
 			return result, err
 		}
-		result.ValidUntil = validity.ValidUntil
-		if validity.Allowed {
-			result.State = DirectVisitorAuthenticated
-			if validity.Admitted {
-				result.State = DirectVisitorAllowed
-			}
+		result.State = DirectVisitorAuthenticated
+		if transport.Admitted {
+			result.State = DirectVisitorAllowed
 		}
-	} else if httpCredential.WorkloadSessionID.Valid {
+	} else if binding.WorkloadSessionID.Valid {
 		if err := d.serviceHTTPSourceAllowed(ctx, q, service, source); err != nil {
 			return result, err
 		}
-		validity, err := recheckWorkloadDirectVisitor(ctx, tx, service, run, number, visitor, httpCredential.WorkloadSessionID.String, source, nil, now)
+		validity, err := recheckWorkloadDirectVisitor(ctx, tx, service, run, number, visitor, binding.WorkloadSessionID.String, source, nil, now)
 		if err != nil && !errors.Is(err, ErrServiceAccess) {
 			return result, err
 		}
@@ -166,7 +172,7 @@ func (d *Database) DirectServiceVisitorStatus(ctx context.Context, lease Ingress
 				result.State = DirectVisitorAllowed
 			}
 		}
-	} else if !httpCredential.IdentityID.Valid {
+	} else if !binding.IdentityID.Valid {
 		var public bool
 		if err = tx.QueryRow(ctx, `SELECT public FROM control.services WHERE id=$1`, service).Scan(&public); err != nil {
 			return result, err
@@ -181,7 +187,7 @@ func (d *Database) DirectServiceVisitorStatus(ctx context.Context, lease Ingress
 			}
 			return result, err
 		}
-		validity, err := recheckDirectServiceVisitor(ctx, tx, service, run, number, visitor, httpCredential.IdentityID.String, httpCredential.DeviceID.String, source, nil, now)
+		validity, err := recheckDirectServiceVisitor(ctx, tx, service, run, number, visitor, binding.IdentityID.String, binding.DeviceID.String, source, nil, now)
 		if err != nil && !errors.Is(err, ErrServiceAccess) {
 			return result, err
 		}
@@ -203,7 +209,7 @@ func (d *Database) PromoteDirectServiceVisitor(ctx context.Context, lease Ingres
 	var id string
 	err := d.pool.QueryRow(ctx, `UPDATE control.direct_service_visitors v SET promoted_at=COALESCE(v.promoted_at,$5)
 	    FROM control.services service,control.ingress_leases ingress
-	    WHERE v.visitor_connection_id=$1 AND v.ingress_id=$2 AND v.ingress_run_id=$3 AND v.ingress_lease_revision=$4 AND v.closed_at IS NULL AND v.valid_until>$5 AND (v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL OR v.http_credential_kind IS NOT NULL)
+	    WHERE v.visitor_connection_id=$1 AND v.ingress_id=$2 AND v.ingress_run_id=$3 AND v.ingress_lease_revision=$4 AND v.closed_at IS NULL AND v.valid_until>$5 AND (v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL OR service.protocol='http')
 	    AND service.id=v.service_id AND service.public AND service.enabled AND service.deleted_at IS NULL
 	    AND ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>$5
 	    RETURNING v.visitor_connection_id`, visitor, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now).Scan(&id)

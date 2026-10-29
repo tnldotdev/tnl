@@ -1,28 +1,29 @@
 schemas:
-  HTTPAuthorizationSubject:
+  VisitorResourceScope:
     type: object
     additionalProperties: false
     required: [kind, id]
     properties:
       kind: { type: string, enum: [public_url, service] }
-      id: { type: string }
+      id: { type: string, maxLength: 64 }
     description: An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
-  CreateServiceHTTPGrantRequest:
+  CreateVisitorCredentialRequest:
     type: object
     additionalProperties: false
-    required: [kind, expires_at]
+    required: [resource, kind, expires_at]
     properties:
+      resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
       kind: { type: string, enum: [token, share] }
       expires_at: { type: string, format: date-time }
-  ServiceHTTPGrant:
+  VisitorCredential:
     type: object
     additionalProperties: false
-    required: [subject, id, kind, secret, expires_at]
+    required: [grant_id, kind, permission, refresh_credential, expires_at]
     properties:
-      subject: { $ref: "../openapi.yaml#/components/schemas/HTTPAuthorizationSubject" }
-      id: { type: string }
+      grant_id: { type: string, pattern: "^shg_[A-Za-z0-9]{22}$" }
       kind: { type: string, enum: [token, share] }
-      secret: { type: string }
+      permission: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenResponse" }
+      refresh_credential: { type: string, maxLength: 128 }
       share_url: { type: string, format: uri }
       expires_at: { type: string, format: date-time }
   ServiceHTTPGrantSummary:
@@ -30,30 +31,11 @@ schemas:
     additionalProperties: false
     required: [subject, id, kind, expires_at]
     properties:
-      subject: { $ref: "../openapi.yaml#/components/schemas/HTTPAuthorizationSubject" }
+      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
       id: { type: string, pattern: "^shg_[A-Za-z0-9]{22}$" }
       kind: { type: string, enum: [token, share] }
       expires_at: { type: string, format: date-time }
       revoked_at: { type: string, format: date-time }
-  ServiceHTTPCredential:
-    type: object
-    additionalProperties: false
-    required: [kind]
-    properties:
-      kind: { type: string, enum: [none, browser, token, share, certificate] }
-      secret: { type: string, maxLength: 256 }
-      certificate: { type: string, format: byte, maxLength: 22000 }
-    description: Exactly one selected credential. Explicit HTTP credentials take precedence over an optional TLS client certificate. Invalid supplied credentials fail closed.
-  ServiceHTTPVisitorRequest:
-    type: object
-    additionalProperties: false
-    required: [run_number, visitor_connection_id, source_ip, destination_port, credential]
-    properties:
-      run_number: { type: integer, format: int64, minimum: 1 }
-      visitor_connection_id: { type: string }
-      source_ip: { type: string }
-      destination_port: { type: integer, minimum: 1024, maximum: 65535 }
-      credential: { $ref: "../openapi.yaml#/components/schemas/ServiceHTTPCredential" }
   ServiceBrowserRequest:
     type: object
     additionalProperties: false
@@ -61,18 +43,6 @@ schemas:
     properties:
       run_number: { type: integer, format: int64, minimum: 1 }
       secret: { type: string, maxLength: 256 }
-  HTTPVisitorRequest:
-    description: A public URL is HTTP-only; services use enrolled visitor devices.
-    type: object
-    additionalProperties: false
-    required: [publish_run_number, source_ip]
-    properties:
-      publish_run_number: { type: integer, format: int64, minimum: 1 }
-      source_ip: { type: string, maxLength: 64 }
-      browser_cookie_secret: { type: string, maxLength: 43 }
-      share_id: { type: string }
-      share_cookie_secret: { type: string, maxLength: 43 }
-      share_secret: { type: string, maxLength: 43 }
   ReplaceVisitorAccessRequest:
     type: object
     additionalProperties: false
@@ -85,16 +55,6 @@ schemas:
         uniqueItems: true
         items: { type: string, minLength: 1, maxLength: 64 }
       expected_revision: { type: integer, format: int64, minimum: 1 }
-  HTTPVisitorResponse:
-    type: object
-    additionalProperties: false
-    required: [visit_allowed, team_member]
-    properties:
-      visit_allowed: { type: boolean }
-      team_member: { type: boolean }
-      identity_id: { type: string }
-      display_name: { type: string }
-      valid_until: { type: string, format: date-time }
   CreateTeamVisitorGrantRequest:
     type: object
     additionalProperties: false
@@ -171,14 +131,21 @@ schemas:
       token:
         type: string
         pattern: "^[A-Za-z0-9_-]{43}$"
+      share_id:
+        $ref: "../openapi.yaml#/components/schemas/ShareID"
+      share_secret:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{43}$"
   BrowserHandoffResponse:
     type: object
     additionalProperties: false
-    required: [cookie_secret, return_path, expires_at]
+    required: [cookie_secret, return_path, expires_at, permission]
     properties:
       cookie_secret:
         type: string
         pattern: "^[A-Za-z0-9_-]{43}$"
+      permission:
+        $ref: "../openapi.yaml#/components/schemas/VisitorTokenResponse"
       return_path:
         type: string
         pattern: "^/"

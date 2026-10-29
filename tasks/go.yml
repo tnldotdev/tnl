@@ -63,10 +63,11 @@ tasks:
 
   test:live-authorization:
     dir: "{{.ROOT_DIR}}"
-    desc: Check public HTTP decision caching and live request authorization
+    desc: Check signed HTTP permissions, policy freshness, and live request authorization
     vars:
-      RUN: '{{default "Test(VisitorDecisionCache|HTTPDecisionCache|PublicHTTP|ServiceHTTPGuard)" .RUN}}'
+      RUN: '{{default "Test(LocalHTTPPermission|PublisherVisitorPolicy|BrowserToken|PublicHTTP|ServiceHTTP)" .RUN}}'
     cmds:
+      - go test {{.CLI_ARGS}} ./internal/security/visitortoken ./internal/policy/visitorlease -count=1
       - go test {{.CLI_ARGS}} ./internal/publisher -run='{{.RUN}}' -count=1
 
   test:http-streaming:

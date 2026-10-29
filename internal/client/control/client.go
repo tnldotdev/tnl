@@ -205,9 +205,13 @@ func (c *Client) EnableShareAccess(ctx context.Context, runID string, version ui
 	return err
 }
 
-func (c *Client) RedeemBrowserHandoff(ctx context.Context, runID string, version uint64, ticket string, token credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+func (c *Client) RedeemBrowserHandoff(ctx context.Context, runID string, version uint64, ticket, shareID, shareSecret string, token credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+	input := controlv1.BrowserHandoffRequest{PublishRunNumber: int64(version), Token: ticket}
+	if shareID != "" && shareSecret != "" {
+		input.ShareId, input.ShareSecret = &shareID, &shareSecret
+	}
 	return request[controlv1.BrowserHandoffResponse](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RedeemPreviewBrowserHandoff(ctx, runID, controlv1.BrowserHandoffRequest{PublishRunNumber: int64(version), Token: ticket}, editors...)
+		return c.api.RedeemPreviewBrowserHandoff(ctx, runID, input, editors...)
 	})
 }
 
@@ -222,12 +226,6 @@ func (c *Client) RevokeBrowserAccess(ctx context.Context, runID string, version 
 		return c.api.RevokePreviewBrowserAccess(ctx, runID, controlv1.BrowserAccessRequest{PublishRunNumber: int64(version), CookieSecret: secret}, editors...)
 	})
 	return err
-}
-
-func (c *Client) GetPublishRunShareState(ctx context.Context, runID string, version uint64, token credentials.PublishRunToken) (controlv1.PublishRunShareState, error) {
-	return request[controlv1.PublishRunShareState](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.GetPublishRunShareState(ctx, runID, controlv1.PublishRunVersionRequest{PublishRunNumber: int64(version)}, editors...)
-	})
 }
 
 func (c *Client) RedeemPublishRunShare(ctx context.Context, runID string, body controlv1.RedeemShareRequest, token credentials.PublishRunToken) (controlv1.ShareRedemption, error) {
@@ -392,6 +390,10 @@ func request[T any](ctx context.Context, client *Client, token string, call cont
 }
 
 func requestWithTimeout[T any](ctx context.Context, client *Client, timeout time.Duration, token string, call controlRequest) (T, error) {
+	return requestWithTimeoutAndLimit[T](ctx, client, timeout, token, maxResponseBytes, call)
+}
+
+func requestWithTimeoutAndLimit[T any](ctx context.Context, client *Client, timeout time.Duration, token string, responseLimit int64, call controlRequest) (T, error) {
 	var zero T
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -405,7 +407,7 @@ func requestWithTimeout[T any](ctx context.Context, client *Client, timeout time
 		return zero, unavailableError(ctx, err)
 	}
 	defer response.Body.Close()
-	payload, err := httpjson.ReadAll(response.Body, maxResponseBytes)
+	payload, err := httpjson.ReadAll(response.Body, responseLimit)
 	if errors.Is(err, httpjson.ErrTooLarge) {
 		return zero, failure.Wrap("read control response", failure.ServerResponseInvalid, errors.New("controlclient: response exceeds limit"))
 	}

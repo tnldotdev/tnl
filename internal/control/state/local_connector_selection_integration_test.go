@@ -55,7 +55,7 @@ func TestIntegrationAppliedProjectLocalConnectorVisitorBinding(t *testing.T) {
 		var data string
 		if err := d.pool.QueryRow(ctx, `SELECT jsonb_build_array(
 		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM control.services s),
-		    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM control.service_grants g),
+		    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM control.visitor_grants g),
 		    (SELECT jsonb_agg(to_jsonb(l) ORDER BY team_id,project_key,service,worktree_key) FROM control.local_project_services l),
 		    (SELECT count(*) FROM control.service_runs),
 		    (SELECT count(*) FROM control.publisher_grants))::text`).Scan(&data); err != nil {
@@ -109,7 +109,7 @@ func TestIntegrationAppliedProjectLocalConnectorVisitorBinding(t *testing.T) {
 		t.Fatal("visitor selection changed management state")
 	}
 	// expiry and revocation take effect on each lookup, even with unchanged provenance.
-	if _, err = d.pool.Exec(ctx, `UPDATE control.service_grants SET expires_at=$2 WHERE service_id=$1 AND kind='team'`, second.ServiceID, now.Add(time.Second)); err != nil {
+	if _, err = d.pool.Exec(ctx, `UPDATE control.visitor_grants SET expires_at=$2 WHERE service_id=$1 AND kind='team'`, second.ServiceID, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	request.Now = now.Add(time.Second)
@@ -124,7 +124,7 @@ func TestIntegrationAppliedProjectLocalConnectorVisitorBinding(t *testing.T) {
 		t.Fatal("removed membership exposed a bound ID", err)
 	}
 	request.ActorID = base.ActingIdentityID
-	if _, err = d.pool.Exec(ctx, `UPDATE control.service_grants SET revoked_at=$2 WHERE service_id=$1`, second.ServiceID, now); err != nil {
+	if _, err = d.pool.Exec(ctx, `UPDATE control.visitor_grants SET revoked_at=$2 WHERE service_id=$1`, second.ServiceID, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = d.GetLocalProjectService(ctx, request); !errors.Is(err, ErrServiceAccess) {

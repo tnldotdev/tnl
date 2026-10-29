@@ -2,75 +2,50 @@ package publisher
 
 import (
 	"context"
-	"errors"
+	"crypto/ed25519"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type measuredHTTPAuthority struct {
-	ServiceHTTPControl
-	decisions []controlv1.ServiceClientCertificateDecision
-	cause     error
-	calls     int
-}
-
-func (c *measuredHTTPAuthority) AuthorizeServiceHTTPVisitor(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
-	c.calls++
-	if c.cause != nil {
-		return controlv1.ServiceClientCertificateDecision{}, c.cause
-	}
-	decision := c.decisions[min(c.calls-1, len(c.decisions)-1)]
-	return decision, nil
-}
-
-func TestServiceHTTPAuthorizationObservesPendingDenialAndPreservesFailure(t *testing.T) {
-	for _, scenario := range []string{"pending", "denied", "infrastructure"} {
+func TestServiceHTTPAuthorizationObservesLocalDecisionAndPreservesFailure(t *testing.T) {
+	for _, scenario := range []string{"admitted", "denied", "failed"} {
 		t.Run(scenario, func(t *testing.T) {
 			m := observability.New("publisher")
 			defer m.Shutdown(context.Background())
-			ctx := observability.WithMetrics(t.Context(), m)
-			cause := errors.New("secret authority response")
-			control := &measuredHTTPAuthority{decisions: []controlv1.ServiceClientCertificateDecision{{}}}
-			switch scenario {
-			case "pending":
-				control.decisions = []controlv1.ServiceClientCertificateDecision{{Allowed: true}, {Allowed: true, Admitted: true, ValidUntil: time.Now().Add(time.Minute)}}
-			case "infrastructure":
-				control.cause = cause
+			ctx := observability.WithFields(observability.WithMetrics(t.Context(), m), observability.Fields{ServiceProtocol: observability.ProtocolHTTP})
+			policy, update, token := httpPermissionFixture(t, false)
+			r := permissionRequest().WithContext(ctx)
+			r.Header.Set(visitorTokenHeader, token.Reveal())
+			if scenario == "denied" {
+				r.Header.Set(visitorTokenHeader, "invalid")
 			}
-			decision, err := (ServiceHTTP{Control: control}).authorize(ctx, controlv1.ServiceHTTPCredential{Kind: "none"})
-			if scenario == "infrastructure" && !errors.Is(err, cause) {
-				t.Fatal("lost infrastructure cause", err)
+			if scenario == "failed" {
+				update.View = update.View.WithVerificationKeys(map[string]ed25519.PublicKey{"new": ed25519.NewKeyFromSeed([]byte(strings.Repeat("n", 32))).Public().(ed25519.PublicKey)})
+				update.KeyRevision++
+				if err := policy.Apply(policy.Begin(), update); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if scenario != "infrastructure" && err != nil {
-				t.Fatal(err)
+			_, guard, _, err := authorizeHTTPRequest(httptest.NewRecorder(), r, policy, nil)
+			if (err == nil) != (scenario == "admitted") {
+				t.Fatal("authorization result changed", err)
 			}
-			if scenario == "pending" && (!decision.Admitted || control.calls != 2) {
-				t.Fatal("pending admission changed", decision, control.calls)
+			if guard != nil {
+				guard.finish()
 			}
 			scrape := httptest.NewRecorder()
 			m.Handler().ServeHTTP(scrape, httptest.NewRequest("GET", "/metrics", nil))
-			text := scrape.Body.String()
-			state := scenario
-			if scenario == "infrastructure" {
-				state = "failed"
-			}
-			if !strings.Contains(text, `tnl_state="`+state+`"`) || strings.Contains(text, "secret") {
-				t.Fatal(text)
-			}
-			if scenario == "pending" && !strings.Contains(text, `tnl_state="admitted"`) {
-				t.Fatal(text)
+			if !strings.Contains(scrape.Body.String(), `tnl_state="`+scenario+`"`) {
+				t.Fatal(scrape.Body.String())
 			}
 			families, err := m.Gather()
 			if err != nil {
 				t.Fatal(err)
 			}
-			outcome := map[string]string{"pending": "success", "denied": "denied", "infrastructure": "error"}[scenario]
+			outcome := map[string]string{"admitted": "success", "denied": "denied", "failed": "error"}[scenario]
 			var measured uint64
 			for _, family := range families {
 				if family.GetName() != "tnl_publisher_operation_duration_seconds" {
@@ -87,7 +62,7 @@ func TestServiceHTTPAuthorizationObservesPendingDenialAndPreservesFailure(t *tes
 				}
 			}
 			if measured != 1 {
-				t.Fatal("service HTTP authorization timing lost its result or protocol", outcome, measured)
+				t.Fatal("local authorization timing lost its result", outcome, measured)
 			}
 		})
 	}

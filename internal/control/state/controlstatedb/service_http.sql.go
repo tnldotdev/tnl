@@ -12,29 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const bindServiceHTTPDirectCredential = `-- name: BindServiceHTTPDirectCredential :exec
-UPDATE control.direct_service_visitors SET http_credential_kind=$1,http_credential_digest=$2,
-    identity_id=NULL,device_id=NULL,workload_session_id=NULL,certificate_digest=NULL,valid_until=$3
-WHERE visitor_connection_id=$4
-`
-
-type BindServiceHTTPDirectCredentialParams struct {
-	Kind                pgtype.Text
-	Digest              []byte
-	ValidUntil          pgtype.Timestamptz
-	VisitorConnectionID string
-}
-
-func (q *Queries) BindServiceHTTPDirectCredential(ctx context.Context, arg BindServiceHTTPDirectCredentialParams) error {
-	_, err := q.db.Exec(ctx, bindServiceHTTPDirectCredential,
-		arg.Kind,
-		arg.Digest,
-		arg.ValidUntil,
-		arg.VisitorConnectionID,
-	)
-	return err
-}
-
 const cleanupServiceHTTPLogins = `-- name: CleanupServiceHTTPLogins :exec
 DELETE FROM control.service_http_browser_logins stored WHERE stored.state_digest IN
     (SELECT expired.state_digest FROM control.service_http_browser_logins expired WHERE expired.expires_at<=$1 LIMIT 100)
@@ -287,6 +264,30 @@ func (q *Queries) RevokeServiceHTTPGrant(ctx context.Context, arg RevokeServiceH
 	return result.RowsAffected(), nil
 }
 
+const serviceDirectBinding = `-- name: ServiceDirectBinding :one
+SELECT destination_port,identity_id,device_id,workload_session_id FROM control.direct_service_visitors
+WHERE visitor_connection_id=$1
+`
+
+type ServiceDirectBindingRow struct {
+	DestinationPort   int32
+	IdentityID        pgtype.Text
+	DeviceID          pgtype.Text
+	WorkloadSessionID pgtype.Text
+}
+
+func (q *Queries) ServiceDirectBinding(ctx context.Context, visitorConnectionID string) (ServiceDirectBindingRow, error) {
+	row := q.db.QueryRow(ctx, serviceDirectBinding, visitorConnectionID)
+	var i ServiceDirectBindingRow
+	err := row.Scan(
+		&i.DestinationPort,
+		&i.IdentityID,
+		&i.DeviceID,
+		&i.WorkloadSessionID,
+	)
+	return i, err
+}
+
 const serviceHTTPAppliedConfiguration = `-- name: ServiceHTTPAppliedConfiguration :one
 SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service FROM control.applied_project_services service
 JOIN control.applied_projects project ON project.team_id=service.team_id AND project.project_key=service.project_key
@@ -390,7 +391,7 @@ func (q *Queries) ServiceHTTPBrowserPermission(ctx context.Context, arg ServiceH
 	return i, err
 }
 
-const serviceHTTPDirectBinding = `-- name: ServiceHTTPDirectBinding :one
+const serviceHTTPTransportBinding = `-- name: ServiceHTTPTransportBinding :one
 SELECT (v.promoted_at IS NOT NULL)::boolean AS admitted,LEAST($1::timestamptz+interval '2 minutes',
     run.publisher_expires_at,run.certificate_expires_at,g.expires_at,ingress.lease_expires_at,
     (SELECT max(relay.lease_expires_at) FROM control.service_connection_slots slot
@@ -420,7 +421,7 @@ AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.rela
     AND relay.lease_expires_at>$1 AND NOT relay.draining)
 `
 
-type ServiceHTTPDirectBindingParams struct {
+type ServiceHTTPTransportBindingParams struct {
 	Now                 pgtype.Timestamptz
 	VisitorConnectionID string
 	ServiceID           string
@@ -430,13 +431,13 @@ type ServiceHTTPDirectBindingParams struct {
 	DestinationPort     int32
 }
 
-type ServiceHTTPDirectBindingRow struct {
+type ServiceHTTPTransportBindingRow struct {
 	Admitted   bool
 	ValidUntil pgtype.Timestamptz
 }
 
-func (q *Queries) ServiceHTTPDirectBinding(ctx context.Context, arg ServiceHTTPDirectBindingParams) (ServiceHTTPDirectBindingRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPDirectBinding,
+func (q *Queries) ServiceHTTPTransportBinding(ctx context.Context, arg ServiceHTTPTransportBindingParams) (ServiceHTTPTransportBindingRow, error) {
+	row := q.db.QueryRow(ctx, serviceHTTPTransportBinding,
 		arg.Now,
 		arg.VisitorConnectionID,
 		arg.ServiceID,
@@ -445,72 +446,7 @@ func (q *Queries) ServiceHTTPDirectBinding(ctx context.Context, arg ServiceHTTPD
 		arg.SourceIp,
 		arg.DestinationPort,
 	)
-	var i ServiceHTTPDirectBindingRow
+	var i ServiceHTTPTransportBindingRow
 	err := row.Scan(&i.Admitted, &i.ValidUntil)
-	return i, err
-}
-
-const serviceHTTPDirectCredential = `-- name: ServiceHTTPDirectCredential :one
-SELECT http_credential_kind,http_credential_digest,destination_port,identity_id,device_id,workload_session_id FROM control.direct_service_visitors
-WHERE visitor_connection_id=$1
-`
-
-type ServiceHTTPDirectCredentialRow struct {
-	HttpCredentialKind   pgtype.Text
-	HttpCredentialDigest []byte
-	DestinationPort      int32
-	IdentityID           pgtype.Text
-	DeviceID             pgtype.Text
-	WorkloadSessionID    pgtype.Text
-}
-
-func (q *Queries) ServiceHTTPDirectCredential(ctx context.Context, visitorConnectionID string) (ServiceHTTPDirectCredentialRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPDirectCredential, visitorConnectionID)
-	var i ServiceHTTPDirectCredentialRow
-	err := row.Scan(
-		&i.HttpCredentialKind,
-		&i.HttpCredentialDigest,
-		&i.DestinationPort,
-		&i.IdentityID,
-		&i.DeviceID,
-		&i.WorkloadSessionID,
-	)
-	return i, err
-}
-
-const serviceHTTPGrantPermission = `-- name: ServiceHTTPGrantPermission :one
-SELECT id,created_by_identity_id,control_session_id,expires_at FROM control.service_http_grants
-WHERE service_id=$1 AND kind=$2
-AND secret_digest=$3 AND revoked_at IS NULL AND expires_at>$4
-`
-
-type ServiceHTTPGrantPermissionParams struct {
-	ServiceID    string
-	Kind         string
-	SecretDigest []byte
-	Now          pgtype.Timestamptz
-}
-
-type ServiceHTTPGrantPermissionRow struct {
-	ID                  string
-	CreatedByIdentityID string
-	ControlSessionID    pgtype.Text
-	ExpiresAt           pgtype.Timestamptz
-}
-
-func (q *Queries) ServiceHTTPGrantPermission(ctx context.Context, arg ServiceHTTPGrantPermissionParams) (ServiceHTTPGrantPermissionRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPGrantPermission,
-		arg.ServiceID,
-		arg.Kind,
-		arg.SecretDigest,
-		arg.Now,
-	)
-	var i ServiceHTTPGrantPermissionRow
-	err := row.Scan(
-		&i.ID,
-		&i.CreatedByIdentityID,
-		&i.ControlSessionID,
-		&i.ExpiresAt,
-	)
 	return i, err
 }

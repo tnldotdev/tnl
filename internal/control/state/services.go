@@ -37,8 +37,8 @@ type ServiceGrant struct {
 	ExpiresAt, RevokedAt                          *time.Time
 }
 
-func privateGrantRecord(row controlstatedb.ControlServiceGrant) ServiceGrant {
-	return ServiceGrant{ID: row.ID, ServiceID: row.ServiceID, Kind: row.Kind,
+func privateGrantRecord(row controlstatedb.ControlVisitorGrant) ServiceGrant {
+	return ServiceGrant{ID: row.ID, ServiceID: row.ServiceID.String, Kind: row.Kind,
 		IdentityID: row.IdentityID.String, InvitationID: row.InvitationID.String,
 		CreatedAt: row.CreatedAt.Time, ExpiresAt: optionalTime(row.ExpiresAt), RevokedAt: optionalTime(row.RevokedAt)}
 }
@@ -201,7 +201,7 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 		return result, err
 	}
 	ownerDigest := sha256.Sum256([]byte("service-owner:" + id))
-	if _, err = tx.Exec(ctx, `INSERT INTO control.service_grants(id,service_id,team_id,kind,identity_id,auto_owner,created_by_identity_id,idempotency_key,request_digest,created_at)
+	if _, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,service_id,team_id,kind,identity_id,auto_owner,created_by_identity_id,idempotency_key,request_digest,created_at)
 	    VALUES($1,$2,$3,'identity',$4,true,$4,$5,$6,$7)`, ownerGrantID, id, teamID, actorID, "owner/"+id, ownerDigest[:], now); err != nil {
 		return result, err
 	}

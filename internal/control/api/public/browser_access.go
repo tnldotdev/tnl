@@ -18,7 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
-	"github.com/tnldotdev/tnl/internal/policy/httpsubject"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"golang.org/x/oauth2"
@@ -68,7 +68,7 @@ func (h *handler) BeginPreviewBrowserLogin(response http.ResponseWriter, request
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "public URL not found")
 		return
 	}
-	h.beginBrowserLogin(response, request, httpsubject.Subject{Kind: httpsubject.PublicURL, ID: publicURL.ID}, publicURL.TeamID, preview.ID, params.ReturnPath, params.SwitchAccount)
+	h.beginBrowserLogin(response, request, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: publicURL.ID}, publicURL.TeamID, preview.ID, params.ReturnPath, params.SwitchAccount)
 }
 
 func (h *handler) BeginServiceBrowserLogin(response http.ResponseWriter, request *http.Request, params controlv1.BeginServiceBrowserLoginParams) {
@@ -78,7 +78,7 @@ func (h *handler) BeginServiceBrowserLogin(response http.ResponseWriter, request
 		writeProblem(response, 503, controlv1.Unavailable, "browser sign-in is unavailable")
 		return
 	}
-	subject := httpsubject.Subject{Kind: httpsubject.Service, ID: params.ServiceId}
+	subject := visitorscope.Scope{Kind: visitorscope.Service, ID: params.ServiceId}
 	if !subject.Valid() || !validBrowserReturnPath(params.ReturnPath) {
 		writeProblem(response, 400, controlv1.InvalidRequest, "invalid managed browser sign-in")
 		return
@@ -96,7 +96,7 @@ func (h *handler) BeginServiceBrowserLogin(response http.ResponseWriter, request
 	h.beginBrowserLogin(response, request, subject, team, "", params.ReturnPath, params.SwitchAccount)
 }
 
-func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.Request, subject httpsubject.Subject, team, preview, path string, switchAccount *bool) {
+func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.Request, subject visitorscope.Scope, team, preview, path string, switchAccount *bool) {
 	verifier := oauth2.GenerateVerifier()
 	nonceBytes := make([]byte, 32)
 	if _, err := rand.Read(nonceBytes); err != nil {
@@ -125,7 +125,7 @@ func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.
 		}
 	}
 	var state string
-	if subject.Kind == httpsubject.Service {
+	if subject.Kind == visitorscope.Service {
 		state, err = h.store.(serviceHTTPStore).BeginServiceBrowserLogin(request.Context(), subject, path, nonce, verifier, binding, intent, now)
 	} else {
 		state, err = h.browserAccess.BeginBrowserLogin(request.Context(), preview, subject.ID, path, nonce, verifier, binding, intent, now)
@@ -250,7 +250,7 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 
 func (h *handler) RedeemPreviewBrowserHandoff(response http.ResponseWriter, request *http.Request, runID controlv1.PublishRunID) {
 	var body controlv1.BrowserHandoffRequest
-	if err := decodeJSON(response, request, &body); err != nil || body.PublishRunNumber <= 0 {
+	if err := decodeJSON(response, request, &body); err != nil || body.PublishRunNumber <= 0 || (body.ShareId == nil) != (body.ShareSecret == nil) {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid browser handoff")
 		return
 	}
@@ -258,7 +258,7 @@ func (h *handler) RedeemPreviewBrowserHandoff(response http.ResponseWriter, requ
 	if !ok {
 		return
 	}
-	cookie, path, next, bridge, expires, err := h.browserAccess.RedeemBrowserHandoff(request.Context(), auth, body.Token, time.Now())
+	cookie, path, next, bridge, _, err := h.browserAccess.RedeemBrowserHandoff(request.Context(), auth, body.Token, time.Now())
 	if err != nil && !errors.Is(err, controlstate.ErrPreviewAccess) {
 		writeControlStateProblem(response, "redeem browser handoff", err)
 		return
@@ -267,20 +267,46 @@ func (h *handler) RedeemPreviewBrowserHandoff(response http.ResponseWriter, requ
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "browser handoff expired")
 		return
 	}
-	writeJSON(response, http.StatusOK, controlv1.BrowserHandoffResponse{CookieSecret: cookie, ReturnPath: path, NextUrl: &next, Bridge: &bridge, ExpiresAt: expires})
+	permission, err := h.redeemedBrowserHandoffPermission(request.Context(), auth.PublicURLID, cookie, body)
+	if err != nil {
+		writeVisitorTokenProblem(response, err)
+		return
+	}
+	session, err := h.browserAccess.BrowserSession(request.Context(), auth.PublicURLID, cookie, time.Now())
+	if err != nil {
+		writeControlStateProblem(response, "read redeemed browser session", err)
+		return
+	}
+	// the handoff deadline limits ticket redemption, not the browser sign-in.
+	// the signed visitor permission retains its separate, shorter deadline.
+	writeJSON(response, http.StatusOK, controlv1.BrowserHandoffResponse{CookieSecret: cookie, ReturnPath: path, NextUrl: &next, Bridge: &bridge, ExpiresAt: session.ExpiresAt, Permission: permission})
 }
 
-func (h *handler) browserSessionAccess(ctxRequest *http.Request, auth controlstate.PublishRunAuthentication, token string) (controlstate.BrowserAccessSession, publicURLReadPrincipal, bool, error) {
+func (h *handler) redeemedBrowserHandoffPermission(ctx context.Context, urlID, cookie string, body controlv1.BrowserHandoffRequest) (controlv1.VisitorTokenResponse, error) {
+	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: urlID}
+	permission, err := h.redeemedVisitorPermission(ctx, scope, controlstate.BrowserSessionTokenSource{Secret: cookie})
+	if errors.Is(err, controlstate.ErrVisitorPermission) && body.ShareId != nil && body.ShareSecret != nil {
+		// sign-in establishes identity for feedback; the share remains the
+		// independent authority to visit when this person has no team grant.
+		return h.redeemedVisitorPermission(ctx, scope, controlstate.ShareSessionTokenSource{ShareID: *body.ShareId, Secret: *body.ShareSecret})
+	}
+	return permission, err
+}
+
+func (h *handler) refreshBrowserSignIn(ctx context.Context, publicURLID, token string) (controlstate.BrowserAccessSession, error) {
 	now := time.Now()
-	session, err := h.browserAccess.BrowserSession(ctxRequest.Context(), auth.PublicURLID, token, now)
+	if h.browserAccess == nil {
+		return controlstate.BrowserAccessSession{}, clientauthority.ErrUnavailable
+	}
+	session, err := h.browserAccess.BrowserSession(ctx, publicURLID, token, now)
 	if err != nil {
-		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, err
+		return controlstate.BrowserAccessSession{}, err
 	}
 	if !session.AccessExpiresAt.After(now.Add(30 * time.Second)) {
 		if h.browserAuthority == nil {
-			return session, publicURLReadPrincipal{}, false, clientauthority.ErrUnavailable
+			return session, clientauthority.ErrUnavailable
 		}
-		session, err = h.browserAccess.RefreshBrowserSession(ctxRequest.Context(), auth.PublicURLID, token, now,
+		session, err = h.browserAccess.RefreshBrowserSession(ctx, publicURLID, token, now,
 			func(ctx context.Context, refreshToken string) (controlstate.BrowserTokenRotation, error) {
 				issued, err := h.browserAuthority.Refresh(ctx, credentials.RefreshToken(refreshToken))
 				if err != nil {
@@ -296,8 +322,16 @@ func (h *handler) browserSessionAccess(ctxRequest *http.Request, auth controlsta
 				}, nil
 			})
 		if err != nil {
-			return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, err
+			return controlstate.BrowserAccessSession{}, err
 		}
+	}
+	return session, nil
+}
+
+func (h *handler) browserSessionAccess(ctxRequest *http.Request, auth controlstate.PublishRunAuthentication, token string) (controlstate.BrowserAccessSession, publicURLReadPrincipal, bool, error) {
+	session, err := h.refreshBrowserSignIn(ctxRequest.Context(), auth.PublicURLID, token)
+	if err != nil {
+		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, err
 	}
 	principal, err := h.authorizer.AuthorizePublicURLReads(ctxRequest.Context(), session.AccessToken)
 	if err != nil {

@@ -1,0 +1,18 @@
+paths:
+  /v1/visitor-tokens:
+    post:
+      operationId: issueVisitorToken
+      description: Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+      security: [{}, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenRequest" }
+      responses:
+        "200":
+          description: Signed permission, independently bounded by current visitor policy and stream capacity
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenResponse" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

@@ -343,8 +343,6 @@ type ControlDirectServiceVisitor struct {
 	IdentityID           pgtype.Text
 	DeviceID             pgtype.Text
 	CertificateDigest    []byte
-	HttpCredentialKind   pgtype.Text
-	HttpCredentialDigest []byte
 	PromotedAt           pgtype.Timestamptz
 	ValidUntil           pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
@@ -1317,22 +1315,6 @@ type ControlServiceEndpoint struct {
 	ReusableAfter         pgtype.Timestamptz
 }
 
-type ControlServiceGrant struct {
-	ID                  string
-	ServiceID           string
-	TeamID              string
-	Kind                string
-	IdentityID          pgtype.Text
-	AutoOwner           bool
-	InvitationID        pgtype.Text
-	CreatedByIdentityID string
-	IdempotencyKey      string
-	RequestDigest       []byte
-	CreatedAt           pgtype.Timestamptz
-	ExpiresAt           pgtype.Timestamptz
-	RevokedAt           pgtype.Timestamptz
-}
-
 type ControlServiceHttpBrowserLogin struct {
 	StateDigest        []byte
 	BindingDigest      []byte
@@ -1587,10 +1569,15 @@ type ControlVisitorDevice struct {
 
 type ControlVisitorGrant struct {
 	ID                  string
-	PublicURLID         string
+	PublicURLID         pgtype.Text
+	ServiceID           pgtype.Text
+	ResourceKind        pgtype.Text
+	ResourceID          pgtype.Text
 	TeamID              string
 	Kind                string
 	IdentityID          pgtype.Text
+	AutoOwner           bool
+	InvitationID        pgtype.Text
 	CreatedByIdentityID string
 	IdempotencyKey      string
 	RequestDigest       []byte
@@ -1634,6 +1621,41 @@ type ControlVisitorNetworkHashKey struct {
 	VisitorNetworkHashMasterKeyCiphertext   []byte
 	VisitorNetworkHashMasterKeyStorageKeyID string
 	CreatedAt                               pgtype.Timestamptz
+}
+
+type ControlVisitorPolicy struct {
+	ResourceKind string
+	ResourceID   string
+	Revision     int64
+	ChangedAt    pgtype.Timestamptz
+}
+
+type ControlVisitorPolicyEvent struct {
+	ResourceKind string
+	ResourceID   string
+	Revision     int64
+	ChangedAt    pgtype.Timestamptz
+}
+
+type ControlVisitorTokenIssuer struct {
+	ID     bool
+	Issuer string
+}
+
+type ControlVisitorTokenKey struct {
+	ID             string
+	PublicKey      []byte
+	SeedCiphertext []byte
+	StorageKeyID   string
+	CreatedAt      pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
+	RetiredAt      pgtype.Timestamptz
+	RevokedAt      pgtype.Timestamptz
+}
+
+type ControlVisitorVerificationKeyRevision struct {
+	ID       int16
+	Revision int64
 }
 
 type ControlWorkloadAssertion struct {

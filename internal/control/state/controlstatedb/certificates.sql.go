@@ -805,6 +805,11 @@ UPDATE control.acme_orders
 SET state = 'installed',
     installed_at = COALESCE(installed_at, $1),
     order_revision = order_revision + CASE WHEN installed_at IS NULL THEN 1 ELSE 0 END,
+    -- the first installation fences the old work revision. release that claim
+    -- so DNS cleanup can resume immediately; repeated acknowledgments leave a
+    -- current cleanup worker's lease intact.
+    work_owner = CASE WHEN installed_at IS NULL THEN NULL ELSE work_owner END,
+    work_expires_at = CASE WHEN installed_at IS NULL THEN NULL ELSE work_expires_at END,
     updated_at = GREATEST(updated_at, $1)
 WHERE id = $2
   AND state IN ('waiting_for_install', 'installed')

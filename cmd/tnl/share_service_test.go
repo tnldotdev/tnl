@@ -338,7 +338,7 @@ func TestServiceShareInvitationLifecycleUsesExactAPI(t *testing.T) {
 			listed.Secret, listed.AcceptedAt = nil, new(time.Now())
 			_ = json.NewEncoder(w).Encode(controlv1.ServiceInvitationPage{Invitations: []controlv1.ServiceInvitation{listed}})
 		case "GET /v1/services/" + shareTestService + "/http-grants":
-			_ = json.NewEncoder(w).Encode([]controlv1.ServiceHTTPGrantSummary{{Id: shareTestHTTP, Subject: controlv1.HTTPAuthorizationSubject{Kind: "service", Id: shareTestService}, Kind: "token", ExpiresAt: at}})
+			_ = json.NewEncoder(w).Encode([]controlv1.ServiceHTTPGrantSummary{{Id: shareTestHTTP, Subject: controlv1.VisitorResourceScope{Kind: "service", Id: shareTestService}, Kind: "token", ExpiresAt: at}})
 		case "DELETE /v1/services/" + shareTestService + "/invitations/" + shareTestInvite,
 			"DELETE /v1/services/" + shareTestService + "/grants/" + shareTestGrant:
 			w.WriteHeader(204)
@@ -448,8 +448,9 @@ func TestServiceShareRejectsUnsafeResponsesAndPreservesFailures(t *testing.T) {
 func TestServiceShareServiceHTTPUsesExplicitSubjectAndOneTimeOutput(t *testing.T) {
 	at := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
 	service := controlv1.Service{Id: shareTestService, Protocol: "http", Endpoint: &controlv1.ServiceEndpoint{Hostname: "web.production.example.test", Port: 25443, Public: true}}
-	secret := shareTestHTTP + "." + strings.Repeat("A", 43)
-	for _, kind := range []controlv1.CreateServiceHTTPGrantRequestKind{"share", "token"} {
+	secret := "vrf1." + shareTestHTTP + "." + strings.Repeat("A", 43)
+	permission := controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: shareTestService}, Hostname: service.Endpoint.Hostname, Port: service.Endpoint.Port, VisitorPolicyRevision: 1, ExpiresAt: at, VisitorToken: "header.permission.signature"}
+	for _, kind := range []controlv1.CreateVisitorCredentialRequestKind{"share", "token"} {
 		for _, corrupt := range []string{"", "subject", "id", "kind", "hostname", "secret"} {
 			t.Run(string(kind)+"/"+corrupt, func(t *testing.T) {
 				control := serviceShareTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -460,25 +461,25 @@ func TestServiceShareServiceHTTPUsesExplicitSubjectAndOneTimeOutput(t *testing.T
 					if r.Method != http.MethodPost || r.URL.Path != "/v1/services/"+shareTestService+"/http-grants" {
 						t.Errorf("service HTTP used a public URL or group grant: %s %s", r.Method, r.URL)
 					}
-					var body controlv1.CreateServiceHTTPGrantRequest
-					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Kind != kind || !body.ExpiresAt.Equal(at) {
+					var body controlv1.CreateVisitorCredentialRequest
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Resource != permission.Resource || body.Kind != kind || !body.ExpiresAt.Equal(at) {
 						t.Error("service HTTP grant changed kind or deadline", err)
 					}
-					grant := controlv1.ServiceHTTPGrant{Id: shareTestHTTP, Subject: controlv1.HTTPAuthorizationSubject{Kind: "service", Id: shareTestService}, Kind: controlv1.ServiceHTTPGrantKind(kind), Secret: secret, ExpiresAt: at}
+					grant := controlv1.VisitorCredential{GrantId: shareTestHTTP, Kind: controlv1.VisitorCredentialKind(kind), RefreshCredential: secret, Permission: permission, ExpiresAt: at}
 					if kind == "share" {
 						grant.ShareUrl = new("https://web.production.example.test:25443/__tnl/share/" + secret)
 					}
 					switch corrupt {
 					case "subject":
-						grant.Subject.Kind = "public_url"
+						grant.Permission.Resource.Kind = "public_url"
 					case "id":
-						grant.Subject.Id = "svc_abcdefghijkl0123456789"
+						grant.Permission.Resource.Id = "svc_abcdefghijkl0123456789"
 					case "kind":
 						grant.Kind = "other"
 					case "hostname":
 						grant.ShareUrl = new("https://other.example.test/__tnl/share/" + secret)
 					case "secret":
-						grant.Secret += "\nprivate-value"
+						grant.RefreshCredential += "\nprivate-value"
 					}
 					w.WriteHeader(201)
 					_ = json.NewEncoder(w).Encode(grant)
@@ -492,9 +493,9 @@ func TestServiceShareServiceHTTPUsesExplicitSubjectAndOneTimeOutput(t *testing.T
 					}
 					return
 				}
-				want := secret + "\n"
+				want := permission.VisitorToken + "\n"
 				if kind == "share" {
-					want = "https://web.production.example.test:25443/__tnl/share/" + want
+					want = "https://web.production.example.test:25443/__tnl/share/" + secret + "\n"
 				}
 				if err != nil || output.String() != want {
 					t.Fatalf("raw service HTTP credential output = %q, %v", &output, err)

@@ -166,11 +166,12 @@ func TestPromotedDeniedHTTPResponseOutlivesPendingDeadline(t *testing.T) {
 			t.Parallel()
 			accessClient := &shareAccessTestClient{shareID: "shr_0123456789abcdefghijkl", cookie: base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("c", 32))), active: true, minted: true}
 			access := &shareAccess{client: accessClient, runID: "run-1", version: 1}
-			if err := access.refresh(t.Context()); err != nil {
-				t.Fatal(err)
-			}
+			authority := &liveHTTPControl{check: func(liveHTTPSource) (liveHTTPDecision, error) { return liveHTTPAllowed(time.Now().Add(time.Minute)) }}
+			prepareLiveHTTPControl(t, authority)
+			permission := authority.credential(t, accessClient.cookie, true)
 			var promoted atomic.Int32
-			route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), ShareAccess: access,
+			route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), ShareAccess: access,
+				VisitorPolicy: authority.policy.lease, VisitorTokens: authority.tokens,
 				PromoteVisitor: func(context.Context, Visitor) error { promoted.Add(1); return nil },
 				Handler:        http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { time.Sleep(6 * time.Second); w.WriteHeader(204) })})
 			if err != nil {
@@ -183,7 +184,7 @@ func TestPromotedDeniedHTTPResponseOutlivesPendingDeadline(t *testing.T) {
 			client := mixedVisitorClient(t, route, h2, true)
 			client.Timeout = 12 * time.Second
 			r, _ := http.NewRequest("GET", "https://route.example/", nil)
-			r.AddCookie(&http.Cookie{Name: shareCookieName, Value: accessClient.shareID + "." + accessClient.cookie})
+			r.AddCookie(&http.Cookie{Name: visitorTokenCookie, Value: permission})
 			response, err := client.Do(r)
 			if err != nil {
 				t.Fatal(err)

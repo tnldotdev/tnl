@@ -130,7 +130,6 @@ type ShareStore interface {
 
 type ShareAccessStore interface {
 	EnableShareAccess(context.Context, controlstate.PublishRunAuthentication, string) error
-	PublishRunShareState(context.Context, controlstate.PublishRunAuthentication, time.Time) ([]controlstate.PublisherShare, error)
 	RedeemShare(context.Context, controlstate.PublishRunAuthentication, string, []byte, []byte, time.Time) (controlstate.ShareRedemption, error)
 }
 

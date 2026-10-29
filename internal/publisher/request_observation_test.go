@@ -26,7 +26,7 @@ func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {
 	}))
 	defer upstream.Close()
 	var events []inspection.Summary
-	server, err := newTestPublicURLServer(PublicURLServerConfig{
+	server, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "app.example", Target: upstream.URL,
 		ObserveSummary: func(event inspection.Summary) { events = append(events, event) },
 	})
@@ -83,7 +83,7 @@ func TestRequestObservationNoneRecordsNothing(t *testing.T) {
 	}))
 	defer upstream.Close()
 	observed := 0
-	server, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "app.example", Target: upstream.URL,
+	server, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "app.example", Target: upstream.URL,
 		InspectionMode: inspection.None, ObserveSummary: func(inspection.Summary) { observed++ }})
 	if err != nil {
 		t.Fatal(err)

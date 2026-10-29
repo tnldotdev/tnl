@@ -23,13 +23,6 @@ SELECT other.preview_id FROM control.preview_public_urls AS other
 WHERE other.public_url_id = sqlc.arg(public_url_id)
   AND other.preview_id <> sqlc.arg(preview_id) LIMIT 1;
 
--- name: TeamAccessForPublicURL :one
-SELECT p.id AS preview_id, p.team_id, p.team_access_enabled
-FROM control.previews AS p
-JOIN control.preview_public_urls AS included ON included.preview_id = p.id
-WHERE included.public_url_id = sqlc.arg(public_url_id)
-  AND p.team_access_enabled = true LIMIT 1;
-
 -- name: OtherTeamAccessForPublicURL :one
 SELECT p.id FROM control.previews AS p
 JOIN control.preview_public_urls AS included ON included.preview_id = p.id

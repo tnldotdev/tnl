@@ -56,6 +56,22 @@ role, issuer/session provenance, and recovery remain separate. Workload sessions
 are key-bound visitor authority with exact saved service rights and a fixed
 window; runtime assertions cannot apply configuration or create human sessions.
 
+For public URL and direct service HTTP, `state/visitor_tokens.go` turns one
+authenticated source into a signed permission. Both resource kinds use
+`control.visitor_identity_permission` and `control.visitor_grants`; browser,
+share, device, and workload parents still bound their own lifetimes. HTTP client
+certificates bind the same permission to the CSR key and certificate serial.
+Refresh credentials are authority-facing; application requests carry only the
+signed permission. `state/visitor_policy.go` returns a snapshot with its policy
+revision, verification keys, IP filter, and workload leases. Fact mutations
+advance policy revisions in the same transaction. Signing keys are prepared
+before serving and ordinary rotation retains keys through issued deadlines.
+
+`tnl share token create` exchanges its new share source at `/v1/visitor-tokens`
+and prints a signed `Tnl-Visitor-Token` value. The public URL permission lasts at
+most five minutes, capped by the share deadline; JSON `expires_at` reports that
+permission deadline. `--expires-in` sets the underlying share lifetime.
+
 Publisher grants bind one saved public URL or authorized namespace. Enrollment
 is explicit and one-use; signing keys remain with the publisher. Control checks
 grant, current team access, and URL state at run creation and heartbeat. Purposes

@@ -315,6 +315,12 @@ func (d *Database) ExpireVisitorPermissions(ctx context.Context, now time.Time) 
 		return err
 	}
 	q := controlstatedb.New(d.pool)
+	if err := q.DeleteExpiredShareCookies(ctx, timestamptz(now)); err != nil {
+		return err
+	}
+	if err := q.DeleteFinishedShareHandoffs(ctx, timestamptz(now)); err != nil {
+		return err
+	}
 	if err := q.CleanupVisitorSessions(ctx, timestamptz(now)); err != nil {
 		return err
 	}

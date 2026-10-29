@@ -11,8 +11,8 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/policy/httpsubject"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
@@ -109,6 +109,19 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 	if profile == nil || prepared.Preparation.CertificatePlan == nil {
 		return nil, nil, ErrPrivateStream
 	}
+	closeHTTP := func() {}
+	var httpFrontend publisher.ServiceHTTP
+	if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
+		var err error
+		httpFrontend, closeHTTP, err = publisher.PrepareServiceHTTP(ctx, publisher.ServiceHTTP{
+			Control: control, Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: setup.ServiceId},
+			RunID: setup.ServiceRunId, Number: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken),
+			Hostname: prepared.managedHostname, Port: prepared.servicePort, Requests: prepared.serviceHTTPRequests,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	decision := func(result controlv1.ServiceClientCertificateDecision, err error) (publisher.ServiceVisitorDecision, error) {
 		if errors.Is(err, clientcontrol.ErrNotFound) || errors.Is(err, clientcontrol.ErrUnauthenticated) {
 			return publisher.ServiceVisitorDecision{}, nil
@@ -141,12 +154,9 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 		}
 		if header.Direct != nil && header.Connector == nil {
 			if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
-				return publisher.PublicHTTPVisitor{Frontend: publisher.ServiceHTTP{
-					Control: control, Subject: httpsubject.Subject{Kind: httpsubject.Service, ID: setup.ServiceId},
-					RunID: setup.ServiceRunId, Number: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken),
-					Hostname: prepared.managedHostname, Port: prepared.servicePort, Header: header,
-					Requests: prepared.serviceHTTPRequests,
-				}}
+				frontend := httpFrontend
+				frontend.Header = header
+				return publisher.PublicHTTPVisitor{Frontend: frontend}
 			}
 			return publisher.CertificateVisitor{Check: func(check context.Context, leaf *x509.Certificate) (publisher.ServiceVisitorDecision, error) {
 				return awaitAdmission(check, func(ctx context.Context) (controlv1.ServiceClientCertificateDecision, error) {
@@ -158,9 +168,10 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 	}
 	cache, err := profile.CertificatesForPublisher(prepared.Preparation.TeamId, config.Identity.ClientId, *prepared.Preparation.CertificatePlan)
 	if err != nil {
+		closeHTTP()
 		return nil, nil, err
 	}
 	certificates := publisher.ServiceCertificates{Control: control, Cache: cache, ServiceID: setup.ServiceId, RunID: setup.ServiceRunId, PublisherIdentityID: config.Identity.ClientId, RunNumber: setup.RunNumber, Token: credentials.ServiceRunToken(setup.RunToken), Hostname: prepared.managedHostname, Plan: *prepared.Preparation.CertificatePlan, Install: prepared.installManagedCertificate}
 	certificateCtx, cancel := context.WithCancel(ctx)
-	return func() error { return certificates.Maintain(certificateCtx) }, cancel, nil
+	return func() error { return certificates.Maintain(certificateCtx) }, func() { cancel(); closeHTTP() }, nil
 }
