@@ -133,10 +133,6 @@ func (d *Database) HeartbeatPublishRun(
 		return PublishRunSetup{}, err
 	}
 	setup.PolicyDenials = uint64(session.PolicyDenials)
-	setup.VisitorPolicyRevision, err = queries.GetVisitorPolicyRevision(ctx, session.TeamID)
-	if err != nil {
-		return PublishRunSetup{}, err
-	}
 	if err := pendingEvents.publish(ctx, queries); err != nil {
 		return PublishRunSetup{}, err
 	}

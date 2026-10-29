@@ -77,22 +77,21 @@ type ConnectionAssignment struct {
 
 // PublishRunSetup is the retry-stable result of publish-run creation.
 type PublishRunSetup struct {
-	PublishRunID          string
-	PublicURLID           string
-	TeamID                string
-	MembershipID          string
-	PublishRunNumber      uint64
-	PolicyRevision        uint64
-	PublishRunToken       credentials.PublishRunToken
-	State                 PublishRunState
-	CreatedAt             time.Time
-	ExpiresAt             time.Time
-	ReadyAt               *time.Time
-	ClosedAt              *time.Time
-	PolicyDenials         uint64
-	VisitorPolicyRevision int64
-	Traffic               trafficlimits.Limits
-	PublisherConnections  [publishRunConnectionCount]ConnectionAssignment
+	PublishRunID         string
+	PublicURLID          string
+	TeamID               string
+	MembershipID         string
+	PublishRunNumber     uint64
+	PolicyRevision       uint64
+	PublishRunToken      credentials.PublishRunToken
+	State                PublishRunState
+	CreatedAt            time.Time
+	ExpiresAt            time.Time
+	ReadyAt              *time.Time
+	ClosedAt             *time.Time
+	PolicyDenials        uint64
+	Traffic              trafficlimits.Limits
+	PublisherConnections [publishRunConnectionCount]ConnectionAssignment
 }
 
 // CreatePublishRun creates one publish run with two connection assignments on

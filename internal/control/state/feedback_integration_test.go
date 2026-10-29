@@ -58,9 +58,6 @@ func TestIntegrationFeedbackCombinedBrowserShareUsesVerifiedAuthor(t *testing.T)
 	if err != nil || event.AuthorIdentityID != identity || event.AuthorDisplayName != "Verified reviewer" || !event.AuthorVerified || event.ActorReference != "identity:"+identity {
 		t.Fatal("combined feedback append lost verified author", event, err)
 	}
-	if _, err := d.HTTPVisitorPermission(t.Context(), auth, HTTPVisitorRequest{SourceIP: actor.SourceIP, BrowserCookieSecret: cookie, ShareID: share.ID, ShareSecret: secret}, now); !errors.Is(err, ErrVisitorSignIn) {
-		t.Fatal("feedback's combined credentials crossed HTTP exclusive selection", err)
-	}
 	if _, err := d.RevokeShare(t.Context(), share.ID, f.request.ActingIdentityID, now); err != nil {
 		t.Fatal(err)
 	}

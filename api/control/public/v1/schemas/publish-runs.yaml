@@ -211,30 +211,12 @@ schemas:
         minLength: 43
         maxLength: 43
         pattern: "^[A-Za-z0-9_-]+$"
-  PublishRunShareState:
-    type: object
-    additionalProperties: false
-    required: [schema_version, shares]
-    properties:
-      schema_version:
-        $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
-      team_access_enabled:
-        type: boolean
-      shares:
-        type: array
-        items:
-          $ref: "../openapi.yaml#/components/schemas/PublisherShare"
   PublishRunHeartbeat:
     type: object
     additionalProperties: false
     description: Each HTTP publisher becomes ready independently after DNS, its installed public URL certificate, and two ready publisher connections.
-    required: [publish_run, publisher_connections, policy_denials, visitor_policy_revision]
+    required: [publish_run, publisher_connections, policy_denials]
     properties:
-      visitor_policy_revision:
-        type: integer
-        format: int64
-        minimum: 0
-        description: Current team authority revision; publishers invalidate run-local visitor decisions when it advances.
       publish_run:
         $ref: "../openapi.yaml#/components/schemas/PublishRun"
       publisher_connections:

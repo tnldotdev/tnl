@@ -143,7 +143,9 @@ func TestIntegrationInstalledCertificateRetainsCleanupWork(t *testing.T) {
 	if err != nil || issued.State != "waiting_for_install" || issued.CertificatePEM == "" {
 		t.Fatalf("certificate blocked on DNS cleanup: state=%q certificate=%t error=%v", issued.State, issued.CertificatePEM != "", err)
 	}
-	claimed, found, err := database.ClaimACMEOrderWork(t.Context(), "before-install", now.Add(time.Second), time.Second)
+	// installation invalidates the claimed revision. cleanup must resume without
+	// waiting out the invalidated worker's remaining lease.
+	claimed, found, err := database.ClaimACMEOrderWork(t.Context(), "before-install", now.Add(time.Second), time.Minute)
 	if err != nil || !found || claimed.ID != prepared.ID || claimed.Authorizations[0].State != "valid" {
 		t.Fatalf("uninstalled cleanup claim: found=%t error=%v", found, err)
 	}
@@ -157,6 +159,9 @@ func TestIntegrationInstalledCertificateRetainsCleanupWork(t *testing.T) {
 	current, found, err := database.ClaimACMEOrderWork(t.Context(), "after-install", now.Add(2*time.Second), time.Second)
 	if err != nil || !found || current.State != "installed" || current.Authorizations[0].State != "valid" {
 		t.Fatalf("installed cleanup work was lost: found=%t state=%q error=%v", found, current.State, err)
+	}
+	if _, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, prepared.ID, *prepared.NotAfter, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
 	}
 	current.Authorizations[0].State, current.Authorizations[0].AvailableAt = "cleaning", now
 	current.AvailableAt = now

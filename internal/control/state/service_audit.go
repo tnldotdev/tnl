@@ -72,7 +72,7 @@ func RecordServiceAudit(ctx context.Context, tx pgx.Tx, event serviceaudit.Event
 		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.identities person WHERE person.id=$1 AND (
 			EXISTS(SELECT 1 FROM control.team_memberships member WHERE member.identity_id=person.id AND member.team_id=$2 AND member.removed_at IS NULL)
 			OR $4::text IN ('invitation.accept','grant.create','device.enroll','device.revoke','certificate.client.issue') AND (
-			    EXISTS(SELECT 1 FROM control.service_grants g WHERE g.service_id=$3 AND g.identity_id=person.id)
+			    EXISTS(SELECT 1 FROM control.visitor_grants g WHERE g.service_id=$3 AND g.identity_id=person.id)
 			    OR EXISTS(SELECT 1 FROM control.visitor_grants g WHERE g.public_url_id=$3 AND g.identity_id=person.id)
 			    OR EXISTS(SELECT 1 FROM control.connector_sessions c WHERE c.service_id=$3 AND c.identity_id=person.id)
 			)))`, event.ActorIdentityID, event.TeamID, event.ServiceID, event.EventType).Scan(&exists); err != nil {
@@ -446,7 +446,7 @@ func (s *nullableAuditString) ScanText(v pgtype.Text) error {
 func auditDeviceMutation(ctx context.Context, tx pgx.Tx, identity, device, operation string, now time.Time) error {
 	rows, err := tx.Query(ctx, `SELECT DISTINCT s.team_id,s.id FROM control.services s WHERE
 		EXISTS(SELECT 1 FROM control.team_memberships m WHERE m.team_id=s.team_id AND m.identity_id=$1 AND m.removed_at IS NULL)
-		OR EXISTS(SELECT 1 FROM control.service_grants g WHERE g.service_id=s.id AND g.identity_id=$1)
+		OR EXISTS(SELECT 1 FROM control.visitor_grants g WHERE g.service_id=s.id AND g.identity_id=$1)
 		OR EXISTS(SELECT 1 FROM control.connector_sessions c WHERE c.service_id=s.id AND c.device_id=$2)
 		ORDER BY s.team_id,s.id`, identity, device)
 	if err != nil {

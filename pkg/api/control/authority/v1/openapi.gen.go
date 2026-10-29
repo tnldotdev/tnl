@@ -1183,8 +1183,8 @@ type ListWebsiteServiceHTTPGrantsParams struct {
 	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
 }
 
-// CreateWebsiteServiceHTTPGrantParams defines parameters for CreateWebsiteServiceHTTPGrant.
-type CreateWebsiteServiceHTTPGrantParams struct {
+// CreateWebsiteServiceVisitorCredentialParams defines parameters for CreateWebsiteServiceVisitorCredential.
+type CreateWebsiteServiceVisitorCredentialParams struct {
 	// XTnlActorToken Configured-issuer, configured-client signed human assertion with unique jti and at most five-minute lifetime. Nonce is base64url(SHA256("tnl.service.actor.v1\n" + METHOD + "\n" + escaped path and raw query + "\n" + base64url(SHA256(exact body bytes)))); base64url has no padding. GET and DELETE use an empty body. Only these service bridge operations accept this purpose. Current control identity, roles, eligibility and signed company source contexts are checked transactionally; website credentials and token roles alone grant nothing.
 	XTnlActorToken ServiceActorToken `json:"X-Tnl-Actor-Token"`
 }
@@ -1402,8 +1402,8 @@ type AcceptWebsiteServiceInvitationJSONRequestBody = ServiceInvitationCredential
 // PreviewWebsiteServiceInvitationJSONRequestBody defines body for PreviewWebsiteServiceInvitation for application/json ContentType.
 type PreviewWebsiteServiceInvitationJSONRequestBody = ServiceInvitationCredential
 
-// CreateWebsiteServiceHTTPGrantJSONRequestBody defines body for CreateWebsiteServiceHTTPGrant for application/json ContentType.
-type CreateWebsiteServiceHTTPGrantJSONRequestBody = externalRef0.CreateServiceHTTPGrantRequest
+// CreateWebsiteServiceVisitorCredentialJSONRequestBody defines body for CreateWebsiteServiceVisitorCredential for application/json ContentType.
+type CreateWebsiteServiceVisitorCredentialJSONRequestBody = externalRef0.CreateVisitorCredentialRequest
 
 // InviteWebsiteServiceVisitorJSONRequestBody defines body for InviteWebsiteServiceVisitor for application/json ContentType.
 type InviteWebsiteServiceVisitorJSONRequestBody = externalRef0.CreateServiceInvitationRequest
@@ -1791,17 +1791,17 @@ type ClientInterface interface {
 	// ListWebsiteServiceHTTPGrants performs a GET /v1/service/services/{service_id}/http-grants (the `ListWebsiteServiceHTTPGrants` operationId) request.
 	ListWebsiteServiceHTTPGrants(ctx context.Context, serviceId ServiceID, params *ListWebsiteServiceHTTPGrantsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateWebsiteServiceHTTPGrantWithBody performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceHTTPGrant` operationId) request,
+	// CreateWebsiteServiceVisitorCredentialWithBody performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceVisitorCredential` operationId) request,
 	// with any type of body and a specified content type.
 	//
 	// Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
-	CreateWebsiteServiceHTTPGrantWithBody(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceHTTPGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateWebsiteServiceVisitorCredentialWithBody(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceVisitorCredentialParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateWebsiteServiceHTTPGrant performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceHTTPGrant` operationId) request.
+	// CreateWebsiteServiceVisitorCredential performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceVisitorCredential` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
 	// Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
-	CreateWebsiteServiceHTTPGrant(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceHTTPGrantParams, body CreateWebsiteServiceHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateWebsiteServiceVisitorCredential(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceVisitorCredentialParams, body CreateWebsiteServiceVisitorCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeWebsiteServiceHTTPGrant performs a DELETE /v1/service/services/{service_id}/http-grants/{grant_id} (the `RevokeWebsiteServiceHTTPGrant` operationId) request.
 	RevokeWebsiteServiceHTTPGrant(ctx context.Context, serviceId ServiceID, grantId string, params *RevokeWebsiteServiceHTTPGrantParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2801,12 +2801,12 @@ func (c *Client) ListWebsiteServiceHTTPGrants(ctx context.Context, serviceId Ser
 	return c.Client.Do(req)
 }
 
-// CreateWebsiteServiceHTTPGrantWithBody performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceHTTPGrant` operationId) request,
+// CreateWebsiteServiceVisitorCredentialWithBody performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceVisitorCredential` operationId) request,
 // with any type of body and a specified content type.
 //
 // Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
-func (c *Client) CreateWebsiteServiceHTTPGrantWithBody(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceHTTPGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateWebsiteServiceHTTPGrantRequestWithBody(c.Server, serviceId, params, contentType, body)
+func (c *Client) CreateWebsiteServiceVisitorCredentialWithBody(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceVisitorCredentialParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateWebsiteServiceVisitorCredentialRequestWithBody(c.Server, serviceId, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2817,12 +2817,12 @@ func (c *Client) CreateWebsiteServiceHTTPGrantWithBody(ctx context.Context, serv
 	return c.Client.Do(req)
 }
 
-// CreateWebsiteServiceHTTPGrant performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceHTTPGrant` operationId) request.
+// CreateWebsiteServiceVisitorCredential performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceVisitorCredential` operationId) request.
 // Takes a body of the `application/json` content type.
 //
 // Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
-func (c *Client) CreateWebsiteServiceHTTPGrant(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceHTTPGrantParams, body CreateWebsiteServiceHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateWebsiteServiceHTTPGrantRequest(c.Server, serviceId, params, body)
+func (c *Client) CreateWebsiteServiceVisitorCredential(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceVisitorCredentialParams, body CreateWebsiteServiceVisitorCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateWebsiteServiceVisitorCredentialRequest(c.Server, serviceId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4842,19 +4842,19 @@ func NewListWebsiteServiceHTTPGrantsRequest(server string, serviceId ServiceID, 
 	return req, nil
 }
 
-// NewCreateWebsiteServiceHTTPGrantRequest calls the generic CreateWebsiteServiceHTTPGrant builder with application/json body
-func NewCreateWebsiteServiceHTTPGrantRequest(server string, serviceId ServiceID, params *CreateWebsiteServiceHTTPGrantParams, body CreateWebsiteServiceHTTPGrantJSONRequestBody) (*http.Request, error) {
+// NewCreateWebsiteServiceVisitorCredentialRequest calls the generic CreateWebsiteServiceVisitorCredential builder with application/json body
+func NewCreateWebsiteServiceVisitorCredentialRequest(server string, serviceId ServiceID, params *CreateWebsiteServiceVisitorCredentialParams, body CreateWebsiteServiceVisitorCredentialJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateWebsiteServiceHTTPGrantRequestWithBody(server, serviceId, params, "application/json", bodyReader)
+	return NewCreateWebsiteServiceVisitorCredentialRequestWithBody(server, serviceId, params, "application/json", bodyReader)
 }
 
-// NewCreateWebsiteServiceHTTPGrantRequestWithBody constructs an http.Request for the CreateWebsiteServiceHTTPGrant method, with any body, and a specified content type
-func NewCreateWebsiteServiceHTTPGrantRequestWithBody(server string, serviceId ServiceID, params *CreateWebsiteServiceHTTPGrantParams, contentType string, body io.Reader) (*http.Request, error) {
+// NewCreateWebsiteServiceVisitorCredentialRequestWithBody constructs an http.Request for the CreateWebsiteServiceVisitorCredential method, with any body, and a specified content type
+func NewCreateWebsiteServiceVisitorCredentialRequestWithBody(server string, serviceId ServiceID, params *CreateWebsiteServiceVisitorCredentialParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -7029,19 +7029,19 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	ListWebsiteServiceHTTPGrantsWithResponse(ctx context.Context, serviceId ServiceID, params *ListWebsiteServiceHTTPGrantsParams, reqEditors ...RequestEditorFn) (*ListWebsiteServiceHTTPGrantsResponse, error)
 
-	// CreateWebsiteServiceHTTPGrantWithBodyWithResponse performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceHTTPGrant` operationId) request,
+	// CreateWebsiteServiceVisitorCredentialWithBodyWithResponse performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceVisitorCredential` operationId) request,
 	// with any type of body and a specified content type.
 	//
 	// Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
 	//
 	// Returns a wrapper object for the known response body format(s).
-	CreateWebsiteServiceHTTPGrantWithBodyWithResponse(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceHTTPGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateWebsiteServiceHTTPGrantResponse, error)
+	CreateWebsiteServiceVisitorCredentialWithBodyWithResponse(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceVisitorCredentialParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateWebsiteServiceVisitorCredentialResponse, error)
 
-	// CreateWebsiteServiceHTTPGrantWithResponse performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceHTTPGrant` operationId) request.
+	// CreateWebsiteServiceVisitorCredentialWithResponse performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceVisitorCredential` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
-	CreateWebsiteServiceHTTPGrantWithResponse(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceHTTPGrantParams, body CreateWebsiteServiceHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWebsiteServiceHTTPGrantResponse, error)
+	CreateWebsiteServiceVisitorCredentialWithResponse(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceVisitorCredentialParams, body CreateWebsiteServiceVisitorCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWebsiteServiceVisitorCredentialResponse, error)
 
 	// RevokeWebsiteServiceHTTPGrantWithResponse performs a DELETE /v1/service/services/{service_id}/http-grants/{grant_id} (the `RevokeWebsiteServiceHTTPGrant` operationId) request.
 	//
@@ -8654,32 +8654,32 @@ func (r ListWebsiteServiceHTTPGrantsResponse) ContentType() string {
 	return ""
 }
 
-type CreateWebsiteServiceHTTPGrantResponse struct {
+type CreateWebsiteServiceVisitorCredentialResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *externalRef0.ServiceHTTPGrant
+	JSON201 *externalRef0.VisitorCredential
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateWebsiteServiceHTTPGrantResponse) GetJSON201() *externalRef0.ServiceHTTPGrant {
+func (r CreateWebsiteServiceVisitorCredentialResponse) GetJSON201() *externalRef0.VisitorCredential {
 	return r.JSON201
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateWebsiteServiceHTTPGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r CreateWebsiteServiceVisitorCredentialResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r CreateWebsiteServiceHTTPGrantResponse) GetBody() []byte {
+func (r CreateWebsiteServiceVisitorCredentialResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r CreateWebsiteServiceHTTPGrantResponse) Status() string {
+func (r CreateWebsiteServiceVisitorCredentialResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -8687,7 +8687,7 @@ func (r CreateWebsiteServiceHTTPGrantResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r CreateWebsiteServiceHTTPGrantResponse) StatusCode() int {
+func (r CreateWebsiteServiceVisitorCredentialResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -8695,7 +8695,7 @@ func (r CreateWebsiteServiceHTTPGrantResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateWebsiteServiceHTTPGrantResponse) ContentType() string {
+func (r CreateWebsiteServiceVisitorCredentialResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -10905,30 +10905,30 @@ func (c *ClientWithResponses) ListWebsiteServiceHTTPGrantsWithResponse(ctx conte
 	return ParseListWebsiteServiceHTTPGrantsResponse(rsp)
 }
 
-// CreateWebsiteServiceHTTPGrantWithBodyWithResponse performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceHTTPGrant` operationId) request,
+// CreateWebsiteServiceVisitorCredentialWithBodyWithResponse performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceVisitorCredential` operationId) request,
 // with any type of body and a specified content type.
 //
 // Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
 //
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CreateWebsiteServiceHTTPGrantWithBodyWithResponse(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceHTTPGrantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateWebsiteServiceHTTPGrantResponse, error) {
-	rsp, err := c.CreateWebsiteServiceHTTPGrantWithBody(ctx, serviceId, params, contentType, body, reqEditors...)
+func (c *ClientWithResponses) CreateWebsiteServiceVisitorCredentialWithBodyWithResponse(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceVisitorCredentialParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateWebsiteServiceVisitorCredentialResponse, error) {
+	rsp, err := c.CreateWebsiteServiceVisitorCredentialWithBody(ctx, serviceId, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseCreateWebsiteServiceHTTPGrantResponse(rsp)
+	return ParseCreateWebsiteServiceVisitorCredentialResponse(rsp)
 }
 
-// CreateWebsiteServiceHTTPGrantWithResponse performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceHTTPGrant` operationId) request.
+// CreateWebsiteServiceVisitorCredentialWithResponse performs a POST /v1/service/services/{service_id}/http-grants (the `CreateWebsiteServiceVisitorCredential` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
-func (c *ClientWithResponses) CreateWebsiteServiceHTTPGrantWithResponse(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceHTTPGrantParams, body CreateWebsiteServiceHTTPGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWebsiteServiceHTTPGrantResponse, error) {
-	rsp, err := c.CreateWebsiteServiceHTTPGrant(ctx, serviceId, params, body, reqEditors...)
+func (c *ClientWithResponses) CreateWebsiteServiceVisitorCredentialWithResponse(ctx context.Context, serviceId ServiceID, params *CreateWebsiteServiceVisitorCredentialParams, body CreateWebsiteServiceVisitorCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWebsiteServiceVisitorCredentialResponse, error) {
+	rsp, err := c.CreateWebsiteServiceVisitorCredential(ctx, serviceId, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseCreateWebsiteServiceHTTPGrantResponse(rsp)
+	return ParseCreateWebsiteServiceVisitorCredentialResponse(rsp)
 }
 
 // RevokeWebsiteServiceHTTPGrantWithResponse performs a DELETE /v1/service/services/{service_id}/http-grants/{grant_id} (the `RevokeWebsiteServiceHTTPGrant` operationId) request.
@@ -12461,22 +12461,22 @@ func ParseListWebsiteServiceHTTPGrantsResponse(rsp *http.Response) (*ListWebsite
 	return response, nil
 }
 
-// ParseCreateWebsiteServiceHTTPGrantResponse parses an HTTP response from a CreateWebsiteServiceHTTPGrantWithResponse call
-func ParseCreateWebsiteServiceHTTPGrantResponse(rsp *http.Response) (*CreateWebsiteServiceHTTPGrantResponse, error) {
+// ParseCreateWebsiteServiceVisitorCredentialResponse parses an HTTP response from a CreateWebsiteServiceVisitorCredentialWithResponse call
+func ParseCreateWebsiteServiceVisitorCredentialResponse(rsp *http.Response) (*CreateWebsiteServiceVisitorCredentialResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &CreateWebsiteServiceHTTPGrantResponse{
+	response := &CreateWebsiteServiceVisitorCredentialResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest externalRef0.ServiceHTTPGrant
+		var dest externalRef0.VisitorCredential
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -13713,7 +13713,7 @@ type ServerInterface interface {
 	ListWebsiteServiceHTTPGrants(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params ListWebsiteServiceHTTPGrantsParams)
 
 	// (POST /v1/service/services/{service_id}/http-grants)
-	CreateWebsiteServiceHTTPGrant(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params CreateWebsiteServiceHTTPGrantParams)
+	CreateWebsiteServiceVisitorCredential(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params CreateWebsiteServiceVisitorCredentialParams)
 
 	// (DELETE /v1/service/services/{service_id}/http-grants/{grant_id})
 	RevokeWebsiteServiceHTTPGrant(w http.ResponseWriter, r *http.Request, serviceId ServiceID, grantId string, params RevokeWebsiteServiceHTTPGrantParams)
@@ -14573,8 +14573,8 @@ func (siw *ServerInterfaceWrapper) ListWebsiteServiceHTTPGrants(w http.ResponseW
 	handler.ServeHTTP(w, r)
 }
 
-// CreateWebsiteServiceHTTPGrant operation middleware
-func (siw *ServerInterfaceWrapper) CreateWebsiteServiceHTTPGrant(w http.ResponseWriter, r *http.Request) {
+// CreateWebsiteServiceVisitorCredential operation middleware
+func (siw *ServerInterfaceWrapper) CreateWebsiteServiceVisitorCredential(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
@@ -14589,7 +14589,7 @@ func (siw *ServerInterfaceWrapper) CreateWebsiteServiceHTTPGrant(w http.Response
 	}
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params CreateWebsiteServiceHTTPGrantParams
+	var params CreateWebsiteServiceVisitorCredentialParams
 
 	headers := r.Header
 
@@ -14617,7 +14617,7 @@ func (siw *ServerInterfaceWrapper) CreateWebsiteServiceHTTPGrant(w http.Response
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateWebsiteServiceHTTPGrant(w, r, serviceId, params)
+		siw.Handler.CreateWebsiteServiceVisitorCredential(w, r, serviceId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -16306,7 +16306,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/service-invitations/preview", wrapper.PreviewWebsiteServiceInvitation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/service-invitations/accept", wrapper.AcceptWebsiteServiceInvitation)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/services/{service_id}/http-grants", wrapper.ListWebsiteServiceHTTPGrants)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/services/{service_id}/http-grants", wrapper.CreateWebsiteServiceHTTPGrant)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service/services/{service_id}/http-grants", wrapper.CreateWebsiteServiceVisitorCredential)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/service/services/{service_id}/http-grants/{grant_id}", wrapper.RevokeWebsiteServiceHTTPGrant)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload-sessions/identity", wrapper.IdentifyWorkload)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload-sessions/{session_id}/assertions", wrapper.AttachWorkloadAssertion)

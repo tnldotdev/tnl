@@ -32,6 +32,7 @@ func newAdmissionTransportFixture(t *testing.T) *admissionTransportFixture {
 	t.Helper()
 	material := newForwardingTestMaterial(t)
 	f := &admissionTransportFixture{entry: forwardingTestEntry(time.Now(), ""), material: material}
+	f.entry.PublicUrlId = "url_0123456789abcdefghijkl"
 	f.entry.CanonicalHostname = "route.example"
 	f.entry.IpPolicy = ingressv1.AllowAll
 	registry := relay.NewRegistry()

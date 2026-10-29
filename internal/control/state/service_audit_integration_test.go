@@ -46,7 +46,7 @@ func TestIntegrationServiceAuditTransactionalManagement(t *testing.T) {
 		t.Fatal("mutation committed without audit")
 	}
 	var count int
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.service_grants WHERE service_id=$1 AND kind='team'`, service.ID).Scan(&count); err != nil || count != 0 {
+	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.visitor_grants WHERE service_id=$1 AND kind='team'`, service.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("grant escaped rollback: %d %v", count, err)
 	}
 	if _, err = d.pool.Exec(t.Context(), `ALTER TABLE control.service_audit_events DROP CONSTRAINT reject_audit_grant`); err != nil {

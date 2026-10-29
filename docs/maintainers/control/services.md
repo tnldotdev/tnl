@@ -83,7 +83,7 @@ each application stream needs a current ready run and a separate admission.
 ingress and publisher check the exact subject, session, service/run, source,
 grant, and connection assignment. ingress emits PROXY v2 once, after the relay
 acknowledges its assignment. connector-admitted streams do not request an
-application client certificate. direct HTTP uses its current HTTP credential;
+application client certificate. direct HTTP uses its signed visitor permission;
 direct database clients use mTLS. application authorization remains independent.
 
 assignment retries retain one idempotency key until the outcome is known. changed
@@ -91,7 +91,7 @@ requests conflict; expired, revoked, bound, or stale assignments cannot replay.
 the encrypted retry result is covered by storage-key rotation and bounded
 retention. see [`connector/stream`](../../../internal/connector/stream),
 [`tunnelv1`](../../../pkg/protocol/tunnelv1), and
-[`service_http_authorization.go`](../../../internal/control/state/service_http_authorization.go).
+[`http_permission.go`](../../../internal/publisher/http_permission.go).
 
 ## retain current authorization
 
@@ -100,6 +100,11 @@ ongoing authorization. ingress normally rechecks active streams every 30 seconds
 bounded by the applicable grant, run, infrastructure lease, certificate, and
 two-minute maximum decision deadline. denial closes both ends; unavailable
 control cannot extend the deadline. stream workers join before capacity is released.
+
+direct HTTP application requests use the publisher's shared local permission
+verifier and ten-second policy lease. ingress admission checks transport and run
+capacity; it does not authorize the HTTP credential. policy renewal happens
+outside request admission, and stale policy closes guarded requests.
 
 session expiry prevents new streams while admitted streams drain under their
 own authorization. replacement joins the old runner before reopening the

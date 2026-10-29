@@ -24,33 +24,12 @@ WHERE share.id = sqlc.arg(share_id)
   AND share.expires_at > sqlc.arg(now)
   AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)));
 
--- name: ListActiveSharesForPublicURL :many
-SELECT share.id, share.secret_digest, share.expires_at
-FROM control.shares AS share
-JOIN control.share_public_urls AS included ON included.share_id = share.id
-WHERE included.public_url_id = sqlc.arg(public_url_id)
-  AND share.revoked_at IS NULL
-  AND share.expires_at > sqlc.arg(now)
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)))
-ORDER BY share.id LIMIT 256;
-
 -- name: CountActiveSharesForPublicURL :one
 SELECT count(*)::bigint FROM control.shares AS share
 JOIN control.share_public_urls AS included ON included.share_id = share.id
 WHERE included.public_url_id = sqlc.arg(public_url_id)
   AND share.revoked_at IS NULL AND share.expires_at > sqlc.arg(now)
   AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)));
-
--- name: ListActiveShareCookiesForPublicURL :many
-SELECT cookie.share_id, cookie.token_digest, cookie.expires_at
-FROM control.share_cookies AS cookie
-JOIN control.shares AS share ON share.id = cookie.share_id
-WHERE cookie.public_url_id = sqlc.arg(public_url_id)
-  AND cookie.expires_at > sqlc.arg(now)
-  AND share.revoked_at IS NULL
-  AND share.expires_at > sqlc.arg(now)
-  AND (share.scope != 'guest' OR control.guest_share_live(share.guest_id, sqlc.arg(now)))
-ORDER BY cookie.created_at DESC LIMIT 2048;
 
 -- name: CountActiveShareCookiesForPublicURL :one
 SELECT count(*)::bigint FROM control.share_cookies AS cookie

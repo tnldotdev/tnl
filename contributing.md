@@ -181,10 +181,13 @@ publishers for the project together. The app-workflows tier covers these fences
 and once-per-run automatic readiness with its bounded retry budget.
 
 For public HTTP live authorization, run `task go:test:live-authorization`, then
-`task go:test:live-authorization -- -race`. These use deterministic clocks for
-long HTTP/WebSocket renewal, denial, outage deadlines, and HTTP/2 isolation.
+`task go:test:live-authorization -- -race`. These check the shared signed-permission
+verifier and local policy lease, then use deterministic clocks for long
+HTTP/WebSocket renewal, denial, outage deadlines, and HTTP/2 isolation.
 `task go:test:integration:live-authorization` owns disposable PostgreSQL for
 browser and alias handoffs, current visitor authorization, and HTTP logout.
+`task go:test:integration:share-token` checks the CLI's signed share permission
+output and its exact scope and expiry against disposable PostgreSQL.
 
 For ingress production wiring, pool selection, lifetime traffic totals, pending
 promotion, private relay fallback, and server-first half-closes, run

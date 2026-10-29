@@ -137,7 +137,7 @@ type visitorDrainHarness struct {
 
 type drainDecisionControl struct{ *certificateTestControl }
 
-func (*drainDecisionControl) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+func (*drainDecisionControl) RedeemBrowserHandoff(context.Context, string, uint64, string, string, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
 	return controlv1.BrowserHandoffResponse{}, errors.New("no browser handoff")
 }
 
@@ -149,17 +149,8 @@ func (*drainDecisionControl) RevokeBrowserAccess(context.Context, string, uint64
 	return nil
 }
 
-func (*drainDecisionControl) AuthorizeHTTPVisitor(context.Context, string, controlv1.HTTPVisitorRequest, credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
-	expires := time.Now().Add(time.Minute)
-	return controlv1.HTTPVisitorResponse{VisitAllowed: true, ValidUntil: &expires}, nil
-}
-
 func (*drainDecisionControl) EnableShareAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
 	return nil
-}
-
-func (*drainDecisionControl) GetPublishRunShareState(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunShareState, error) {
-	return controlv1.PublishRunShareState{Shares: []controlv1.PublisherShare{}}, nil
 }
 
 func (*drainDecisionControl) RedeemPublishRunShare(context.Context, string, controlv1.RedeemShareRequest, credentials.PublishRunToken) (controlv1.ShareRedemption, error) {

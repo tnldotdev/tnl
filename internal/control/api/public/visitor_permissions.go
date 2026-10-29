@@ -2,7 +2,6 @@ package public
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"net/http"
@@ -12,14 +11,11 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type VisitorStore interface {
-	HTTPVisitorPermission(context.Context, controlstate.PublishRunAuthentication, controlstate.HTTPVisitorRequest, time.Time) (controlstate.VisitorPermission, error)
 	CreateTeamVisitorGrant(context.Context, string, string, string, *time.Time, time.Time) (controlstate.VisitorGrant, error)
 	CreateIdentityVisitorGrant(context.Context, string, string, string, string, *time.Time, time.Time) (controlstate.VisitorGrant, error)
 	ListVisitorGrants(context.Context, string, string) ([]controlstate.VisitorGrant, error)
@@ -30,77 +26,6 @@ type VisitorStore interface {
 	AcceptVisitorInvitation(context.Context, string, string, time.Time) (controlstate.VisitorGrant, error)
 	ListAvailablePublicURLs(context.Context, string, string, string, time.Time) (controlstate.AvailablePublicURLPage, error)
 	ReplaceVisitorAccess(context.Context, string, string, controlstate.VisitorAccessMode, []string, uint64, time.Time) (controlstate.PublicURL, error)
-}
-
-func (h *handler) AuthorizeHTTPVisitor(w http.ResponseWriter, r *http.Request, runID controlv1.PublishRunID) {
-	if h.visitorState == nil {
-		writeProblem(w, 503, controlv1.Unavailable, "visitor permissions are unavailable")
-		return
-	}
-	var body controlv1.HTTPVisitorRequest
-	if decodeJSON(w, r, &body) != nil || body.PublishRunNumber < 1 || !validVisitorSource(body.SourceIp) {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor decision")
-		return
-	}
-	auth, ok := h.authenticatePublishRunRequest(w, r, runID, uint64(body.PublishRunNumber))
-	if !ok {
-		return
-	}
-	input := controlstate.HTTPVisitorRequest{SourceIP: body.SourceIp, BrowserCookieSecret: optionalFeedbackString(body.BrowserCookieSecret), ShareID: optionalFeedbackString(body.ShareId)}
-	if body.BrowserCookieSecret != nil {
-		raw, err := base64.RawURLEncoding.Strict().DecodeString(*body.BrowserCookieSecret)
-		if err != nil || len(raw) != 32 {
-			writeProblem(w, 403, controlv1.Forbidden, "invalid browser credential")
-			return
-		}
-	}
-	if body.ShareId != nil || body.ShareSecret != nil || body.ShareCookieSecret != nil {
-		if body.ShareId == nil || !opaqueid.Valid(*body.ShareId, opaqueid.SharePrefix) || (body.ShareSecret == nil) == (body.ShareCookieSecret == nil) {
-			writeProblem(w, 403, controlv1.Forbidden, "invalid share credential")
-			return
-		}
-	}
-	if body.ShareSecret != nil {
-		raw, err := base64.RawURLEncoding.Strict().DecodeString(*body.ShareSecret)
-		if err != nil || len(raw) != 32 {
-			writeProblem(w, 403, controlv1.Forbidden, "invalid share secret")
-			return
-		}
-		input.ShareSecret = raw
-	}
-	if body.ShareCookieSecret != nil {
-		raw, err := base64.RawURLEncoding.Strict().DecodeString(*body.ShareCookieSecret)
-		if err != nil || len(raw) != 32 {
-			writeProblem(w, 403, controlv1.Forbidden, "invalid share cookie")
-			return
-		}
-		input.ShareCookieSecret = raw
-	}
-	if input.BrowserCookieSecret != "" {
-		if h.browserAccess == nil {
-			writeProblem(w, 503, controlv1.Unavailable, "browser sign-in is unavailable")
-			return
-		}
-		if _, _, _, err := h.browserSessionAccess(r, auth, input.BrowserCookieSecret); err != nil {
-			writeVisitorDecisionProblem(w, "verify visitor identity", err)
-			return
-		}
-	}
-	decision, err := h.visitorState.HTTPVisitorPermission(r.Context(), auth, input, time.Now())
-	if err != nil {
-		writeVisitorDecisionProblem(w, "authorize HTTP visitor", err)
-		return
-	}
-	result := controlv1.HTTPVisitorResponse{VisitAllowed: decision.VisitAllowed, TeamMember: decision.TeamMember}
-	observability.AuthorizationDecision(r.Context(), "http_visitor", decision.VisitAllowed)
-	if decision.VisitAllowed {
-		result.ValidUntil = decision.ExpiresAt
-	}
-	if decision.IdentityID != "" {
-		result.IdentityId = &decision.IdentityID
-		result.DisplayName = &decision.DisplayName
-	}
-	writeJSON(w, 200, result)
 }
 
 func (h *handler) visitorActor(w http.ResponseWriter, r *http.Request) (string, bool) {

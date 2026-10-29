@@ -140,6 +140,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 		return &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	client := newClient("api", job)
+	awaitServiceHTTPStatus(t, client, endpoint("api"), "Authorization", "Bearer application-owned", 200)
 	request := func(client *http.Client, endpoint, path string, payload []byte, status int) *http.Response {
 		t.Helper()
 		r, err := http.NewRequestWithContext(t.Context(), "POST", endpoint+path, bytes.NewReader(payload))
@@ -195,6 +196,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	openStream := func(job *workload.Client) <-chan error {
 		t.Helper()
 		streamClient := newClient("api", job)
+		awaitServiceHTTPStatus(t, streamClient, endpoint("api"), "Authorization", "Bearer application-owned", 200)
 		streamClient.Timeout = 0
 		response := request(streamClient, endpoint("api"), "/stream", nil, 200)
 		t.Cleanup(func() { _ = response.Body.Close() })
@@ -226,6 +228,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	upgradeRequest.Header.Set("Connection", "Upgrade")
 	upgradeRequest.Header.Set("Upgrade", "workload-test")
 	upgradeClient := newClient("api", upgradeJob)
+	awaitServiceHTTPStatus(t, upgradeClient, endpoint("api"), "Authorization", "Bearer application-owned", 200)
 	upgradeClient.Timeout = 0
 	upgradeResponse, err := upgradeClient.Do(upgradeRequest)
 	if err != nil {
