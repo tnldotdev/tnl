@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,7 +52,7 @@ func (f *nativeDeliveryFixture) ReadPublisherVisitorPolicy(_ context.Context, bo
 	return controlv1.VisitorPolicyUpdate{Policy: policy, AfterRevision: body.AfterRevision, SnapshotRequired: body.AfterRevision == 0}, nil
 }
 
-func nativePeerFixture(t *testing.T, target string) (*Bound, *PeerSession, *tls.Config, func(string) tunnelv1.NativePeerVisitorEntry, *nativeDeliveryFixture) {
+func nativePeerFixture(t *testing.T, target string, lifetime ...time.Duration) (*Bound, *PeerSession, *tls.Config, func(string) tunnelv1.NativePeerVisitorEntry, *nativeDeliveryFixture) {
 	t.Helper()
 	p, b, _, verification := privateFixture(t, target)
 	controlKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{1}, 32))
@@ -63,6 +64,9 @@ func nativePeerFixture(t *testing.T, target string) (*Bound, *PeerSession, *tls.
 	now := time.Now()
 	t.Cleanup(b.Invalidate)
 	d := controlv1.NativePeerPairDelivery{PairId: "npp_" + strings.Repeat("C", 22), DeliveryId: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{3}, 16)), DeliveryGeneration: 1, Key: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32)), ServiceId: p.Preparation.ServiceId, ServiceRunId: p.Preparation.ServiceRunId, RunNumber: p.Preparation.RunNumber, PublisherIdentityId: p.Preparation.PublisherIdentityId, SourceIp: "192.0.2.1", Subject: controlv1.VisitorSubject{Kind: controlv1.VisitorSubjectKind(peerSubject.Kind), IdentityId: &identity, DeviceId: &device}, ObservedAt: now, ExpiresAt: now.Add(time.Minute)}
+	if len(lifetime) != 0 {
+		d.ExpiresAt = now.Add(lifetime[0])
+	}
 	for slot, a := range b.connections {
 		d.Relays = append(d.Relays, controlv1.NativePeerPairRelay{PublisherConnectionId: a.PublisherConnectionId, AssignmentRevision: a.ConnectionAssignmentRevision, RelayAddress: a.RelayAddress, TlsServerName: a.TlsServerName, RelayLease: controlv1.NativePeerRelayLease{RelayServiceId: a.RelayServiceId, RelayId: "relay-process", RelayRunId: "rr_" + strings.Repeat(string(rune('D'+slot)), 22), RelayLeaseRevision: 1}})
 	}
@@ -131,16 +135,18 @@ func TestNativeServicePeerConsumerForwardsAndRejectsReplayLocally(t *testing.T) 
 	}
 	defer target.Close()
 	var targets sync.WaitGroup
+	var accepted atomic.Int64
 	go func() {
 		for {
 			conn, err := target.Accept()
 			if err != nil {
 				return
 			}
+			accepted.Add(1)
 			targets.Go(func() { defer conn.Close(); _, _ = io.Copy(conn, conn) })
 		}
 	}()
-	b, p, verification, opening, control := nativePeerFixture(t, target.Addr().String())
+	b, p, verification, opening, control := nativePeerFixture(t, target.Addr().String(), 2*time.Second)
 	first, replayed := opening("F"), opening("F")
 	client, server := nativeInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
@@ -173,6 +179,43 @@ func TestNativeServicePeerConsumerForwardsAndRejectsReplayLocally(t *testing.T) 
 	if _, err := io.ReadFull(local, got[:]); err != nil || string(got[:]) != "native" {
 		t.Fatal("native target transcript changed", string(got[:]), err)
 	}
+	old := p.bindingSnapshot()
+	b.mu.Lock()
+	var original *nativeAdmission
+	for a := range p.streams {
+		original = a
+	}
+	if original == nil {
+		b.mu.Unlock()
+		t.Fatal("no retained native admission after the target replied")
+	}
+	inner, setupUntil := p.session, original.setupUntil
+	b.mu.Unlock()
+	renewal := *control
+	renewal.delivery.ObservedAt = time.Now()
+	renewal.delivery.ExpiresAt = renewal.delivery.ObservedAt.Add(time.Minute)
+	binding, err := PreparePeerBinding(ctx, &renewal, old.serviceID, old.runID, old.pairID, old.generation, "run-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Renew(binding); err != nil {
+		t.Fatal("current authenticated delivery did not renew the retained owner", err)
+	}
+	// the original fixed context deadline must not close this same inner stream,
+	// target socket, capacity charge or replay history after successful renewal.
+	timer := time.NewTimer(time.Until(old.until) + 20*time.Millisecond)
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		timer.Stop()
+		t.Fatal(ctx.Err())
+	}
+	if _, err := local.Write([]byte("retain")); err != nil {
+		t.Fatal("renewal closed the retained stream", err)
+	}
+	if _, err := io.ReadFull(local, got[:]); err != nil || string(got[:]) != "retain" {
+		t.Fatal("renewal changed the live target transcript", string(got[:]), err)
+	}
 	replay := open(replayed)
 	if err := replay.HandshakeContext(ctx); err == nil {
 		t.Fatal("same visitor entered twice on the retained pair")
@@ -180,9 +223,11 @@ func TestNativeServicePeerConsumerForwardsAndRejectsReplayLocally(t *testing.T) 
 	_ = replay.Close()
 	b.mu.Lock()
 	active, pending := b.reservedStreams, b.nativePending
+	_, retained := p.streams[original]
+	unchanged := p.session == inner && original.setupUntil.Equal(setupUntil) && len(p.seen) == 1
 	b.mu.Unlock()
-	if active != 1 || pending != 0 {
-		t.Fatal("native admission did not share C or release pending", active, pending)
+	if active != 1 || pending != 0 || !retained || !unchanged || accepted.Load() != 1 {
+		t.Fatal("renewal changed native stream, target, replay, setup or capacity ownership", active, pending, retained, unchanged, accepted.Load())
 	}
 	if control.calls != 1 {
 		t.Fatal("application arrival fetched delivery", control.calls)
@@ -202,6 +247,45 @@ func TestNativeServicePeerConsumerForwardsAndRejectsReplayLocally(t *testing.T) 
 	}
 	_ = target.Close()
 	targets.Wait()
+}
+
+func TestNativePeerRenewalCannotTransferOrReviveOwnership(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*PeerSession, *PeerBinding)
+	}{
+		{"pair", func(_ *PeerSession, b *PeerBinding) { b.pairID = "npp_" + strings.Repeat("Z", 22) }},
+		{"service", func(_ *PeerSession, b *PeerBinding) { b.serviceID = "svc_" + strings.Repeat("Z", 22) }},
+		{"run", func(_ *PeerSession, b *PeerBinding) { b.runID = "srun_" + strings.Repeat("Z", 22) }},
+		{"publisher", func(_ *PeerSession, b *PeerBinding) { b.publisherID = "pub_" + strings.Repeat("Z", 22) }},
+		{"run number", func(_ *PeerSession, b *PeerBinding) { b.number++ }},
+		{"generation", func(_ *PeerSession, b *PeerBinding) { b.generation++ }},
+		{"delivery", func(_ *PeerSession, b *PeerBinding) { b.delivery[0]++ }},
+		{"key", func(_ *PeerSession, b *PeerBinding) { b.key[0]++ }},
+		{"subject", func(_ *PeerSession, b *PeerBinding) { b.subject.DeviceID = "vdev_" + strings.Repeat("Z", 22) }},
+		{"source", func(_ *PeerSession, b *PeerBinding) { b.source = netip.MustParseAddr("192.0.2.2") }},
+		{"assignment", func(_ *PeerSession, b *PeerBinding) { b.relays[0].AssignmentRevision++ }},
+		{"expired delivery", func(_ *PeerSession, b *PeerBinding) { b.until = time.Now().Add(-time.Second) }},
+		{"expired owner", func(p *PeerSession, _ *PeerBinding) { p.binding.until = time.Now().Add(-time.Second) }},
+		{"retired owner", func(p *PeerSession, _ *PeerBinding) { p.closed = true }},
+		{"unregistered owner", func(p *PeerSession, _ *PeerBinding) { delete(p.bound.nativePeers, p.binding.pairID) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			b, p, _, _, _ := nativePeerFixture(t, "127.0.0.1:1")
+			b.mu.Lock()
+			next := p.binding
+			next.until = time.Now().Add(2 * time.Minute)
+			test.change(p, &next)
+			before := p.binding
+			b.mu.Unlock()
+			if err := p.Renew(next); !errors.Is(err, ErrPrivateStream) {
+				t.Fatal("renewal transferred or revived peer authority", err)
+			}
+			if p.bindingSnapshot() != before {
+				t.Fatal("rejected renewal changed the retained binding")
+			}
+		})
+	}
 }
 
 func TestNativeServiceDeniedOpeningCannotResolveOrReadMySQLTarget(t *testing.T) {
@@ -474,6 +558,11 @@ func TestNativeServiceResolutionUsesOriginalSetupDeadline(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("resolver was not entered", ctx.Err())
+	}
+	next := p.bindingSnapshot()
+	next.until = time.Now().Add(2 * time.Minute)
+	if err := p.Renew(next); err != nil {
+		t.Fatal("peer renewal during entered setup failed", err)
 	}
 	select {
 	case <-expired:

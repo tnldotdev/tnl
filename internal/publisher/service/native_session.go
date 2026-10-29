@@ -35,6 +35,7 @@ type PeerSession struct {
 	serve       sync.WaitGroup
 	workers     sync.WaitGroup
 	watchDone   chan struct{}
+	changed     chan struct{}
 	replayUntil time.Time
 }
 
@@ -58,11 +59,67 @@ func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession
 	if b.nativePeers == nil {
 		b.nativePeers = make(map[string]*PeerSession)
 	}
-	life, cancel := context.WithDeadline(ctx, binding.until)
-	p := &PeerSession{bound: b, binding: binding, ctx: life, cancel: cancel, seen: make(map[string]struct{}), streams: make(map[*nativeAdmission]struct{}), watchDone: make(chan struct{})}
+	life, cancel := context.WithCancel(ctx)
+	p := &PeerSession{bound: b, binding: binding, ctx: life, cancel: cancel, seen: make(map[string]struct{}), streams: make(map[*nativeAdmission]struct{}), watchDone: make(chan struct{}), changed: make(chan struct{})}
 	b.nativePeers[binding.pairID] = p
-	go func() { defer close(p.watchDone); <-life.Done(); p.stop() }()
+	go p.watch()
 	return p, nil
+}
+
+// Renew installs a newly authenticated delivery for this exact retained owner.
+// it cannot revive an expired peer, change its source/subject/key, transfer a
+// replacement pair or run, or reset any admitted stream's setup deadline.
+func (p *PeerSession) Renew(binding PeerBinding) error {
+	if p == nil || p.bound == nil || p.bound.boundState == nil {
+		return ErrPrivateStream
+	}
+	b := p.bound
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	old := p.binding
+	if !p.currentLocked() || !b.peerCurrentLocked(binding) ||
+		binding.pairID != old.pairID || binding.serviceID != old.serviceID || binding.runID != old.runID ||
+		binding.publisherID != old.publisherID || binding.number != old.number || binding.generation != old.generation ||
+		binding.delivery != old.delivery || binding.key != old.key || binding.source != old.source || binding.subject != old.subject {
+		return ErrPrivateStream
+	}
+	p.binding = binding
+	close(p.changed)
+	p.changed = make(chan struct{})
+	return nil
+}
+
+func (p *PeerSession) currentLocked() bool {
+	return !p.closed && p.ctx.Err() == nil && p.bound.nativePeers[p.binding.pairID] == p && p.bound.peerCurrentLocked(p.binding)
+}
+
+func (p *PeerSession) watch() {
+	defer close(p.watchDone)
+	defer p.stop()
+	for {
+		p.bound.mu.Lock()
+		current := p.currentLocked()
+		until, changed := p.binding.until, p.changed
+		p.bound.mu.Unlock()
+		if !current {
+			return
+		}
+		timer := time.NewTimer(time.Until(until))
+		select {
+		case <-p.ctx.Done():
+			timer.Stop()
+			return
+		case <-changed:
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
+}
+
+func (p *PeerSession) bindingSnapshot() PeerBinding {
+	p.bound.mu.Lock()
+	defer p.bound.mu.Unlock()
+	return p.binding
 }
 
 func (p *PeerSession) stop() {
@@ -105,7 +162,7 @@ func (p *PeerSession) Serve(ctx context.Context, session muxsession.Session) err
 	}
 	b := p.bound
 	b.mu.Lock()
-	if p.closed || p.started || p.ctx.Err() != nil || ctx.Err() != nil || !b.peerCurrentLocked(p.binding) {
+	if p.started || ctx.Err() != nil || !p.currentLocked() {
 		b.mu.Unlock()
 		_ = session.Close()
 		return ErrPrivateStream
@@ -168,7 +225,7 @@ func (p *PeerSession) reserve(caller context.Context, stream net.Conn) (*nativeA
 	if limit == 0 {
 		limit = 64
 	}
-	if p.closed || p.ctx.Err() != nil || caller.Err() != nil || !b.peerCurrentLocked(p.binding) || b.nativePending >= min(limit, 4096) || len(p.streams) >= maxNativePeerStreams {
+	if caller.Err() != nil || !p.currentLocked() || b.nativePending >= min(limit, 4096) || len(p.streams) >= maxNativePeerStreams {
 		return nil, ErrPrivateStream
 	}
 	life, cancel := context.WithCancel(p.ctx)
@@ -199,7 +256,7 @@ func (a *nativeAdmission) CheckUse(ctx context.Context) (time.Time, error) {
 	b := a.peer.bound
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if a.retiring || !a.admitted || !a.ready && !time.Now().Before(a.setupUntil) || a.ctx.Err() != nil || a.caller.Err() != nil || ctx.Err() != nil || a.peer.closed || !b.peerCurrentLocked(a.peer.binding) {
+	if a.retiring || !a.admitted || !a.ready && !time.Now().Before(a.setupUntil) || a.ctx.Err() != nil || a.caller.Err() != nil || ctx.Err() != nil || !a.peer.currentLocked() {
 		return time.Time{}, ErrPrivateStream
 	}
 	until, err := a.guard.Current()
@@ -218,7 +275,7 @@ func (a *nativeAdmission) FinishSetup() error {
 	b := a.peer.bound
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if a.retiring || !a.admitted || a.ctx.Err() != nil || a.caller.Err() != nil || a.peer.closed || !b.peerCurrentLocked(a.peer.binding) || !time.Now().Before(a.setupUntil) {
+	if a.retiring || !a.admitted || a.ctx.Err() != nil || a.caller.Err() != nil || !a.peer.currentLocked() || !time.Now().Before(a.setupUntil) {
 		return ErrPrivateStream
 	}
 	if _, err := a.guard.Current(); err != nil {
@@ -282,11 +339,12 @@ func (a *nativeAdmission) forwardPeer() (result error) {
 	if !enabled || entry.MetadataRevision != uint64(b.prepared.metadataRevision) {
 		return ErrPrivateStream
 	}
-	permission, err := visitortoken.VerifyNativePeerSession(entry, initial, p.binding.expected(), view, time.Now())
+	binding := p.bindingSnapshot()
+	permission, err := visitortoken.VerifyNativePeerSession(entry, initial, binding.expected(), view, time.Now())
 	if err != nil {
 		return err
 	}
-	a.guard, err = b.prepared.policy.BindNative(permission, p.binding.source, int64(entry.MetadataRevision), nil, a.stopAndClose)
+	a.guard, err = b.prepared.policy.BindNative(permission, binding.source, int64(entry.MetadataRevision), nil, a.stopAndClose)
 	if err != nil {
 		return err
 	}
@@ -295,7 +353,7 @@ func (a *nativeAdmission) forwardPeer() (result error) {
 	}
 	b.mu.Lock()
 	_, replay := p.seen[entry.VisitorConnectionID]
-	valid := !a.retiring && a.ctx.Err() == nil && a.caller.Err() == nil && !p.closed && b.peerCurrentLocked(p.binding) && !replay && len(p.seen) < maxNativePeerHistory
+	valid := !a.retiring && a.ctx.Err() == nil && a.caller.Err() == nil && p.currentLocked() && !replay && len(p.seen) < maxNativePeerHistory
 	if valid {
 		// valid acceptance spends history even when C or final handoff fails.
 		p.seen[entry.VisitorConnectionID] = struct{}{}
@@ -335,7 +393,8 @@ func (a *nativeAdmission) forwardPeer() (result error) {
 			a.stopAndClose()
 			return ErrPrivateStream
 		}
-		next, err := visitortoken.VerifyNativePeerRenewalProof(nextEntry, nil, p.binding.expected(), view, time.Now())
+		binding := p.bindingSnapshot()
+		next, err := visitortoken.VerifyNativePeerRenewalProof(nextEntry, nil, binding.expected(), view, time.Now())
 		if err == nil && next.SameIdentity(permission) {
 			err = a.guard.Renew(next)
 		} else if err == nil {
