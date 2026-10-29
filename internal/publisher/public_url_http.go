@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -248,24 +249,21 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				serverPermitted := false
 				var permission httpPermission
 				if !proof {
+					var guard *publicHTTPGuard
+					var guarded *http.Request
 					var err error
-					permission, err = localHTTPPermission(request, config.VisitorPolicy, config.VisitorTokens)
+					permission, guard, guarded, err = authorizePublicHTTPRequest(response, request, config.VisitorPolicy, config.VisitorTokens)
 					serverPermitted = err == nil
 					if serverPermitted {
-						guard, guarded, err := guardLocalHTTPRequest(response, request, config.VisitorPolicy, permission)
-						if err != nil {
-							serverPermitted = false
-						} else {
-							defer guard.finish()
-							if config.VisitorTokens != nil && !permission.anonymous {
-								prepared, release, found := config.VisitorTokens.use(permission.token, guard.local)
-								guard.release = release
-								if found && (permission.renewed || prepared.VisitorToken != permission.token.Reveal()) {
-									_ = visitorPermissionCookie(response, prepared)
-								}
+						defer guard.finish()
+						if config.VisitorTokens != nil && !permission.anonymous {
+							prepared, release, found := config.VisitorTokens.use(permission.token, guard.local)
+							guard.release = release
+							if found && (permission.renewed || prepared.VisitorToken != permission.token.Reveal()) {
+								_ = visitorPermissionCookie(response, prepared)
 							}
-							response, request = guard, guarded
 						}
+						response, request = guard, guarded
 					}
 				}
 				if share, ok := permission.permission.Facts().Subject.(visitortoken.Share); ok && share.ShareID != "" && serverPermitted {
@@ -394,4 +392,28 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		}
 	}
 	return route, nil
+}
+
+// authorizePublicHTTPRequest observes only local permission verification and
+// current guard binding. the guard keeps the HTTP parent and request cancellation;
+// neither target forwarding nor capacity promotion belongs to this finite span.
+func authorizePublicHTTPRequest(w http.ResponseWriter, r *http.Request, policy *visitorlease.Lease, tokens *browserTokens) (permission httpPermission, guard *publicHTTPGuard, guarded *http.Request, err error) {
+	check, finish := observability.PublisherOperation(r.Context(), "visitor_authorization")
+	defer func() {
+		observed := err
+		switch {
+		case errors.Is(err, visitortoken.ErrToken), errors.Is(err, visitortoken.ErrBinding), errors.Is(err, visitortoken.ErrPolicy):
+			observed = diagnostic.Wrap(diagnostic.VisitorAccessDenied, err)
+		case errors.Is(err, visitortoken.ErrKey):
+			observed = diagnostic.Wrap(diagnostic.ServerUnavailable, err)
+		}
+		observability.PublisherAuthorization(check, err == nil, err == nil, observed)
+		finish(observed)
+	}()
+	permission, err = localHTTPPermission(r, policy, tokens)
+	if err != nil {
+		return permission, nil, nil, err
+	}
+	guard, guarded, err = guardLocalHTTPRequest(w, r, policy, permission)
+	return permission, guard, guarded, err
 }

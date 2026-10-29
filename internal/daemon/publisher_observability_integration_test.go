@@ -92,6 +92,11 @@ func (c *topologyTraceCollector) process(t *testing.T, role string) context.Cont
 
 func (c *topologyTraceCollector) assertChain(t *testing.T, names ...string) {
 	t.Helper()
+	c.assertChainState(t, "", names...)
+}
+
+func (c *topologyTraceCollector) assertChainState(t *testing.T, state string, names ...string) {
+	t.Helper()
 	privateWait(t, 5*time.Second, func(ctx context.Context) (bool, error) {
 		for _, owner := range c.owners {
 			if err := owner.ForceFlush(ctx); err != nil {
@@ -104,7 +109,15 @@ func (c *topologyTraceCollector) assertChain(t *testing.T, names ...string) {
 		var walk func(int, *tracepb.Span) bool
 		walk = func(index int, parent *tracepb.Span) bool {
 			if index == len(names) {
-				return true
+				if state == "" {
+					return true
+				}
+				for _, attr := range parent.Attributes {
+					if attr.Key == string(observability.State.Key()) && attr.Value.GetStringValue() == state {
+						return true
+					}
+				}
+				return false
 			}
 			for _, span := range c.spans {
 				if span.Name != names[index] {
@@ -145,6 +158,9 @@ func TestIntegrationPublisherObservabilityPublic(t *testing.T) {
 			collector := newTopologyTraceCollector(t)
 			fixture := newSplitPublishFixtureWithOptions(t, "trace", splitPublishOptions{processContext: func(role string) context.Context { return collector.process(t, role) }})
 			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/denied" {
+					t.Error("invalid visitor permission reached the target")
+				}
 				for _, name := range []string{"traceparent", "tracestate", "baggage"} {
 					if r.Header.Get(name) != "" {
 						t.Errorf("target received injected %s", name)
@@ -159,7 +175,11 @@ func TestIntegrationPublisherObservabilityPublic(t *testing.T) {
 			} else {
 				quic = privateDisabledConnector()
 			}
-			handle := startOwnedIntegrationPublisherContext(t, collector.process(t, "publisher"), fixture.owner, fixture.identity.publisherConfig(target.URL, quic, tcp), nil)
+			config := fixture.identity.publisherConfig(target.URL, quic, tcp)
+			if config.AccessMode != "anonymous" || config.AdmitVisitor != nil || config.PromoteVisitor != nil {
+				t.Fatal("public authorization fixture must use default anonymous permission without admission hooks")
+			}
+			handle := startOwnedIntegrationPublisherContext(t, collector.process(t, "publisher"), fixture.owner, config, nil)
 			ready := fixture.waitReady(t, handle)
 			response, body, err := fixture.visitor.requestURL(http.MethodGet, ready.PublicURL+"/observed", nil)
 			if err != nil {
@@ -171,7 +191,19 @@ func TestIntegrationPublisherObservabilityPublic(t *testing.T) {
 			fixture.visitor.transport.CloseIdleConnections()
 			collector.assertChain(t, "ingress.open_visitor_stream", "ingress.relay_attempt", "relay.open_visitor_stream", "publisher.visitor", "publisher.visitor_tls")
 			collector.assertChain(t, "ingress.open_visitor_stream", "ingress.relay_attempt", "relay.open_visitor_stream", "publisher.visitor", "publisher.http", "publisher.target_connect")
-			collector.assertChain(t, "ingress.open_visitor_stream", "ingress.relay_attempt", "relay.open_visitor_stream", "publisher.visitor", "publisher.visitor_authorization", "publisher.authorization")
+			chain := []string{"ingress.open_visitor_stream", "ingress.relay_attempt", "relay.open_visitor_stream", "publisher.visitor", "publisher.http", "publisher.visitor_authorization", "publisher.authorization"}
+			collector.assertChainState(t, "admitted", chain...)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ready.PublicURL+"/denied", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("Tnl-Visitor-Token", "invalid-private-visitor-credential")
+			response, _, err = fixture.visitor.request(request)
+			if err != nil || response.StatusCode != http.StatusForbidden {
+				t.Fatal("invalid supplied credential did not deny the anonymous public visit", err)
+			}
+			fixture.visitor.transport.CloseIdleConnections()
+			collector.assertChainState(t, "denied", chain...)
 		})
 	}
 }

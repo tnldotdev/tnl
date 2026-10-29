@@ -24,9 +24,14 @@ import (
 
 func httpPermissionFixture(t *testing.T, anonymous bool) (*visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
 	t.Helper()
+	return httpPermissionFixtureClock(t, anonymous, nil)
+}
+
+func httpPermissionFixtureClock(t *testing.T, anonymous bool, clock func() time.Time) (*visitorlease.Lease, visitorlease.Update, visitortoken.Token) {
+	t.Helper()
 	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: "url_" + strings.Repeat("A", 22)}
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("h", 32)))
-	policy, err := visitorlease.New(scope, nil)
+	policy, err := visitorlease.New(scope, clock)
 	if err != nil {
 		t.Fatal(err)
 	}
