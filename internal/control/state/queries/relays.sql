@@ -33,6 +33,7 @@ INSERT INTO control.relay_leases (
     relay_service_id,
     relay_run_id,
     relay_lease_revision,
+    peer_signing_public_key,
     protocol_version,
     internal_relay_address,
     internal_networks,
@@ -47,6 +48,7 @@ SELECT
     relay_service.relay_service_id,
     sqlc.arg(relay_run_id),
     1,
+    sqlc.narg(peer_signing_public_key)::bytea,
     sqlc.arg(protocol_version),
     sqlc.arg(internal_relay_address),
     sqlc.arg(internal_networks),
@@ -66,6 +68,7 @@ ON CONFLICT (relay_id) DO UPDATE SET
         ELSE control.relay_leases.relay_lease_revision + 1
     END,
     protocol_version = EXCLUDED.protocol_version,
+    peer_signing_public_key = EXCLUDED.peer_signing_public_key,
     internal_relay_address = EXCLUDED.internal_relay_address,
     internal_networks = EXCLUDED.internal_networks,
     connection_capacity = EXCLUDED.connection_capacity,
@@ -114,8 +117,13 @@ ON CONFLICT (relay_id) DO UPDATE SET
             THEN control.relay_leases.lease_expires_at
         ELSE EXCLUDED.lease_expires_at
     END
-WHERE (control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
-    OR control.relay_leases.lease_expires_at <= EXCLUDED.registered_at)
+WHERE ((control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
+    AND control.relay_leases.peer_signing_public_key IS NOT DISTINCT FROM EXCLUDED.peer_signing_public_key)
+    OR (control.relay_leases.relay_run_id <> EXCLUDED.relay_run_id
+        AND (control.relay_leases.peer_signing_public_key IS NULL
+            OR EXCLUDED.peer_signing_public_key IS NULL
+            OR control.relay_leases.peer_signing_public_key <> EXCLUDED.peer_signing_public_key)
+        AND control.relay_leases.lease_expires_at <= EXCLUDED.registered_at))
   AND NOT (control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
       AND control.relay_leases.draining
       AND control.relay_leases.lease_expires_at <= EXCLUDED.registered_at)
@@ -337,3 +345,49 @@ FROM service_guard
 WHERE relay_service_id = sqlc.arg(relay_service_id)
   AND transport_private_key_storage_key_id = sqlc.arg(previous_key_id)
   AND transport_private_key_ciphertext = sqlc.arg(previous_ciphertext);
+
+-- run only after RegisterRelay succeeds, inside the same transaction. on a
+-- mismatched historical key the caller rolls back the lease replacement too.
+-- name: BindRelayRunSigningKey :execrows
+INSERT INTO control.relay_run_signing_keys (relay_id, relay_run_id, peer_signing_public_key)
+VALUES (sqlc.arg(relay_id), sqlc.arg(relay_run_id), sqlc.arg(peer_signing_public_key))
+ON CONFLICT (relay_id, relay_run_id) DO UPDATE SET
+    peer_signing_public_key = EXCLUDED.peer_signing_public_key
+WHERE control.relay_run_signing_keys.peer_signing_public_key = EXCLUDED.peer_signing_public_key;
+
+-- registration holds the lease row lock until this update commits. a matching
+-- old run clears its supersession only after it has passed lease and key checks.
+-- name: MarkSupersededRelayRunSigningKeys :exec
+UPDATE control.relay_run_signing_keys
+SET superseded_at = CASE WHEN relay_run_id = sqlc.arg(relay_run_id)::text
+    THEN NULL ELSE sqlc.arg(superseded_at)::timestamptz END
+WHERE relay_id = sqlc.arg(relay_id)
+  AND ((relay_run_id = sqlc.arg(relay_run_id) AND superseded_at IS NOT NULL)
+    OR (relay_run_id <> sqlc.arg(relay_run_id) AND superseded_at IS NULL));
+
+-- lock the lease before key rows, as registration does. skip a relay being
+-- registered: deleting its old binding before its key check would allow a
+-- different key on a returning run. never delete the current run's key.
+-- name: CleanupSupersededRelayRunSigningKeys :execrows
+WITH candidates AS MATERIALIZED (
+    SELECT candidate.relay_id, candidate.relay_run_id FROM control.relay_run_signing_keys AS candidate
+    WHERE candidate.superseded_at < sqlc.arg(cutoff)
+    ORDER BY candidate.superseded_at, candidate.relay_id, candidate.relay_run_id LIMIT sqlc.arg(batch_size)
+), locked_leases AS MATERIALIZED (
+    SELECT leases.relay_id, leases.relay_run_id
+    FROM control.relay_leases AS leases
+    JOIN (SELECT DISTINCT relay_id FROM candidates) AS candidates USING (relay_id)
+    ORDER BY leases.relay_id FOR UPDATE OF leases SKIP LOCKED
+), victims AS MATERIALIZED (
+    SELECT keys.relay_id, keys.relay_run_id
+    FROM control.relay_run_signing_keys AS keys
+    JOIN candidates USING (relay_id, relay_run_id)
+    JOIN locked_leases AS leases USING (relay_id)
+    WHERE keys.superseded_at < sqlc.arg(cutoff)
+      AND keys.relay_run_id <> leases.relay_run_id
+    ORDER BY keys.superseded_at, keys.relay_id, keys.relay_run_id
+    FOR UPDATE OF keys SKIP LOCKED
+)
+DELETE FROM control.relay_run_signing_keys AS keys
+USING victims
+WHERE keys.relay_id = victims.relay_id AND keys.relay_run_id = victims.relay_run_id;

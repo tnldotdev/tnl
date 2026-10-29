@@ -9,6 +9,12 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1native-peer-pairs"
+  /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1native-peer-pairs~1{pair_id}~1delivery"
+  /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/prepared:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1native-peer-pairs~1{pair_id}~1prepared"
   /v1/visitor-policy:
     $ref: "./paths/visitor-policy.yaml#/paths/~1v1~1visitor-policy"
   /v1/visitor-tokens:
@@ -121,6 +127,10 @@ paths:
     $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1ingress-assignments"
   /v1/services/{service_id}/select-run:
     $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1select-run"
+  /v1/services/{service_id}/native-peer-pairs:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1native-peer-pairs"
+  /v1/services/{service_id}/native-peer-pairs/{pair_id}/renew:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1native-peer-pairs~1{pair_id}~1renew"
   /v1/services/{service_id}/runs:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs"
   /v1/services/{service_id}/runs/{service_run_id}:
@@ -306,6 +316,14 @@ components:
     Problem:
       $ref: "./schemas/common.yaml#/responses/Problem"
   schemas:
+    NativePeerPairCandidate:
+      $ref: "./schemas/service-runs.yaml#/schemas/NativePeerPairCandidate"
+    NativePeerPairCandidates:
+      $ref: "./schemas/service-runs.yaml#/schemas/NativePeerPairCandidates"
+    NativePeerPairDelivery:
+      $ref: "./schemas/service-runs.yaml#/schemas/NativePeerPairDelivery"
+    NativePeerPairPrepared:
+      $ref: "./schemas/service-runs.yaml#/schemas/NativePeerPairPrepared"
     KubernetesAuth:
       $ref: "./schemas/common.yaml#/schemas/KubernetesAuth"
     VisitorSubject:
@@ -474,6 +492,16 @@ components:
       $ref: "./schemas/connectors.yaml#/schemas/VisitorDevice"
     ServiceSelection:
       $ref: "./schemas/services.yaml#/schemas/ServiceSelection"
+    NativePeerRelayLease:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerRelayLease"
+    NativePeerPairRelay:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerPairRelay"
+    NativePeerPairReady:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerPairReady"
+    NativePeerPairRequest:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerPairRequest"
+    NativePeerPair:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerPair"
     ServiceID:
       $ref: "./schemas/services.yaml#/schemas/ServiceID"
     VisitorConnectionID:

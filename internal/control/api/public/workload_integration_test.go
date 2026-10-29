@@ -152,6 +152,9 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	if _, err = workloadControl.GetPublisherGroupAssignments(ctx, session.Credential); err == nil {
 		t.Fatal("workload became a publisher")
 	}
+	t.Run("signed native peer pair", func(t *testing.T) {
+		exerciseWorkloadNativePeerPair(t, d, job, server, human.Identity.Identity.ID, team, service, session.Credential, databaseURL)
+	})
 	// verify actual response bodies contain no assertion, provider selector or
 	// application credential in visitor inventory and error envelopes.
 	for _, path := range []string{"/v1/workload/services", "/v1/identity"} {

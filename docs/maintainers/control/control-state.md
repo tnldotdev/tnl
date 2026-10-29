@@ -63,6 +63,36 @@ permissions and IP grants without pruning workload replay fences. run both
 workers when checking retention: current credentials, retained assertions, and
 dependent visitor records must continue to pin their workload session.
 
+## native preparation authority
+
+each native preparation has an independent owner, even when two owners use the
+same device or workload signer. the signed `IdempotencyKey` stays with that owner
+through create, renew and replace. pair ID and generation identify a predecessor;
+they do not prove ownership. replacement issues new delivery material and a new
+session, not a transfer of an existing carrier or inner connection.
+
+an uncertain reply repeats the exact signed action, timestamp and key. a fresh
+renewal supersedes earlier create/replace reply proofs, so an old proof cannot
+borrow its later deadline. replay-retained rows still consume the 64-owner budget.
+the run lock serializes replacement and owner admission; failed insertion or
+capacity checks roll back predecessor deletion. see
+[`native_peer_pairs.go`](../../../internal/control/state/native_peer_pairs.go).
+
+delivery and publisher reports share the checked
+[`nativePeerPairBinding`](../../../internal/control/state/native_peer_pair_binding.go).
+each relay claim retains its own confirmed deadline, exact process and source.
+pair renewal never renews claims; a report records installation, not a grant.
+one valid claim in either slot stays pending. stale process/source/parent facts
+remain denials, and current parent growth cannot revive an expired claim/report.
+
+the explicit intermediate identity remains
+`tnl-control-fresh-v1-public-reservations`. migration repeat, open and readiness
+also compare the native preparation catalog's types, full constraint definitions,
+validation, indexes and enabled enforcement against
+[`native_preparation_shape.go`](../../../internal/control/state/native_preparation_shape.go).
+an incompatible same-name database is rejected, never converted or repaired.
+this foundation does not activate native carriers or ordinary native defaults.
+
 ## acquire locks in one order
 
 Every transaction must choose its complete lock order before it starts taking

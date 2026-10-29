@@ -104,9 +104,13 @@ func (h *handler) CreateWorkloadIngressAssignments(w http.ResponseWriter, r *htt
 }
 
 func privateSelectionResponse(selected controlstate.ServiceSelection) controlv1.ServiceSelection {
-	return controlv1.ServiceSelection{ServiceId: selected.ServiceID, ServiceRunId: selected.ServiceRunID, RunNumber: selected.RunNumber,
+	result := controlv1.ServiceSelection{ServiceId: selected.ServiceID, ServiceRunId: selected.ServiceRunID, RunNumber: selected.RunNumber,
 		Subject: visitorsubject.Wire(selected.Subject), ExpiresAt: selected.ExpiresAt,
 		Protocol: controlv1.ServiceProtocol(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: endpointResponse(selected.Endpoint)}
+	if selected.PairReady != nil {
+		result.PairReady = &controlv1.NativePeerPairReady{PublisherIdentityId: selected.PairReady.PublisherIdentityID, Relays: nativePairRelays(selected.PairReady.Relays)}
+	}
+	return result
 }
 
 func (h *handler) SelectWorkloadServiceRun(w http.ResponseWriter, r *http.Request, service string) {

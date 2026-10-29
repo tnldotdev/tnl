@@ -24,9 +24,9 @@ WITH relay_lease AS (
       AND leases.relay_lease_revision = $5
       AND leases.lease_expires_at > $2
       AND NOT leases.draining
-    RETURNING leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at
+    RETURNING leases.peer_signing_public_key, leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at
 )
-SELECT relay_lease.id, relay_lease.relay_id, relay_lease.relay_service_id, relay_lease.relay_run_id, relay_lease.relay_lease_revision, relay_lease.protocol_version, relay_lease.internal_relay_address, relay_lease.observed_address, relay_lease.internal_networks, relay_lease.connection_capacity, relay_lease.stream_capacity, relay_lease.reported_connections, relay_lease.reported_streams, relay_lease.draining, relay_lease.drain_deadline, relay_lease.registered_at, relay_lease.renewed_at, relay_lease.lease_expires_at, services.relay_address, services.tls_server_name
+SELECT relay_lease.peer_signing_public_key, relay_lease.id, relay_lease.relay_id, relay_lease.relay_service_id, relay_lease.relay_run_id, relay_lease.relay_lease_revision, relay_lease.protocol_version, relay_lease.internal_relay_address, relay_lease.observed_address, relay_lease.internal_networks, relay_lease.connection_capacity, relay_lease.stream_capacity, relay_lease.reported_connections, relay_lease.reported_streams, relay_lease.draining, relay_lease.drain_deadline, relay_lease.registered_at, relay_lease.renewed_at, relay_lease.lease_expires_at, services.relay_address, services.tls_server_name
 FROM relay_lease
 JOIN control.relay_services AS services USING (relay_service_id)
 `
@@ -40,6 +40,7 @@ type BeginAdminRelayDrainParams struct {
 }
 
 type BeginAdminRelayDrainRow struct {
+	PeerSigningPublicKey []byte
 	ID                   int64
 	RelayID              string
 	RelayServiceID       string
@@ -72,6 +73,7 @@ func (q *Queries) BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayD
 	)
 	var i BeginAdminRelayDrainRow
 	err := row.Scan(
+		&i.PeerSigningPublicKey,
 		&i.ID,
 		&i.RelayID,
 		&i.RelayServiceID,
@@ -179,7 +181,7 @@ func (q *Queries) InsertAdminAuditEvent(ctx context.Context, arg InsertAdminAudi
 }
 
 const listAdminRelayLeases = `-- name: ListAdminRelayLeases :many
-SELECT leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at, services.relay_address, services.tls_server_name
+SELECT leases.peer_signing_public_key, leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at, services.relay_address, services.tls_server_name
 FROM control.relay_leases AS leases
 JOIN control.relay_services AS services USING (relay_service_id)
 WHERE leases.lease_expires_at > $1
@@ -195,6 +197,7 @@ type ListAdminRelayLeasesParams struct {
 }
 
 type ListAdminRelayLeasesRow struct {
+	PeerSigningPublicKey []byte
 	ID                   int64
 	RelayID              string
 	RelayServiceID       string
@@ -227,6 +230,7 @@ func (q *Queries) ListAdminRelayLeases(ctx context.Context, arg ListAdminRelayLe
 	for rows.Next() {
 		var i ListAdminRelayLeasesRow
 		if err := rows.Scan(
+			&i.PeerSigningPublicKey,
 			&i.ID,
 			&i.RelayID,
 			&i.RelayServiceID,

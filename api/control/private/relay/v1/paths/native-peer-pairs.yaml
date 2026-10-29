@@ -1,0 +1,29 @@
+paths:
+  /internal/v1/native-peer-pairs/{pair_id}/legs/{connection_slot}/claim:
+    post:
+      operationId: claimNativePeerPairLeg
+      description: release one native peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+      parameters:
+        - name: pair_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
+        - name: connection_slot
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0, maximum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairLegClaimRequest" }
+      responses:
+        "200":
+          description: exact signed relay leg claim. contains a secret; never cache or log.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairLegClaim" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
