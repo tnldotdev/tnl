@@ -56,10 +56,12 @@ try {
     }),
   );
   await run("pnpm", ["install", "--ignore-scripts"], { cwd: directory });
-  await copyFile(
-    path.join(root, "packages/ts/test/fixtures/connections/drizzle.config.ts"),
-    path.join(directory, "drizzle.config.ts"),
-  );
+  for (const filename of ["drizzle.config.ts", "installed-drizzle-diagnostics.ts"]) {
+    await copyFile(
+      path.join(root, "packages/ts/test/fixtures/connections", filename),
+      path.join(directory, filename),
+    );
+  }
   const drizzle = await run(
     process.execPath,
     [

@@ -564,7 +564,7 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 		node := exec.CommandContext(t.Context(), "node", fixture, binary)
 		node.Dir, node.Env = root, append(slices.Clone(env), "TNL_CONNECTION_HANDLE="+state.ConnectionHandle, "DB_USER="+backend.User.Username(), "DB_PASSWORD="+password, "DB_NAME="+strings.TrimPrefix(backend.Path, "/"))
 		if output, err := node.CombinedOutput(); err != nil {
-			t.Fatalf("installed Drizzle Kit: %v %s", err, output)
+			t.Fatalf("installed Drizzle Kit: %s", drizzleFixtureFailure(output))
 		}
 	}
 	if protocol == "http" || protocol == "kubernetes" {
