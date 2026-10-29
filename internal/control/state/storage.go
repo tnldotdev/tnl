@@ -24,10 +24,6 @@ func guestRetryMasterKeyContext() string {
 	return "control.guest_retry_keys.guest_retry_master_key_ciphertext\x00id"
 }
 
-func visitorNetworkHashMasterKeyContext() string {
-	return "control.visitor_network_hash_keys.visitor_network_hash_master_key_ciphertext\x00id"
-}
-
 func acmeAccountKeyContext(accountID string) string {
 	return "control.acme_accounts.account_key_ciphertext\x00" + accountID
 }

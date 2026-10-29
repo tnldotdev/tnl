@@ -87,6 +87,47 @@ func TestIntegrationWorkloadReusableProviderFixedWindow(t *testing.T) {
 	}
 }
 
+func TestIntegrationWorkloadRestartKeepsExpiryAndRejectsClockRollback(t *testing.T) {
+	for _, duration := range []int{3600, 21600} {
+		t.Run(fmt.Sprint(duration), func(t *testing.T) {
+			d, now := newControlStateIntegrationDatabase(t, "workload_fixed_restart")
+			r := appliedProjectRequest(t, d, now)
+			r.Configuration = workloadConfiguration()
+			workload := r.Configuration.Workloads["test"]
+			workload.MaxDurationSeconds = duration
+			r.Configuration.Workloads["test"] = workload
+			if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
+				t.Fatal(err)
+			}
+			request, _ := workloadExchange(t, r, now)
+			original, err := d.ExchangeWorkload(t.Context(), request, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := d.RenewWorkloadSession(t.Context(), original.ID, original.Credential, now.Add(30*time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			// a new control owner reads the same durable session; opening state
+			// must not turn the original expiry into a fresh duration.
+			reopened, err := Open(t.Context(), d.pool.Config().ConnString(), testStorageKey, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(reopened.Close)
+			renewed, err := reopened.RenewWorkloadSession(t.Context(), original.ID, original.Credential, now.Add(60*time.Second))
+			if err != nil || !renewed.ExpiresAt.Equal(original.ExpiresAt) || !renewed.ExpiresAt.Equal(now.Add(time.Duration(duration)*time.Second)) {
+				t.Fatal("reopened control restarted the workload window", renewed.ExpiresAt, err)
+			}
+			if _, err := reopened.RenewWorkloadSession(t.Context(), original.ID, original.Credential, now.Add(59*time.Second)); !errors.Is(err, ErrWorkloadDenied) {
+				t.Fatal("renewal accepted time before its last saved observation", err)
+			}
+			if _, err := reopened.ExchangeWorkload(t.Context(), request, now.Add(59*time.Second)); !errors.Is(err, ErrWorkloadExpired) {
+				t.Fatal("exchange retry ignored detected clock rollback", err)
+			}
+		})
+	}
+}
+
 func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_handles")
 	ctx := t.Context()

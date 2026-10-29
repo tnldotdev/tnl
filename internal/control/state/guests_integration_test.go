@@ -173,7 +173,7 @@ func TestIntegrationGuestIssuanceSerializesOneNetwork(t *testing.T) {
 	}
 }
 
-func TestIntegrationGuestTrialMetersReadyTimeAndBothByteDirections(t *testing.T) {
+func TestIntegrationGuestTrialSettlesIdleReadyAuthorityOnce(t *testing.T) {
 	database, now, request, _ := newPublishRunPrerequisites(t)
 	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
 	if err != nil {
@@ -189,75 +189,31 @@ func TestIntegrationGuestTrialMetersReadyTimeAndBothByteDirections(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.guest_trials SET active_ready_at = $2 WHERE id = $1`, guest.ID, now.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_url_usage_buckets
-		(public_url_id, publish_run_number, team_id, acting_identity_id, bucket_start, bucket_end,
-		 observed_through, ingress_bytes, egress_bytes, histogram_data, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $6, 2097152, 1048576, $7, $6)`,
-		request.PublicURLID, setup.PublishRunNumber, request.TeamID, request.ActingIdentityID,
-		now, now.Add(time.Minute), []byte{0}); err != nil {
-		t.Fatal(err)
-	}
 	queries := controlstatedb.New(database.pool)
-	update := controlstatedb.UpdateGuestTransferredBytesParams{
-		GuestRouteID: request.PublicURLID, ObservedAt: timestamptz(now.Add(time.Minute)),
+	if count, err := queries.MarkGuestRunReady(t.Context(), controlstatedb.MarkGuestRunReadyParams{PublishRunID: text(setup.PublishRunID), ReadyAt: timestamptz(now.Add(time.Second))}); err != nil || count != 1 {
+		t.Fatal(err)
+	}
+	if _, err := queries.UpdateGuestServingAuthority(t.Context(), controlstatedb.UpdateGuestServingAuthorityParams{PublishRunID: setup.PublishRunID, Now: timestamptz(now.Add(time.Second))}); err != nil {
+		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err := queries.UpdateGuestTransferredBytes(t.Context(), update); err != nil {
+		if err := database.ClosePublishRun(t.Context(), setup.PublishRunID, setup.PublishRunToken, now.Add(time.Minute)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := database.ClosePublishRun(t.Context(), setup.PublishRunID, setup.PublishRunToken, now.Add(time.Minute)); err != nil {
-		t.Fatal(err)
-	}
 	stored, err := database.GuestTrialByAccessToken(t.Context(), guest.Token)
-	if err != nil || stored.UsedBytes != 3<<20 || stored.UsedReady != 59*time.Second {
-		t.Fatalf("cumulative guest usage = %+v, error = %v", stored, err)
-	}
-	if count, err := database.FinalizePublicURLUsageBuckets(t.Context(), now.Add(time.Minute), now.Add(time.Minute)); err != nil || count != 0 {
-		t.Fatalf("guest-only external usage deliveries = %d, %v", count, err)
-	}
-	var finalized bool
-	if err := database.pool.QueryRow(t.Context(), `SELECT finalized FROM control.public_url_usage_buckets WHERE public_url_id = $1`, request.PublicURLID).Scan(&finalized); err != nil || !finalized {
-		t.Fatalf("guest usage was not finalized: %t, %v", finalized, err)
+	if err != nil || stored.UsedReady != 29*time.Second || !stored.ServingUntil.Equal(now.Add(30*time.Second)) {
+		t.Fatalf("idle ready authority settlement = %+v, error = %v", stored, err)
 	}
 }
 
 func TestIntegrationGuestHeartbeatClosesExhaustedTrial(t *testing.T) {
-	database, now, request, _ := newPublishRunPrerequisites(t)
-	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
-	if err != nil {
+	f, guest := guestAuthorityFixture(t)
+	database, now := f.database, f.now
+	if _, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), now.Add(time.Second), time.Hour, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.CreateGuestTrial(t.Context(), guest, "routes.example.test", now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.guest_public_urls (public_url_id, guest_id, created_at) VALUES ($1, $2, $3)`, request.PublicURLID, guest.ID, now); err != nil {
-		t.Fatal(err)
-	}
-	setup, err := database.CreatePublishRun(t.Context(), request, now, 30*time.Second, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_url_usage_buckets
-		(public_url_id, publish_run_number, team_id, acting_identity_id, bucket_start, bucket_end,
-		 observed_through, ingress_bytes, egress_bytes, histogram_data, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $6, 3145728, 3145728, $7, $6)`,
-		request.PublicURLID, setup.PublishRunNumber, request.TeamID, request.ActingIdentityID,
-		now, now.Add(time.Minute), []byte{0}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := controlstatedb.New(database.pool).UpdateGuestTransferredBytes(t.Context(), controlstatedb.UpdateGuestTransferredBytesParams{
-		GuestRouteID: request.PublicURLID, ObservedAt: timestamptz(now.Add(time.Minute)),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	_, err = database.HeartbeatPublishRun(t.Context(), PublishRunAuthentication{
-		PublishRunID: setup.PublishRunID, PublicURLID: setup.PublicURLID,
-		PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken,
-	}, now.Add(2*time.Second), 30*time.Second, time.Minute)
+	_, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), now.Add(GuestReadyAllowance), 30*time.Second, time.Minute)
 	if !errors.Is(err, ErrGuestTrialSpent) {
 		t.Fatalf("exhausted guest heartbeat = %v", err)
 	}
@@ -266,11 +222,11 @@ func TestIntegrationGuestHeartbeatClosesExhaustedTrial(t *testing.T) {
 		t.Fatalf("guest retained active run = %v, %v", activeRunID, err)
 	}
 	var endReason string
-	if err := database.pool.QueryRow(t.Context(), `SELECT end_reason FROM control.guest_trials WHERE id=$1`, guest.ID).Scan(&endReason); err != nil || endReason != "transfer_limit" {
-		t.Fatalf("guest byte cutoff reason = %q, %v", endReason, err)
+	if err := database.pool.QueryRow(t.Context(), `SELECT end_reason FROM control.guest_trials WHERE id=$1`, guest.ID).Scan(&endReason); err != nil || endReason != "ready_limit" {
+		t.Fatalf("guest ready cutoff reason = %q, %v", endReason, err)
 	}
-	stats, err := database.RecentGuestTrialStats(t.Context(), now.Add(2*time.Second))
-	if err != nil || stats.Issued != 1 || stats.TransferLimit != 1 || stats.Expired != 0 {
+	stats, err := database.RecentGuestTrialStats(t.Context(), now.Add(GuestReadyAllowance))
+	if err != nil || stats.Issued != 1 || stats.ReadyLimit != 1 || stats.Expired != 0 {
 		t.Fatalf("committed guest totals = %+v, %v", stats, err)
 	}
 }
@@ -336,12 +292,15 @@ func TestIntegrationGuestExpiryClosesRunWithoutHeartbeat(t *testing.T) {
 				t.Fatal(err)
 			}
 			if test.ready {
-				if _, err := database.pool.Exec(t.Context(), `UPDATE control.guest_trials SET active_ready_at=$2 WHERE id=$1`, guest.ID, now); err != nil {
+				if _, err := controlstatedb.New(database.pool).MarkGuestRunReady(t.Context(), controlstatedb.MarkGuestRunReadyParams{PublishRunID: text(setup.PublishRunID), ReadyAt: timestamptz(now)}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET publisher_expires_at=$2 WHERE id=$1`,
 				setup.PublishRunID, now.Add(GuestLifetime+time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := controlstatedb.New(database.pool).UpdateGuestServingAuthority(t.Context(), controlstatedb.UpdateGuestServingAuthorityParams{PublishRunID: setup.PublishRunID, Now: timestamptz(now)}); err != nil {
 				t.Fatal(err)
 			}
 			closed, err := database.ExpireSavedPublishRuns(t.Context(), now.Add(test.elapsed))

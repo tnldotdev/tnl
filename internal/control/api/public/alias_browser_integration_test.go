@@ -76,7 +76,7 @@ func TestIntegrationAliasBrowserHTTPAuthorizationAndLogout(t *testing.T) {
 	refresh := func() visitortoken.View {
 		t.Helper()
 		started := policy.Begin()
-		update, err := client.ReadPublisherVisitorPolicy(ctx, controlv1.PublisherVisitorPolicyRequest{ObservedAllocations: []string{}, Resource: installed.Permission.Resource, RunId: run.PublishRunID,
+		update, err := client.ReadPublisherVisitorPolicy(ctx, controlv1.PublisherVisitorPolicyRequest{ObservedAllocations: []controlv1.StreamCapacityObservation{}, Resource: installed.Permission.Resource, RunId: run.PublishRunID,
 			RunNumber: int64(run.PublishRunNumber), AfterRevision: started.AfterRevision}, run.PublishRunToken.String())
 		if err != nil {
 			t.Fatal(err)
@@ -204,7 +204,7 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 	if err != nil || installed.CookieSecret == "" || installed.Permission.VisitorToken == "" {
 		t.Fatal("share reviewer sign-in failed before visitor handoff", err)
 	}
-	update, err := client.ReadPublisherVisitorPolicy(ctx, controlv1.PublisherVisitorPolicyRequest{ObservedAllocations: []string{}, Resource: installed.Permission.Resource, RunId: run.PublishRunID, RunNumber: int64(run.PublishRunNumber)}, run.PublishRunToken.String())
+	update, err := client.ReadPublisherVisitorPolicy(ctx, controlv1.PublisherVisitorPolicyRequest{ObservedAllocations: []controlv1.StreamCapacityObservation{}, Resource: installed.Permission.Resource, RunId: run.PublishRunID, RunNumber: int64(run.PublishRunNumber)}, run.PublishRunToken.String())
 	if err != nil {
 		t.Fatal(err)
 	}

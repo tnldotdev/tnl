@@ -14,6 +14,7 @@ import { closeServer, listeningTarget, isBunServer, type LocalHTTPServer } from 
 import { record, exactKeys } from "../project/runtime.js";
 import { parseStatus } from "./status.js";
 import type { TnlRatePeriod } from "../../config.gen.js";
+import { readTelemetryDisabled } from "./telemetry.js";
 
 export type PublisherCredentialFile = {
   readonly publisherCredentialFile: string;
@@ -79,14 +80,18 @@ export function openServer(
   server: LocalHTTPServer,
   options: OpenOptions = {},
   runtime: Dependencies = dependencies,
+  telemetryDisabled: boolean = readTelemetryDisabled(process.env.TNL_NO_TELEMETRY),
 ): Promise<AdHocTunnel> {
-  return operation("sdk.open", () => openServerUntraced(server, options, runtime));
+  return operation("sdk.open", () =>
+    openServerUntraced(server, options, runtime, telemetryDisabled),
+  );
 }
 
 async function openServerUntraced(
   server: LocalHTTPServer,
   options: OpenOptions,
   runtime: Dependencies,
+  telemetryDisabled: boolean,
 ): Promise<AdHocTunnel> {
   validateOptions(options);
   const target = await listeningTarget(server, options);
@@ -114,6 +119,7 @@ async function openServerUntraced(
     owner,
     pid: process.pid,
     target,
+    telemetry_disabled: telemetryDisabled,
     ...(options.server === undefined ? {} : { server_url: options.server }),
     ...(options.publisherIdentityID === undefined
       ? {}
@@ -459,13 +465,14 @@ export async function openFetch(
   handler: FetchHandler,
   options: OpenOptions = {},
   runtime: Dependencies = dependencies,
+  telemetryDisabled: boolean = readTelemetryDisabled(process.env.TNL_NO_TELEMETRY),
 ): Promise<AdHocTunnel> {
   validateOptions(options);
   const { createFetchServer } = await import("./fetch.js");
   const server = await createFetchServer(handler);
   let base: AdHocTunnel;
   try {
-    base = await openServer(server, options, runtime);
+    base = await openServer(server, options, runtime, telemetryDisabled);
   } catch (cause) {
     try {
       await closeServer(server);

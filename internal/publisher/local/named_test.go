@@ -32,11 +32,19 @@ func TestNamedLeasePinsConfigurationDigestAtOwnerBoundary(t *testing.T) {
 	}
 	a.project = transferred
 	request := publisherprotocol.Lease{Service: "api", Owner: strings.Repeat("a", 32), Pid: os.Getpid(), ConfigurationDigest: digest}
+	request.TelemetryDisabled = new(bool)
+	*request.TelemetryDisabled = true
 	var registration publisherprotocol.Registration
 	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/leases", request, &registration); err != nil || registration.Target != "http://127.0.0.1:4100" {
 		t.Fatalf("resolved lease = %+v, %v", registration, err)
 	}
 	defer a.manager.Unregister(registration.RegistrationID, request.Owner)
+	a.mu.Lock()
+	disabled := a.prepared[registration.RegistrationID].telemetryDisabled
+	a.mu.Unlock()
+	if !disabled {
+		t.Fatal("named lease lost its invocation-specific telemetry choice")
+	}
 	for _, change := range []func(*clientproject.Project){
 		func(p *clientproject.Project) { p.Config.Server = &configuredServer },
 		func(p *clientproject.Project) { p.Config.Team = &configuredTeam },

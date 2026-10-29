@@ -66,8 +66,6 @@ type publishOutput struct {
 	stalled               uint64
 	readyPublishRunNumber uint64
 	fallbackPublicURL     uint64
-	blockPublicURL        uint64
-	blocked               uint64
 	command               string
 	target                string
 	demo                  bool
@@ -157,24 +155,6 @@ func (o *publishOutput) transportFallback(publishRunNumber uint64, transport str
 	})
 }
 
-// blockedVisitors presents aggregate policy denials without exposing visitor IPs.
-func (o *publishOutput) blockedVisitors(publishRunNumber, total uint64) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if publishRunNumber != o.blockPublicURL {
-		o.blockPublicURL, o.blocked = publishRunNumber, 0
-	}
-	if total <= o.blocked {
-		return nil
-	}
-	increase := total - o.blocked
-	o.blocked = total
-	if o.mode != publishOutputHuman {
-		return nil
-	}
-	return diagnostic.WritePolicyDenial(o.stderr, o.command, increase, total)
-}
-
 func newPublishOutput(mode publishOutputMode, command string, stdout, stderr io.Writer, openURL func(string) error) (*publishOutput, error) {
 	if mode != publishOutputHuman && mode != publishOutputNDJSON {
 		return nil, errors.New("output must be human or ndjson")
@@ -222,7 +202,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 				)
 			}
 			if o.guestDemo {
-				fields = append(fields, clioutput.Field{Label: "guest trial", Value: "15 min / about 5 MiB across runs"})
+				fields = append(fields, clioutput.Field{Label: "guest trial", Value: "20 ready min across runs, including idle"})
 			}
 			if o.fallbackPublicURL == publishRunNumber {
 				fields = append(fields, clioutput.Field{Label: "transport", Value: "TLS/TCP fallback"})
@@ -434,8 +414,6 @@ func handlePublisherEvent(ctx context.Context, tunnel *clientstate.Tunnel, outpu
 		return tunnel.SetDraining(context.WithoutCancel(ctx))
 	case publisher.EventTransportFallback:
 		return output.transportFallback(event.PublishRunNumber, string(event.Transport))
-	case publisher.EventIPPolicyDenials:
-		return output.blockedVisitors(event.PublishRunNumber, event.PolicyDenials)
 	case publisher.EventTargetUnavailable:
 		return output.targetUnavailable()
 	}

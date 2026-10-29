@@ -1,6 +1,8 @@
 -- name: InsertTelemetryEvent :exec
-INSERT INTO telemetry_outbox (event_id, created_at, event_json)
-VALUES (sqlc.arg(event_id), sqlc.arg(created_at), sqlc.arg(event_json));
+INSERT INTO telemetry_outbox (event_id, created_at, event_json, client_json)
+SELECT sqlc.arg(event_id), sqlc.arg(created_at), sqlc.arg(event_json), sqlc.arg(client_json)
+FROM installation_settings
+WHERE id = 1 AND telemetry_enabled = 1 AND telemetry_epoch = sqlc.arg(telemetry_epoch);
 
 -- name: DeleteExpiredTelemetryEvents :exec
 DELETE FROM telemetry_outbox WHERE created_at < sqlc.arg(before);
@@ -10,7 +12,7 @@ DELETE FROM telemetry_outbox WHERE event_id NOT IN
     (SELECT event_id FROM telemetry_outbox ORDER BY created_at DESC, event_id DESC LIMIT sqlc.arg(max_events));
 
 -- name: SelectPendingTelemetryEvents :many
-SELECT event_id, event_json FROM telemetry_outbox
+SELECT event_id, event_json, client_json FROM telemetry_outbox
 ORDER BY created_at, event_id LIMIT sqlc.arg(max_events);
 
 -- name: DeleteAcknowledgedTelemetryEvents :exec

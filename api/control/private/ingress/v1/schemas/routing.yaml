@@ -107,6 +107,10 @@ schemas:
       publish_run_closed:
         type: boolean
         description: True only on a tombstone proving this exact publish run is permanently closed. An omitted or false value can mean temporary unroutability and must not retire lifetime traffic totals.
+      publish_run_ready_at:
+        type: string
+        format: date-time
+        description: The existing final ready_at fact. Joining ingresses prepare these runs before becoming healthy; starting runs prepare independently.
       publisher_connections:
         type: array
         maxItems: 2
@@ -209,11 +213,6 @@ schemas:
       - ingress_already_running
       - ingress_lease_stale
       - recovery_episode_stale
-      - invalid_usage_report
-      - usage_route_not_found
-      - stale_usage_report
-      - usage_report_conflict
-      - usage_bucket_finalized
       - routing_table_resnapshot_required
   Problem:
     type: object

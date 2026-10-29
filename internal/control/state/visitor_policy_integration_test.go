@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/netip"
 	"sync/atomic"
@@ -36,6 +37,40 @@ func policyObservationAt(t *testing.T, d *Database, scope visitorscope.Scope, af
 		t.Fatal(err)
 	}
 	return result
+}
+
+func TestIntegrationVisitorPolicyCarriesCurrentServiceMetadata(t *testing.T) {
+	f, run, _ := capacityFixture(t, 4)
+	d := f.database
+	if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, f.now); err != nil {
+		t.Fatal(err)
+	}
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: run.ServiceID}
+	for range 2 {
+		// change the durable service revision independently of the policy revision
+		// and prepared run, so neither can accidentally stand in for this fact.
+		var revision int64
+		if err := d.pool.QueryRow(t.Context(), `UPDATE control.services SET trust_revision=trust_revision+2 WHERE id=$1 RETURNING trust_revision`, run.ServiceID).Scan(&revision); err != nil {
+			t.Fatal(err)
+		}
+		wire, err := d.ReadPublisherVisitorPolicy(t.Context(), scope, run.RunID, run.RunNumber, run.Token, 0, nil, f.now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(wire)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded controlv1.VisitorPolicyUpdate
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		installed := installServingTestPolicy(t, scope, decoded, f.now)
+		view, enabled, _ := installed.Current()
+		if !enabled || view.MetadataRevision != revision {
+			t.Fatal("publisher policy did not carry current durable service metadata", view.MetadataRevision, revision)
+		}
+	}
 }
 
 func TestIntegrationVisitorPolicyProjectsCurrentIPAuthority(t *testing.T) {

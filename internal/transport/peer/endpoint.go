@@ -40,10 +40,11 @@ type Config struct {
 }
 
 type fragment struct {
-	sequence uint64
-	total    uint16
-	mask     uint8
-	data     [tunnelv1.MaxPeerPacketBytes]byte
+	sequence   uint64
+	generation uint64
+	total      uint16
+	mask       uint8
+	data       [tunnelv1.MaxPeerPacketBytes]byte
 }
 
 type path struct {
@@ -66,6 +67,27 @@ type path struct {
 type queuedFrame struct {
 	generation uint64
 	data       []byte
+}
+
+type queuedPacket struct {
+	data       []byte
+	slot       *CarrierSlot
+	generation uint64
+}
+
+// copyTo is the local input handoff. a carrier replacement uses this same slot
+// lock, so it either follows this bounded copy or discards the old candidate.
+// a completed copy is an accepted prefix; no QUIC consumer acknowledgement is
+// needed and no carrier revision can grant application or source authority.
+func (p queuedPacket) copyTo(b []byte) (int, bool) {
+	if p.slot != nil {
+		p.slot.mu.Lock()
+		defer p.slot.mu.Unlock()
+		if p.slot.closed || p.slot.revision != p.generation {
+			return 0, false
+		}
+	}
+	return copy(b, p.data), true
 }
 
 type changingCarrier interface {
@@ -106,7 +128,7 @@ type Endpoint struct {
 	paths  [pathCount]*path
 	active int
 	seq    atomic.Uint64
-	input  chan []byte
+	input  chan queuedPacket
 	read   deadline
 	write  deadline
 	wait   sync.WaitGroup
@@ -140,7 +162,7 @@ func New(parent context.Context, config Config) (*Endpoint, error) {
 		return nil, ErrConfiguration
 	}
 	ctx, cancel := context.WithCancel(parent)
-	e := &Endpoint{config: config, ctx: ctx, cancel: cancel, active: RelayA, input: make(chan []byte, packetQueue)}
+	e := &Endpoint{config: config, ctx: ctx, cancel: cancel, active: RelayA, input: make(chan queuedPacket, packetQueue)}
 	e.read.changed, e.write.changed = make(chan struct{}), make(chan struct{})
 	for index, carrier := range config.Paths {
 		if carrier == nil {
@@ -215,7 +237,15 @@ func (e *Endpoint) ReadFrom(b []byte) (int, net.Addr, error) {
 			return 0, nil, os.ErrDeadlineExceeded
 		case packet := <-e.input:
 			timer.Stop()
-			return copy(b, packet), e.RemoteAddr(), nil
+			if e.ctx.Err() != nil {
+				return 0, nil, net.ErrClosed
+			}
+			if e.read.expired() {
+				return 0, nil, os.ErrDeadlineExceeded
+			}
+			if n, current := packet.copyTo(b); current {
+				return n, e.RemoteAddr(), nil
+			}
 		}
 	}
 }
@@ -238,17 +268,18 @@ func (e *Endpoint) WriteTo(b []byte, addr net.Addr) (int, error) {
 	}
 	e.chooseLocked()
 	index := e.active
+	generation := e.paths[index].generation
 	e.mu.Unlock()
 	seq := e.seq.Add(1)
 	for offset := 0; offset < len(b); offset += tunnelv1.PeerFragmentBytes {
 		part := b[offset:min(offset+tunnelv1.PeerFragmentBytes, len(b))]
-		e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: seq, Fragment: uint8(offset / tunnelv1.PeerFragmentBytes), Total: uint16(len(b)), Payload: part})
+		e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: seq, Fragment: uint8(offset / tunnelv1.PeerFragmentBytes), Total: uint16(len(b)), Payload: part}, generation)
 	}
 	// bounded queues intentionally drop packets; inner QUIC performs recovery.
 	return len(b), nil
 }
 
-func (e *Endpoint) enqueue(index int, packet tunnelv1.PeerPacket) {
+func (e *Endpoint) enqueue(index int, packet tunnelv1.PeerPacket, generation uint64) {
 	packet.Sender, packet.Path = e.config.Role, uint8(index)
 	unsigned, err := packet.AuthenticatedBytes()
 	if err != nil {
@@ -267,6 +298,10 @@ func (e *Endpoint) enqueue(index int, packet tunnelv1.PeerPacket) {
 		return
 	}
 	p.refreshGenerationLocked()
+	if p.generation != generation {
+		p.stats.DroppedFrames++
+		return
+	}
 	if index == Direct && packet.Kind == tunnelv1.PeerData && !p.alive {
 		p.stats.DroppedFrames++
 		return
@@ -357,9 +392,10 @@ func (e *Endpoint) probeLoop() {
 				p.sent = now
 			}
 			challenge := p.challenge
+			generation := p.generation
 			e.chooseLocked()
 			e.mu.Unlock()
-			e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerProbe, Sequence: e.seq.Add(1), Total: 16, Payload: challenge[:]})
+			e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerProbe, Sequence: e.seq.Add(1), Total: 16, Payload: challenge[:]}, generation)
 		}
 		select {
 		case <-e.ctx.Done():
@@ -371,7 +407,14 @@ func (e *Endpoint) probeLoop() {
 
 func (e *Endpoint) receiveLoop(index int, p *path) {
 	for {
-		frame, err := p.carrier.Receive(e.ctx)
+		var frame []byte
+		var generation uint64
+		var err error
+		if slot, ok := p.carrier.(*CarrierSlot); ok {
+			frame, generation, err = slot.receiveGeneration(e.ctx)
+		} else {
+			frame, err = p.carrier.Receive(e.ctx)
+		}
 		if err != nil {
 			e.fail(index)
 			return
@@ -385,11 +428,11 @@ func (e *Endpoint) receiveLoop(index int, p *path) {
 		e.mu.Unlock()
 		switch packet.Kind {
 		case tunnelv1.PeerProbe:
-			e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerProbeReply, Sequence: e.seq.Add(1), Total: 16, Payload: packet.Payload})
+			e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerProbeReply, Sequence: e.seq.Add(1), Total: 16, Payload: packet.Payload}, generation)
 		case tunnelv1.PeerProbeReply:
 			e.mu.Lock()
 			p.refreshGenerationLocked()
-			if p.challenge != [16]byte{} && hmac.Equal(p.challenge[:], packet.Payload) {
+			if p.generation == generation && p.challenge != [16]byte{} && hmac.Equal(p.challenge[:], packet.Payload) {
 				p.ack, p.alive = time.Now(), true
 				p.stats.RTT = p.ack.Sub(p.sent)
 				p.challenge = [16]byte{}
@@ -397,7 +440,7 @@ func (e *Endpoint) receiveLoop(index int, p *path) {
 			}
 			e.mu.Unlock()
 		case tunnelv1.PeerData:
-			e.assemble(p, packet)
+			e.assemble(p, packet, generation)
 		}
 	}
 }
@@ -415,7 +458,7 @@ func authenticatePacket(frame []byte, key [32]byte, role uint8, index int) (tunn
 	return packet, hmac.Equal(packet.MAC[:], mac.Sum(nil))
 }
 
-func (e *Endpoint) assemble(p *path, packet tunnelv1.PeerPacket) {
+func (e *Endpoint) assemble(p *path, packet tunnelv1.PeerPacket, generation uint64) {
 	if packet.Sequence < p.highest && p.highest-packet.Sequence >= reassemblySlots {
 		return
 	}
@@ -425,8 +468,8 @@ func (e *Endpoint) assemble(p *path, packet tunnelv1.PeerPacket) {
 		return
 	}
 	f := &p.fragments[slot]
-	if f.sequence != packet.Sequence {
-		*f = fragment{sequence: packet.Sequence, total: packet.Total}
+	if f.sequence != packet.Sequence || f.generation != generation {
+		*f = fragment{sequence: packet.Sequence, generation: generation, total: packet.Total}
 	}
 	if f.total != packet.Total {
 		return
@@ -442,8 +485,9 @@ func (e *Endpoint) assemble(p *path, packet tunnelv1.PeerPacket) {
 	}
 	p.complete[slot] = packet.Sequence
 	b := append([]byte(nil), f.data[:f.total]...)
+	carrierSlot, _ := p.carrier.(*CarrierSlot)
 	select {
-	case e.input <- b:
+	case e.input <- queuedPacket{data: b, slot: carrierSlot, generation: generation}:
 	default:
 		e.mu.Lock()
 		p.stats.DroppedFrames++

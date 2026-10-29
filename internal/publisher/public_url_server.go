@@ -43,18 +43,19 @@ type PublicURLServerConfig struct {
 	BrowserLoginAvailable bool
 	Feedback              *feedbackRuntime
 	Limits                ApplicationLimits
-	StreamCapacity        int
-	VisitorPolicy         *visitorlease.Lease
-	VisitorTokens         *browserTokens
-	OnTargetFailure       func()
-	ObserveSummary        inspection.Observer
-	PromoteVisitor        PromoteVisitor
-	AdmitVisitor          AdmitVisitor
-	ReadinessProof        *ReadinessProof
-	OnWarning             func(string)
-	InspectionMode        inspection.Mode
-	Certificate           tls.Certificate
-	CertificatePlan       controlv1.CertificatePlan
+	// authorized visitor streams across both relay connections; setup is separate.
+	StreamCapacity  int
+	VisitorPolicy   *visitorlease.Lease
+	VisitorTokens   *browserTokens
+	OnTargetFailure func()
+	ObserveSummary  inspection.Observer
+	PromoteVisitor  PromoteVisitor
+	AdmitVisitor    AdmitVisitor
+	ReadinessProof  *ReadinessProof
+	OnWarning       func(string)
+	InspectionMode  inspection.Mode
+	Certificate     tls.Certificate
+	CertificatePlan controlv1.CertificatePlan
 }
 
 type PublicURLServer struct {
@@ -71,8 +72,11 @@ type PublicURLServer struct {
 	started            bool
 	closed             bool
 	draining           bool
-	streams            map[net.Conn]struct{}
+	streams            map[net.Conn]*publicVisitorAdmission
 	streamCapacity     int
+	authorizedStreams  int
+	pendingStreams     int
+	pendingRelays      map[string]int
 	policy             *visitorlease.Lease
 	handlers           sync.WaitGroup
 	httpDone           chan error
@@ -110,7 +114,27 @@ func (r *PublicURLServer) start() error {
 
 func (r *PublicURLServer) Drain(ctx context.Context) error {
 	r.stopAdmissions()
-	return r.http.Shutdown(ctx)
+	r.mu.Lock()
+	streams := make([]*publicVisitorAdmission, 0, len(r.streams))
+	for _, stream := range r.streams {
+		streams = append(streams, stream)
+	}
+	r.mu.Unlock()
+	var pending []<-chan struct{}
+	for _, stream := range streams {
+		if done := stream.stopPending(); done != nil {
+			pending = append(pending, done)
+		}
+	}
+	err := r.http.Shutdown(ctx)
+	for _, done := range pending {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		}
+	}
+	return err
 }
 
 func (r *PublicURLServer) stopAdmissions() {
@@ -133,8 +157,8 @@ func (r *PublicURLServer) Close() error {
 		}
 		started := r.started
 		streams := make([]net.Conn, 0, len(r.streams))
-		for stream := range r.streams {
-			streams = append(streams, stream)
+		for _, admission := range r.streams {
+			streams = append(streams, admission.connection)
 		}
 		r.mu.Unlock()
 		result := errors.Join(r.http.Close(), r.queue.Close())

@@ -196,7 +196,7 @@ func TestSocketICENativePacketMACDispatchKeepsSiblingQueuesSeparate(t *testing.T
 	left.session.remotes[remote], right.session.remotes[remote] = left.icePacketConn, right.icePacketConn
 	sender := &Endpoint{config: Config{Key: [32]byte{1}}}
 	sender.paths[Direct] = &path{queue: make(chan queuedFrame, 1)}
-	sender.enqueue(Direct, tunnelv1.PeerPacket{Kind: tunnelv1.PeerProbe, Sequence: 1, Total: 16, Payload: make([]byte, 16)})
+	sender.enqueue(Direct, tunnelv1.PeerPacket{Kind: tunnelv1.PeerProbe, Sequence: 1, Total: 16, Payload: make([]byte, 16)}, 0)
 	frame := (<-sender.paths[Direct].queue).data
 	m.dispatch(frame, remote)
 	if len(left.queue) != 1 || len(right.queue) != 0 {

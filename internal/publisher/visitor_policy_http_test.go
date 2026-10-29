@@ -65,6 +65,12 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			current := delta
+			current.AfterRevision, current.Revisions = math.MaxInt64, []int64{}
+			currentRaw, err := json.Marshal(current)
+			if err != nil {
+				t.Fatal(err)
+			}
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var request controlv1.PublisherVisitorPolicyRequest
 				if json.NewDecoder(r.Body).Decode(&request) != nil {
@@ -73,7 +79,9 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
-				if fault == "maximum" && request.AfterRevision == delta.AfterRevision {
+				if fault == "maximum" && request.AfterRevision == math.MaxInt64 {
+					_, _ = w.Write(currentRaw)
+				} else if fault == "maximum" && request.AfterRevision == delta.AfterRevision {
 					_, _ = w.Write(deltaRaw)
 				} else {
 					_, _ = w.Write(raw)
@@ -121,7 +129,7 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 					t.Fatal("publisher truncated or changed workload authority")
 				}
 			}
-			if ids := policy.lease.ObservedAllocations(body.Policy.StreamAllocations[0].RunId); len(ids) != 2048 {
+			if ids := policy.lease.BoundedAllocations(body.Policy.StreamAllocations[0].RunId); len(ids) != 2048 {
 				t.Fatal("publisher truncated installed allocations")
 			}
 			authorityNow := view.AuthorityTime(time.Now())

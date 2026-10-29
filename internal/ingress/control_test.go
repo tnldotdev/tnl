@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oapi-codegen/runtime/types"
-
 	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
@@ -83,9 +81,6 @@ func (c leaseTestClient) GetIngressRoutingTableEvents(ctx context.Context, _ ing
 
 func testIngressLease(now time.Time) ingressv1.IngressLease {
 	lease := ingressv1.IngressLease{IngressId: "ingress", IngressRunId: "run", IngressLeaseRevision: 1, ProtocolVersion: 1, ConnectionCapacity: 10, RegisteredAt: now, RenewedAt: now, LeaseExpiresAt: now.Add(time.Hour)}
-	for index := range 2 {
-		lease.VisitorNetworkHashKeys = append(lease.VisitorNetworkHashKeys, ingressv1.VisitorNetworkHashKey{UtcDate: types.Date{Time: now.UTC().Truncate(24*time.Hour).AddDate(0, 0, index)}, Key: make([]byte, 32)})
-	}
 	return lease
 }
 

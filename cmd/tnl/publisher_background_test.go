@@ -122,6 +122,108 @@ func TestBackgroundInstallsEnrolledHTTPJobWithLocalTarget(t *testing.T) {
 	}
 }
 
+func TestBackgroundInstallCapturesSourceTelemetryChoiceWithoutChangingSiblings(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		savedEnabled bool
+		flag         bool
+		unknown      bool
+		wantDisabled bool
+	}{
+		{"saved on", true, false, false, false},
+		{"saved off", false, false, false, true},
+		{"explicit flag", true, true, false, true},
+		{"unknown preference", false, false, true, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			r, authority, control, selection := backgroundFixture(t)
+			newID := func(prefix string) string {
+				t.Helper()
+				id, err := opaqueid.New(prefix)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return id
+			}
+			url := newID(opaqueid.PublicURLPrefix)
+			siblingIdentity := authorityv1.PublisherEnrollmentResult{ClientId: newID(opaqueid.PublisherIdentityPrefix), KeyId: newID(opaqueid.PublisherIdentityKeyPrefix), GrantId: newID(opaqueid.PublisherGrantPrefix), TeamId: "team", Kind: authorityv1.SavedPublicUrl, PublicUrlId: &url}
+			_, key, err := ed25519.GenerateKey(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sibling := supervisor.Job{ID: "sibling", Kind: supervisor.KindPublicURL, Server: "https://control.example", Target: "http://127.0.0.1:3001", Protocol: config.ProtocolHTTP, PublicURLID: url, PublisherIdentityID: siblingIdentity.ClientId, GrantID: siblingIdentity.GrantId}
+			if err := r.Install(t.Context(), sibling, siblingIdentity, key); err != nil {
+				t.Fatal(err)
+			}
+			before, err := r.ResolveJob(t.Context(), sibling.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sourceRoot := filepath.Join(t.TempDir(), "source")
+			var source *clientstate.Database
+			if test.unknown {
+				if err := os.Mkdir(sourceRoot, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(clientstate.DatabasePath(sourceRoot), []byte("unreadable preference"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				source, err = clientstate.OpenWithOptions(t.Context(), sourceRoot, clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer source.Close()
+				if err := source.SetTelemetryEnabled(t.Context(), test.savedEnabled); err != nil {
+					t.Fatal(err)
+				}
+				sourceRoot = source.Root()
+			}
+			flags := publishCommand{Target: "http://127.0.0.1:3000", remoteFlags: remoteFlags{ServerURL: "https://control.example", StateDir: sourceRoot}, telemetryDisabled: test.flag}
+			clients := func(supervisor.Job) (publisheridentity.NativeControl, publisheridentity.EnrollmentAuthority, error) {
+				// the install owner must have captured the source choice before
+				// remote/client callbacks can change it.
+				if source != nil {
+					if err := source.SetTelemetryEnabled(t.Context(), !test.savedEnabled); err != nil {
+						return nil, nil, err
+					}
+				}
+				return control, authority, nil
+			}
+			var installed string
+			if err := installBackgroundJob(t.Context(), r, flags, selection, backgroundPublishFlags{Install: true}, strings.NewReader(""), clients, &installed); err != nil {
+				t.Fatal(err)
+			}
+			root := r.Root()
+			if err := r.Close(); err != nil {
+				t.Fatal(err)
+			}
+			owner := os.Geteuid()
+			reopened, err := supervisor.Open(t.Context(), supervisor.OpenOptions{Root: root, TestOwnerUID: &owner})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reopened.Close()
+			job, err := reopened.ResolveJob(t.Context(), installed)
+			if err != nil || job.TelemetryDisabled != test.wantDisabled {
+				t.Fatalf("saved job lost source choice: disabled=%t want=%t err=%v", job.TelemetryDisabled, test.wantDisabled, err)
+			}
+			after, err := reopened.ResolveJob(t.Context(), sibling.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first, _ := json.Marshal(before)
+			last, _ := json.Marshal(after)
+			if !bytes.Equal(first, last) {
+				t.Fatal("installation changed the existing sibling")
+			}
+			if preference, err := clientstate.TelemetryPreferenceAt(t.Context(), root); err != nil || !preference.Enabled || preference.Epoch != 0 {
+				t.Fatalf("installation changed the separately enabled registry preference: %+v %v", preference, err)
+			}
+		})
+	}
+}
+
 func TestAppWorkflowInstallLoadsExplicitPublisherFromClientState(t *testing.T) {
 	r, a, c, selection := backgroundFixture(t)
 	state, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "operator"))

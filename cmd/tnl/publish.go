@@ -34,14 +34,15 @@ type publishCommand struct {
 	Output                  publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
 	Demo                    bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 
-	serverFromConfig bool
-	selectedTeam     string
-	projectRoot      string
-	demoNameFromCLI  bool
-	Service          string `kong:"-"`
-	project          projectConfiguration
-	service          bool
-	namedOverrides   bool
+	serverFromConfig  bool
+	selectedTeam      string
+	projectRoot       string
+	demoNameFromCLI   bool
+	Service           string `kong:"-"`
+	project           projectConfiguration
+	service           bool
+	namedOverrides    bool
+	telemetryDisabled bool
 }
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
@@ -82,7 +83,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		}
 		output.detachedCtx = ctx
 		defer func() { result = output.finish(ctx, result) }()
-		return runNamedPublish(ctx, selected.resolvedNamedInvocation, flags.StateDir, output)
+		return runNamedPublish(ctx, selected.resolvedNamedInvocation, flags.StateDir, flags.telemetryDisabled, output)
 	}
 	if flags.service || flags.Protocol != "" && flags.Protocol != "http" {
 		return runPrivatePublish(ctx, flags, stdout, stderr)
@@ -129,7 +130,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		if protocol == controlv1.Http {
 			output.openURL = browserOpener(ctx, flags.Open, true)
 		}
-		return runNamedPublish(ctx, selected.resolvedNamedInvocation, flags.StateDir, output)
+		return runNamedPublish(ctx, selected.resolvedNamedInvocation, flags.StateDir, flags.telemetryDisabled, output)
 	}
 	if flags.Demo {
 		flags.projectRoot, err = currentProjectRoot(ctx)
@@ -144,7 +145,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 }
 
 func publicOptions(flags publishCommand) invocation.PublicOptions {
-	return invocation.PublicOptions{Target: flags.Target, TargetCAFile: flags.TargetCAFile, TargetTLSName: flags.TargetTLSName, ProjectRoot: flags.projectRoot, Project: flags.project.Project, Service: flags.Service, StateDir: flags.StateDir, ServerURL: flags.ServerURL, AccessToken: flags.AccessToken, PublicURL: flags.PublicURL, Name: flags.Name, Domain: flags.Domain, Team: flags.Team, SelectedTeam: flags.selectedTeam, Ephemeral: flags.Ephemeral, Demo: flags.Demo, Anonymous: flags.Anonymous, IP: flags.IP, Access: flags.access, Limits: flags.limits(), InspectionMode: flags.InspectionMode, Inspection: flags.inspection, Resolver: runtimeTargetResolver}
+	return invocation.PublicOptions{Target: flags.Target, TargetCAFile: flags.TargetCAFile, TargetTLSName: flags.TargetTLSName, ProjectRoot: flags.projectRoot, Project: flags.project.Project, Service: flags.Service, StateDir: flags.StateDir, ServerURL: flags.ServerURL, AccessToken: flags.AccessToken, PublicURL: flags.PublicURL, Name: flags.Name, Domain: flags.Domain, Team: flags.Team, SelectedTeam: flags.selectedTeam, Ephemeral: flags.Ephemeral, Demo: flags.Demo, Anonymous: flags.Anonymous, IP: flags.IP, Access: flags.access, Limits: flags.limits(), InspectionMode: flags.InspectionMode, Inspection: flags.inspection, Resolver: runtimeTargetResolver, TelemetryDisabled: flags.telemetryDisabled}
 }
 
 func publisherAuthentication(stderr io.Writer) func(context.Context, *clientstate.Database, string, string) (*auth.Client, error) {
@@ -171,14 +172,14 @@ func publicationPresentation(ctx context.Context, flags publishCommand, output *
 		Demo:             output.setDemo, GuestDemo: output.setGuestDemo, GuestShare: output.setGuestShare, DemoPing: demoPingHandler(output, telemetry), Logf: output.logf,
 		PublisherEvent: func(ctx context.Context, tunnel *clientstate.Tunnel, server string, event publisher.Event) error {
 			observing.Do(func() {
-				observe = withTelemetryObserver(telemetry, telemetryPublish, server, nil, func(event publisher.Event) error { return handlePublisherEvent(ctx, tunnel, output, event) })
+				observe = withTelemetryObserver(telemetry, server, nil, func(event publisher.Event) error { return handlePublisherEvent(ctx, tunnel, output, event) })
 			})
 			return observe(event)
 		},
 	}
 	if telemetry != nil {
 		presentation.Observe = func(event invocation.IntegrationObservation) {
-			telemetry.Report(newIntegrationTelemetry(telemetryEventName(event.Event), telemetryWebhookDelivery(event.Delivery)))
+			telemetry.Report(newIntegrationTelemetry(string(event.Event), telemetryWebhookDelivery(event.Delivery)))
 		}
 	}
 	return presentation

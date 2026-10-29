@@ -1,10 +1,11 @@
 import { createServer } from "node:http";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { TnlError } from "../../src/errors.js";
 import { openServer, openFetch } from "../../src/internal/publisher/open.js";
 import { parseStatus } from "../../src/internal/publisher/status.js";
 import { runtimeRequest, type RuntimeEndpoint } from "../../src/internal/publisher/local.js";
 import { record } from "../../src/internal/project/runtime.js";
+import { withProcessEnvironment } from "../helpers/environment.js";
 
 const id = `reg_${"a".repeat(32)}`;
 const publicURL = "https://temporary.member.example";
@@ -48,14 +49,15 @@ test("status fences scope, registration, target, and publish run without public 
   expect(() => parseStatus(value, "invocation", id, "http://127.0.0.1:1234")).toThrow(TnlError);
 });
 
-test("real Node port-0 wildcard listener waits for exact native status and joins target-fenced cleanup", async () => {
+test("real Node IPC retains telemetry opt-out across listener startup and owner recovery", async () => {
+  vi.stubEnv("TNL_NO_TELEMETRY", "YeS");
   const app = createServer((_request, response) => response.end("app"));
-  await new Promise<void>((resolve) => app.listen(0, "0.0.0.0", resolve));
   const calls: { path: string | undefined; body: unknown }[] = [];
   let service = "";
   let owner = "";
   let target = "";
   let statuses = 0;
+  let restarted = false;
   const api = createServer((request, response) => {
     expect(request.headers.authorization).toBe(`Bearer ${"b".repeat(64)}`);
     expect(request.headers.origin).toBeUndefined();
@@ -92,7 +94,7 @@ test("real Node port-0 wildcard listener waits for exact native status and joins
   const address = api.address();
   if (address === null || typeof address === "string") throw new Error("missing listener");
   try {
-    const handle = await openServer(
+    const opening = openServer(
       app,
       { publisherIdentityID: `pub_${"A".repeat(22)}` },
       {
@@ -104,16 +106,29 @@ test("real Node port-0 wildcard listener waits for exact native status and joins
           scope: "invocation",
           invocation_id: selection?.invocationID ?? "",
         }),
-        request: runtimeRequest,
+        request: async (endpoint, operation, body) => {
+          if (operation === "status" && !restarted) {
+            restarted = true;
+            throw new TnlError("sdk.registration_stale");
+          }
+          return runtimeRequest(endpoint, operation, body);
+        },
         pause: async () => new Promise((resolve) => setTimeout(resolve, 1)),
       },
     );
+    process.env.TNL_NO_TELEMETRY = "false";
+    await new Promise<void>((resolve) => app.listen(0, "0.0.0.0", resolve));
+    const handle = await opening;
     expect(handle.url).toBe(publicURL);
     expect(statuses).toBeGreaterThanOrEqual(3);
     await handle.close();
     await handle.wait();
     expect(app.listening).toBe(true);
     expect(calls.at(-1)?.path).toBe("/v1/unregister");
+    expect(calls.filter((call) => call.path === "/v1/ad-hoc/register")).toMatchObject([
+      { body: { telemetry_disabled: true } },
+      { body: { telemetry_disabled: true } },
+    ]);
   } finally {
     await Promise.all(
       [app, api].map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
@@ -173,6 +188,44 @@ test("default invocation rediscovery retains automatic publisher selection after
   expect(starts).toBe(2);
   expect(ids[0]).toBe(ids[1]);
   await handle.close();
+});
+
+test("an opted-out SDK invocation carries its own decision to a shared owner", async () => {
+  await withProcessEnvironment({ TNL_NO_TELEMETRY: "true" }, async () => {
+    let service = "";
+    let target = "";
+    const opening = openFetch(
+      () => new Response("app"),
+      {},
+      {
+        start: async (_directory, _binary, selection): Promise<RuntimeEndpoint> => {
+          service = selection?.invocationID ?? "";
+          return {
+            version: 1,
+            url: "http://127.0.0.1:12345",
+            capability: "b".repeat(64),
+            owner_id: "a".repeat(32),
+            scope: "invocation",
+            invocation_id: service,
+          };
+        },
+        request: async (_endpoint, operation, body) => {
+          if (operation === "ad-hoc/register") {
+            const request = record(body, "invocation");
+            expect(request.telemetry_disabled).toBe(true);
+            target = String(request.target);
+            return { version: 1, registration_id: id, owner: request.owner, target };
+          }
+          if (operation === "status") return snapshot(service, target);
+          return undefined;
+        },
+        pause: async () => new Promise((resolve) => setTimeout(resolve, 1)),
+      },
+    );
+    process.env.TNL_NO_TELEMETRY = "false";
+    const handle = await opening;
+    await handle.close();
+  });
 });
 
 test("close interrupts status polling and joins unregister without waiting for its next timer", async () => {

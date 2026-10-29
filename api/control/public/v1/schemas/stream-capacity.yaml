@@ -31,6 +31,7 @@ schemas:
       valid_until: { type: string, format: date-time }
       retired: { type: boolean }
       publisher_observed: { type: boolean }
+      publisher_observed_until: { type: string, format: date-time }
       reservation_key:
         type: string
         format: byte

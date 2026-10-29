@@ -1,0 +1,525 @@
+{
+  "components": {
+    "schemas": {
+      "Version": {
+        "type": "integer",
+        "enum": [1],
+        "x-enum-varnames": ["V1"]
+      },
+      "EventID": {
+        "type": "string",
+        "pattern": "^tev_[A-Za-z0-9]{22}$"
+      },
+      "InstallationID": {
+        "type": "string",
+        "pattern": "^inst_[A-Za-z0-9]{22}$"
+      },
+      "Client": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version", "os", "arch", "ci"],
+        "properties": {
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "os": {
+            "type": "string",
+            "enum": ["darwin", "linux", "windows", "other"]
+          },
+          "arch": {
+            "type": "string",
+            "enum": ["amd64", "arm64", "other"]
+          },
+          "ci": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Batch": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schema_version", "installation_id", "client", "events"],
+        "properties": {
+          "schema_version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "installation_id": {
+            "$ref": "#/components/schemas/InstallationID"
+          },
+          "client": {
+            "$ref": "#/components/schemas/Client"
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 25,
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            }
+          }
+        }
+      },
+      "EventHeader": {
+        "type": "object",
+        "required": ["event_id", "event_version"],
+        "properties": {
+          "event_id": {
+            "$ref": "#/components/schemas/EventID"
+          },
+          "event_version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        }
+      },
+      "Event": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/CommandEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ReadyEvent"
+          },
+          {
+            "$ref": "#/components/schemas/DemoEvent"
+          },
+          {
+            "$ref": "#/components/schemas/IntegrationEvent"
+          },
+          {
+            "$ref": "#/components/schemas/PublisherEvent"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "name",
+          "mapping": {
+            "command.outcome": "#/components/schemas/CommandEvent",
+            "tunnel.ready": "#/components/schemas/ReadyEvent",
+            "demo.first_ping": "#/components/schemas/DemoEvent",
+            "integration.outcome": "#/components/schemas/IntegrationEvent",
+            "publisher.report": "#/components/schemas/PublisherEvent"
+          }
+        }
+      },
+      "CommandEvent": {
+        "unevaluatedProperties": false,
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EventHeader"
+          },
+          {
+            "type": "object",
+            "required": ["name", "payload"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": ["command.outcome"]
+              },
+              "payload": {
+                "$ref": "#/components/schemas/CommandOutcome"
+              }
+            }
+          }
+        ]
+      },
+      "CommandOutcome": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "outcome"],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": [
+              "init",
+              "auth",
+              "publish",
+              "status",
+              "watch",
+              "wait",
+              "inspect",
+              "requests",
+              "connect",
+              "config",
+              "team",
+              "domain",
+              "url",
+              "share",
+              "feedback",
+              "publisher",
+              "apply",
+              "generate",
+              "admin",
+              "other"
+            ]
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "start",
+              "stop",
+              "list",
+              "show",
+              "create",
+              "update",
+              "delete",
+              "get",
+              "set",
+              "add",
+              "remove",
+              "login",
+              "logout",
+              "invite",
+              "revoke",
+              "renew",
+              "join",
+              "leave",
+              "accept",
+              "serve",
+              "provision",
+              "install",
+              "uninstall",
+              "other"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": ["completed", "failed", "canceled"]
+          },
+          "failure_stage": {
+            "type": "string",
+            "enum": ["setup", "command", "authentication", "local_service", "public_url"]
+          }
+        }
+      },
+      "ReadyEvent": {
+        "unevaluatedProperties": false,
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EventHeader"
+          },
+          {
+            "type": "object",
+            "required": ["name", "payload"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": ["tunnel.ready"]
+              },
+              "payload": {
+                "$ref": "#/components/schemas/PublicationReady"
+              }
+            }
+          }
+        ]
+      },
+      "PublicationReady": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["server_kind", "publish_mode"],
+        "properties": {
+          "server_kind": {
+            "type": "string",
+            "enum": ["hosted", "self_hosted"]
+          },
+          "publish_mode": {
+            "type": "string",
+            "enum": ["app", "demo"]
+          },
+          "framework": {
+            "type": "string",
+            "enum": ["vite", "next", "other"]
+          }
+        }
+      },
+      "DemoEvent": {
+        "unevaluatedProperties": false,
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EventHeader"
+          },
+          {
+            "type": "object",
+            "required": ["name", "payload"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": ["demo.first_ping"]
+              },
+              "payload": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        ]
+      },
+      "IntegrationEvent": {
+        "unevaluatedProperties": false,
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EventHeader"
+          },
+          {
+            "type": "object",
+            "required": ["name", "payload"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": ["integration.outcome"]
+              },
+              "payload": {
+                "$ref": "#/components/schemas/IntegrationOutcome"
+              }
+            }
+          }
+        ]
+      },
+      "IntegrationOutcome": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "outcome"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["oauth", "webhook"]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": ["ready", "redirected", "reached_receiver"]
+          },
+          "delivery": {
+            "type": "string",
+            "enum": ["fanout", "selected"]
+          }
+        }
+      },
+      "PublisherEvent": {
+        "unevaluatedProperties": false,
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EventHeader"
+          },
+          {
+            "type": "object",
+            "required": ["name", "payload"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": ["publisher.report"]
+              },
+              "payload": {
+                "$ref": "#/components/schemas/PublisherReport"
+              }
+            }
+          }
+        ]
+      },
+      "PublisherReport": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/PublicReport"
+          },
+          {
+            "$ref": "#/components/schemas/NativeReport"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "kind",
+          "mapping": {
+            "public_ingress": "#/components/schemas/PublicReport",
+            "native_peer": "#/components/schemas/NativeReport"
+          }
+        }
+      },
+      "Report": {
+        "type": "object",
+        "required": ["active_duration"],
+        "properties": {
+          "active_duration": {
+            "$ref": "#/components/schemas/DurationBucket"
+          },
+          "fallbacks": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "$ref": "#/components/schemas/FallbackCount"
+            }
+          }
+        }
+      },
+      "PublicReport": {
+        "unevaluatedProperties": false,
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Report"
+          },
+          {
+            "type": "object",
+            "required": ["kind", "paths"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["public_ingress"]
+              },
+              "paths": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 2,
+                "items": {
+                  "$ref": "#/components/schemas/PublicPathAggregate"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "NativeReport": {
+        "unevaluatedProperties": false,
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Report"
+          },
+          {
+            "type": "object",
+            "required": ["kind", "paths"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["native_peer"]
+              },
+              "paths": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 3,
+                "items": {
+                  "$ref": "#/components/schemas/NativePathAggregate"
+                }
+              },
+              "direct_setup_attempts": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "direct_setup_successes": {
+                "$ref": "#/components/schemas/Count"
+              },
+              "direct_establishment": {
+                "$ref": "#/components/schemas/Histogram"
+              }
+            }
+          }
+        ]
+      },
+      "PublicPathAggregate": {
+        "unevaluatedProperties": false,
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PathObservation"
+          },
+          {
+            "type": "object",
+            "required": ["path"],
+            "properties": {
+              "path": {
+                "type": "string",
+                "enum": ["public_udp", "public_tcp"]
+              }
+            }
+          }
+        ]
+      },
+      "NativePathAggregate": {
+        "unevaluatedProperties": false,
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PathObservation"
+          },
+          {
+            "type": "object",
+            "required": ["path"],
+            "properties": {
+              "path": {
+                "type": "string",
+                "enum": ["native_direct", "native_relay_udp", "native_relay_tcp"]
+              }
+            }
+          }
+        ]
+      },
+      "PathObservation": {
+        "type": "object",
+        "required": ["active_duration"],
+        "properties": {
+          "active_duration": {
+            "$ref": "#/components/schemas/DurationBucket"
+          },
+          "sent": {
+            "$ref": "#/components/schemas/VolumeBucket"
+          },
+          "received": {
+            "$ref": "#/components/schemas/VolumeBucket"
+          },
+          "rtt": {
+            "$ref": "#/components/schemas/Histogram"
+          }
+        }
+      },
+      "Histogram": {
+        "type": "array",
+        "minItems": 12,
+        "maxItems": 12,
+        "x-tnl-upper-bounds-ms": [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 10000],
+        "description": "Non-cumulative counts for at most 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 10000 ms, then larger. Omit unmeasured histograms.",
+        "items": {
+          "$ref": "#/components/schemas/Count"
+        }
+      },
+      "Count": {
+        "type": "integer",
+        "format": "int64",
+        "minimum": 0,
+        "maximum": 1000000000
+      },
+      "VolumeBucket": {
+        "type": "string",
+        "enum": [
+          "zero",
+          "lt_64kib",
+          "lt_1mib",
+          "lt_16mib",
+          "lt_256mib",
+          "lt_4gib",
+          "lt_64gib",
+          "larger"
+        ]
+      },
+      "DurationBucket": {
+        "type": "string",
+        "enum": ["lt_1s", "lt_10s", "lt_1m", "lt_10m", "lt_1h", "lt_6h", "larger"]
+      },
+      "FallbackCount": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason", "count"],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "udp_blocked",
+              "path_unavailable",
+              "network_changed",
+              "backpressure",
+              "direct_unavailable"
+            ]
+          },
+          "count": {
+            "$ref": "#/components/schemas/Count"
+          }
+        }
+      },
+      "ProblemCode": {
+        "type": "string",
+        "enum": ["invalid_argument", "internal"]
+      }
+    }
+  }
+}

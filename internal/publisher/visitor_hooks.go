@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -53,6 +54,7 @@ type visitorSession struct {
 	life       context.Context
 	cancel     context.CancelFunc
 	onPromoted func()
+	capacity   func(*visitorlease.Guard) error
 	mu         sync.Mutex
 	promotion  *visitorPromotion
 	closed     bool
@@ -60,6 +62,10 @@ type visitorSession struct {
 }
 
 func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
+	return v.admitPermission(ctx, nil, readiness...)
+}
+
+func (v *visitorSession) admitPermission(ctx context.Context, permission *visitorlease.Guard, readiness ...bool) error {
 	if v == nil {
 		return nil
 	}
@@ -97,6 +103,11 @@ func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
 	if visitor.Readiness {
 		return nil
 	}
+	if v.capacity != nil {
+		if err := v.capacity(permission); err != nil {
+			return err
+		}
+	}
 	v.mu.Lock()
 	if v.closed {
 		v.mu.Unlock()
@@ -124,6 +135,9 @@ func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
 			}
 			if work.err == nil && v.onPromoted != nil {
 				v.onPromoted()
+			}
+			if work.err != nil && v.capacity != nil && v.cancel != nil {
+				v.cancel()
 			}
 			// one shared decision is never replayed on an ambiguous transport
 			// failure. request cancellation affects only its own waiter.
@@ -157,10 +171,11 @@ func (v *visitorSession) close() {
 }
 
 type livePublisherSession struct {
-	session *tunnel.Session
-	ref     tunnelv1.PublisherConnectionRef
-	ctx     context.Context
-	cancel  context.CancelFunc
+	session  *tunnel.Session
+	ref      tunnelv1.PublisherConnectionRef
+	ctx      context.Context
+	cancel   context.CancelFunc
+	visitors sync.WaitGroup
 }
 
 type visitorSessionKey struct{}

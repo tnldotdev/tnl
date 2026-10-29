@@ -105,9 +105,7 @@ func TestIntegrationPublicPublisherScopedCertificateCachePool(t *testing.T) {
 		for slot := range 2 {
 			claimTestConnection(t, run, slot, now)
 		}
-		if _, err = d.MarkPublishRunReady(t.Context(), run.authentication(), now); err != nil {
-			t.Fatal(err)
-		}
+		readyTestServingRun(t, run, now)
 		order, err := controlstatedb.New(d.pool).GetACMEOrder(t.Context(), material.IssuanceID)
 		if err != nil || !bytes.Equal(order.CsrDer, pending.CSRDER) {
 			t.Fatal("issued certificate did not use this publisher's persistent CSR", err)
@@ -180,9 +178,7 @@ func TestIntegrationPublicPublisherScopedCertificateCachePool(t *testing.T) {
 	for slot := range 2 {
 		claimTestConnection(t, restarted, slot, now)
 	}
-	if _, err = d.MarkPublishRunReady(t.Context(), restarted.authentication(), now); err != nil {
-		t.Fatal(err)
-	}
+	readyTestServingRun(t, restarted, now)
 	var issued int
 	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.acme_orders`).Scan(&issued); err != nil || issued != 2 {
 		t.Fatalf("restart requested another CA issuance instead of own reuse: %d %v", issued, err)

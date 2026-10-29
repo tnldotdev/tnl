@@ -364,6 +364,8 @@ components:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorCertificateRequest"
     PublisherVisitorPolicyRequest:
       $ref: "./schemas/visitor-policy.yaml#/schemas/PublisherVisitorPolicyRequest"
+    StreamCapacityObservation:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/StreamCapacityObservation"
     VisitorPolicyUpdate:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorPolicyUpdate"
     VisitorPolicySnapshot:

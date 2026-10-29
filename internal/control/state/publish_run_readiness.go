@@ -8,7 +8,23 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+// preparation routing has a lifetime before ready_at. keep its existing
+// heartbeat, connection-change and terminal projections current in that window.
+func publishRunRoutingPublished(ctx context.Context, queries *controlstatedb.Queries, session controlstatedb.ControlPublishRun) (bool, error) {
+	if session.ReadyAt.Valid {
+		return true, nil
+	}
+	if !session.CertificateInstalledAt.Valid {
+		return false, nil
+	}
+	revision, err := queries.LatestIngressRoutingEntryRevision(ctx, controlstatedb.LatestIngressRoutingEntryRevisionParams{
+		PublicURLID: session.PublicURLID, PublishRunNumber: session.PublishRunNumber,
+	})
+	return revision > 0, err
+}
 
 func (d *Database) MarkPublishRunReady(
 	ctx context.Context,
@@ -36,7 +52,7 @@ func (d *Database) MarkPublishRunReady(
 	if err != nil {
 		return PublishRunLifecycle{}, err
 	}
-	var publishedEvent *publishedIngressRoutingTableEvent
+	newlyReady := !session.ReadyAt.Valid
 	if !session.ReadyAt.Valid {
 		reason, err := queries.GuestRunAllowanceSpent(ctx, controlstatedb.GuestRunAllowanceSpentParams{
 			PublishRunID: text(session.ID), Now: timestamptz(now),
@@ -59,6 +75,48 @@ func (d *Database) MarkPublishRunReady(
 				DNSState: dnsState, CreatedAt: session.CreatedAt.Time,
 			}
 		}
+	}
+	// publish the existing starting run's routing before asking ingress to
+	// prepare it. this commits no ready state, guest time or ready metric.
+	routing, err := queries.ReadPublishRunPreparationRouting(ctx, controlstatedb.ReadPublishRunPreparationRoutingParams{
+		PublicURLID: route.ID, RunNumber: session.PublishRunNumber, Now: timestamptz(now),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if len(connections) == 0 {
+			return publishRunLifecycle(session, connections, 0, 0), ErrPublishRunNotReady
+		}
+		published, err := pendingEvents.addRouteEvent(ctx, queries, route, session, connections, IngressPublicURLUpsert, now)
+		if err != nil {
+			return PublishRunLifecycle{}, err
+		}
+		if err := pendingEvents.publish(ctx, queries); err != nil {
+			return PublishRunLifecycle{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return PublishRunLifecycle{}, fmt.Errorf("controlstate: publish preparation routing: commit: %w", err)
+		}
+		return publishRunLifecycle(session, connections, published.routingTableRevision, published.entryRevision), ErrPublishRunNotReady
+	}
+	if err != nil {
+		return PublishRunLifecycle{}, fmt.Errorf("controlstate: read preparation routing: %w", err)
+	}
+	// registration takes pool -> ingress; this path holds team/URL/run -> pool
+	// and only reads ingress rows. no ingress holder acquires the pool here.
+	// hold membership through ready_at and final routing visibility, so a new
+	// receiver either participates in this check or snapshots the final fact.
+	if _, err := queries.LockIngressPoolMembership(ctx, route.IngressPoolID); err != nil {
+		return PublishRunLifecycle{}, fmt.Errorf("controlstate: lock readiness pool membership: %w", err)
+	}
+	prepared, err := queries.PublishRunServingPrepared(ctx, controlstatedb.PublishRunServingPreparedParams{
+		RunID: session.ID, RunNumber: session.PublishRunNumber, Now: timestamptz(now), ProtocolVersion: tunnelv1.Version,
+	})
+	if err != nil {
+		return PublishRunLifecycle{}, fmt.Errorf("controlstate: check serving preparation: %w", err)
+	}
+	if !prepared || len(connections) == 0 {
+		return publishRunLifecycle(session, connections, routing.ID, routing.EntryRevision), ErrPublishRunNotReady
+	}
+	if newlyReady {
 		session, err = queries.MarkPublishRunReady(ctx, controlstatedb.MarkPublishRunReadyParams{
 			ReadyAt: timestamptz(now), PublishRunID: session.ID,
 			PublicURLID: route.ID, PublishRunNumber: session.PublishRunNumber,
@@ -74,26 +132,27 @@ func (d *Database) MarkPublishRunReady(
 		}); err != nil {
 			return PublishRunLifecycle{}, fmt.Errorf("controlstate: mark guest run ready: %w", err)
 		}
-		publishedEvent, err = pendingEvents.addRouteEvent(
-			ctx, queries, route, session, connections, "public_url_upsert", now,
-		)
+		session, err = boundGuestServingAuthority(ctx, queries, session, now)
 		if err != nil {
 			return PublishRunLifecycle{}, err
 		}
-	}
-	if err := pendingEvents.publish(ctx, queries); err != nil {
-		return PublishRunLifecycle{}, err
-	}
-	var routingTableRevision, publicURLEntryRevision int64
-	if publishedEvent != nil {
-		routingTableRevision = publishedEvent.routingTableRevision
-		publicURLEntryRevision = publishedEvent.entryRevision
+		// this final projection tells future joining ingresses which saved runs
+		// they must prepare before health. existing receivers already prepared
+		// the same routing and setup, so visitor access need not wait for it.
+		published, err := pendingEvents.addRouteEvent(ctx, queries, route, session, connections, IngressPublicURLUpsert, now)
+		if err != nil {
+			return PublishRunLifecycle{}, err
+		}
+		if err := pendingEvents.publish(ctx, queries); err != nil {
+			return PublishRunLifecycle{}, err
+		}
+		routing.ID, routing.EntryRevision = published.routingTableRevision, published.entryRevision
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return PublishRunLifecycle{}, fmt.Errorf("controlstate: mark publish run ready: commit: %w", err)
 	}
-	if publishedEvent != nil {
+	if newlyReady {
 		d.activity.metrics.Load().ObservePublishRunReady(route.Purpose)
 	}
-	return publishRunLifecycle(session, connections, routingTableRevision, publicURLEntryRevision), nil
+	return publishRunLifecycle(session, connections, routing.ID, routing.EntryRevision), nil
 }

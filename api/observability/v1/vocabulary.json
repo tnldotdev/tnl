@@ -235,8 +235,6 @@
         "server.startup_failed",
         "server.storage_key_invalid",
         "server.stored_state_invalid",
-        "server.usage_config_invalid",
-        "server.usage_delivery_failed",
         "server.website_config_invalid",
         "server.worker_failed",
         "tunnel.capacity_exceeded",
@@ -492,16 +490,11 @@
         "expected_close",
         "unexpected_close",
         "operational_failure",
-        "incomplete",
-        "finalized",
-        "retried",
-        "rejected",
         "issued",
         "allocated",
         "ready",
         "expired",
         "ready_limit",
-        "transfer_limit",
         "cleanup",
         "opened",
         "closed",
@@ -1260,64 +1253,6 @@
       ]
     },
     {
-      "name": "tnl_control_public_url_usage_items_total",
-      "semantics": "Usage runs, buckets or deliveries committed by result.",
-      "kind": "counter",
-      "dimensions": [
-        "otel.metric.overflow",
-        "tnl.event"
-      ]
-    },
-    {
-      "name": "tnl_control_public_url_usage_last_success_timestamp_seconds",
-      "semantics": "Unix time of the last successful finalization call or committed delivery; zero before success.",
-      "kind": "gauge",
-      "dimensions": [
-        "otel.metric.overflow",
-        "tnl.operation"
-      ]
-    },
-    {
-      "name": "tnl_control_public_url_usage_receiver_duration_seconds",
-      "semantics": "Usage receiver request duration by bounded outcome.",
-      "kind": "histogram",
-      "dimensions": [
-        "otel.metric.overflow",
-        "tnl.outcome",
-        "tnl.reason"
-      ],
-      "explicit_bounds": [
-        0.001,
-        0.0025,
-        0.005,
-        0.01,
-        0.025,
-        0.05,
-        0.1,
-        0.25,
-        0.5,
-        1,
-        2.5,
-        5,
-        10,
-        20,
-        30,
-        60,
-        120
-      ]
-    },
-    {
-      "name": "tnl_control_public_url_usage_work_total",
-      "semantics": "Usage worker operations by fixed phase and outcome.",
-      "kind": "counter",
-      "dimensions": [
-        "otel.metric.overflow",
-        "tnl.operation",
-        "tnl.outcome",
-        "tnl.reason"
-      ]
-    },
-    {
       "name": "tnl_control_public_urls_created_total",
       "semantics": "New public URLs committed by client-declared purpose; excludes idempotent retries.",
       "kind": "counter",
@@ -1888,14 +1823,6 @@
         "tnl.operation",
         "tnl.outcome",
         "tnl.reason"
-      ]
-    },
-    {
-      "name": "tnl_ingress_usage_retained_buckets",
-      "semantics": "Ingress usage buckets retained in memory, including dirty and pending buckets.",
-      "kind": "gauge",
-      "dimensions": [
-        "otel.metric.overflow"
       ]
     },
     {

@@ -43,7 +43,7 @@ func (q *Queries) GetActivePublishRunMembership(ctx context.Context, arg GetActi
 }
 
 const getOpenPublishRun = `-- name: GetOpenPublishRun :one
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.publish_runs
 WHERE public_url_id = $1
   AND closed_at IS NULL ORDER BY publish_run_number DESC LIMIT 1
@@ -68,7 +68,6 @@ func (q *Queries) GetOpenPublishRun(ctx context.Context, publicUrlID string) (Co
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
-		&i.PolicyDenials,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
@@ -90,7 +89,7 @@ func (q *Queries) GetOpenPublishRun(ctx context.Context, publicUrlID string) (Co
 }
 
 const getPublishRunByIdempotency = `-- name: GetPublishRunByIdempotency :one
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 FROM control.publish_runs
 WHERE public_url_id = $1
   AND idempotency_key = $2
@@ -120,7 +119,6 @@ func (q *Queries) GetPublishRunByIdempotency(ctx context.Context, arg GetPublish
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
-		&i.PolicyDenials,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
@@ -203,7 +201,7 @@ INSERT INTO control.publish_runs (
     $20,
     $21
 FROM version
-RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
 `
 
 type InsertPublishRunParams struct {
@@ -273,7 +271,6 @@ func (q *Queries) InsertPublishRun(ctx context.Context, arg InsertPublishRunPara
 		&i.PublishRunTokenID,
 		&i.PublishRunTokenDigest,
 		&i.PolicyRevision,
-		&i.PolicyDenials,
 		&i.CertificateCacheKey,
 		&i.CertificateScope,
 		&i.CertificateIdentifiers,
@@ -436,7 +433,7 @@ func (q *Queries) InsertPublishRunConnections(ctx context.Context, arg InsertPub
 }
 
 const listOpenPublishRuns = `-- name: ListOpenPublishRuns :many
-SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, policy_denials, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open FROM control.publish_runs WHERE public_url_id=$1
+SELECT id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open FROM control.publish_runs WHERE public_url_id=$1
   AND closed_at IS NULL ORDER BY publish_run_number FOR UPDATE
 `
 
@@ -465,7 +462,6 @@ func (q *Queries) ListOpenPublishRuns(ctx context.Context, publicUrlID string) (
 			&i.PublishRunTokenID,
 			&i.PublishRunTokenDigest,
 			&i.PolicyRevision,
-			&i.PolicyDenials,
 			&i.CertificateCacheKey,
 			&i.CertificateScope,
 			&i.CertificateIdentifiers,
@@ -555,10 +551,8 @@ WHERE sessions.closed_at IS NULL
       JOIN control.guest_trials AS guest ON guest.id = guest_url.guest_id
       WHERE guest_url.public_url_id = routes.id AND (
           guest.expires_at <= $1
-          OR guest.used_bytes >= 5242880
-          OR guest.used_ready_ns >= 900000000000
-          OR guest.active_ready_at IS NOT NULL AND guest.used_ready_ns +
-              GREATEST(0, (EXTRACT(EPOCH FROM ($1::timestamptz - guest.active_ready_at)) * 1000000000)::bigint) >= 900000000000
+          OR guest.used_ready_ns >= 1200000000000
+          OR guest.ready_deadline <= $1
       )
   ))
 ORDER BY sessions.publisher_expires_at, sessions.id
@@ -646,8 +640,8 @@ FOR NO KEY UPDATE
 `
 
 // publish run operations serialize with public URL mutations without changing
-// public URL identity. NO KEY UPDATE permits usage's KEY SHARE references;
-// overlapping usage pages could starve a stronger UPDATE heartbeat lock.
+// public URL identity. NO KEY UPDATE permits independent KEY SHARE references
+// without letting them starve a heartbeat's run-local update.
 func (q *Queries) LockPublicURLForRun(ctx context.Context, publicUrlID string) (ControlPublicUrl, error) {
 	row := q.db.QueryRow(ctx, lockPublicURLForRun, publicUrlID)
 	var i ControlPublicUrl

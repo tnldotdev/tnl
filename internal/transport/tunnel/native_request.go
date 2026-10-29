@@ -125,6 +125,12 @@ type NativeRequestReader struct {
 	payload     []byte
 	payloadRead int
 	afterEnd    sync.Once
+	lifeMu      sync.Mutex
+	finished    bool
+	renewDone   chan struct{}
+	renewErr    error
+	closeOnce   sync.Once
+	closeErr    error
 }
 
 var _ net.Conn = (*NativeRequestReader)(nil)
@@ -136,6 +142,12 @@ func NewNativeRequestReader(conn net.Conn, initial []byte, renew func(tunnelv1.N
 func (s *NativeRequestReader) Read(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.lifeMu.Lock()
+	finished := s.finished
+	s.lifeMu.Unlock()
+	if finished {
+		return 0, net.ErrClosed
+	}
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -177,25 +189,69 @@ func (s *NativeRequestReader) Read(p []byte) (int, error) {
 // this only after the TLS reader reports EOF; it must own the raw reader until
 // then. no further TLS data may follow close_notify.
 func (s *NativeRequestReader) ContinueAfterTLSCloseNotify() {
+	s.lifeMu.Lock()
+	defer s.lifeMu.Unlock()
+	if s.finished {
+		return
+	}
 	s.afterEnd.Do(func() {
-		if s.initial.Len() != 0 || s.remaining != nil && s.remaining.Len() != 0 {
-			_ = s.Conn.Close()
-			return
-		}
-		go s.renewAfterEnd()
+		s.renewDone = make(chan struct{})
+		go func() {
+			defer close(s.renewDone)
+			err := s.renewAfterEnd()
+			s.lifeMu.Lock()
+			s.renewErr = err
+			s.lifeMu.Unlock()
+			_ = s.Close()
+		}()
 	})
 }
 
 // after the local application sees EOF, only signed permission frames may
 // arrive. a failed renewal closes this visitor stream, not its mux session.
-func (s *NativeRequestReader) renewAfterEnd() {
+func (s *NativeRequestReader) renewAfterEnd() error {
+	if s.initial.Len() != 0 || s.remaining != nil && s.remaining.Len() != 0 {
+		return tunnelv1.ErrNativeRequest
+	}
 	for {
 		frame, err := s.readFrame()
-		if err != nil || frame.Kind != tunnelv1.NativeRequestPermission || s.renew == nil || s.renew(frame.Permission) != nil {
-			_ = s.Conn.Close()
-			return
+		if err != nil {
+			return err
+		}
+		if frame.Kind != tunnelv1.NativeRequestPermission || s.renew == nil {
+			return tunnelv1.ErrNativeRequest
+		}
+		if err := s.renew(frame.Permission); err != nil {
+			return err
 		}
 	}
+}
+
+// Close interrupts physical I/O but never waits for the renewal worker, which
+// may itself be the closer. the owning stream tail joins through Finish.
+func (s *NativeRequestReader) Close() error {
+	s.closeOnce.Do(func() { s.closeErr = s.Conn.Close() })
+	return s.closeErr
+}
+
+// Finish prevents a later continuation, interrupts and joins raw reads and the
+// actually started renewal worker. call it only from the stream's owning tail.
+func (s *NativeRequestReader) Finish() error {
+	s.lifeMu.Lock()
+	s.finished = true
+	done := s.renewDone
+	s.lifeMu.Unlock()
+	err := s.Close()
+	if done != nil {
+		<-done
+	}
+	// renewal owns raw reads after EOF without taking mu. join it first, then
+	// retain the ordinary read gate while collecting the final result.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lifeMu.Lock()
+	defer s.lifeMu.Unlock()
+	return errors.Join(err, s.renewErr)
 }
 
 // net/http interrupts idle reads with deadlines when hijacking an upgraded

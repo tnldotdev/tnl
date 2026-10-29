@@ -81,8 +81,7 @@ input, expired access, or malformed responses.
 Preserve HTTP status and HTML negotiation. Control, built-in authority, private
 ingress, and private relay use the shared problem envelope: `type`, `title`,
 `status`, `code`, `detail`, and `request_id`. Unexpected failures correlate the
-request ID with operator logs; `detail` contains authored text. External usage
-receivers own their HTTP contract.
+request ID with operator logs; `detail` contains authored text.
 
 Classify and report through the existing operation boundary. Keep helper
 imports free of process-wide error-handler side effects.

@@ -16,7 +16,7 @@ distinct process run, last successful renewal, confirmed lease deadline/revision
 drain deadline, routing revision/check time where applicable, and local registered
 publisher connection/visitor stream counts. registered connections are not a count
 of ready database claims. the endpoint projects explicit fields, never a complete
-lease containing credentials or visitor-network keys.
+lease containing credentials.
 
 SIGTERM begins the existing bounded drain and immediately clears process readiness.
 component contexts keep their process-owned observability context through drain;
@@ -28,12 +28,32 @@ start with HTTP 503 and `Retry-After`. existing renewals and cleanup retain thei
 ordinary authentication/state boundaries while admitted work drains.
 
 relay can remain live and unready during control loss, and renews through its
-existing retry loop. ingress has a stricter existing accounting boundary: after
-its confirmed lease expires, its controller ends that process run. its usage and
-audit identity cannot be reused. automatic in-process replacement after ingress
+existing retry loop. after ingress's confirmed lease expires, its controller ends
+that process run. its authority and audit identity cannot be reused. automatic in-process replacement after ingress
 lease loss is not implemented here; a supervisor still needs bounded restart
 backoff for that case. the separated lifecycle tests qualify forwarding, drain,
 and lease fail-closed behavior; they do not qualify a Kubernetes operator.
+
+## public url readiness
+
+control publishes preparatory routing before the run is ready. routing installation
+alone does not prove serving preparation: each eligible ingress must install that
+URL's policy and capacity, and the publisher must install its matching allocation.
+control checks bounded observations before recording readiness or starting guest
+ready-time accounting. see [the readiness owner](../../../internal/control/state/publish_run_readiness.go).
+
+each ingress run renews capacity before refreshing policy in one background loop.
+short allocations renew earlier, using their issued lifetime rather than waiting
+the ordinary two seconds; an outage does not turn time remaining into a retry spin.
+the publisher reports newly installed allocations without waiting for another poll,
+using one follow-up within the same request budget. neither side acknowledges an
+uninstalled response or extends old evidence when only the allocation renews.
+visitor arrival reads installed local state and the current process lease; it does
+not prepare authority or probe TLS before the first application request.
+
+temporary routing loss does not close the publish run. ingress retains its bounded
+preparation until control confirms closure or the ingress owner is replaced;
+failed renewals still expire at the installed policy and allocation deadlines.
 
 ## publisher observations
 

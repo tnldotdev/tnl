@@ -80,7 +80,7 @@ func TestProfileRoutingHistory(t *testing.T) {
 				}
 				seen := make(map[string]bool, f.routes)
 				for _, event := range snapshot.Entries {
-					if seen[event.PublicURLID] || event.EntryRevision != uint64(perPublicURL) || len(event.Projection.PublisherConnections) != 2 {
+					if seen[event.PublicURLID] || event.EntryRevision != uint64(perPublicURL+1) || len(event.Projection.PublisherConnections) != 2 {
 						t.Fatalf("unexpected snapshot route=%s entry=%d", event.PublicURLID, event.EntryRevision)
 					}
 					seen[event.PublicURLID] = true

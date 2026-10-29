@@ -9,8 +9,10 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
+	api "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 func TestInspectProtocolAdapterGoldenJSON(t *testing.T) {
@@ -48,15 +50,14 @@ func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	t.Setenv("TNL_STATE_DIR", stateRoot)
 	var stdout, stderr bytes.Buffer
-	var events []telemetryPayload
+	var events []clienttelemetry.Observation
 	factory := func(string) telemetryReporter {
-		return telemetryReporterFunc(func(event telemetryPayload) { events = append(events, event) })
+		return telemetryReporterFunc(func(event clienttelemetry.Observation) { events = append(events, event) })
 	}
 	if err := run(t.Context(), []string{"inspect", "list", "--output=json"}, &stdout, &stderr, factory); err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 2 || events[0].Command != telemetryInspect || events[0].Action != "list" ||
-		events[1].Event != telemetryCommandCompleted || events[1].Action != "list" {
+	if len(events) != 1 || events[0].Command != api.CommandOutcomeCommandInspect || events[0].Event != clienttelemetry.CommandCompleted || events[0].Action != "list" {
 		t.Fatalf("list telemetry = %+v", events)
 	}
 	var list struct {
@@ -71,7 +72,7 @@ func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 	if err := run(t.Context(), []string{"inspect", "show", "1", "--output=json"}, &stdout, &stderr, factory); err == nil {
 		t.Fatal("unknown inspection was found")
 	}
-	if len(events) != 2 || events[0].Action != "show" || events[1].Event != telemetryCommandFailed {
+	if len(events) != 1 || events[0].Action != "show" || events[0].Event != clienttelemetry.CommandFailed {
 		t.Fatalf("show telemetry = %+v", events)
 	}
 	if err := run(t.Context(), []string{"requests", "list"}, &stdout, &stderr, factory); err == nil {

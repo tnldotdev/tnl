@@ -8,7 +8,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
@@ -46,8 +45,8 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	for _, table := range []string{
 		"schema_identity", "identities", "oidc_assertion_exchanges", "managed_label_reservations", "teams", "member_slug_reservations", "team_memberships", "team_invitations", "domains", "control_sessions", "guest_retry_keys", "dns_authorities", "dns_challenge_changes",
 		"public_urls", "publish_runs", "publisher_service_connection_slots", "relay_services", "relay_leases", "ingress_leases", "ingress_routing_table_clock", "ingress_routing_table_events", "relay_service_reservations",
-		"acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_usage_runs", "ingress_usage_reports",
-		"visitor_network_hash_keys", "public_url_usage_buckets", "public_url_usage_deliveries", "public_url_recovery_episodes", "public_url_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
+		"acme_accounts", "relay_certificate_orders", "acme_orders", "acme_authorizations", "ingress_run_fences",
+		"public_url_recovery_episodes", "public_url_recovery_histogram", "admin_audit_events", "maintenance_controls", "schema_migration_lock",
 	} {
 		var exists bool
 		if err := database.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'control' AND table_name = $1)`, table).Scan(&exists); err != nil {
@@ -57,10 +56,14 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 			t.Errorf("control.%s missing after migration", table)
 		}
 		var key string
-		if err := database.pool.QueryRow(ctx, `SELECT a.attname FROM pg_constraint AS c
+		wantKey := "id"
+		if table == "ingress_run_fences" {
+			wantKey = "ingress_id,ingress_run_id"
+		}
+		if err := database.pool.QueryRow(ctx, `SELECT string_agg(a.attname, ',' ORDER BY array_position(c.conkey,a.attnum)) FROM pg_constraint AS c
 			JOIN pg_attribute AS a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-			WHERE c.conrelid = ('control.' || $1)::regclass AND c.contype = 'p'`, table).Scan(&key); err != nil || key != "id" {
-			t.Errorf("control.%s primary key = %q, %v; want id", table, key, err)
+			WHERE c.conrelid = ('control.' || $1)::regclass AND c.contype = 'p'`, table).Scan(&key); err != nil || key != wantKey {
+			t.Errorf("control.%s primary key = %q, %v; want %s", table, key, err, wantKey)
 		}
 	}
 	for _, view := range []string{"publish_run_connection_slots", "service_connection_slots", "publisher_service_runs"} {
@@ -87,28 +90,46 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 		newer.Close()
 		t.Fatal("open accepted a newer database schema")
 	}
+	if err := Migrate(ctx, databaseURL); err == nil {
+		t.Fatal("migration accepted a newer database schema")
+	}
 }
 
 func TestIntegrationMigrationRejectsOtherVersionOneBaseline(t *testing.T) {
-	ctx := t.Context()
-	url := newDisposableControlStateDatabaseURL(t, "baseline_identity")
-	if err := Migrate(ctx, url); err != nil {
-		t.Fatal(err)
-	}
-	pool, err := pgxpool.New(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	if _, err := pool.Exec(ctx, `DROP TABLE control.schema_identity`); err != nil {
-		t.Fatal(err)
-	}
-	if err := Migrate(ctx, url); err == nil {
-		t.Fatal("migration accepted a different version-one baseline")
-	}
-	if database, err := Open(ctx, url, testStorageKey, ""); err == nil {
-		database.Close()
-		t.Fatal("serving accepted a different version-one baseline")
+	for _, test := range []struct{ name, fault string }{
+		{"missing identity table", `DROP TABLE control.schema_identity`},
+		{"missing identity row", `DELETE FROM control.schema_identity`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			d, url, _ := newControlStateIntegrationDatabaseWithURL(t, "baseline_identity")
+			if _, err := d.pool.Exec(t.Context(), test.fault); err != nil {
+				t.Fatal(err)
+			}
+			if err := Migrate(t.Context(), url); err == nil {
+				t.Fatal("migration accepted a different version-one baseline")
+			}
+			if err := d.Readiness(t.Context()); err == nil {
+				t.Fatal("readiness accepted a different version-one baseline")
+			}
+			if database, err := Open(t.Context(), url, testStorageKey, ""); err == nil {
+				database.Close()
+				t.Fatal("serving accepted a different version-one baseline")
+			}
+			var identity *string
+			if err := d.pool.QueryRow(t.Context(), `SELECT to_regclass('control.schema_identity')::text`).Scan(&identity); err != nil {
+				t.Fatal(err)
+			}
+			if test.name == "missing identity table" {
+				if identity != nil {
+					t.Fatal("entrypoint recreated the missing identity table")
+				}
+			} else {
+				var count int
+				if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.schema_identity`).Scan(&count); err != nil || count != 0 {
+					t.Fatal("entrypoint recreated the missing identity row", count, err)
+				}
+			}
+		})
 	}
 }
 
@@ -121,9 +142,12 @@ func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
 	for _, previous := range []string{
 		"tnl-control-fresh-v1-services",
 		"tnl-control-fresh-v1-visitors",
+		"tnl-control-fresh-v1-public-reservations-guest-authority",
 		"tnl-control-fresh-v1-services-oidc-company-service-http-dns-egress-deployment-workload-visitors",
 		"tnl-control-fresh-v1-services-oidc-company-service-http-dns-egress-deployment-provider-workloads",
 		"tnl-control-fresh-v1-services-platform-access",
+		"tnl-control-fresh-v1-public-reservations",
+		// this historical name already labels incompatible donor schemas.
 		"tnl-control-fresh-v1-relay-peer-keys",
 	} {
 		t.Run(previous, func(t *testing.T) {
@@ -139,6 +163,10 @@ func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
 			if opened, err := Open(ctx, d.pool.Config().ConnString(), testStorageKey, ""); err == nil {
 				opened.Close()
 				t.Fatal("serving accepted a sibling workload baseline")
+			}
+			var stored string
+			if err := d.pool.QueryRow(ctx, `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&stored); err != nil || stored != previous {
+				t.Fatal("entrypoint relabeled an incompatible baseline", stored, err)
 			}
 		})
 	}

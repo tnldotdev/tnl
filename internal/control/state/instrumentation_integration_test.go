@@ -12,7 +12,6 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/observability/publicurlusage"
 )
 
 func TestIntegrationOperationMetricsExport(t *testing.T) {
@@ -38,11 +37,15 @@ func TestIntegrationOperationMetricsExport(t *testing.T) {
 	if _, err := database.RenewIngress(t.Context(), IngressRenewal{IngressLeaseIdentity: ingress.IngressLeaseIdentity}, now, time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.ReportIngressUsage(t.Context(), ingress.IngressLeaseIdentity, IngressUsageBatch{Reports: []IngressUsageReport{{
-		PublicURLID: setup.PublicURLID, PublishRunNumber: setup.PublishRunNumber, ReportRevision: 1,
-		BucketStart: now.Truncate(time.Minute), BucketEnd: now.Truncate(time.Minute).Add(time.Minute), ObservedThrough: now,
-		HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary(),
-	}}}, now); err != nil {
+	guard, err := database.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, guard)
+	if _, err := lockCurrentIngressLease(t.Context(), controlstatedb.New(guard), ingress.IngressLeaseIdentity, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := guard.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	// validation and pool-acquisition failures belong to the state operation,
@@ -63,18 +66,18 @@ func TestIntegrationOperationMetricsExport(t *testing.T) {
 	families := exportedDurationMetrics(t, metrics)
 	for operation, count := range map[string]uint64{
 		"CreatePublishRun": 1, "HeartbeatPublishRun": 1, "ClaimPublisherConnection": 2,
-		"MarkPublisherConnectionReady": 2, "ReadIngressRoutingTableSnapshot": 1,
-		"ReadIngressRoutingTableEvents": 1, "RenewIngress": 1, "ReportIngressUsage": 1,
+		"MarkPublisherConnectionReady": 2, "ReadIngressRoutingTableSnapshot": 3,
+		"ReadIngressRoutingTableEvents": 1, "RenewIngress": 3,
 	} {
 		assertDurationCount(t, families, "tnl_control_operation_duration_seconds", operation, "success", count)
 	}
 	for _, outcome := range []string{"error", "canceled", "timeout"} {
 		assertDurationCount(t, families, "tnl_control_operation_duration_seconds", "CreatePublishRun", outcome, 1)
 	}
-	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "ListIngressRoutingTableSnapshot", "success", 1)
+	assertDurationCount(t, families, "tnl_database_query_duration_seconds", "ListIngressRoutingTableSnapshot", "success", 3)
 	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockLocalTeamForSession", "success", 1)
 	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockRelayServicesForPlacement", "success", 1)
-	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockPublishRunForUsage", "success", 1)
+	assertDurationCount(t, families, "tnl_database_guard_held_duration_seconds", "LockIngressLease", "success", 1)
 	var placements float64
 	for _, family := range families {
 		if family.GetName() != "tnl_control_placement_decisions_total" {

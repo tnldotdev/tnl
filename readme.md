@@ -40,7 +40,7 @@ match the URL and count with the terminal running `tnl`. The browser shows the
 round-trip time and when your computer sent the pong. Guests can run one demo
 at a time. The link admits this demo without signing in; tnl prints it once
 instead of admitting every visitor from your IP. A guest credential lasts 72 hours
-and allows 15 minutes ready or about 5 MiB of traffic across runs. Ctrl+C
+and allows 20 cumulative ready minutes across runs, including idle time. Ctrl+C
 stops the demo and removes its public URL. Run `tnl auth login` to publish your own
 app. CLI telemetry is on by default, including for the demo. Run
 `tnl telemetry off` to disable it.
@@ -298,8 +298,7 @@ For an app that is already running, [use `tnl publish`](https://tnl.dev/docs/pub
 
 ## how much does it cost?
 
-tnl.dev is free for now. Teams have a soft limit of 50 GiB of transfer per
-month across their public URLs, counting traffic in both directions.
+tnl.dev is free for now.
 
 Accounts and teams created while it is free will keep a free plan
 if paid options arrive.

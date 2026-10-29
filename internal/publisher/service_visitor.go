@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"net"
 	"reflect"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
@@ -26,6 +28,10 @@ type ServiceHTTPFrontend interface {
 type ServiceHTTPTarget struct {
 	Address   string
 	Transport targettransport.Transport
+	native    ServiceNativeAdmission
+	lifetime  context.Context
+	track     func(net.Conn)
+	enter     func() (func(), bool)
 }
 
 type PublicHTTPVisitor struct{ Frontend ServiceHTTPFrontend }
@@ -43,6 +49,27 @@ func (PublicHTTPVisitor) authorize(context.Context, tls.ConnectionState) (Servic
 // session. it never asks the application to supply another credential.
 type ConnectorVisitor struct {
 	Check func(context.Context) (ServiceVisitorDecision, error)
+}
+
+// ServiceNativeAdmission is consumed only by the native forwarding path. the
+// concrete service admission owns construction, physical-owner checks and C;
+// this interface does not turn a permission guard or a callback into admission.
+type ServiceNativeAdmission interface {
+	CheckUse(context.Context) (time.Time, error)
+	SetupDeadline() time.Time
+	FinishSetup() error
+	Stop()
+}
+
+// NativeVisitor is supplied by a real, stream-owned service admission after
+// signed possession verification. HTTP request guards do not implement admission.
+type NativeVisitor struct{ Admission ServiceNativeAdmission }
+
+func (v NativeVisitor) valid() bool                  { return !nilManagedValue(v.Admission) }
+func (NativeVisitor) clientAuth() tls.ClientAuthType { return tls.NoClientCert }
+func (v NativeVisitor) authorize(ctx context.Context, _ tls.ConnectionState) (ServiceVisitorDecision, error) {
+	until, err := v.Admission.CheckUse(ctx)
+	return ServiceVisitorDecision{Allowed: err == nil, ValidUntil: until}, err
 }
 
 func (v ConnectorVisitor) valid() bool                  { return v.Check != nil }
@@ -79,6 +106,12 @@ func normalizeManagedVisitor(visitor ServiceVisitorAuthentication) (ServiceVisit
 	case ConnectorVisitor:
 		return v, v.valid()
 	case *ConnectorVisitor:
+		if v != nil {
+			return *v, v.valid()
+		}
+	case NativeVisitor:
+		return v, v.valid()
+	case *NativeVisitor:
 		if v != nil {
 			return *v, v.valid()
 		}

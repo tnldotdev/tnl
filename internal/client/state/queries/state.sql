@@ -44,6 +44,9 @@ UPDATE installation_settings
 SET telemetry_enabled = sqlc.arg(enabled)
 WHERE id = 1;
 
+-- name: GetTelemetryPreference :one
+SELECT telemetry_enabled, telemetry_epoch FROM installation_settings WHERE id = 1;
+
 -- name: GetWorktreeHashSalt :one
 SELECT coalesce(worktree_hash_salt, x'') AS worktree_hash_salt
 FROM installation_settings

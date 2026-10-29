@@ -12,6 +12,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -40,6 +41,9 @@ func SigningIdentity(ctx context.Context, profile *clientstate.Store, id string)
 // private publication never reserves a hostname or asks for a visitor certificate.
 // only the person's session creates saved state; runs use the exact signed grant.
 func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePresentation) error {
+	if flags.Install {
+		flags.TelemetryDisabled = clienttelemetry.InstallationDisabled(ctx, flags.StateDir, flags.TelemetryDisabled)
+	}
 	project := projectConfiguration{Project: flags.Project, targetResolver: flags.Resolver}
 	protocol, err := privatePublishProtocol(flags.Protocol)
 	if err != nil {
@@ -323,7 +327,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 	}
 	job := supervisor.Job{Kind: supervisor.KindService, ID: supervisor.ServiceJobKey(server, *identity.ServiceId), Name: name, Server: server,
 		ServiceID: *identity.ServiceId, PublisherIdentityID: identity.ClientId, GrantID: identity.GrantId, Target: target, Protocol: config.ProtocolName(protocol), Trust: trust, ServerCAPEM: serverCAPEM,
-		TrustRevision: approved.TrustRevision, PublisherPool: approved.PublisherPool}
+		TrustRevision: approved.TrustRevision, PublisherPool: approved.PublisherPool, TelemetryDisabled: flags.TelemetryDisabled}
 	job.Limits = flags.Limits
 	if flags.Service != "" {
 		job.Project, job.ProjectService = &project.Project, flags.Service

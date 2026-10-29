@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -85,8 +86,8 @@ func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
 
 	fixture.visitor.transport.CloseIdleConnections()
 	stopIntegrationPublisher(t, handle)
+	assertRuntimeForwardedBytes(t, fixture.process)
 	stopIntegrationProcess(t, fixture.process)
-	assertStandaloneUsage(t, fixture.databaseURL, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
 }
 
 func TestIntegrationURLPublisherTerminatesVisitorTLSLocally(t *testing.T) {
@@ -176,6 +177,40 @@ func TestIntegrationDeniedVisitorGetsHTTPS403(t *testing.T) {
 			stopIntegrationPublisher(t, handle)
 		})
 	}
+}
+
+// keep the real byte-direction proof at the operator-metrics owner, not in a
+// retired hosted accounting table. both copies must finish before it passes.
+func assertRuntimeForwardedBytes(t *testing.T, process *integrationProcess) {
+	t.Helper()
+	waitForIntegrationCondition(t, 5*time.Second, func(ctx context.Context) (bool, error) {
+		response, err := integrationGET(ctx, &http.Client{Timeout: time.Second}, "http://"+process.metricsAddress+"/metrics")
+		if err != nil {
+			return false, err
+		}
+		families, err := observability.ParseMetrics(response.Body)
+		err = errors.Join(err, response.Body.Close())
+		if err != nil {
+			return false, err
+		}
+		if response.StatusCode != http.StatusOK {
+			return false, fmt.Errorf("read forwarding metrics: %s", response.Status)
+		}
+		positive := map[string]bool{}
+		for _, family := range families {
+			if family.GetName() != "tnl_ingress_forwarded_bytes_total" {
+				continue
+			}
+			for _, metric := range family.Metric {
+				for _, label := range metric.Label {
+					if label.GetName() == "tnl_direction" && metric.GetCounter().GetValue() > 0 {
+						positive[label.GetValue()] = true
+					}
+				}
+			}
+		}
+		return positive["visitor_to_publisher"] && positive["publisher_to_visitor"], nil
+	})
 }
 
 func assertRuntimeOperations(t *testing.T, processes []*integrationProcess, minimums map[string]uint64) {

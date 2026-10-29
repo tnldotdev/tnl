@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"sort"
 	"sync"
@@ -23,82 +24,87 @@ type PublicVisitorControl interface {
 }
 
 type publicVisitorRun struct {
-	policy        *visitorPolicy
-	capacity      *streamCapacity
-	mu            sync.Mutex
-	additional    []*streamCapacity
-	limit         int
-	nextExpansion time.Time
+	policy   *visitorPolicy
+	capacity *streamCapacity
+	cancel   context.CancelFunc
+	done     chan struct{}
+}
+
+func preparePublicVisitorRun(ctx context.Context, client PublicVisitorControl, current func() ingressv1.IngressLease, entry ingressv1.IngressRoutingTableEntry, report func(error)) (*publicVisitorRun, error) {
+	limits := trafficlimits.Default()
+	if entry.Traffic != nil {
+		limits.Connections = entry.Traffic.Connections
+	}
+	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: entry.PublicUrlId}
+	// each ingress prepares its full local setup bound. authorized capacity is
+	// shared at the publisher, not split among ingresses.
+	body := ingressv1.StreamCapacityRequest{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: scope.ID}, RunId: entry.PublishRunId, RunNumber: entry.PublishRunNumber, Capacity: limits.Connections}
+	capacity, err := newStreamCapacity(client, current(), body)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := newVisitorPolicy(client, scope, current)
+	if err != nil {
+		capacity.pool.Close()
+		return nil, err
+	}
+	life, cancel := context.WithCancel(ctx)
+	r := &publicVisitorRun{policy: policy, capacity: capacity, cancel: cancel, done: make(chan struct{})}
+	policy.observations = func() []ingressv1.IngressStreamAllocationObservation {
+		return r.observationsFor(entry, current(), time.Now())
+	}
+	if err := r.refresh(life); err != nil {
+		close(r.done)
+		r.close(ctx)
+		return nil, err
+	}
+	go func() {
+		defer close(r.done)
+		timer := time.NewTimer(capacity.refreshInterval())
+		defer timer.Stop()
+		for {
+			select {
+			case <-life.Done():
+				return
+			case <-timer.C:
+				if err := r.refresh(life); err != nil && life.Err() == nil && report != nil {
+					report(err)
+				}
+				timer.Reset(capacity.refreshInterval())
+			}
+		}
+	}()
+	return r, nil
+}
+
+func (r *publicVisitorRun) refresh(ctx context.Context) error {
+	// one run owns fetch-through-install ordering. separate timers could keep
+	// policy a capacity response behind until short publisher evidence expired.
+	capacityErr := r.capacity.refresh(ctx)
+	// a capacity outage must not stop policy renewal for still-live admissions.
+	return errors.Join(capacityErr, r.policy.refresh(ctx))
 }
 
 func (r *publicVisitorRun) close(ctx context.Context) {
+	r.cancel()
+	<-r.done
 	r.policy.Close()
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	for _, capacity := range r.capacities() {
-		_ = capacity.Close(cleanup)
-	}
-}
-
-func (r *publicVisitorRun) active() bool {
-	for _, capacity := range r.capacities() {
-		capacity.pool.mu.Lock()
-		active := len(capacity.pool.active) != 0
-		capacity.pool.mu.Unlock()
-		if active {
-			return true
-		}
-	}
-	return false
-}
-
-func (r *publicVisitorRun) capacities() []*streamCapacity {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]*streamCapacity{r.capacity}, r.additional...)
-}
-
-func (r *publicVisitorRun) expand(ctx context.Context, report func(error)) {
-	var used, delegated int
-	for _, capacity := range r.capacities() {
-		capacity.pool.mu.Lock()
-		used += len(capacity.pool.active)
-		for _, slots := range capacity.pool.allocations {
-			if !slots.allocation.Retired && slots.allocation.ValidUntil.After(time.Now()) {
-				delegated += slots.allocation.Capacity
-			}
-		}
-		capacity.pool.mu.Unlock()
-	}
-	if used < max(1, delegated*3/4) || delegated >= r.limit || len(r.additional) >= 31 || time.Now().Before(r.nextExpansion) {
-		return
-	}
-	r.nextExpansion = time.Now().Add(2 * time.Second)
-	body := ingressv1.StreamCapacityRequest{Resource: r.capacity.body.Resource, RunId: r.capacity.body.RunId, RunNumber: r.capacity.body.RunNumber, Capacity: r.capacity.body.Capacity}
-	body.Capacity = min(body.Capacity, r.limit-delegated)
-	extra, err := prepareStreamCapacity(ctx, r.capacity.client, r.capacity.owner, body, report)
-	if err != nil {
-		return
-	}
-	r.mu.Lock()
-	r.additional = append(r.additional, extra)
-	r.mu.Unlock()
+	_ = r.capacity.Close(cleanup)
 }
 
 func (r *publicVisitorRun) reserve(visitor string, source netip.Addr, stop func()) (*streamReservation, *visitorlease.ReservationGuard, error) {
-	for _, capacity := range r.capacities() {
-		reservation, err := capacity.reserve(visitor, source, stop)
-		if err != nil {
-			continue
-		}
-		guard, err := r.policy.lease.BindReservationFrom(reservation.header, source, stop)
-		if err != nil {
-			reservation.Close()
-			continue
-		}
-		return reservation, guard, nil
+	reservation, err := r.capacity.reserve(visitor, source, stop)
+	if err != nil {
+		return nil, nil, err
 	}
-	return nil, nil, ErrStreamReservation
+	guard, err := r.policy.lease.BindReservationFrom(reservation.header, source, stop)
+	if err != nil {
+		reservation.Close()
+		return nil, nil, err
+	}
+	return reservation, guard, nil
 }
 
 // LookupPublicURLs reads prepared state only. routing publication wakes the
@@ -116,17 +122,19 @@ func (c *Controller) LookupPublicURLs(hostname string, forwarder *Forwarder, now
 		return nil, LookupInvalidProjection
 	}
 	prepared := make([]PublicURL, 0, len(routes))
+	process := c.Lease()
 	for _, route := range routes {
 		c.mu.RLock()
 		run := c.publicVisitors[route.PublishRunID]
 		c.mu.RUnlock()
-		if run == nil {
-			continue
+		entry := ingressv1.IngressRoutingTableEntry{}
+		for _, candidate := range entries {
+			if candidate.PublishRunId == route.PublishRunID {
+				entry = candidate
+				break
+			}
 		}
-		run.capacity.mu.Lock()
-		ready := run.capacity.ready
-		run.capacity.mu.Unlock()
-		if !ready {
+		if run == nil || !run.preparedFor(entry, process, now) {
 			continue
 		}
 		view, enabled, anonymous := run.policy.lease.Current()
@@ -184,6 +192,9 @@ func (c *Controller) runPublicVisitors(ctx context.Context) error {
 		if process.IngressLeaseRevision == 0 || process.Draining || !process.LeaseExpiresAt.After(time.Now()) {
 			continue
 		}
+		// initial health follows local preparation, not the next process renewal.
+		// starting URLs do not hold unrelated ready URLs behind this join gate.
+		c.markPublicRoutingPrepared()
 		c.routingTable.mu.RLock()
 		current := make(map[string]ingressv1.IngressRoutingTableEntry)
 		terminal := make(map[string]bool)
@@ -193,7 +204,7 @@ func (c *Controller) runPublicVisitors(ctx context.Context) error {
 				terminal[entry.PublishRunId] = true
 				continue
 			}
-			if !stored.tombstone && entry.PublicUrlExpiresAt.After(time.Now()) {
+			if !stored.tombstone && c.publicPool(entry) && entry.PublicUrlExpiresAt.After(time.Now()) {
 				current[entry.PublishRunId] = entry
 			}
 		}
@@ -201,20 +212,19 @@ func (c *Controller) runPublicVisitors(ctx context.Context) error {
 		c.mu.Lock()
 		var retired []*publicVisitorRun
 		for id, run := range c.publicVisitors {
-			_, present := current[id]
 			owner := run.capacity.owner
-			if terminal[id] || owner.IngressRunId != process.IngressRunId || owner.IngressLeaseRevision != process.IngressLeaseRevision || !present && !run.active() {
+			// a missing/expired projection or temporary routing tombstone does not
+			// close the run. retain its bounded prepared owner through recovery;
+			// policy and allocation deadlines still fence work during an outage.
+			if terminal[id] || owner.IngressRunId != process.IngressRunId || owner.IngressLeaseRevision != process.IngressLeaseRevision {
 				delete(c.publicVisitors, id)
 				retired = append(retired, run)
 			}
 		}
 		var pending []string
-		var existing []*publicVisitorRun
 		for id := range current {
 			if c.publicVisitors[id] == nil {
 				pending = append(pending, id)
-			} else {
-				existing = append(existing, c.publicVisitors[id])
 			}
 		}
 		remaining := max(0, 4096-len(c.publicVisitors))
@@ -222,14 +232,6 @@ func (c *Controller) runPublicVisitors(ctx context.Context) error {
 		for _, run := range retired {
 			run.close(ctx)
 		}
-		// expansion observes local occupancy in this background loop. even a
-		// full pool never turns a visitor into an allocation request.
-		var expanding sync.WaitGroup
-		for index := range min(8, len(existing)) {
-			run := existing[(cursor+index)%len(existing)]
-			expanding.Go(func() { run.expand(ctx, c.report) })
-		}
-		expanding.Wait()
 		if len(pending) == 0 {
 			continue
 		}
@@ -241,24 +243,10 @@ func (c *Controller) runPublicVisitors(ctx context.Context) error {
 		for offset := range count {
 			entry := current[pending[(start+offset)%len(pending)]]
 			workers.Go(func() {
-				scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: entry.PublicUrlId}
-				limits := trafficlimits.Default()
-				if entry.Traffic != nil {
-					limits.Connections = entry.Traffic.Connections
-				}
-				// start with a portion rather than taking the whole run from other
-				// ingress processes; background occupancy can request more portions.
-				body := ingressv1.StreamCapacityRequest{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: scope.ID}, RunId: entry.PublishRunId, RunNumber: entry.PublishRunNumber, Capacity: max(1, limits.Connections/4)}
-				capacity, err := prepareStreamCapacity(ctx, c.visitorControl, process, body, c.report)
+				run, err := preparePublicVisitorRun(ctx, c.visitorControl, c.Lease, entry, c.report)
 				if err != nil {
 					return
 				}
-				policy, err := prepareVisitorPolicy(ctx, c.visitorControl, scope, c.Lease, c.report)
-				if err != nil {
-					_ = capacity.Close(ctx)
-					return
-				}
-				run := &publicVisitorRun{policy: policy, capacity: capacity, limit: limits.Connections}
 				c.mu.Lock()
 				c.publicVisitors[entry.PublishRunId] = run
 				c.mu.Unlock()

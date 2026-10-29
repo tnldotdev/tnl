@@ -30,9 +30,9 @@ func TestPublisherVisitorPolicyReportsExplicitEmptyAndAllInstalledAllocations(t 
 				if len(body.ObservedAllocations) != 2048 {
 					t.Fatal("public publisher truncated installed observations", len(body.ObservedAllocations))
 				}
-				for index, id := range body.ObservedAllocations {
-					if id != fmt.Sprintf("salloc_%022d", index) {
-						t.Fatal("observation omitted or changed an installed allocation", index, id)
+				for index, observation := range body.ObservedAllocations {
+					if observation.AllocationId != fmt.Sprintf("salloc_%022d", index) || observation.RunId != body.RunId || observation.RunNumber != body.RunNumber || observation.ValidUntil.IsZero() {
+						t.Fatal("observation omitted or changed installed allocation evidence", index)
 					}
 				}
 			}
@@ -54,10 +54,13 @@ func TestPublisherVisitorPolicyReportsExplicitEmptyAndAllInstalledAllocations(t 
 			t.Fatal(err)
 		}
 		defer policy.Close()
+		if base.calls.Load() != 2 {
+			t.Fatal("installed allocations were not reported before the next poll", base.calls.Load())
+		}
 		if err := policy.refresh(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		if base.calls.Load() != 2 {
+		if base.calls.Load() != 3 {
 			t.Fatal("observation preparation made unexpected control requests", base.calls.Load())
 		}
 	})

@@ -96,7 +96,6 @@ schemas:
       - connection_capacity
       - reported_connections
       - routing_table_revision
-      - visitor_network_hash_keys
       - draining
       - registered_at
       - renewed_at
@@ -126,13 +125,6 @@ schemas:
         type: integer
         format: int64
         minimum: 0
-      visitor_network_hash_keys:
-        type: array
-        minItems: 2
-        maxItems: 2
-        description: Keys for the current and next UTC dates. Ingress uses them only to hash visitor networks for one public URL.
-        items:
-          $ref: "../openapi.yaml#/components/schemas/VisitorNetworkHashKey"
       draining:
         type: boolean
       drain_deadline:
@@ -192,14 +184,3 @@ schemas:
         type: integer
         format: int64
         minimum: 1
-  VisitorNetworkHashKey:
-    type: object
-    additionalProperties: false
-    required: [utc_date, key]
-    properties:
-      utc_date:
-        type: string
-        format: date
-      key:
-        type: string
-        format: byte

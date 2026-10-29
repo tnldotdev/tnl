@@ -135,21 +135,11 @@ func expireOpenPublishRun(ctx context.Context, queries *controlstatedb.Queries, 
 		if err != nil {
 			return false, false, fmt.Errorf("controlstate: expire publish run: read guest trial: %w", err)
 		}
-		if guest.ExpiresAt.Valid && guest.ExpiresAt.Time.Before(closedAt) {
+		if guest.ExpiresAt.Valid && !guest.ExpiresAt.Time.After(closedAt) {
 			closedAt, reason = guest.ExpiresAt.Time, "guest_expired"
 		}
-		if guest.ActiveReadyAt.Valid {
-			remaining := GuestReadyAllowance - time.Duration(guest.UsedReadyNs)
-			if remaining < 0 {
-				remaining = 0
-			}
-			deadline := guest.ActiveReadyAt.Time.Add(remaining)
-			if deadline.Before(closedAt) {
-				closedAt, reason = deadline, "guest_ready_limit"
-			}
-		}
-		if guest.UsedBytes >= GuestByteAllowance && now.Before(closedAt) {
-			closedAt, reason = now, "guest_transfer_limit"
+		if guest.ReadyDeadline.Valid && !guest.ReadyDeadline.Time.After(closedAt) {
+			closedAt, reason = guest.ReadyDeadline.Time, "guest_ready_limit"
 		}
 	}
 	if closedAt.After(now) {
@@ -171,7 +161,11 @@ func closePublishRun(
 	now time.Time,
 	reason string,
 ) error {
-	if session.ReadyAt.Valid {
+	routingPublished, err := publishRunRoutingPublished(ctx, queries, session)
+	if err != nil {
+		return err
+	}
+	if routingPublished {
 		// the event and closure commit together. only this terminal path may
 		// authorize ingress to retire lifetime totals for the exact run.
 		session.ClosedAt = timestamptz(now)

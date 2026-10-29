@@ -13,7 +13,19 @@ schemas:
         type: array
         maxItems: 2048
         uniqueItems: true
-        items: { type: string, pattern: "^salloc_[A-Za-z0-9]{22}$" }
+        items: { $ref: "../openapi.yaml#/components/schemas/StreamCapacityObservation" }
+  StreamCapacityObservation:
+    type: object
+    additionalProperties: false
+    required: [allocation_id, run_id, run_number, valid_until]
+    properties:
+      allocation_id: { type: string, pattern: "^salloc_[A-Za-z0-9]{22}$" }
+      run_id: { type: string, maxLength: 64 }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      valid_until:
+        type: string
+        format: date-time
+        description: Deadline of the already-installed allocation and policy, never a renewed database expiry.
   VisitorPolicyUpdate:
     type: object
     additionalProperties: false
@@ -36,6 +48,7 @@ schemas:
         port,
         issuer,
         visitor_policy_revision,
+        metadata_revision,
         key_revision,
         observed_at,
         valid_until,
@@ -51,6 +64,11 @@ schemas:
       port: { type: integer, minimum: 1, maximum: 65535 }
       issuer: { type: string, format: uri, maxLength: 256 }
       visitor_policy_revision: { type: integer, format: int64, minimum: 1 }
+      metadata_revision:
+        type: integer
+        format: int64
+        minimum: 0
+        description: current service trust revision; zero for public URLs.
       key_revision: { type: integer, format: int64, minimum: 1 }
       observed_at: { type: string, format: date-time }
       valid_until: { type: string, format: date-time }

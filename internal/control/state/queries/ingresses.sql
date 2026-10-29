@@ -16,7 +16,7 @@ INSERT INTO control.ingress_leases (
 ) VALUES (
     sqlc.arg(ingress_id),
     sqlc.arg(ingress_run_id),
-    1,
+    COALESCE((SELECT max(ingress_lease_revision) FROM control.ingress_run_fences WHERE ingress_id = sqlc.arg(ingress_id)), 0) + 1,
     sqlc.arg(protocol_version),
     sqlc.arg(connection_capacity),
     sqlc.arg(ingress_pool_id),
@@ -82,13 +82,23 @@ ON CONFLICT (ingress_id) DO UPDATE SET
         ELSE EXCLUDED.lease_expires_at
     END
 WHERE (control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
+    AND control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
     AND control.ingress_leases.ingress_pool_id=EXCLUDED.ingress_pool_id
     AND control.ingress_leases.connector_only=EXCLUDED.connector_only
     AND control.ingress_leases.service_ports=EXCLUDED.service_ports
     AND control.ingress_leases.connector_address=EXCLUDED.connector_address
     AND control.ingress_leases.connector_tls_server_name=EXCLUDED.connector_tls_server_name)
-   OR control.ingress_leases.lease_expires_at <= EXCLUDED.registered_at
+   OR (control.ingress_leases.ingress_run_id <> EXCLUDED.ingress_run_id
+       AND control.ingress_leases.lease_expires_at <= EXCLUDED.registered_at)
 RETURNING *;
+
+-- name: FenceIngressRun :one
+INSERT INTO control.ingress_run_fences (ingress_id, ingress_run_id, ingress_lease_revision)
+VALUES (sqlc.arg(ingress_id), sqlc.arg(ingress_run_id), sqlc.arg(ingress_lease_revision))
+ON CONFLICT (ingress_id, ingress_run_id) DO UPDATE
+SET ingress_lease_revision = EXCLUDED.ingress_lease_revision
+WHERE control.ingress_run_fences.ingress_lease_revision = EXCLUDED.ingress_lease_revision
+RETURNING ingress_lease_revision;
 
 -- name: RenewIngress :one
 UPDATE control.ingress_leases

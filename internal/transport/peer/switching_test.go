@@ -44,7 +44,7 @@ func TestPeerSwitchingPreservesTCPConnection(t *testing.T) {
 				serverTLS, clientTLS := peerTLS(t)
 				var gate [pathCount]*atomic.Bool
 				var clientPaths, serverPaths [pathCount]Carrier
-				clientDirect, serverDirect := NewCarrierSlot(), NewCarrierSlot()
+				var clientSlots, serverSlots [pathCount]*CarrierSlot
 				var directLeft, directRight Carrier
 				for index := range pathCount {
 					gate[index] = new(atomic.Bool)
@@ -55,11 +55,19 @@ func TestPeerSwitchingPreservesTCPConnection(t *testing.T) {
 					} else {
 						left, right = relayPair(t, ctx, relays.tcp[index], serverTLS, clientTLS)
 					}
-					clientPaths[index] = &gatedCarrier{Carrier: left, drop: gate[index]}
-					serverPaths[index] = &gatedCarrier{Carrier: right, drop: gate[index]}
+					clientSlots[index], serverSlots[index] = NewCarrierSlot(), NewCarrierSlot()
+					clientPaths[index], serverPaths[index] = clientSlots[index], serverSlots[index]
+					left = &gatedCarrier{Carrier: left, drop: gate[index]}
+					right = &gatedCarrier{Carrier: right, drop: gate[index]}
 					if index == Direct {
-						directLeft, directRight = clientPaths[index], serverPaths[index]
-						clientPaths[index], serverPaths[index] = clientDirect, serverDirect
+						directLeft, directRight = left, right
+					} else {
+						if err := clientSlots[index].Install(left); err != nil {
+							t.Fatal(err)
+						}
+						if err := serverSlots[index].Install(right); err != nil {
+							t.Fatal(err)
+						}
 					}
 				}
 				var key [32]byte
@@ -182,14 +190,26 @@ func TestPeerSwitchingPreservesTCPConnection(t *testing.T) {
 				}
 				awaitPath(t, ctx, clientEndpoint, serverEndpoint, RelayA)
 				exchange()
+				// replace the selected relay's physical carriers inside this same
+				// authorized pair. endpoint sequence/replay state, inner QUIC,
+				// application streams and the monotonic target socket all survive.
+				left, right := relayPair(t, ctx, !relays.tcp[RelayA], serverTLS, clientTLS)
+				if err := clientSlots[RelayA].Install(&gatedCarrier{Carrier: left, drop: gate[RelayA]}); err != nil {
+					t.Fatal(err)
+				}
+				if err := serverSlots[RelayA].Install(&gatedCarrier{Carrier: right, drop: gate[RelayA]}); err != nil {
+					t.Fatal(err)
+				}
+				awaitPath(t, ctx, clientEndpoint, serverEndpoint, RelayA)
+				exchange()
 				if clientEndpoint.ActivePath() == Direct {
 					t.Fatal("blocked ICE delayed or bypassed relay-first traffic")
 				}
 				if direct {
-					if err := clientDirect.Install(directLeft); err != nil {
+					if err := clientSlots[Direct].Install(directLeft); err != nil {
 						t.Fatal(err)
 					}
-					if err := serverDirect.Install(directRight); err != nil {
+					if err := serverSlots[Direct].Install(directRight); err != nil {
 						t.Fatal(err)
 					}
 					gate[Direct].Store(false)
@@ -210,10 +230,10 @@ func TestPeerSwitchingPreservesTCPConnection(t *testing.T) {
 					// a new UDP pair models a changed NAT mapping without changing
 					// the logical endpoint, QUIC session, or application sockets.
 					left, right := directPair(t)
-					if err := clientDirect.Install(&gatedCarrier{Carrier: left, drop: gate[Direct]}); err != nil {
+					if err := clientSlots[Direct].Install(&gatedCarrier{Carrier: left, drop: gate[Direct]}); err != nil {
 						t.Fatal(err)
 					}
-					if err := serverDirect.Install(&gatedCarrier{Carrier: right, drop: gate[Direct]}); err != nil {
+					if err := serverSlots[Direct].Install(&gatedCarrier{Carrier: right, drop: gate[Direct]}); err != nil {
 						t.Fatal(err)
 					}
 					gate[Direct].Store(false)

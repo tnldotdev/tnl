@@ -38,25 +38,9 @@ func (d *Database) HeartbeatPublishRun(
 	defer rollback(ctx, tx, "heartbeat publish run", &retErr)()
 	queries := controlstatedb.New(tx)
 	pendingEvents := pendingIngressRoutingTableEvents{}
-	route, session, err := lockAuthenticatedPublishRun(ctx, queries, authentication, now)
+	route, session, err := lockAuthenticatedPublishRunIdentity(ctx, queries, authentication)
 	if err != nil {
 		return PublishRunSetup{}, err
-	}
-	live, err := d.publisherRunLive(ctx, queries, route, session.ID, now)
-	if err != nil {
-		return PublishRunSetup{}, err
-	}
-	if !live {
-		if err := closePublishRun(ctx, queries, &pendingEvents, route, session, PublishRunClosed, now, "publisher_grant_revoked"); err != nil {
-			return PublishRunSetup{}, err
-		}
-		if err := pendingEvents.publish(ctx, queries); err != nil {
-			return PublishRunSetup{}, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return PublishRunSetup{}, err
-		}
-		return PublishRunSetup{}, ErrPublisherIdentity
 	}
 	spentReason, err := queries.GuestRunAllowanceSpent(ctx, controlstatedb.GuestRunAllowanceSpentParams{
 		PublishRunID: text(session.ID), Now: timestamptz(now),
@@ -76,6 +60,25 @@ func (d *Database) HeartbeatPublishRun(
 		}
 		return PublishRunSetup{}, ErrGuestTrialSpent
 	}
+	if !session.PublisherExpiresAt.Valid || !session.PublisherExpiresAt.Time.After(now) {
+		return PublishRunSetup{}, ErrPublishRunStale
+	}
+	live, err := d.publisherRunLive(ctx, queries, route, session.ID, now)
+	if err != nil {
+		return PublishRunSetup{}, err
+	}
+	if !live {
+		if err := closePublishRun(ctx, queries, &pendingEvents, route, session, PublishRunClosed, now, "publisher_grant_revoked"); err != nil {
+			return PublishRunSetup{}, err
+		}
+		if err := pendingEvents.publish(ctx, queries); err != nil {
+			return PublishRunSetup{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return PublishRunSetup{}, err
+		}
+		return PublishRunSetup{}, ErrPublisherIdentity
+	}
 	if route.Ephemeral {
 		if _, err := queries.RenewEphemeralPublicURLExpiry(ctx, controlstatedb.RenewEphemeralPublicURLExpiryParams{
 			ExpiresAt: timestamptz(now.Add(ephemeralPublicURLGracePeriod)), PublicURLID: route.ID,
@@ -93,6 +96,10 @@ func (d *Database) HeartbeatPublishRun(
 	}
 	if err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: heartbeat publish run: update lease: %w", err)
+	}
+	session, err = boundGuestServingAuthority(ctx, queries, session, now)
+	if err != nil {
+		return PublishRunSetup{}, err
 	}
 	leaseExtended := session.PublisherExpiresAt.Time.After(previousExpiresAt)
 	connections, err := validReadyPublisherConnections(ctx, queries, session.ID, now)
@@ -114,15 +121,16 @@ func (d *Database) HeartbeatPublishRun(
 			return PublishRunSetup{}, err
 		}
 	}
-	if session.PolicyDenials < 0 {
-		return PublishRunSetup{}, errors.New("controlstate: heartbeat publish run: invalid policy denial count")
-	}
 	if session.ReadyAt.Valid && removedReadyConnection {
 		if err := openPublicURLRecoveryEpisode(ctx, queries, route.ID, session.PublishRunNumber, now); err != nil {
 			return PublishRunSetup{}, err
 		}
 	}
-	if session.ReadyAt.Valid && (leaseExtended && len(connections) > 0 || removedReadyConnection) {
+	routingPublished, err := publishRunRoutingPublished(ctx, queries, session)
+	if err != nil {
+		return PublishRunSetup{}, err
+	}
+	if routingPublished && (leaseExtended && len(connections) > 0 || removedReadyConnection) {
 		eventKind := publicURLRoutingTableEventKind(len(connections) > 0)
 		if _, err := pendingEvents.addRouteEvent(ctx, queries, route, session, connections, eventKind, now); err != nil {
 			return PublishRunSetup{}, err
@@ -132,7 +140,6 @@ func (d *Database) HeartbeatPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
-	setup.PolicyDenials = uint64(session.PolicyDenials)
 	setup.VisitorPolicyRevision, err = queries.GetVisitorPolicyRevision(ctx, session.TeamID)
 	if err != nil {
 		return PublishRunSetup{}, err

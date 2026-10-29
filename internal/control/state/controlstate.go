@@ -26,8 +26,9 @@ import (
 const (
 	// the coordinated baseline requires the exact migration and identity.
 	schemaVersion       int64 = 1
-	baselineID                = "tnl-control-fresh-v1-public-reservations"
+	baselineID                = "tnl-control-fresh-v1-practical-cutover"
 	versionTable              = "control.goose_db_version"
+	schemaIdentityQuery       = `SELECT baseline_id FROM control.schema_identity WHERE id=1`
 	bootstrapRetryDelay       = 25 * time.Millisecond
 )
 
@@ -242,8 +243,7 @@ type schemaVersionQuerier interface {
 func readSchemaVersion(ctx context.Context, database schemaVersionQuerier) (int64, error) {
 	var version int64
 	if err := database.QueryRow(ctx, `
-		SELECT CASE WHEN to_regclass('control.publish_run_publisher_grants') IS NULL THEN 0
-		    ELSE COALESCE(MAX(version_id) FILTER (WHERE is_applied), 0) END
+		SELECT COALESCE(MAX(version_id) FILTER (WHERE is_applied), 0)
 		FROM control.goose_db_version
 	`).Scan(&version); err != nil {
 		return 0, fmt.Errorf("controlstate: read schema version: %w", err)

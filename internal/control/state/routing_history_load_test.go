@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// seed before starting workload actors. the first f.routes events are genuine
-// routable public URL projections, one per public URL. copy them to grow history
-// without changing current connections or simulating elapsed lease time.
+// seed before starting workload actors. each run has genuine preparation and
+// final-ready projections. grow ready history from the latter, retaining the
+// mandatory preparation event without changing connections or lease time.
 func seedLoadRoutingHistory(t *testing.T, f *controlLoadFixture, previous, perPublicURL int) int64 {
 	t.Helper()
 	if previous < 1 || perPublicURL < previous {
@@ -23,8 +23,8 @@ func seedLoadRoutingHistory(t *testing.T, f *controlLoadFixture, previous, perPu
 				seed.entry_revision + sweep - 1, seed.projection, seed.public_url_expires_at, seed.created_at
 			FROM control.ingress_routing_table_events AS seed
 			CROSS JOIN generate_series($1::integer, $2::integer) AS sweep
-			WHERE seed.id <= $3::bigint
-			ORDER BY sweep, seed.id`, previous+1, perPublicURL, f.routes)
+			WHERE seed.entry_revision = 2
+			ORDER BY sweep, seed.id`, previous+1, perPublicURL)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -41,10 +41,10 @@ func seedLoadRoutingHistory(t *testing.T, f *controlLoadFixture, previous, perPu
 		FROM control.ingress_routing_table_events`).Scan(&total, &revision, &bytes); err != nil {
 		t.Fatal(err)
 	}
-	if total != int64(f.routes)*int64(perPublicURL) || revision != total {
-		t.Fatalf("history rows=%d revision=%d want=%d", total, revision, int64(f.routes)*int64(perPublicURL))
+	if total != int64(f.routes)*int64(perPublicURL+1) || revision != total {
+		t.Fatalf("history rows=%d revision=%d want=%d", total, revision, int64(f.routes)*int64(perPublicURL+1))
 	}
 	t.Logf("routes=%d history_events=%d events_per_route=%d relation_bytes=%d history_setup_elapsed=%s (no injected SQL delay)",
-		f.routes, total, perPublicURL, bytes, time.Since(started))
+		f.routes, total, perPublicURL+1, bytes, time.Since(started))
 	return total
 }

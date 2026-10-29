@@ -51,11 +51,14 @@ func nullableTestMembership(value string) any {
 
 // seedControlPublicURL supplies local authority and an enabled shared public
 // URL. it does not create relay leases, publish runs, or ACME work.
-func seedControlPublicURL(t *testing.T, database *Database, now time.Time, suffix string) {
+func seedControlPublicURL(t *testing.T, database *Database, now time.Time, suffix string, canonicalID ...string) {
 	t.Helper()
 	identityID, teamID := "identity_"+suffix, "team_"+suffix
 	reservationID, membershipID := "reservation_"+suffix, "membership_"+suffix
 	domainID, publicURLID := "domain_"+suffix, "public_url_"+suffix
+	if len(canonicalID) != 0 {
+		publicURLID = canonicalID[0]
+	}
 	sealedDigest, err := database.sealSecret(publicURLRequestDigestContext(publicURLID), make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)

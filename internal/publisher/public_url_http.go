@@ -248,6 +248,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				// request never asks control for a permission or refreshes a cache.
 				serverPermitted := false
 				var permission httpPermission
+				var requestGuard *visitorlease.Guard
 				if !proof {
 					var guard *publicHTTPGuard
 					var guarded *http.Request
@@ -264,6 +265,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 							}
 						}
 						response, request = guard, guarded
+						requestGuard = guard.local
 					}
 				}
 				if share, ok := permission.permission.Facts().Subject.(visitortoken.Share); ok && share.ShareID != "" && serverPermitted {
@@ -342,7 +344,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					return
 				}
 				if session, _ := request.Context().Value(visitorSessionKey{}).(*visitorSession); session != nil {
-					if err := session.admit(request.Context(), proof); err != nil {
+					if err := session.admitPermission(request.Context(), requestGuard, proof); err != nil {
 						auditOutcome, auditReason = "failed", "capacity"
 						admission.refund()
 						diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
@@ -382,7 +384,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		},
 		httpDone:           make(chan error, 1),
 		certificateExpired: make(chan struct{}),
-		streams:            make(map[net.Conn]struct{}),
+		streams:            make(map[net.Conn]*publicVisitorAdmission),
 	}
 	route.tls.GetCertificate = route.getCertificate
 	if len(config.Certificate.Certificate) != 0 || config.Certificate.PrivateKey != nil {

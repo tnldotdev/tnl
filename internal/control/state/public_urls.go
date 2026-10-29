@@ -230,7 +230,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		}
 		// guest team IDs are trial-owned, not rows in control.teams.
 		ingressPoolID = PrimaryIngressPoolID
-		if !guest.ExpiresAt.Time.After(now) || guest.UsedReadyNs >= int64(GuestReadyAllowance) || guest.UsedBytes >= GuestByteAllowance {
+		if !guest.ExpiresAt.Time.After(now) || guest.UsedReadyNs >= int64(GuestReadyAllowance) {
 			return PublicURL{}, ErrGuestTrialSpent
 		}
 		if guest.LastDemoNumber < 1 || !strings.HasPrefix(request.CanonicalHostname, fmt.Sprintf("demo-%d.%s.", guest.LastDemoNumber, guest.NamespaceLabel)) ||
@@ -247,7 +247,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		if err != nil {
 			return PublicURL{}, err
 		}
-		if count != 0 {
+		if count != 0 || guest.ServingUntil.Valid && guest.ServingUntil.Time.After(now) {
 			return PublicURL{}, ErrPublishRunOpen
 		}
 	}

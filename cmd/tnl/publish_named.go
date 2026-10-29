@@ -66,6 +66,6 @@ func resolveNamedPrivate(flags publishCommand) (resolvedPrivateInvocation, error
 	return resolvedPrivateInvocation{selected, protocol}, err
 }
 
-func runNamedPublish(ctx context.Context, selected resolvedNamedInvocation, stateDir string, output *publishOutput) error {
-	return invocation.PublishNamed(ctx, selected.project.Project, selected.service, stateDir, local.EnsureOwner, &invocation.Presentation{Starting: output.starting, Provisioning: output.provisioning, Ready: output.ready, Stopped: output.stopped})
+func runNamedPublish(ctx context.Context, selected resolvedNamedInvocation, stateDir string, telemetryDisabled bool, output *publishOutput) error {
+	return invocation.PublishNamed(ctx, selected.project.Project, selected.service, stateDir, telemetryDisabled, local.EnsureOwner, &invocation.Presentation{Starting: output.starting, Provisioning: output.provisioning, Ready: output.ready, Stopped: output.stopped})
 }

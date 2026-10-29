@@ -25,7 +25,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publisher.PublicURLServerConfig) {
+func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publisher.PublicURLServerConfig, configure ...func(*visitorlease.Update)) {
 	t.Helper()
 	c.Hostname = "route.example"
 	c.PublicURLID = f.entry.PublicUrlId
@@ -43,6 +43,9 @@ func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publi
 	update := visitorlease.Update{View: visitortoken.View{Issuer: "https://control.example.test", Scope: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: c.PublicURLID},
 		Hostname: c.Hostname, Port: 443, VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second)}.WithVerificationKeys(map[string]ed25519.PublicKey{"fixture": key.Public().(ed25519.PublicKey)}),
 		KeyRevision: 1, Snapshot: true, Enabled: true, Anonymous: true, Allocations: map[string]controlv1.StreamCapacityAllocation{allocation.Id: allocation}}
+	if len(configure) != 0 {
+		configure[0](&update)
+	}
 	if err := policy.Apply(request, update); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +66,7 @@ func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publi
 	if err := ingressPolicy.Apply(ingressPolicy.Begin(), update); err != nil {
 		t.Fatal(err)
 	}
-	f.prepared = &publicVisitorRun{policy: &visitorPolicy{lease: ingressPolicy}, capacity: &streamCapacity{pool: pool, id: allocation.Id, ready: true}}
+	f.prepared = &publicVisitorRun{policy: &visitorPolicy{lease: ingressPolicy}, capacity: &streamCapacity{pool: pool, id: allocation.Id, ready: true, publisherUntil: allocation.ValidUntil}}
 	r, err := publisher.NewPublicURLServer(c)
 	if err != nil {
 		t.Fatal(err)

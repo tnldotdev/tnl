@@ -102,10 +102,13 @@ func Run(ctx context.Context, config Config) (result error) {
 	if err := observe(config, Event{Type: EventPublicURLAssigned, PublicURLID: publicURLID, Hostname: publicURL.CanonicalHostname}); err != nil {
 		return err
 	}
+	var previousRun error
 	for {
 		setup, err := createPublishRun(ctx, config, publicURL)
 		if err != nil {
-			return err
+			// a denied replacement must not erase the expired run or its cleanup
+			// failures. the replacement error remains first for presentation.
+			return errors.Join(err, previousRun)
 		}
 		err = runPublishRun(ctx, config, setup, func() error {
 			publicAddress := "https://" + setup.PublicUrl.CanonicalHostname
@@ -120,6 +123,7 @@ func Run(ctx context.Context, config Config) (result error) {
 		if !errors.Is(err, clientcontrol.ErrStatusConflict) {
 			return err
 		}
+		previousRun = err
 		publicURL.NextPublishRunNumber = setup.PublishRun.PublishRunNumber + 1
 	}
 }

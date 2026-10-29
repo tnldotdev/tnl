@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/tnldotdev/tnl/internal/observability/publicurlusage"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
@@ -71,8 +71,9 @@ func TestIntegrationPublishRunCreation(t *testing.T) {
 func TestIntegrationPublishRunExpiryAndGatedReplay(t *testing.T) {
 	f := newPublishRunFixture(t)
 	database, now, setup, request := f.database, f.now, f.setup, f.request
+	readyTestSession(t, f)
 	closedAt := setup.CreatedAt.Add(5 * time.Second)
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET state = 'ready', ready_at = $2, publisher_expires_at = $3 WHERE id = $1`, setup.PublishRunID, now, closedAt); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_runs SET publisher_expires_at = $2 WHERE id = $1`, setup.PublishRunID, closedAt); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.maintenance_controls SET allowed = false, revision = revision + 1, updated_at = $1, updated_by = 'test' WHERE operation = 'publish_run_creation'`, now); err != nil {
@@ -95,7 +96,7 @@ func TestIntegrationPublishRunExpiryAndGatedReplay(t *testing.T) {
 		t.Fatalf("close reason = %q, %v", reason, err)
 	}
 	var eventKind string
-	if err := database.pool.QueryRow(t.Context(), `SELECT event_kind FROM control.ingress_routing_table_events WHERE public_url_id = $1 AND publish_run_number = $2`, setup.PublicURLID, setup.PublishRunNumber).Scan(&eventKind); err != nil || eventKind != string(IngressPublicURLTombstone) {
+	if err := database.pool.QueryRow(t.Context(), `SELECT event_kind FROM control.ingress_routing_table_events WHERE public_url_id = $1 AND publish_run_number = $2 ORDER BY id DESC LIMIT 1`, setup.PublicURLID, setup.PublishRunNumber).Scan(&eventKind); err != nil || eventKind != string(IngressPublicURLTombstone) {
 		t.Fatalf("gated replay routing event = %q, %v", eventKind, err)
 	}
 	request.IdempotencyKey, request.RequestDigest, request.ExpectedMutationRevision = "replacement", sha256.Sum256([]byte("replacement")), 2
@@ -240,8 +241,8 @@ func TestIntegrationPublishRunReadiness(t *testing.T) {
 		t.Fatalf("wrong issuance acknowledgement: %v", err)
 	}
 	claimTestConnection(t, f, 1, now.Add(time.Second))
-	lifecycle, err = database.MarkPublishRunReady(t.Context(), authentication, now.Add(2*time.Second))
-	if err != nil || lifecycle.ReadyAt == nil || !lifecycle.Routable || lifecycle.ReadyPublisherConnectionCount != 2 {
+	lifecycle = readyTestServingRun(t, f, now.Add(2*time.Second))
+	if lifecycle.ReadyAt == nil || !lifecycle.Routable || lifecycle.ReadyPublisherConnectionCount != 2 {
 		t.Fatalf("ready lifecycle = %#v, %v", lifecycle, err)
 	}
 	repeated, err := database.MarkPublicURLCertificateInstalled(t.Context(), authentication, work.ID, *work.NotAfter, now.Add(3*time.Second))
@@ -293,9 +294,9 @@ func TestIntegrationManagedMemberReadinessWaitsForWildcardDNS(t *testing.T) {
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET dns_state = 'published', dns_available_at = NULL WHERE id = $1`, request.PublicURLID); err != nil {
 		t.Fatal(err)
 	}
-	ready, err := database.MarkPublishRunReady(t.Context(), authentication, now)
-	if err != nil || !ready.Routable {
-		t.Fatalf("ready after wildcard DNS = %#v, %v", ready, err)
+	ready := readyTestServingRun(t, f, now)
+	if !ready.Routable {
+		t.Fatalf("ready after wildcard DNS = %#v", ready)
 	}
 }
 
@@ -331,9 +332,9 @@ func TestIntegrationExactPublicURLReadinessWaitsForDNS(t *testing.T) {
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.public_urls SET dns_state = 'published', dns_available_at = NULL WHERE id = $1`, f.setup.PublicURLID); err != nil {
 		t.Fatal(err)
 	}
-	ready, err := database.MarkPublishRunReady(t.Context(), authentication, now)
-	if err != nil || !ready.Routable {
-		t.Fatalf("exact URL ready after DNS = %#v, %v", ready, err)
+	ready := readyTestServingRun(t, f, now)
+	if !ready.Routable {
+		t.Fatalf("exact URL ready after DNS = %#v", ready)
 	}
 }
 
@@ -353,16 +354,8 @@ func TestIntegrationPublishRunHeartbeatPreservesConnectionsAndExpiry(t *testing.
 	if _, err := database.pool.Exec(t.Context(), `UPDATE control.publish_run_connection_slots SET publisher_connection_credential_expires_at = $2 WHERE publish_run_id = $1`, f.setup.PublishRunID, heartbeatAt.Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	lease := registerTestIngress(t, database, now)
-	bucket := heartbeatAt.Truncate(time.Minute)
-	if err := database.ReportIngressUsage(t.Context(), lease.IngressLeaseIdentity, IngressUsageBatch{Reports: []IngressUsageReport{{
-		PublicURLID: f.setup.PublicURLID, PublishRunNumber: f.setup.PublishRunNumber, BucketStart: bucket, BucketEnd: bucket.Add(time.Minute), ObservedThrough: heartbeatAt,
-		ReportRevision: 1, ConnectionAttempts: 3, PolicyDenials: 3, HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary(),
-	}}}, heartbeatAt); err != nil {
-		t.Fatal(err)
-	}
 	heartbeat, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), heartbeatAt, 30*time.Second, time.Minute)
-	if err != nil || !heartbeat.ExpiresAt.Equal(heartbeatAt.Add(30*time.Second)) || heartbeat.PublishRunNumber != f.setup.PublishRunNumber || heartbeat.PolicyDenials != 3 {
+	if err != nil || !heartbeat.ExpiresAt.Equal(heartbeatAt.Add(30*time.Second)) || heartbeat.PublishRunNumber != f.setup.PublishRunNumber {
 		t.Fatalf("heartbeat = %#v, %v", heartbeat, err)
 	}
 	publicURL, err := database.GetPublicURL(t.Context(), f.request.ActingIdentityID, f.setup.PublicURLID)
@@ -444,7 +437,11 @@ func newPublishRunPrerequisites(t *testing.T) (*Database, time.Time, PublishRunR
 func publishRunPrerequisitesWithRelayKeys(t *testing.T, keyForRun func(string) []byte) (*Database, time.Time, PublishRunRequest, map[string]RelayLease) {
 	t.Helper()
 	database, now := newControlStateIntegrationDatabase(t, "publish_run")
-	seedControlPublicURL(t, database, now, "session")
+	publicURLID, err := opaqueid.New(opaqueid.PublicURLPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedControlPublicURL(t, database, now, "session", publicURLID)
 	leases := make(map[string]RelayLease)
 	for slot := range publishRunConnectionCount {
 		registration := relayLifecycleRegistration(fmt.Sprintf("placement-%d", slot))
@@ -458,7 +455,7 @@ func publishRunPrerequisitesWithRelayKeys(t *testing.T, keyForRun func(string) [
 		}
 		leases[lease.RelayServiceID] = lease
 	}
-	return database, now, PublishRunRequest{PublicURLID: "public_url_session", TeamID: "team_session", ActingIdentityID: "identity_session", MembershipID: "membership_session",
+	return database, now, PublishRunRequest{PublicURLID: publicURLID, TeamID: "team_session", ActingIdentityID: "identity_session", MembershipID: "membership_session",
 		RetrySecret: bytes.Repeat([]byte{7}, 32), IdempotencyKey: "session", RequestDigest: sha256.Sum256([]byte("session")), PolicyRevision: 1,
 		CertificateCacheKey: "certificate_session", CertificateScope: "public-url", CertificateIdentifiers: []string{"route-session.example.test"}, CertificateChallenge: "dns-01", ExpectedMutationRevision: 1}, leases
 }
@@ -509,10 +506,29 @@ func readyTestSession(t *testing.T, f publishRunFixture) []PublisherConnectionCl
 	for slot := range f.setup.PublisherConnections {
 		claims = append(claims, claimTestConnection(t, f, slot, f.now))
 	}
-	if _, err := f.database.MarkPublishRunReady(t.Context(), f.authentication(), f.now); err != nil {
+	readyTestServingRun(t, f, f.now)
+	return claims
+}
+
+// readyTestServingRun prepares an actual receiver only for tests that request
+// public readiness. certificate, connection and DNS failure stages stay outside.
+func readyTestServingRun(t *testing.T, f publishRunFixture, now time.Time) PublishRunLifecycle {
+	t.Helper()
+	owner := registerServingIngress(t, f, now)
+	servingPreparationPending(t, f, now)
+	if err := f.database.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, now); err != nil {
 		t.Fatal(err)
 	}
-	return claims
+	allocation := servingAllocation(t, f, owner, now)
+	observeServingPublisher(t, f, allocation, now)
+	observeServingIngress(t, f, allocation, now)
+	acknowledgeServingRouting(t, f, owner, now)
+	ready, err := f.database.MarkPublishRunReady(t.Context(), f.authentication(), now)
+	if err != nil || ready.State != PublishRunReady || ready.ReadyAt == nil || !ready.ReadyAt.Equal(now) {
+		t.Fatalf("prepared receiver did not make the run ready: %+v, %v", ready, err)
+	}
+	acknowledgeServingRouting(t, f, owner, now)
+	return ready
 }
 
 func registerTestIngress(t *testing.T, database *Database, now time.Time) IngressLease {

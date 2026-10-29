@@ -121,6 +121,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 			return result, ErrVisitorPolicy
 		}
 		team, policy.Hostname, policy.Port = row.TeamID, row.CertificateHostname, int(row.ServicePort.Int32)
+		policy.MetadataRevision = row.TrustRevision
 		policy.Enabled = row.Enabled && !row.DeletedAt.Valid
 		settings, err := d.serviceHTTPSettings(ctx, q, scope.ID)
 		if err != nil {
@@ -144,14 +145,17 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 	if scope.Kind == visitorscope.PublicURL {
 		var guest bool
 		var deadline time.Time
-		err := tx.QueryRow(ctx, `SELECT control.guest_share_live(id,$2),LEAST(expires_at,
-		    COALESCE(active_ready_at + (GREATEST(0,900000000000-used_ready_ns)::double precision/1000000000)*interval '1 second',expires_at))
-		    FROM control.guest_trials WHERE team_id=$1`, team, now).Scan(&guest, &deadline)
+		err := tx.QueryRow(ctx, `SELECT control.guest_share_live(guest.id,$2),control.guest_serving_deadline(guest.id,$2)
+		    FROM control.guest_trials guest
+		    WHERE guest.team_id=$1`, team, now).Scan(&guest, &deadline)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return result, err
 		}
 		activeTeam = activeTeam || guest
-		if guest && deadline.After(now) && deadline.Before(policy.ValidUntil) {
+		if guest && !deadline.After(now) {
+			// keep a valid disabled observation, not authority past the guest bound.
+			policy.Enabled = false
+		} else if guest && deadline.Before(policy.ValidUntil) {
 			policy.ValidUntil = deadline
 		}
 	}
@@ -238,9 +242,29 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 	return result, nil
 }
 
-func (d *Database) ReadIngressVisitorPolicy(ctx context.Context, identity IngressLeaseIdentity, scope visitorscope.Scope, after int64, now time.Time) (result controlv1.VisitorPolicyUpdate, retErr error) {
+// IngressStreamAllocationObservation acknowledges existing local setup, not
+// visitor permission. its deadline cannot exceed the installed policy or setup.
+type IngressStreamAllocationObservation struct {
+	AllocationID string
+	RunID        string
+	RunNumber    int64
+	ValidUntil   time.Time
+}
+
+func (d *Database) ReadIngressVisitorPolicy(ctx context.Context, identity IngressLeaseIdentity, scope visitorscope.Scope, after int64, now time.Time, observed ...IngressStreamAllocationObservation) (result controlv1.VisitorPolicyUpdate, retErr error) {
 	if !scope.Valid() {
 		return result, ErrVisitorPolicy
+	}
+	if len(observed) > 2048 || len(observed) > 0 && scope.Kind != visitorscope.PublicURL {
+		return result, ErrVisitorPolicy
+	}
+	seen := make(map[string]bool, len(observed))
+	for _, observation := range observed {
+		if !opaqueid.Valid(observation.AllocationID, "salloc_") || !validStateText(observation.RunID) || observation.RunNumber < 1 ||
+			observation.ValidUntil.IsZero() || observation.ValidUntil.After(now.Add(visitortoken.PolicyLifetime)) || seen[observation.AllocationID] {
+			return result, ErrVisitorPolicy
+		}
+		seen[observation.AllocationID] = true
 	}
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
@@ -268,17 +292,40 @@ func (d *Database) ReadIngressVisitorPolicy(ctx context.Context, identity Ingres
 	if err != nil {
 		return result, err
 	}
+	// only acknowledge the snapshot installed before this request. a response
+	// containing a newer policy is not evidence that ingress installed it.
+	if after == result.Policy.VisitorPolicyRevision && !lease.Draining && !lease.ConnectorOnly && result.Policy.Enabled {
+		for _, observation := range observed {
+			if !observation.ValidUntil.After(now) {
+				continue
+			}
+			count, err := controlstatedb.New(tx).ObserveIngressStreamAllocation(ctx, controlstatedb.ObserveIngressStreamAllocationParams{
+				ResourceKind: string(scope.Kind), ResourceID: scope.ID, ID: observation.AllocationID,
+				RunID: observation.RunID, RunNumber: observation.RunNumber,
+				IngressID: identity.IngressID, IngressRunID: identity.IngressRunID, IngressLeaseRevision: int64(identity.IngressLeaseRevision),
+				Now: timestamptz(now), ValidUntil: timestamptz(minTime(observation.ValidUntil, lease.LeaseExpiresAt.Time)),
+			})
+			if err != nil {
+				return result, err
+			}
+			if count != 1 {
+				return result, ErrVisitorPolicy
+			}
+		}
+	}
 	return result, tx.Commit(ctx)
 }
 
-func (d *Database) ReadPublisherVisitorPolicy(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, observed []string, now time.Time) (result controlv1.VisitorPolicyUpdate, retErr error) {
+func (d *Database) ReadPublisherVisitorPolicy(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, observed []controlv1.StreamCapacityObservation, now time.Time) (result controlv1.VisitorPolicyUpdate, retErr error) {
 	observed = slices.Clone(observed)
 	if len(observed) > 2048 {
 		return result, ErrVisitorPolicy
 	}
 	seen := make(map[string]struct{}, len(observed))
-	for _, id := range observed {
-		if _, duplicate := seen[id]; duplicate || !opaqueid.Valid(id, "salloc_") {
+	for _, observation := range observed {
+		id := observation.AllocationId
+		if _, duplicate := seen[id]; duplicate || !opaqueid.Valid(id, "salloc_") || observation.RunId != run || observation.RunNumber != number ||
+			observation.ValidUntil.IsZero() || observation.ValidUntil.After(now.Add(visitortoken.PolicyLifetime)) {
 			return result, ErrVisitorPolicy
 		}
 		seen[id] = struct{}{}
@@ -290,7 +337,7 @@ func (d *Database) ReadPublisherVisitorPolicy(ctx context.Context, scope visitor
 	})
 }
 
-func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, observed []string, now time.Time) (result controlv1.VisitorPolicyUpdate, retErr error) {
+func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, scope visitorscope.Scope, run string, number int64, token string, after int64, observed []controlv1.StreamCapacityObservation, now time.Time) (result controlv1.VisitorPolicyUpdate, retErr error) {
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err
@@ -336,12 +383,32 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 	default:
 		return result, ErrVisitorPolicy
 	}
-	if err := q.ObservePublisherStreamAllocations(ctx, controlstatedb.ObservePublisherStreamAllocationsParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID, RunID: run, RunNumber: number, Ids: observed, Now: timestamptz(now)}); err != nil {
-		return result, err
-	}
 	result, err = d.readVisitorPolicy(ctx, tx, scope, after, now)
 	if err != nil {
 		return result, err
+	}
+	if after == result.Policy.VisitorPolicyRevision && result.Policy.Enabled {
+		for _, observation := range observed {
+			if !observation.ValidUntil.After(now) {
+				continue
+			}
+			count, err := q.ObservePublisherStreamAllocation(ctx, controlstatedb.ObservePublisherStreamAllocationParams{
+				ResourceKind: string(scope.Kind), ResourceID: scope.ID, RunID: run, RunNumber: number,
+				ID: observation.AllocationId, Now: timestamptz(now), ValidUntil: timestamptz(observation.ValidUntil),
+			})
+			if err != nil {
+				return result, err
+			}
+			if count == 1 {
+				for index := range result.Policy.StreamAllocations {
+					allocation := &result.Policy.StreamAllocations[index]
+					if allocation.Id == observation.AllocationId {
+						until := minTime(observation.ValidUntil, allocation.ValidUntil)
+						allocation.PublisherObservedUntil, allocation.PublisherObserved = &until, now.Before(until)
+					}
+				}
+			}
+		}
 	}
 	return result, tx.Commit(ctx)
 }

@@ -44,8 +44,13 @@ func TestIntegrationPublishRunTrafficStoredRetryAndProjection(t *testing.T) {
 		t.Fatalf("snapshot traffic: %+v %v", snapshot, err)
 	}
 	page, err := database.ReadIngressRoutingTableEvents(t.Context(), ingress.IngressLeaseIdentity, 0, 100, now)
-	if err != nil || len(page.Events) != 1 || page.Events[0].Projection.Traffic == nil || *page.Events[0].Projection.Traffic != want {
+	if err != nil || len(page.Events) != 2 {
 		t.Fatalf("event traffic: %+v %v", page, err)
+	}
+	for index, event := range page.Events {
+		if event.Projection.Traffic == nil || *event.Projection.Traffic != want || (event.Projection.PublishRunReadyAt != nil) != (index == 1) {
+			t.Fatalf("preparation/final event traffic: %+v", event)
+		}
 	}
 	heartbeat, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), now.Add(2*time.Second), time.Minute, time.Minute)
 	if err != nil || heartbeat.Traffic != want {

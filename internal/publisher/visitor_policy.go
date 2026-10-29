@@ -3,6 +3,7 @@ package publisher
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
@@ -22,6 +23,17 @@ type visitorPolicy struct {
 	cancel  context.CancelFunc
 	done    chan struct{}
 	gate    chan struct{}
+}
+
+// PrepareServiceVisitorPolicy shares the existing background policy owner with
+// the service runtime. application arrival receives only the installed lease;
+// closing the returned owner joins refresh before closing canonical guards.
+func PrepareServiceVisitorPolicy(ctx context.Context, client visitorPolicyClient, serviceID, runID string, number int64, token string) (*visitorlease.Lease, func(), error) {
+	p, err := prepareVisitorPolicy(ctx, client, visitorscope.Scope{Kind: visitorscope.Service, ID: serviceID}, runID, number, token, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	return p.lease, p.Close, nil
 }
 
 func prepareVisitorPolicy(ctx context.Context, client visitorPolicyClient, scope visitorscope.Scope, run string, number int64, token string, report func(error)) (*visitorPolicy, error) {
@@ -71,9 +83,29 @@ func (p *visitorPolicy) refresh(ctx context.Context) error {
 	if err := refreshContextError(call); err != nil {
 		return err
 	}
+	before := p.lease.BoundedAllocations(p.request.RunId)
+	if err := p.fetch(call); err != nil {
+		return err
+	}
+	after := p.lease.BoundedAllocations(p.request.RunId)
+	if len(after) > 0 && !slices.EqualFunc(before, after, func(a, b controlv1.StreamCapacityObservation) bool {
+		return a.AllocationId == b.AllocationId && a.RunId == b.RunId && a.RunNumber == b.RunNumber && a.ValidUntil.Equal(b.ValidUntil)
+	}) {
+		// report only after successful installation, without spending another poll
+		// interval of a short process lease. one follow-up shares the same budget;
+		// its response cannot recursively schedule another acknowledgement.
+		return p.fetch(call)
+	}
+	return nil
+}
+
+func (p *visitorPolicy) fetch(call context.Context) error {
+	if err := refreshContextError(call); err != nil {
+		return err
+	}
 	request := p.lease.Begin()
 	body := p.request
-	body.ObservedAllocations = p.lease.ObservedAllocations(body.RunId)
+	body.ObservedAllocations = p.lease.BoundedAllocations(body.RunId)
 	body.AfterRevision = request.AfterRevision
 	if request.Snapshot {
 		body.AfterRevision = 0

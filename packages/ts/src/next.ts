@@ -8,6 +8,7 @@ import {
   type PrepareOptions,
 } from "./internal/publisher/app.js";
 import { operation } from "./internal/tracing.js";
+import { readTelemetryDisabled } from "./internal/publisher/telemetry.js";
 
 const developmentServerPhase = "phase-development-server";
 const runtimeEnvironmentName = "TNL_PROJECT_RUNTIME";
@@ -31,6 +32,10 @@ export function withTnl(
   options: PrepareOptions = {},
 ): NextConfigFactory {
   return async function tnlNextConfig(phase, context) {
+    const telemetryDisabled =
+      phase === developmentServerPhase
+        ? readTelemetryDisabled(process.env.TNL_NO_TELEMETRY)
+        : false;
     const resolved = typeof config === "function" ? await config(phase, context) : await config;
     const nextConfig = resolved ?? {};
     if (phase !== developmentServerPhase) {
@@ -46,7 +51,7 @@ export function withTnl(
     }
     const target = nextTarget(process.env);
     const assignment = await operation("next.register", async () => {
-      const assignment = await prepareService(options, "next");
+      const assignment = await prepareService(options, "next", telemetryDisabled);
       // supported Next versions set this origin from their bound HTTP listener
       // before loading configuration. PORT alone is never a registration.
       await reportFrameworkTarget(assignment, target);

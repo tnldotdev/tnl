@@ -37,6 +37,7 @@ type StreamCapacityAllocation struct {
 	ObservedAt, ValidUntil time.Time
 	Retired                bool
 	PublisherObserved      bool
+	PublisherObservedUntil time.Time
 	ProofKey               [32]byte
 }
 
@@ -44,16 +45,22 @@ func (StreamCapacityAllocation) String() string   { return "stream capacity allo
 func (StreamCapacityAllocation) GoString() string { return "stream capacity allocation" }
 
 func (a StreamCapacityAllocation) Wire() controlv1.StreamCapacityAllocation {
+	var publisherUntil *time.Time
+	if !a.PublisherObservedUntil.IsZero() {
+		until := a.PublisherObservedUntil
+		publisherUntil = &until
+	}
 	return controlv1.StreamCapacityAllocation{Id: a.ID, Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(a.Scope.Kind), Id: a.Scope.ID}, RunId: a.RunID, RunNumber: a.RunNumber,
 		IngressId: a.Owner.IngressID, IngressRunId: a.Owner.IngressRunID, IngressLeaseRevision: int64(a.Owner.IngressLeaseRevision), Capacity: int(a.Capacity), ObservedAt: a.ObservedAt, ValidUntil: a.ValidUntil, Retired: a.Retired, PublisherObserved: a.PublisherObserved,
-		ReservationKey: append([]byte(nil), a.ProofKey[:]...)}
+		PublisherObservedUntil: publisherUntil, ReservationKey: append([]byte(nil), a.ProofKey[:]...)}
 }
 
 func streamCapacityProofContext(id string) string { return "stream-capacity-proof:" + id }
 
 func (d *Database) allocationRecord(row controlstatedb.ControlStreamCapacityAllocation, now time.Time) (StreamCapacityAllocation, error) {
 	a := StreamCapacityAllocation{ID: row.ID, Scope: visitorscope.Scope{Kind: visitorscope.Kind(row.ResourceKind), ID: row.ResourceID}, RunID: row.RunID, RunNumber: row.RunNumber,
-		Owner: IngressLeaseIdentity{IngressID: row.IngressID, IngressRunID: row.IngressRunID, IngressLeaseRevision: uint64(row.IngressLeaseRevision)}, Capacity: row.Capacity, ObservedAt: now, ValidUntil: row.ValidUntil.Time, Retired: row.RetiredAt.Valid, PublisherObserved: row.PublisherObservedAt.Valid}
+		Owner: IngressLeaseIdentity{IngressID: row.IngressID, IngressRunID: row.IngressRunID, IngressLeaseRevision: uint64(row.IngressLeaseRevision)}, Capacity: row.Capacity, ObservedAt: now, ValidUntil: row.ValidUntil.Time, Retired: row.RetiredAt.Valid,
+		PublisherObservedUntil: row.PublisherObservedUntil.Time, PublisherObserved: row.PublisherObservedUntil.Valid && now.Before(row.PublisherObservedUntil.Time)}
 	key, _, err := d.storageKey.Open(row.ProofKeyStorageKeyID, streamCapacityProofContext(row.ID), row.ProofKeyCiphertext)
 	if err != nil || len(key) != len(a.ProofKey) {
 		clear(key)
@@ -65,8 +72,10 @@ func (d *Database) allocationRecord(row controlstatedb.ControlStreamCapacityAllo
 }
 
 // AllocateStreamCapacity holds the existing team/resource/run admission guards.
-// allocations count all owners until their fixed deadlines, including retired
-// owners. no connection reservation creates or renews a database row.
+// service grants share the run's capacity across ingress owners. public URL
+// allocations bound setup at each ingress; only the publisher spends the run's
+// authorized capacity. both retain exact-process source and replay evidence.
+// no visitor arrival creates or renews a database row.
 func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCapacityRequest, now time.Time) (result StreamCapacityAllocation, retErr error) {
 	if !request.Scope.Valid() || request.RunNumber < 1 || !validIdempotencyKey(request.RequestID) || request.Capacity < 1 || request.Capacity > 1<<20 {
 		return result, ErrStreamCapacity
@@ -108,6 +117,16 @@ func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCap
 			return result, ErrStreamCapacity
 		}
 		capacity, expires = int64(limits.Connections), run.PublisherExpiresAt.Time
+		deadline, err := q.GuestPublicURLServingDeadline(ctx, controlstatedb.GuestPublicURLServingDeadlineParams{PublicURLID: url.ID, Now: timestamptz(now)})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return result, err
+		}
+		if err == nil {
+			if !deadline.Valid {
+				return result, ErrStreamCapacity
+			}
+			expires = minTime(expires, deadline.Time)
+		}
 	case visitorscope.Service:
 		resource, err := lockVisitorResource(ctx, tx, request.Scope, now)
 		if err != nil {
@@ -149,24 +168,27 @@ func (d *Database) AllocateStreamCapacity(ctx context.Context, request StreamCap
 	if !until.After(now) {
 		return result, ErrStreamCapacity
 	}
-	used, err := q.SumStreamCapacityAllocations(ctx, controlstatedb.SumStreamCapacityAllocationsParams{ResourceKind: string(request.Scope.Kind), ResourceID: request.Scope.ID, RunID: request.RunID, Now: timestamptz(now)})
-	if err != nil {
-		return result, err
-	}
-	// leave an initial share for each public-serving ingress, even when existing
-	// replicas are idle. private connector-only processes cannot use those slots.
-	live, err := q.CountEligibleIngressesByPool(ctx, controlstatedb.CountEligibleIngressesByPoolParams{IngressPoolID: ingressPool, Now: timestamptz(now), ProtocolVersion: tunnelv1.Version, ResourceKind: string(request.Scope.Kind)})
-	if err != nil {
-		return result, err
-	}
-	if live < 1 {
-		return result, ErrStreamCapacity
-	}
-	fairShare := (capacity + live - 1) / live
 	owned, err := q.SumOwnedStreamCapacityAllocations(ctx, controlstatedb.SumOwnedStreamCapacityAllocationsParams{ResourceKind: string(request.Scope.Kind), ResourceID: request.Scope.ID, RunID: request.RunID,
 		IngressID: request.Owner.IngressID, IngressRunID: request.Owner.IngressRunID, IngressLeaseRevision: int64(request.Owner.IngressLeaseRevision), Now: timestamptz(now)})
 	if err != nil {
 		return result, err
+	}
+	// every public-serving ingress can prepare even when C=1. these local setup
+	// slots are not additional target permissions or shares of authorized C.
+	used, fairShare := owned, capacity
+	if request.Scope.Kind == visitorscope.Service {
+		used, err = q.SumStreamCapacityAllocations(ctx, controlstatedb.SumStreamCapacityAllocationsParams{ResourceKind: string(request.Scope.Kind), ResourceID: request.Scope.ID, RunID: request.RunID, Now: timestamptz(now)})
+		if err != nil {
+			return result, err
+		}
+		live, err := q.CountEligibleIngressesByPool(ctx, controlstatedb.CountEligibleIngressesByPoolParams{IngressPoolID: ingressPool, Now: timestamptz(now), ProtocolVersion: tunnelv1.Version, ResourceKind: string(request.Scope.Kind)})
+		if err != nil {
+			return result, err
+		}
+		if live < 1 {
+			return result, ErrStreamCapacity
+		}
+		fairShare = (capacity + live - 1) / live
 	}
 	prior, err := q.FindStreamCapacityAllocation(ctx, controlstatedb.FindStreamCapacityAllocationParams{ResourceKind: string(request.Scope.Kind), ResourceID: request.Scope.ID, RunID: request.RunID,
 		IngressID: request.Owner.IngressID, IngressRunID: request.Owner.IngressRunID, IngressLeaseRevision: int64(request.Owner.IngressLeaseRevision), RequestID: request.RequestID})

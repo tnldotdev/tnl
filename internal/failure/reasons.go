@@ -164,7 +164,6 @@ const (
 	ServerACMEInvalid                     Reason = "server.acme_invalid"
 	ServerOIDCInvalid                     Reason = "server.oidc_invalid"
 	ServerDNSConfigInvalid                Reason = "server.dns_config_invalid"
-	ServerUsageConfigInvalid              Reason = "server.usage_config_invalid"
 	ServerEmailConfigInvalid              Reason = "server.email_config_invalid"
 	ServerWebsiteConfigInvalid            Reason = "server.website_config_invalid"
 	ServerClusterSecretInvalid            Reason = "server.cluster_secret_invalid"
@@ -182,7 +181,6 @@ const (
 	ServerCertificateRejected             Reason = "server.certificate_rejected"
 	ServerDNSFailed                       Reason = "server.dns_failed"
 	ServerDNSConflict                     Reason = "server.dns_conflict"
-	ServerUsageDeliveryFailed             Reason = "server.usage_delivery_failed"
 	ServerEmailDeliveryFailed             Reason = "server.email_delivery_failed"
 	ServerEmailLeaseStale                 Reason = "server.email_lease_stale"
 	ServerStoredStateInvalid              Reason = "server.stored_state_invalid"
@@ -749,10 +747,6 @@ var definitions = map[Reason]Definition{
 		Class: Invalid, Message: "DNS automation settings are incomplete or invalid",
 		Action: "check Route 53 zone IDs, region, and ingress IP addresses", Retry: RetryAfterChange,
 	},
-	ServerUsageConfigInvalid: {
-		Class: Invalid, Message: "public URL usage receiver settings are invalid",
-		Action: "configure both a valid usage URL and token or omit both", Retry: RetryAfterChange,
-	},
 	ServerEmailConfigInvalid: {
 		Class: Invalid, Message: "invitation email settings are incomplete or invalid",
 		Action: "configure an HTTPS TNLD_EMAIL_URL and matching TNLD_WEBHOOK_SECRET or omit both", Retry: RetryAfterChange,
@@ -824,10 +818,6 @@ var definitions = map[Reason]Definition{
 	ServerDNSConflict: {
 		Class: Conflict, Message: "DNS records or zone ownership conflict with this public URL",
 		Action: "inspect zone delegation, ownership records, and existing address records", Retry: RetryAfterChange,
-	},
-	ServerUsageDeliveryFailed: {
-		Class: Unavailable, Message: "usage delivery failed",
-		Action: "check the configured usage receiver and retry", Retry: RetryLater,
 	},
 	ServerEmailDeliveryFailed: {
 		Class: Unavailable, Message: "invitation email work failed and will be retried",

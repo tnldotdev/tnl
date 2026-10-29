@@ -16,7 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -150,19 +150,9 @@ func main() {
 		<-ctx.Done()
 		stop() // restore default handling so a second signal terminates immediately.
 	}()
-	var telemetry *asyncTelemetryReporter
 	launchCtx := observability.ExtractLaunch(ctx, os.Getenv(observability.LaunchTraceparent))
 	_ = os.Unsetenv(observability.LaunchTraceparent)
-	err := run(context.WithValue(launchCtx, nativeProcessKey{}, true), os.Args[1:], os.Stdout, os.Stderr, func(root string) telemetryReporter {
-		telemetry = newTelemetryReporter(root)
-		return telemetry
-	})
-	if telemetry != nil {
-		waitCtx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
-		telemetry.Wait(waitCtx)
-		telemetry.flush(waitCtx)
-		cancel()
-	}
+	err := runNativeProcess(launchCtx, os.Args[1:], os.Stdout, os.Stderr, newTelemetryReporter)
 	if err != nil {
 		code, render := terminalResult(err)
 		if render != nil {
@@ -503,31 +493,26 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	if !flags.NoTelemetry && collectTelemetry &&
 		len(reporterFactories) != 0 && reporterFactories[0] != nil {
 		if root, stateErr := commandStateRoot(parsed); stateErr == nil {
-			if enabled, preferenceErr := clientstate.TelemetryEnabledAt(ctx, root); preferenceErr == nil && enabled {
-				if reporter := reporterFactories[0](root); reporter != nil {
-					if invocation, idErr := newTelemetryInvocation(reporter); idErr == nil {
-						telemetry = invocation
-						telemetry.action = telemetryAction
-						if telemetryCommand == telemetryPublish {
-							mode := telemetryPublishApp
-							if flags.Publish.Demo {
-								mode = telemetryPublishDemo
-							}
-							telemetry.SetPublishMode(mode)
-						}
+			if reporter := reporterFactories[0](root); reporter != nil {
+				telemetry = newTelemetryInvocation(reporter)
+				if telemetryCommand == telemetryPublish {
+					mode := telemetryPublishApp
+					if flags.Publish.Demo {
+						mode = telemetryPublishDemo
 					}
+					telemetry.SetPublishMode(mode)
 				}
 			}
 		}
 	}
 	failureStage := telemetrySetupStage
 	if telemetry != nil {
-		telemetry.Report(newTelemetryStarted(telemetryCommand))
 		defer func() {
-			if result != nil {
-				telemetry.failed(telemetryCommand, failureStage, classifyCommandError(result))
-			} else if telemetryCommand != telemetryPublish && !(telemetryCommand == "feedback" && telemetryAction == "watch") {
-				telemetry.Report(newTelemetryCompleted(telemetryCommand))
+			outcome := telemetryCommandOutcome(ctx, result)
+			if outcome == clienttelemetry.CommandFailed {
+				telemetry.failed(telemetryCommand, telemetryAction, failureStage, classifyCommandError(result))
+			} else {
+				telemetry.Report(clienttelemetry.Observation{Event: outcome, Command: telemetryCommand, Action: telemetryAction})
 			}
 		}()
 	}
@@ -647,10 +632,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
 		return err
 	case "publish <service-or-target>":
+		flags.Publish.telemetryDisabled = flags.NoTelemetry
 		return runPublish(ctx, flags.Publish, stdout, stderr, telemetry)
 	case "connect available":
 		return runConnectAvailable(ctx, flags.Connect.Available, stdout, stderr)
 	case "connect start <name>":
+		flags.Connect.Start.telemetryDisabled = flags.NoTelemetry
 		return runConnectStart(ctx, flags.Connect.Start, stdout, stderr)
 	case "connect list":
 		return runConnectJobs(ctx, flags.Connect.List, "", "list", stdout)

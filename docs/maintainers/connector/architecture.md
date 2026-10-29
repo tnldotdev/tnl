@@ -66,6 +66,10 @@ Human process lifetime is distinct from workload session lifetime. Workload
 assertion acquisition, refresh, connector renewal, certificate renewal, and
 reconnection cannot extend the original fixed session window or replace its
 verified subject. Late results cannot resurrect an expired/replaced owner.
+The running owner anchors its expiry to the local monotonic clock once; renewal
+can only shorten it. Control retains the original UTC expiry across restarts and
+rejects time before saved creation or renewal. This assumes normally maintained
+system clocks, not detection of an entire machine or database restored to the past.
 Shutdown shares the caller's cleanup budget across assignment release and session
 revocation, and joins operation/renewal workers before releasing owned context.
 

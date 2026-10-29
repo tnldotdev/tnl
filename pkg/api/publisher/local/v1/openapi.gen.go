@@ -313,7 +313,10 @@ type Invocation struct {
 	PublisherIdentityId     string                                   `json:"publisher_identity_id,omitempty"`
 	ServerUrl               *string                                  `json:"server_url,omitempty"`
 	Target                  string                                   `json:"target"`
-	Version                 InvocationVersion                        `json:"version"`
+
+	// TelemetryDisabled Disable telemetry for this ad-hoc publication.
+	TelemetryDisabled *bool             `json:"telemetry_disabled,omitempty"`
+	Version           InvocationVersion `json:"version"`
 }
 
 // InvocationAccessMode defines model for Invocation.AccessMode.
@@ -329,6 +332,9 @@ type Lease struct {
 	Owner               string `json:"owner"`
 	Pid                 int    `json:"pid"`
 	Service             string `json:"service"`
+
+	// TelemetryDisabled Disable telemetry for this configured service lease.
+	TelemetryDisabled *bool `json:"telemetry_disabled,omitempty"`
 }
 
 // Observation defines model for Observation.
@@ -349,7 +355,10 @@ type Prepare struct {
 	Owner     string           `json:"owner"`
 	PID       int              `json:"pid"`
 	Service   string           `json:"service,omitempty"`
-	Version   PrepareVersion   `json:"version"`
+
+	// TelemetryDisabled Disable telemetry for this app registration in a shared publisher owner.
+	TelemetryDisabled *bool          `json:"telemetry_disabled,omitempty"`
+	Version           PrepareVersion `json:"version"`
 }
 
 // PrepareFramework defines model for Prepare.Framework.

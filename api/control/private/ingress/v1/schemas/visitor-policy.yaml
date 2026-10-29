@@ -9,3 +9,10 @@ schemas:
       resource:
         { $ref: "../../../../public/v1/openapi.yaml#/components/schemas/VisitorResourceScope" }
       after_revision: { type: integer, format: int64, minimum: 0 }
+      observed_allocations:
+        type: array
+        maxItems: 2048
+        description: Already-installed public URL policy and local setup, bound to this exact ingress process. This acknowledgement grants no visitor access.
+        items: { $ref: "../openapi.yaml#/components/schemas/IngressStreamAllocationObservation" }
+  IngressStreamAllocationObservation:
+    $ref: "../../../../public/v1/openapi.yaml#/components/schemas/StreamCapacityObservation"

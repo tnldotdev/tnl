@@ -190,11 +190,12 @@ func TestInstallRetryRefreshesSettingsWithoutReplacingScopeOrKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	job.Target = "http://127.0.0.1:4000"
+	job.TelemetryDisabled = true
 	if err := r.Install(t.Context(), job, identity, private); err != nil {
 		t.Fatalf("installation retry failed: %v", err)
 	}
 	jobs, err := r.List(t.Context())
-	if err != nil || len(jobs) != 1 || jobs[0].Target != job.Target || jobs[0].Revision != 2 {
+	if err != nil || len(jobs) != 1 || jobs[0].Target != job.Target || !jobs[0].TelemetryDisabled || jobs[0].Revision != 2 {
 		t.Fatalf("refreshed settings: %+v, %v", jobs, err)
 	}
 	_, restored, _, err := r.signingIdentity(t.Context(), jobs[0])

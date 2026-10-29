@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
@@ -40,6 +41,8 @@ type Prepared struct {
 	servicePort         uint16
 	managedPublic       bool
 	serviceHTTPRequests *publisher.ServiceHTTPRequestLimits
+	policy              *visitorlease.Lease
+	metadataRevision    int64
 }
 
 // mutable certificate state stays behind a pointer so redacted value
@@ -87,6 +90,9 @@ type boundState struct {
 	active          map[net.Conn]struct{}
 	closed          bool
 	reservedStreams int
+	nativePending   int
+	nativePeers     map[string]*PeerSession
+	closePolicy     func()
 }
 
 func (Bound) String() string   { return "private publisher run" }
@@ -166,7 +172,13 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 		return ErrPrivateStream
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	var retired []*PeerSession
+	defer func() {
+		b.mu.Unlock()
+		for _, p := range retired {
+			p.Close()
+		}
+	}()
 	if b.closed {
 		return ErrPrivateStream
 	}
@@ -198,6 +210,11 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 		next[current.ConnectionSlot] = current
 	}
 	b.connections, b.assignments = next, refs
+	for _, p := range b.nativePeers {
+		if !b.peerCurrentLocked(p.binding) {
+			retired = append(retired, p)
+		}
+	}
 	return nil
 }
 
@@ -374,6 +391,10 @@ func (b *Bound) Invalidate() {
 	}
 	b.mu.Lock()
 	b.closed = true
+	peers := make([]*PeerSession, 0, len(b.nativePeers))
+	for _, p := range b.nativePeers {
+		peers = append(peers, p)
+	}
 	streams := make([]net.Conn, 0, len(b.active))
 	for stream := range b.active {
 		streams = append(streams, stream)
@@ -381,6 +402,12 @@ func (b *Bound) Invalidate() {
 	b.mu.Unlock()
 	for _, stream := range streams {
 		_ = stream.Close()
+	}
+	for _, p := range peers {
+		p.Close()
+	}
+	if b.closePolicy != nil {
+		b.closePolicy()
 	}
 }
 
@@ -410,9 +437,39 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	if header.Direct != nil && (metadata.Destination.Port() != header.Direct.DestinationPort || header.Direct.DestinationPort != b.prepared.servicePort) {
 		return ErrPrivateStream
 	}
+	authority := ""
+	// direct visitors use the exact managed origin. admitted connector clients
+	// can use a loopback authority, including an owned kubeconfig's local server.
+	if b.prepared.managedPublic && header.Direct != nil {
+		authority = net.JoinHostPort(b.prepared.managedHostname, strconv.Itoa(int(b.prepared.servicePort)))
+	}
+	return b.forwardManaged(ctx, &replayConn{Conn: stream, reader: replay}, b.prepared.managedVisitor(header), authority)
+}
+
+func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor publisher.ServiceVisitorAuthentication, authority string) error {
+	check := func() error {
+		if native, ok := visitor.(publisher.NativeVisitor); ok {
+			_, err := native.Admission.CheckUse(ctx)
+			return err
+		}
+		return nil
+	}
+	if err := check(); err != nil {
+		return err
+	}
 	target, targetTLS := b.prepared.target, b.prepared.managedTargetTLS
 	if b.prepared.targetResolver != nil {
-		target, targetTLS, err = b.prepared.targetResolver.ResolveTarget(ctx)
+		resolve := ctx
+		cancel := func() {}
+		if native, ok := visitor.(publisher.NativeVisitor); ok {
+			resolve, cancel = context.WithDeadline(ctx, native.Admission.SetupDeadline())
+		}
+		var err error
+		target, targetTLS, err = b.prepared.targetResolver.ResolveTarget(resolve)
+		if err == nil {
+			err = context.Cause(resolve)
+		}
+		cancel()
 		if err != nil {
 			return err
 		}
@@ -420,16 +477,13 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 			return ErrPrivateStream
 		}
 	}
-	authority := ""
-	// direct visitors use the exact managed origin. admitted connector clients
-	// can use a loopback authority, including an owned kubeconfig's local server.
-	if b.prepared.managedPublic && header.Direct != nil {
-		authority = net.JoinHostPort(b.prepared.managedHostname, strconv.Itoa(int(b.prepared.servicePort)))
+	if err := check(); err != nil {
+		return err
 	}
 	managed := publisher.ServiceStream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, HTTPRequests: b.prepared.serviceHTTPRequests,
 		Authority: authority,
-		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: b.prepared.managedVisitor(header)}
-	return managed.Forward(ctx, &replayConn{Conn: stream, reader: replay})
+		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: visitor}
+	return managed.Forward(ctx, stream)
 }
 
 func headerMatches(ref tunnelv1.ServicePublisherConnectionRef, h tunnelv1.ServiceForwardingHeader, now time.Time) bool {

@@ -6,14 +6,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+	"github.com/zalando/go-keyring"
 )
 
 func TestTelemetryCommandControlsFutureCommandEvents(t *testing.T) {
+	keyring.MockInit()
 	root := filepath.Join(t.TempDir(), "state")
 	t.Setenv("TNL_STATE_DIR", root)
-	var events []telemetryPayload
+	var events []clienttelemetry.Observation
 	factory := func(string) telemetryReporter {
-		return telemetryReporterFunc(func(event telemetryPayload) { events = append(events, event) })
+		return telemetryReporterFunc(func(event clienttelemetry.Observation) { events = append(events, event) })
 	}
 	invoke := func(args ...string) string {
 		t.Helper()

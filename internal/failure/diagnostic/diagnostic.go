@@ -203,19 +203,6 @@ func WriteWarning(output io.Writer, command string, code Code) error {
 	return err
 }
 
-// WritePolicyDenial reports aggregate IP policy denials without visitor addresses.
-func WritePolicyDenial(output io.Writer, command string, newlyBlocked, total uint64) error {
-	text := renderText(command, IPPolicyDenied, "",
-		"IP policy blocked visitor connections before they reached the local service.",
-		"newly blocked: "+strconv.FormatUint(newlyBlocked, 10)+"; total blocked: "+strconv.FormatUint(total, 10),
-	) + "\n"
-	written, err := io.WriteString(output, text)
-	if err == nil && written != len(text) {
-		return io.ErrShortWrite
-	}
-	return err
-}
-
 func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code, caseID ...string) {
 	status := definitionFor(code).HTTPStatus
 	if status < 400 || status > 599 {

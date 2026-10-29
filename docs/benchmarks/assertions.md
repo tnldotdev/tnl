@@ -27,7 +27,6 @@ local coordinator, not the shared publisher or visitor implementation.
 | Joined cancellation and close failure remains a failure                                 | Shared publisher regression                 |
 | Unexpected publisher or component exit aborts the run                                   | Publisher group / deployment runner         |
 | Zero active sessions, connections, and reservations after shutdown                      | Local coordinator SQL assertion             |
-| Final ingress usage flush, complete coverage, report/aggregate equality                 | Local coordinator SQL assertion             |
 | Per-component resources, raw metrics, bounded failure evidence                          | Deployment runner                           |
 | Disposable infrastructure cleanup on success and failure                                | Deployment runner                           |
 

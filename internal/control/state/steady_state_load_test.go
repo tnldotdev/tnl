@@ -8,8 +8,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/tnldotdev/tnl/internal/observability/publicurlusage"
 )
 
 // this is a bounded database workload, not a lease-cadence or soak test. the
@@ -41,7 +39,7 @@ func TestLoadSteadyState(t *testing.T) {
 	}
 	for _, event := range initial.Entries {
 		setup, ok := byID[event.PublicURLID]
-		if !ok || event.Kind != IngressPublicURLUpsert || event.PublishRunNumber != setup.PublishRunNumber || event.EntryRevision != uint64(f.history) ||
+		if !ok || event.Kind != IngressPublicURLUpsert || event.PublishRunNumber != setup.PublishRunNumber || event.EntryRevision != uint64(f.history+1) ||
 			event.Projection.PublishRunID != setup.PublishRunID || len(event.Projection.PublisherConnections) != 2 {
 			t.Fatalf("initial snapshot: unexpected route %s", event.PublicURLID)
 		}
@@ -52,11 +50,11 @@ func TestLoadSteadyState(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	workers := newIntegrationWorkers(t, cancel)
-	var heartbeats, pages atomic.Int64
+	var heartbeats atomic.Int64
 	f.startMetrics(t)
 	started := time.Now()
 	defer func() {
-		t.Logf("heartbeats=%d/%d usage_pages_including_replays=%d/%d workers=64 elapsed=%s", heartbeats.Load(), 3*f.routes, pages.Load(), 8*((f.routes+15)/16), time.Since(started))
+		t.Logf("heartbeats=%d/%d workers=64 elapsed=%s", heartbeats.Load(), 3*f.routes, time.Since(started))
 		f.logStats(t)
 	}()
 	defer workers.stop()
@@ -69,7 +67,7 @@ func TestLoadSteadyState(t *testing.T) {
 	// logical time monotonically even when workflows progress at different rates.
 	start := make(chan struct{})
 	var work sync.WaitGroup
-	work.Add(64 + len(ingresses))
+	work.Add(64)
 	for worker := range 64 {
 		workers.Go(func() {
 			defer work.Done()
@@ -101,42 +99,7 @@ func TestLoadSteadyState(t *testing.T) {
 			}
 		})
 	}
-	bucketStart := f.now.Truncate(time.Minute)
 	now := f.now.Add(3 * time.Second)
-	for index, ingress := range ingresses {
-		// exactly one serial page stream per ingress. each cumulative revision
-		// is replayed once before the next page; only new deltas may be counted.
-		workers.Go(func() {
-			defer work.Done()
-			<-start
-			for revision := uint64(1); revision <= 2; revision++ {
-				for offset := 0; offset < len(sessions) && ctx.Err() == nil; offset += 16 {
-					var reports []IngressUsageReport
-					for _, session := range sessions[offset:min(offset+16, len(sessions))] {
-						n := revision * uint64(index+1)
-						reports = append(reports, IngressUsageReport{
-							PublicURLID: session.setup.PublicURLID, PublishRunNumber: session.setup.PublishRunNumber,
-							BucketStart: bucketStart, BucketEnd: bucketStart.Add(time.Minute), ObservedThrough: f.now,
-							ReportRevision: revision, ConnectionAttempts: 4 * n, SuccessfulStreams: n,
-							PolicyDenials: n, CapacityDenials: n, VisitorStreamOpenFailures: n,
-							ConnectionNanoseconds: 100 * n, IngressBytes: 100 * n, EgressBytes: 200 * n,
-							HistogramData: (publicurlusage.Checkpoint{}).MarshalBinary(),
-						})
-					}
-					for replay := range 2 {
-						callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-						err := f.controls[index].ReportIngressUsage(callCtx, ingress.IngressLeaseIdentity, IngressUsageBatch{Reports: reports}, now)
-						stop()
-						if err != nil {
-							fail(fmt.Errorf("usage ingress=%d offset=%d revision=%d replay=%d: %w", index, offset, revision, replay, err))
-							return
-						}
-						pages.Add(1)
-					}
-				}
-			}
-		})
-	}
 	workDone := make(chan struct{})
 	workers.Go(func() { work.Wait(); close(workDone) })
 	for index, ingress := range ingresses {
@@ -155,18 +118,15 @@ func TestLoadSteadyState(t *testing.T) {
 	if ctx.Err() != nil {
 		t.Fatal(ctx.Err())
 	}
-	if heartbeats.Load() != int64(3*f.routes) || pages.Load() != int64(8*((f.routes+15)/16)) {
-		t.Fatal("incomplete heartbeat or usage workload")
+	if heartbeats.Load() != int64(3*f.routes) {
+		t.Fatal("incomplete heartbeat workload")
 	}
 	t.Logf("mixed_workload_elapsed=%s", time.Since(started))
-	// both ingress streams end at revision 2: their cumulative units are 2+4.
-	// one undelayed row stream checks every stored bucket and publish run. match
-	// each row to the fixture to reject missing, extra, duplicate, or misrouted
-	// rows even when their global sums happen to be correct.
+	// verify every durable run, not only successful calls or a global count.
 	verificationStarted := time.Now()
 	verified := 0
 	defer func() {
-		t.Logf("verified_usage_buckets=%d/%d verification_elapsed=%s", verified, len(sessions), time.Since(verificationStarted))
+		t.Logf("verified_runs=%d/%d verification_elapsed=%s", verified, len(sessions), time.Since(verificationStarted))
 	}()
 	for _, session := range sessions {
 		byID[session.setup.PublicURLID] = session.setup
@@ -174,17 +134,11 @@ func TestLoadSteadyState(t *testing.T) {
 	callCtx, stop := context.WithTimeout(ctx, 20*time.Second)
 	defer stop()
 	rows, err := f.database.pool.Query(callCtx, `
-		SELECT b.public_url_id, b.publish_run_number, COALESCE(s.id, ''),
-			(b.bucket_start = $1 AND b.bucket_end = $2 AND b.observed_through = $3
-			 AND b.connection_attempts = 24 AND b.successful_streams = 6
-			 AND b.policy_denials = 6 AND b.capacity_denials = 6 AND b.visitor_stream_open_failures = 6
-			 AND b.connection_nanoseconds = 600 AND b.ingress_bytes = 600 AND b.egress_bytes = 1200
-			 AND s.policy_denials = 6) IS TRUE
-		FROM control.public_url_usage_buckets b
-		LEFT JOIN control.publish_runs s ON s.public_url_id = b.public_url_id AND s.publish_run_number = b.publish_run_number`,
-		bucketStart, bucketStart.Add(time.Minute), f.now)
+		SELECT public_url_id, publish_run_number, id,
+		    (state='ready' AND closed_at IS NULL AND publisher_expires_at > $1) IS TRUE
+		FROM control.publish_runs`, now)
 	if err != nil {
-		t.Fatalf("verify usage: %v", err)
+		t.Fatalf("verify runs: %v", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -192,20 +146,20 @@ func TestLoadSteadyState(t *testing.T) {
 		var version uint64
 		var valuesMatch bool
 		if err := rows.Scan(&publicURLID, &version, &sessionID, &valuesMatch); err != nil {
-			t.Fatalf("verify usage row: %v", err)
+			t.Fatalf("verify run: %v", err)
 		}
 		expected, ok := byID[publicURLID]
 		if !ok || version != expected.PublishRunNumber || sessionID != expected.PublishRunID || !valuesMatch {
-			t.Fatalf("unexpected usage bucket/session route=%s version=%d session=%s expected_route=%t values_match=%t", publicURLID, version, sessionID, ok, valuesMatch)
+			t.Fatalf("unexpected run public_url_id=%s number=%d run=%s expected=%t values_match=%t", publicURLID, version, sessionID, ok, valuesMatch)
 		}
 		delete(byID, publicURLID)
 		verified++
 	}
 	if err := rows.Err(); err != nil {
-		t.Fatalf("verify usage rows: %v", err)
+		t.Fatalf("verify runs: %v", err)
 	}
 	if len(byID) != 0 {
-		t.Fatalf("missing usage buckets: verified=%d want=%d", verified, len(sessions))
+		t.Fatalf("missing runs: verified=%d want=%d", verified, len(sessions))
 	}
 	assertAssignmentTotals(t, f.database.pool, int64(f.routes)*2)
 }
@@ -245,9 +199,9 @@ func readyLoadSessions(t *testing.T, f *controlLoadFixture, publisherLease, cred
 		for slot := range setup.PublisherConnections {
 			claimTestConnection(t, session, slot, f.now)
 		}
-		ready, err := f.database.MarkPublishRunReady(t.Context(), session.authentication(), f.now)
-		if err != nil || !ready.Routable {
-			t.Fatalf("ready route=%s routable=%t: %v", setup.PublicURLID, ready.Routable, err)
+		ready := readyTestServingRun(t, session, f.now)
+		if !ready.Routable {
+			t.Fatalf("ready route=%s routable=%t", setup.PublicURLID, ready.Routable)
 		}
 		sessions = append(sessions, session)
 	}

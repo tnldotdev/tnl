@@ -28,6 +28,10 @@ import (
 )
 
 func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.Invocation) (_ publisherprotocol.Registration, result error) {
+	// capture before preparation can wait or call application-owned hooks. the
+	// retained request must not borrow the caller's optional boolean either.
+	telemetryDisabled := request.TelemetryDisabled != nil && *request.TelemetryDisabled
+	request.TelemetryDisabled = &telemetryDisabled
 	release, err := a.beginPreparation(ctx, request.InvocationId)
 	if err != nil {
 		return publisherprotocol.Registration{}, err
@@ -156,7 +160,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		}
 	}
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{configuration: configuration, invocation: &request}
+	a.prepared[id] = appPreparation{configuration: configuration, invocation: &request, telemetryDisabled: telemetryDisabled}
 	a.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return publisherprotocol.Registration{}, err

@@ -81,3 +81,16 @@ func (q *Queries) LockIngressPoolForProvision(ctx context.Context, id string) (C
 	)
 	return i, err
 }
+
+const lockIngressPoolMembership = `-- name: LockIngressPoolMembership :one
+SELECT id FROM control.ingress_pools WHERE id = $1 FOR NO KEY UPDATE
+`
+
+// serialize public receiver additions with final readiness, without blocking
+// foreign-key key-share locks or involving normal lease renewal.
+func (q *Queries) LockIngressPoolMembership(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, lockIngressPoolMembership, id)
+	var id_2 string
+	err := row.Scan(&id_2)
+	return id_2, err
+}

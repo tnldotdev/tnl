@@ -84,6 +84,24 @@ test("accepts the native private protocol golden assignment", async () => {
   await handle.close();
 });
 
+test("captures per-app telemetry opt-out in the exact registration", async () => {
+  await withProcessEnvironment({ TNL_NO_TELEMETRY: "1" }, async () => {
+    const request = vi.fn(async (_endpoint: RuntimeEndpoint, operation: string) =>
+      operation === "prepare" ? assignment() : undefined,
+    );
+    const prepared = await createPreparedService({}, "node", {
+      start: async () => testEndpoint,
+      request,
+    });
+    expect(request).toHaveBeenCalledWith(
+      testEndpoint,
+      "prepare",
+      expect.objectContaining({ telemetry_disabled: true }),
+    );
+    await prepared.close();
+  });
+});
+
 function assignment(registration = "a") {
   return {
     version: 1,
@@ -369,6 +387,7 @@ test(
   "live scoped HTTP reconnect replaces both owner capability and registration",
   { timeout: 15_000 },
   async () => {
+    vi.stubEnv("TNL_NO_TELEMETRY", "YeS");
     const first = await startTestBootstrap();
     const second = await startTestBootstrap({
       capability: "c".repeat(64),
@@ -384,6 +403,7 @@ test(
     });
     try {
       await handle.register(app);
+      process.env.TNL_NO_TELEMETRY = "false";
       await expect(
         runtimeRequest({ ...second.endpoint, capability: first.endpoint.capability }, "health"),
       ).rejects.toMatchObject({ code: "sdk.registration_stale" });
@@ -399,6 +419,12 @@ test(
         body: { registration_id: `reg_${"e".repeat(32)}` },
       });
       expect(handle.publicURL).toBe("https://api.member.example");
+      for (const bootstrap of [first, second])
+        expect(
+          bootstrap.requests.find((request) => request.path === "/v1/prepare")?.body,
+        ).toMatchObject({
+          telemetry_disabled: true,
+        });
       await handle.close();
       expect(second.requests.at(-1)?.body).toMatchObject({
         registration_id: `reg_${"e".repeat(32)}`,
