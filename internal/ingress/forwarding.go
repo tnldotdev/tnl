@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
 	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -20,24 +22,28 @@ import (
 
 const relaySessionSetupTimeout = 10 * time.Second
 
+type VisitorSourceSigner func(ingressv1.IngressRoutingTableEntry, string, netip.AddrPort, netip.AddrPort) (string, error)
+
 type ForwarderConfig struct {
-	Context         context.Context
-	TLSConfig       *tls.Config
-	ClusterSecret   string
-	TransportConfig muxsession.TLSYamuxConfig
-	Observer        OperationObserver
-	OnSessionClosed func(relayServiceID, relayID, origin string, cause error)
-	PromoteVisitor  func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult
+	SignVisitorSource VisitorSourceSigner
+	Context           context.Context
+	TLSConfig         *tls.Config
+	ClusterSecret     string
+	TransportConfig   muxsession.TLSYamuxConfig
+	Observer          OperationObserver
+	OnSessionClosed   func(relayServiceID, relayID, origin string, cause error)
+	PromoteVisitor    func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult
 }
 
 // Forwarder pools authenticated sessions to exact relay processes and opens
 // acknowledged internal-forwarding streams for visitor connections.
 type Forwarder struct {
-	connector       relayConnector
-	observer        OperationObserver
-	context         context.Context
-	cancel          context.CancelFunc
-	onSessionClosed func(relayServiceID, relayID, origin string, cause error)
+	signVisitorSource VisitorSourceSigner
+	connector         relayConnector
+	observer          OperationObserver
+	context           context.Context
+	cancel            context.CancelFunc
+	onSessionClosed   func(relayServiceID, relayID, origin string, cause error)
 
 	mu        sync.Mutex
 	sessions  map[relaySessionKey]*relaySession
@@ -49,11 +55,15 @@ type Forwarder struct {
 }
 
 func NewForwarder(config ForwarderConfig) (*Forwarder, error) {
+	if config.SignVisitorSource == nil {
+		return nil, visitortoken.ErrVisitorSource
+	}
 	connector, err := newTLSRelayConnector(config.TLSConfig, config.ClusterSecret, config.TransportConfig)
 	if err != nil {
 		return nil, err
 	}
 	f := newForwarderContext(config.Context, connector)
+	f.signVisitorSource = config.SignVisitorSource
 	f.observer = config.Observer
 	f.onSessionClosed = config.OnSessionClosed
 	f.promote = config.PromoteVisitor
@@ -151,6 +161,12 @@ func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicU
 		return PublicURL{}, errors.New("ingress: routing-table IP policy is inconsistent")
 	}
 	route := PublicURL{
+		AttestSource: func(visitorID string, source, destination netip.AddrPort) (string, error) {
+			if f.signVisitorSource == nil {
+				return "", visitortoken.ErrVisitorSource
+			}
+			return f.signVisitorSource(entry, visitorID, source, destination)
+		},
 		ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber),
 		PublishRunID:   entry.PublishRunId,
 		HashedIPPolicy: hashed, AllowAll: entry.IpPolicy == ingressv1.AllowAll, Backends: backends,

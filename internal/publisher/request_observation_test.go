@@ -51,7 +51,7 @@ func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {
 			request.Host = "other.example"
 		}
 		response := httptest.NewRecorder()
-		server.http.Handler.ServeHTTP(response, request)
+		serveTestPublicRequest(t, server, response, request)
 		if response.Code != test.status {
 			t.Fatalf("%s: status = %d", test.path, response.Code)
 		}
@@ -94,7 +94,7 @@ func TestRequestObservationNoneRecordsNothing(t *testing.T) {
 	request.Host = "app.example"
 	request.TLS = &tls.ConnectionState{ServerName: "app.example"}
 	response := httptest.NewRecorder()
-	server.http.Handler.ServeHTTP(response, request)
+	serveTestPublicRequest(t, server, response, request)
 	if response.Code != http.StatusNoContent || observed != 0 {
 		t.Fatalf("none mode response = %d, observations = %d", response.Code, observed)
 	}

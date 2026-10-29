@@ -98,7 +98,7 @@ func confirmPublishRunReady(
 }
 
 func (r *PublicURLServer) visitorPolicyPrepared() bool {
-	if r.policy == nil {
+	if r.policy == nil || r.visitorSourceKey == ([32]byte{}) {
 		return false
 	}
 	view, enabled, _ := r.policy.Current()

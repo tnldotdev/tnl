@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -215,7 +216,7 @@ func TestPublicURLManagerRecoveryReachesRegisteredHTTPVisitorsAndStaysRunLocal(t
 						if err != nil {
 							return nil, err
 						}
-						metadata, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40001"), Destination: netip.MustParseAddrPort("203.0.113.10:443")})
+						metadata, err := encodeTestPublicMetadata(route, tunnelv1.VisitorStreamHeader{VisitorConnectionID: "vc_0123456789abcdefghijkl"}, proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40001"), Destination: netip.MustParseAddrPort("203.0.113.10:443")})
 						if err == nil {
 							_, err = stream.Write(metadata)
 						}

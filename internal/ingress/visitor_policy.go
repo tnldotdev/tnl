@@ -2,14 +2,18 @@ package ingress
 
 import (
 	"context"
+	"net/netip"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type visitorPolicyClient interface {
@@ -39,6 +43,13 @@ type publicRunPolicy struct {
 	policy    *visitorlease.Lease
 	cancel    context.CancelFunc
 	done      chan struct{}
+	source    atomic.Pointer[publicRunSource]
+	sequence  *atomic.Uint64
+}
+
+type publicRunSource struct {
+	key       [32]byte
+	authority tunnelv1.VisitorSourceAuthority
 }
 
 func (r *publicRunPolicy) matches(entry ingressv1.IngressRoutingTableEntry, process ingressv1.IngressLease) bool {
@@ -59,7 +70,15 @@ func (c *Controller) installedPublicPolicy(entry ingressv1.IngressRoutingTableEn
 		!entry.PublicUrlExpiresAt.After(view.AuthorityTime(now)) || !process.LeaseExpiresAt.After(view.AuthorityTime(now)) {
 		return time.Time{}, false
 	}
-	return view.AuthorityTime(view.ValidUntil), true
+	source := run.source.Load()
+	if source == nil || source.authority.VisitorPolicyRevision != view.VisitorPolicyRevision || source.authority.ValidUntil <= view.AuthorityTime(now).Unix() {
+		return time.Time{}, false
+	}
+	until := view.AuthorityTime(view.ValidUntil)
+	if delegated := time.Unix(source.authority.ValidUntil, 0); delegated.Before(until) {
+		until = delegated
+	}
+	return until, true
 }
 
 func (c *Controller) preparePublicPolicy(ctx context.Context, entry ingressv1.IngressRoutingTableEntry, owner ingressv1.IngressLease) (*publicRunPolicy, error) {
@@ -68,7 +87,18 @@ func (c *Controller) preparePublicPolicy(ctx context.Context, entry ingressv1.In
 		return nil, err
 	}
 	life, cancel := context.WithCancel(ctx)
+	c.mu.Lock()
+	if c.sourceSequences == nil {
+		c.sourceSequences = make(map[string]*atomic.Uint64)
+	}
+	sequence := c.sourceSequences[entry.PublishRunId]
+	if sequence == nil {
+		sequence = new(atomic.Uint64)
+		c.sourceSequences[entry.PublishRunId] = sequence
+	}
+	c.mu.Unlock()
 	run := &publicRunPolicy{ingressID: owner.IngressId, hostname: entry.CanonicalHostname, policy: policy, cancel: cancel, done: make(chan struct{}),
+		sequence: sequence,
 		request: ingressv1.IngressVisitorPolicyRequest{IngressRunId: owner.IngressRunId, IngressLeaseRevision: owner.IngressLeaseRevision,
 			Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: entry.PublicUrlId}, PublishRunId: entry.PublishRunId,
 			PublishRunNumber: entry.PublishRunNumber, PolicyRevision: entry.PolicyRevision}}
@@ -103,10 +133,27 @@ func (c *Controller) preparePublicPolicy(ctx context.Context, entry ingressv1.In
 		if err != nil {
 			return err
 		}
+		if response.VisitorSourceKey == nil || len(*response.VisitorSourceKey) != 32 || response.VisitorSourceAuthority == nil {
+			return visitortoken.ErrVisitorSource
+		}
+		authority, err := tunnelv1.ReadVisitorSourceAuthority(*response.VisitorSourceAuthority)
+		if err != nil || authority.PublicURLID != body.Resource.Id || authority.PublishRunID != body.PublishRunId || authority.PublishRunNumber != uint64(body.PublishRunNumber) ||
+			authority.IngressID != run.ingressID || authority.IngressRunID != body.IngressRunId || authority.IngressLeaseRevision != uint64(body.IngressLeaseRevision) ||
+			authority.VisitorPolicyRevision != response.Policy.VisitorPolicyRevision || authority.ValidUntil > response.Policy.ValidUntil.Unix() || authority.ValidUntil <= response.Policy.ObservedAt.Unix() {
+			return visitortoken.ErrVisitorSource
+		}
+		source := &publicRunSource{key: [32]byte(*response.VisitorSourceKey), authority: authority}
+		if source.key == ([32]byte{}) {
+			return visitortoken.ErrVisitorSource
+		}
 		if !time.Now().Before(deadline) {
 			return context.DeadlineExceeded
 		}
-		return policy.Apply(request, update)
+		if err := policy.Apply(request, update); err != nil {
+			return err
+		}
+		run.source.Store(source)
+		return nil
 	}
 	if err := refresh(); err != nil {
 		cancel()
@@ -135,6 +182,36 @@ func (c *Controller) preparePublicPolicy(ctx context.Context, entry ingressv1.In
 	return run, nil
 }
 
+func (c *Controller) SignVisitorSource(entry ingressv1.IngressRoutingTableEntry, visitorID string, source, destination netip.AddrPort) (string, error) {
+	owner, now := c.Lease(), c.now()
+	if owner.Draining || owner.IngressLeaseRevision <= 0 {
+		return "", visitortoken.ErrVisitorSource
+	}
+	if _, ok := c.installedPublicPolicy(entry, owner, now); !ok {
+		return "", visitortoken.ErrVisitorSource
+	}
+	c.mu.RLock()
+	run := c.publicPolicies[entry.PublishRunId]
+	c.mu.RUnlock()
+	if run == nil || !run.matches(entry, owner) {
+		return "", visitortoken.ErrVisitorSource
+	}
+	state := run.source.Load()
+	view, enabled, _ := run.policy.Current()
+	if state == nil || !enabled || state.authority.VisitorPolicyRevision != view.VisitorPolicyRevision {
+		return "", visitortoken.ErrVisitorSource
+	}
+	proof, err := visitortoken.SignVisitorSource(state.key, state.authority, run.sequence.Add(1), tunnelv1.VisitorSourceBinding{
+		PublicURLID: entry.PublicUrlId, PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber),
+		VisitorID: visitorID, Source: source, Destination: destination,
+	}, view.AuthorityTime(now))
+	if err != nil {
+		return "", err
+	}
+	wire, err := proof.MarshalBinary()
+	return string(wire), err
+}
+
 func (r *publicRunPolicy) close() {
 	r.cancel()
 	<-r.done
@@ -146,6 +223,7 @@ func (c *Controller) publicPolicyLoop(ctx context.Context) error {
 		c.mu.Lock()
 		runs := c.publicPolicies
 		c.publicPolicies = make(map[string]*publicRunPolicy)
+		c.sourceSequences = nil
 		c.mu.Unlock()
 		// cancel every owner before joining any blocked policy request.
 		for _, run := range runs {
@@ -179,6 +257,11 @@ func (c *Controller) publicPolicyLoop(ctx context.Context) error {
 		}
 		c.routingTable.mu.RUnlock()
 		c.mu.Lock()
+		for id := range c.sourceSequences {
+			if _, exists := current[id]; !exists {
+				delete(c.sourceSequences, id)
+			}
+		}
 		var retired []*publicRunPolicy
 		for id, run := range c.publicPolicies {
 			entry, exists := current[id]

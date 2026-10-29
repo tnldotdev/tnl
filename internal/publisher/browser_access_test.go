@@ -75,7 +75,7 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 			request.Header.Set("Cookie", cookie)
 		}
 		response := httptest.NewRecorder()
-		server.http.Handler.ServeHTTP(response, request)
+		serveTestPublicRequest(t, server, response, request)
 		return response
 	}
 	if response := serve("/settings", "", true); response.Code != http.StatusForbidden {
@@ -89,7 +89,7 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 	navigation.Header.Set("Sec-Fetch-Dest", "document")
 	navigation = navigation.WithContext(context.WithValue(navigation.Context(), denialContextKey{}, true))
 	redirect := httptest.NewRecorder()
-	server.http.Handler.ServeHTTP(redirect, navigation)
+	serveTestPublicRequest(t, server, redirect, navigation)
 	if redirect.Code != http.StatusSeeOther || redirect.Header().Get("Location") != "/__tnl/team/login?return=%2Fsettings%3Ftab%3Dprofile" {
 		t.Fatalf("unallowed browser navigation = %d %q", redirect.Code, redirect.Header().Get("Location"))
 	}
@@ -205,7 +205,7 @@ func TestBrowserAndShareSessionsReprepareWithoutExpiredVisitorCookie(t *testing.
 				}
 				r = r.WithContext(context.WithValue(r.Context(), denialContextKey{}, true))
 				w := httptest.NewRecorder()
-				server.http.Handler.ServeHTTP(w, r)
+				serveTestPublicRequest(t, server, w, r)
 				return w
 			}
 			if denied := serve("/settings", cookie, false); denied.Code != http.StatusForbidden {

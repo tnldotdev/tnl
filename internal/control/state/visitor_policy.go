@@ -238,6 +238,7 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 	}
 	defer rollback(ctx, tx, "read publisher visitor policy", &retErr)()
 	q := controlstatedb.New(tx)
+	var sourceKey []byte
 	switch scope.Kind {
 	case visitorscope.PublicURL:
 		// match mutation order before publisherRunLive takes identity/grant
@@ -266,6 +267,11 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 			}
 			return result, ErrPublishRunCredential
 		}
+		key, err := visitortoken.PublicVisitorSourceKey(row.PublishRunTokenDigest, run, uint64(number))
+		if err != nil {
+			return result, err
+		}
+		sourceKey = key[:]
 	case visitorscope.Service:
 		row, err := serviceRunAuthorization(ctx, tx, q, scope.ID, run, token, now)
 		if err != nil {
@@ -280,6 +286,9 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 	result, err = d.readVisitorPolicy(ctx, tx, scope, after, now)
 	if err != nil {
 		return result, err
+	}
+	if sourceKey != nil {
+		result.VisitorSourceKey = &sourceKey
 	}
 	return result, tx.Commit(ctx)
 }

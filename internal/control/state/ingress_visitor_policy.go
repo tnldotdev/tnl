@@ -7,7 +7,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // ingress preparation reads the same policy as publishers, authenticated by its
@@ -53,5 +55,34 @@ func (d *Database) ReadIngressVisitorPolicy(ctx context.Context, identity Ingres
 	if err != nil {
 		return result, err
 	}
+	row, err := controlstatedb.New(tx).GetPublishRun(ctx, run)
+	if err != nil {
+		return result, err
+	}
+	master, err := visitortoken.PublicVisitorSourceKey(row.PublishRunTokenDigest, run, uint64(number))
+	if err != nil {
+		return result, err
+	}
+	until := result.Policy.ValidUntil
+	if owner.LeaseExpiresAt.Time.Before(until) {
+		until = owner.LeaseExpiresAt.Time
+	}
+	if row.PublisherExpiresAt.Time.Before(until) {
+		until = row.PublisherExpiresAt.Time
+	}
+	authority, child, err := visitortoken.IssueVisitorSourceAuthority(master, tunnelv1.VisitorSourceAuthority{
+		PublicURLID: scope.ID, PublishRunID: run, PublishRunNumber: uint64(number),
+		IngressID: identity.IngressID, IngressRunID: identity.IngressRunID, IngressLeaseRevision: identity.IngressLeaseRevision,
+		VisitorPolicyRevision: result.Policy.VisitorPolicyRevision, ValidUntil: until.Unix(),
+	}, now)
+	if err != nil {
+		return result, ErrVisitorPolicy
+	}
+	wire, err := authority.MarshalBinary()
+	if err != nil {
+		return result, ErrVisitorPolicy
+	}
+	key := child[:]
+	result.VisitorSourceKey, result.VisitorSourceAuthority = &key, &wire
 	return result, tx.Commit(ctx)
 }

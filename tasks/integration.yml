@@ -27,6 +27,12 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/control/api/public -run='^TestIntegration(Workload|MigrationRejectsSiblingWorkloadBaselines)' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
+  public-capacity:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check public capacity across two ingress processes and standalone with both transports
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegration(PublicRunCapacity|PublisherTransportMatrix)$' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
   workload-runtime:
     dir: "{{.ROOT_DIR}}"
     desc: Check real workload QUIC and TLS/TCP paths, native PostgreSQL, HTTP, renewal, revocation and fixed expiry

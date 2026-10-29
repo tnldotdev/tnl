@@ -13,7 +13,7 @@ func TestVisitorPolicyRevisionClosesStreamsWithoutStoppingPublisher(t *testing.T
 	stream, peer := net.Pipe()
 	defer stream.Close()
 	defer peer.Close()
-	route := &PublicURLServer{streams: map[net.Conn]struct{}{stream: {}}}
+	route := &PublicURLServer{streams: map[net.Conn]*publicVisitorAdmission{stream: {connection: newDoneConn(stream)}}}
 	policy, update, token := httpPermissionFixture(t, false)
 	view, _, _ := policy.Current()
 	permission, err := visitortoken.VerifyBearer(token, view, time.Now())

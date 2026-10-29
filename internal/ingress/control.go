@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -76,6 +77,7 @@ type Controller struct {
 	publicPolicies    map[string]*publicRunPolicy
 	policyCancel      context.CancelFunc
 	policyDone        chan struct{}
+	sourceSequences   map[string]*atomic.Uint64
 
 	mu                  sync.RWMutex
 	lease               ingressv1.IngressLease

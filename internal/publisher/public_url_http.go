@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -33,6 +34,12 @@ type shareConnectionKey struct{}
 
 // NewPublicURLServer creates a public URL server served by publisher connections.
 func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) {
+	if config.StreamCapacity == 0 {
+		config.StreamCapacity = trafficlimits.Default().Connections
+	}
+	if config.StreamCapacity < 1 || config.StreamCapacity > 1<<20 {
+		return nil, errors.New("public URL stream capacity must be between 1 and 1048576")
+	}
 	if config.ServiceProtocol == "" || config.ServiceProtocol == controlv1.Http {
 		if config.TargetTLSName != "" {
 			config.TargetOptions.ServerName = config.TargetTLSName
@@ -97,13 +104,15 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	base = observability.WithPublisherRecovery(base)
 	life, cancelLife := context.WithCancel(context.WithoutCancel(base))
 	route := &PublicURLServer{
-		hostname:  hostname,
-		policy:    config.VisitorPolicy,
-		admission: admission,
-		run:       PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber},
-		promote:   config.PromoteVisitor,
-		guard:     config.AdmitVisitor,
-		life:      life, cancel: cancelLife,
+		hostname:         hostname,
+		policy:           config.VisitorPolicy,
+		visitorSourceKey: config.VisitorSourceKey,
+		streamCapacity:   config.StreamCapacity,
+		admission:        admission,
+		run:              PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber},
+		promote:          config.PromoteVisitor,
+		guard:            config.AdmitVisitor,
+		life:             life, cancel: cancelLife,
 		certificatePlan: config.CertificatePlan,
 		queue:           queue,
 		bodyTimeout:     httpstream.RequestBodyTimeout,
@@ -115,6 +124,12 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		http: &http.Server{
 			BaseContext: func(net.Listener) context.Context { return life },
 			Handler: observability.PublisherHTTP(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				session, _ := request.Context().Value(visitorSessionKey{}).(*visitorSession)
+				if session == nil || !session.beginRequest() {
+					diagnostic.WriteHTTP(response, request, diagnostic.RequestRejected)
+					return
+				}
+				defer session.requests.Done()
 				auditOutcome, auditReason := "denied", "invalid_request"
 				auditReport := true
 				auditSent := false
@@ -303,11 +318,9 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					probeCtx, cancel := context.WithTimeout(request.Context(), 5*time.Second)
 					defer cancel()
 					request = request.WithContext(probeCtx)
-					if session, _ := request.Context().Value(visitorSessionKey{}).(*visitorSession); session != nil {
-						if err := session.admit(probeCtx, true); err != nil {
-							diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
-							return
-						}
+					if err := session.admit(probeCtx, true); err != nil {
+						diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+						return
 					}
 					handler.ServeHTTP(response, request)
 					return
@@ -334,13 +347,11 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}
 					return
 				}
-				if session, _ := request.Context().Value(visitorSessionKey{}).(*visitorSession); session != nil {
-					if err := session.admit(request.Context(), proof); err != nil {
-						auditOutcome, auditReason = "failed", "capacity"
-						admission.refund()
-						diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
-						return
-					}
+				if err := session.admit(request.Context(), proof); err != nil {
+					auditOutcome, auditReason = "failed", "capacity"
+					admission.refund()
+					diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+					return
 				}
 				if request.Context().Err() != nil {
 					auditOutcome, auditReason = "failed", "cancelled"
@@ -375,7 +386,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		},
 		httpDone:           make(chan error, 1),
 		certificateExpired: make(chan struct{}),
-		streams:            make(map[net.Conn]struct{}),
+		streams:            make(map[net.Conn]*publicVisitorAdmission),
 	}
 	transportPromote := tunnel.NewVisitorPromoter(func(v Visitor) tunnelv1.VisitorStreamHeader { return v.Header }, route.resolvePublisherSession)
 	route.defaultPromote = func(ctx context.Context, visitor Visitor) error {

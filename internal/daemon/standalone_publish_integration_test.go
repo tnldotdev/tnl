@@ -214,6 +214,12 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 	for _, transport := range []string{"quic", "tls-tcp"} {
 		t.Run(transport, func(t *testing.T) {
 			fixture := newStandalonePublishFixture(t, "transport-"+transport)
+			const concurrentRequests = 16
+			entered := make(chan string, concurrentRequests)
+			release := make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			defer unblock()
+			var active atomic.Int32
 			var (
 				mu       sync.Mutex
 				requests = make(map[string]int)
@@ -229,6 +235,14 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 				mu.Unlock()
 				if request.Method == http.MethodPost {
 					_, _ = response.Write(body)
+					return
+				}
+				active.Add(1)
+				defer active.Add(-1)
+				entered <- request.URL.Path
+				select {
+				case <-release:
+				case <-request.Context().Done():
 					return
 				}
 				_, _ = io.WriteString(response, request.URL.Path)
@@ -248,12 +262,14 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 			handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
 			ready := fixture.waitReady(t, handle)
 
-			const concurrentRequests = 16
+			join, cancelJoin := context.WithTimeout(t.Context(), 15*time.Second)
+			var workers sync.WaitGroup
+			defer func() { unblock(); cancelJoin(); workers.Wait() }()
 			results := make(chan error, concurrentRequests)
 			for index := range concurrentRequests {
-				go func() {
+				workers.Go(func() {
 					path := fmt.Sprintf("/parallel/%d", index)
-					request, err := http.NewRequest(http.MethodGet, ready.PublicURL+path, nil)
+					request, err := http.NewRequestWithContext(join, http.MethodGet, ready.PublicURL+path, nil)
 					if err != nil {
 						results <- err
 						return
@@ -268,10 +284,30 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 						return
 					}
 					results <- nil
-				}()
+				})
+				// stage setup, then keep every original handler active together.
+				// the pending-setup allowance is not application capacity.
+				select {
+				case path := <-entered:
+					if path != fmt.Sprintf("/parallel/%d", index) {
+						t.Fatalf("unexpected staged target path %q", path)
+					}
+				case err := <-results:
+					t.Fatalf("original request completed before response release: %v", err)
+				case <-join.Done():
+					t.Fatal("original request did not enter target")
+				}
 			}
-			join, cancelJoin := context.WithTimeout(t.Context(), 15*time.Second)
-			defer cancelJoin()
+			if active.Load() != concurrentRequests {
+				t.Fatalf("simultaneously active target handlers = %d, want %d", active.Load(), concurrentRequests)
+			}
+			select {
+			case err := <-results:
+				t.Fatalf("original request completed before response release: %v", err)
+			default:
+			}
+			t.Logf("all %d original application requests active before releasing any response", concurrentRequests)
+			unblock()
 			for range concurrentRequests {
 				select {
 				case err := <-results:

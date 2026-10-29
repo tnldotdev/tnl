@@ -52,7 +52,7 @@ func TestInlinePublisherAppliesTotalAndRateAfterVisitorAccess(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = server.Close() })
 			first := httptest.NewRecorder()
-			server.http.Handler.ServeHTTP(first, newInlineTestRequest())
+			serveTestPublicRequest(t, server, first, newInlineTestRequest())
 			if first.Code != http.StatusNoContent {
 				t.Fatalf("first request = %d", first.Code)
 			}
@@ -60,12 +60,12 @@ func TestInlinePublisherAppliesTotalAndRateAfterVisitorAccess(t *testing.T) {
 			denied.Header.Set(visitorTokenHeader, "invalid-visitor-token")
 			denied = denied.WithContext(context.WithValue(denied.Context(), denialContextKey{}, true))
 			policy := httptest.NewRecorder()
-			server.http.Handler.ServeHTTP(policy, denied)
+			serveTestPublicRequest(t, server, policy, denied)
 			if policy.Code != http.StatusForbidden {
 				t.Fatalf("policy rejection = %d", policy.Code)
 			}
 			second := httptest.NewRecorder()
-			server.http.Handler.ServeHTTP(second, newInlineTestRequest())
+			serveTestPublicRequest(t, server, second, newInlineTestRequest())
 			if second.Code != test.status || second.Header().Get("Tnl-Error-Code") != test.code ||
 				second.Header().Get("Retry-After") != test.retryAfter || served.Load() != 1 {
 				t.Fatalf("rejected request = %d, headers = %v, served = %d", second.Code, second.Header(), served.Load())
@@ -102,7 +102,7 @@ func TestInlinePublisherAdmissionFollowsVisitorAccess(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		server.http.Handler.ServeHTTP(httptest.NewRecorder(), newInlineTestRequest())
+		serveTestPublicRequest(t, server, httptest.NewRecorder(), newInlineTestRequest())
 	}()
 	defer func() { close(release); <-done }()
 	select {
@@ -115,13 +115,13 @@ func TestInlinePublisherAdmissionFollowsVisitorAccess(t *testing.T) {
 	denied.Header.Set(visitorTokenHeader, "invalid-visitor-token")
 	denied = denied.WithContext(context.WithValue(denied.Context(), denialContextKey{}, true))
 	response := httptest.NewRecorder()
-	server.http.Handler.ServeHTTP(response, denied)
+	serveTestPublicRequest(t, server, response, denied)
 	if response.Code != http.StatusForbidden || response.Header().Get("Tnl-Error-Code") != string(diagnostic.VisitorAccessDenied) {
 		t.Fatalf("denied visitor during application saturation = %d, %q", response.Code, response.Header().Get("Tnl-Error-Code"))
 	}
 
 	response = httptest.NewRecorder()
-	server.http.Handler.ServeHTTP(response, newInlineTestRequest())
+	serveTestPublicRequest(t, server, response, newInlineTestRequest())
 	if response.Code != http.StatusServiceUnavailable || response.Header().Get("Retry-After") != "1" ||
 		response.Header().Get("Connection") != "close" {
 		t.Fatalf("application overload = %d, headers = %v", response.Code, response.Header())

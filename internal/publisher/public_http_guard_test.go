@@ -72,7 +72,8 @@ func startLiveHTTPRoute(t *testing.T, control *liveHTTPControl, handler http.Han
 	prepareLiveHTTPControl(t, control)
 	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), Handler: handler,
 		PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", PublishRunNumber: 1, VisitorPolicy: control.policy.lease, VisitorTokens: control.tokens,
-		BrowserAccess: &browserAccess{client: control, runID: "original-run", version: 1}})
+		VisitorSourceKey: control.policy.sourceKey,
+		BrowserAccess:    &browserAccess{client: control, runID: "original-run", version: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +108,7 @@ func (c *liveHTTPControl) ReadPublisherVisitorPolicy(_ context.Context, body con
 		}
 	}
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: events, SnapshotRequired: body.AfterRevision == 0,
+		VisitorSourceKey: testVisitorSourceKeyBytes(),
 		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "route.example", Port: 443, Issuer: "https://control.example.test", Enabled: true,
 			VisitorPolicyRevision: c.revision, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second),
 			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "live", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil
@@ -336,7 +338,11 @@ func TestPublicHTTPLiveOutageAndOriginalCredentialDeadline(t *testing.T) {
 					}
 					result <- err
 				}()
-				<-started
+				select {
+				case <-started:
+				case err := <-result:
+					t.Fatal("visitor failed before reaching the application", err)
+				}
 				control.mu.Lock()
 				unavailable = true
 				control.mu.Unlock()
@@ -561,7 +567,7 @@ func TestPublicHTTPMissingDeadlineIsDenied(t *testing.T) {
 	route := startLiveHTTPRoute(t, control, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("malformed decision reached target") }))
 	r := newInlineTestRequest()
 	w := httptest.NewRecorder()
-	route.http.Handler.ServeHTTP(w, r)
+	serveTestPublicRequest(t, route, w, r)
 	if w.Code != http.StatusForbidden {
 		t.Fatal(w.Code)
 	}

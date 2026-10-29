@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 )
@@ -155,15 +156,27 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 			}
 		}()
 	}
-	header, err := proxyproto.Encode(proxyproto.Header{Source: source, Destination: destination})
-	if err != nil {
-		return fmt.Errorf("ingress: encode proxy header: %w", err)
-	}
+	var err error
 	if visitorID == "" {
 		visitorID, err = opaqueid.New(visitorConnectionIDPrefix)
 		if err != nil {
 			return fmt.Errorf("ingress: create visitor connection ID: %w", err)
 		}
+	}
+	metadata := proxyproto.Header{Source: source, Destination: destination}
+	if route.AttestSource == nil {
+		return visitortoken.ErrVisitorSource
+	}
+	metadata.VisitorSourceProof, err = route.AttestSource(visitorID, source, destination)
+	if err != nil {
+		return fmt.Errorf("attest visitor source: %w", err)
+	}
+	if metadata.VisitorSourceProof == "" {
+		return visitortoken.ErrVisitorSource
+	}
+	header, err := proxyproto.Encode(metadata)
+	if err != nil {
+		return fmt.Errorf("ingress: encode proxy header: %w", err)
 	}
 	if admission != nil && denied {
 		admission.hostname = hello.ServerName

@@ -198,11 +198,16 @@ func runSession(
 			shareRuntime.browser = browser
 		}
 	}
+	streamCapacity := 0
+	if setup.Traffic != nil {
+		streamCapacity = setup.Traffic.Connections
+	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Context:               ctx,
 		AuditSink:             auditSink,
 		BrowserAccess:         browser,
 		VisitorPolicy:         policy.lease,
+		VisitorSourceKey:      policy.sourceKey,
 		VisitorTokens:         browserRenewal,
 		BrowserLoginAvailable: config.BrowserLoginAvailable,
 		PreviewID:             config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, PublishRunNumber: version,
@@ -218,6 +223,7 @@ func runSession(
 		ShareAccess:    shareRuntime,
 		Feedback:       feedback,
 		Limits:         config.Limits,
+		StreamCapacity: streamCapacity,
 		ObserveSummary: config.ObserveSummary,
 		InspectionMode: config.InspectionMode,
 		Handler:        config.Handler,
