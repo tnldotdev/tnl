@@ -1018,17 +1018,17 @@ func TestPrivateRoutingRejectsOldAssignmentAndLease(t *testing.T) {
 	_, control, _, _, lease, _ := privateTestSetup(t)
 	table := new(ServiceRoutingTable)
 	now := time.Now()
-	if err := table.ApplySnapshot(ingressv1.ServiceSnapshot{Revision: 1, Entries: []ingressv1.ServiceProjection{control.projection}}, now); err != nil {
+	if err := table.ApplySnapshot(ingressv1.ServiceSnapshot{Revision: 1, Entries: []ingressv1.ServiceProjection{control.projection}}); err != nil {
 		t.Fatal(err)
 	}
 	changed := clonePrivateProjection(control.projection)
 	changed.Revision = 2
 	(*changed.ConnectedRelays)[0].ConnectionAssignmentRevision = 2
 	(*changed.ConnectedRelays)[0].PublisherConnectionId = privateTestID(t, opaqueid.PublisherConnectionPrefix)
-	if err := table.ApplyEvents(1, ingressv1.ServiceSnapshot{Revision: 2, Entries: []ingressv1.ServiceProjection{changed}}, now); err != nil {
+	if err := table.ApplyEvents(1, ingressv1.ServiceSnapshot{Revision: 2, Entries: []ingressv1.ServiceProjection{changed}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := table.ApplyEvents(2, ingressv1.ServiceSnapshot{Revision: 3, Entries: []ingressv1.ServiceProjection{control.projection}}, now); !errors.Is(err, ErrPrivateRoutingStale) {
+	if err := table.ApplyEvents(2, ingressv1.ServiceSnapshot{Revision: 3, Entries: []ingressv1.ServiceProjection{control.projection}}); !errors.Is(err, ErrPrivateRoutingStale) {
 		t.Fatalf("accepted old assignment revision: %v", err)
 	}
 	if _, ok := table.Lookup(control.service, control.run, 1, lease.LeaseExpiresAt.Add(time.Second)); ok {

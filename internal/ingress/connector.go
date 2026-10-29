@@ -522,7 +522,7 @@ func (p *Connector) refreshRouting(ctx context.Context, lease ingressv1.IngressL
 		if err != nil {
 			return err
 		}
-		if err := p.config.Routing.ApplySnapshot(snapshot, time.Now()); err != nil {
+		if err := p.config.Routing.ApplySnapshot(snapshot); err != nil {
 			return err
 		}
 	}
@@ -535,7 +535,7 @@ func (p *Connector) refreshRouting(ctx context.Context, lease ingressv1.IngressL
 			p.config.Routing.Clear()
 			return err
 		}
-		if err := p.config.Routing.ApplyEvents(after, page, time.Now()); err != nil {
+		if err := p.config.Routing.ApplyEvents(after, page); err != nil {
 			p.config.Routing.Clear()
 			return err
 		}
