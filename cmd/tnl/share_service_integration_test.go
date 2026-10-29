@@ -227,7 +227,7 @@ func TestIntegrationServiceShareManagerLookup(t *testing.T) {
 		}
 		defer conn.Close(ctx)
 		for _, query := range []string{
-			`INSERT INTO control.service_grants(id,service_id,team_id,kind,identity_id,created_by_identity_id,idempotency_key,request_digest,created_at,revoked_at)
+			`INSERT INTO control.visitor_grants(id,service_id,team_id,kind,identity_id,created_by_identity_id,idempotency_key,request_digest,created_at,revoked_at)
 			 SELECT 'sgr_'||lpad(n::text,22,'0'),$1,$2,'identity',$3,$3,'cli-page-grant/'||n,sha256(convert_to('grant/'||n,'UTF8')),$4::timestamptz,
 			 CASE WHEN n<=120 THEN $4::timestamptz END FROM generate_series(1,205) n`,
 			`INSERT INTO control.service_invitations(id,service_id,team_id,normalized_email,token_digest,created_by_identity_id,idempotency_key,request_digest,created_at,expires_at,revoked_at)

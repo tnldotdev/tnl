@@ -392,6 +392,10 @@ func request[T any](ctx context.Context, client *Client, token string, call cont
 }
 
 func requestWithTimeout[T any](ctx context.Context, client *Client, timeout time.Duration, token string, call controlRequest) (T, error) {
+	return requestWithTimeoutAndLimit[T](ctx, client, timeout, token, maxResponseBytes, call)
+}
+
+func requestWithTimeoutAndLimit[T any](ctx context.Context, client *Client, timeout time.Duration, token string, responseLimit int64, call controlRequest) (T, error) {
 	var zero T
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -405,7 +409,7 @@ func requestWithTimeout[T any](ctx context.Context, client *Client, timeout time
 		return zero, unavailableError(ctx, err)
 	}
 	defer response.Body.Close()
-	payload, err := httpjson.ReadAll(response.Body, maxResponseBytes)
+	payload, err := httpjson.ReadAll(response.Body, responseLimit)
 	if errors.Is(err, httpjson.ErrTooLarge) {
 		return zero, failure.Wrap("read control response", failure.ServerResponseInvalid, errors.New("controlclient: response exceeds limit"))
 	}

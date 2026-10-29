@@ -338,7 +338,7 @@ func TestServiceShareInvitationLifecycleUsesExactAPI(t *testing.T) {
 			listed.Secret, listed.AcceptedAt = nil, new(time.Now())
 			_ = json.NewEncoder(w).Encode(controlv1.ServiceInvitationPage{Invitations: []controlv1.ServiceInvitation{listed}})
 		case "GET /v1/services/" + shareTestService + "/http-grants":
-			_ = json.NewEncoder(w).Encode([]controlv1.ServiceHTTPGrantSummary{{Id: shareTestHTTP, Subject: controlv1.HTTPAuthorizationSubject{Kind: "service", Id: shareTestService}, Kind: "token", ExpiresAt: at}})
+			_ = json.NewEncoder(w).Encode([]controlv1.ServiceHTTPGrantSummary{{Id: shareTestHTTP, Subject: controlv1.VisitorResourceScope{Kind: "service", Id: shareTestService}, Kind: "token", ExpiresAt: at}})
 		case "DELETE /v1/services/" + shareTestService + "/invitations/" + shareTestInvite,
 			"DELETE /v1/services/" + shareTestService + "/grants/" + shareTestGrant:
 			w.WriteHeader(204)
@@ -464,7 +464,7 @@ func TestServiceShareServiceHTTPUsesExplicitSubjectAndOneTimeOutput(t *testing.T
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Kind != kind || !body.ExpiresAt.Equal(at) {
 						t.Error("service HTTP grant changed kind or deadline", err)
 					}
-					grant := controlv1.ServiceHTTPGrant{Id: shareTestHTTP, Subject: controlv1.HTTPAuthorizationSubject{Kind: "service", Id: shareTestService}, Kind: controlv1.ServiceHTTPGrantKind(kind), Secret: secret, ExpiresAt: at}
+					grant := controlv1.ServiceHTTPGrant{Id: shareTestHTTP, Subject: controlv1.VisitorResourceScope{Kind: "service", Id: shareTestService}, Kind: controlv1.ServiceHTTPGrantKind(kind), Secret: secret, ExpiresAt: at}
 					if kind == "share" {
 						grant.ShareUrl = new("https://web.production.example.test:25443/__tnl/share/" + secret)
 					}

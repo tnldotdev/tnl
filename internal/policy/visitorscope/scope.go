@@ -1,5 +1,5 @@
-// package httpsubject names the authorization boundary of an HTTP frontend.
-package httpsubject
+// package visitorscope names the exact resource authorized by a visitor permission.
+package visitorscope
 
 import "github.com/tnldotdev/tnl/internal/naming/opaqueid"
 
@@ -10,13 +10,13 @@ const (
 	Service   Kind = "service"
 )
 
-// Subject never infers scope from a hostname or a certificate.
-type Subject struct {
+// Scope never infers resource identity from a hostname or a certificate.
+type Scope struct {
 	Kind Kind   `json:"kind"`
 	ID   string `json:"id"`
 }
 
-func (s Subject) Valid() bool {
+func (s Scope) Valid() bool {
 	switch s.Kind {
 	case PublicURL:
 		return opaqueid.Valid(s.ID, opaqueid.PublicURLPrefix)

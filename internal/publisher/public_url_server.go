@@ -42,6 +42,7 @@ type PublicURLServerConfig struct {
 	BrowserLoginAvailable bool
 	Feedback              *feedbackRuntime
 	Limits                ApplicationLimits
+	StreamCapacity        int
 	OnTargetFailure       func()
 	ObserveSummary        inspection.Observer
 	PromoteVisitor        PromoteVisitor
@@ -68,6 +69,7 @@ type PublicURLServer struct {
 	closed                bool
 	draining              bool
 	streams               map[net.Conn]struct{}
+	streamCapacity        int
 	visitorPolicyRevision int64
 	handlers              sync.WaitGroup
 	httpDone              chan error
