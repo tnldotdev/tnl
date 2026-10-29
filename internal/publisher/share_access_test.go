@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type shareDeadlineConn struct {
@@ -112,7 +113,7 @@ func TestShareHeaderUsesCurrentDecisionAndIsRemovedBeforeForwarding(t *testing.T
 		request.Header.Set(visitorTokenHeader, token)
 		request.Header.Set("Cookie", "app_session=ok; __Host-tnl-share=expired")
 		response := httptest.NewRecorder()
-		route.http.Handler.ServeHTTP(response, request)
+		serveTestPublicRequest(t, route, response, request)
 		return response.Code, response.Body.String()
 	}
 	if got, body := visit(); got != http.StatusNoContent {
@@ -182,7 +183,7 @@ func TestShareHTTPDenialsRedemptionAndCookieIsolation(t *testing.T) {
 			request.Header.Set("Cookie", cookie)
 		}
 		response := httptest.NewRecorder()
-		route.http.Handler.ServeHTTP(response, request)
+		serveTestPublicRequest(t, route, response, request)
 		return response
 	}
 	if got := serve("/", true, ""); got.Code != http.StatusForbidden {
@@ -279,9 +280,12 @@ func TestShareVisitorClearsDeniedTLSDeadlineAfterRealHandshake(t *testing.T) {
 	tracked := &shareDeadlineConn{Conn: publisher}
 	_ = ingress.SetDeadline(time.Now().Add(10 * time.Second))
 	done := make(chan struct{})
-	go func() { route.handleVisitor(tracked, true); close(done) }()
+	go func() {
+		serveTestPublicVisitor(t, route, tracked, tunnelv1.VisitorStreamHeader{AccessPending: true})
+		close(done)
+	}()
 	defer func() { _ = ingress.Close(); <-done }()
-	header, err := proxyproto.Encode(proxyproto.Header{
+	header, err := encodeTestPublicMetadata(route, tunnelv1.VisitorStreamHeader{AccessPending: true}, proxyproto.Header{
 		Source: netip.MustParseAddrPort("192.0.2.10:1234"), Destination: netip.MustParseAddrPort("127.0.0.1:443"),
 	})
 	if err != nil {

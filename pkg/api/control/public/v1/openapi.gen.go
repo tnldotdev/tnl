@@ -3594,6 +3594,12 @@ type VisitorPolicyUpdate struct {
 	Policy           VisitorPolicySnapshot `json:"policy"`
 	Revisions        []int64               `json:"revisions"`
 	SnapshotRequired bool                  `json:"snapshot_required"`
+
+	// VisitorSourceAuthority Opaque tunnelv1 source authority for the exact ingress process and public run. Present only in ingress preparation responses; it supplies neither visitor permission nor capacity.
+	VisitorSourceAuthority *[]byte `json:"visitor_source_authority,omitempty"`
+
+	// VisitorSourceKey Private public-run source key. Publishers receive the run master; ingress receives only the child key bound by visitor_source_authority. Never expose this value to a browser or relay.
+	VisitorSourceKey *[]byte `json:"visitor_source_key,omitempty"`
 }
 
 // VisitorResourceScope An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.

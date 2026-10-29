@@ -50,7 +50,7 @@ func TestHTTPServiceAuditRecordsFinalAuthorizationWithoutRequestSecrets(t *testi
 		r = r.WithContext(context.WithValue(r.Context(), denialContextKey{}, denied))
 		r = r.WithContext(context.WithValue(r.Context(), visitorSessionKey{}, &visitorSession{visitor: Visitor{Run: route.run, Header: tunnelv1.VisitorStreamHeader{VisitorConnectionID: visitorID}, Source: netip.MustParseAddrPort("192.0.2.7:1234")}}))
 		w := httptest.NewRecorder()
-		route.http.Handler.ServeHTTP(w, r)
+		serveTestPublicRequest(t, route, w, r)
 		if denied && w.Code != 403 || !denied && w.Code != 204 {
 			t.Fatalf("status %d", w.Code)
 		}

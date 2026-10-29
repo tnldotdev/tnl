@@ -12,9 +12,11 @@ import (
 	"time"
 
 	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type publicPolicyTestClient struct {
@@ -28,7 +30,20 @@ func (c publicPolicyTestClient) ReadIngressVisitorPolicy(ctx context.Context, id
 
 func publicPolicyWire(body ingressv1.IngressVisitorPolicyRequest, hostname string, now time.Time) controlv1.VisitorPolicyUpdate {
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("i", 32)))
+	authority, child, err := visitortoken.IssueVisitorSourceAuthority([32]byte{1}, tunnelv1.VisitorSourceAuthority{
+		PublicURLID: body.Resource.Id, PublishRunID: body.PublishRunId, PublishRunNumber: uint64(body.PublishRunNumber),
+		IngressID: "ingress", IngressRunID: body.IngressRunId, IngressLeaseRevision: uint64(body.IngressLeaseRevision),
+		VisitorPolicyRevision: 1, ValidUntil: now.Add(10 * time.Second).Unix(),
+	}, now)
+	if err != nil {
+		panic(err)
+	}
+	wire, err := authority.MarshalBinary()
+	if err != nil {
+		panic(err)
+	}
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, SnapshotRequired: body.AfterRevision == 0, Revisions: []int64{},
+		VisitorSourceKey: new(child[:]), VisitorSourceAuthority: &wire,
 		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: hostname, Port: 443, Issuer: "https://control.example.test",
 			VisitorPolicyRevision: 1, KeyRevision: 1, Enabled: true, ObservedAt: now, ValidUntil: now.Add(10 * time.Second),
 			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "ingress-test", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}
@@ -355,11 +370,11 @@ func TestPublicPolicySurvivesControlRetryOnlyUntilInstalledDeadline(t *testing.T
 					return ingressv1.IngressRoutingTablePage{}, ctx.Err()
 				}
 			},
-		}, read: func(context.Context, string, ingressv1.IngressVisitorPolicyRequest) (controlv1.VisitorPolicyUpdate, error) {
+		}, read: func(_ context.Context, _ string, body ingressv1.IngressVisitorPolicyRequest) (controlv1.VisitorPolicyUpdate, error) {
 			if unavailable.Load() {
 				return controlv1.VisitorPolicyUpdate{}, errors.New("control unavailable")
 			}
-			return publicPolicyWire(ingressv1.IngressVisitorPolicyRequest{Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: event.PublicUrlId}}, "pool.example", time.Now()), nil
+			return publicPolicyWire(body, "pool.example", time.Now()), nil
 		}}
 		c, err := NewController(ControllerConfig{Client: client, RoutingTable: new(RoutingTable),
 			Registration:    ingressv1.IngressRegistration{IngressId: owner.IngressId, IngressRunId: owner.IngressRunId, ProtocolVersion: 1, ConnectionCapacity: 10},

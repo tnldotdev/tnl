@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -35,10 +36,23 @@ type wiringControl struct {
 	lease    ingressv1.IngressLease
 }
 
-func (c *wiringControl) ReadIngressVisitorPolicy(_ context.Context, _ string, body ingressv1.IngressVisitorPolicyRequest) (controlv1.VisitorPolicyUpdate, error) {
+func (c *wiringControl) ReadIngressVisitorPolicy(_ context.Context, id string, body ingressv1.IngressVisitorPolicyRequest) (controlv1.VisitorPolicyUpdate, error) {
 	now := time.Now()
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("w", 32)))
+	authority, child, err := visitortoken.IssueVisitorSourceAuthority([32]byte{1}, tunnelv1.VisitorSourceAuthority{
+		PublicURLID: body.Resource.Id, PublishRunID: body.PublishRunId, PublishRunNumber: uint64(body.PublishRunNumber),
+		IngressID: id, IngressRunID: body.IngressRunId, IngressLeaseRevision: uint64(body.IngressLeaseRevision),
+		VisitorPolicyRevision: 1, ValidUntil: now.Add(10 * time.Second).Unix(),
+	}, now)
+	if err != nil {
+		return controlv1.VisitorPolicyUpdate{}, err
+	}
+	wire, err := authority.MarshalBinary()
+	if err != nil {
+		return controlv1.VisitorPolicyUpdate{}, err
+	}
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
+		VisitorSourceKey: new(child[:]), VisitorSourceAuthority: &wire,
 		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "pool.example", Port: 443, Issuer: "https://control.example.test",
 			VisitorPolicyRevision: 1, KeyRevision: 1, Enabled: true, ObservedAt: now, ValidUntil: now.Add(10 * time.Second),
 			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "wiring", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil

@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -227,7 +228,9 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 			if host != publicHostname {
 				return ingress.PublicURL{}, ingress.LookupNotFound
 			}
-			return ingress.PublicURL{ID: publicID, PublishRunID: publicRun, PublishRunNumber: 1, AllowAll: true, AccessMode: "anonymous", Backends: []ingressbackend.Backend{target}}, ingress.LookupCurrent
+			return ingress.PublicURL{ID: publicID, PublishRunID: publicRun, PublishRunNumber: 1, AllowAll: true, AccessMode: "anonymous", Backends: []ingressbackend.Backend{target},
+				AttestSource: func(string, netip.AddrPort, netip.AddrPort) (string, error) { return "audit-fixture-source-proof", nil },
+			}, ingress.LookupCurrent
 		}})
 	if err != nil {
 		_ = listener.Close()

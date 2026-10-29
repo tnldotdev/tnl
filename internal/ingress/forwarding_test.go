@@ -311,8 +311,9 @@ func issueForwardingTestCertificate(
 func newTestForwarder(t *testing.T, material forwardingTestMaterial) *Forwarder {
 	t.Helper()
 	forwarder, err := NewForwarder(ForwarderConfig{
-		TLSConfig:     &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots},
-		ClusterSecret: forwardingClusterSecret,
+		SignVisitorSource: testForwardingSourceSigner,
+		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots},
+		ClusterSecret:     forwardingClusterSecret,
 	})
 	if err != nil {
 		t.Fatalf("NewForwarder: %v", err)

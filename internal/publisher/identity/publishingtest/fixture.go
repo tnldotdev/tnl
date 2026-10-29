@@ -38,6 +38,7 @@ type Fixture struct {
 	HTTP                                      *http.Client
 	Enrollments, Allocations, Runs, Deletions atomic.Int32
 	VisitorDecisions                          atomic.Int32
+	sourceSequence                            atomic.Uint64
 	mu                                        sync.Mutex
 	backend                                   *testutil.PublishingFixture
 	seed                                      *clientcontrol.Client
@@ -211,7 +212,14 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		now := time.Now()
 		key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{17}, 32))
+		source, err := publicSourceKey(setup)
+		if err != nil {
+			f.t.Error(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		write(w, controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
+			VisitorSourceKey: new(source[:]),
 			Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: setup.PublicUrl.CanonicalHostname, Port: 443, Issuer: f.URL,
 				VisitorPolicyRevision: 1, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: true,
 				VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "publishing-fixture", PublicKey: key.Public().(ed25519.PublicKey)}},

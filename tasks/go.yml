@@ -76,6 +76,12 @@ tasks:
     cmds:
       - go test {{.CLI_ARGS}} ./internal/transport/httpstream ./internal/publisher/proxy ./internal/publisher -count=1 -timeout=3m
 
+  test:public-capacity:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check run-owned public connection capacity, relay setup fairness, and joined retirement
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/publisher -run='^TestPublicCapacity' -count=1 -timeout=3m
+
   test:database-native:
     dir: "{{.ROOT_DIR}}"
     desc: Check managed native TLS negotiation, authentication, and setup cancellation

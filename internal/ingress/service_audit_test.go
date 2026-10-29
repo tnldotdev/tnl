@@ -16,7 +16,7 @@ func (f auditSinkFunc) Observe(o serviceaudit.Observation) bool { return f(o) }
 
 func TestNetworkPolicyDenialAuditedAtIngress(t *testing.T) {
 	var events []serviceaudit.Observation
-	route := PublicURL{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_0123456789ABCDEFGHIJKL", PublishRunNumber: 1, Backends: []ingressbackend.Backend{&singleBackend{}}}
+	route := PublicURL{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_0123456789ABCDEFGHIJKL", PublishRunNumber: 1, Backends: []ingressbackend.Backend{&singleBackend{}}, AttestSource: testBackendSourceProof}
 	s := &Server{config: Config{Lookup: func(string) (PublicURL, LookupReason) { return route, LookupCurrent }, AuditSink: auditSinkFunc(func(o serviceaudit.Observation) bool { events = append(events, o); return true })}}
 	if err := s.forward(nil, netip.MustParseAddrPort("192.0.2.8:1234"), netip.MustParseAddrPort("203.0.113.1:443"), clienthello.ClientHello{ServerName: "private.example"}); err != nil {
 		t.Fatal(err)

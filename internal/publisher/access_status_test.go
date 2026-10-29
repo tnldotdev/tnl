@@ -15,6 +15,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	publisherv1 "github.com/tnldotdev/tnl/pkg/api/publisher/browser/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestBrowserAccessStatusSharesTheForwardingDecision(t *testing.T) {
@@ -44,9 +45,12 @@ func TestBrowserAccessStatusSharesTheForwardingDecision(t *testing.T) {
 			ingress, publisher := net.Pipe()
 			_ = ingress.SetDeadline(time.Now().Add(5 * time.Second))
 			finished := make(chan struct{})
-			go func() { route.handleVisitor(publisher, denied); close(finished) }()
+			go func() {
+				serveTestPublicVisitor(t, route, publisher, tunnelv1.VisitorStreamHeader{AccessPending: denied})
+				close(finished)
+			}()
 			t.Cleanup(func() { _ = ingress.Close(); awaitPublisherTest(t, finished) })
-			header, err := proxyproto.Encode(proxyproto.Header{
+			header, err := encodeTestPublicMetadata(route, tunnelv1.VisitorStreamHeader{AccessPending: denied}, proxyproto.Header{
 				Source: netip.MustParseAddrPort("192.0.2.10:1234"), Destination: netip.MustParseAddrPort("127.0.0.1:443"),
 			})
 			if err != nil {
