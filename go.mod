@@ -23,6 +23,9 @@ require (
 	github.com/matoous/go-nanoid/v2 v2.1.0
 	github.com/miekg/dns v1.1.73
 	github.com/oapi-codegen/runtime v1.7.0
+	github.com/pion/ice/v4 v4.4.8
+	github.com/pion/logging v0.2.4
+	github.com/pion/stun/v4 v4.0.1
 	github.com/pires/go-proxyproto v0.15.0
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/prometheus/client_golang v1.25.0
@@ -96,9 +99,15 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
+	github.com/pion/dtls/v3 v3.1.9 // indirect
+	github.com/pion/mdns/v2 v2.2.2 // indirect
+	github.com/pion/randutil v0.1.0 // indirect
+	github.com/pion/transport/v5 v5.0.1 // indirect
+	github.com/pion/turn/v5 v5.1.2 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sethvargo/go-retry v0.4.0 // indirect
+	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.47.0 // indirect

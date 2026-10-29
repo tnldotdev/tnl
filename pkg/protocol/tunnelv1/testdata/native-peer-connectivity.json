@@ -1,0 +1,11 @@
+{
+  "protocol_version": 1,
+  "kind": "native_peer_connectivity",
+  "pair_id": "npp_1234567890123456789012",
+  "delivery_id": "AQEBAQEBAQEBAQEBAQEBAQ",
+  "delivery_generation": 1,
+  "attempt": 1,
+  "username_fragment": "abcd",
+  "password": "abcdefghijklmnopqrstuv",
+  "candidates": ["1 1 udp 2130706431 192.0.2.1 4443 typ host"]
+}

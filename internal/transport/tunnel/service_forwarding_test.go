@@ -45,6 +45,9 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 	relay := await(t, accepted)
 	defer publisher.Close()
 	defer relay.Close()
+	if borrowed, err := publisher.BorrowServicePublisherTransport(); err != nil || borrowed != client {
+		t.Fatal("claimed publisher did not borrow its exact transport", err)
+	}
 	header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
 		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber,
@@ -133,5 +136,17 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 	result := <-answered
 	if result.err != nil || result.response.Kind != tunnelv1.ReturnAccepted {
 		t.Fatalf("matching private stream not acknowledged: %+v %v", result.response, result.err)
+	}
+}
+
+func TestServicePublisherTransportRequiresClaimedPublisherRole(t *testing.T) {
+	client, _ := newMemoryPair(t)
+	for _, session := range []*Session{nil, {}, {transport: client}, {transport: client, role: tunnelv1.Publisher},
+		{transport: client, role: tunnelv1.NativeConnector, serviceConnection: &tunnelv1.ServicePublisherConnectionRef{}}} {
+		borrowed, err := session.BorrowServicePublisherTransport()
+		var rejected *ProtocolError
+		if borrowed != nil || !errors.As(err, &rejected) || rejected.Code != tunnelv1.Unauthenticated {
+			t.Fatal("unclaimed or wrong-role session lent its transport", err)
+		}
 	}
 }
