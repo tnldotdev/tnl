@@ -249,6 +249,7 @@ tasks:
       - go test ./internal/ingress/clienthello -run='^$' -fuzz='^FuzzInspectClientHello$' -fuzztime='{{.TIME}}'
       - go test ./internal/transport/proxyproto -run='^$' -fuzz='^FuzzDecode$' -fuzztime='{{.TIME}}'
       - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzReadFrames$' -fuzztime='{{.TIME}}'
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzReturnFrame$' -fuzztime='{{.TIME}}'
       - task: :go:test:fuzz:publisher-observability
         vars:
           TIME: "{{.TIME}}"

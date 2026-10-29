@@ -126,7 +126,7 @@ func (a *publicVisitorAdmission) commit() error {
 	return nil
 }
 
-// the original setup deadline remains armed until sideband promotion succeeds.
+// the original setup deadline remains armed until stream-local promotion succeeds.
 // a stable rejection can be returned again without replaying the decision, but
 // cannot retain an idle connection beyond that deadline.
 func (a *publicVisitorAdmission) completeSetup() error {

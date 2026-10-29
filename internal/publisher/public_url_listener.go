@@ -1,6 +1,7 @@
 package publisher
 
 import (
+	"errors"
 	"io"
 	"net"
 	"net/netip"
@@ -80,16 +81,23 @@ func (c *publicURLReaderConn) Read(destination []byte) (int, error) {
 
 type metadataConn struct {
 	net.Conn
-	header  proxyproto.Header
-	denied  bool
-	session *visitorSession
+	header    proxyproto.Header
+	denied    bool
+	session   *visitorSession
+	endStream func() error
 }
 
 func (c *metadataConn) Close() error {
+	// TLS has sent its close-notify. finish the outer return stream before
+	// canceling the visitor lifetime, whose callback closes the raw connection.
+	var err error
+	if c.endStream != nil {
+		err = c.endStream()
+	}
 	if c.session != nil && c.session.cancel != nil {
 		c.session.cancel()
 	}
-	return c.Conn.Close()
+	return errors.Join(err, c.Conn.Close())
 }
 
 func (c *publicURLReaderConn) CloseWrite() error { return closeWrite(c.Conn) }

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -65,7 +66,7 @@ func promotionSessionPair(t *testing.T, ref tunnelv1.PublisherConnectionRef) (*t
 	return publisher, relay.session
 }
 
-func TestAutomaticPromotionUsesExactCurrentSessionAndWaitsForAck(t *testing.T) {
+func TestAutomaticPromotionUsesExactCurrentStream(t *testing.T) {
 	ref := tunnelv1.PublisherConnectionRef{PublicURLID: "url-1", PublishRunID: "run-1", PublishRunNumber: 1, PublisherConnectionID: "connection-1", ConnectionAssignmentRevision: 1, RelayServiceID: "relay-1"}
 	publisher, relay := promotionSessionPair(t, ref)
 	route, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, Handler: http.NotFoundHandler()})
@@ -78,41 +79,39 @@ func TestAutomaticPromotionUsesExactCurrentSessionAndWaitsForAck(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer route.unregisterPublisherSession(live)
-	ack, entered := make(chan struct{}), make(chan struct{})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	h := tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor-1", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, AccessPending: true}
 	worker := make(chan error, 1)
 	go func() {
-		worker <- relay.ServeAdmissions(ctx, tunnelv1.PublisherAdmissionStream, func(decisionCtx context.Context, h tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult {
-			if h.PublisherConnectionID != ref.PublisherConnectionID || h.PublishRunID != ref.PublishRunID || h.ConnectionAssignmentRevision != ref.ConnectionAssignmentRevision {
-				t.Error("promotion changed stream identity")
+		stream, err := relay.OpenVisitorStream(ctx, h, tunnel.ReturnEvents{Promoted: func(p tunnelv1.AdmissionHeader) error {
+			if p.PublisherConnectionID != ref.PublisherConnectionID || p.PublishRunID != ref.PublishRunID || p.ConnectionAssignmentRevision != ref.ConnectionAssignmentRevision {
+				return errors.New("promotion changed identity")
 			}
-			close(entered)
-			select {
-			case <-ack:
-			case <-decisionCtx.Done():
-				return tunnelv1.AdmissionResult{Type: tunnelv1.StreamRejected, Code: tunnelv1.Unavailable}
-			}
-			return tunnelv1.AdmissionResult{Type: tunnelv1.StreamAccepted}
-		})
+			return nil
+		}})
+		if err == nil {
+			_, err = io.ReadAll(stream)
+			_ = stream.Close()
+		}
+		worker <- err
 	}()
-	t.Cleanup(func() { cancel(); _ = relay.Close(); awaitPublisherTest(t, worker) })
-	h := tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor-1", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, AccessPending: true}
-	result := make(chan error, 1)
-	go func() { result <- route.defaultPromote(t.Context(), Visitor{Header: h}) }()
-	awaitPublisherTest(t, entered)
-	select {
-	case err := <-result:
-		t.Fatalf("promotion returned before acknowledgement: %v", err)
-	default:
-	}
-	close(ack)
-	if err := awaitPublisherTest(t, result); err != nil {
+	incoming, err := publisher.AcceptVisitorStream(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	h.PublisherConnectionID = "replacement-connection"
-	if err := route.defaultPromote(t.Context(), Visitor{Header: h}); err == nil {
-		t.Fatal("old visitor resolved a different publisher connection")
+	defer incoming.Stream.Close()
+	if err := incoming.Accept(); err != nil {
+		t.Fatal(err)
+	}
+	if err := incoming.Promote(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := incoming.Stream.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaitPublisherTest(t, worker); err != nil {
+		t.Fatal(err)
 	}
 	if route.resolvePublisherSession(ref.PublisherConnectionID) != publisher {
 		t.Fatal("current session disappeared")

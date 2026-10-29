@@ -96,7 +96,7 @@ func serveTestPublicVisitor(t *testing.T, route *PublicURLServer, connection net
 		t.Error(err)
 		return
 	}
-	route.handleVisitor(route.life, a, testPublicStreamHeader(route, header))
+	route.handleVisitor(route.life, a, testPublicStreamHeader(route, header), nil, nil)
 }
 
 func ownTestVisitorSession(t *testing.T, route *PublicURLServer, session *visitorSession) func() {
