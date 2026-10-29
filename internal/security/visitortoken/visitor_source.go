@@ -62,9 +62,12 @@ func SignVisitorSource(key [32]byte, authority tunnelv1.VisitorSourceAuthority, 
 // VerifyVisitorSource authenticates origin, not visitor access. the caller must
 // consume replay evidence once per run after metadata arrives, then perform the
 // ordinary current visitor-policy check before forwarding any application work.
+// an older delegation remains source evidence until its original deadline; it
+// cannot roll back the publisher's newer access policy. a future delegation may
+// not outrun the policy the publisher has actually installed.
 func VerifyVisitorSource(master [32]byte, proof tunnelv1.VisitorSourceProof, binding tunnelv1.VisitorSourceBinding, policyRevision int64, now time.Time) error {
 	input, err := proof.Authority.SigningBytes()
-	if err != nil || master == ([32]byte{}) || proof.Authority.VisitorPolicyRevision != policyRevision || proof.Authority.ValidUntil <= now.Unix() ||
+	if err != nil || master == ([32]byte{}) || policyRevision < 1 || proof.Authority.VisitorPolicyRevision > policyRevision || proof.Authority.ValidUntil <= now.Unix() ||
 		proof.Authority.ValidUntil > now.Add(PolicyLifetime).Unix() ||
 		!hmac.Equal(proof.Authority.MAC, sourceMAC(master, "tnl-public-visitor-source-authority-v1", input)) {
 		return ErrVisitorSource

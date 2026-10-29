@@ -15,6 +15,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -255,16 +256,25 @@ func TestVisitorSourcePolicyChangeClosesPermissionButRetainsReplayAndStaleReleas
 		t.Fatal("policy change retained a streaming request authorized by old permission")
 	}
 	f.wait(0, 0)
-	if err := f.route.consumeVisitorSource(proof, now); !errors.Is(err, errVisitorSourceReplay) {
+	if err := f.route.authenticateVisitorSource(stream.(*publicCapacityStream).header, metadata); !errors.Is(err, errVisitorSourceReplay) {
 		t.Fatal("policy change or connection cleanup cleared source history", err)
 	}
 	denied, err := f.open(1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
+	olderSource := func(stream *publicCapacityStream) {
+		t.Helper()
+		stream.metadata, err = encodeTestPublicSource(testPublicVisitorSourceKey, stream.header, proof.Authority.VisitorPolicyRevision,
+			view.AuthorityTime(time.Now()), time.Unix(proof.Authority.ValidUntil, 0), metadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	olderSource(denied.(*publicCapacityStream))
 	denial, err := f.request(denied, "/", token.Reveal())
 	if err != nil || denial.StatusCode != 403 {
-		t.Fatal("fresh source proof authorized an obsolete HTTP permission", err)
+		t.Fatal("unexpired older source evidence authorized an obsolete HTTP permission", err)
 	}
 	_ = denial.Body.Close()
 	f.wait(0, 0)
@@ -278,13 +288,14 @@ func TestVisitorSourcePolicyChangeClosesPermissionButRetainsReplayAndStaleReleas
 	if err != nil {
 		t.Fatal(err)
 	}
+	olderSource(fresh.(*publicCapacityStream))
 	current, err := f.secure(fresh)
 	if err != nil {
 		t.Fatal(err)
 	}
 	result, err := capacityRequest(current, "/", false, freshToken.Reveal())
 	if err != nil || result.StatusCode != 204 {
-		t.Fatal("current source and permission did not reuse retired capacity", err)
+		t.Fatal("unexpired older source evidence and current permission did not reuse retired capacity", err)
 	}
 	_ = result.Body.Close()
 	retired.retire()
@@ -294,6 +305,42 @@ func TestVisitorSourcePolicyChangeClosesPermissionButRetainsReplayAndStaleReleas
 	}
 	_ = current.Close()
 	f.wait(0, 0)
+	// old origin evidence also cannot bypass a newly installed IP restriction,
+	// even when the HTTP permission itself is signed for the current revision.
+	ip, err := ippolicy.Hash([32]byte{1}, netip.MustParsePrefix("198.51.100.0/24"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restriction, err := ippolicy.New([32]byte{1}, []ippolicy.Entry{ip})
+	if err != nil {
+		t.Fatal(err)
+	}
+	update.IP = &restriction
+	update.View.VisitorPolicyRevision++
+	now = time.Now()
+	update.View.ObservedAt, update.View.ValidUntil = now, now.Add(10*time.Second)
+	if err := policy.Apply(policy.Begin(), update); err != nil {
+		t.Fatal(err)
+	}
+	facts.VisitorPolicyRevision = update.View.VisitorPolicyRevision
+	currentToken, err := visitortoken.Sign(view.Issuer, facts.SigningKeyID, ed25519.NewKeyFromSeed([]byte(strings.Repeat("h", 32))), facts, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside, err := f.open(0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	olderSource(outside.(*publicCapacityStream))
+	blocked, err := f.request(outside, "/", currentToken.Reveal())
+	if err != nil || blocked.StatusCode != 403 {
+		t.Fatal("old source evidence bypassed current IP policy", err)
+	}
+	_ = blocked.Body.Close()
+	f.wait(0, 0)
+	if calls.Load() != 2 {
+		t.Fatal("new IP restriction reached the application", calls.Load())
+	}
 }
 
 func TestPublisherVisitorPolicyRejectsMissingOrChangedSourceMasterWithoutExtendingPolicy(t *testing.T) {

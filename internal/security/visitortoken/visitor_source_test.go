@@ -61,6 +61,9 @@ func TestVisitorSourceProofBindsRunProcessSequenceAndTrustedEndpoints(t *testing
 			p.Authority.IngressLeaseRevision++
 		},
 		func(p *tunnelv1.VisitorSourceProof, _ *tunnelv1.VisitorSourceBinding) { p.Authority.ValidUntil++ },
+		func(p *tunnelv1.VisitorSourceProof, _ *tunnelv1.VisitorSourceBinding) {
+			p.Authority.VisitorPolicyRevision--
+		},
 	} {
 		changed, endpoints := proof, binding
 		mutate(&changed, &endpoints)
@@ -77,8 +80,13 @@ func TestVisitorSourceDelegationCannotExtendAuthorityOrBecomeAMaster(t *testing.
 			t.Fatal("proof escaped its original delegation deadline", err)
 		}
 	}
-	if err := VerifyVisitorSource(master, proof, binding, 4, now); !errors.Is(err, ErrVisitorSource) {
-		t.Fatal("source proof supplied obsolete policy authority", err)
+	if err := VerifyVisitorSource(master, proof, binding, 4, now); err != nil {
+		t.Fatal("a newer access policy invalidated still-current source evidence", err)
+	}
+	for _, revision := range []int64{0, 2} {
+		if err := VerifyVisitorSource(master, proof, binding, revision, now); !errors.Is(err, ErrVisitorSource) {
+			t.Fatal("source proof outran installed access policy", err)
+		}
 	}
 	child := visitorSourceChildKey(master, proof.Authority)
 	forged := proof.Authority
