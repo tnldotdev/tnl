@@ -39,16 +39,7 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 	}
 	defer session.Close()
 	root := t.TempDir()
-	bin := filepath.Join(root, "tnl")
-	repository, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	build := exec.CommandContext(t.Context(), "go", "build", "-buildvcs=false", "-o", bin, "./cmd/tnl")
-	build.Dir = repository
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
-	}
+	bin := workflowExecutable(t)
 	ca := filepath.Join(root, "ca.pem")
 	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.issuer.Raw}), 0600); err != nil {
 		t.Fatal(err)

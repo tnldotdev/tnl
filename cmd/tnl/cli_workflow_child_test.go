@@ -13,6 +13,16 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
+var cliWorkflowBinary = flag.String("tnl-cli-binary", "", "CLI built by the workflow Task before child lifecycle deadlines")
+
+func workflowExecutable(t *testing.T) string {
+	t.Helper()
+	if *cliWorkflowBinary == "" {
+		t.Fatal("run task go:test:integration:cli to build the workflow CLI")
+	}
+	return *cliWorkflowBinary
+}
+
 // each real CLI workflow gets its own trust cache and protected state. the
 // parent never changes infrastructure roots for other tests in the process.
 func cliWorkflowInChild(t *testing.T) bool {
@@ -30,7 +40,7 @@ func cliWorkflowInChild(t *testing.T) bool {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	command := exec.CommandContext(ctx, executable, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v", "-test.timeout=110s", "-tnl-test-tier=integration", "-tnl-test-postgres-url="+flag.Lookup("tnl-test-postgres-url").Value.String(), "-tnl-cli-workflow-child")
+	command := exec.CommandContext(ctx, executable, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v", "-test.timeout=110s", "-tnl-test-tier=integration", "-tnl-test-postgres-url="+flag.Lookup("tnl-test-postgres-url").Value.String(), "-tnl-cli-binary="+*cliWorkflowBinary, "-tnl-cli-workflow-child")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("CLI workflow child: %v\n%s", err, output)

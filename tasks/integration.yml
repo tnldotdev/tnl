@@ -71,7 +71,10 @@ tasks:
       - sh: test "$(uname -s)" = Linux
         msg: App workflow CLI integration requires isolated Linux client-state protection
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - task: :go:test:integration:cli
+        vars:
+          RUN: "{{.RUN}}"
+          TIMEOUT: 8m
 
   connections:
     dir: "{{.ROOT_DIR}}"
@@ -266,11 +269,17 @@ tasks:
       RUN: '{{default "^TestIntegrationCLI" .RUN}}'
       SHARD: '{{default "1/1" .SHARD}}'
       SKIP: '{{default "^$" .SKIP}}'
+      TIMEOUT: '{{default "10m" .TIMEOUT}}'
     preconditions:
       - sh: test "$(uname -s)" = Linux
         msg: CLI integration tests require Linux for isolated credential protection
     cmds:
-      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -skip='{{.SKIP}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
+      - |
+        set -eu
+        build_dir="$(mktemp -d "${TMPDIR:-/tmp}/tnl-cli.XXXXXXXX")"
+        trap 'rm -rf "$build_dir"' EXIT
+        go build -buildvcs=false -o "$build_dir/tnl" ./cmd/tnl
+        go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -skip='{{.SKIP}}' -count=1 -timeout='{{.TIMEOUT}}' -args -tnl-test-tier=integration -tnl-cli-binary="$build_dir/tnl"
 
   cli:shard:
     dir: "{{.ROOT_DIR}}"
