@@ -67,6 +67,11 @@ revision, verification keys, IP filter, and workload leases. Fact mutations
 advance policy revisions in the same transaction. Signing keys are prepared
 before serving and ordinary rotation retains keys through issued deadlines.
 
+Service browser sessions keep an encrypted refresh credential on their existing
+session row. Renewal locks that row while the authority rotates the parent
+control session, then checks that the returned access token belongs to the same
+parent. The service, captured runs, and original browser deadline stay fixed.
+
 `tnl share token create` exchanges its new share source at `/v1/visitor-tokens`
 and prints a signed `Tnl-Visitor-Token` value. The public URL permission lasts at
 most five minutes, capped by the share deadline; JSON `expires_at` reports that

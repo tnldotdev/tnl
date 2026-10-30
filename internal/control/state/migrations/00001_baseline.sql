@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-permissions')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-permissions-browser-refresh')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-permissions');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-permissions-browser-refresh');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2193,6 +2193,8 @@ CREATE TABLE control.service_http_browser_sessions (
     service_id text NOT NULL REFERENCES control.services(id),
     run_ids text[] NOT NULL CHECK (cardinality(run_ids) BETWEEN 1 AND 256),
     control_session_id text NOT NULL REFERENCES control.control_sessions(id),
+    refresh_ciphertext bytea NOT NULL,
+    storage_key_id text NOT NULL,
     return_path text NOT NULL,
     handoff_expires_at timestamptz NOT NULL,
     expires_at timestamptz NOT NULL,

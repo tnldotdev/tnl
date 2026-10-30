@@ -276,7 +276,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				}
 				if !allowed {
 					auditReason = "authorization"
-					if config.BrowserLoginAvailable && config.BrowserAccess != nil && config.BrowserAccess.redirectRestricted(response, request) {
+					if config.BrowserAccess.redirectRestricted(response, request, config.BrowserLoginAvailable) {
 						return
 					}
 					diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)

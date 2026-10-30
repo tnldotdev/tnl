@@ -68,8 +68,8 @@ func (h *handler) IssueVisitorToken(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, 400, controlv1.InvalidRequest, "select one visitor token source")
 		return
 	}
-	if browser, ok := source.(controlstate.BrowserSessionTokenSource); ok && scope.Kind == visitorscope.PublicURL {
-		if _, err := h.refreshBrowserSignIn(ctx, scope.ID, browser.Secret); err != nil {
+	if browser, ok := source.(controlstate.BrowserSessionTokenSource); ok {
+		if _, err := h.refreshBrowserSignIn(ctx, scope, browser.Secret); err != nil {
 			writeVisitorTokenProblem(w, err)
 			return
 		}

@@ -1,9 +1,17 @@
 package public
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 )
 
 func TestVisitorTokenSourceRejectsMixedUnknownAndIncompleteVariants(t *testing.T) {
@@ -33,5 +41,47 @@ func TestVisitorTokenSourceRejectsMixedUnknownAndIncompleteVariants(t *testing.T
 		if err != nil || parsed == nil || needsHuman != human {
 			t.Fatal("incorrect source authentication boundary", err)
 		}
+	}
+}
+
+type serviceBrowserTokenStore struct {
+	PublicURLStore
+	refreshed, issued bool
+	err               error
+}
+
+func (s *serviceBrowserTokenStore) RefreshServiceBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error) {
+	s.refreshed = true
+	return controlstate.BrowserAccessSession{}, s.err
+}
+
+func (s *serviceBrowserTokenStore) IssueVisitorToken(context.Context, string, visitorscope.Scope, controlstate.VisitorTokenSource, time.Time) (controlstate.IssuedVisitorToken, error) {
+	s.issued = true
+	if !s.refreshed {
+		return controlstate.IssuedVisitorToken{}, controlstate.ErrVisitorPermission
+	}
+	return controlstate.IssuedVisitorToken{}, nil
+}
+
+func TestVisitorTokenRefreshesServiceBrowserBeforeIssuingPermission(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"current session", nil, http.StatusOK},
+		{"expired session", controlstate.ErrVisitorPermission, http.StatusForbidden},
+		{"authority outage", clientauthority.ErrUnavailable, http.StatusServiceUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &serviceBrowserTokenStore{err: test.err}
+			h := &handler{store: store}
+			request := httptest.NewRequest(http.MethodPost, "/v1/visitor-tokens", strings.NewReader(`{"resource":{"kind":"service","id":"svc_`+strings.Repeat("A", 22)+`"},"source":{"kind":"browser_session","secret":"`+strings.Repeat("B", 43)+`"}}`))
+			response := httptest.NewRecorder()
+			h.IssueVisitorToken(response, request)
+			if response.Code != test.status || !store.refreshed || store.issued != (test.err == nil) {
+				t.Fatal("service permission did not follow browser refresh", response.Code, store.refreshed, store.issued)
+			}
+		})
 	}
 }

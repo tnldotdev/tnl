@@ -293,34 +293,26 @@ func (h *handler) redeemedBrowserHandoffPermission(ctx context.Context, urlID, c
 	return permission, err
 }
 
-func (h *handler) refreshBrowserSignIn(ctx context.Context, publicURLID, token string) (controlstate.BrowserAccessSession, error) {
+func (h *handler) refreshBrowserSignIn(ctx context.Context, scope visitorscope.Scope, token string) (controlstate.BrowserAccessSession, error) {
 	now := time.Now()
+	if scope.Kind == visitorscope.Service {
+		store, ok := h.store.(interface {
+			RefreshServiceBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error)
+		})
+		if !ok {
+			return controlstate.BrowserAccessSession{}, clientauthority.ErrUnavailable
+		}
+		return store.RefreshServiceBrowserSession(ctx, scope.ID, token, now, h.rotateBrowserCredentials)
+	}
 	if h.browserAccess == nil {
 		return controlstate.BrowserAccessSession{}, clientauthority.ErrUnavailable
 	}
-	session, err := h.browserAccess.BrowserSession(ctx, publicURLID, token, now)
+	session, err := h.browserAccess.BrowserSession(ctx, scope.ID, token, now)
 	if err != nil {
 		return controlstate.BrowserAccessSession{}, err
 	}
 	if !session.AccessExpiresAt.After(now.Add(30 * time.Second)) {
-		if h.browserAuthority == nil {
-			return session, clientauthority.ErrUnavailable
-		}
-		session, err = h.browserAccess.RefreshBrowserSession(ctx, publicURLID, token, now,
-			func(ctx context.Context, refreshToken string) (controlstate.BrowserTokenRotation, error) {
-				issued, err := h.browserAuthority.Refresh(ctx, credentials.RefreshToken(refreshToken))
-				if err != nil {
-					return controlstate.BrowserTokenRotation{}, err
-				}
-				rotated, err := clientauthority.ValidateControlSessionResponse(issued, "", time.Time{})
-				if err != nil {
-					return controlstate.BrowserTokenRotation{}, err
-				}
-				return controlstate.BrowserTokenRotation{
-					IdentityID: issued.Identity.Identity.Id, AccessToken: rotated.AccessToken,
-					RefreshToken: rotated.RefreshToken, AccessExpiresAt: rotated.AccessExpiresAt,
-				}, nil
-			})
+		session, err = h.browserAccess.RefreshBrowserSession(ctx, scope.ID, token, now, h.rotateBrowserCredentials)
 		if err != nil {
 			return controlstate.BrowserAccessSession{}, err
 		}
@@ -328,8 +320,24 @@ func (h *handler) refreshBrowserSignIn(ctx context.Context, publicURLID, token s
 	return session, nil
 }
 
+func (h *handler) rotateBrowserCredentials(ctx context.Context, refreshToken string) (controlstate.BrowserTokenRotation, error) {
+	if h.browserAuthority == nil {
+		return controlstate.BrowserTokenRotation{}, clientauthority.ErrUnavailable
+	}
+	issued, err := h.browserAuthority.Refresh(ctx, credentials.RefreshToken(refreshToken))
+	if err != nil {
+		return controlstate.BrowserTokenRotation{}, err
+	}
+	rotated, err := clientauthority.ValidateControlSessionResponse(issued, "", time.Time{})
+	if err != nil {
+		return controlstate.BrowserTokenRotation{}, err
+	}
+	return controlstate.BrowserTokenRotation{IdentityID: issued.Identity.Identity.Id, AccessToken: rotated.AccessToken,
+		RefreshToken: rotated.RefreshToken, AccessExpiresAt: rotated.AccessExpiresAt}, nil
+}
+
 func (h *handler) browserSessionAccess(ctxRequest *http.Request, auth controlstate.PublishRunAuthentication, token string) (controlstate.BrowserAccessSession, publicURLReadPrincipal, bool, error) {
-	session, err := h.refreshBrowserSignIn(ctxRequest.Context(), auth.PublicURLID, token)
+	session, err := h.refreshBrowserSignIn(ctxRequest.Context(), visitorscope.Scope{Kind: visitorscope.PublicURL, ID: auth.PublicURLID}, token)
 	if err != nil {
 		return controlstate.BrowserAccessSession{}, publicURLReadPrincipal{}, false, err
 	}

@@ -118,7 +118,7 @@ func (f ServiceHTTP) Forward(ctx context.Context, client *tls.Conn, target Servi
 			}
 			permission, guard, guarded, err := authorizeHTTPRequest(w, r, f.Policy, tokens)
 			if err != nil {
-				if f.browser != nil && f.browser.redirectRestricted(w, r) {
+				if f.browser.redirectRestricted(w, r, true) {
 					return
 				}
 				serviceHTTPDenied(w, serviceHTTPDecisionStatus(err))
