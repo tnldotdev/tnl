@@ -65,6 +65,7 @@ type PublicURLServer struct {
 	visitorSourceKey   [32]byte
 	sourceHistory      map[[32]byte]*visitorSourceHistory
 	sourceExpirations  visitorSourceExpirations
+	sourceTime         int64
 	certificatePlan    controlv1.CertificatePlan
 	tls                *tls.Config
 	certificate        atomic.Pointer[tls.Certificate]
