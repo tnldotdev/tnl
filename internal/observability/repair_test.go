@@ -199,6 +199,19 @@ func (e *shutdownLogExporter) Export(ctx context.Context, _ []sdklog.Record) err
 func (*shutdownLogExporter) ForceFlush(context.Context) error { return nil }
 func (e *shutdownLogExporter) Shutdown(context.Context) error { close(e.done); return nil }
 
+func TestProviderWorkPreservesCancellationWhenWorkersReturnSuccess(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	cause := errors.New("shutdown deadline cause")
+	err := providerWork(ctx, func(context.Context) error {
+		cancel(cause)
+		return nil
+	})
+	if !errors.Is(err, cause) {
+		t.Fatal("provider completion lost the shared cancellation cause", err)
+	}
+}
+
 func TestOwnerShutdownStartsTraceDrainWhileLogsAreSlow(t *testing.T) {
 	for _, expired := range []bool{false, true} {
 		t.Run(fmt.Sprint(expired), func(t *testing.T) {

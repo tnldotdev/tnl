@@ -293,6 +293,8 @@ func providerWork(ctx context.Context, work ...func(context.Context) error) erro
 	for range work {
 		err = errors.Join(err, <-results)
 	}
+	// a provider may finish cleanup successfully after the shared bound expires.
+	err = errors.Join(err, context.Cause(ctx))
 	if err != nil {
 		return safeExportError("observability provider operation failed", err)
 	}
