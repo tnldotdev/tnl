@@ -39,15 +39,7 @@ func NewPublisherConnection(
 
 func (c *PublisherConnection) Ref() tunnelv1.PublisherConnectionRef { return c.ref }
 
-func (c *PublisherConnection) OpenVisitor(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
-	return c.openVisitor(ctx, visitorConnectionID, false, tunnel.ReturnEvents{})
-}
-
-func (c *PublisherConnection) OpenPendingVisitor(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
-	return c.openVisitor(ctx, visitorConnectionID, true, tunnel.ReturnEvents{})
-}
-
-func (c *PublisherConnection) openVisitor(ctx context.Context, visitorConnectionID string, denied bool, events tunnel.ReturnEvents) (net.Conn, error) {
+func (c *PublisherConnection) OpenVisitor(ctx context.Context, visitorConnectionID string, pending, confirm bool, initial []byte, events tunnel.ReturnEvents) (net.Conn, error) {
 	if err := c.beginOpen(); err != nil {
 		return nil, err
 	}
@@ -57,7 +49,8 @@ func (c *PublisherConnection) openVisitor(ctx context.Context, visitorConnection
 		PublishRunID: c.ref.PublishRunID, PublishRunNumber: c.ref.PublishRunNumber,
 		PublisherConnectionID:        c.ref.PublisherConnectionID,
 		ConnectionAssignmentRevision: c.ref.ConnectionAssignmentRevision,
-		AccessPending:                denied,
-	}, events)
+		AccessPending:                pending,
+		ConfirmBeforeBytes:           confirm,
+	}, initial, events)
 	return c.finishOpen(stream, err)
 }

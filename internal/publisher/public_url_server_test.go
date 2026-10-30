@@ -376,7 +376,8 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 		PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber,
 		PublisherConnectionID:        ref.PublisherConnectionID,
 		ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
-	}, tunnel.ReturnEvents{})
+		ConfirmBeforeBytes:           true,
+	}, nil, tunnel.ReturnEvents{})
 	if err != nil {
 		t.Fatal(err)
 	}

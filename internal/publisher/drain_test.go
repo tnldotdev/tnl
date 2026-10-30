@@ -226,7 +226,7 @@ func newVisitorDrainHarness(t *testing.T, transport string, configure func(*cert
 
 func (h *visitorDrainHarness) admit() net.Conn {
 	h.t.Helper()
-	stream, err := h.relay.OpenVisitor(h.ctx, "visitor_drain")
+	stream, err := h.relay.OpenVisitor(h.ctx, "visitor_drain", false, true, nil, tunnel.ReturnEvents{})
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func (h *visitorDrainHarness) admit() net.Conn {
 
 func (h *visitorDrainHarness) assertAdmissionRejected() {
 	h.t.Helper()
-	admitted, err := h.relay.OpenVisitor(h.ctx, "visitor_after_cancel")
+	admitted, err := h.relay.OpenVisitor(h.ctx, "visitor_after_cancel", false, true, nil, tunnel.ReturnEvents{})
 	if err == nil {
 		_ = admitted.Close()
 		h.t.Fatal("draining session admitted a new visitor")

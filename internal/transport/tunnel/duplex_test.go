@@ -119,7 +119,8 @@ func realVisitorPair(t *testing.T, client, server *Session) (muxsession.Stream, 
 		return incoming
 	})
 	h := visitorStreamHeader()
-	stream, err := client.OpenVisitorStream(tunnelContext(t), h, ReturnEvents{})
+	h.ConfirmBeforeBytes = true
+	stream, err := client.OpenVisitorStream(tunnelContext(t), h, nil, ReturnEvents{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -46,11 +46,8 @@ func TestPublicOpeningLatency(t *testing.T) {
 	durations := make([]time.Duration, 0, samples)
 	for i := range samples + 1 {
 		start := time.Now()
-		stream, err := b.Open(ingressContext(t), fmt.Sprintf("visitor_latency_%d", i))
+		stream, err := b.Start(ingressContext(t), fmt.Sprintf("visitor_latency_%d", i), false, []byte("proxy"), []byte("!"))
 		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := stream.Write([]byte("proxy!")); err != nil {
 			t.Fatal(err)
 		}
 		var response [1]byte

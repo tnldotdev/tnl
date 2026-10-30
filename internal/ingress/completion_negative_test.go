@@ -43,14 +43,13 @@ type completionBackend struct {
 	ordinary atomic.Int32
 }
 
-func (b *completionBackend) Open(ctx context.Context, id string) (net.Conn, error) {
-	b.ordinary.Add(1)
-	return b.pendingTLSBackend.Open(ctx, id)
-}
-
-func (b *completionBackend) OpenPending(ctx context.Context, id string) (net.Conn, error) {
-	b.pending.Add(1)
-	return b.pendingTLSBackend.OpenPending(ctx, id)
+func (b *completionBackend) Start(ctx context.Context, id string, pending bool, proxy, initial []byte) (net.Conn, error) {
+	if pending {
+		b.pending.Add(1)
+	} else {
+		b.ordinary.Add(1)
+	}
+	return b.pendingTLSBackend.Start(ctx, id, pending, proxy, initial)
 }
 
 type completionMetrics struct {

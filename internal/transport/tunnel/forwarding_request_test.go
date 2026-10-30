@@ -55,9 +55,11 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 				defer peer.Close()
 				wrote := tunnelWorker(t, func() { _ = client.Close() }, func() error {
 					if private {
-						return tunnelv1.WriteServiceForwardingHeader(peer, maximumServiceHeader("relay", true))
+						_, err := tunnelv1.WriteServiceOpening(peer, maximumServiceHeader("relay", true))
+						return err
 					}
-					return tunnelv1.WriteInternalForwardingHeader(peer, maximumPublicHeader("relay"))
+					_, err := tunnelv1.WriteForwardingOpening(peer, maximumPublicHeader("relay"), nil, nil)
+					return err
 				})
 				incoming, err := (&Session{transport: server}).AcceptInternalForwardingStream(ctx)
 				if err != nil {

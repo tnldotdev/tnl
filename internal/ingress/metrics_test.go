@@ -11,10 +11,8 @@ import (
 
 type pendingTLSBackend struct{ connection net.Conn }
 
-func (b pendingTLSBackend) Open(context.Context, string) (net.Conn, error) { return b.connection, nil }
-
-func (b pendingTLSBackend) OpenPending(ctx context.Context, id string) (net.Conn, error) {
-	return b.Open(ctx, id)
+func (b pendingTLSBackend) Start(ctx context.Context, _ string, _ bool, proxy, initial []byte) (net.Conn, error) {
+	return startTestBackend(ctx, b.connection, proxy, initial)
 }
 
 func TestRestrictedVisitorForwardingHasSuccessfulOutcome(t *testing.T) {

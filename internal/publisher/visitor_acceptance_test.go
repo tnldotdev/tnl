@@ -26,12 +26,13 @@ func TestVisitorAcceptanceFailureStaysStreamLocal(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	h := tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor-1", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision}
+	h.ConfirmBeforeBytes = true
 	for _, failed := range []bool{true, false} {
 		result, done := make(chan error, 1), make(chan struct{})
 		t.Cleanup(func() { cancel(); _ = relay.Close(); awaitPublisherTest(t, done) })
 		go func() {
 			defer close(done)
-			stream, err := relay.OpenVisitorStream(ctx, h, tunnel.ReturnEvents{})
+			stream, err := relay.OpenVisitorStream(ctx, h, nil, tunnel.ReturnEvents{})
 			if err == nil {
 				_, err = io.Copy(io.Discard, stream)
 				_ = stream.Close()

@@ -97,7 +97,7 @@ func (s *failedEndStream) CloseWrite() error {
 func TestReturnEndRetainsHalfCloseFailureWithoutReplay(t *testing.T) {
 	cause := errors.New("half-close failed")
 	wire := &failedEndStream{failure: cause}
-	reply := &replyStream{Stream: wire, accepted: true}
+	reply := &replyStream{Stream: wire, accepted: true, sent: true}
 	for range 2 {
 		if err := reply.end(t.Context()); !errors.Is(err, cause) {
 			t.Fatal("end lost its supported half-close cause", err)
