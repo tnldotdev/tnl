@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -212,7 +213,7 @@ func TestPublicURLManagerRecoveryReachesRegisteredHTTPVisitorsAndStaysRunLocal(t
 				}
 				transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: rootsForCertificate(t, *route.certificate.Load()), ServerName: "route.example"},
 					DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-						stream, err := result.peers[1].OpenVisitor(ctx, "vc_0123456789abcdefghijkl")
+						stream, err := result.peers[1].OpenVisitor(ctx, "vc_0123456789abcdefghijkl", false, true, nil, tunnel.ReturnEvents{})
 						if err != nil {
 							return nil, err
 						}

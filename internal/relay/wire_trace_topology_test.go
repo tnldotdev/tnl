@@ -244,7 +244,7 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 						if e != nil {
 							t.Fatal(e)
 						}
-						stream, err = backends[0].Open(setup, fmt.Sprintf("visitor-%d", visitor))
+						stream, err = backends[0].Start(setup, fmt.Sprintf("visitor-%d", visitor), false, nil, nil)
 					}
 					if err != nil {
 						t.Fatal(err)

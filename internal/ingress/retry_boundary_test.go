@@ -94,14 +94,14 @@ type waitingBackend struct{ entered chan struct{} }
 
 type contextBackend struct{ ingressbackend.Backend }
 
-func (b contextBackend) Open(ctx context.Context, id string) (net.Conn, error) {
+func (b contextBackend) Start(ctx context.Context, id string, pending bool, proxy, initial []byte) (net.Conn, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return b.Backend.Open(ctx, id)
+	return b.Backend.Start(ctx, id, pending, proxy, initial)
 }
 
-func (b waitingBackend) Open(ctx context.Context, _ string) (net.Conn, error) {
+func (b waitingBackend) Start(ctx context.Context, _ string, _ bool, _, _ []byte) (net.Conn, error) {
 	if b.entered != nil {
 		close(b.entered)
 	}
@@ -209,12 +209,12 @@ func newFailAfterProxyBackend(t *testing.T, visitorBytes int) *failAfterProxyBac
 	ingressWorker(t, func() { _ = a.Close(); _ = b.Close() }, func() error { defer b.Close(); _, _ = io.Copy(io.Discard, b); return nil })
 	return &failAfterProxyBackend{connection: &failAfterProxyConn{Conn: a, visitorBytes: visitorBytes}}
 }
-func (b *failAfterProxyBackend) Open(_ context.Context, id string) (net.Conn, error) {
+func (b *failAfterProxyBackend) Start(ctx context.Context, id string, _ bool, proxy, initial []byte) (net.Conn, error) {
 	b.opens.Add(1)
 	b.mu.Lock()
 	b.visitorID = id
 	b.mu.Unlock()
-	return b.connection, nil
+	return startTestBackend(ctx, b.connection, proxy, initial)
 }
 func (b *failAfterProxyBackend) visitorConnectionID() string {
 	b.mu.Lock()

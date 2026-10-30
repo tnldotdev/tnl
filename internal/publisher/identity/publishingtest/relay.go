@@ -131,7 +131,7 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 		return 0, nil, err
 	}
 	r := selected.ref
-	stream, err := selected.session.OpenVisitorStream(ctx, tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: id, PublicURLID: r.PublicURLID, PublishRunID: r.PublishRunID, PublishRunNumber: r.PublishRunNumber, PublisherConnectionID: r.PublisherConnectionID, ConnectionAssignmentRevision: r.ConnectionAssignmentRevision}, tunnel.ReturnEvents{})
+	stream, err := selected.session.OpenVisitorStream(ctx, tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: id, PublicURLID: r.PublicURLID, PublishRunID: r.PublishRunID, PublishRunNumber: r.PublishRunNumber, PublisherConnectionID: r.PublisherConnectionID, ConnectionAssignmentRevision: r.ConnectionAssignmentRevision}, nil, tunnel.ReturnEvents{})
 	if err != nil {
 		return 0, nil, err
 	}

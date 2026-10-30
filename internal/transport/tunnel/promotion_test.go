@@ -11,10 +11,17 @@ import (
 )
 
 func TestStreamLocalPromotionOrdersBytesAndRejectsReuse(t *testing.T) {
+	for _, confirm := range []bool{false, true} {
+		t.Run(map[bool]string{false: "pipelined", true: "confirmed"}[confirm], func(t *testing.T) { testStreamLocalPromotion(t, confirm) })
+	}
+}
+
+func testStreamLocalPromotion(t *testing.T, confirm bool) {
 	client, server := newAuthenticatedPair(t)
 	ctx := tunnelContext(t)
 	h := visitorStreamHeader()
 	h.AccessPending = true
+	h.ConfirmBeforeBytes = confirm
 	promoted := false
 	worker := tunnelWorker(t, func() { _ = server.Close() }, func() error {
 		incoming, err := server.AcceptVisitorStream(ctx)
@@ -43,7 +50,7 @@ func TestStreamLocalPromotionOrdersBytesAndRejectsReuse(t *testing.T) {
 		}
 		return incoming.Stream.CloseWrite()
 	})
-	stream, err := client.OpenVisitorStream(ctx, h, ReturnEvents{Promoted: func(p tunnelv1.AdmissionHeader) error {
+	stream, err := client.OpenVisitorStream(ctx, h, nil, ReturnEvents{Promoted: func(p tunnelv1.AdmissionHeader) error {
 		if p.VisitorConnectionID != h.VisitorConnectionID || p.PublisherConnectionID != h.PublisherConnectionID || p.ConnectionAssignmentRevision != h.ConnectionAssignmentRevision {
 			return errors.New("promotion changed identity")
 		}
@@ -68,9 +75,16 @@ func TestStreamLocalPromotionOrdersBytesAndRejectsReuse(t *testing.T) {
 }
 
 func TestPromotionCancellationInterruptsBlockedReturnWrite(t *testing.T) {
+	for _, confirm := range []bool{false, true} {
+		t.Run(map[bool]string{false: "lazy_acceptance", true: "promotion"}[confirm], func(t *testing.T) { testPromotionCancellation(t, confirm) })
+	}
+}
+
+func testPromotionCancellation(t *testing.T, confirm bool) {
 	client, server := newAuthenticatedPair(t)
 	h := visitorStreamHeader()
 	h.AccessPending = true
+	h.ConfirmBeforeBytes = confirm
 	incoming := make(chan *IncomingVisitorStream, 1)
 	worker := tunnelWorker(t, func() { _ = server.Close() }, func() error {
 		v, err := server.AcceptVisitorStream(tunnelContext(t))
@@ -80,7 +94,7 @@ func TestPromotionCancellationInterruptsBlockedReturnWrite(t *testing.T) {
 		incoming <- v
 		return v.Accept()
 	})
-	stream, err := client.OpenVisitorStream(tunnelContext(t), h, ReturnEvents{})
+	stream, err := client.OpenVisitorStream(tunnelContext(t), h, nil, ReturnEvents{})
 	if err != nil {
 		t.Fatal(err)
 	}

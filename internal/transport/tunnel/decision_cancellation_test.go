@@ -50,7 +50,7 @@ func TestReturnDecisionCancellationAndJoin(t *testing.T) {
 						wire := &decisionResetStream{Stream: &memoryStream{Conn: local}, resetEntered: make(chan struct{}), resetRelease: make(chan struct{})}
 						release := sync.OnceFunc(func() { close(wire.resetRelease) })
 						defer release()
-						reply := &replyStream{Stream: wire, accepted: true, promotion: decisionPromotion()}
+						reply := &replyStream{Stream: wire, accepted: true, confirmed: true, promotion: decisionPromotion()}
 						var prior <-chan error
 						if contention != "own_write" {
 							prior = tunnelWorker(t, func() { _ = local.Close() }, func() error {

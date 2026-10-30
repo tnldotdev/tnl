@@ -56,13 +56,23 @@ joins its interrupt callback, and preserves the context cause. a pre-canceled
 decision does no I/O. return-data writers share the same serialization; decision
 writers never borrow or clear each other's deadlines.
 
-Ingress may try another connected relay before the first visitor byte is sent.
-A rejected open, failed PROXY-header write, or zero-byte ClientHello write can
-still be retried. The first visitor byte commits the stream, even if the rest of
-ClientHello fails. Copy/close then owns it; live connections are never replayed
-or migrated. Public and private setup reserve time for alternate relays before
-that boundary. A denied visitor may use separate admission to finish TLS at the
-publisher and receive HTTPS 403.
+public openings carry the header and a length-prefixed block of at most 64 KiB,
+then raw request bytes. ingress includes PROXY v2 and the inspected ClientHello;
+any excess prefix follows as raw bytes. a fresh exact session/assignment first
+confirms metadata through the publisher, then sends visitor bytes on that same
+stream. later openings pipeline the prefix without waiting for acceptance.
+confirmation is scoped to that session and assignment, not a recovery timer.
+private service openings retain metadata-only acceptance before application bytes.
+
+ingress may try another connected relay before the first visitor byte is sent.
+a rejected confirmation, failed PROXY-header write, or zero-byte ClientHello
+write can still be retried. the first visitor byte commits the stream, even if
+the rest of ClientHello fails or a later return frame rejects it. opening errors
+retain the exact visitor-byte count, excluding framing and PROXY metadata.
+copy/close then owns it; live connections are never replayed or migrated.
+public and private setup reserve time for alternate relays before that boundary.
+a denied visitor may use separate admission to finish TLS at the publisher and
+receive HTTPS 403.
 
 The routing table copies relay process identity and last advertised lease
 deadline. A renewal need not publish a new URL projection. The connected relay

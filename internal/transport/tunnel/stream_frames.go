@@ -114,15 +114,48 @@ func (s *returnStream) Read(p []byte) (int, error) {
 // half-closes remain independent. each responder is owned by one visitor stream.
 type replyStream struct {
 	muxsession.Stream
+	readMu     sync.Mutex
+	initial    []byte
 	writeInit  sync.Once
 	writeGate  chan struct{}
 	responded  bool
 	respondErr error
 	accepted   bool
+	confirmed  bool
+	sent       bool
 	promoted   bool
 	ended      bool
 	writeErr   error
 	promotion  tunnelv1.AdmissionHeader
+}
+
+func newReplyStream(stream muxsession.Stream, initial []byte, confirmed bool) *replyStream {
+	return &replyStream{Stream: stream, initial: initial, confirmed: confirmed}
+}
+
+func (s *replyStream) takeInitial() []byte {
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
+	initial := s.initial
+	s.initial = nil
+	return initial
+}
+
+func (s *replyStream) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
+	if len(s.initial) != 0 {
+		n := copy(p, s.initial)
+		s.initial = s.initial[n:]
+		if len(s.initial) == 0 {
+			s.initial = nil
+		}
+		return n, nil
+	}
+	return s.Stream.Read(p)
 }
 
 // writers serializes return frames, including the one accept/reject decision.
@@ -189,14 +222,16 @@ func (s *replyStream) respondLocked(response tunnelv1.StreamResponse) error {
 		s.ended = true
 		return errors.Join(tunnelv1.WriteReturnFrame(s.Stream, tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnRejected, Code: response.Code}), s.Stream.Close())
 	}
-	s.writeErr = tunnelv1.WriteReturnFrame(s.Stream, tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnAccepted})
+	s.accepted = true
+	if s.confirmed {
+		s.writeErr = s.writable()
+	}
 	if s.writeErr == nil {
 		s.writeErr = s.Stream.SetDeadline(time.Time{})
 	}
 	if s.writeErr != nil {
 		return errors.Join(s.writeErr, s.Stream.Close())
 	}
-	s.accepted = true
 	return nil
 }
 
@@ -217,7 +252,11 @@ func (s *replyStream) writable() error {
 	if !s.accepted || s.ended {
 		return io.ErrClosedPipe
 	}
-	return nil
+	if !s.sent {
+		s.writeErr = tunnelv1.WriteReturnFrame(s.Stream, tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnAccepted})
+		s.sent = s.writeErr == nil
+	}
+	return s.writeErr
 }
 
 func (s *replyStream) Write(p []byte) (int, error) {

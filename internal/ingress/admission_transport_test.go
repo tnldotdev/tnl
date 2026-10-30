@@ -110,7 +110,7 @@ func openPendingTransport(t *testing.T, f *admissionTransportFixture, id string)
 		return v.Accept()
 	})
 	b := mustOnlyBackend(t, f.forwarder, f.entry).(forwardingBackend)
-	c, err := b.OpenPending(ingressContext(t), id)
+	c, err := b.Start(ingressContext(t), id, true, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func openRawPendingTransport(t *testing.T, f *admissionTransportFixture, id stri
 		if err != nil {
 			return err
 		}
-		header, err := tunnelv1.ReadVisitorStreamHeader(stream)
+		header, _, err := tunnelv1.ReadVisitorOpening(stream)
 		if err != nil {
 			_ = stream.Close()
 			return err
@@ -232,7 +232,7 @@ func openRawPendingTransport(t *testing.T, f *admissionTransportFixture, id stri
 		return tunnelv1.WriteReturnFrame(stream, tunnelv1.ReturnFrame{Kind: tunnelv1.ReturnAccepted})
 	})
 	b := mustOnlyBackend(t, f.forwarder, f.entry).(forwardingBackend)
-	stream, err := b.OpenPending(ingressContext(t), id)
+	stream, err := b.Start(ingressContext(t), id, true, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

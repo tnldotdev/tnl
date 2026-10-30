@@ -184,7 +184,8 @@ func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel
 			return incoming.Promote(incoming.Header.Admission())
 		}
 	}
-	publisher, err := connection.openVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, events)
+	initial := incoming.TakeInitial()
+	publisher, err := connection.OpenVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, incoming.Header.ConfirmBeforeBytes, initial, events)
 	if err != nil {
 		a.streamRejected("publisher_unavailable")
 		code := tunnelv1.Unavailable
@@ -204,6 +205,7 @@ func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel
 	defer incoming.Stream().Close()
 	_, finishForward := observability.Start(ctx, "relay.forward_visitor")
 	copied, err := streamcopy.Copy(incoming.Stream(), publisher)
+	copied.LeftToRight += int64(len(initial))
 	finishForward(err)
 	if observer, ok := a.observer.(interface {
 		ObserveRelayTransfer(string, int64, int64, error)

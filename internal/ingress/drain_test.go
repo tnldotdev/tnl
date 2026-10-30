@@ -15,7 +15,16 @@ import (
 
 type singleBackend struct{ connection net.Conn }
 
-func (b singleBackend) Open(context.Context, string) (net.Conn, error) { return b.connection, nil }
+type drainReadConn struct {
+	net.Conn
+	reading func()
+}
+
+func (c drainReadConn) Read(p []byte) (int, error) { c.reading(); return c.Conn.Read(p) }
+
+func (b singleBackend) Start(ctx context.Context, _ string, _ bool, proxy, initial []byte) (net.Conn, error) {
+	return startTestBackend(ctx, b.connection, proxy, initial)
+}
 
 func TestDrainDeadlineForcesBackendClosed(t *testing.T) {
 	a, b := net.Pipe()
@@ -28,11 +37,10 @@ func TestDrainDeadlineForcesBackendClosed(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		close(opened)
 		_, err = io.Copy(io.Discard, replay)
 		return err
 	})
-	server, address := startIngress(t, publicURLConfig(singleBackend{a}))
+	server, address := startIngress(t, publicURLConfig(singleBackend{&drainReadConn{Conn: a, reading: sync.OnceFunc(func() { close(opened) })}}))
 	client := ingressClient(t, address, "route.example", "")
 	handshake := ingressWorker(t, func() { _ = client.Close() }, client.Handshake)
 	ingressAwait(t, opened)

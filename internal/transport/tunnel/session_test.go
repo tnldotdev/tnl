@@ -58,7 +58,7 @@ func TestSessionHandshakeAndVisitorStream(t *testing.T) {
 		}
 		return err
 	})
-	stream, err := client.OpenVisitorStream(ctx, header, ReturnEvents{})
+	stream, err := client.OpenVisitorStream(ctx, header, nil, ReturnEvents{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestVisitorStreamRejection(t *testing.T) {
 		defer incoming.Stream.Close()
 		return incoming.Reject(tunnelv1.StalePublishRunNumber)
 	})
-	_, err := client.OpenVisitorStream(ctx, visitorStreamHeader(), ReturnEvents{})
+	_, err := client.OpenVisitorStream(ctx, visitorStreamHeader(), nil, ReturnEvents{})
 	var p *ProtocolError
 	if !errors.As(err, &p) || p.Code != tunnelv1.StalePublishRunNumber {
 		t.Fatalf("open=%v", err)
@@ -138,7 +138,7 @@ func TestInternalForwardingStream(t *testing.T) {
 		}
 		return err
 	})
-	stream, err := client.OpenInternalForwardingStream(ctx, header, ReturnEvents{})
+	stream, err := client.OpenInternalForwardingStream(ctx, header, nil, nil, ReturnEvents{})
 	if err != nil {
 		t.Fatal(err)
 	}
