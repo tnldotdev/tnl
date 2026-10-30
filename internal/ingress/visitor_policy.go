@@ -44,7 +44,12 @@ type publicRunPolicy struct {
 	cancel    context.CancelFunc
 	done      chan struct{}
 	source    atomic.Pointer[publicRunSource]
-	sequence  *atomic.Uint64
+	sequence  *publicRunSequence
+}
+
+type publicRunSequence struct {
+	atomic.Uint64
+	retainUntil time.Time // guarded by the controller mutex
 }
 
 type publicRunSource struct {
@@ -89,11 +94,11 @@ func (c *Controller) preparePublicPolicy(ctx context.Context, entry ingressv1.In
 	life, cancel := context.WithCancel(ctx)
 	c.mu.Lock()
 	if c.sourceSequences == nil {
-		c.sourceSequences = make(map[string]*atomic.Uint64)
+		c.sourceSequences = make(map[string]*publicRunSequence)
 	}
 	sequence := c.sourceSequences[entry.PublishRunId]
 	if sequence == nil {
-		sequence = new(atomic.Uint64)
+		sequence = new(publicRunSequence)
 		c.sourceSequences[entry.PublishRunId] = sequence
 	}
 	c.mu.Unlock()
@@ -152,6 +157,11 @@ func (c *Controller) preparePublicPolicy(ctx context.Context, entry ingressv1.In
 		if err := policy.Apply(request, update); err != nil {
 			return err
 		}
+		// receipt plus the maximum delegation lifetime is a conservative local
+		// retirement boundary, including a temporary tombstone or resnapshot.
+		c.mu.Lock()
+		sequence.retainUntil = time.Now().Add(visitortoken.PolicyLifetime)
+		c.mu.Unlock()
 		run.source.Store(source)
 		return nil
 	}
@@ -257,11 +267,6 @@ func (c *Controller) publicPolicyLoop(ctx context.Context) error {
 		}
 		c.routingTable.mu.RUnlock()
 		c.mu.Lock()
-		for id := range c.sourceSequences {
-			if _, exists := current[id]; !exists {
-				delete(c.sourceSequences, id)
-			}
-		}
 		var retired []*publicRunPolicy
 		for id, run := range c.publicPolicies {
 			entry, exists := current[id]
@@ -283,6 +288,14 @@ func (c *Controller) publicPolicyLoop(ctx context.Context) error {
 		for _, run := range retired {
 			run.close()
 		}
+		// retired refreshes must join before their counters can be forgotten.
+		c.mu.Lock()
+		for id, sequence := range c.sourceSequences {
+			if _, exists := current[id]; !exists && !sequence.retainUntil.After(time.Now()) {
+				delete(c.sourceSequences, id)
+			}
+		}
+		c.mu.Unlock()
 		if len(pending) == 0 {
 			continue
 		}

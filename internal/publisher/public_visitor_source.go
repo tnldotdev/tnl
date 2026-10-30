@@ -73,12 +73,18 @@ func (h *visitorSourceExpirations) Pop() any {
 }
 
 func (r *PublicURLServer) consumeVisitorSource(proof tunnelv1.VisitorSourceProof, now time.Time) error {
-	if len(proof.Authority.MAC) != 32 || proof.Authority.ValidUntil <= now.Unix() {
+	if len(proof.Authority.MAC) != 32 {
 		return visitortoken.ErrVisitorSource
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for len(r.sourceExpirations) > 0 && r.sourceExpirations[0].until <= now.Unix() {
+	// policy refreshes can reduce the projected authority time. acceptance and
+	// retirement share one run-owned floor so retired evidence stays expired.
+	r.sourceTime = max(r.sourceTime, now.Unix())
+	if proof.Authority.ValidUntil <= r.sourceTime {
+		return visitortoken.ErrVisitorSource
+	}
+	for len(r.sourceExpirations) > 0 && r.sourceExpirations[0].until <= r.sourceTime {
 		expired := heap.Pop(&r.sourceExpirations).(visitorSourceExpiration)
 		delete(r.sourceHistory, expired.key)
 	}

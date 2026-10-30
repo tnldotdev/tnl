@@ -119,6 +119,13 @@ func TestVisitorSourceReplayHasOneRunOwnerAndImmutableRetirement(t *testing.T) {
 	if err := route.consumeVisitorSource(proof, time.Unix(until, 0)); !errors.Is(err, visitortoken.ErrVisitorSource) {
 		t.Fatal("retired authority became usable again", err)
 	}
+	// a faster policy refresh can project an earlier authority time. retirement
+	// must remain final even after its history has left the bounded replay table.
+	for _, rollback := range []time.Duration{time.Second, time.Hour} {
+		if err := route.consumeVisitorSource(proof, time.Unix(until, 0).Add(-rollback)); !errors.Is(err, visitortoken.ErrVisitorSource) {
+			t.Fatal("clock rollback reopened retired source evidence", rollback, err)
+		}
+	}
 }
 
 func TestVisitorSourceCannotSupplyMissingOrDifferentServerRunIdentity(t *testing.T) {
