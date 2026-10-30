@@ -553,6 +553,10 @@ func newCLIWorkflow(t *testing.T) *cliWorkflow {
 	server.StartTLS()
 	t.Cleanup(server.Close)
 	f.url = server.URL
+	// match control startup before any publisher prepares its first policy view.
+	if err := database.PrepareVisitorSigningKeys(t.Context(), f.url, time.Now()); err != nil {
+		t.Fatal("workflow visitor signing preparation failed")
+	}
 	providerMux := http.NewServeMux()
 	provider := httptest.NewUnstartedServer(providerMux)
 	provider.TLS = f.tls.Clone()
