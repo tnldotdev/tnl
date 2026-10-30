@@ -2,9 +2,15 @@ package main
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 )
 
 func TestIntegrationCLIWorkflowPreparesVisitorPolicyBeforeIssuance(t *testing.T) {
@@ -28,5 +34,52 @@ func TestIntegrationCLIWorkflowPreparesVisitorPolicyBeforeIssuance(t *testing.T)
 	}
 	if !issuer || !key || !emptyRetentions {
 		t.Fatal("workflow startup did not prepare its issuer and verification key independently of visitor issuance")
+	}
+}
+
+func TestIntegrationCLIWorkflowForwardsAuthenticatedVisitorSource(t *testing.T) {
+	if !cliWorkflowInChild(t) {
+		return
+	}
+	f := newCLIWorkflow(t)
+	person := f.state(t, "prepared-visitor")
+	f.loginPerson(t, person)
+	session, err := openTeamSession(t.Context(), remoteFlags{ServerURL: f.url, StateDir: person}, "prepared visitor workflow", io.Discard)
+	if err != nil {
+		t.Fatal("workflow team session failed")
+	}
+	defer session.Close()
+	current, err := session.CurrentWithDomains(t.Context())
+	if err != nil {
+		t.Fatal("workflow team domain selection failed")
+	}
+	hostname, _, _, err := resolve.PublishHostname("", "prepared", "", current)
+	if err != nil {
+		t.Fatal("workflow public hostname selection failed")
+	}
+	var applicationRequests atomic.Int64
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/prepared-visitor" {
+			applicationRequests.Add(1)
+		}
+		_, _ = io.WriteString(w, "prepared visitor reached the app")
+	}))
+	t.Cleanup(target.Close)
+	publisherCtx, stopPublisher := context.WithCancel(t.Context())
+	f.command(t, publisherCtx, stopPublisher, []string{"--no-config", "publish", target.URL, "--name", "prepared", "--anonymous", "--foreground", "--team", session.Identity().PersonalTeamId, "--server", f.url, "--state-dir", person})
+	visitor := &http.Client{Transport: http.DefaultTransport, Timeout: 2 * time.Second}
+	// the real publisher authenticates ingress source evidence before TLS. a
+	// hand-built routing projection cannot substitute for that exact-run proof.
+	workflowWait(t, 25*time.Second, func() bool {
+		response, err := visitor.Get("https://" + hostname + "/prepared-visitor")
+		if err != nil {
+			return false
+		}
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		return err == nil && response.StatusCode == http.StatusOK && string(body) == "prepared visitor reached the app"
+	})
+	if applicationRequests.Load() == 0 {
+		t.Fatal("workflow public visitor did not reach the application through authenticated source evidence")
 	}
 }
