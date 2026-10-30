@@ -74,6 +74,8 @@ type Controller struct {
 	publicRunPrepared publicRunPreparedFunc
 	servingChanged    chan struct{}
 	publicPolicies    map[string]*publicRunPolicy
+	policyCancel      context.CancelFunc
+	policyDone        chan struct{}
 
 	mu                  sync.RWMutex
 	lease               ingressv1.IngressLease
@@ -120,10 +122,22 @@ func NewController(config ControllerConfig) (*Controller, error) {
 }
 
 func (c *Controller) Run(ctx context.Context) error {
-	err := runUntilEitherStops(ctx,
-		func(ctx context.Context) error { return runUntilEitherStops(ctx, c.run, c.watchLease) },
-		c.publicPolicyLoop,
-	)
+	// policy work stops at drain; lease renewal and accounting live until shutdown.
+	policyCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	c.mu.Lock()
+	c.policyCancel, c.policyDone = cancel, done
+	if c.lease.Draining {
+		cancel()
+	}
+	c.mu.Unlock()
+	go func() {
+		defer close(done)
+		_ = c.publicPolicyLoop(policyCtx)
+	}()
+	err := runUntilEitherStops(ctx, c.run, c.watchLease)
+	cancel()
+	<-done
 	c.clearLease()
 	return err
 }
@@ -465,6 +479,18 @@ func (c *Controller) Drain(ctx context.Context, deadline time.Time) error {
 	lease := c.Lease()
 	if lease.IngressLeaseRevision <= 0 || !deadline.After(c.now()) {
 		return errors.New("ingress: active lease and future drain deadline are required")
+	}
+	c.mu.Lock()
+	c.lease.Draining = true
+	cancel, done := c.policyCancel, c.policyDone
+	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		}
 	}
 	updated, err := c.client.DrainIngress(ctx, c.registration.IngressId, ingressv1.IngressDrainRequest{
 		IngressId: c.registration.IngressId, IngressRunId: c.registration.IngressRunId,

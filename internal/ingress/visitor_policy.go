@@ -90,11 +90,11 @@ func (c *Controller) preparePublicPolicy(ctx context.Context, entry ingressv1.In
 		body := run.request
 		body.AfterRevision = after
 		response, err := c.client.ReadIngressVisitorPolicy(call, run.ingressID, body)
-		if err != nil {
-			return c.responseError("prepare ingress visitor policy", err)
-		}
 		if err := call.Err(); err != nil {
 			return err
+		}
+		if err != nil {
+			return c.responseError("prepare ingress visitor policy", err)
 		}
 		if !time.Now().Before(deadline) {
 			return context.DeadlineExceeded
