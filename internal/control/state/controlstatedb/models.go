@@ -1329,15 +1329,17 @@ type ControlServiceHttpBrowserLogin struct {
 }
 
 type ControlServiceHttpBrowserSession struct {
-	HandoffDigest    []byte
-	CookieDigest     []byte
-	ServiceID        string
-	RunIds           []string
-	ControlSessionID string
-	ReturnPath       string
-	HandoffExpiresAt pgtype.Timestamptz
-	ExpiresAt        pgtype.Timestamptz
-	RevokedAt        pgtype.Timestamptz
+	HandoffDigest     []byte
+	CookieDigest      []byte
+	ServiceID         string
+	RunIds            []string
+	ControlSessionID  string
+	RefreshCiphertext []byte
+	StorageKeyID      string
+	ReturnPath        string
+	HandoffExpiresAt  pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
 }
 
 type ControlServiceHttpGrant struct {

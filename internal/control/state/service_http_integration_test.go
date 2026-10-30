@@ -2,14 +2,19 @@ package state
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"errors"
 	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/control/storagekey"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
@@ -194,6 +199,71 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		t.Fatal("handoff replay")
 	}
 	check(a, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, true)
+	t.Run("refresh expired service browser access", func(t *testing.T) {
+		// an idle browser retains its session after the short access token expires.
+		now = now.Add(2 * time.Second)
+		if _, err := d.pool.Exec(t.Context(), `UPDATE control.control_sessions SET access_expires_at=$2 WHERE id=$1`, issued.SessionID, now.Add(-time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		check(a, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, false)
+		unavailable := errors.New("authority unavailable")
+		if _, err := d.RefreshServiceBrowserSession(t.Context(), a.Subject.ID, redemption.CookieSecret, now, func(context.Context, string) (BrowserTokenRotation, error) {
+			return BrowserTokenRotation{}, unavailable
+		}); !errors.Is(err, unavailable) {
+			t.Fatal("refresh lost authority failure", err)
+		}
+		check(a, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, false)
+		var calls atomic.Int32
+		// renewal must survive retiring the key that encrypted its handoff.
+		newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{6}, 32))
+		d.storageKey, err = storagekey.New(newKey, testStorageKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := d.CompleteStorageKeyRotation(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		d.storageKey, err = storagekey.New(newKey, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		refresh := func(ctx context.Context, token string) (BrowserTokenRotation, error) {
+			calls.Add(1)
+			rotated, err := d.RefreshControlSession(ctx, credentials.RefreshToken(token), time.Hour, now)
+			if err != nil {
+				return BrowserTokenRotation{}, err
+			}
+			return BrowserTokenRotation{IdentityID: r.ActorID, AccessToken: rotated.AccessToken.String(), RefreshToken: rotated.RefreshToken.String(), AccessExpiresAt: rotated.AccessExpiresAt}, nil
+		}
+		if _, err := d.RefreshServiceBrowserSession(t.Context(), b.Subject.ID, redemption.CookieSecret, now, refresh); !errors.Is(err, ErrPreviewAccess) || calls.Load() != 0 {
+			t.Fatal("another service refreshed the session", err)
+		}
+		var workers sync.WaitGroup
+		for range 8 {
+			workers.Go(func() {
+				session, err := d.RefreshServiceBrowserSession(t.Context(), a.Subject.ID, redemption.CookieSecret, now, refresh)
+				if err != nil || !session.AccessExpiresAt.After(now) || !session.ExpiresAt.Equal(redemption.ExpiresAt) {
+					t.Error("refresh failed or changed the browser deadline", err)
+				}
+			})
+		}
+		workers.Wait()
+		if calls.Load() != 1 {
+			t.Fatal("concurrent browser requests rotated more than once", calls.Load())
+		}
+		check(a, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, true)
+		// the stored rotated credential must work again, not only the first one.
+		if _, err := d.pool.Exec(t.Context(), `UPDATE control.control_sessions SET access_expires_at=$2 WHERE id=$1`, issued.SessionID, now.Add(-time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.RefreshServiceBrowserSession(t.Context(), a.Subject.ID, redemption.CookieSecret, now, refresh); err != nil || calls.Load() != 2 {
+			t.Fatal("rotated refresh credential was not retained", err)
+		}
+		check(a, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, true)
+		if _, err := d.RefreshServiceBrowserSession(t.Context(), a.Subject.ID, redemption.CookieSecret, redemption.ExpiresAt, refresh); !errors.Is(err, ErrPreviewAccess) || calls.Load() != 2 {
+			t.Fatal("refresh extended the original browser lifetime", err)
+		}
+	})
 	if _, err = d.BrowserSession(t.Context(), a.Subject.ID, redemption.CookieSecret, now); err == nil {
 		t.Fatal("managed browser widened legacy URL scope")
 	}

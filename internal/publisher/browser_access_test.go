@@ -156,11 +156,8 @@ func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testi
 }
 
 func TestBrowserAndShareSessionsReprepareWithoutExpiredVisitorCookie(t *testing.T) {
-	for _, share := range []bool{false, true} {
-		name := "browser"
-		if share {
-			name = "share"
-		}
+	for _, name := range []string{"browser", "share", "share without browser login"} {
+		share := name != "browser"
 		t.Run(name, func(t *testing.T) {
 			var revoked atomic.Bool
 			var unavailable atomic.Bool
@@ -180,7 +177,7 @@ func TestBrowserAndShareSessionsReprepareWithoutExpiredVisitorCookie(t *testing.
 				policy: control.policy, tokens: control.tokens}
 			server, err := NewPublicURLServer(PublicURLServerConfig{Hostname: "route.example", PublicURLID: certificateTestPublicURLID,
 				Handler:       http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
-				BrowserAccess: access, BrowserLoginAvailable: true, VisitorPolicy: control.policy.lease, VisitorTokens: control.tokens})
+				BrowserAccess: access, BrowserLoginAvailable: name != "share without browser login", VisitorPolicy: control.policy.lease, VisitorTokens: control.tokens})
 			if err != nil {
 				t.Fatal(err)
 			}

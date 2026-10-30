@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -135,7 +136,7 @@ func (d *Database) consumeServiceBrowserLogin(ctx context.Context, digest, bindi
 }
 
 func (d *Database) issueServiceBrowserHandoff(ctx context.Context, attempt BrowserLoginAttempt, session BrowserAccessSession, now time.Time) (result BrowserHandoff, retErr error) {
-	if !attempt.Subject.Valid() || len(attempt.ServiceRunIDs) == 0 || !session.ExpiresAt.After(now) {
+	if !attempt.Subject.Valid() || len(attempt.ServiceRunIDs) == 0 || !session.ExpiresAt.After(now) || session.RefreshToken == "" || d.storageKey == nil {
 		return result, ErrPreviewAccess
 	}
 	tx, err := d.pool.Begin(ctx)
@@ -179,7 +180,11 @@ func (d *Database) issueServiceBrowserHandoff(ctx context.Context, attempt Brows
 		return result, err
 	}
 	digest, _ := browserDigest(result.Token)
-	err = q.InsertServiceHTTPBrowserSession(ctx, controlstatedb.InsertServiceHTTPBrowserSessionParams{HandoffDigest: digest, ServiceID: attempt.Subject.ID, RunIds: runs, ControlSessionID: controlSession.ID, ReturnPath: attempt.ReturnPath, HandoffExpiresAt: timestamptz(now.Add(time.Minute)), ExpiresAt: timestamptz(minTime(session.ExpiresAt, now.Add(browserSessionLifetime)))})
+	refresh, err := d.storageKey.Seal(browserContext(digest), []byte(session.RefreshToken))
+	if err != nil {
+		return result, err
+	}
+	err = q.InsertServiceHTTPBrowserSession(ctx, controlstatedb.InsertServiceHTTPBrowserSessionParams{HandoffDigest: digest, ServiceID: attempt.Subject.ID, RunIds: runs, ControlSessionID: controlSession.ID, ReturnPath: attempt.ReturnPath, HandoffExpiresAt: timestamptz(now.Add(time.Minute)), ExpiresAt: timestamptz(minTime(session.ExpiresAt, now.Add(browserSessionLifetime))), RefreshCiphertext: refresh, StorageKeyID: d.storageKey.CurrentID()})
 	if err != nil {
 		return result, err
 	}
@@ -262,6 +267,67 @@ func (d *Database) ServiceBrowserSession(ctx context.Context, auth ServiceHTTPRu
 	}
 	if err != nil {
 		return result, err
+	}
+	return result, tx.Commit(ctx)
+}
+
+// the browser row serializes refresh without locking the parent session that
+// the authority must rotate. contenders release their connection before retrying
+// so they cannot exhaust the authority's pool. service and expiry remain fixed.
+func (d *Database) RefreshServiceBrowserSession(ctx context.Context, service, secret string, now time.Time,
+	refresh func(context.Context, string) (BrowserTokenRotation, error)) (BrowserAccessSession, error) {
+	result, err := retryVisitorPreparation(ctx, now, func(at time.Time) (BrowserAccessSession, error) {
+		return d.refreshServiceBrowserSession(ctx, service, secret, at, refresh)
+	})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr != nil && pgErr.Code == "55P03" {
+		err = errors.Join(ErrVisitorPolicy, err)
+	}
+	return result, err
+}
+
+func (d *Database) refreshServiceBrowserSession(ctx context.Context, service, secret string, now time.Time,
+	refresh func(context.Context, string) (BrowserTokenRotation, error)) (result BrowserAccessSession, retErr error) {
+	digest, err := browserDigest(secret)
+	if err != nil || d.storageKey == nil {
+		return result, ErrPreviewAccess
+	}
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer rollback(ctx, tx, "refresh service browser session", &retErr)()
+	q := controlstatedb.New(tx)
+	row, err := q.LockServiceHTTPBrowserSession(ctx, controlstatedb.LockServiceHTTPBrowserSessionParams{ServiceID: service, CookieDigest: digest, ExpiresAt: timestamptz(now)})
+	if err != nil {
+		return result, publisherLookupError(err, ErrPreviewAccess)
+	}
+	if row.ParentRevokedAt.Valid || !row.RefreshExpiresAt.Time.After(now) {
+		return result, ErrPreviewAccess
+	}
+	result = BrowserAccessSession{IdentityID: row.IdentityID, AccessExpiresAt: row.AccessExpiresAt.Time,
+		ExpiresAt: minTime(row.ExpiresAt.Time, row.RefreshExpiresAt.Time)}
+	if !result.AccessExpiresAt.After(now.Add(30 * time.Second)) {
+		secret, _, err := d.storageKey.Open(row.StorageKeyID, browserContext(row.HandoffDigest), row.RefreshCiphertext)
+		if err != nil {
+			return result, err
+		}
+		rotated, err := refresh(ctx, string(secret))
+		if err != nil {
+			return result, err
+		}
+		principal, err := d.authenticateAccessToken(ctx, q, credentials.AccessToken(rotated.AccessToken), now)
+		if err != nil || principal.SessionID != row.ControlSessionID || principal.IdentityID != row.IdentityID || rotated.IdentityID != row.IdentityID || rotated.RefreshToken == "" || !rotated.AccessExpiresAt.After(now) {
+			return result, ErrPreviewAccess
+		}
+		sealed, err := d.storageKey.Seal(browserContext(row.HandoffDigest), []byte(rotated.RefreshToken))
+		if err != nil {
+			return result, err
+		}
+		if err := q.RotateServiceHTTPBrowserSession(ctx, controlstatedb.RotateServiceHTTPBrowserSessionParams{HandoffDigest: row.HandoffDigest, RefreshCiphertext: sealed, StorageKeyID: d.storageKey.CurrentID()}); err != nil {
+			return result, err
+		}
+		result.AccessExpiresAt = rotated.AccessExpiresAt
 	}
 	return result, tx.Commit(ctx)
 }

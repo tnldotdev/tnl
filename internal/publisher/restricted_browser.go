@@ -15,7 +15,7 @@ func markBrowserLoginAttempt(w http.ResponseWriter) {
 
 // redirectRestricted starts sign-in only for an actual top-level navigation.
 // the short-lived host cookie prevents repeated OIDC/return loops after denial.
-func (a *browserAccess) redirectRestricted(w http.ResponseWriter, r *http.Request) bool {
+func (a *browserAccess) redirectRestricted(w http.ResponseWriter, r *http.Request, loginAvailable bool) bool {
 	if r.TLS != nil && len(r.TLS.PeerCertificates) != 0 {
 		return false
 	}
@@ -32,6 +32,9 @@ func (a *browserAccess) redirectRestricted(w http.ResponseWriter, r *http.Reques
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		http.Redirect(w, r, "/__tnl/team/renew?return="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
 		return true
+	}
+	if !loginAvailable {
+		return false
 	}
 	if _, err := r.Cookie(browserLoginAttemptCookieName); err == nil {
 		return false

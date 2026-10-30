@@ -70,6 +70,7 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.ingress_transport_certificates WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.applied_projects WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.service_http_browser_logins WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.service_http_browser_sessions WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.browser_login_attempts WHERE verifier_storage_key_id=$1) +
 			(SELECT count(*) FROM control.browser_access_sessions WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.browser_access_handoffs WHERE storage_key_id=$1) +
@@ -350,6 +351,9 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		{`SELECT ctid::text, encode(state_digest,'hex'), verifier_ciphertext FROM control.service_http_browser_logins
 		  WHERE storage_key_id=$1 ORDER BY state_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"verifier_ciphertext", "storage_key_id", "control.service_http_browser_logins", func(id string) string { return "browser-access:" + id }},
+		{`SELECT ctid::text, encode(handoff_digest,'hex'), refresh_ciphertext FROM control.service_http_browser_sessions
+		  WHERE storage_key_id=$1 ORDER BY handoff_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"refresh_ciphertext", "storage_key_id", "control.service_http_browser_sessions", func(id string) string { return "browser-access:" + id }},
 		{`SELECT ctid::text, team_id || '/' || project_key, configuration_ciphertext FROM control.applied_projects
 		  WHERE storage_key_id=$1 ORDER BY team_id,project_key FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"configuration_ciphertext", "storage_key_id", "control.applied_projects", func(id string) string { return "applied-project/" + id }},

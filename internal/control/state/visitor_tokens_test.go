@@ -30,6 +30,7 @@ func TestVisitorPreparationRetryErrorClassification(t *testing.T) {
 		{"real serialization before nil PostgreSQL match", errors.Join(serialization, typedNil), 8},
 		{"serialization", serialization, 8},
 		{"wrapped deadlock", fmt.Errorf("wrapped: %w", deadlock), 8},
+		{"busy row", &pgconn.PgError{Code: "55P03"}, 8},
 		{"unrelated PostgreSQL", &pgconn.PgError{Code: "23505"}, 1},
 		{"unrelated text", errors.New("40001 40P01"), 1},
 	} {

@@ -96,18 +96,20 @@ func (q *Queries) InsertServiceHTTPBrowserLogin(ctx context.Context, arg InsertS
 }
 
 const insertServiceHTTPBrowserSession = `-- name: InsertServiceHTTPBrowserSession :exec
-INSERT INTO control.service_http_browser_sessions(handoff_digest,service_id,run_ids,control_session_id,return_path,handoff_expires_at,expires_at)
-VALUES($1,$2,$3,$4,$5,$6,$7)
+INSERT INTO control.service_http_browser_sessions(handoff_digest,service_id,run_ids,control_session_id,return_path,handoff_expires_at,expires_at,refresh_ciphertext,storage_key_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
 `
 
 type InsertServiceHTTPBrowserSessionParams struct {
-	HandoffDigest    []byte
-	ServiceID        string
-	RunIds           []string
-	ControlSessionID string
-	ReturnPath       string
-	HandoffExpiresAt pgtype.Timestamptz
-	ExpiresAt        pgtype.Timestamptz
+	HandoffDigest     []byte
+	ServiceID         string
+	RunIds            []string
+	ControlSessionID  string
+	ReturnPath        string
+	HandoffExpiresAt  pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
+	RefreshCiphertext []byte
+	StorageKeyID      string
 }
 
 func (q *Queries) InsertServiceHTTPBrowserSession(ctx context.Context, arg InsertServiceHTTPBrowserSessionParams) error {
@@ -119,6 +121,8 @@ func (q *Queries) InsertServiceHTTPBrowserSession(ctx context.Context, arg Inser
 		arg.ReturnPath,
 		arg.HandoffExpiresAt,
 		arg.ExpiresAt,
+		arg.RefreshCiphertext,
+		arg.StorageKeyID,
 	)
 	return err
 }
@@ -186,6 +190,62 @@ func (q *Queries) ListServiceHTTPGrants(ctx context.Context, serviceID string) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockServiceHTTPBrowserSession = `-- name: LockServiceHTTPBrowserSession :one
+SELECT session.handoff_digest, session.cookie_digest, session.service_id, session.run_ids, session.control_session_id, session.refresh_ciphertext, session.storage_key_id, session.return_path, session.handoff_expires_at, session.expires_at, session.revoked_at, parent.identity_id, parent.access_expires_at, parent.refresh_expires_at,
+    parent.revoked_at AS parent_revoked_at
+FROM control.service_http_browser_sessions session
+JOIN control.control_sessions parent ON parent.id=session.control_session_id
+WHERE session.service_id=$1 AND session.cookie_digest=$2 AND session.revoked_at IS NULL AND session.expires_at>$3
+FOR UPDATE OF session NOWAIT
+`
+
+type LockServiceHTTPBrowserSessionParams struct {
+	ServiceID    string
+	CookieDigest []byte
+	ExpiresAt    pgtype.Timestamptz
+}
+
+type LockServiceHTTPBrowserSessionRow struct {
+	HandoffDigest     []byte
+	CookieDigest      []byte
+	ServiceID         string
+	RunIds            []string
+	ControlSessionID  string
+	RefreshCiphertext []byte
+	StorageKeyID      string
+	ReturnPath        string
+	HandoffExpiresAt  pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
+	IdentityID        string
+	AccessExpiresAt   pgtype.Timestamptz
+	RefreshExpiresAt  pgtype.Timestamptz
+	ParentRevokedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) LockServiceHTTPBrowserSession(ctx context.Context, arg LockServiceHTTPBrowserSessionParams) (LockServiceHTTPBrowserSessionRow, error) {
+	row := q.db.QueryRow(ctx, lockServiceHTTPBrowserSession, arg.ServiceID, arg.CookieDigest, arg.ExpiresAt)
+	var i LockServiceHTTPBrowserSessionRow
+	err := row.Scan(
+		&i.HandoffDigest,
+		&i.CookieDigest,
+		&i.ServiceID,
+		&i.RunIds,
+		&i.ControlSessionID,
+		&i.RefreshCiphertext,
+		&i.StorageKeyID,
+		&i.ReturnPath,
+		&i.HandoffExpiresAt,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.IdentityID,
+		&i.AccessExpiresAt,
+		&i.RefreshExpiresAt,
+		&i.ParentRevokedAt,
+	)
+	return i, err
 }
 
 const redeemServiceHTTPBrowserSession = `-- name: RedeemServiceHTTPBrowserSession :one
@@ -262,6 +322,22 @@ func (q *Queries) RevokeServiceHTTPGrant(ctx context.Context, arg RevokeServiceH
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const rotateServiceHTTPBrowserSession = `-- name: RotateServiceHTTPBrowserSession :exec
+UPDATE control.service_http_browser_sessions SET refresh_ciphertext=$2,storage_key_id=$3
+WHERE handoff_digest=$1
+`
+
+type RotateServiceHTTPBrowserSessionParams struct {
+	HandoffDigest     []byte
+	RefreshCiphertext []byte
+	StorageKeyID      string
+}
+
+func (q *Queries) RotateServiceHTTPBrowserSession(ctx context.Context, arg RotateServiceHTTPBrowserSessionParams) error {
+	_, err := q.db.Exec(ctx, rotateServiceHTTPBrowserSession, arg.HandoffDigest, arg.RefreshCiphertext, arg.StorageKeyID)
+	return err
 }
 
 const serviceDirectBinding = `-- name: ServiceDirectBinding :one

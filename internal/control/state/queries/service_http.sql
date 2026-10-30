@@ -18,8 +18,20 @@ AND consumed_at IS NULL AND expires_at>sqlc.arg(now)
 RETURNING *;
 
 -- name: InsertServiceHTTPBrowserSession :exec
-INSERT INTO control.service_http_browser_sessions(handoff_digest,service_id,run_ids,control_session_id,return_path,handoff_expires_at,expires_at)
-VALUES($1,$2,$3,$4,$5,$6,$7);
+INSERT INTO control.service_http_browser_sessions(handoff_digest,service_id,run_ids,control_session_id,return_path,handoff_expires_at,expires_at,refresh_ciphertext,storage_key_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9);
+
+-- name: LockServiceHTTPBrowserSession :one
+SELECT session.*, parent.identity_id, parent.access_expires_at, parent.refresh_expires_at,
+    parent.revoked_at AS parent_revoked_at
+FROM control.service_http_browser_sessions session
+JOIN control.control_sessions parent ON parent.id=session.control_session_id
+WHERE session.service_id=$1 AND session.cookie_digest=$2 AND session.revoked_at IS NULL AND session.expires_at>$3
+FOR UPDATE OF session NOWAIT;
+
+-- name: RotateServiceHTTPBrowserSession :exec
+UPDATE control.service_http_browser_sessions SET refresh_ciphertext=$2,storage_key_id=$3
+WHERE handoff_digest=$1;
 
 -- name: RedeemServiceHTTPBrowserSession :one
 UPDATE control.service_http_browser_sessions SET cookie_digest=sqlc.arg(cookie_digest)

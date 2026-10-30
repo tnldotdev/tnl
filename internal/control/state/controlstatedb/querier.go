@@ -457,6 +457,7 @@ type Querier interface {
 	LockRelayServicesForPlacement(ctx context.Context) ([]string, error)
 	LockService(ctx context.Context, id string) (ControlService, error)
 	LockServiceAuditClock(ctx context.Context, teamID string) error
+	LockServiceHTTPBrowserSession(ctx context.Context, arg LockServiceHTTPBrowserSessionParams) (LockServiceHTTPBrowserSessionRow, error)
 	LockServiceRoutingClock(ctx context.Context) (int64, error)
 	LockServiceRun(ctx context.Context, arg LockServiceRunParams) (ControlServiceRun, error)
 	LockTeamActorContext(ctx context.Context, arg LockTeamActorContextParams) (LockTeamActorContextRow, error)
@@ -579,6 +580,7 @@ type Querier interface {
 	RotateControlSessionRetrySecret(ctx context.Context, arg RotateControlSessionRetrySecretParams) error
 	RotateRelayCertificateOrderPrivateKey(ctx context.Context, arg RotateRelayCertificateOrderPrivateKeyParams) error
 	RotateRelayServicePrivateKey(ctx context.Context, arg RotateRelayServicePrivateKeyParams) error
+	RotateServiceHTTPBrowserSession(ctx context.Context, arg RotateServiceHTTPBrowserSessionParams) error
 	SaveACMEAuthorizationWork(ctx context.Context, arg SaveACMEAuthorizationWorkParams) (ControlAcmeAuthorization, error)
 	SaveACMEOrderWork(ctx context.Context, arg SaveACMEOrderWorkParams) (ControlAcmeOrder, error)
 	SaveDNSAuthorityWork(ctx context.Context, arg SaveDNSAuthorityWorkParams) (ControlDnsAuthority, error)

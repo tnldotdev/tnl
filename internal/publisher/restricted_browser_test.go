@@ -8,7 +8,7 @@ import (
 
 func TestRestrictedBrowserRedirectRequiresTopLevelNavigationAndStopsLoops(t *testing.T) {
 	a := &browserAccess{}
-	for _, kind := range []string{"navigation", "fetch", "iframe", "post", "loop", "encoded redirect", "websocket"} {
+	for _, kind := range []string{"navigation", "login disabled", "fetch", "iframe", "post", "loop", "encoded redirect", "websocket"} {
 		t.Run(kind, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, "https://web.example.test/settings?tab=profile", nil)
 			r.Header.Set("Sec-Fetch-Mode", "navigate")
@@ -28,7 +28,7 @@ func TestRestrictedBrowserRedirectRequiresTopLevelNavigationAndStopsLoops(t *tes
 				r.Header.Set("Upgrade", "websocket")
 			}
 			w := httptest.NewRecorder()
-			redirected := a.redirectRestricted(w, r)
+			redirected := a.redirectRestricted(w, r, kind != "login disabled")
 			if redirected != (kind == "navigation") {
 				t.Fatalf("redirected=%t status=%d", redirected, w.Code)
 			}
