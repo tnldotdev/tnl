@@ -23,9 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
-	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -387,13 +385,6 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		httpDone:           make(chan error, 1),
 		certificateExpired: make(chan struct{}),
 		streams:            make(map[net.Conn]*publicVisitorAdmission),
-	}
-	transportPromote := tunnel.NewVisitorPromoter(func(v Visitor) tunnelv1.VisitorStreamHeader { return v.Header }, route.resolvePublisherSession)
-	route.defaultPromote = func(ctx context.Context, visitor Visitor) error {
-		if route.resolvePublisherSession(visitor.Header.PublisherConnectionID) == nil {
-			return &tunnel.ProtocolError{Code: tunnelv1.Unavailable}
-		}
-		return transportPromote(ctx, visitor)
 	}
 	route.tls.GetCertificate = route.getCertificate
 	if len(config.Certificate.Certificate) != 0 || config.Certificate.PrivateKey != nil {

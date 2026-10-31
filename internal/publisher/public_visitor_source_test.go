@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -163,7 +164,7 @@ func TestVisitorSourceCannotBeRewrittenOrReplayAcrossRelayConnectionsAfterReleas
 		ref := f.refs[index]
 		header.ProtocolVersion, header.Kind = tunnelv1.Version, tunnelv1.VisitorStream
 		header.PublisherConnectionID, header.ConnectionAssignmentRevision = ref.PublisherConnectionID, ref.ConnectionAssignmentRevision
-		stream, err := f.relays[index].OpenVisitorStream(f.ctx, header)
+		stream, err := f.relays[index].OpenVisitorStream(f.ctx, header, tunnel.ReturnEvents{})
 		if err != nil {
 			return nil, err
 		}

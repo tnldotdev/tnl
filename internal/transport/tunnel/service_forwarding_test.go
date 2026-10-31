@@ -75,11 +75,11 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 		wrote := make(chan error, 1)
 		go func() { wrote <- tunnelv1.WriteServiceForwardingHeader(stream, changed) }()
 		type outcome struct {
-			response tunnelv1.StreamResponse
+			response tunnelv1.ReturnFrame
 			err      error
 		}
 		answered := make(chan outcome, 1)
-		go func() { value, err := tunnelv1.ReadStreamResponse(stream); answered <- outcome{value, err} }()
+		go func() { value, err := tunnelv1.ReadReturnFrame(stream); answered <- outcome{value, err} }()
 		if _, err := publisher.AcceptServiceForwardingStream(ctx); err == nil {
 			t.Fatal("wrong private run reached publisher")
 		}
@@ -87,7 +87,7 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 			t.Fatal(err)
 		}
 		result := <-answered
-		if result.err != nil || result.response.Type != tunnelv1.StreamRejected {
+		if result.err != nil || result.response.Kind != tunnelv1.ReturnRejected {
 			t.Fatalf("wrong relay assignment was acknowledged: %+v %v", result.response, result.err)
 		}
 		_ = stream.Close()
@@ -100,11 +100,11 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 	wrote := make(chan error, 1)
 	go func() { wrote <- tunnelv1.WriteServiceForwardingHeader(stream, header) }()
 	type outcome struct {
-		response tunnelv1.StreamResponse
+		response tunnelv1.ReturnFrame
 		err      error
 	}
 	answered := make(chan outcome, 1)
-	go func() { value, err := tunnelv1.ReadStreamResponse(stream); answered <- outcome{value, err} }()
+	go func() { value, err := tunnelv1.ReadReturnFrame(stream); answered <- outcome{value, err} }()
 	incoming, err := publisher.AcceptServiceForwardingStream(ctx)
 	if err != nil || incoming.Header.PublisherConnectionID != ref.PublisherConnectionID {
 		t.Fatalf("matching private stream was rejected: %v", err)
@@ -116,7 +116,7 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 		t.Fatal(err)
 	}
 	result := <-answered
-	if result.err != nil || result.response.Type != tunnelv1.StreamAccepted {
+	if result.err != nil || result.response.Kind != tunnelv1.ReturnAccepted {
 		t.Fatalf("matching private stream not acknowledged: %+v %v", result.response, result.err)
 	}
 }

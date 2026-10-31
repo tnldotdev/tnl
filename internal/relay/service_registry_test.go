@@ -210,7 +210,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		if err != nil {
 			return err
 		}
-		return forwarder.forward(ctx, incoming, nil)
+		return forwarder.forward(ctx, incoming)
 	})
 	publisherDone := relayWorker(t, func() { _ = publisher.Close() }, func() error {
 		incoming, err := publisher.AcceptServiceForwardingStream(ctx)
@@ -252,7 +252,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		if err != nil {
 			return err
 		}
-		return forwarder.forward(ctx, incoming, nil)
+		return forwarder.forward(ctx, incoming)
 	})
 	if _, err := ingress.OpenServiceForwardingStream(ctx, header); err == nil {
 		t.Fatal("stale private assignment admitted")

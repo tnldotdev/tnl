@@ -376,7 +376,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 		PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber,
 		PublisherConnectionID:        ref.PublisherConnectionID,
 		ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
-	})
+	}, tunnel.ReturnEvents{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,8 +393,8 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	if _, err := malformed.Write([]byte{0, 0, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
-	badResponse, err := tunnelv1.ReadStreamResponse(malformed)
-	if err != nil || badResponse.Type != tunnelv1.StreamRejected || badResponse.Code != tunnelv1.InvalidMessage {
+	badResponse, err := tunnelv1.ReadReturnFrame(malformed)
+	if err != nil || badResponse.Kind != tunnelv1.ReturnRejected || badResponse.Code != tunnelv1.InvalidMessage {
 		t.Fatalf("malformed stream response = %+v, %v", badResponse, err)
 	}
 	if err := stream.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
@@ -559,7 +559,7 @@ func openHTTPTestRouteServer(route *PublicURLServer, handled chan struct{}) (net
 	}
 	streamHeader := testPublicStreamHeader(route, tunnelv1.VisitorStreamHeader{})
 	go func() {
-		route.handleVisitor(route.life, a, streamHeader)
+		route.handleVisitor(route.life, a, streamHeader, nil, nil)
 		close(handled)
 	}()
 	header, err := encodeTestPublicMetadata(route, streamHeader, proxyproto.Header{

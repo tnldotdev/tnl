@@ -6,9 +6,6 @@ import (
 	"io"
 	"net"
 	"sync"
-	"syscall"
-
-	quic "github.com/quic-go/quic-go"
 )
 
 const bufferSize = 32 << 10
@@ -25,7 +22,8 @@ type Result struct {
 
 // Copy waits for both directions and half-closes each destination when supported.
 // the caller must close or set deadlines on the connections to cancel the copy.
-// an unexpected error in either direction closes both connections.
+// a copy or supported half-close failure closes both connections and retains
+// both copy causes and cleanup failures.
 func Copy(left, right net.Conn) (Result, error) {
 	return CopyObserved(left, right, nil, nil)
 }
@@ -40,7 +38,6 @@ func CopyObserved(
 		leftToRight bool
 		bytes       int64
 		err         error
-		stopOther   bool
 	}
 	results := make(chan copyResult, 2)
 	copyDirection := func(destination, source net.Conn, leftToRight bool, observe func(int64)) {
@@ -51,23 +48,29 @@ func CopyObserved(
 		}
 		count, err := io.CopyBuffer(writer, source, *buffer)
 		buffers.Put(buffer)
-		// report a reset but do not treat it as a half-close. the other direction
-		// may wait forever for a peer that has gone away.
-		stopOther := err != nil && !errors.Is(err, io.EOF)
+		// io.Copy consumes a clean io.EOF. a non-nil error that wraps EOF can
+		// also carry a session reset; it is not permission to keep copying.
 		if closer, ok := destination.(interface{ CloseWrite() error }); err == nil && ok {
-			err = errors.Join(err, closer.CloseWrite())
+			err = closer.CloseWrite()
+			if err == errors.ErrUnsupported {
+				// only an exact unsupported result means no half-close capability.
+				err = nil
+			}
 		}
-		results <- copyResult{leftToRight: leftToRight, bytes: count, err: normalize(err), stopOther: stopOther}
+		results <- copyResult{leftToRight: leftToRight, bytes: count, err: err}
 	}
 	go copyDirection(right, left, true, onLeftToRight)
 	go copyDirection(left, right, false, onRightToLeft)
 
 	first := <-results
-	if first.stopOther || first.err != nil {
-		_ = left.Close()
-		_ = right.Close()
+	var cleanupErr error
+	if first.err != nil {
+		cleanupErr = errors.Join(left.Close(), right.Close())
 	}
 	second := <-results
+	if first.err == nil && second.err != nil {
+		cleanupErr = errors.Join(left.Close(), right.Close())
+	}
 	result := Result{}
 	for _, copied := range []copyResult{first, second} {
 		if copied.leftToRight {
@@ -76,7 +79,7 @@ func CopyObserved(
 			result.RightToLeft = copied.bytes
 		}
 	}
-	return result, errors.Join(first.err, second.err)
+	return result, errors.Join(first.err, second.err, cleanupErr)
 }
 
 type observedWriter struct {
@@ -90,18 +93,4 @@ func (w observedWriter) Write(data []byte) (int, error) {
 		w.observe(int64(written))
 	}
 	return written, err
-}
-
-func normalize(err error) error {
-	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, errors.ErrUnsupported) ||
-		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ENOTCONN) {
-		return nil
-	}
-	var canceled *quic.StreamError
-	if errors.As(err, &canceled) && canceled.ErrorCode == 0 {
-		// peer stream cancellation is normal during visitor close, not a
-		// forwarding failure to log for every connection.
-		return nil
-	}
-	return err
 }

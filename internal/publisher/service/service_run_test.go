@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -86,7 +87,11 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 				defer client.Close()
 				_ = client.SetDeadline(time.Now().Add(5 * time.Second))
 				done := make(chan error, 1)
-				go func() { defer server.Close(); done <- bound.serveBody(ctx, ref, server, privateHeader(t, ref)) }()
+				var ended atomic.Int32
+				go func() {
+					defer server.Close()
+					done <- bound.serveBody(ctx, ref, server, privateHeader(t, ref), func(context.Context) error { ended.Add(1); return nil })
+				}()
 				proxy, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
 				if _, err := client.Write(proxy); err != nil {
 					t.Fatal(err)
@@ -115,6 +120,9 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 				case <-done:
 				case <-ctx.Done():
 					t.Fatal("connector publisher did not join")
+				}
+				if ended.Load() != 1 {
+					t.Fatal("service TLS close did not end its outer return stream exactly once", ended.Load())
 				}
 				if p.managedPublic != public || p.managedHostname != verification.ServerName {
 					t.Fatal("connector changed approved public endpoint metadata")
@@ -216,7 +224,7 @@ func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {
 			defer server.Close()
 			_ = client.SetDeadline(time.Now().Add(time.Second))
 			done := make(chan error, 1)
-			go func() { defer server.Close(); done <- bound.serveBody(t.Context(), ref, server, header) }()
+			go func() { defer server.Close(); done <- bound.serveBody(t.Context(), ref, server, header, nil) }()
 			proxy, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
 			_, _ = client.Write(proxy)
 			secure := tls.Client(client, verification)

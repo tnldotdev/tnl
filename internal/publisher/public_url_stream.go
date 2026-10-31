@@ -98,7 +98,7 @@ func (r *PublicURLServer) acceptVisitorForSession(ctx context.Context, incoming 
 		admission.retire()
 		return nil
 	}
-	go r.handleVisitor(incoming.Context(), admission, incoming.Header)
+	go r.handleVisitor(incoming.Context(), admission, incoming.Header, incoming.Promote, incoming.CloseWrite)
 	return nil
 }
 
@@ -117,7 +117,7 @@ func (r *PublicURLServer) validateIncomingPublicURL(
 	return ""
 }
 
-func (r *PublicURLServer) handleVisitor(parent context.Context, admission *publicVisitorAdmission, streamHeader tunnelv1.VisitorStreamHeader) {
+func (r *PublicURLServer) handleVisitor(parent context.Context, admission *publicVisitorAdmission, streamHeader tunnelv1.VisitorStreamHeader, promoteStream func(context.Context) error, endStream func(context.Context) error) {
 	defer admission.retire()
 	connection := admission.connection
 	denied := streamHeader.AccessPending
@@ -147,12 +147,23 @@ func (r *PublicURLServer) handleVisitor(parent context.Context, admission *publi
 		return
 	}
 	promote := r.promote
-	if promote == nil && streamHeader.PublisherConnectionID != "" {
-		promote = r.defaultPromote
+	if promote == nil && streamHeader.PublisherConnectionID != "" && denied {
+		promote = func(ctx context.Context, visitor Visitor) error {
+			if err := context.Cause(ctx); err != nil {
+				return err
+			}
+			if r.resolvePublisherSession(visitor.Header.PublisherConnectionID) != admission.live.session {
+				return &tunnel.ProtocolError{Code: tunnelv1.Unavailable}
+			}
+			return promoteStream(ctx)
+		}
 	}
 	session := &visitorSession{visitor: Visitor{Run: r.run, Header: streamHeader, Source: header.Source, Destination: header.Destination}, promote: promote, guard: r.guard, life: life, cancel: cancel, capacity: admission}
 	defer session.close()
 	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: replay}, header: header, denied: denied, session: session}
+	if endStream != nil {
+		metadata.endStream = func() error { return endStream(life) }
+	}
 	tracked := newDoneConn(metadata)
 	secured := tls.Server(tracked, r.tls)
 	ctx, cancelHandshake := context.WithTimeout(life, 10*time.Second)

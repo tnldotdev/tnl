@@ -465,6 +465,8 @@ func TestPublicHTTPGuardRetainsPreparedPolicyAge(t *testing.T) {
 		control.mu.Lock()
 		revoked = true
 		control.mu.Unlock()
+		// finish any successful in-flight refresh before capturing its deadline.
+		synctest.Wait()
 		confirmed, _, _ := control.policy.lease.Current()
 		time.Sleep(time.Until(confirmed.ValidUntil) - 2*time.Second)
 		stream := request("stream")

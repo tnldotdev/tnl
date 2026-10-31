@@ -108,8 +108,6 @@ type StreamKind string
 const (
 	VisitorStream            StreamKind = "visitor"
 	InternalForwardingStream StreamKind = "internal_forward"
-	PublisherAdmissionStream StreamKind = "publisher_admission"
-	IngressAdmissionStream   StreamKind = "ingress_admission"
 	ConnectorVisitorStream   StreamKind = "connector_visitor"
 	ServiceForwardingStream  StreamKind = "service_forward"
 )
@@ -158,7 +156,7 @@ const (
 	StreamRejected StreamResponseType = "rejected"
 )
 
-// StreamResponse is sent before PROXY v2 metadata or visitor bytes are written.
+// StreamResponse is a local admission result; ReturnFrame owns its wire form.
 type StreamResponse struct {
 	Type StreamResponseType `json:"type"`
 	Code ErrorCode          `json:"code,omitempty"`
@@ -216,24 +214,6 @@ func ReadInternalForwardingHeader(reader io.Reader) (InternalForwardingHeader, e
 		return InternalForwardingHeader{}, err
 	}
 	return header, nil
-}
-
-func WriteStreamResponse(writer io.Writer, response StreamResponse) error {
-	if err := response.Validate(); err != nil {
-		return err
-	}
-	return writeJSONFrame(writer, response, MaxHeaderBytes)
-}
-
-func ReadStreamResponse(reader io.Reader) (StreamResponse, error) {
-	var response StreamResponse
-	if err := readJSONFrame(reader, &response, MaxHeaderBytes); err != nil {
-		return StreamResponse{}, err
-	}
-	if err := response.Validate(); err != nil {
-		return StreamResponse{}, err
-	}
-	return response, nil
 }
 
 func (m Message) Validate() error {

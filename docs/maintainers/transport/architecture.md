@@ -42,10 +42,19 @@ target: independently selected HTTP/TCP/database transport
 
 Ingress creates one PROXY v2 header carrying the original source/destination;
 relay preserves it and the TLS bytes. On restricted URLs, bounded pending capacity
-lasts until publisher authorization. The promotion sideband binds visitor, run,
-assignment, and connected relay. Ingress acknowledges ordinary capacity before
-target bytes. Promotion validates the current claim even when there is no spare
-new-stream capacity: the admitted visitor already owns its stream.
+lasts until publisher authorization. Acceptance, rejection, promotion, response
+data, and half-close use bounded return frames on that same visitor stream.
+Promotion binds visitor, run, assignment, and connected relay; ingress checks
+current policy and ordinary capacity before releasing the following response
+bytes. It is a one-way notification, not a second authorization RPC. Promotion
+validates the current claim even when there is no spare new-stream capacity:
+the admitted visitor already owns its stream.
+
+the stream owner bounds acceptance, rejection, and promotion from writer
+acquisition through the last frame byte. cancellation resets only that stream,
+joins its interrupt callback, and preserves the context cause. a pre-canceled
+decision does no I/O. return-data writers share the same serialization; decision
+writers never borrow or clear each other's deadlines.
 
 Ingress may try another connected relay before the first visitor byte is sent.
 A rejected open, failed PROXY-header write, or zero-byte ClientHello write can
