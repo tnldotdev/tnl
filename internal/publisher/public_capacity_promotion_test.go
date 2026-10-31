@@ -93,7 +93,11 @@ func TestPublicCapacityPendingDeadlineRetainsPermitUntilRetirement(t *testing.T)
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		route := &PublicURLServer{streams: make(map[net.Conn]*publicVisitorAdmission), streamCapacity: 1}
+		route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", StreamCapacity: 1, Handler: http.NotFoundHandler()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer route.Close()
 		live := &livePublisherSession{ctx: ctx, ref: tunnelv1.PublisherConnectionRef{RelayServiceID: "relay-a"}}
 		route.sessions[0] = live
 		connection, peer := net.Pipe()
@@ -103,16 +107,20 @@ func TestPublicCapacityPendingDeadlineRetainsPermitUntilRetirement(t *testing.T)
 			t.Fatal(code)
 		}
 		defer a.retire()
+		header, metadata := sourceMetadataFixture(t, route)
+		if err := a.authenticateSource(header, metadata); err != nil {
+			t.Fatal(err)
+		}
 		time.Sleep(visitorPromotionTimeout)
 		<-a.connection.done
 		if err := a.commit(); err == nil {
 			t.Fatal("expired setup committed authorization")
 		}
-		if route.pendingStreams != 1 || route.authorizedStreams != 0 {
+		if route.pendingStreams != 1 || route.authorizedStreams != 0 || route.pendingSources[a.source] != 1 {
 			t.Fatal("deadline released a permit before worker retirement")
 		}
 		a.retire()
-		if route.pendingStreams != 0 || len(route.pendingRelays) != 0 {
+		if route.pendingStreams != 0 || len(route.pendingRelays) != 0 || len(route.pendingSources) != 0 {
 			t.Fatal("retired setup retained capacity")
 		}
 	})

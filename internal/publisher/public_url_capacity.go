@@ -2,16 +2,21 @@ package publisher
 
 import (
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// pending setups are bounded per trusted relay service,
+// pending setups are bounded per trusted relay service and verified source,
 // independently of the run's authorized visitor connections.
-const PendingSetupsPerRelay = 4
+const PendingSetupsPerRelay = 16
+const PendingSetupsPerSource = 8
 
 // publicVisitorAdmission belongs to a connection, not an HTTP request. the run
 // owns all counters, including retiring sessions from the same relay service.
@@ -20,8 +25,9 @@ type publicVisitorAdmission struct {
 	live       *livePublisherSession
 	stream     net.Conn
 	connection *doneConn
-	admitted   bool // protected by run.mu
-	stopped    bool // protected by run.mu
+	admitted   bool         // protected by run.mu
+	stopped    bool         // protected by run.mu
+	source     netip.Prefix // protected by run.mu
 	timer      *time.Timer
 	timerDone  chan struct{}
 	expiresAt  time.Time
@@ -55,6 +61,33 @@ func (r *PublicURLServer) reservePublicSetup(live *livePublisherSession, stream 
 	return a, ""
 }
 
+// charge a source only after verifying ingress's signed metadata. the run owns
+// this allowance across both relays, including their retiring connections.
+func (a *publicVisitorAdmission) authenticateSource(stream tunnelv1.VisitorStreamHeader, header proxyproto.Header) error {
+	r := a.run
+	if err := r.authenticateVisitorSource(stream, header); err != nil {
+		return err
+	}
+	source := trafficlimits.SourceNetwork(header.Source.Addr())
+	if !source.IsValid() {
+		return visitortoken.ErrVisitorSource
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !a.currentLocked() || a.admitted || a.source.IsValid() {
+		return net.ErrClosed
+	}
+	if r.draining || !time.Now().Before(a.expiresAt) || r.pendingSources[source] >= PendingSetupsPerSource {
+		return &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
+	}
+	if r.pendingSources == nil {
+		r.pendingSources = make(map[netip.Prefix]int)
+	}
+	r.pendingSources[source]++
+	a.source = source
+	return nil
+}
+
 func (a *publicVisitorAdmission) leavePendingLocked() {
 	r := a.run
 	domain := a.live.ref.RelayServiceID
@@ -62,6 +95,12 @@ func (a *publicVisitorAdmission) leavePendingLocked() {
 	r.pendingRelays[domain]--
 	if r.pendingRelays[domain] == 0 {
 		delete(r.pendingRelays, domain)
+	}
+	if a.source.IsValid() {
+		r.pendingSources[a.source]--
+		if r.pendingSources[a.source] == 0 {
+			delete(r.pendingSources, a.source)
+		}
 	}
 }
 

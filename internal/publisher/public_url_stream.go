@@ -142,7 +142,7 @@ func (r *PublicURLServer) handleVisitor(parent context.Context, admission *publi
 		visitorErr = err
 		return
 	}
-	if err := r.authenticateVisitorSource(streamHeader, header); err != nil {
+	if err := admission.authenticateSource(streamHeader, header); err != nil {
 		visitorErr = err
 		return
 	}

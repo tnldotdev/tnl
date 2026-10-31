@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -44,7 +45,7 @@ type retiringPublicVisitor struct {
 	cancel    context.CancelFunc
 }
 
-func openRetiringPublicVisitor(t *testing.T, f *publicCapacityFixture) retiringPublicVisitor {
+func openRetiringPublicVisitor(t *testing.T, f *publicCapacityFixture, sources ...netip.Addr) retiringPublicVisitor {
 	t.Helper()
 	ref := f.refs[0]
 	ref.ConnectionAssignmentRevision++
@@ -78,7 +79,11 @@ func openRetiringPublicVisitor(t *testing.T, f *publicCapacityFixture) retiringP
 		accepted <- err
 		close(accepted)
 	}()
-	stream, err := f.open(0, false)
+	var source netip.Addr
+	if len(sources) != 0 {
+		source = sources[0]
+	}
+	stream, err := f.openFrom(0, false, source)
 	if err != nil {
 		t.Fatal(err)
 	}
