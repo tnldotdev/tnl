@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"syscall"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
 
-func copyYamuxPair(t *testing.T) (muxsession.Session, muxsession.Session) {
+func copyYamuxPair(t *testing.T, resetOnClose bool) (muxsession.Session, muxsession.Session) {
 	t.Helper()
 	ca, certificate := testutil.TLSCertificate(t, []string{"relay.test"}, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
 	roots := x509.NewCertPool()
@@ -61,7 +62,17 @@ func copyYamuxPair(t *testing.T) (muxsession.Session, muxsession.Session) {
 			t.Error("TLS/yamux fixture did not join")
 		}
 	})
-	client, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: roots}}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
+	dialer := new(net.Dialer)
+	if resetOnClose {
+		dialer.Control = func(_, _ string, raw syscall.RawConn) error {
+			var socketErr error
+			controlErr := raw.Control(func(fd uintptr) {
+				socketErr = syscall.SetsockoptLinger(int(fd), syscall.SOL_SOCKET, syscall.SO_LINGER, &syscall.Linger{Onoff: 1})
+			})
+			return errors.Join(controlErr, socketErr)
+		}
+	}
+	client, err := (muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: roots}, Config: muxsession.TLSYamuxConfig{Dialer: dialer}}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,13 +86,10 @@ func copyYamuxPair(t *testing.T) (muxsession.Session, muxsession.Session) {
 }
 
 func TestCopyRealYamuxResetAndSessionEOFStopIdleDirection(t *testing.T) {
-	for _, sessionLoss := range []bool{false, true} {
-		name := "stream_reset"
-		if sessionLoss {
-			name = "session_EOF"
-		}
+	for _, name := range []string{"stream_reset", "session_close", "session_reset"} {
 		t.Run(name, func(t *testing.T) {
-			client, server := copyYamuxPair(t)
+			client, server := copyYamuxPair(t, name == "session_reset")
+			sessionLoss := name != "stream_reset"
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			outbound, err := client.OpenStream(ctx)
@@ -106,8 +114,14 @@ func TestCopyRealYamuxResetAndSessionEOFStopIdleDirection(t *testing.T) {
 				t.Fatalf("real reset lost its cause: %v", got.err)
 			}
 			if sessionLoss {
-				if !errors.Is(got.err, io.EOF) {
-					t.Fatalf("session failure lost its wrapped EOF cause: %v", got.err)
+				// an abrupt TCP close can produce EOF or a reset. preserve the
+				// session's exact cause instead of assuming which one wins.
+				cause := server.Err()
+				if cause == nil || !errors.Is(got.err, cause) {
+					t.Fatalf("session failure lost its cause: %v; want %v", got.err, cause)
+				}
+				if name == "session_reset" && !errors.Is(cause, syscall.ECONNRESET) {
+					t.Fatalf("abortive TCP close did not produce a reset: %v", cause)
 				}
 				return
 			}
