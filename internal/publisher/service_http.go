@@ -173,7 +173,7 @@ func (f ServiceHTTP) share(w http.ResponseWriter, r *http.Request) {
 		serviceHTTPDenied(w, 503)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: shareCookieName, Value: strings.TrimPrefix(r.URL.Path, "/__tnl/share/"), Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: permission.ExpiresAt})
+	http.SetCookie(w, &http.Cookie{Name: shareCookieName, Value: strings.TrimPrefix(r.URL.Path, "/__tnl/share/"), Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

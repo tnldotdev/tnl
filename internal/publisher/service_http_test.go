@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
@@ -90,19 +91,46 @@ func TestServiceHTTPShareRedemptionKeepsRenewingBeyondFirstPermission(t *testing
 			t.Fatal(err)
 		}
 		defer tokens.Close()
-		frontend := ServiceHTTP{Subject: scope, Control: serviceHTTPGrantControl{client: issuer}, browser: &browserAccess{policy: policy, tokens: tokens}}
+		frontend := ServiceHTTP{Subject: scope, Control: serviceHTTPGrantControl{client: issuer}, browser: &browserAccess{subject: scope, policy: policy, tokens: tokens}}
 		response := httptest.NewRecorder()
 		frontend.share(response, httptest.NewRequest(http.MethodGet, "/__tnl/share/"+refresh, nil))
 		if response.Code != http.StatusSeeOther {
 			t.Fatal("share redemption failed", response.Code, response.Body.String())
 		}
 		initial := response.Result().Cookies()[0]
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		renew := httptest.NewRequest(http.MethodGet, "https://service.example/__tnl/team/renew?return=/", nil)
+		jar.SetCookies(renew.URL, response.Result().Cookies())
 		time.Sleep(4*time.Minute + 2*time.Second)
 		synctest.Wait()
 		current, done, found := tokens.use(visitortoken.Token(initial.Value), nil)
 		done()
 		if !found || !current.ExpiresAt.After(initial.Expires) || issuer.calls.Load() != 2 {
 			t.Fatal("share renewal was capped at its first short permission", found, issuer.calls.Load())
+		}
+		// an idle browser has not received the background renewal's cookie.
+		// after its first permission expires, the share must still recover it.
+		time.Sleep(time.Minute)
+		for _, cookie := range jar.Cookies(renew.URL) {
+			renew.AddCookie(cookie)
+		}
+		if _, err := renew.Cookie(visitorTokenCookie); err == nil {
+			t.Fatal("fixture retained the expired visitor permission")
+		}
+		renewed := httptest.NewRecorder()
+		if !frontend.browser.handle(renewed, renew) || renewed.Code != http.StatusSeeOther {
+			t.Fatal("idle service share could not renew after its first permission expired", renewed.Code, renewed.Body.String())
+		}
+		jar.SetCookies(renew.URL, renewed.Result().Cookies())
+		var restored bool
+		for _, cookie := range jar.Cookies(renew.URL) {
+			restored = restored || cookie.Name == visitorTokenCookie
+		}
+		if !restored || issuer.calls.Load() != 3 {
+			t.Fatal("idle renewal did not restore a permission through the original share", restored, issuer.calls.Load())
 		}
 	})
 }
