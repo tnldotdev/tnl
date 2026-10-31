@@ -170,22 +170,37 @@ func (c *Controller) preparePublicPolicy(ctx context.Context, entry ingressv1.In
 		policy.Close()
 		return nil, err
 	}
+	refreshDelay := func() time.Duration {
+		view, _, _ := policy.Current()
+		until := view.ValidUntil
+		if source := run.source.Load(); source != nil {
+			delegated := view.LocalDeadline(time.Unix(source.authority.ValidUntil, 0))
+			if delegated.Before(until) {
+				until = delegated
+			}
+		}
+		// refresh halfway to expiry, without spinning on a nearly expired grant.
+		return min(2*time.Second, max(100*time.Millisecond, until.Sub(c.now())/2))
+	}
 	go func() {
 		defer close(run.done)
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
+		timer := time.NewTimer(refreshDelay())
+		defer timer.Stop()
 		for {
 			select {
 			case <-life.Done():
 				return
-			case <-ticker.C:
+			case <-timer.C:
+				delay := 2 * time.Second
 				if err := refresh(); err != nil {
 					if life.Err() == nil {
 						c.report(err)
 					}
 				} else {
 					c.ServingStateChanged()
+					delay = refreshDelay()
 				}
+				timer.Reset(delay)
 			}
 		}
 	}()
