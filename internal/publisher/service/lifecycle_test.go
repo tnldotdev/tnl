@@ -229,7 +229,13 @@ func TestPrivateLifecycleRejectsUnapprovedProtocolOrTrustBeforePreparingRun(t *t
 
 func TestPrivateLifecycleReplacesOnlyChangedSlotAndKeepsEndpointPlan(t *testing.T) {
 	config, f := lifecycleFixture(t)
-	f.replace = true
+	// replace an established slot, not a first connection still being scheduled.
+	config.Ready = func() error {
+		f.mu.Lock()
+		f.replace = true
+		f.mu.Unlock()
+		return nil
+	}
 	connected := make(chan uint8, 4)
 	config.Connect = func(_ context.Context, bound *Bound, slot uint8) (SlotSession, error) {
 		if bound.prepared.Preparation.RunNumber != f.firstStart || bound.prepared.managedHostname != f.prep.Hostname {

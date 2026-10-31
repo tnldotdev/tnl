@@ -57,7 +57,7 @@ func (p *Connector) AcceptDirect(ctx context.Context, connection net.Conn, sourc
 		return err
 	}
 	projection := ingressv1.ServiceProjection{ServiceId: claimed.ServiceId, ServiceRunId: &claimed.ServiceRunId, RunNumber: &claimed.RunNumber, Revision: 1, Kind: ingressv1.Upsert, ExpiresAt: claimed.ExpiresAt, ConnectedRelays: &claimed.ConnectedRelays}
-	if claimed.VisitorConnectionId != visitor || validatePrivateProjection(projection, time.Now()) != nil || !admission.selectService(claimed.ServiceId) {
+	if claimed.VisitorConnectionId != visitor || validateDirectProjection(projection, time.Now()) != nil || !admission.selectService(claimed.ServiceId) {
 		return ErrServiceAdmission
 	}
 	audit := serviceaudit.Observation{ServiceID: claimed.ServiceId, ServiceKind: "service", RunID: claimed.ServiceRunId, RunNumber: claimed.RunNumber, VisitorConnectionID: visitor, SourceIP: source.Addr().Unmap().String(), EventType: "connection.open", Outcome: "denied", Reason: "authorization"}
@@ -127,6 +127,23 @@ func (p *Connector) AcceptDirect(ctx context.Context, connection net.Conn, sourc
 		return err
 	}
 	return ErrServiceAdmission
+}
+
+// direct admission uses the claim immediately, rather than installing history.
+// every included relay and the claim itself must still be current.
+func validateDirectProjection(p ingressv1.ServiceProjection, now time.Time) error {
+	if err := validatePrivateProjection(p); err != nil {
+		return err
+	}
+	if p.Kind != ingressv1.Upsert || !p.ExpiresAt.After(now) {
+		return ErrPrivateRoutingStale
+	}
+	for _, relay := range *p.ConnectedRelays {
+		if !relay.LeaseExpiresAt.After(now) {
+			return ErrPrivateRoutingStale
+		}
+	}
+	return nil
 }
 
 func (p *Connector) openPrivateRelay(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, proxy []byte, deadline time.Time) (net.Conn, error) {

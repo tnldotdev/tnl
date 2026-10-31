@@ -318,22 +318,19 @@ test(
       );
       const message = z.object({ type: z.optional(z.string()) }).parse(JSON.parse(socketMessage));
       expect(["isrManifest", "turbopack-connected"]).toContain(message.type);
-      // startup frames can arrive together; either accepted frame confirms the connection.
-      let updateMessage = waitForWebSocketMessage(socket, 30_000);
+      // keep one listener across progress and completion frames from the same read.
+      const updateMessage = waitForWebSocketMessage(socket, 30_000, (value) => {
+        const update = z.object({ type: z.optional(z.string()) }).parse(JSON.parse(value));
+        return update.type === "built";
+      });
       await writeFile(
         pageSource,
         originalPageSource.replace("Next.js fixture", "Next.js fixture refreshed"),
       );
-      let updateType = "";
-      while (updateType !== "built") {
-        const update = z
-          .object({ type: z.optional(z.string()) })
-          .parse(JSON.parse(await updateMessage));
-        updateType = update.type ?? "";
-        if (updateType !== "built") {
-          updateMessage = waitForWebSocketMessage(socket, 30_000);
-        }
-      }
+      const update = z
+        .object({ type: z.optional(z.string()) })
+        .parse(JSON.parse(await updateMessage));
+      expect(update.type).toBe("built");
       await expect
         .poll(
           async () => {

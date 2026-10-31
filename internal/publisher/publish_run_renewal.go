@@ -43,6 +43,14 @@ func runCertificateRenewals(
 				}
 				renewalLock = lock
 			}
+			// waiting for another publish run's cache lock can cross expiry
+			// before the session's expiration watcher cancels this worker.
+			if ctx.Err() != nil {
+				return context.Cause(ctx)
+			}
+			if !material.Certificate.Leaf.NotAfter.After(time.Now()) {
+				return errCertificateExpired
+			}
 			replacement, renewalErr := attemptCertificateTransaction(
 				ctx, authority, route, state, true,
 			)

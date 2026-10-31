@@ -53,14 +53,14 @@ func TestPrivateRoutingPoolTombstoneKeepsSiblingRun(t *testing.T) {
 	second.Revision = 2
 	now := time.Now()
 	var table ServiceRoutingTable
-	if err := table.ApplySnapshot(ingressv1.ServiceSnapshot{Revision: 2, Entries: []ingressv1.ServiceProjection{first, second}}, now); err != nil {
+	if err := table.ApplySnapshot(ingressv1.ServiceSnapshot{Revision: 2, Entries: []ingressv1.ServiceProjection{first, second}}); err != nil {
 		t.Fatal(err)
 	}
 	tombstone := clonePrivateProjection(first)
 	tombstone.Kind = ingressv1.Tombstone
 	tombstone.ConnectedRelays = nil
 	tombstone.Revision = 3
-	if err := table.ApplyEvents(2, ingressv1.ServiceSnapshot{Revision: 3, Entries: []ingressv1.ServiceProjection{tombstone}}, now); err != nil {
+	if err := table.ApplyEvents(2, ingressv1.ServiceSnapshot{Revision: 3, Entries: []ingressv1.ServiceProjection{tombstone}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := table.Lookup(first.ServiceId, *first.ServiceRunId, *first.RunNumber, now); ok {

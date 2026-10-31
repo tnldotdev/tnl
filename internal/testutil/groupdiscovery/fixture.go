@@ -50,6 +50,7 @@ type Fixture struct {
 	Key              ed25519.PrivateKey
 	Profile          *clientstate.Store
 	Heartbeat        chan controlv1.ServiceRunHeartbeat
+	TargetHandshake  chan struct{}
 	DiscoveryStarted chan struct{}
 	DiscoveryStopped chan struct{}
 	Requests         atomic.Int32
@@ -57,6 +58,7 @@ type Fixture struct {
 	Stops            atomic.Int32
 	Closes           atomic.Int32
 	Block            atomic.Bool
+	HoldHeartbeat    atomic.Bool
 	mu               sync.Mutex
 	assignment       controlv1.PublisherGroupAssignments
 	service          controlv1.Service
@@ -83,7 +85,7 @@ func New(t *testing.T) *Fixture {
 	}
 	member := controlv1.PublisherGroupMember{TeamId: id(opaqueid.TeamPrefix), PublisherIdentityId: id(opaqueid.PublisherIdentityPrefix), KeyId: id(opaqueid.PublisherIdentityKeyPrefix), GroupId: id("pgrp_"), GroupName: "cloud", ProjectKey: strings.Repeat("a", 56)}
 	serviceID, runID, grantID := id(opaqueid.ServicePrefix), id(opaqueid.ServiceRunPrefix), id(opaqueid.PublisherGrantPrefix)
-	f := &Fixture{Key: key, Heartbeat: make(chan controlv1.ServiceRunHeartbeat, 16), DiscoveryStarted: make(chan struct{}), DiscoveryStopped: make(chan struct{}), proofs: map[string]bool{}}
+	f := &Fixture{Key: key, Heartbeat: make(chan controlv1.ServiceRunHeartbeat, 16), TargetHandshake: make(chan struct{}, 1), DiscoveryStarted: make(chan struct{}), DiscoveryStopped: make(chan struct{}), proofs: map[string]bool{}}
 	protocol := controlv1.ServiceProtocol("kubernetes")
 	f.assignment = controlv1.PublisherGroupAssignments{Member: member, Revision: 1, ConfigurationHash: strings.Repeat("a", 64), CertificateStatePlans: []controlv1.CertificatePlan{}, Services: []controlv1.PublisherGroupServiceAssignment{{Service: "cluster", ServiceId: serviceID, ServiceKind: "service", GrantId: grantID, TrustRevision: 1, Configuration: controlv1.ProjectServiceConfiguration{Protocol: &protocol, PublisherGroup: &member.GroupName, TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}}}
 	f.service = controlv1.Service{Id: serviceID, TeamId: member.TeamId, Name: "cluster", Protocol: protocol, Enabled: true, TrustRevision: 1, PublisherPool: true, CreatedAt: time.Now(), Endpoint: &controlv1.ServiceEndpoint{Hostname: "managed.example.test", Port: 25443}}
@@ -256,6 +258,9 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 		case f.Heartbeat <- health:
 		default:
 		}
+		if f.HoldHeartbeat.Load() {
+			<-r.Context().Done()
+		}
 		// stop before relay admission: the fixture proves native preparation and
 		// real verified target preflight, without inventing a ready relay.
 		serviceapi.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture heartbeat boundary")
@@ -297,6 +302,10 @@ func (f *Fixture) startAWSAndTarget(t *testing.T) {
 			_ = connection.SetDeadline(time.Now().Add(time.Second))
 			if connection.(*tls.Conn).HandshakeContext(t.Context()) == nil {
 				f.TargetHandshakes.Add(1)
+				select {
+				case f.TargetHandshake <- struct{}{}:
+				default:
+				}
 			}
 			_ = connection.Close()
 		}
