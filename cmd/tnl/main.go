@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -144,12 +145,10 @@ type aliasChoiceCommand struct {
 }
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	received := make(chan os.Signal, 1)
+	signal.Notify(received, os.Interrupt, syscall.SIGTERM)
+	ctx, stop := processSignalContext(context.Background(), received, func() { signal.Stop(received) })
 	defer stop()
-	go func() {
-		<-ctx.Done()
-		stop() // restore default handling so a second signal terminates immediately.
-	}()
 	var telemetry *asyncTelemetryReporter
 	launchCtx := observability.ExtractLaunch(ctx, os.Getenv(observability.LaunchTraceparent))
 	_ = os.Unsetenv(observability.LaunchTraceparent)
@@ -163,6 +162,7 @@ func main() {
 		telemetry.flush(waitCtx)
 		cancel()
 	}
+	stop() // command observation and the final telemetry flush have already joined.
 	if err != nil {
 		code, render := terminalResult(err)
 		if render != nil {
@@ -172,6 +172,39 @@ func main() {
 			os.Exit(code)
 		}
 	}
+}
+
+// only this registered signal producer turns SIGINT/SIGTERM into ordinary
+// cancellation. parent causes are inherited unchanged; consumers never infer
+// signal origin from an opaque error's text, type name or Is method.
+func processSignalContext(parent context.Context, received <-chan os.Signal, unregister func()) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	stopContext := sync.OnceFunc(cancel)
+	stopNotifications := sync.OnceFunc(unregister)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer stopNotifications()
+		for {
+			select {
+			case value, ok := <-received:
+				if !ok {
+					return
+				}
+				if value != os.Interrupt && value != syscall.SIGTERM {
+					continue
+				}
+				// restore default handling before publishing cancellation, so a
+				// second signal can terminate a command that stalls during cleanup.
+				stopNotifications()
+				stopContext()
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return ctx, func() { stopNotifications(); stopContext(); <-done }
 }
 
 func terminalResult(err error) (int, error) {
