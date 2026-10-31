@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -85,6 +86,7 @@ type PublicURLServer struct {
 	authorizedStreams  int
 	pendingStreams     int
 	pendingRelays      map[string]int
+	pendingSources     map[netip.Prefix]int
 	handlers           sync.WaitGroup
 	httpDone           chan error
 	closeOnce          sync.Once

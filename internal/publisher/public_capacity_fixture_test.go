@@ -78,16 +78,31 @@ func (f *publicCapacityFixture) connect(index int) {
 }
 
 func (f *publicCapacityFixture) open(index int, denied bool, claimed ...int) (muxsession.Stream, error) {
+	return f.openFrom(index, denied, netip.Addr{}, claimed...)
+}
+
+func (f *publicCapacityFixture) openFrom(index int, denied bool, source netip.Addr, claimed ...int) (muxsession.Stream, error) {
 	ref := f.refs[index]
 	if len(claimed) != 0 {
 		ref = f.refs[claimed[0]]
 	}
+	sequence := f.sequence.Add(1)
+	// relay-capacity fixtures use independent visitors unless a source is selected.
+	if !source.IsValid() {
+		source = netip.AddrFrom4([4]byte{192, 0, 2, byte(sequence%254 + 1)})
+	}
 	header := tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream,
-		VisitorConnectionID: fmt.Sprintf("visitor-%d", f.sequence.Add(1)), PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID,
+		VisitorConnectionID: fmt.Sprintf("visitor-%d", sequence), PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID,
 		PublishRunNumber: ref.PublishRunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, AccessPending: denied}
 	stream, err := f.relays[index].OpenVisitorStream(f.ctx, header)
 	if err == nil {
-		metadata, sourceErr := encodeTestPublicMetadata(f.route, header, proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.1:1234"), Destination: netip.MustParseAddrPort("127.0.0.1:443")})
+		// ingress signs canonical addresses; PROXY v2 requires one address family.
+		source = source.Unmap()
+		destination := netip.MustParseAddrPort("127.0.0.1:443")
+		if source.Is6() {
+			destination = netip.MustParseAddrPort("[::1]:443")
+		}
+		metadata, sourceErr := encodeTestPublicMetadata(f.route, header, proxyproto.Header{Source: netip.AddrPortFrom(source, 1234), Destination: destination})
 		if sourceErr != nil {
 			_ = stream.Close()
 			return nil, sourceErr
