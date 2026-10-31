@@ -1,0 +1,80 @@
+schemas:
+  VisitorTokenSource:
+    x-go-type: json.RawMessage
+    oneOf:
+      - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenControlSessionSource" }
+      - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenBrowserSessionSource" }
+      - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenDeviceSource" }
+      - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenWorkloadSource" }
+      - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenShareSource" }
+      - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenShareSessionSource" }
+      - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenGrantSource" }
+  VisitorTokenControlSessionSource:
+    type: object
+    additionalProperties: false
+    required: [kind]
+    properties:
+      kind: { type: string, enum: [control_session], x-enum-varnames: [VisitorTokenControlSession] }
+      preview_id: { $ref: "../openapi.yaml#/components/schemas/PreviewID" }
+  VisitorTokenBrowserSessionSource:
+    type: object
+    additionalProperties: false
+    required: [kind, secret]
+    properties:
+      kind: { type: string, enum: [browser_session], x-enum-varnames: [VisitorTokenBrowserSession] }
+      secret: { type: string, minLength: 43, maxLength: 43 }
+  VisitorTokenDeviceSource:
+    type: object
+    additionalProperties: false
+    required: [kind, device_id]
+    properties:
+      kind: { type: string, enum: [device], x-enum-varnames: [VisitorTokenDevice] }
+      device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
+  VisitorTokenWorkloadSource:
+    type: object
+    additionalProperties: false
+    required: [kind, credential]
+    properties:
+      kind: { type: string, enum: [workload], x-enum-varnames: [VisitorTokenWorkload] }
+      credential: { type: string, minLength: 5, maxLength: 256 }
+  VisitorTokenShareSource:
+    type: object
+    additionalProperties: false
+    required: [kind, share_id, secret]
+    properties:
+      kind: { type: string, enum: [share], x-enum-varnames: [VisitorTokenShare] }
+      share_id: { $ref: "../openapi.yaml#/components/schemas/ShareID" }
+      secret: { type: string, minLength: 43, maxLength: 43 }
+  VisitorTokenGrantSource:
+    type: object
+    additionalProperties: false
+    required: [kind, credential]
+    properties:
+      kind: { type: string, enum: [grant], x-enum-varnames: [VisitorTokenGrant] }
+      credential: { type: string, minLength: 5, maxLength: 128 }
+  VisitorTokenShareSessionSource:
+    type: object
+    additionalProperties: false
+    required: [kind, share_id, secret]
+    properties:
+      kind: { type: string, enum: [share_session], x-enum-varnames: [VisitorTokenShareSession] }
+      share_id: { $ref: "../openapi.yaml#/components/schemas/ShareID" }
+      secret: { type: string, minLength: 43, maxLength: 43 }
+  VisitorTokenRequest:
+    type: object
+    additionalProperties: false
+    required: [resource, source]
+    properties:
+      resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
+      source: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenSource" }
+  VisitorTokenResponse:
+    type: object
+    additionalProperties: false
+    required: [resource, hostname, port, visitor_token, visitor_policy_revision, expires_at]
+    properties:
+      resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
+      hostname: { type: string, maxLength: 253 }
+      port: { type: integer, minimum: 1, maximum: 65535 }
+      visitor_token: { type: string, maxLength: 2048 }
+      visitor_policy_revision: { type: integer, format: int64, minimum: 1 }
+      expires_at: { type: string, format: date-time }

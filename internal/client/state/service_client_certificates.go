@@ -20,7 +20,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitorcert"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -174,7 +176,17 @@ func validateServiceClientMaterial(key, certificate, issuer []byte, service, ide
 	if now.After(leaf.NotAfter) {
 		now = leaf.NotAfter.Add(-time.Second)
 	}
-	if _, err = leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil || len(leaf.URIs) != 1 || leaf.URIs[0].String() != "tnl://service-client/"+service+"/"+identity+"/"+device || leaf.IsCA || leaf.NotAfter.Sub(leaf.NotBefore) > visitorcert.MaxLifetime+time.Minute {
+	chains, err := leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
+	if err != nil || len(leaf.URIs) != 1 || leaf.IsCA || leaf.NotAfter.Sub(leaf.NotBefore) > visitorcert.MaxLifetime+time.Minute {
+		return material, visitorcert.ErrInvalidCertificate
+	}
+	if leaf.URIs[0].Host == "visitor-token" {
+		scope, subject, err := visitortoken.CertificateIssuanceBinding(chains)
+		person, ok := subject.(visitortoken.Device)
+		if err != nil || scope != (visitorscope.Scope{Kind: visitorscope.Service, ID: service}) || !ok || person.IdentityID != identity || person.DeviceID != device {
+			return material, visitorcert.ErrInvalidCertificate
+		}
+	} else if leaf.URIs[0].String() != "tnl://service-client/"+service+"/"+identity+"/"+device {
 		return material, visitorcert.ErrInvalidCertificate
 	}
 	material.Leaf = leaf

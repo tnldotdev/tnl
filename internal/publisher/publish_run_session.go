@@ -10,6 +10,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -114,6 +115,24 @@ func runSession(
 		}
 	}
 	ctx = sessionCtx
+	var visitorClient any = config.Control
+	if config.VisitorControl != nil {
+		visitorClient = config.VisitorControl
+	}
+	policyClient, ok := visitorClient.(visitorPolicyClient)
+	if !ok {
+		return errors.New("publisher visitor policy client is required")
+	}
+	policy, err := prepareVisitorPolicy(ctx, policyClient, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: setup.PublicUrl.Id}, setup.PublishRun.Id,
+		int64(version), publishRunToken.String(), func(error) {
+			if config.Logf != nil {
+				config.Logf("publisher: visitor policy renewal failed")
+			}
+		})
+	if err != nil {
+		return err
+	}
+	defer policy.Close()
 	if config.Demo && config.Feedback {
 		client, ok := config.Control.(interface {
 			CreatePublishRunPreview(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.Preview, error)
@@ -147,26 +166,6 @@ func runSession(
 			return fmt.Errorf("publisher: enable share access: %w", err)
 		}
 		shareRuntime = &shareAccess{client: client, runID: setup.PublishRun.Id, version: version, token: publishRunToken}
-		if err := shareRuntime.refresh(ctx); err != nil {
-			return fmt.Errorf("publisher: read share access: %w", err)
-		}
-		refreshDone := make(chan struct{})
-		go func() {
-			defer close(refreshDone)
-			ticker := time.NewTicker(shareRefreshPeriod)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-sessionCtx.Done():
-					return
-				case <-ticker.C:
-					if err := shareRuntime.refresh(sessionCtx); err != nil && config.Logf != nil && sessionCtx.Err() == nil {
-						config.Logf("publisher: refresh share access: %v", err)
-					}
-				}
-			}
-		}()
-		defer func() { cancelSession(nil); <-refreshDone }()
 	}
 	var material clientstate.Material
 	identity := authority.identity
@@ -178,16 +177,33 @@ func runSession(
 	if err != nil {
 		return err
 	}
-	browser := browserAccessForRun(config, setup, publishRunToken, shareRuntime)
-	observeVisitorPolicy := func(revision int64) {
-		if browser != nil && browser.decisions != nil {
-			browser.decisions.invalidate(revision)
+	browser := browserAccessForRun(config, setup, publishRunToken)
+	var browserRenewal *browserTokens
+	if browser != nil {
+		issuer, ok := visitorClient.(browserTokenClient)
+		if !ok {
+			return errors.New("publisher visitor token client is required")
+		}
+		browserRenewal, err = startBrowserTokens(ctx, issuer, policy.lease, func(error) {
+			if config.Logf != nil {
+				config.Logf("publisher: browser visitor token renewal failed")
+			}
+		})
+		if err != nil {
+			return err
+		}
+		defer browserRenewal.Close()
+		browser.tokens, browser.policy = browserRenewal, policy
+		if shareRuntime != nil {
+			shareRuntime.browser = browser
 		}
 	}
 	route, err := NewPublicURLServer(PublicURLServerConfig{
 		Context:               ctx,
 		AuditSink:             auditSink,
 		BrowserAccess:         browser,
+		VisitorPolicy:         policy.lease,
+		VisitorTokens:         browserRenewal,
 		BrowserLoginAvailable: config.BrowserLoginAvailable,
 		PreviewID:             config.PreviewID, PublicURLID: setup.PublicUrl.Id, PublishRunID: setup.PublishRun.Id, PublishRunNumber: version,
 		Hostname: setup.PublicUrl.CanonicalHostname, Target: config.Target, ResolveTarget: config.ResolveTarget, TargetOptions: config.TargetOptions, CertificatePlan: plan,
@@ -224,10 +240,6 @@ func runSession(
 	})
 	if err != nil {
 		return err
-	}
-	observePolicy := func(revision int64) { observeVisitorPolicy(revision); route.invalidateVisitorPolicy(revision) }
-	if observedHeartbeat {
-		observePolicy(heartbeat.VisitorPolicyRevision)
 	}
 	defer route.Close()
 	if err := route.Start(); err != nil {
@@ -302,7 +314,6 @@ func runSession(
 		err := heartbeatSessionAfterUpdate(
 			sessionCtx, authority, heartbeat.PublishRun.ExpiresAt,
 			connections.Update, observePolicyDenials, config.heartbeatInterval,
-			observePolicy,
 		)
 		if err != nil && parentCanceledSession(parentCtx, sessionCtx) {
 			err = nil

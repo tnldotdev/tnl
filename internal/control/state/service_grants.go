@@ -46,23 +46,23 @@ func (d *Database) CreateServiceGrant(ctx context.Context, serviceID, actorID, k
 			return result, ErrServiceAccess
 		}
 	}
-	var existing controlstatedb.ControlServiceGrant
+	var existing controlstatedb.ControlVisitorGrant
 	// sqlc's create source has an exact active grant constraint; query the retry key before inserting.
 	var oldID string
-	err = tx.QueryRow(ctx, `SELECT id FROM control.service_grants WHERE created_by_identity_id=$1 AND kind=$2 AND idempotency_key=$3`, actorID, kind, key).Scan(&oldID)
+	err = tx.QueryRow(ctx, `SELECT id FROM control.visitor_grants WHERE resource_kind='service' AND created_by_identity_id=$1 AND kind=$2 AND idempotency_key=$3`, actorID, kind, key).Scan(&oldID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
 	if oldID != "" {
 		err = tx.QueryRow(ctx, `SELECT id, service_id, team_id, kind, identity_id, invitation_id,
 			created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at
-			FROM control.service_grants WHERE id=$1 FOR UPDATE`, oldID).Scan(&existing.ID, &existing.ServiceID,
+			FROM control.visitor_grants WHERE id=$1 FOR UPDATE`, oldID).Scan(&existing.ID, &existing.ServiceID,
 			&existing.TeamID, &existing.Kind, &existing.IdentityID, &existing.InvitationID, &existing.CreatedByIdentityID,
 			&existing.IdempotencyKey, &existing.RequestDigest, &existing.CreatedAt, &existing.ExpiresAt, &existing.RevokedAt)
 		if err != nil {
 			return result, err
 		}
-		if existing.ServiceID != serviceID || existing.RevokedAt.Valid || !bytes.Equal(existing.RequestDigest, digest[:]) {
+		if existing.ServiceID.String != serviceID || existing.RevokedAt.Valid || !bytes.Equal(existing.RequestDigest, digest[:]) {
 			return result, ErrServiceConflict
 		}
 		if err = tx.Commit(ctx); err != nil {
@@ -71,7 +71,7 @@ func (d *Database) CreateServiceGrant(ctx context.Context, serviceID, actorID, k
 		return privateGrantRecord(existing), nil
 	}
 	row, err := controlstatedb.New(tx).InsertServiceGrant(ctx, controlstatedb.InsertServiceGrantParams{
-		ID: id, ServiceID: serviceID, TeamID: service.TeamID, Kind: kind, IdentityID: nullableText(identityID),
+		ID: id, ServiceID: text(serviceID), TeamID: service.TeamID, Kind: kind, IdentityID: nullableText(identityID),
 		CreatedByIdentityID: actorID, IdempotencyKey: key, RequestDigest: digest[:], Now: timestamptz(now), ExpiresAt: nullableTime(expires),
 	})
 	var pgErr *pgconn.PgError
@@ -102,7 +102,7 @@ func (d *Database) ListServiceGrants(ctx context.Context, serviceID, actorID, af
 	if _, err = lockService(ctx, tx, serviceID, actorID); err != nil {
 		return nil, "", err
 	}
-	rows, err := controlstatedb.New(tx).ListServiceGrants(ctx, controlstatedb.ListServiceGrantsParams{ServiceID: serviceID, AfterID: after})
+	rows, err := controlstatedb.New(tx).ListServiceGrants(ctx, controlstatedb.ListServiceGrantsParams{ServiceID: text(serviceID), AfterID: after})
 	if err != nil {
 		return nil, "", err
 	}
@@ -134,7 +134,7 @@ func (d *Database) RevokeServiceGrant(ctx context.Context, serviceID, actorID, g
 	if err = rejectProjectManagedGrant(ctx, tx, grantID); err != nil {
 		return err
 	}
-	count, err := controlstatedb.New(tx).RevokeServiceGrant(ctx, controlstatedb.RevokeServiceGrantParams{ID: grantID, ServiceID: serviceID, Now: timestamptz(now)})
+	count, err := controlstatedb.New(tx).RevokeServiceGrant(ctx, controlstatedb.RevokeServiceGrantParams{ID: grantID, ServiceID: text(serviceID), Now: timestamptz(now)})
 	if err != nil {
 		return err
 	}

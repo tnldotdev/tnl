@@ -45,13 +45,13 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/CreateServiceHTTPGrantRequest" }
+            schema: { $ref: "../openapi.yaml#/components/schemas/CreateVisitorCredentialRequest" }
       responses:
         "201":
           description: Exact managed subject and one-time secret
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceHTTPGrant" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/VisitorCredential" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/http-grants/{grant_id}:
     delete:
@@ -129,24 +129,6 @@ paths:
             schema: { $ref: "../openapi.yaml#/components/schemas/ServiceBrowserRequest" }
       responses:
         "204": { description: Host-bound browser session revoked }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/publish-runs/{publish_run_id}/visitor-access:
-    post:
-      operationId: authorizeHTTPVisitor
-      security: [{ publishRunAuth: [] }]
-      parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/PublishRunID" }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/HTTPVisitorRequest" }
-      responses:
-        "200":
-          description: Transaction-owned current HTTP permission and separate browser identity
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/HTTPVisitorResponse" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/visitor/public-urls:
     get:

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"io"
 	"net"
@@ -81,17 +82,33 @@ func TestIntegrationWorkloadHTTPReplacementKeepsSubjectsSeparate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		response, err := (&http.Client{Transport: transport}).Do(request)
-		if err != nil || response.StatusCode != 200 {
-			t.Fatal("open stream", err)
-		}
+		var response *http.Response
+		privateWait(t, 5*time.Second, func(context.Context) (bool, error) {
+			response, err = (&http.Client{Transport: transport}).Do(request)
+			if err != nil {
+				return false, err
+			}
+			if response.StatusCode == http.StatusOK {
+				return true, nil
+			}
+			response.Body.Close()
+			return false, nil
+		})
 		t.Cleanup(func() { _ = response.Body.Close() })
 		return response, session.Id, session.ExpiresAt
 	}
 	old, oldID, expires := open("old", "401")
 	current, currentID, _ := open("new", "402")
+	if oldID == currentID {
+		t.Fatal("replacement reused its parent session")
+	}
 	oldDone := make(chan struct{})
 	go func() { _, _ = io.Copy(io.Discard, old.Body); close(oldDone) }()
+	select {
+	case <-oldDone:
+		t.Fatal("replacement revoked the still-current old subject")
+	default:
+	}
 	reader := bufio.NewReader(current.Body)
 	for time.Now().Before(expires.Add(time.Second)) {
 		if line, err := reader.ReadString('\n'); err != nil || line != "tick\n" {
@@ -102,9 +119,5 @@ func TestIntegrationWorkloadHTTPReplacementKeepsSubjectsSeparate(t *testing.T) {
 	case <-oldDone:
 	case <-time.After(time.Second):
 		t.Fatal("old subject survived fixed expiry")
-	}
-	var oldConnections, newConnections, mixed int
-	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FILTER(WHERE workload_session_id=$1),count(*) FILTER(WHERE workload_session_id=$2 AND closed_at IS NULL),count(*) FILTER(WHERE workload_session_id=$2 AND certificate_digest IN(SELECT certificate_digest FROM control.workload_client_certificates WHERE workload_session_id=$1)) FROM control.direct_service_visitors`, oldID, currentID).Scan(&oldConnections, &newConnections, &mixed); err != nil || oldConnections != 1 || newConnections != 1 || mixed != 0 {
-		t.Fatal("replacement transferred a visitor/certificate binding", err)
 	}
 }

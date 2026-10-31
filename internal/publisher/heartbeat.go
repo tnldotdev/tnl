@@ -21,7 +21,6 @@ func heartbeatSessionAfterUpdate(
 	update func([]controlv1.ConnectionAssignment) error,
 	observePolicyDenials func(int64) error,
 	interval time.Duration,
-	observeVisitorPolicy ...func(int64),
 ) error {
 	if interval == 0 {
 		interval = heartbeatInterval
@@ -37,13 +36,6 @@ func heartbeatSessionAfterUpdate(
 		response, observedHeartbeat, err := heartbeatResponseOnce(ctx, authority, expiresAt)
 		if err != nil || ctx.Err() != nil {
 			return err
-		}
-		if observedHeartbeat {
-			for _, observe := range observeVisitorPolicy {
-				if observe != nil {
-					observe(response.VisitorPolicyRevision)
-				}
-			}
 		}
 		if update != nil && len(response.PublisherConnections) != 0 {
 			if err := update(response.PublisherConnections); err != nil {

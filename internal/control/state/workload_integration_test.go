@@ -180,7 +180,15 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	certificate, err := d.IssueWorkloadServiceClientCertificate(ctx, maximum.Credential, service, csr, expired)
+	// native certificates retain the fixed workload window; HTTP permissions
+	// have their own short-lived certificate and local policy lease coverage.
+	nativeService := ""
+	for _, candidate := range applied.Services {
+		if candidate.Service == "db" {
+			nativeService = candidate.ServiceID
+		}
+	}
+	certificate, err := d.IssueWorkloadServiceClientCertificate(ctx, maximum.Credential, nativeService, csr, expired)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +327,12 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	replica := enrollAppliedGroup(t, d, r, e, now)
-	a := replica.assignments.Services[0]
+	var a PublisherGroupServiceAssignment
+	for _, candidate := range replica.assignments.Services {
+		if candidate.Configuration.Protocol == "postgres" {
+			a = candidate
+		}
+	}
 	access := groupAssignmentAccess(t, d, replica, a, now)
 	service, err := d.GetServiceForPublisher(ctx, a.ServiceID, access.PublisherIdentity, now)
 	if err != nil {

@@ -14,6 +14,9 @@ import (
 
 func TestIntegrationPublicURLPublisherPoolsIndependentDNSCertificates(t *testing.T) {
 	d, now, base, leases := newPublishRunPrerequisites(t)
+	request := oidcRouteRequest(t, d, now)
+	url := createTestPublicURL(t, d, request, now)
+	base.PublicURLID, base.TeamID, base.ActingIdentityID, base.MembershipID = url.ID, request.TeamID, request.ActingIdentityID, request.MembershipID
 	if _, err := d.pool.Exec(t.Context(), `UPDATE control.public_urls SET publisher_pool=true WHERE id=$1`, base.PublicURLID); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +90,7 @@ func TestIntegrationPublicURLPublisherPoolsIndependentDNSCertificates(t *testing
 	if err = d.ClosePublishRun(t.Context(), runs[0].setup.PublishRunID, runs[0].setup.PublishRunToken, now); err != nil {
 		t.Fatal(err)
 	}
-	if permission, err := d.HTTPVisitorPermission(t.Context(), runs[1].authentication(), HTTPVisitorRequest{SourceIP: "192.0.2.9", BrowserCookieSecret: cookie}, now); err != nil || !permission.VisitAllowed {
+	if permission, err := preparedPublicURLPermission(t.Context(), d, runs[1].authentication(), preparedVisitorInput{SourceIP: "192.0.2.9", BrowserCookieSecret: cookie}, now); err != nil || !permission.VisitAllowed {
 		t.Fatalf("closed pool sibling invalidated browser access: %+v %v", permission, err)
 	}
 	snapshot, err = d.ReadIngressRoutingTableSnapshot(t.Context(), ingress.IngressLeaseIdentity, now)

@@ -18,8 +18,20 @@ AND consumed_at IS NULL AND expires_at>sqlc.arg(now)
 RETURNING *;
 
 -- name: InsertServiceHTTPBrowserSession :exec
-INSERT INTO control.service_http_browser_sessions(handoff_digest,service_id,run_ids,control_session_id,return_path,handoff_expires_at,expires_at)
-VALUES($1,$2,$3,$4,$5,$6,$7);
+INSERT INTO control.service_http_browser_sessions(handoff_digest,service_id,run_ids,control_session_id,return_path,handoff_expires_at,expires_at,refresh_ciphertext,storage_key_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9);
+
+-- name: LockServiceHTTPBrowserSession :one
+SELECT session.*, parent.identity_id, parent.access_expires_at, parent.refresh_expires_at,
+    parent.revoked_at AS parent_revoked_at
+FROM control.service_http_browser_sessions session
+JOIN control.control_sessions parent ON parent.id=session.control_session_id
+WHERE session.service_id=$1 AND session.cookie_digest=$2 AND session.revoked_at IS NULL AND session.expires_at>$3
+FOR UPDATE OF session NOWAIT;
+
+-- name: RotateServiceHTTPBrowserSession :exec
+UPDATE control.service_http_browser_sessions SET refresh_ciphertext=$2,storage_key_id=$3
+WHERE handoff_digest=$1;
 
 -- name: RedeemServiceHTTPBrowserSession :one
 UPDATE control.service_http_browser_sessions SET cookie_digest=sqlc.arg(cookie_digest)
@@ -55,12 +67,7 @@ WHERE id=sqlc.arg(id) AND service_id=sqlc.arg(service_id);
 SELECT id,kind,expires_at,revoked_at FROM control.service_http_grants
 WHERE service_id=sqlc.arg(service_id) ORDER BY id;
 
--- name: ServiceHTTPGrantPermission :one
-SELECT id,created_by_identity_id,control_session_id,expires_at FROM control.service_http_grants
-WHERE service_id=sqlc.arg(service_id) AND kind=sqlc.arg(kind)
-AND secret_digest=sqlc.arg(secret_digest) AND revoked_at IS NULL AND expires_at>sqlc.arg(now);
-
--- name: ServiceHTTPDirectBinding :one
+-- name: ServiceHTTPTransportBinding :one
 SELECT (v.promoted_at IS NOT NULL)::boolean AS admitted,LEAST(sqlc.arg(now)::timestamptz+interval '2 minutes',
     run.publisher_expires_at,run.certificate_expires_at,g.expires_at,ingress.lease_expires_at,
     (SELECT max(relay.lease_expires_at) FROM control.service_connection_slots slot
@@ -89,13 +96,8 @@ AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.rela
     WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
     AND relay.lease_expires_at>sqlc.arg(now) AND NOT relay.draining);
 
--- name: BindServiceHTTPDirectCredential :exec
-UPDATE control.direct_service_visitors SET http_credential_kind=sqlc.arg(kind),http_credential_digest=sqlc.arg(digest),
-    identity_id=NULL,device_id=NULL,workload_session_id=NULL,certificate_digest=NULL,valid_until=sqlc.arg(valid_until)
-WHERE visitor_connection_id=sqlc.arg(visitor_connection_id);
-
--- name: ServiceHTTPDirectCredential :one
-SELECT http_credential_kind,http_credential_digest,destination_port,identity_id,device_id,workload_session_id FROM control.direct_service_visitors
+-- name: ServiceDirectBinding :one
+SELECT destination_port,identity_id,device_id,workload_session_id FROM control.direct_service_visitors
 WHERE visitor_connection_id=$1;
 
 -- name: ServiceHTTPAppliedConfiguration :one

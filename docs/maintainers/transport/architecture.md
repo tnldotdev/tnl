@@ -71,14 +71,32 @@ session or its visitors, including while the newer session is connecting.
 
 ## authorization and tls boundaries
 
-Public HTTP decisions bind URL, run, selected credential digest, and trusted
-source. Rechecks occur within 30 seconds; structured control unavailability may
-reuse a positive result for at most two minutes and never past an earlier grant,
-credential, or run deadline. Unknown, denied, and malformed results fail closed.
-Each streaming request/WebSocket keeps its original live guard. A replacement
-credential authorizes future work, not that original operation. Denial cancels
-the target request and resets only the affected HTTP/2 stream; upgraded HTTP/1
-closes directly. No request is buffered for authorization or replayed.
+Public URL and direct service HTTP requests verify signed visitor permissions
+locally. Before serving, the publisher prepares a resource policy using its
+current run credential. Fetching through installation has a two-second budget;
+the policy expires within ten seconds of request start. Failed renewal cannot
+extend that deadline. Control-clock translation also bounds credential and
+parent expiry despite clock skew.
+
+[`visitortoken`](../../../internal/security/visitortoken/token.go) owns signature,
+resource, hostname, port, and proof verification. It depends on the shared exact
+resource value in `internal/policy/visitorscope`, not control state.
+[`visitorlease`](../../../internal/policy/visitorlease/lease.go) owns local policy
+installation and request guards; publisher runtime owns fetching and joins.
+These shared leaves let both HTTP frontends use one verifier without importing
+the control authority or copying its grant rules.
+
+Each request binds the trusted forwarding source and current policy. A request
+uses one `Tnl-Visitor-Token` header, signed cookie, or service client certificate.
+A supplied certificate cannot switch subjects through an HTTP credential;
+malformed or ambiguous credentials fail closed. Browser/share
+redemption and background renewal prepare permissions separately. Only that
+credential owner may renew an active guard for the same subject, within its
+parent deadline. Malformed renewal responses revoke that source's active requests;
+an outage or pending policy/key installation can only retain the last confirmed
+permission until its existing deadline. Expiry or revocation cancels the target request and resets only
+the affected HTTP/2 stream; upgraded HTTP/1 closes directly. Application requests
+perform no authorization RPC and never replay bytes.
 
 Private connector sessions authenticate two ingress paths and bind the observed
 source, exact service/session/subject, nonce, expiry, and key proof. Each stream

@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -184,12 +185,8 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						return
 					}
 				}
-				denied := request.Context().Value(denialContextKey{}) == true
 				var shareExpiry time.Time
 				sharePermitted := false
-				if config.ShareAccess != nil {
-					shareExpiry, sharePermitted = config.ShareAccess.permission(request)
-				}
 				if sharePath(request.URL.EscapedPath()) {
 					response.Header().Set("Cache-Control", "no-store")
 					response.Header().Set("Referrer-Policy", "no-referrer")
@@ -234,51 +231,52 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 							_ = connection.SetDeadline(time.Now().Add(15 * time.Second))
 							defer connection.SetDeadline(time.Time{})
 						}
-						if config.BrowserAccess.handle(response, request, !denied || sharePermitted) {
+						if config.BrowserAccess.handle(response, request) {
 							return
 						}
 					}
 				}
-				// the publisher can inspect browser credentials that ingress cannot.
-				// check each request against the bounded, run-scoped decision,
-				// including requests on an already-promoted visitor connection.
+				// visitor credentials are checked here, after publisher TLS. this
+				// request never asks control for a permission or refreshes a cache.
 				serverPermitted := false
-				var authorized controlv1.HTTPVisitorResponse
-				var authorizedAt time.Time
-				var authorizationRequest *http.Request
-				browser := controlv1.BrowserAccessResponse{}
-				if !proof && config.BrowserAccess != nil {
-					decision, checkedAt, err := config.BrowserAccess.currentDecision(request, false)
-					if err == nil {
-						serverPermitted = decision.VisitAllowed && decision.ValidUntil != nil && decision.ValidUntil.After(time.Now())
-						authorized = decision
-						authorizedAt = checkedAt
-						authorizationRequest = request.Clone(request.Context())
-						if decision.IdentityId != nil && decision.DisplayName != nil {
-							browser = controlv1.BrowserAccessResponse{IdentityId: *decision.IdentityId, DisplayName: *decision.DisplayName,
-								TeamMember: decision.TeamMember && decision.VisitAllowed, VisitAllowed: decision.VisitAllowed}
-							request = request.WithContext(context.WithValue(request.Context(), browserIdentityKey{}, browser))
+				var permission httpPermission
+				if !proof {
+					var guard *publicHTTPGuard
+					var guarded *http.Request
+					var err error
+					permission, guard, guarded, err = authorizeHTTPRequest(response, request, config.VisitorPolicy, config.VisitorTokens)
+					serverPermitted = err == nil
+					if serverPermitted {
+						defer guard.finish()
+						if config.VisitorTokens != nil && !permission.anonymous {
+							prepared, release, found := config.VisitorTokens.use(permission.token, guard.local)
+							guard.release = release
+							if found && (permission.renewed || prepared.VisitorToken != permission.token.Reveal()) {
+								_ = visitorPermissionCookie(response, prepared)
+							}
 						}
+						response, request = guard, guarded
 					}
 				}
-				// cached share state is only a hint for the browser UI. the bounded
-				// control decision, including its revocation deadline, owns admission.
-				sharePermitted = sharePermitted && serverPermitted
-				integrationRequest := (config.Purpose == controlv1.Oauth || config.Purpose == controlv1.Webhooks) && config.AccessMode == controlv1.Anonymous && !denied
-				allowed := proof || serverPermitted || integrationRequest
+				if share, ok := permission.permission.Facts().Subject.(visitortoken.Share); ok && share.ShareID != "" && serverPermitted {
+					sharePermitted, shareExpiry = true, permission.permission.Facts().ExpiresAt
+				} else {
+					sharePermitted = false
+				}
+				allowed := proof || serverPermitted
 				if request.URL.Path == "/__tnl/access" {
 					if request.Method != http.MethodGet || config.PreviewID == "" {
 						http.NotFound(response, request)
 						return
 					}
-					result := previewAccessStatus(config, serverPermitted, sharePermitted, serverPermitted && browser.TeamMember, shareExpiry)
+					result := previewAccessStatus(config, serverPermitted, sharePermitted, false, shareExpiry)
 					request = request.WithContext(context.WithValue(request.Context(), accessStatusContextKey{}, result))
 					(&feedbackHTTP{}).GetBrowserAccessStatus(response, request)
 					return
 				}
 				if !allowed {
 					auditReason = "authorization"
-					if config.BrowserLoginAvailable && config.BrowserAccess != nil && config.BrowserAccess.redirectRestricted(response, request) {
+					if config.BrowserAccess.redirectRestricted(response, request, config.BrowserLoginAvailable) {
 						return
 					}
 					diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)
@@ -350,16 +348,6 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				}
 				defer release()
 				emitAudit()
-				if serverPermitted {
-					if !authorized.ValidUntil.After(time.Now()) {
-						diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)
-						return
-					}
-					guard, guarded := guardPublicHTTPRequest(response, request, authorizationRequest, config.BrowserAccess, authorized, authorizedAt)
-					defer guard.finish()
-					response = guard
-					request = guarded
-				}
 				handler.ServeHTTP(response, request)
 			})),
 			ConnContext: func(ctx context.Context, connection net.Conn) context.Context {

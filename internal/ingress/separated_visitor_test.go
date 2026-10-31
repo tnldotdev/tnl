@@ -3,6 +3,7 @@ package ingress
 import (
 	"bufio"
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -11,9 +12,13 @@ import (
 	"net/netip"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -26,6 +31,20 @@ func startSeparatedPublisher(t *testing.T, f *admissionTransportFixture, c publi
 	c.Hostname = "route.example"
 	c.PublicURLID = f.entry.PublicUrlId
 	c.PublishRunNumber = uint64(f.entry.PublishRunNumber)
+	scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: c.PublicURLID}
+	policy, err := visitorlease.New(scope, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(policy.Close)
+	now := time.Now()
+	key := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+	if err := policy.Apply(policy.Begin(), visitorlease.Update{Snapshot: true, Enabled: true, Anonymous: true, KeyRevision: 1,
+		View: visitortoken.View{Scope: scope, Issuer: "https://control.example", Hostname: c.Hostname, Port: 443,
+			VisitorPolicyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second)}.WithVerificationKeys(map[string]ed25519.PublicKey{"fixture": key.Public().(ed25519.PublicKey)})}); err != nil {
+		t.Fatal(err)
+	}
+	c.VisitorPolicy = policy
 	c.PromoteVisitor = tunnel.NewVisitorPromoter(func(v publisher.Visitor) tunnelv1.VisitorStreamHeader { return v.Header }, func(id string) *tunnel.Session {
 		if id == f.ref.PublisherConnectionID {
 			return f.publisher

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -9,7 +10,33 @@ import (
 	"testing"
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func TestVisitorTokenSourceDoesNotInheritManagementBearer(t *testing.T) {
+	base := &recordingTransport{respond: func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusBadRequest, map[string]any{"code": "invalid_request"}), nil
+	}}
+	source := &tokenSource{control: control{serverEndpoint: testControlOrigin}, explicit: "management-access"}
+	client, err := clientcontrol.NewExternallyAuthenticated(testControlOrigin, &http.Client{Transport: &bearerTransport{base: base, source: source}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"browser_session", "share_session", "control_session"} {
+		_, _ = client.IssueVisitorToken(t.Context(), controlv1.VisitorTokenRequest{
+			Resource: controlv1.VisitorResourceScope{Kind: "public_url", Id: "url_aaaaaaaaaaaaaaaaaaaaaa"},
+			Source:   json.RawMessage(`{"kind":"` + kind + `","secret":"source-secret"}`),
+		})
+	}
+	requests := base.snapshot()
+	if len(requests) != 3 {
+		t.Fatalf("visitor source requests = %d; want three", len(requests))
+	}
+	if requests[0].header.Get("Authorization") != "" || requests[1].header.Get("Authorization") != "" || requests[2].header.Get("Authorization") != "Bearer management-access" {
+		t.Fatal("visitor source inherited the management bearer or human source lost it")
+	}
+}
 
 type trackedBody struct {
 	io.Reader

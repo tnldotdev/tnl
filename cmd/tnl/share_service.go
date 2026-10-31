@@ -76,7 +76,7 @@ type serviceShareLinkCommand struct {
 }
 
 type serviceShareTokenCommand struct {
-	Create serviceShareHTTPCreateCommand `cmd:"" help:"Print a one-time Tnl-Access-Token value; requires --expires-at or --expires-in (at most 7d)."`
+	Create serviceShareHTTPCreateCommand `cmd:"" help:"Print a one-time Tnl-Visitor-Token value; requires --expires-at or --expires-in (at most 7d)."`
 }
 
 type serviceShareHTTPCreateCommand struct {
@@ -487,7 +487,7 @@ func revokeServiceShare(ctx context.Context, control *clientcontrol.Client, serv
 	))
 }
 
-func runServiceShareHTTPCreate(ctx context.Context, f serviceShareHTTPCreateCommand, project projectConfiguration, kind controlv1.CreateServiceHTTPGrantRequestKind, o, d io.Writer) error {
+func runServiceShareHTTPCreate(ctx context.Context, f serviceShareHTTPCreateCommand, project projectConfiguration, kind controlv1.CreateVisitorCredentialRequestKind, o, d io.Writer) error {
 	at, err := f.deadline(time.Now(), 7*24*time.Hour)
 	if err != nil {
 		return err
@@ -500,23 +500,25 @@ func runServiceShareHTTPCreate(ctx context.Context, f serviceShareHTTPCreateComm
 	return createServiceShareHTTP(ctx, s.Authenticated().Control, service, f.Output, kind, at, o)
 }
 
-func createServiceShareHTTP(ctx context.Context, control *clientcontrol.Client, service controlv1.Service, mode statusOutputMode, kind controlv1.CreateServiceHTTPGrantRequestKind, at time.Time, o io.Writer) error {
+func createServiceShareHTTP(ctx context.Context, control *clientcontrol.Client, service controlv1.Service, mode statusOutputMode, kind controlv1.CreateVisitorCredentialRequestKind, at time.Time, o io.Writer) error {
 	if service.Protocol != controlv1.ServiceProtocolHTTP || service.Endpoint == nil || !service.Endpoint.Public {
 		return serviceShareInput("HTTP links and tokens require a publicly reachable service HTTP service; use an identity invitation for connector access")
 	}
-	grant, err := control.CreateServiceHTTPGrant(ctx, service.Id, controlv1.CreateServiceHTTPGrantRequest{Kind: kind, ExpiresAt: at})
+	grant, err := control.CreateServiceHTTPGrant(ctx, service.Id, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.Id}, Kind: kind, ExpiresAt: at})
 	if err != nil {
 		return err
 	}
-	if grant.Subject.Kind != "service" || grant.Subject.Id != service.Id || string(grant.Kind) != string(kind) || !grant.ExpiresAt.Equal(at) || !opaqueid.Valid(grant.Id, "shg_") || !serviceShareSecret(grant.Secret, grant.Id) {
+	refresh, versioned := strings.CutPrefix(grant.RefreshCredential, "vrf1.")
+	permission := grant.Permission
+	if permission.Resource.Kind != "service" || permission.Resource.Id != service.Id || string(grant.Kind) != string(kind) || !grant.ExpiresAt.Equal(at) || !opaqueid.Valid(grant.GrantId, "shg_") || !versioned || !serviceShareSecret(refresh, grant.GrantId) || permission.Hostname != service.Endpoint.Hostname || permission.Port != service.Endpoint.Port || permission.VisitorPolicyRevision < 1 || permission.ExpiresAt.After(grant.ExpiresAt) || !permission.ExpiresAt.After(time.Now()) || len(permission.VisitorToken) > 2048 || strings.Count(permission.VisitorToken, ".") != 2 {
 		return serviceShareResponse()
 	}
-	value := grant.Secret
-	if kind == controlv1.CreateServiceHTTPGrantRequestKindToken && grant.ShareUrl != nil {
+	value := permission.VisitorToken
+	if kind == controlv1.CreateVisitorCredentialRequestKindToken && grant.ShareUrl != nil {
 		return serviceShareResponse()
 	}
-	if kind == controlv1.CreateServiceHTTPGrantRequestKindShare {
-		expected := "https://" + net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port)) + "/__tnl/share/" + grant.Secret
+	if kind == controlv1.CreateVisitorCredentialRequestKindShare {
+		expected := "https://" + net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port)) + "/__tnl/share/" + grant.RefreshCredential
 		if grant.ShareUrl == nil || *grant.ShareUrl != expected {
 			return serviceShareResponse()
 		}

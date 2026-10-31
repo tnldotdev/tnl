@@ -2,110 +2,15 @@ package state
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
-
-type HTTPVisitorRequest struct {
-	SourceIP, BrowserCookieSecret, ShareID string
-	ShareCookieSecret, ShareSecret         []byte
-}
-
-func (d *Database) httpVisitorDecision(ctx context.Context, q *controlstatedb.Queries, url controlstatedb.ControlPublicUrl, input HTTPVisitorRequest, now time.Time) (VisitorPermission, error) {
-	result := VisitorPermission{}
-	ip, ipExpires, err := d.visitorIPAllowed(ctx, q, url, input.SourceIP, now)
-	if err != nil || !ip {
-		return result, err
-	}
-	result.ExpiresAt = ipExpires
-	if input.BrowserCookieSecret != "" {
-		verified, verifyErr := d.browserPermission(ctx, q, url.ID, input.BrowserCookieSecret, now)
-		if verifyErr == nil {
-			result = verified
-			if ipExpires != nil {
-				result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, *ipExpires)
-			}
-		} else {
-			return result, verifyErr
-		}
-	}
-	if result.VisitAllowed {
-		return result, nil
-	}
-	if len(input.ShareSecret) == 32 {
-		share, lookupErr := q.GetActiveShareForPublicURL(ctx, controlstatedb.GetActiveShareForPublicURLParams{
-			ShareID: input.ShareID, PublicURLID: url.ID, Now: timestamptz(now),
-		})
-		if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
-			return result, lookupErr
-		}
-		if lookupErr == nil {
-			digest := sha256.Sum256(input.ShareSecret)
-			if subtle.ConstantTimeCompare(digest[:], share.SecretDigest) == 1 {
-				result.VisitAllowed, result.Reason = true, "anonymous_share"
-				result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, share.ExpiresAt.Time)
-				return result, nil
-			}
-		}
-	}
-	if !result.VisitAllowed && len(input.ShareCookieSecret) == 32 {
-		digest := sha256.Sum256(input.ShareCookieSecret)
-		expires, lookupErr := q.ReviewerShareCookieValid(ctx, controlstatedb.ReviewerShareCookieValidParams{ShareID: input.ShareID, PublicURLID: url.ID, TokenDigest: digest[:], Now: timestamptz(now)})
-		err = lookupErr
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return result, err
-		}
-		if err == nil {
-			result.VisitAllowed = true
-			result.Reason = "anonymous_share"
-			result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, expires.Time)
-		}
-	}
-	if input.ShareID == "" && len(input.ShareSecret) == 0 && len(input.ShareCookieSecret) == 0 && (input.BrowserCookieSecret == "" || result.Authenticated) && url.AccessMode == string(VisitorAccessAnonymous) {
-		result.VisitAllowed, result.Reason = true, "anonymous"
-	}
-	return result, nil
-}
-
-func (d *Database) HTTPVisitorPermission(ctx context.Context, auth PublishRunAuthentication, input HTTPVisitorRequest, now time.Time) (result VisitorPermission, retErr error) {
-	// HTTP chooses one credential before authorization. feedback may separately
-	// verify an author and a URL-scoped share; it retains its own actor boundary.
-	if input.BrowserCookieSecret != "" && (input.ShareID != "" || len(input.ShareSecret) != 0 || len(input.ShareCookieSecret) != 0) || len(input.ShareSecret) != 0 && len(input.ShareCookieSecret) != 0 {
-		return result, ErrVisitorSignIn
-	}
-	tx, err := d.pool.Begin(ctx)
-	if err != nil {
-		return result, err
-	}
-	defer rollback(ctx, tx, "authorize HTTP visitor", &retErr)()
-	q := controlstatedb.New(tx)
-	url, err := lockVisitorURL(ctx, q, auth.PublicURLID)
-	if err != nil {
-		return result, err
-	}
-	if url.ServiceProtocol != "http" {
-		return result, ErrPreviewAccess
-	}
-	run, err := d.lockAuthenticatedRun(ctx, q, auth, now)
-	if err != nil {
-		return result, err
-	}
-	result, err = d.httpVisitorDecision(ctx, q, url, input, now)
-	if err != nil {
-		return result, err
-	}
-	if result.VisitAllowed {
-		result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, run.PublisherExpiresAt.Time)
-		result.ExpiresAt = earlierVisitorExpiry(result.ExpiresAt, now.Add(2*time.Minute))
-	}
-	return result, tx.Commit(ctx)
-}
 
 func earlierVisitorExpiry(current *time.Time, candidate time.Time) *time.Time {
 	if candidate.IsZero() || current != nil && !candidate.Before(*current) {
@@ -197,14 +102,17 @@ func identityPermission(ctx context.Context, q *controlstatedb.Queries, urlID, i
 		return result, err
 	}
 	result.TeamMember = err == nil
-	row, err := q.VisitorPermission(ctx, controlstatedb.VisitorPermissionParams{PublicURLID: urlID, IdentityID: identityID, PreviewID: previewID, Now: timestamptz(now)})
+	row, err := q.VisitorPermission(ctx, controlstatedb.VisitorPermissionParams{ResourceKind: "public_url", ResourceID: urlID, IdentityID: identityID, ControlSessionID: companySessionID(ctx, identityID), PreviewID: previewID, Now: timestamptz(now)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, nil
 	}
 	if err != nil {
 		return result, err
 	}
-	result.VisitAllowed, result.Reason, result.ExpiresAt = true, row.Reason, optionalTime(row.ExpiresAt)
+	result.VisitAllowed, result.Reason = true, row.Reason
+	if row.ExpiresAt.InfinityModifier != pgtype.Infinity {
+		result.ExpiresAt = optionalTime(row.ExpiresAt)
+	}
 	deadline, err := q.CompanySubjectDeadline(ctx, controlstatedb.CompanySubjectDeadlineParams{TeamID: url.TeamID, IdentityID: identityID, SessionID: companySessionID(ctx, identityID), Now: timestamptz(now)})
 	if err != nil {
 		return VisitorPermission{}, err

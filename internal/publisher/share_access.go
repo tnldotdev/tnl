@@ -2,17 +2,14 @@ package publisher
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
+	"encoding/json"
 	"errors"
-	"fmt"
 	"html"
 	"io"
 	"net/http"
 	"net/textproto"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -20,21 +17,11 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-const (
-	shareCookieName     = "__Host-tnl-share"
-	shareStateFreshness = 30 * time.Second
-	shareRefreshPeriod  = 10 * time.Second
-)
+const shareCookieName = "__Host-tnl-share"
 
 type shareAccessClient interface {
 	EnableShareAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error
-	GetPublishRunShareState(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunShareState, error)
 	RedeemPublishRunShare(context.Context, string, controlv1.RedeemShareRequest, credentials.PublishRunToken) (controlv1.ShareRedemption, error)
-}
-
-type cachedShare struct {
-	expiresAt time.Time
-	cookies   map[[32]byte]struct{}
 }
 
 type shareAccess struct {
@@ -42,78 +29,7 @@ type shareAccess struct {
 	runID   string
 	version uint64
 	token   credentials.PublishRunToken
-
-	mu                sync.RWMutex
-	confirmed         time.Time
-	shares            map[string]cachedShare
-	teamAccessEnabled bool
-}
-
-func (a *shareAccess) refresh(ctx context.Context) error {
-	started := time.Now()
-	response, err := a.client.GetPublishRunShareState(ctx, a.runID, a.version, a.token)
-	if err != nil {
-		return err
-	}
-	if len(response.Shares) > 256 {
-		return errors.New("publisher: share state exceeds the supported bound")
-	}
-	shares := make(map[string]cachedShare, len(response.Shares))
-	now := time.Now()
-	for _, entry := range response.Shares {
-		if !opaqueid.Valid(entry.ShareId, opaqueid.SharePrefix) || !entry.ExpiresAt.After(now) || len(entry.CookieHashes) > 2048 {
-			return errors.New("publisher: server returned invalid share state")
-		}
-		fingerprint, err := hex.DecodeString(entry.SecretFingerprint)
-		if err != nil || len(fingerprint) != 32 {
-			return errors.New("publisher: server returned an invalid share fingerprint")
-		}
-		if _, duplicate := shares[entry.ShareId]; duplicate {
-			return errors.New("publisher: server returned duplicate share state")
-		}
-		share := cachedShare{expiresAt: entry.ExpiresAt, cookies: make(map[[32]byte]struct{}, len(entry.CookieHashes))}
-		for _, encoded := range entry.CookieHashes {
-			decoded, err := hex.DecodeString(encoded)
-			if err != nil || len(decoded) != 32 {
-				return errors.New("publisher: server returned an invalid share cookie hash")
-			}
-			var digest [32]byte
-			copy(digest[:], decoded)
-			share.cookies[digest] = struct{}{}
-		}
-		shares[entry.ShareId] = share
-	}
-	a.mu.Lock()
-	a.shares, a.confirmed, a.teamAccessEnabled = shares, started, response.TeamAccessEnabled != nil && *response.TeamAccessEnabled
-	a.mu.Unlock()
-	return nil
-}
-
-func (a *shareAccess) permission(request *http.Request) (time.Time, bool) {
-	cookie, err := request.Cookie(shareCookieName)
-	if err != nil {
-		return time.Time{}, false
-	}
-	shareID, raw, found := strings.Cut(cookie.Value, ".")
-	if !found || !opaqueid.Valid(shareID, opaqueid.SharePrefix) {
-		return time.Time{}, false
-	}
-	secret, err := base64.RawURLEncoding.DecodeString(raw)
-	if err != nil || len(secret) != 32 {
-		return time.Time{}, false
-	}
-	digest := sha256.Sum256(secret)
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	if a.confirmed.IsZero() || time.Since(a.confirmed) > shareStateFreshness {
-		return time.Time{}, false
-	}
-	share, found := a.shares[shareID]
-	if !found || !share.expiresAt.After(time.Now()) {
-		return time.Time{}, false
-	}
-	_, allowed := share.cookies[digest]
-	return share.expiresAt, allowed
+	browser *browserAccess
 }
 
 func (a *shareAccess) redeem(ctx context.Context, path string) (controlv1.ShareRedemption, error) {
@@ -148,8 +64,14 @@ func (a *shareAccess) redeem(ctx context.Context, path string) (controlv1.ShareR
 	if cookie, err := base64.RawURLEncoding.DecodeString(result.CookieSecret); err != nil || len(cookie) != 32 {
 		return controlv1.ShareRedemption{}, errors.New("publisher: server returned invalid share cookie")
 	}
-	if err := a.refresh(ctx); err != nil {
-		return controlv1.ShareRedemption{}, fmt.Errorf("publisher: refresh redeemed share: %w", err)
+	if a.browser != nil && a.browser.tokens != nil {
+		source, err := json.Marshal(controlv1.VisitorTokenShareSessionSource{Kind: controlv1.VisitorTokenShareSession, ShareId: result.ShareId, Secret: result.CookieSecret})
+		if err == nil {
+			err = a.browser.prepareToken(ctx, source, result.Permission, result.ExpiresAt)
+		}
+		if err != nil {
+			return controlv1.ShareRedemption{}, err
+		}
 	}
 	return result, nil
 }
@@ -165,7 +87,7 @@ func stripTnlCookies(request *http.Request) *http.Request {
 			name, _, found := strings.Cut(pair, "=")
 			// net/http trims the name separately from the cookie pair.
 			name = textproto.TrimString(name)
-			if found && name != shareCookieName && name != feedbackBrowserCookieName && name != browserAccessCookieName && name != browserLoginAttemptCookieName && pair != "" {
+			if found && name != shareCookieName && name != feedbackBrowserCookieName && name != browserAccessCookieName && name != browserLoginAttemptCookieName && name != visitorTokenCookie && pair != "" {
 				clean = append(clean, pair)
 			}
 		}
@@ -179,6 +101,10 @@ func stripTnlCookies(request *http.Request) *http.Request {
 }
 
 func shareRedirect(response http.ResponseWriter, redemption controlv1.ShareRedemption) {
+	if err := visitorPermissionCookie(response, redemption.Permission); err != nil {
+		http.Error(response, "share visitor permission is unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	http.SetCookie(response, &http.Cookie{
 		Name: shareCookieName, Value: redemption.ShareId + "." + redemption.CookieSecret,
 		Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode,

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
@@ -23,6 +24,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -32,11 +34,10 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// testVisitorControl simulates a current control decision for transport tests;
-// policy-specific tests supply their own browserAccess client instead.
-type testVisitorControl struct{ shares *shareAccess }
+// testVisitorControl supplies explicit browser operations for transport fixtures.
+type testVisitorControl struct{}
 
-func (*testVisitorControl) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+func (*testVisitorControl) RedeemBrowserHandoff(context.Context, string, uint64, string, string, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
 	return controlv1.BrowserHandoffResponse{}, errors.New("browser handoff is unavailable")
 }
 
@@ -48,23 +49,42 @@ func (*testVisitorControl) RevokeBrowserAccess(context.Context, string, uint64, 
 	return nil
 }
 
-func (c *testVisitorControl) AuthorizeHTTPVisitor(ctx context.Context, _ string, input controlv1.HTTPVisitorRequest, _ credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
-	allowed := ctx.Value(denialContextKey{}) != true
-	if !allowed && c.shares != nil && input.ShareId != nil && input.ShareCookieSecret != nil {
-		request := httptest.NewRequest(http.MethodGet, "https://route.example/", nil)
-		request.Header.Set("Cookie", shareCookieName+"="+*input.ShareId+"."+*input.ShareCookieSecret)
-		_, allowed = c.shares.permission(request)
+func newTestPublicURLServer(t *testing.T, config PublicURLServerConfig) (*PublicURLServer, error) {
+	t.Helper()
+	if config.PublicURLID == "" {
+		config.PublicURLID = certificateTestPublicURLID
 	}
-	until := time.Now().Add(time.Minute)
-	return controlv1.HTTPVisitorResponse{VisitAllowed: allowed, ValidUntil: &until}, nil
-}
-
-func newTestPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) {
+	if config.VisitorPolicy == nil {
+		run := config.PublishRunID
+		if run == "" {
+			run = "pr_0123456789abcdefghijkl"
+		}
+		policy, err := prepareVisitorPolicy(t.Context(), testHTTPPolicyClient{hostname: config.Hostname, anonymous: config.AccessMode != "restricted"}, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: config.PublicURLID}, run, max(1, int64(config.PublishRunNumber)), "fixture-run-token", nil)
+		if err != nil {
+			return nil, err
+		}
+		t.Cleanup(policy.Close)
+		config.VisitorPolicy = policy.lease
+	}
 	if (config.ServiceProtocol == "" || config.ServiceProtocol == controlv1.Http) && config.BrowserAccess == nil {
-		config.BrowserAccess = &browserAccess{client: &testVisitorControl{shares: config.ShareAccess}, publicURLID: config.PublicURLID,
+		config.BrowserAccess = &browserAccess{client: &testVisitorControl{}, publicURLID: config.PublicURLID,
 			runID: config.PublishRunID, version: config.PublishRunNumber}
 	}
 	return NewPublicURLServer(config)
+}
+
+type testHTTPPolicyClient struct {
+	hostname  string
+	anonymous bool
+}
+
+func (f testHTTPPolicyClient) ReadPublisherVisitorPolicy(_ context.Context, body controlv1.PublisherVisitorPolicyRequest, _ string) (controlv1.VisitorPolicyUpdate, error) {
+	now := time.Now()
+	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("v", 32)))
+	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
+		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Issuer: "https://control.example.test", Hostname: f.hostname, Port: 443,
+			ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: f.anonymous, VisitorPolicyRevision: 1, KeyRevision: 1,
+			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "fixture", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil
 }
 
 func TestRouteServerTerminatesTLSAndProxiesLocalHTTP(t *testing.T) {
@@ -126,7 +146,14 @@ func TestDeniedVisitorCompletesTLSButCannotReachLocalService(t *testing.T) {
 		response.WriteHeader(http.StatusOK)
 	}))
 	defer upstream.Close()
-	route := startHTTPTestRouteServer(t, upstream.URL)
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Target: upstream.URL, AccessMode: "restricted", Certificate: publicURLTestCertificate(t, "route.example")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := route.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = route.Close() })
 	ingress, publisher := net.Pipe()
 	_ = ingress.SetDeadline(time.Now().Add(5 * time.Second))
 	handled := make(chan struct{})
@@ -224,7 +251,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	defer upstream.Close()
 
 	publicURLCertificate := publicURLTestCertificate(t, "route.example")
-	route, err := newTestPublicURLServer(PublicURLServerConfig{
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", Target: upstream.URL, Certificate: publicURLCertificate,
 	})
 	if err != nil {
@@ -287,7 +314,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	})
 
 	ref := tunnelv1.PublisherConnectionRef{
-		PublishRunID: "publish_run_1", PublicURLID: "public_url_1", PublishRunNumber: 1,
+		PublishRunID: "publish_run_1", PublicURLID: route.run.PublicURLID, PublishRunNumber: 1,
 		PublisherConnectionID: "connection_1", ConnectionSlot: 0,
 		ConnectionAssignmentRevision: 1, RelayServiceID: "relay_service_1",
 	}
@@ -447,7 +474,7 @@ func TestRouteServerNegotiatesHTTP2AndProxiesLocalHTTP(t *testing.T) {
 
 func TestIntegrationURLHandlerSeesTrustedVisitorSourceAndRejectsOtherAuthorities(t *testing.T) {
 	sources := make(chan string, 1)
-	url, err := newTestPublicURLServer(PublicURLServerConfig{
+	url, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", Target: "http://127.0.0.1:1",
 		Certificate: publicURLTestCertificate(t, "route.example"),
 		Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -495,7 +522,7 @@ func TestIntegrationURLHandlerSeesTrustedVisitorSourceAndRejectsOtherAuthorities
 
 func startHTTPTestRouteServer(t *testing.T, target string) *PublicURLServer {
 	t.Helper()
-	route, err := newTestPublicURLServer(PublicURLServerConfig{
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", Target: target, Certificate: publicURLTestCertificate(t, "route.example"),
 	})
 	if err != nil {

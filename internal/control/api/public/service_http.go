@@ -8,18 +8,17 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/policy/httpsubject"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 type serviceHTTPStore interface {
-	ServiceHTTPBrowserTeam(context.Context, httpsubject.Subject, time.Time) (string, error)
-	BeginServiceBrowserLogin(context.Context, httpsubject.Subject, string, string, string, []byte, *controlstate.CompanyLoginIntent, time.Time) (string, error)
-	AuthorizeServiceHTTPVisitor(context.Context, controlstate.ServiceHTTPRun, controlv1.ServiceHTTPVisitorRequest, time.Time) (controlstate.ServiceVisitorValidity, error)
+	ServiceHTTPBrowserTeam(context.Context, visitorscope.Scope, time.Time) (string, error)
+	BeginServiceBrowserLogin(context.Context, visitorscope.Scope, string, string, string, []byte, *controlstate.CompanyLoginIntent, time.Time) (string, error)
 	RedeemServiceBrowserHandoff(context.Context, controlstate.ServiceHTTPRun, string, time.Time) (controlv1.BrowserHandoffResponse, error)
 	ServiceBrowserSession(context.Context, controlstate.ServiceHTTPRun, string, bool, time.Time) (controlstate.VisitorPermission, error)
-	CreateServiceHTTPGrant(context.Context, string, string, controlv1.CreateServiceHTTPGrantRequest, time.Time) (controlv1.ServiceHTTPGrant, error)
+	CreateServiceHTTPGrant(context.Context, string, string, controlv1.CreateVisitorCredentialRequest, time.Time) (controlv1.VisitorCredential, error)
 	RevokeServiceHTTPGrant(context.Context, string, string, string, time.Time) error
 }
 
@@ -38,26 +37,7 @@ func (h *handler) serviceHTTP(w http.ResponseWriter, r *http.Request) (serviceHT
 }
 
 func serviceHTTPRun(service, run, token string, number int64) controlstate.ServiceHTTPRun {
-	return controlstate.ServiceHTTPRun{Subject: httpsubject.Subject{Kind: httpsubject.Service, ID: service}, RunID: run, Number: number, Token: credentials.ServiceRunToken(token)}
-}
-
-func (h *handler) AuthorizeServiceHTTPVisitor(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID, run controlv1.ServiceRunID) {
-	store, token, ok := h.serviceHTTP(w, r)
-	if !ok {
-		return
-	}
-	var body controlv1.ServiceHTTPVisitorRequest
-	if decodeJSONLimited(w, r, &body, 32<<10) != nil || body.RunNumber < 1 || !validVisitorSource(body.SourceIp) {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service HTTP decision")
-		return
-	}
-	result, err := store.AuthorizeServiceHTTPVisitor(r.Context(), serviceHTTPRun(service, run, token, body.RunNumber), body, time.Now())
-	if err != nil {
-		writeManagedCertificateProblem(w, "authorize service HTTP visitor", err)
-		return
-	}
-	observability.AuthorizationAdmission(r.Context(), "service_http_visitor", result.Allowed, result.Admitted)
-	writeJSON(w, 200, controlv1.ServiceClientCertificateDecision{Allowed: result.Allowed, Admitted: result.Admitted, ValidUntil: result.ValidUntil})
+	return controlstate.ServiceHTTPRun{Subject: visitorscope.Scope{Kind: visitorscope.Service, ID: service}, RunID: run, Number: number, Token: credentials.ServiceRunToken(token)}
 }
 
 func (h *handler) RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID, run controlv1.ServiceRunID) {
@@ -73,6 +53,11 @@ func (h *handler) RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Req
 	result, err := store.RedeemServiceBrowserHandoff(r.Context(), serviceHTTPRun(service, run, token, body.RunNumber), body.Secret, time.Now())
 	if err != nil {
 		writeServiceHTTPBrowserProblem(w, err)
+		return
+	}
+	result.Permission, err = h.redeemedVisitorPermission(r.Context(), visitorscope.Scope{Kind: visitorscope.Service, ID: service}, controlstate.BrowserSessionTokenSource{Secret: result.CookieSecret})
+	if err != nil {
+		writeVisitorTokenProblem(w, err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -124,7 +109,7 @@ func (h *handler) CreateServiceHTTPGrant(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	var body controlv1.CreateServiceHTTPGrantRequest
+	var body controlv1.CreateVisitorCredentialRequest
 	if decodeJSONLimited(w, r, &body, 4096) != nil {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service HTTP grant")
 		return

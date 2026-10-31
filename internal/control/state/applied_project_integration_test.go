@@ -444,7 +444,7 @@ func TestIntegrationAppliedProjectGroupReassignmentKeepsSavedService(t *testing.
 		t.Fatal("private HTTP/TLS assignment is not publishable", err)
 	}
 	var teamGrants int
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.service_grants WHERE service_id=$1 AND kind='team' AND revoked_at IS NULL`, a.ServiceID).Scan(&teamGrants); err != nil || teamGrants != 0 {
+	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.visitor_grants WHERE service_id=$1 AND kind='team' AND revoked_at IS NULL`, a.ServiceID).Scan(&teamGrants); err != nil || teamGrants != 0 {
 		t.Fatal("removed declarative team access survived", err)
 	}
 	r.ExpectedRevision = 2

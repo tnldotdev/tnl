@@ -408,7 +408,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		t.Fatal("public group lost service HTTP endpoint")
 	}
 	f.connectDirectListener(t, directService.Endpoint)
-	grant, err := control.CreateServiceHTTPGrant(t.Context(), directService.Id, controlv1.CreateServiceHTTPGrantRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
+	grant, err := control.CreateServiceHTTPGrant(t.Context(), directService.Id, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: directService.Id}, Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +417,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		request.Header.Set("Tnl-Access-Token", grant.Secret)
+		request.Header.Set("Tnl-Visitor-Token", grant.Permission.VisitorToken)
 		response, err := visitor.Do(request)
 		if err != nil {
 			return false
@@ -553,6 +553,10 @@ func newCLIWorkflow(t *testing.T) *cliWorkflow {
 	server.StartTLS()
 	t.Cleanup(server.Close)
 	f.url = server.URL
+	// match control startup before any publisher prepares its first policy view.
+	if err := database.PrepareVisitorSigningKeys(t.Context(), f.url, time.Now()); err != nil {
+		t.Fatal("workflow visitor signing preparation failed")
+	}
 	providerMux := http.NewServeMux()
 	provider := httptest.NewUnstartedServer(providerMux)
 	provider.TLS = f.tls.Clone()

@@ -12,29 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const bindServiceHTTPDirectCredential = `-- name: BindServiceHTTPDirectCredential :exec
-UPDATE control.direct_service_visitors SET http_credential_kind=$1,http_credential_digest=$2,
-    identity_id=NULL,device_id=NULL,workload_session_id=NULL,certificate_digest=NULL,valid_until=$3
-WHERE visitor_connection_id=$4
-`
-
-type BindServiceHTTPDirectCredentialParams struct {
-	Kind                pgtype.Text
-	Digest              []byte
-	ValidUntil          pgtype.Timestamptz
-	VisitorConnectionID string
-}
-
-func (q *Queries) BindServiceHTTPDirectCredential(ctx context.Context, arg BindServiceHTTPDirectCredentialParams) error {
-	_, err := q.db.Exec(ctx, bindServiceHTTPDirectCredential,
-		arg.Kind,
-		arg.Digest,
-		arg.ValidUntil,
-		arg.VisitorConnectionID,
-	)
-	return err
-}
-
 const cleanupServiceHTTPLogins = `-- name: CleanupServiceHTTPLogins :exec
 DELETE FROM control.service_http_browser_logins stored WHERE stored.state_digest IN
     (SELECT expired.state_digest FROM control.service_http_browser_logins expired WHERE expired.expires_at<=$1 LIMIT 100)
@@ -119,18 +96,20 @@ func (q *Queries) InsertServiceHTTPBrowserLogin(ctx context.Context, arg InsertS
 }
 
 const insertServiceHTTPBrowserSession = `-- name: InsertServiceHTTPBrowserSession :exec
-INSERT INTO control.service_http_browser_sessions(handoff_digest,service_id,run_ids,control_session_id,return_path,handoff_expires_at,expires_at)
-VALUES($1,$2,$3,$4,$5,$6,$7)
+INSERT INTO control.service_http_browser_sessions(handoff_digest,service_id,run_ids,control_session_id,return_path,handoff_expires_at,expires_at,refresh_ciphertext,storage_key_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
 `
 
 type InsertServiceHTTPBrowserSessionParams struct {
-	HandoffDigest    []byte
-	ServiceID        string
-	RunIds           []string
-	ControlSessionID string
-	ReturnPath       string
-	HandoffExpiresAt pgtype.Timestamptz
-	ExpiresAt        pgtype.Timestamptz
+	HandoffDigest     []byte
+	ServiceID         string
+	RunIds            []string
+	ControlSessionID  string
+	ReturnPath        string
+	HandoffExpiresAt  pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
+	RefreshCiphertext []byte
+	StorageKeyID      string
 }
 
 func (q *Queries) InsertServiceHTTPBrowserSession(ctx context.Context, arg InsertServiceHTTPBrowserSessionParams) error {
@@ -142,6 +121,8 @@ func (q *Queries) InsertServiceHTTPBrowserSession(ctx context.Context, arg Inser
 		arg.ReturnPath,
 		arg.HandoffExpiresAt,
 		arg.ExpiresAt,
+		arg.RefreshCiphertext,
+		arg.StorageKeyID,
 	)
 	return err
 }
@@ -209,6 +190,62 @@ func (q *Queries) ListServiceHTTPGrants(ctx context.Context, serviceID string) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockServiceHTTPBrowserSession = `-- name: LockServiceHTTPBrowserSession :one
+SELECT session.handoff_digest, session.cookie_digest, session.service_id, session.run_ids, session.control_session_id, session.refresh_ciphertext, session.storage_key_id, session.return_path, session.handoff_expires_at, session.expires_at, session.revoked_at, parent.identity_id, parent.access_expires_at, parent.refresh_expires_at,
+    parent.revoked_at AS parent_revoked_at
+FROM control.service_http_browser_sessions session
+JOIN control.control_sessions parent ON parent.id=session.control_session_id
+WHERE session.service_id=$1 AND session.cookie_digest=$2 AND session.revoked_at IS NULL AND session.expires_at>$3
+FOR UPDATE OF session NOWAIT
+`
+
+type LockServiceHTTPBrowserSessionParams struct {
+	ServiceID    string
+	CookieDigest []byte
+	ExpiresAt    pgtype.Timestamptz
+}
+
+type LockServiceHTTPBrowserSessionRow struct {
+	HandoffDigest     []byte
+	CookieDigest      []byte
+	ServiceID         string
+	RunIds            []string
+	ControlSessionID  string
+	RefreshCiphertext []byte
+	StorageKeyID      string
+	ReturnPath        string
+	HandoffExpiresAt  pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
+	RevokedAt         pgtype.Timestamptz
+	IdentityID        string
+	AccessExpiresAt   pgtype.Timestamptz
+	RefreshExpiresAt  pgtype.Timestamptz
+	ParentRevokedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) LockServiceHTTPBrowserSession(ctx context.Context, arg LockServiceHTTPBrowserSessionParams) (LockServiceHTTPBrowserSessionRow, error) {
+	row := q.db.QueryRow(ctx, lockServiceHTTPBrowserSession, arg.ServiceID, arg.CookieDigest, arg.ExpiresAt)
+	var i LockServiceHTTPBrowserSessionRow
+	err := row.Scan(
+		&i.HandoffDigest,
+		&i.CookieDigest,
+		&i.ServiceID,
+		&i.RunIds,
+		&i.ControlSessionID,
+		&i.RefreshCiphertext,
+		&i.StorageKeyID,
+		&i.ReturnPath,
+		&i.HandoffExpiresAt,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.IdentityID,
+		&i.AccessExpiresAt,
+		&i.RefreshExpiresAt,
+		&i.ParentRevokedAt,
+	)
+	return i, err
 }
 
 const redeemServiceHTTPBrowserSession = `-- name: RedeemServiceHTTPBrowserSession :one
@@ -285,6 +322,46 @@ func (q *Queries) RevokeServiceHTTPGrant(ctx context.Context, arg RevokeServiceH
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const rotateServiceHTTPBrowserSession = `-- name: RotateServiceHTTPBrowserSession :exec
+UPDATE control.service_http_browser_sessions SET refresh_ciphertext=$2,storage_key_id=$3
+WHERE handoff_digest=$1
+`
+
+type RotateServiceHTTPBrowserSessionParams struct {
+	HandoffDigest     []byte
+	RefreshCiphertext []byte
+	StorageKeyID      string
+}
+
+func (q *Queries) RotateServiceHTTPBrowserSession(ctx context.Context, arg RotateServiceHTTPBrowserSessionParams) error {
+	_, err := q.db.Exec(ctx, rotateServiceHTTPBrowserSession, arg.HandoffDigest, arg.RefreshCiphertext, arg.StorageKeyID)
+	return err
+}
+
+const serviceDirectBinding = `-- name: ServiceDirectBinding :one
+SELECT destination_port,identity_id,device_id,workload_session_id FROM control.direct_service_visitors
+WHERE visitor_connection_id=$1
+`
+
+type ServiceDirectBindingRow struct {
+	DestinationPort   int32
+	IdentityID        pgtype.Text
+	DeviceID          pgtype.Text
+	WorkloadSessionID pgtype.Text
+}
+
+func (q *Queries) ServiceDirectBinding(ctx context.Context, visitorConnectionID string) (ServiceDirectBindingRow, error) {
+	row := q.db.QueryRow(ctx, serviceDirectBinding, visitorConnectionID)
+	var i ServiceDirectBindingRow
+	err := row.Scan(
+		&i.DestinationPort,
+		&i.IdentityID,
+		&i.DeviceID,
+		&i.WorkloadSessionID,
+	)
+	return i, err
 }
 
 const serviceHTTPAppliedConfiguration = `-- name: ServiceHTTPAppliedConfiguration :one
@@ -390,7 +467,7 @@ func (q *Queries) ServiceHTTPBrowserPermission(ctx context.Context, arg ServiceH
 	return i, err
 }
 
-const serviceHTTPDirectBinding = `-- name: ServiceHTTPDirectBinding :one
+const serviceHTTPTransportBinding = `-- name: ServiceHTTPTransportBinding :one
 SELECT (v.promoted_at IS NOT NULL)::boolean AS admitted,LEAST($1::timestamptz+interval '2 minutes',
     run.publisher_expires_at,run.certificate_expires_at,g.expires_at,ingress.lease_expires_at,
     (SELECT max(relay.lease_expires_at) FROM control.service_connection_slots slot
@@ -420,7 +497,7 @@ AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.rela
     AND relay.lease_expires_at>$1 AND NOT relay.draining)
 `
 
-type ServiceHTTPDirectBindingParams struct {
+type ServiceHTTPTransportBindingParams struct {
 	Now                 pgtype.Timestamptz
 	VisitorConnectionID string
 	ServiceID           string
@@ -430,13 +507,13 @@ type ServiceHTTPDirectBindingParams struct {
 	DestinationPort     int32
 }
 
-type ServiceHTTPDirectBindingRow struct {
+type ServiceHTTPTransportBindingRow struct {
 	Admitted   bool
 	ValidUntil pgtype.Timestamptz
 }
 
-func (q *Queries) ServiceHTTPDirectBinding(ctx context.Context, arg ServiceHTTPDirectBindingParams) (ServiceHTTPDirectBindingRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPDirectBinding,
+func (q *Queries) ServiceHTTPTransportBinding(ctx context.Context, arg ServiceHTTPTransportBindingParams) (ServiceHTTPTransportBindingRow, error) {
+	row := q.db.QueryRow(ctx, serviceHTTPTransportBinding,
 		arg.Now,
 		arg.VisitorConnectionID,
 		arg.ServiceID,
@@ -445,72 +522,7 @@ func (q *Queries) ServiceHTTPDirectBinding(ctx context.Context, arg ServiceHTTPD
 		arg.SourceIp,
 		arg.DestinationPort,
 	)
-	var i ServiceHTTPDirectBindingRow
+	var i ServiceHTTPTransportBindingRow
 	err := row.Scan(&i.Admitted, &i.ValidUntil)
-	return i, err
-}
-
-const serviceHTTPDirectCredential = `-- name: ServiceHTTPDirectCredential :one
-SELECT http_credential_kind,http_credential_digest,destination_port,identity_id,device_id,workload_session_id FROM control.direct_service_visitors
-WHERE visitor_connection_id=$1
-`
-
-type ServiceHTTPDirectCredentialRow struct {
-	HttpCredentialKind   pgtype.Text
-	HttpCredentialDigest []byte
-	DestinationPort      int32
-	IdentityID           pgtype.Text
-	DeviceID             pgtype.Text
-	WorkloadSessionID    pgtype.Text
-}
-
-func (q *Queries) ServiceHTTPDirectCredential(ctx context.Context, visitorConnectionID string) (ServiceHTTPDirectCredentialRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPDirectCredential, visitorConnectionID)
-	var i ServiceHTTPDirectCredentialRow
-	err := row.Scan(
-		&i.HttpCredentialKind,
-		&i.HttpCredentialDigest,
-		&i.DestinationPort,
-		&i.IdentityID,
-		&i.DeviceID,
-		&i.WorkloadSessionID,
-	)
-	return i, err
-}
-
-const serviceHTTPGrantPermission = `-- name: ServiceHTTPGrantPermission :one
-SELECT id,created_by_identity_id,control_session_id,expires_at FROM control.service_http_grants
-WHERE service_id=$1 AND kind=$2
-AND secret_digest=$3 AND revoked_at IS NULL AND expires_at>$4
-`
-
-type ServiceHTTPGrantPermissionParams struct {
-	ServiceID    string
-	Kind         string
-	SecretDigest []byte
-	Now          pgtype.Timestamptz
-}
-
-type ServiceHTTPGrantPermissionRow struct {
-	ID                  string
-	CreatedByIdentityID string
-	ControlSessionID    pgtype.Text
-	ExpiresAt           pgtype.Timestamptz
-}
-
-func (q *Queries) ServiceHTTPGrantPermission(ctx context.Context, arg ServiceHTTPGrantPermissionParams) (ServiceHTTPGrantPermissionRow, error) {
-	row := q.db.QueryRow(ctx, serviceHTTPGrantPermission,
-		arg.ServiceID,
-		arg.Kind,
-		arg.SecretDigest,
-		arg.Now,
-	)
-	var i ServiceHTTPGrantPermissionRow
-	err := row.Scan(
-		&i.ID,
-		&i.CreatedByIdentityID,
-		&i.ControlSessionID,
-		&i.ExpiresAt,
-	)
 	return i, err
 }
