@@ -164,7 +164,8 @@ func TestVisitorSourceCannotBeRewrittenOrReplayAcrossRelayConnectionsAfterReleas
 		ref := f.refs[index]
 		header.ProtocolVersion, header.Kind = tunnelv1.Version, tunnelv1.VisitorStream
 		header.PublisherConnectionID, header.ConnectionAssignmentRevision = ref.PublisherConnectionID, ref.ConnectionAssignmentRevision
-		stream, err := f.relays[index].OpenVisitorStream(f.ctx, header, tunnel.ReturnEvents{})
+		header.ConfirmBeforeBytes = true
+		stream, err := f.relays[index].OpenVisitorStream(f.ctx, header, nil, tunnel.ReturnEvents{})
 		if err != nil {
 			return nil, err
 		}

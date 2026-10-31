@@ -57,8 +57,35 @@ type auditCompositionTarget struct {
 	workers sync.WaitGroup
 }
 
-func (f *auditCompositionTarget) Open(context.Context, string) (net.Conn, error) {
-	return f.open(true), nil
+func (f *auditCompositionTarget) Start(ctx context.Context, _ string, _ bool, proxy, initial []byte) (result net.Conn, retErr error) {
+	connection := f.open(true)
+	deadline, _ := ctx.Deadline()
+	written := 0
+	defer func() {
+		if retErr != nil {
+			result = nil
+			retErr = &tunnel.OpeningError{Committed: written > 0, VisitorBytes: int64(written), Err: errors.Join(retErr, connection.Close())}
+		}
+	}()
+	if err := connection.SetDeadline(deadline); err != nil {
+		return nil, err
+	}
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { _ = connection.SetDeadline(time.Now()); close(done) })
+	defer func() {
+		if !stop() {
+			<-done
+		}
+		retErr = errors.Join(retErr, context.Cause(ctx), connection.SetDeadline(time.Time{}))
+	}()
+	if _, err := connection.Write(proxy); err != nil {
+		return nil, err
+	}
+	written, retErr = connection.Write(initial)
+	if retErr == nil && written != len(initial) {
+		retErr = io.ErrShortWrite
+	}
+	return connection, retErr
 }
 
 func (f *auditCompositionTarget) OpenPrivate(context.Context, ingressv1.ServiceRelay, tunnelv1.ServiceForwardingHeader) (net.Conn, error) {

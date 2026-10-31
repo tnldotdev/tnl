@@ -98,7 +98,7 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 	}
 	defer stream.Close()
 	wrote := make(chan error, 1)
-	go func() { wrote <- tunnelv1.WriteServiceForwardingHeader(stream, header) }()
+	go func() { _, err := tunnelv1.WriteServiceOpening(stream, header); wrote <- err }()
 	type outcome struct {
 		response tunnelv1.ReturnFrame
 		err      error

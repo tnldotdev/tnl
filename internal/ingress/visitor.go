@@ -19,12 +19,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 )
 
 type committedVisitorStream struct {
 	connection net.Conn
 	bytes      int64
-	setupErr   error
 }
 
 var errBackendTrackingClosed = errors.New("ingress: backend tracking closed")
@@ -196,16 +196,30 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	openCtx, cancel := context.WithTimeout(ctx, openTimeout)
 	opened, openErr := s.openVisitorStream(openCtx, backends, visitorID, kind, header, hello.Prefix, usage)
 	cancel()
-	if errors.Is(openErr, errBackendTrackingClosed) {
-		visitorOutcome = observability.VisitorDraining
-		return net.ErrClosed
-	}
 	if s.config.Metrics != nil {
-		s.config.Metrics.ObserveVisitorOpen(opened.connection != nil && opened.setupErr == nil, time.Since(visitorStarted))
+		s.config.Metrics.ObserveVisitorOpen(openErr == nil, time.Since(visitorStarted))
 	}
 	if openErr != nil {
 		auditOutcome, auditReason = "failed", "forwarding"
 		visitorOutcome = observability.VisitorOpenFailed
+		var opening *tunnel.OpeningError
+		if errors.As(openErr, &opening) && opening.Committed {
+			visitorOutcome = observability.VisitorCommittedFailed
+			if usage != nil {
+				usage.StreamOpened(time.Now().UTC())
+				usage.AddIngress(opening.VisitorBytes, time.Now().UTC())
+				streamCommitted = true
+			}
+			if s.config.Metrics != nil {
+				s.config.Metrics.AddForwardedBytes("visitor_to_publisher", opening.VisitorBytes)
+			}
+			s.reportForwardingFailure(route, visitorID, ForwardingCommittedWrite, len(backends))
+			return openErr
+		}
+		if errors.Is(openErr, errBackendTrackingClosed) {
+			visitorOutcome = observability.VisitorDraining
+			return openErr
+		}
 		s.reportForwardingFailure(route, visitorID, ForwardingNoBackend, len(backends))
 		return openErr
 	}
@@ -222,12 +236,6 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	}
 	if s.config.Metrics != nil {
 		s.config.Metrics.AddForwardedBytes("visitor_to_publisher", opened.bytes)
-	}
-	if opened.setupErr != nil {
-		auditOutcome, auditReason = "failed", "forwarding"
-		visitorOutcome = observability.VisitorCommittedFailed
-		s.reportForwardingFailure(route, visitorID, ForwardingCommittedWrite, len(backends))
-		return fmt.Errorf("ingress: write visitor setup after %d bytes: %w", opened.bytes, opened.setupErr)
 	}
 	upstream := opened.connection
 	if admission != nil {
@@ -306,12 +314,11 @@ func (s *Server) selectPoolRun(candidates []PublicURL) (PublicURL, func(), Looku
 }
 
 // openVisitorStream retries only before a visitor byte reaches a relay. the
-// returned connection is owned by the caller even when its setup write failed.
+// backend owns failed openings; the caller owns each successful connection.
 func (s *Server) openVisitorStream(ctx context.Context, backends []ingressbackend.Backend, visitorID string, kind connectionKind, header, prefix []byte, usage UsageConnection) (result committedVisitorStream, retErr error) {
 	ctx, finish := observability.Start(ctx, "ingress.open_visitor_stream")
 	observability.Visitor(ctx, visitorID)
-	defer func() { finish(errors.Join(retErr, result.setupErr)) }()
-	opened := false
+	defer func() { finish(retErr) }()
 	// rotate visitors across connected relays before committing bytes.
 	firstBackend := 0
 	if len(backends) > 1 {
@@ -330,48 +337,31 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []ingressbacken
 		}
 		attemptCtx, stopAttempt := backendAttemptContext(ctx, len(backends)-attempt)
 		started := time.Now()
-		var candidate net.Conn
-		var openErr error
-		if kind == pendingConnection {
-			if pendingBackend, ok := backend.(ingressbackend.PendingBackend); ok {
-				candidate, openErr = pendingBackend.OpenPending(attemptCtx, visitorID)
-			} else {
-				openErr = errors.New("ingress: backend does not support pending authorization")
-			}
-		} else {
-			candidate, openErr = backend.Open(attemptCtx, visitorID)
-		}
+		candidate, openErr := backend.Start(attemptCtx, visitorID, kind == pendingConnection, header, prefix)
+		stopAttempt()
 		if openErr != nil {
-			stopAttempt()
 			s.observeAttempt(attempt, openErr, started)
-			s.observeRelayAttempt(backend, observability.RelayAttemptOpenFailed)
 			lastErr = fmt.Errorf("ingress: open public_url: %w", openErr)
+			var opening *tunnel.OpeningError
+			if errors.As(openErr, &opening) && opening.Committed {
+				if usage != nil {
+					usage.VisitorStreamOpened(time.Now().UTC())
+				}
+				s.observeRelayAttempt(backend, observability.RelayAttemptCommittedFailed)
+				return committedVisitorStream{}, lastErr
+			}
+			s.observeRelayAttempt(backend, observability.RelayAttemptOpenFailed)
 			continue
 		}
-		if usage != nil && !opened {
+		if usage != nil {
 			usage.VisitorStreamOpened(time.Now().UTC())
-			opened = true
 		}
 		if !s.trackBackend(candidate) {
-			_ = candidate.Close()
-			stopAttempt()
-			return committedVisitorStream{}, errBackendTrackingClosed
+			return committedVisitorStream{}, &tunnel.OpeningError{Committed: len(prefix) > 0, VisitorBytes: int64(len(prefix)), Err: errors.Join(errBackendTrackingClosed, candidate.Close())}
 		}
-		// a partial ClientHello write crosses the retry boundary even on error.
-		written, writeErr := writeSetup(attemptCtx, candidate, header, prefix)
-		stopAttempt()
-		s.observeAttempt(attempt, writeErr, started)
-		if writeErr != nil && written == 0 {
-			s.observeRelayAttempt(backend, observability.RelayAttemptSetupFailed)
-			lastErr = errors.Join(writeErr, s.releaseBackend(candidate))
-			continue
-		}
-		if writeErr != nil {
-			s.observeRelayAttempt(backend, observability.RelayAttemptCommittedFailed)
-		} else {
-			s.observeRelayAttempt(backend, observability.RelayAttemptCommitted)
-		}
-		return committedVisitorStream{connection: candidate, bytes: written, setupErr: writeErr}, nil
+		s.observeAttempt(attempt, nil, started)
+		s.observeRelayAttempt(backend, observability.RelayAttemptCommitted)
+		return committedVisitorStream{connection: candidate, bytes: int64(len(prefix))}, nil
 	}
 	if lastErr == nil {
 		lastErr = errors.New("ingress: route has no usable backend")

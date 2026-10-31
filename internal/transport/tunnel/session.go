@@ -160,35 +160,6 @@ func authenticatedSession(transport muxsession.Session, control muxsession.Strea
 	return s
 }
 
-// OpenVisitorStream opens a visitor stream and waits for the publisher to
-// accept it. it returns before sending PROXY v2 metadata or visitor bytes.
-func (s *Session) OpenVisitorStream(ctx context.Context, header tunnelv1.VisitorStreamHeader, events ReturnEvents) (muxsession.Stream, error) {
-	header.TraceContext = observability.WireTrace(ctx)
-	return s.openAcknowledgedStream(ctx, "visitor", func(stream muxsession.Stream) error {
-		return tunnelv1.WriteVisitorStreamHeader(stream, header)
-	}, events)
-}
-
-// OpenInternalForwardingStream opens one visitor stream from ingress to a relay
-// and waits for acceptance before returning it. no visitor bytes are sent here.
-func (s *Session) OpenInternalForwardingStream(
-	ctx context.Context,
-	header tunnelv1.InternalForwardingHeader,
-	events ReturnEvents,
-) (muxsession.Stream, error) {
-	header.TraceContext = observability.WireTrace(ctx)
-	return s.openAcknowledgedStream(ctx, "internal forwarding", func(stream muxsession.Stream) error {
-		return tunnelv1.WriteInternalForwardingHeader(stream, header)
-	}, events)
-}
-
-func (s *Session) OpenServiceForwardingStream(ctx context.Context, header tunnelv1.ServiceForwardingHeader) (muxsession.Stream, error) {
-	header.TraceContext = observability.WireTrace(ctx)
-	return s.openAcknowledgedStream(ctx, "service forwarding", func(stream muxsession.Stream) error {
-		return tunnelv1.WriteServiceForwardingHeader(stream, header)
-	}, ReturnEvents{})
-}
-
 // RequestPublisherDrain asks a relay to stop admitting visitor streams and
 // waits until all streams already admitted by that relay have closed.
 func (s *Session) RequestPublisherDrain(ctx context.Context, requestID string) error {
@@ -255,41 +226,6 @@ func (s *Session) HandlePublisherDrain(ctx context.Context, drain func(context.C
 	return nil
 }
 
-func (s *Session) openAcknowledgedStream(
-	ctx context.Context,
-	kind string,
-	writeHeader func(muxsession.Stream) error,
-	events ReturnEvents,
-) (result muxsession.Stream, err error) {
-	stream, err := s.transport.OpenStream(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("tunnel: open %s stream: %w", kind, err)
-	}
-	defer func() {
-		if err != nil {
-			err = errors.Join(controlContextError(ctx, err), stream.Close())
-		}
-	}()
-	finish, err := setupDeadline(ctx, stream)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		err = errors.Join(err, finish(err == nil))
-		if err != nil {
-			result = nil
-		}
-	}()
-	if err := writeHeader(stream); err != nil {
-		return nil, fmt.Errorf("tunnel: write %s stream header: %w", kind, err)
-	}
-	response := &returnStream{Stream: stream, events: events}
-	if err := response.accept(); err != nil {
-		return nil, fmt.Errorf("tunnel: read %s stream response: %w", kind, err)
-	}
-	return response, nil
-}
-
 // IncomingVisitorStream is a visitor stream awaiting an accept or reject response.
 type IncomingVisitorStream struct {
 	owner  context.Context
@@ -305,13 +241,13 @@ func (s *Session) AcceptVisitorStream(ctx context.Context) (*IncomingVisitorStre
 	if err != nil {
 		return nil, err
 	}
-	header, err := tunnelv1.ReadVisitorStreamHeader(stream)
+	header, initial, err := tunnelv1.ReadVisitorOpening(stream)
 	if err != nil {
 		_ = (&replyStream{Stream: stream}).forwardRejection(ctx, tunnelv1.InvalidMessage)
 		_ = stream.Close()
 		return nil, &StreamHeaderError{Kind: "visitor", Err: err}
 	}
-	reply := &replyStream{Stream: stream}
+	reply := newReplyStream(stream, initial, header.ConfirmBeforeBytes)
 	if ref := s.publisherConnection; ref != nil && header.AccessPending {
 		reply.promotion = tunnelv1.AdmissionHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.PublisherPromotion,
 			VisitorConnectionID: header.VisitorConnectionID, PublicURLID: header.PublicURLID, PublishRunID: header.PublishRunID,
@@ -351,13 +287,13 @@ func (s *Session) AcceptInternalForwardingStream(ctx context.Context) (InternalF
 	if err != nil {
 		return nil, err
 	}
-	header, service, err := tunnelv1.ReadForwardingHeader(stream)
+	header, service, initial, err := tunnelv1.ReadForwardingOpening(stream)
 	if err != nil {
 		_ = (&replyStream{Stream: stream}).forwardRejection(ctx, tunnelv1.InvalidMessage)
 		_ = stream.Close()
 		return nil, &StreamHeaderError{Kind: "internal forwarding", Err: err}
 	}
-	reply := &replyStream{Stream: stream}
+	reply := newReplyStream(stream, initial, service != nil || header.ConfirmBeforeBytes)
 	response := reply
 	if service != nil {
 		return &IncomingServiceForwardingStream{owner: ctx, stream: reply, Header: *service, response: response}, nil
@@ -387,6 +323,8 @@ func (*IncomingPublicForwardingStream) internalForwardingRequest()  {}
 func (*IncomingServiceForwardingStream) internalForwardingRequest() {}
 
 func (r *IncomingPublicForwardingStream) Stream() muxsession.Stream { return r.stream }
+
+func (r *IncomingPublicForwardingStream) TakeInitial() []byte { return r.response.takeInitial() }
 
 func (r *IncomingPublicForwardingStream) Context() context.Context {
 	return incomingContext(r.owner, r.Header.TraceContext)
@@ -440,7 +378,12 @@ func (s *Session) AcceptServiceForwardingStream(ctx context.Context) (*IncomingS
 		_ = stream.Close()
 		return nil, &StreamHeaderError{Kind: "service forwarding", Err: errors.New("claimed assignment changed")}
 	}
-	reply := &replyStream{Stream: stream}
+	initial, err := tunnelv1.ReadInitialBytes(stream)
+	if err != nil {
+		_ = stream.Close()
+		return nil, &StreamHeaderError{Kind: "service forwarding", Err: err}
+	}
+	reply := newReplyStream(stream, initial, true)
 	return &IncomingServiceForwardingStream{owner: ctx, stream: reply, Header: header, response: reply}, nil
 }
 

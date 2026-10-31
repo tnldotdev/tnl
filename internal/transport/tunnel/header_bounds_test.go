@@ -47,7 +47,7 @@ func TestSessionMaximumForwardingHeaders(t *testing.T) {
 					want := h
 					want.TraceContext = tunnelv1.TraceContext{TraceParent: boundsTraceParent}
 					checkMaximumTransfer(t, want, tunnelv1.MaxHeaderBytes,
-						func() (net.Conn, error) { return client.OpenInternalForwardingStream(ctx, h, ReturnEvents{}) },
+						func() (net.Conn, error) { return client.OpenInternalForwardingStream(ctx, h, nil, nil, ReturnEvents{}) },
 						func() (muxsession.Stream, any, func() error, error) {
 							v, err := peer.AcceptInternalForwardingStream(ctx)
 							if err != nil {
@@ -161,7 +161,7 @@ func maximumPublicHeader(text string) tunnelv1.InternalForwardingHeader {
 	return tunnelv1.InternalForwardingHeader{ProtocolVersion: 1, Kind: tunnelv1.InternalForwardingStream,
 		VisitorConnectionID: text, PublicURLID: text, PublishRunID: text, PublishRunNumber: math.MaxUint64, PublisherConnectionID: text,
 		ConnectionSlot: 1, ConnectionAssignmentRevision: math.MaxUint64, RelayServiceID: text, RelayID: text, RelayRunID: text,
-		RelayLeaseRevision: math.MaxUint64, PublicUrlExpiresAt: boundsTimestamp(), LeaseExpiresAt: boundsTimestamp(), AccessPending: true}
+		RelayLeaseRevision: math.MaxUint64, PublicUrlExpiresAt: boundsTimestamp(), LeaseExpiresAt: boundsTimestamp(), AccessPending: true, ConfirmBeforeBytes: true}
 }
 
 func maximumServiceHeader(text string, direct bool) tunnelv1.ServiceForwardingHeader {
@@ -269,7 +269,7 @@ func TestSessionForwardingBoundsRejectMalformedStreams(t *testing.T) {
 	want := h
 	want.TraceContext = tunnelv1.TraceContext{TraceParent: boundsTraceParent}
 	checkMaximumTransfer(t, want, tunnelv1.MaxHeaderBytes, func() (net.Conn, error) {
-		return client.OpenInternalForwardingStream(headerBoundsContext(t), h, ReturnEvents{})
+		return client.OpenInternalForwardingStream(headerBoundsContext(t), h, nil, nil, ReturnEvents{})
 	}, func() (muxsession.Stream, any, func() error, error) {
 		v, err := peer.AcceptInternalForwardingStream(ctx)
 		if err != nil {

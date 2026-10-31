@@ -25,10 +25,14 @@ func TestOpeningAcknowledgmentPrecedesMetadataAndVisitorBytes(t *testing.T) {
 					}
 					result := tunnelWorker(t, func() { _ = client.Close() }, func() opened {
 						if hop == "publisher" {
-							stream, err := client.OpenVisitorStream(ctx, visitorStreamHeader(), ReturnEvents{})
+							header := visitorStreamHeader()
+							header.ConfirmBeforeBytes = true
+							stream, err := client.OpenVisitorStream(ctx, header, nil, ReturnEvents{})
 							return opened{stream, err}
 						}
-						stream, err := client.OpenInternalForwardingStream(ctx, internalForwardingHeader(), ReturnEvents{})
+						header := internalForwardingHeader()
+						header.ConfirmBeforeBytes = true
+						stream, err := client.OpenInternalForwardingStream(ctx, header, nil, nil, ReturnEvents{})
 						return opened{stream, err}
 					})
 					var stream muxsession.Stream

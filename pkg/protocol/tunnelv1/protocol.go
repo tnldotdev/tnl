@@ -125,7 +125,8 @@ type VisitorStreamHeader struct {
 	ConnectionAssignmentRevision uint64       `json:"connection_assignment_revision"`
 	// AccessPending is trusted ingress state: this visitor has only bounded
 	// pending authorization capacity until an authenticated promotion is accepted.
-	AccessPending bool `json:"access_pending,omitempty"`
+	AccessPending      bool `json:"access_pending,omitempty"`
+	ConfirmBeforeBytes bool `json:"confirm_before_bytes,omitempty"`
 }
 
 // InternalForwardingHeader identifies one visitor connection sent from ingress to a connected relay.
@@ -147,6 +148,7 @@ type InternalForwardingHeader struct {
 	PublicUrlExpiresAt           time.Time    `json:"public_url_expires_at"`
 	LeaseExpiresAt               time.Time    `json:"lease_expires_at"`
 	AccessPending                bool         `json:"access_pending,omitempty"`
+	ConfirmBeforeBytes           bool         `json:"confirm_before_bytes,omitempty"`
 }
 
 type StreamResponseType string

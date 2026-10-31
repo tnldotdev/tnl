@@ -137,7 +137,7 @@ func TestSetupCancellationInterruptsRead(t *testing.T) {
 				} else {
 					client, server := newAuthenticatedPair(t)
 					result = tunnelWorker(t, func() { _ = client.Close() }, func() error {
-						_, err := client.OpenVisitorStream(ctx, visitorStreamHeader(), ReturnEvents{})
+						_, err := client.OpenVisitorStream(ctx, visitorStreamHeader(), nil, ReturnEvents{})
 						return err
 					})
 					if _, err := server.AcceptVisitorStream(ctx); err != nil {
@@ -191,7 +191,7 @@ func TestCanceledStreamKeepsSessionUsable(t *testing.T) {
 	client, server := newAuthenticatedPair(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	result := tunnelWorker(t, cancel, func() error {
-		_, err := client.OpenVisitorStream(ctx, visitorStreamHeader(), ReturnEvents{})
+		_, err := client.OpenVisitorStream(ctx, visitorStreamHeader(), nil, ReturnEvents{})
 		return err
 	})
 	if _, err := server.AcceptVisitorStream(tunnelContext(t)); err != nil {
@@ -208,7 +208,7 @@ func TestCanceledStreamKeepsSessionUsable(t *testing.T) {
 		}
 		return incoming.Accept()
 	})
-	stream, err := client.OpenVisitorStream(tunnelContext(t), visitorStreamHeader(), ReturnEvents{})
+	stream, err := client.OpenVisitorStream(tunnelContext(t), visitorStreamHeader(), nil, ReturnEvents{})
 	if err != nil {
 		t.Fatal(err)
 	}

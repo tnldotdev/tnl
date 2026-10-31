@@ -84,7 +84,7 @@ func TestAutomaticPromotionUsesExactCurrentStream(t *testing.T) {
 	h := tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor-1", PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, AccessPending: true}
 	worker := make(chan error, 1)
 	go func() {
-		stream, err := relay.OpenVisitorStream(ctx, h, tunnel.ReturnEvents{Promoted: func(p tunnelv1.AdmissionHeader) error {
+		stream, err := relay.OpenVisitorStream(ctx, h, nil, tunnel.ReturnEvents{Promoted: func(p tunnelv1.AdmissionHeader) error {
 			if p.PublisherConnectionID != ref.PublisherConnectionID || p.PublishRunID != ref.PublishRunID || p.ConnectionAssignmentRevision != ref.ConnectionAssignmentRevision {
 				return errors.New("promotion changed identity")
 			}
