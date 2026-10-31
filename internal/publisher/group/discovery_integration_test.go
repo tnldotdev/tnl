@@ -22,6 +22,9 @@ func TestSignedCloudAssignmentProductionCallbackAndTargetTLS(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			fixture := groupdiscovery.New(t)
+			// keep this publication at the observed boundary until cancellation,
+			// rather than allowing the group to retry while the target records TLS.
+			fixture.HoldHeartbeat.Store(true)
 			metrics := observability.New("publisher")
 			defer metrics.Shutdown(context.Background())
 			ctx, cancel := context.WithCancel(observability.WithMetrics(t.Context(), metrics))
@@ -71,15 +74,27 @@ func TestSignedCloudAssignmentProductionCallbackAndTargetTLS(t *testing.T) {
 				go func() { defer close(done); result = runtime(ctx, fixture.Job, nil) }()
 			}
 			defer func() { cancel(); <-done }()
+			deadline := time.NewTimer(5 * time.Second)
+			defer deadline.Stop()
 			select {
 			case heartbeat := <-fixture.Heartbeat:
-				if !heartbeat.Healthy || fixture.TargetHandshakes.Load() == 0 {
-					t.Fatal("assigned EKS CA/SNI did not reach native target TLS preflight")
+				if !heartbeat.Healthy {
+					t.Fatalf("assigned EKS CA/SNI did not reach native target TLS preflight: healthy=%t handshakes=%d", heartbeat.Healthy, fixture.TargetHandshakes.Load())
 				}
 			case <-done:
 				t.Fatal("group exited before target preparation", result)
-			case <-time.After(5 * time.Second):
+			case <-deadline.C:
 				t.Fatal("signed assignment did not reach production callback and verified target")
+			}
+			// the client can finish TLS before the server records its handshake.
+			// join that observation inside the same preparation budget.
+			select {
+			case <-fixture.TargetHandshake:
+				if fixture.TargetHandshakes.Load() == 0 {
+					t.Fatal("assigned EKS CA/SNI did not reach native target TLS preflight")
+				}
+			case <-deadline.C:
+				t.Fatal("target did not record the verified TLS handshake")
 			}
 			cancel()
 			select {
