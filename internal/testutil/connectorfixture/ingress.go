@@ -27,14 +27,17 @@ import (
 
 // this fixture implements only connector admission and byte forwarding. the
 // publisher fixture remains the TLS server and requests no client certificate.
-func Ingress(t *testing.T, ca *x509.Certificate, caKey ed25519.PrivateKey, caPEM []byte, service, workload, target string) ([]map[string]any, map[string]controlv1.IngressTransportTrust) {
+func Ingress(t *testing.T, ca *x509.Certificate, caKey ed25519.PrivateKey, caPEM []byte, service, workload, target string, names ...string) ([]map[string]any, map[string]controlv1.IngressTransportTrust) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	var workers sync.WaitGroup
 	t.Cleanup(func() { cancel(); workers.Wait() })
 	assignments := []map[string]any{}
 	trusts := map[string]controlv1.IngressTransportTrust{}
-	for slot, name := range []string{"ingress-a", "ingress-b"} {
+	if len(names) == 0 {
+		names = []string{"ingress-a", "ingress-b"}
+	}
+	for slot, name := range names {
 		public, key, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			t.Fatal(err)
