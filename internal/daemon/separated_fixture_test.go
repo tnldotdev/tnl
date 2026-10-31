@@ -258,10 +258,13 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 		cfg.OIDCIssuer, cfg.OIDCClientID, cfg.StorageKey = testOIDCIssuer, "server", testStorageKey
 		cfg.AccessTokenLifetime, cfg.RefreshTokenLifetime = 5*time.Minute, time.Hour
 		cfg.Route53ManagedZoneID, cfg.Route53Region, cfg.DNSServer = "local", "us-east-1", "dns:53"
-		addresses, err := net.LookupIP("ingress")
-		if err != nil {
-			t.Fatal(err)
-		}
+		// compose starts control and ingress together; aliases appear at startup.
+		var addresses []net.IP
+		waitForIntegrationCondition(t, 30*time.Second, func(ctx context.Context) (bool, error) {
+			var err error
+			addresses, err = net.DefaultResolver.LookupIP(ctx, "ip4", "ingress")
+			return len(addresses) > 0 && err == nil, err
+		})
 		for _, address := range addresses {
 			if address.To4() != nil {
 				cfg.IngressIPv4Addresses = append(cfg.IngressIPv4Addresses, address.String())
