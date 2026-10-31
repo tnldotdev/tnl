@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -199,6 +200,14 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 		t.Fatal("visitor TCP half-close failed")
 	}
 	completionAwait(t, ctx, gate.entered)
+	// drain the peer's TLS close-notify and TCP FIN before deliberately closing
+	// the backend. otherwise its own CloseWrite races our injected failure.
+	if n, err := io.Copy(io.Discard, visitor); err != nil || n != 0 {
+		t.Fatal("visitor TLS close-notify drain failed", err)
+	}
+	if n, err := io.Copy(io.Discard, visitor.NetConn()); err != nil || n != 0 {
+		t.Fatal("visitor TCP EOF drain failed", err)
+	}
 	if prematureClose {
 		// payload alone cannot make closing the destination before shutdown clean.
 		if err := connection.Close(); err != nil {
@@ -207,19 +216,11 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	}
 	unblock()
 	halfClose := completionAwait(t, ctx, gate.result)
-	if !prematureClose {
-		if halfClose != nil {
-			t.Fatal("backend TCP half-close failed")
-		}
-		if n, err := io.Copy(io.Discard, visitor); err != nil || n != 0 {
-			t.Fatal("visitor TLS close-notify drain failed")
-		}
-		if n, err := io.Copy(io.Discard, visitor.NetConn()); err != nil || n != 0 {
-			t.Fatal("visitor TCP EOF drain failed")
-		}
+	if !prematureClose && halfClose != nil {
+		t.Fatal("backend TCP half-close failed", halfClose)
 	}
 	if err := completionAwait(t, ctx, peerResult); err != nil {
-		t.Fatal("peer TLS/TCP completion failed")
+		t.Fatal("peer TLS/TCP completion failed", err)
 	}
 	completionAwait(t, ctx, peerDone)
 	outcome := completionAwait(t, ctx, metrics.visitorOutcomes)
@@ -294,10 +295,10 @@ func finishCompletionPeer(peer *net.TCPConn, certificate tls.Certificate, header
 		return err
 	}
 	if err := secured.CloseWrite(); err != nil {
-		return err
+		return fmt.Errorf("peer TLS close-notify: %w", err)
 	}
 	if err := peer.CloseWrite(); err != nil {
-		return err
+		return fmt.Errorf("peer TCP half-close: %w", err)
 	}
 	if n, err := io.Copy(io.Discard, secured); err != nil || n != 0 {
 		return errors.Join(errors.New("peer TLS close-notify drain failed"), err)
