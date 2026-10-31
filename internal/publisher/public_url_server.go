@@ -170,6 +170,9 @@ func (r *PublicURLServer) drain(streams []*publicVisitorAdmission) {
 	for _, done := range pending {
 		<-done
 	}
+	// net/http can finish while an admitted TLS connection's first close is
+	// still running. join the run-owned cleanup before reporting a drained run.
+	r.handlers.Wait()
 }
 
 func (r *PublicURLServer) Close() error {
