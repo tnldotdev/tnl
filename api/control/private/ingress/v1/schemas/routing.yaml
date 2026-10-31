@@ -65,6 +65,10 @@ schemas:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       publish_run_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
+      publish_run_ready_at:
+        type: string
+        format: date-time
+        description: Existing ready runs must be prepared before a new ingress joins health.
       publish_run_number:
         type: integer
         format: int64
@@ -221,6 +225,7 @@ schemas:
       - internal
       - ingress_already_running
       - ingress_lease_stale
+      - visitor_policy_stale
       - recovery_episode_stale
       - invalid_usage_report
       - usage_route_not_found

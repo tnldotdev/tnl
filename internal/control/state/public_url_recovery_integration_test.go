@@ -120,7 +120,7 @@ func TestIntegrationRouteRoutingTableLifecycle(t *testing.T) {
 	// is skipped. entry revisions remain contiguous within this publish run number.
 	var cursor uint64
 	var events int
-	wantKinds := []IngressRoutingTableEventKind{IngressPublicURLUpsert, IngressPublicURLUpsert, IngressPublicURLTombstone}
+	wantKinds := []IngressRoutingTableEventKind{IngressPublicURLUpsert, IngressPublicURLUpsert, IngressPublicURLUpsert, IngressPublicURLTombstone}
 	for {
 		page, err := database.ReadIngressRoutingTableEvents(t.Context(), ingress.IngressLeaseIdentity, cursor, 1, now.Add(3*time.Second))
 		if err != nil || page.ResnapshotRequired || len(page.Events) != 1 || page.NextRevision <= cursor {

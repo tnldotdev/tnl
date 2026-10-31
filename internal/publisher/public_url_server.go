@@ -58,6 +58,7 @@ type PublicURLServerConfig struct {
 
 type PublicURLServer struct {
 	hostname           string
+	policy             *visitorlease.Lease
 	certificatePlan    controlv1.CertificatePlan
 	tls                *tls.Config
 	certificate        atomic.Pointer[tls.Certificate]

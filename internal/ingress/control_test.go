@@ -13,6 +13,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestDirectStaleLeaseClearsController(t *testing.T) {
@@ -68,6 +69,10 @@ type leaseTestClient struct {
 	events   func(context.Context) (ingressv1.IngressRoutingTablePage, error)
 }
 
+func (leaseTestClient) ReadIngressVisitorPolicy(context.Context, string, ingressv1.IngressVisitorPolicyRequest) (controlv1.VisitorPolicyUpdate, error) {
+	return controlv1.VisitorPolicyUpdate{}, errors.New("lease-only fixture has no visitor policy")
+}
+
 func (c leaseTestClient) RegisterIngress(ctx context.Context, registration ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
 	return c.register(ctx, registration)
 }
@@ -94,6 +99,11 @@ func testLeaseController(t *testing.T, client ControlClient) *Controller {
 	controller, err := NewController(ControllerConfig{Client: client, RoutingTable: new(RoutingTable), Registration: ingressv1.IngressRegistration{IngressId: "ingress", IngressRunId: "run", ProtocolVersion: 1, ConnectionCapacity: 10}, RenewalInterval: time.Millisecond, RetryInterval: time.Millisecond, RoutingWait: time.Second, Report: func(error) {}})
 	if err != nil {
 		t.Fatal(err)
+	}
+	// these tests isolate lease/routing mechanics. installed-policy composition
+	// has its own fixture and never uses this explicit test-only observation.
+	controller.publicRunPrepared = func(entry ingressv1.IngressRoutingTableEntry, _ ingressv1.IngressLease, _ time.Time) (time.Time, bool) {
+		return entry.PublicUrlExpiresAt, true
 	}
 	return controller
 }

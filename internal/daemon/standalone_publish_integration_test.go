@@ -43,7 +43,9 @@ func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
 
 	quicConnector, tcpConnector := fixture.connectors()
 	handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
-	ready := fixture.waitReady(t, handle)
+	// the ready event itself must cover installation; do not wait for a later
+	// routing cursor or retry the visitor's first request.
+	ready := waitForPublisherReady(t, handle)
 	request, err := http.NewRequest(http.MethodGet, ready.PublicURL+"/through-tnl?source=integration", nil)
 	if err != nil {
 		t.Fatal(err)

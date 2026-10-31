@@ -288,6 +288,10 @@ func routingEntryForEvent(event ingressv1.IngressRoutingTableEvent) routingTable
 
 func cloneRoutingTableEntry(source ingressv1.IngressRoutingTableEntry) ingressv1.IngressRoutingTableEntry {
 	result := source
+	if source.PublishRunReadyAt != nil {
+		readyAt := *source.PublishRunReadyAt
+		result.PublishRunReadyAt = &readyAt
+	}
 	if source.PublishRunClosed != nil {
 		closed := *source.PublishRunClosed
 		result.PublishRunClosed = &closed

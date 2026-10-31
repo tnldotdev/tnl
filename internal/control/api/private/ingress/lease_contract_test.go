@@ -67,6 +67,8 @@ func TestIngressLeaseMutationContracts(t *testing.T) {
 				var status int
 				if operation == "renew" {
 					body := ingressv1.IngressRenewal{IngressId: "ingress-1", IngressRunId: "run-1", IngressLeaseRevision: 7, ReportedConnections: 3, RoutingTableRevision: 17}
+					observations := []ingressv1.IngressPublicRunObservation{{PublishRunId: "publish-run", PublishRunNumber: 3, EntryRevision: 4, ValidUntil: deadline}}
+					body.PreparedPublicRuns = &observations
 					if transport == "direct" {
 						lease, directErr := client.RenewIngress(t.Context(), "ingress-1", body)
 						err = directErr
@@ -80,7 +82,9 @@ func TestIngressLeaseMutationContracts(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if renewal != (controlstate.IngressRenewal{IngressLeaseIdentity: wantIdentity, ReportedConnections: 3, RoutingTableRevision: 17}) || duration != 30*time.Second {
+					if !reflect.DeepEqual(renewal, controlstate.IngressRenewal{IngressLeaseIdentity: wantIdentity, ReportedConnections: 3, RoutingTableRevision: 17,
+						PreparedPublicRuns: []controlstate.IngressPublicRunObservation{{PublishRunID: "publish-run", PublishRunNumber: 3, EntryRevision: 4, ValidUntil: deadline}},
+					}) || duration != 30*time.Second {
 						t.Fatalf("renewal = %#v, duration %v", renewal, duration)
 					}
 				} else {

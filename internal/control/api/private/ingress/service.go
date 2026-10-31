@@ -104,14 +104,39 @@ func (s *service) RenewIngress(
 			http.StatusBadRequest, "invalid_request", "Ingress renewal identity or counters are invalid",
 		)
 	}
+	if body.PreparedPublicRuns != nil {
+		if len(*body.PreparedPublicRuns) > 1000 {
+			return ingressv1.IngressLease{}, serviceapi.NewProblemError(http.StatusBadRequest, "invalid_request", "Too many public run observations")
+		}
+		for _, observation := range *body.PreparedPublicRuns {
+			if !serviceapi.ValidIdentifiers(observation.PublishRunId) || observation.PublishRunNumber <= 0 || observation.EntryRevision <= 0 || observation.ValidUntil.IsZero() {
+				return ingressv1.IngressLease{}, serviceapi.NewProblemError(http.StatusBadRequest, "invalid_request", "Public run observation is invalid")
+			}
+		}
+	}
 	lease, err := s.store.RenewIngress(ctx, controlstate.IngressRenewal{
 		IngressLeaseIdentity: identity, ReportedConnections: reportedConnections,
 		RoutingTableRevision: routingRevision,
+		PreparedPublicRuns:   publicRunObservations(body.PreparedPublicRuns),
 	}, s.now(), s.leaseDuration)
 	if err != nil {
 		return ingressv1.IngressLease{}, s.storeError(ctx, err)
 	}
 	return ingressLease(lease), nil
+}
+
+func publicRunObservations(observations *[]ingressv1.IngressPublicRunObservation) []controlstate.IngressPublicRunObservation {
+	if observations == nil {
+		return nil
+	}
+	result := make([]controlstate.IngressPublicRunObservation, len(*observations))
+	for index, observation := range *observations {
+		result[index] = controlstate.IngressPublicRunObservation{
+			PublishRunID: observation.PublishRunId, PublishRunNumber: observation.PublishRunNumber,
+			EntryRevision: observation.EntryRevision, ValidUntil: observation.ValidUntil,
+		}
+	}
+	return result
 }
 
 func (s *service) DrainIngress(

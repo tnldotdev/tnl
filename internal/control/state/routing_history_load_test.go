@@ -5,26 +5,30 @@ import (
 	"time"
 )
 
-// seed before starting workload actors. the first f.routes events are genuine
-// routable public URL projections, one per public URL. copy them to grow history
-// without changing current connections or simulating elapsed lease time.
+// seed before starting workload actors. each URL already has its genuine
+// preparation and ready projections. copy only the final ready projection to
+// grow history without changing connections or simulating elapsed lease time.
 func seedLoadRoutingHistory(t *testing.T, f *controlLoadFixture, previous, perPublicURL int) int64 {
 	t.Helper()
-	if previous < 1 || perPublicURL < previous {
-		t.Fatal("routing history must grow from at least one event per route")
+	if previous < 2 || perPublicURL < previous {
+		t.Fatal("routing history must retain preparation and ready events")
 	}
 	started := time.Now()
 	if perPublicURL > previous {
 		_, err := f.database.pool.Exec(t.Context(), `
+			WITH seeds AS (
+				SELECT DISTINCT ON (public_url_id, publish_run_number) *
+				FROM control.ingress_routing_table_events
+				ORDER BY public_url_id, publish_run_number, id DESC
+			)
 			INSERT INTO control.ingress_routing_table_events
 				(event_kind, public_url_id, publish_run_number, canonical_hostname, entry_revision,
 				 projection, public_url_expires_at, created_at)
 			SELECT seed.event_kind, seed.public_url_id, seed.publish_run_number, seed.canonical_hostname,
-				seed.entry_revision + sweep - 1, seed.projection, seed.public_url_expires_at, seed.created_at
-			FROM control.ingress_routing_table_events AS seed
-			CROSS JOIN generate_series($1::integer, $2::integer) AS sweep
-			WHERE seed.id <= $3::bigint
-			ORDER BY sweep, seed.id`, previous+1, perPublicURL, f.routes)
+				sweep, seed.projection, seed.public_url_expires_at, seed.created_at
+			FROM seeds AS seed
+			CROSS JOIN generate_series($1::bigint, $2::bigint) AS sweep
+			ORDER BY sweep, seed.id`, previous+1, perPublicURL)
 		if err != nil {
 			t.Fatal(err)
 		}

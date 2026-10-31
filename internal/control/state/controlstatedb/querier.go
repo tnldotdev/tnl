@@ -133,11 +133,13 @@ type Querier interface {
 	CreateVisitorTokenSigningKey(ctx context.Context, arg CreateVisitorTokenSigningKeyParams) (ControlVisitorTokenKey, error)
 	DNSAuthorityReleaseReady(ctx context.Context, arg DNSAuthorityReleaseReadyParams) (pgtype.Bool, error)
 	DeleteExpiredDeviceLogins(ctx context.Context, now pgtype.Timestamptz) error
+	DeleteExpiredIngressPublicRunObservations(ctx context.Context, arg DeleteExpiredIngressPublicRunObservationsParams) error
 	DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteExpiredShareCookies(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteExpiredVisitorTokenSigningKeys(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteFinishedShareHandoffs(ctx context.Context, now pgtype.Timestamptz) error
 	DeletePublicURL(ctx context.Context, arg DeletePublicURLParams) (int64, error)
+	DeletePublishRunObservations(ctx context.Context, publishRunID string) error
 	// caller closes all current runs and publishes a tombstone under this service
 	// lock in the same transaction.
 	DeleteService(ctx context.Context, arg DeleteServiceParams) (ControlService, error)
@@ -413,6 +415,9 @@ type Querier interface {
 	LockIdentityPublicURLForDelete(ctx context.Context, arg LockIdentityPublicURLForDeleteParams) (LockIdentityPublicURLForDeleteRow, error)
 	LockIngressLease(ctx context.Context, arg LockIngressLeaseParams) (ControlIngressLease, error)
 	LockIngressPoolForProvision(ctx context.Context, id string) (ControlIngressPool, error)
+	// registration and the final ready transition serialize membership, without
+	// taking ingress lease locks beneath the public URL/run locks.
+	LockIngressPoolMembership(ctx context.Context, id string) error
 	LockIngressRoutingTableClock(ctx context.Context) (int64, error)
 	LockIngressTransportCertificate(ctx context.Context, arg LockIngressTransportCertificateParams) (ControlIngressTransportCertificate, error)
 	LockIngressTransportIssuer(ctx context.Context) (ControlIngressTransportIssuer, error)
@@ -484,6 +489,12 @@ type Querier interface {
 	MarkPublisherConnectionReady(ctx context.Context, arg MarkPublisherConnectionReadyParams) (ControlPublishRunConnectionSlot, error)
 	MarkVisitorIPSet(ctx context.Context, publicUrlID string) error
 	NextIngressTransportIssuerRevision(ctx context.Context) (int64, error)
+	// renewal holds only its ingress row. do not acquire a URL/run lock here:
+	// ready holds URL/run -> pool and reads this committed observation.
+	// the lease fences process identity, not concurrent request arrival order.
+	// keep each exact revision's longest installed deadline; a newer revision
+	// replaces it even when its own installed deadline is shorter.
+	ObserveIngressPublicRun(ctx context.Context, arg ObserveIngressPublicRunParams) (int64, error)
 	ObservePublicURLRecoveryEpisode(ctx context.Context, arg ObservePublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
 	OpenPublicURLRecoveryEpisode(ctx context.Context, arg OpenPublicURLRecoveryEpisodeParams) error
 	OtherPreviewForTeamAccess(ctx context.Context, arg OtherPreviewForTeamAccessParams) (string, error)
@@ -500,6 +511,7 @@ type Querier interface {
 	PruneIngressRoutingHistoryBatch(ctx context.Context, afterRevision int64) (PruneIngressRoutingHistoryBatchRow, error)
 	PrunePublisherAccess(ctx context.Context, arg PrunePublisherAccessParams) error
 	PrunePublisherAssertions(ctx context.Context, arg PrunePublisherAssertionsParams) error
+	PublishRunServingPrepared(ctx context.Context, arg PublishRunServingPreparedParams) (pgtype.Bool, error)
 	PublisherRuntimeActive(ctx context.Context, arg PublisherRuntimeActiveParams) (bool, error)
 	// this read does not lock resources after identities. URL and service
 	// run transactions lock their own saved resource first and recheck the grant.
@@ -507,6 +519,7 @@ type Querier interface {
 	PutCompanyEligibility(ctx context.Context, arg PutCompanyEligibilityParams) error
 	QuarantineMemberSlug(ctx context.Context, arg QuarantineMemberSlugParams) (int64, error)
 	ReadIngressRoutingTableClock(ctx context.Context) (ControlIngressRoutingTableClock, error)
+	ReadPublishRunPreparationRouting(ctx context.Context, arg ReadPublishRunPreparationRoutingParams) (ControlIngressRoutingTableEvent, error)
 	ReadServiceRoutingClock(ctx context.Context) (int64, error)
 	ReadVisitorPolicyEvents(ctx context.Context, arg ReadVisitorPolicyEventsParams) ([]ReadVisitorPolicyEventsRow, error)
 	ReadVisitorPolicyRevision(ctx context.Context, arg ReadVisitorPolicyRevisionParams) (int64, error)

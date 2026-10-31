@@ -555,6 +555,16 @@ type ControlIngressPool struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type ControlIngressPublicRunObservation struct {
+	IngressID            string
+	IngressRunID         string
+	IngressLeaseRevision int64
+	PublishRunID         string
+	PublishRunNumber     int64
+	EntryRevision        int64
+	ValidUntil           pgtype.Timestamptz
+}
+
 type ControlIngressRoutingTableClock struct {
 	ID                    int16
 	CurrentRevision       int64

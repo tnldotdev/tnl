@@ -98,6 +98,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	life, cancelLife := context.WithCancel(context.WithoutCancel(base))
 	route := &PublicURLServer{
 		hostname:  hostname,
+		policy:    config.VisitorPolicy,
 		admission: admission,
 		run:       PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber},
 		promote:   config.PromoteVisitor,

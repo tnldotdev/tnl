@@ -16,7 +16,7 @@ import (
 var (
 	loadDelay      = flag.Duration("tnl-load-delay", 0, "delay after successful database commands")
 	loadPublicURLs = flag.Int("tnl-load-public-urls", 1000, "number of public URLs in the database load test")
-	loadHistory    = flag.Int("tnl-load-history", 1, "initial routing events per route")
+	loadHistory    = flag.Int("tnl-load-history", 1, "ready routing events per public URL, excluding its preparation event")
 	loadDuration   = flag.Duration("tnl-load-duration", 0, "paced database load duration")
 	loadRetention  = flag.Duration("tnl-load-retention", 0, "routing history retention window")
 )
@@ -47,13 +47,14 @@ func newControlLoadFixture(t *testing.T) *controlLoadFixture {
 		t.Fatal("history events per route must be a positive PostgreSQL integer")
 	}
 	database, now, request, originalLeases := newPublishRunPrerequisites(t)
-	f := &controlLoadFixture{database: database, now: now, base: request, routes: *loadPublicURLs, history: *loadHistory, leases: make(map[string][]RelayLease)}
+	// the selected history counts ready projections; preparation adds one event.
+	f := &controlLoadFixture{database: database, now: now, base: request, routes: *loadPublicURLs, history: *loadHistory + 1, leases: make(map[string][]RelayLease)}
 	_, err := database.pool.Exec(t.Context(), `
 		INSERT INTO control.public_urls (id, team_id, domain_id, created_by_identity_id, idempotency_key,
 			request_digest_ciphertext, request_digest_storage_key_id, canonical_hostname,
 			target, public_url_scope, purpose, policy_revision, ip_policy,
 			lifecycle_state, dns_state, created_at, updated_at)
-		SELECT 'public_url_load_' || n, team_id, domain_id, created_by_identity_id, 'load-' || n,
+		SELECT 'url_' || lpad(n::text,22,'0'), team_id, domain_id, created_by_identity_id, 'load-' || n,
 			request_digest_ciphertext, request_digest_storage_key_id, 'load-' || n || '.example.test',
 			target, public_url_scope, purpose, policy_revision,
 			ip_policy, lifecycle_state, dns_state, created_at, updated_at
@@ -112,7 +113,7 @@ func newControlLoadFixture(t *testing.T) *controlLoadFixture {
 
 func (f *controlLoadFixture) request(index int) PublishRunRequest {
 	request := f.base
-	request.PublicURLID = fmt.Sprintf("public_url_load_%d", index)
+	request.PublicURLID = fmt.Sprintf("url_%022d", index)
 	request.CertificateIdentifiers = []string{fmt.Sprintf("load-%d.example.test", index)}
 	request.CertificateCacheKey = request.CertificateIdentifiers[0]
 	return request

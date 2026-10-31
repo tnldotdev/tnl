@@ -2,11 +2,13 @@ package daemon
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -22,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -30,6 +33,15 @@ type wiringControl struct {
 	snapshot ingressv1.IngressRoutingTableSnapshot
 	mu       sync.Mutex
 	lease    ingressv1.IngressLease
+}
+
+func (c *wiringControl) ReadIngressVisitorPolicy(_ context.Context, _ string, body ingressv1.IngressVisitorPolicyRequest) (controlv1.VisitorPolicyUpdate, error) {
+	now := time.Now()
+	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("w", 32)))
+	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
+		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: "pool.example", Port: 443, Issuer: "https://control.example.test",
+			VisitorPolicyRevision: 1, KeyRevision: 1, Enabled: true, ObservedAt: now, ValidUntil: now.Add(10 * time.Second),
+			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "wiring", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil
 }
 
 func (c *wiringControl) RegisterIngress(_ context.Context, r ingressv1.IngressRegistration) (ingressv1.IngressLease, error) {
@@ -50,6 +62,13 @@ func (c *wiringControl) DrainIngress(_ context.Context, _ ingressv1.IngressID, r
 	l := c.lease
 	l.Draining, l.DrainDeadline = true, &r.Deadline
 	return l, nil
+}
+func (c *wiringControl) RenewIngress(_ context.Context, _ ingressv1.IngressID, r ingressv1.IngressRenewal) (ingressv1.IngressLease, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lease.RoutingTableRevision = r.RoutingTableRevision
+	c.lease.ReportedConnections = r.ReportedConnections
+	return c.lease, nil
 }
 func (c *wiringControl) GetIngressRoutingTableSnapshot(context.Context, ingressv1.IngressID, ingressv1.GetIngressRoutingTableSnapshotParams) (ingressv1.IngressRoutingTableSnapshot, error) {
 	return c.snapshot, nil
@@ -162,7 +181,7 @@ func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 				if run == 1 {
 					available = 0
 				}
-				entry := ingressv1.IngressRoutingTableEntry{PublicUrlId: "url_0123456789ABCDEFGHIJKL", PublishRunId: fmt.Sprintf("pr_%022d", run*222222), PublishRunNumber: run, CanonicalHostname: "pool.example", PolicyRevision: 1,
+				entry := ingressv1.IngressRoutingTableEntry{PublicUrlId: "url_0123456789ABCDEFGHIJKL", PublishRunId: fmt.Sprintf("pr_%022d", run*222222), PublishRunNumber: run, PublishRunReadyAt: &now, CanonicalHostname: "pool.example", PolicyRevision: 1,
 					AccessMode: ingressv1.Anonymous, IpPolicy: ingressv1.AllowAll, PublicUrlExpiresAt: now.Add(time.Hour), PublisherConnections: []ingressv1.IngressRoutingPublisherConnection{{ConnectionSlot: 0, PublisherConnectionId: fmt.Sprintf("pc-%d", run), ConnectionAssignmentRevision: 1, RelayServiceId: "relay", RelayId: "relay", RelayRunId: "relay-run", RelayLeaseRevision: 1, LeaseExpiresAt: now.Add(time.Hour), InternalRelayAddress: relay.Addr().String(), TlsServerName: "pool.example", AvailableStreams: &available}}}
 				alternate := entry.PublisherConnections[0]
 				alternate.ConnectionSlot, alternate.PublisherConnectionId, alternate.RelayServiceId = 1, fmt.Sprintf("alternate-pc-%d", run), "alternate-relay"
