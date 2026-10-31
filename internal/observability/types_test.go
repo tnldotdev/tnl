@@ -25,8 +25,17 @@ func TestAttributeTypeBoundaryRejectsMisuse(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
-	command := exec.CommandContext(ctx, "go", "test", "-gcflags=github.com/tnldotdev/tnl/internal/observability/testdata/typecheck=-e", "./testdata/typecheck")
+	arguments := []string{"test"}
+	// reuse the dependency build mode already prepared by the parent test run.
+	if typecheckRace {
+		arguments = append(arguments, "-race")
+	}
+	arguments = append(arguments, "-gcflags=github.com/tnldotdev/tnl/internal/observability/testdata/typecheck=-e", "./testdata/typecheck")
+	command := exec.CommandContext(ctx, "go", arguments...)
 	output, err := command.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("compile fixture did not finish within its deadline: %v\n%s", context.Cause(ctx), output)
+	}
 	if err == nil {
 		t.Fatal("invalid telemetry programs compiled")
 	}
