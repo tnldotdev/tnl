@@ -1,4 +1,4 @@
-// package ingress routes HTTPS by exact SNI and authenticates private connectors.
+// package ingress routes HTTPS by exact SNI and direct services by destination.
 // public visitor TLS terminates at the publisher.
 package ingress
 
@@ -85,10 +85,7 @@ type Config struct {
 	HandleControl             func(net.Conn) bool
 	RelayHostname             string
 	HandleRelay               func(net.Conn) bool
-	PrivateHostname           string
-	Connector                 *Connector
-	Connectors                map[string]*Connector
-	DirectConnector           *Connector
+	DirectServices            *DirectServices
 	ServicePortRanges         []tcpport.Range
 	DirectOnly                bool
 	RequireProxyHeader        bool
@@ -135,7 +132,7 @@ type Server struct {
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
-	if listener == nil || !config.DirectOnly && config.Lookup == nil && config.LookupPool == nil || config.DirectOnly && config.DirectConnector == nil {
+	if listener == nil || !config.DirectOnly && config.Lookup == nil && config.LookupPool == nil || config.DirectOnly && config.DirectServices == nil {
 		return nil, errors.New("ingress: listener and route lookup are required")
 	}
 	if config.MaxConnections <= 0 {
@@ -174,30 +171,6 @@ func New(listener net.Listener, config Config) (*Server, error) {
 	if config.RelayHostname != "" && config.RelayHostname == config.ServerHostname {
 		return nil, errors.New("ingress: control and relay hostnames must be distinct")
 	}
-	if config.PrivateHostname != "" {
-		host, err := naming.CanonicalizeHostname(config.PrivateHostname)
-		if err != nil || host != config.PrivateHostname || host == config.ServerHostname || host == config.RelayHostname {
-			return nil, errors.New("ingress: private infrastructure hostname is invalid or shared with another handler")
-		}
-	}
-	if config.Connector != nil && (config.PrivateHostname == "" || config.Connector.config.Hostname != config.PrivateHostname) {
-		return nil, errors.New("ingress: private connector and infrastructure hostname must match")
-	}
-	private := make(map[string]*Connector, len(config.Connectors)+1)
-	for hostname, connector := range config.Connectors {
-		canonical, err := naming.CanonicalizeHostname(hostname)
-		if err != nil || canonical != hostname || hostname == config.ServerHostname || hostname == config.RelayHostname || connector != nil && connector.config.Hostname != hostname {
-			return nil, errors.New("ingress: private infrastructure hostname and connector must match")
-		}
-		private[hostname] = connector
-	}
-	if config.PrivateHostname != "" {
-		if existing, ok := private[config.PrivateHostname]; ok && existing != config.Connector {
-			return nil, errors.New("ingress: private infrastructure hostname has two handlers")
-		}
-		private[config.PrivateHostname] = config.Connector
-	}
-	config.Connectors = private
 	if config.OpenTimeout <= 0 {
 		config.OpenTimeout = defaultOpenTimeout
 	}
@@ -323,7 +296,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	// native database negotiation is not a TLS ClientHello. select a managed
 	// service by its trusted destination before attempting HTTPS inspection.
 	if s.config.DirectOnly || s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
-		if s.config.DirectConnector == nil || !s.servicePorts.Contains(int(destination.Port())) {
+		if s.config.DirectServices == nil || !s.servicePorts.Contains(int(destination.Port())) {
 			return nil
 		}
 		finishInspection()
@@ -333,7 +306,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 			return nil
 		}
 		defer release()
-		return s.config.DirectConnector.AcceptDirect(s.openContext, &readerConn{Conn: public, reader: reader}, source, destination)
+		return s.config.DirectServices.AcceptDirect(s.openContext, &readerConn{Conn: public, reader: reader}, source, destination)
 	}
 	inspected := &readerConn{Conn: public, reader: reader}
 	hello, err := clienthello.InspectClientHello(inspected)
@@ -352,18 +325,6 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	}
 	hello.ServerName = serverName
 	finishInspection()
-	if connector, reserved := s.config.Connectors[hello.ServerName]; reserved {
-		if connector == nil {
-			return nil
-		}
-		release, rejected := s.admitClass(serviceConnection, "")
-		if release == nil {
-			s.rejectCapacity(rejected)
-			return nil
-		}
-		defer release()
-		return connector.Accept(s.openContext, &readerConn{Conn: &addressConn{Conn: public, remote: source, local: destination}, reader: hello.Replay()}, source, destination)
-	}
 	if hello.ServerName == s.config.ServerHostname {
 		if !s.handoff(public, source, destination, hello, controlConnection, s.config.HandleControl) {
 			return nil

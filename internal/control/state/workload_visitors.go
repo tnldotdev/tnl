@@ -6,7 +6,6 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"net/netip"
@@ -15,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	controlvisitor "github.com/tnldotdev/tnl/internal/control/certificates/visitor"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -64,116 +62,6 @@ func (d *Database) ListWorkloadServices(ctx context.Context, credential string, 
 				return nil, err
 			}
 		}
-	}
-	return result, tx.Commit(ctx)
-}
-
-type WorkloadIngressAssignment struct {
-	ID             string    `json:"id"`
-	ServiceID      string    `json:"service_id"`
-	Credential     string    `json:"credential"`
-	ExpiresAt      time.Time `json:"expires_at"`
-	IngressID      string    `json:"ingress_id"`
-	IngressAddress string    `json:"ingress_address"`
-	TLSServerName  string    `json:"tls_server_name"`
-}
-type WorkloadIngressAssignments struct {
-	Subject     VisitorSubject              `json:"subject"`
-	Assignments []WorkloadIngressAssignment `json:"assignments"`
-}
-
-func (d *Database) CreateWorkloadIngressAssignments(ctx context.Context, credential, service, key string, now time.Time) (result WorkloadIngressAssignments, retErr error) {
-	return d.CreateWorkloadIngressAssignmentSet(ctx, credential, service, key, 2, "", now)
-}
-
-func (d *Database) CreateWorkloadIngressAssignmentSet(ctx context.Context, credential, service, key string, count int, exclude string, now time.Time) (result WorkloadIngressAssignments, retErr error) {
-	if !validIdempotencyKey(key) || count < 1 || count > 2 || len(exclude) > 256 || count == 2 && exclude != "" {
-		return result, ErrWorkloadDenied
-	}
-	tx, err := d.pool.Begin(ctx)
-	if err != nil {
-		return result, err
-	}
-	defer rollback(ctx, tx, "create workload ingress assignments", &retErr)()
-	id, err := lockWorkloadCredential(ctx, tx, credential, now)
-	if err != nil {
-		return result, err
-	}
-	_, _, err = VisitorSubjectAccess(ctx, tx, service, workloadSubject(id), now)
-	if err != nil {
-		return result, err
-	}
-	// a handle proves key possession until the fixed session deadline. it never
-	// grants a new or active stream without checking the current renewable lease.
-	var until time.Time
-	if err = tx.QueryRow(ctx, `SELECT expires_at FROM control.workload_sessions WHERE id=$1`, id).Scan(&until); err != nil {
-		return result, err
-	}
-	scope := workloadRequestScope(id, key)
-	var storedService, keyID string
-	var encrypted []byte
-	err = tx.QueryRow(ctx, `SELECT service_id,result_ciphertext,storage_key_id FROM control.workload_ingress_requests WHERE workload_session_id=$1 AND idempotency_key=$2`, id, key).Scan(&storedService, &encrypted, &keyID)
-	if err == nil {
-		if storedService != service {
-			return result, ErrWorkloadConflict
-		}
-		data, _, err := d.storageKey.Open(keyID, scope, encrypted)
-		if err != nil {
-			return result, err
-		}
-		if err = json.Unmarshal(data, &result); err != nil {
-			return result, err
-		}
-		if len(result.Assignments) != count {
-			return result, ErrWorkloadConflict
-		}
-		for _, a := range result.Assignments {
-			if a.IngressID == exclude {
-				return result, ErrWorkloadConflict
-			}
-			var current bool
-			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.connector_sessions s JOIN control.ingress_leases i ON i.ingress_id=s.assigned_ingress_id AND i.ingress_run_id=s.assigned_ingress_run_id AND i.ingress_lease_revision=s.assigned_ingress_lease_revision WHERE s.id=$1 AND s.workload_session_id=$2 AND s.service_id=$3 AND s.revoked_at IS NULL AND s.bound_at IS NULL AND s.expires_at>$4 AND i.lease_expires_at>$4 AND NOT i.draining)`, a.ID, id, service, now).Scan(&current); err != nil {
-				return result, err
-			}
-			if !current {
-				return result, ErrServiceConflict
-			}
-		}
-		return result, tx.Commit(ctx)
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return result, err
-	}
-	placements, err := privateIngressPlacements(ctx, tx, now, count, exclude)
-	if err != nil {
-		return result, err
-	}
-	result.Subject = workloadSubject(id)
-	for _, p := range placements {
-		session, err := opaqueid.New(opaqueid.ConnectorSessionPrefix)
-		if err != nil {
-			return result, err
-		}
-		secret, digest, err := privateSecret()
-		if err != nil {
-			return result, err
-		}
-		_, err = tx.Exec(ctx, `INSERT INTO control.connector_sessions(id,credential_digest,service_id,workload_session_id,created_at,expires_at,assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, session, digest, service, id, now, until, p.id, p.run, p.revision)
-		if err != nil {
-			return result, err
-		}
-		result.Assignments = append(result.Assignments, WorkloadIngressAssignment{ID: session, ServiceID: service, Credential: secret, ExpiresAt: until, IngressID: p.id, IngressAddress: p.address, TLSServerName: p.serverName})
-	}
-	data, _ := json.Marshal(result)
-	encrypted, err = d.storageKey.Seal(scope, data)
-	if err != nil {
-		return result, err
-	}
-	if _, err = tx.Exec(ctx, `INSERT INTO control.workload_ingress_requests(workload_session_id,idempotency_key,service_id,result_ciphertext,storage_key_id) VALUES($1,$2,$3,$4,$5)`, id, key, service, encrypted, d.storageKey.CurrentID()); err != nil {
-		return result, err
-	}
-	if err = workloadAudit(ctx, tx, id, "assignment.create", service, now); err != nil {
-		return result, err
 	}
 	return result, tx.Commit(ctx)
 }

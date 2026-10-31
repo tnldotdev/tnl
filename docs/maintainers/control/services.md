@@ -72,43 +72,49 @@ capacity under the selected relay lease lock. see
 [`service_runs.go`](../../../internal/control/state/service_runs.go), and
 [`relay`](../../../internal/relay).
 
-## authenticate the connector and each stream
+## authenticate the native owner and each stream
 
-a connector establishes two independently assigned ingress paths. its signed
-hello binds the service, subject, and nonce. ingress claims that hello against its
-current lease and captures the socket's source or verified PROXY metadata. SNI
-and client-supplied addresses do not select a service or visitor source.
+a connector prepares one signed owner and exactly two fixed relay carriers.
+control checks the current subject, publisher run, and both relay processes;
+each relay signs its accepted socket source, and both sources must agree.
+the publisher installs that exact pair before the connector completes inner
+QUIC and reports readiness. native service traffic never passes through ingress.
 
-each application stream needs a current ready run and a separate admission.
-ingress and publisher check the exact subject, session, service/run, source,
-grant, and connection assignment. ingress emits PROXY v2 once, after the relay
-acknowledges its assignment. connector-admitted streams do not request an
-application client certificate. direct HTTP uses its signed visitor permission;
-direct database clients use mTLS. application authorization remains independent.
+each application stream needs a signed opening and its own publisher admission.
+the publisher checks the installed pair, subject, source, run, metadata, and
+current signed permission before target resolution, dialing, or greetings.
+native visitor TLS verifies the service hostname without an application client
+certificate. carrier failover preserves inner QUIC and the target socket; carrier,
+owner, or run replacement cannot transfer an admission or replay bytes.
 
-assignment retries retain one idempotency key until the outcome is known. changed
-requests conflict; expired, revoked, bound, or stale assignments cannot replay.
-the encrypted retry result is covered by storage-key rotation and bounded
-retention. see [`connector/stream`](../../../internal/connector/stream),
+creation retries retain the original signed request and idempotency key.
+changed requests conflict; a retry cannot extend authority or recover stale state.
+pair, relay claim, publisher installation, and permission have separate deadlines.
+encrypted pair keys participate in storage-key rotation. see
+[`connector/stream`](../../../internal/connector/stream),
 [`tunnelv1`](../../../pkg/protocol/tunnelv1), and
 [`http_permission.go`](../../../internal/publisher/http_permission.go).
 
 ## retain current authorization
 
-inventory, a connector session, and a previously accepted credential are not
-ongoing authorization. ingress normally rechecks active streams every 30 seconds,
-bounded by the applicable grant, run, infrastructure lease, certificate, and
-two-minute maximum decision deadline. denial closes both ends; unavailable
-control cannot extend the deadline. stream workers join before capacity is released.
+inventory, an installed pair, and a previously accepted credential are not ongoing
+authorization. background workers refresh native authority; application arrivals
+perform no control RPC. the publisher's local guard fences every use. a verified
+newer permission may wait for background policy only within the existing guard's
+unchanged deadline. expiry cannot be revived. workers join before capacity is released.
+
+publicly reachable services retain direct ingress admission, trusted PROXY v2
+metadata, capacity promotion, relay selection, and the first-visitor-byte retry
+boundary. direct database clients use mTLS. ingress rechecks their current
+authorization within the last decision's bound; unavailable control cannot extend it.
 
 direct HTTP application requests use the publisher's shared local permission
 verifier and ten-second policy lease. ingress admission checks transport and run
 capacity; it does not authorize the HTTP credential. policy renewal happens
 outside request admission, and stale policy closes guarded requests.
 
-session expiry prevents new streams while admitted streams drain under their
-own authorization. replacement joins the old runner before reopening the
-reserved local port. it never replays admitted application bytes. workload
+native owner expiry closes its streams. replacement joins the old runner before
+reopening the reserved local port. it never replays admitted application bytes. workload
 renewal may shorten its fixed expiry but cannot extend it. see
 [workload sessions](workload-sessions.md) and
 [transport boundaries](../transport/architecture.md).
@@ -120,9 +126,9 @@ contracts without importing persistence. publishers own target trust; connectors
 never receive it. infrastructure transport certificates, visitor service
 certificates, and target trust are distinct.
 
-split deployment needs two distinct live ingress identities for initial
-connector slots; standalone supplies two logical identities. the infrastructure
-certificate binds the ingress process run and lease, and visitors verify its
-hostname and authenticated pin. see [self-hosting](https://tnl.dev/docs/self-hosting)
+native readiness needs two distinct live relay services, not two ingress processes.
+standalone composes one ingress and two logical relay services. relay transport
+TLS uses the relay address's certificate; there is no native ingress listener,
+certificate, assignment, or service-routing history. see [self-hosting](https://tnl.dev/docs/self-hosting)
 for deployment setup and [test tiers](../../../contributing.md#choose-a-test-tier)
 for the smallest real boundary check.

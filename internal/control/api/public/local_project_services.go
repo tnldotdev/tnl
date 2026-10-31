@@ -89,22 +89,3 @@ func (h *handler) GetProjectPublicMetadata(w http.ResponseWriter, r *http.Reques
 	}
 	writeJSON(w, 200, result)
 }
-
-func (h *handler) ReleaseVisitorIngressAssignment(w http.ResponseWriter, r *http.Request, id controlv1.ConnectorSessionID) {
-	principal, ok := h.authorizeReads(w, r)
-	if !ok {
-		return
-	}
-	store, ok := h.store.(interface {
-		ReleaseVisitorIngressAssignment(context.Context, string, string, time.Time) error
-	})
-	if !ok {
-		writeProblem(w, 503, controlv1.Unavailable, "visitor ingress assignments are unavailable")
-		return
-	}
-	if err := store.ReleaseVisitorIngressAssignment(r.Context(), principal.identityID, id, time.Now()); err != nil {
-		serviceVisitorError(w, "release visitor ingress assignment", err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}

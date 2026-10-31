@@ -13,11 +13,15 @@ import (
 	"sync"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -40,6 +44,8 @@ type Prepared struct {
 	servicePort         uint16
 	managedPublic       bool
 	serviceHTTPRequests *publisher.ServiceHTTPRequestLimits
+	policy              *visitorlease.Lease
+	metadataRevision    int64
 }
 
 // mutable certificate state stays behind a pointer so redacted value
@@ -78,14 +84,20 @@ type Bound struct {
 	prepared *Prepared
 	*boundState
 	streamCapacity int
+	audit          serviceaudit.Sink
 }
 
 type boundState struct {
-	assignments map[string]tunnelv1.ServicePublisherConnectionRef
-	connections [2]controlv1.ConnectionAssignment
-	mu          sync.Mutex
-	active      map[net.Conn]struct{}
-	closed      bool
+	assignments     map[string]tunnelv1.ServicePublisherConnectionRef
+	connections     [2]controlv1.ConnectionAssignment
+	mu              sync.Mutex
+	active          map[net.Conn]struct{}
+	closed          bool
+	reservedStreams int
+	nativePending   int
+	nativePeers     map[string]*PeerSession
+	packetSlots     [2]*Claimed
+	closePolicy     func()
 }
 
 func (Bound) String() string   { return "private publisher run" }
@@ -165,7 +177,13 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 		return ErrPrivateStream
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	var obsolete []*PeerSession
+	defer func() {
+		b.mu.Unlock()
+		for _, p := range obsolete {
+			p.Close()
+		}
+	}()
 	if b.closed {
 		return ErrPrivateStream
 	}
@@ -197,6 +215,11 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 		next[current.ConnectionSlot] = current
 	}
 	b.connections, b.assignments = next, refs
+	for _, p := range b.nativePeers {
+		if !b.peerRelaysCurrentLocked(p.binding) {
+			obsolete = append(obsolete, p)
+		}
+	}
 	return nil
 }
 
@@ -220,6 +243,22 @@ func (b *Bound) current(ref tunnelv1.ServicePublisherConnectionRef) bool {
 	return !b.closed && b.assignments[ref.PublisherConnectionID] == ref
 }
 
+// reserveStream is the run's shared final capacity, across both relay slots and
+// native peers. only joined physical cleanup returns this debit.
+func (b *Bound) reserveStream(ref tunnelv1.ServicePublisherConnectionRef) (func(), bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	limit := b.streamCapacity
+	if limit == 0 {
+		limit = 64
+	}
+	if b.closed || b.assignments[ref.PublisherConnectionID] != ref || b.reservedStreams >= limit {
+		return nil, false
+	}
+	b.reservedStreams++
+	return sync.OnceFunc(func() { b.mu.Lock(); b.reservedStreams--; b.mu.Unlock() }), true
+}
+
 // ConnectSlot uses server-authenticated WebPKI on both transport candidates.
 // tunnel.Race returns only after the relay accepts this exact private claim.
 // no target CA or private TLS key is used for relay authentication.
@@ -234,7 +273,7 @@ func (b *Bound) ConnectSlotWithPreference(ctx context.Context, slot uint8, prefe
 	if roots.InsecureSkipVerify {
 		return nil, ErrPrivateStream
 	}
-	return b.ConnectSlotWithTransports(ctx, slot, preferTCP, muxsession.QUICConnector{TLSConfig: roots}, muxsession.TLSYamuxConnector{TLSConfig: roots})
+	return b.ConnectSlotWithTransports(ctx, slot, preferTCP, muxsession.QUICConnector{TLSConfig: roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}, muxsession.TLSYamuxConnector{TLSConfig: roots})
 }
 
 // ConnectSlotWithTransports retains the production claim and stale-assignment
@@ -244,7 +283,7 @@ func (b *Bound) ConnectSlotWithTransports(ctx context.Context, slot uint8, prefe
 	if err != nil {
 		return nil, err
 	}
-	primary := tunnel.Candidate{Connector: quic, Endpoint: endpoint, Transport: tunnel.TransportQUIC}
+	primary := tunnel.Candidate{Connector: requirePeerDatagrams(quic), Endpoint: endpoint, Transport: tunnel.TransportQUIC}
 	fallback := tunnel.Candidate{Connector: tcp, Endpoint: endpoint, Transport: tunnel.TransportTLSTCP}
 	if preferTCP {
 		primary, fallback = fallback, primary
@@ -260,8 +299,31 @@ func (b *Bound) ConnectSlotWithTransports(ctx context.Context, slot uint8, prefe
 		_ = session.Close()
 		return nil, ErrPrivateStream
 	}
-	return &Claimed{bound: b, ref: *hello.ServiceConnection, session: session, transport: transport,
-		endObservation: observability.PublisherConnectionLifetime(ctx, string(transport), int(slot))}, nil
+	outer, err := session.BorrowServicePublisherTransport()
+	if err != nil {
+		return nil, errors.Join(err, session.Close())
+	}
+	packets, err := peer.NewDispatchedSharedSession(ctx, outer)
+	if err != nil {
+		return nil, errors.Join(err, session.Close())
+	}
+	dispatcher, err := tunnel.NewServiceStreamDispatcher(ctx, session, packets)
+	if err != nil {
+		return nil, errors.Join(err, packets.Close(), session.Close())
+	}
+	claimed := &Claimed{bound: b, ref: *hello.ServiceConnection, session: session, transport: transport,
+		packets: packets, dispatcher: dispatcher,
+		endObservation: observability.PublisherConnectionLifetime(ctx, string(transport), int(slot))}
+	b.mu.Lock()
+	current := !b.closed && b.assignments[claimed.ref.PublisherConnectionID] == claimed.ref
+	if current {
+		b.packetSlots[slot] = claimed
+	}
+	b.mu.Unlock()
+	if !current {
+		return nil, errors.Join(ErrPrivateStream, claimed.Close())
+	}
+	return claimed, nil
 }
 
 // Claimed can only be constructed after a relay accepted the private tunnel
@@ -272,6 +334,10 @@ type Claimed struct {
 	session        *tunnel.Session
 	transport      tunnel.Transport
 	endObservation func(error, bool)
+	packets        *peer.SharedSession
+	dispatcher     *tunnel.ServiceStreamDispatcher
+	closeOnce      sync.Once
+	closeErr       error
 }
 
 func (c *Claimed) Transport() tunnel.Transport { return c.transport }
@@ -288,10 +354,24 @@ func (c *Claimed) Close() error {
 	if c == nil || c.session == nil {
 		return nil
 	}
-	if c.endObservation != nil {
-		c.endObservation(nil, true)
-	}
-	return c.session.Close()
+	c.closeOnce.Do(func() {
+		c.bound.mu.Lock()
+		if c.bound.packetSlots[c.ref.ConnectionSlot] == c {
+			c.bound.packetSlots[c.ref.ConnectionSlot] = nil
+		}
+		c.bound.mu.Unlock()
+		if c.endObservation != nil {
+			c.endObservation(nil, true)
+		}
+		if c.dispatcher != nil {
+			c.closeErr = errors.Join(c.closeErr, c.dispatcher.Close())
+		}
+		if c.packets != nil {
+			c.closeErr = errors.Join(c.closeErr, c.packets.Close())
+		}
+		c.closeErr = errors.Join(c.closeErr, c.session.Close())
+	})
+	return c.closeErr
 }
 
 func (c *Claimed) Serve(ctx context.Context) (result error) {
@@ -312,13 +392,8 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 	stop := context.AfterFunc(ctx, func() { _ = c.session.Close() })
 	var workers sync.WaitGroup
 	defer func() { cancel(); _ = c.session.Close(); workers.Wait(); stop() }()
-	limit := c.bound.streamCapacity
-	if limit == 0 {
-		limit = 64
-	}
-	capacity := make(chan struct{}, limit)
 	for {
-		incoming, err := c.session.AcceptServiceForwardingStream(ctx)
+		incoming, err := c.session.AcceptDispatchedServiceForwardingStream(ctx, c.dispatcher)
 		if err != nil {
 			var invalid *tunnel.StreamHeaderError
 			if errors.As(err, &invalid) {
@@ -333,18 +408,17 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 			_ = incoming.Reject(tunnelv1.StaleConnectionAssignment)
 			continue
 		}
-		select {
-		case capacity <- struct{}{}:
-		default:
+		release, available := c.bound.reserveStream(c.ref)
+		if !available {
 			_ = incoming.Reject(tunnelv1.CapacityExceeded)
 			continue
 		}
 		if err := incoming.Accept(); err != nil {
-			<-capacity
+			release()
 			continue
 		}
 		workers.Go(func() {
-			defer func() { <-capacity }()
+			defer release()
 			defer incoming.Stream().Close()
 			_ = c.bound.serveBody(incoming.Context(), c.ref, incoming.Stream(), incoming.Header, incoming.CloseWrite)
 		})
@@ -359,6 +433,10 @@ func (b *Bound) Invalidate() {
 	}
 	b.mu.Lock()
 	b.closed = true
+	peers := make([]*PeerSession, 0, len(b.nativePeers))
+	for _, p := range b.nativePeers {
+		peers = append(peers, p)
+	}
 	streams := make([]net.Conn, 0, len(b.active))
 	for stream := range b.active {
 		streams = append(streams, stream)
@@ -366,6 +444,12 @@ func (b *Bound) Invalidate() {
 	b.mu.Unlock()
 	for _, stream := range streams {
 		_ = stream.Close()
+	}
+	for _, p := range peers {
+		p.Close()
+	}
+	if b.closePolicy != nil {
+		b.closePolicy()
 	}
 }
 
@@ -395,9 +479,43 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	if header.Direct != nil && (metadata.Destination.Port() != header.Direct.DestinationPort || header.Direct.DestinationPort != b.prepared.servicePort) {
 		return ErrPrivateStream
 	}
+	authority := ""
+	// direct visitors use the exact managed origin. admitted connector clients
+	// can use a loopback authority, including an owned kubeconfig's local server.
+	if b.prepared.managedPublic && header.Direct != nil {
+		authority = net.JoinHostPort(b.prepared.managedHostname, strconv.Itoa(int(b.prepared.servicePort)))
+	}
+	connection := &replayConn{Conn: stream, reader: replay}
+	if endStream != nil {
+		connection.endStream = func() error { return endStream(ctx) }
+	}
+	return b.forwardManaged(ctx, connection, b.prepared.managedVisitor(header), authority)
+}
+
+func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor publisher.ServiceVisitorAuthentication, authority string) error {
+	check := func() error {
+		if native, ok := visitor.(publisher.NativeVisitor); ok {
+			_, err := native.Admission.CheckUse(ctx)
+			return err
+		}
+		return nil
+	}
+	if err := check(); err != nil {
+		return err
+	}
 	target, targetTLS := b.prepared.target, b.prepared.managedTargetTLS
 	if b.prepared.targetResolver != nil {
-		target, targetTLS, err = b.prepared.targetResolver.ResolveTarget(ctx)
+		resolve := ctx
+		cancel := func() {}
+		if native, ok := visitor.(publisher.NativeVisitor); ok {
+			resolve, cancel = context.WithDeadline(ctx, native.Admission.SetupDeadline())
+		}
+		var err error
+		target, targetTLS, err = b.prepared.targetResolver.ResolveTarget(resolve)
+		if err == nil {
+			err = context.Cause(resolve)
+		}
+		cancel()
 		if err != nil {
 			return err
 		}
@@ -405,20 +523,13 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 			return ErrPrivateStream
 		}
 	}
-	authority := ""
-	// direct visitors use the exact managed origin. admitted connector clients
-	// can use a loopback authority, including an owned kubeconfig's local server.
-	if b.prepared.managedPublic && header.Direct != nil {
-		authority = net.JoinHostPort(b.prepared.managedHostname, strconv.Itoa(int(b.prepared.servicePort)))
+	if err := check(); err != nil {
+		return err
 	}
 	managed := publisher.ServiceStream{Protocol: b.prepared.managedProtocol, Public: b.prepared.managedPublic, Hostname: b.prepared.managedHostname, Target: target, HTTPRequests: b.prepared.serviceHTTPRequests,
 		Authority: authority,
-		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: b.prepared.managedVisitor(header)}
-	connection := &replayConn{Conn: stream, reader: replay}
-	if endStream != nil {
-		connection.endStream = func() error { return endStream(ctx) }
-	}
-	return managed.Forward(ctx, connection)
+		TLS:       &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return b.prepared.currentCertificate() }}, TargetTLS: targetTLS, Visitor: visitor}
+	return managed.Forward(ctx, stream)
 }
 
 func headerMatches(ref tunnelv1.ServicePublisherConnectionRef, h tunnelv1.ServiceForwardingHeader, now time.Time) bool {

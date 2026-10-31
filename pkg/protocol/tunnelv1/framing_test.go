@@ -10,9 +10,10 @@ import (
 	"testing"
 )
 
-func readControl(r io.Reader) error    { _, err := ReadControl(r); return err }
-func readVisitor(r io.Reader) error    { _, err := ReadVisitorStreamHeader(r); return err }
-func readForwarding(r io.Reader) error { _, err := ReadInternalForwardingHeader(r); return err }
+func readControl(r io.Reader) error           { _, err := ReadControl(r); return err }
+func readVisitor(r io.Reader) error           { _, err := ReadVisitorStreamHeader(r); return err }
+func readForwarding(r io.Reader) error        { _, err := ReadInternalForwardingHeader(r); return err }
+func readNativePeerVisitor(r io.Reader) error { _, err := ReadNativePeerVisitorEntry(r); return err }
 
 var frameReaders = []struct {
 	name  string
@@ -20,6 +21,14 @@ var frameReaders = []struct {
 	read  func(io.Reader) error
 }{
 	{"control-hello", MaxControlBytes, readControl},
+	{"control-native-hello", MaxControlBytes, readControl},
+	{"control-native-accepted", MaxControlBytes, readControl},
+	{"control-native-renew", MaxControlBytes, readControl},
+	{"control-native-renewed", MaxControlBytes, readControl},
+	{"control-native-activate", MaxControlBytes, readControl},
+	{"control-native-activated", MaxControlBytes, readControl},
+	{"control-accepted", MaxControlBytes, readControl},
+	{"native-peer-visitor-entry", MaxHeaderBytes, readNativePeerVisitor},
 	{"visitor-stream-header", MaxHeaderBytes, readVisitor},
 	{"internal-forwarding-header", MaxHeaderBytes, readForwarding},
 }
@@ -126,6 +135,9 @@ func TestFrameWritersPropagateErrorsAndShortWrites(t *testing.T) {
 		{"publisher", func(w io.Writer) error {
 			h, _ := ReadVisitorStreamHeader(bytes.NewReader(goldenWire(t, "visitor-stream-header")))
 			return WriteVisitorStreamHeader(w, h)
+		}},
+		{"native-peer", func(w io.Writer) error {
+			return WriteNativePeerVisitorEntry(w, peerOpeningFixture())
 		}},
 		{"forwarding", func(w io.Writer) error {
 			h, _ := ReadInternalForwardingHeader(bytes.NewReader(goldenWire(t, "internal-forwarding-header")))

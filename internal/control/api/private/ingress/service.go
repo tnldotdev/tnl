@@ -13,13 +13,6 @@ import (
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 )
 
-func optionalString(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
-}
-
 type service struct {
 	store               Store
 	leaseDuration       time.Duration
@@ -72,7 +65,6 @@ func (s *service) RegisterIngress(ctx context.Context, body ingressv1.IngressReg
 		IngressID: body.IngressId, IngressRunID: body.IngressRunId,
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
 		IngressPoolID: body.IngressPoolId, ServicePorts: servicePorts(body.ServicePorts),
-		ConnectorAddress: optionalString(body.ConnectorAddress), ConnectorTLSServerName: optionalString(body.ConnectorTlsServerName),
 	}, s.now(), s.leaseDuration)
 	if err != nil {
 		return ingressv1.IngressLease{}, s.storeError(ctx, err)

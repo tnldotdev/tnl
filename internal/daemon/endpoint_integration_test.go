@@ -31,13 +31,13 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 	for _, standalone := range []bool{false, true} {
 		t.Run(map[bool]string{false: "split", true: "standalone"}[standalone], func(t *testing.T) {
 			f := newServiceRuntimeFixtureTiming(t, standalone, nil, false)
-			var directIngress *ingress.Connector
+			var directIngress *ingress.DirectServices
 			if !standalone {
 				process := startSeparatedPrivateIngress(t, f, 0, "quic", nil)
-				directIngress = process.ingresses[0].private
+				directIngress = process.ingresses[0].direct
 				startSeparatedPrivateIngress(t, f, 1, "quic", nil)
 			} else {
-				directIngress = f.composed.ingresses[0].private
+				directIngress = f.composed.ingresses[0].direct
 			}
 			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/once" {
@@ -124,10 +124,6 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			control := &separatedVisitorControl{Control: production}
-			if standalone {
-				control.dialAddress = f.sharedQUIC
-			}
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
@@ -135,7 +131,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			connectorCtx, stopConnector := context.WithCancel(t.Context())
 			connectorReady, connectorDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				connectorDone <- connectorstream.Serve(connectorCtx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "http", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(connectorReady); return nil }})
+				connectorDone <- connectorstream.Serve(connectorCtx, listener, connectorstream.Config{Control: production, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "http", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(connectorReady); return nil }})
 			}()
 			t.Cleanup(func() {
 				stopConnector()
@@ -189,7 +185,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 	}
 }
 
-func checkManagedDirectTLS(t *testing.T, f *privateSeparatedFixture, connector *ingress.Connector, applied controlv1.AppliedProjectConfiguration, service controlv1.Service, device, identity string) {
+func checkManagedDirectTLS(t *testing.T, f *privateSeparatedFixture, connector *ingress.DirectServices, applied controlv1.AppliedProjectConfiguration, service controlv1.Service, device, identity string) {
 	t.Helper()
 	ctx := t.Context()
 	material, err := f.identity.state.EnsureServiceClientCertificate(ctx, identity, service.Id, device, func(ctx context.Context, csr []byte) (controlv1.ServiceClientCertificate, error) {
@@ -202,7 +198,7 @@ func checkManagedDirectTLS(t *testing.T, f *privateSeparatedFixture, connector *
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{DirectOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, DirectConnector: connector, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, MaxConnections: 64})
+	server, err := ingress.New(listener, ingress.Config{DirectOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, DirectServices: connector, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, MaxConnections: 64})
 	if err != nil {
 		_ = listener.Close()
 		t.Fatal(err)

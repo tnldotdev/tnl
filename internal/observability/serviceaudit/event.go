@@ -50,7 +50,7 @@ type Observation struct {
 	OccurredAt          time.Time `json:"occurred_at"`
 	RunID               string    `json:"run_id"`
 	RunNumber           int64     `json:"run_number"`
-	ConnectorSessionID  string    `json:"connector_session_id,omitempty"`
+	PairID              string    `json:"pair_id,omitempty"`
 	VisitorConnectionID string    `json:"visitor_connection_id"`
 	SourceIP            string    `json:"source_ip,omitempty"`
 	Outcome             string    `json:"outcome"`
@@ -126,7 +126,7 @@ func (o Observation) Validate() error {
 		!opaqueid.Valid(o.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) || !ValidReason(o.Reason) {
 		return ErrInvalid
 	}
-	if o.ConnectorSessionID != "" && !opaqueid.Valid(o.ConnectorSessionID, opaqueid.ConnectorSessionPrefix) {
+	if o.PairID != "" && (!opaqueid.Valid(o.PairID, "npp_") || o.ServiceKind != "service" || o.RunID == "") {
 		return ErrInvalid
 	}
 	serviceDenial := o.RunID == "" && o.RunNumber == 0 && o.EventType == "connection.open" &&
@@ -135,8 +135,7 @@ func (o Observation) Validate() error {
 		o.ServiceKind == "service" && !opaqueid.Valid(o.RunID, opaqueid.ServiceRunPrefix)) {
 		return ErrInvalid
 	}
-	if o.ServiceKind == "service" && (o.ConnectorSessionID == "" && o.RunID == "" || o.SourceIP == "") ||
-		o.ServiceKind == "public_url" && o.ConnectorSessionID != "" {
+	if o.ServiceKind == "service" && (o.RunID == "" || o.SourceIP == "") {
 		return ErrInvalid
 	}
 	if o.SourceIP != "" {

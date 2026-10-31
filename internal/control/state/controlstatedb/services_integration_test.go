@@ -1,7 +1,6 @@
 package controlstatedb_test
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -18,7 +17,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
@@ -133,68 +131,26 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 		t.Fatalf("newest expired grant hid healthy pool sibling: %+v %v", inventory, err)
 	}
 	exec(`UPDATE control.publisher_grants SET expires_at=NULL WHERE id=$1`, publishers[1].GrantID)
-	ingress := controlstate.IngressLeaseIdentity{IngressID: "ingress-a", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1}
-	exec(`INSERT INTO control.ingress_leases(ingress_id,ingress_run_id,ingress_lease_revision,protocol_version,connection_capacity,registered_at,renewed_at,lease_expires_at) VALUES($1,$2,1,1,8,$3,$3,$4)`, ingress.IngressID, ingress.IngressRunID, now, now.Add(time.Hour))
-	exec(`UPDATE control.ingress_leases SET connector_address='ingress-a.example:443',connector_tls_server_name='ingress-a.example' WHERE ingress_id='ingress-a'`)
-	otherIngress := controlstate.IngressLeaseIdentity{IngressID: "ingress-b", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1}
-	exec(`INSERT INTO control.ingress_leases(ingress_id,ingress_run_id,ingress_lease_revision,protocol_version,connection_capacity,registered_at,renewed_at,lease_expires_at,connector_address,connector_tls_server_name)
-	    VALUES($1,$2,1,1,8,$3,$3,$4,'ingress-b.example:443','ingress-b.example')`, otherIngress.IngressID, otherIngress.IngressRunID, now, now.Add(time.Hour))
-	snapshot, err := d.ReadServiceSnapshot(ctx, ingress, now)
-	if err != nil || len(snapshot.Entries) != 2 {
-		t.Fatalf("pool snapshot: %+v %v", snapshot, err)
-	}
-	public, deviceKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	device, err := d.EnrollVisitorDevice(ctx, person, public, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assignments, err := d.CreateVisitorIngressAssignments(ctx, person, device.ID, service.ID, "startup", now)
-	if err != nil || len(assignments) != 2 {
-		t.Fatalf("dual ingress assignments: %+v %v", assignments, err)
-	}
-	if assignments[0].IngressID == assignments[1].IngressID || assignments[0].IngressAddress == assignments[1].IngressAddress {
-		t.Fatal("ingress assignments share one process address")
-	}
+	exec(`UPDATE control.services SET public=true WHERE id=$1`, service.ID)
+	port := service.Endpoint.Port
+	ingress := directIngressLease(t, ctx, d, "ingress-a", port, now)
+	otherIngress := directIngressLease(t, ctx, d, "ingress-b", port, now)
+	device, certificate := directVisitorCertificate(t, ctx, d, service.ID, person, now)
 	source := netip.MustParseAddr("192.0.2.10")
-	for _, session := range assignments {
-		assigned := ingress
-		if session.IngressID == otherIngress.IngressID {
-			assigned = otherIngress
-		}
-		hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "connector_session", ServiceID: service.ID, SessionID: session.ID, Credential: session.Credential, Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: device.ID, IdentityID: person}, Nonce: bytes.Repeat([]byte{1}, 32), Signature: make([]byte, 64)}
-		proof, err := hello.Claim().Digest()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err = d.AuthenticateVisitorConnector(ctx, assigned, hello.Claim(), source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
-			t.Fatalf("invalid device signature admitted: %v", err)
-		}
-		hello.Signature = ed25519.Sign(deviceKey, proof)
-		wrongIngress := ingress
-		if assigned.IngressID == ingress.IngressID {
-			wrongIngress = otherIngress
-		}
-		if _, err = d.AuthenticateVisitorConnector(ctx, wrongIngress, hello.Claim(), source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
-			t.Fatalf("assignment crossed ingress leases: %v", err)
-		}
-		if _, err = d.AuthenticateVisitorConnector(ctx, assigned, hello.Claim(), source, now); err != nil {
-			t.Fatal(err)
-		}
-	}
-	selected, err := d.SelectServiceRun(ctx, service.ID, person, device.ID, now)
+	selected, err := d.SelectServiceRun(ctx, service.ID, person, device, now)
 	if err != nil || selected.TLS == nil || selected.TLS.Digest != metadata.TLS.Digest {
 		t.Fatalf("authorized trust snapshot: %+v %v", selected, err)
 	}
 	var wg sync.WaitGroup
-	results := make(chan controlstate.ServiceStreamAuthorization, 2)
+	results := make(chan controlstate.DirectVisitorAdmission, 2)
 	problems := make(chan error, 2)
+	// isolate one run's atomic capacity, then restore the eligible pool sibling.
+	exec(`UPDATE control.publisher_grants SET expires_at=$2 WHERE id=$1`, publishers[1].GrantID, now.Add(time.Second))
+	now = now.Add(2 * time.Second)
 	for range 2 {
 		wg.Go(func() {
 			streamID, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
-			admitted, err := d.AuthorizeServiceStream(ctx, ingress, service.ID, runs[0].RunID, assignments[0].ID, streamID, runs[0].RunNumber, source, now)
+			admitted, err := d.AdmitDirectServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, streamID, port, source, now)
 			results <- admitted
 			problems <- err
 		})
@@ -213,38 +169,54 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	if allowed != 1 {
 		t.Fatalf("concurrent capacity admissions=%d, want one", allowed)
 	}
-	var active controlstate.ServiceStreamAuthorization
+	var active controlstate.DirectVisitorAdmission
 	for result := range results {
-		if result.VisitorConnectionID != "" {
+		if result.RunID != "" && result.ExpiresAt.After(now) {
 			active = result
 		}
 	}
-	selected, err = d.SelectServiceRun(ctx, service.ID, person, device.ID, now)
+	exec(`UPDATE control.publisher_grants SET expires_at=NULL WHERE id=$1`, publishers[1].GrantID)
+	selected, err = d.SelectServiceRun(ctx, service.ID, person, device, now)
 	if err != nil || selected.ServiceRunID != runs[1].RunID {
 		t.Fatalf("full run selected: %+v %v", selected, err)
 	}
-	if _, err = d.AuthorizeServiceStream(ctx, ingress, service.ID, runs[1].RunID, assignments[0].ID, id(opaqueid.VisitorConnectionPrefix), runs[1].RunNumber, netip.MustParseAddr("192.0.2.11"), now); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatalf("connector supplied another source: %v", err)
+	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, active.RunID, runs[0].Token, active.ConnectionID, active.RunNumber, netip.MustParseAddr("192.0.2.11"), certificate.Raw, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+		t.Fatalf("certificate supplied another source: %v", err)
 	}
-	if err = d.CloseServiceStream(ctx, ingress, assignments[0].ID, active.VisitorConnectionID, now); err != nil {
+	if err = d.CloseDirectServiceVisitor(ctx, ingress, active.ConnectionID, now); err != nil {
 		t.Fatal(err)
 	}
-	selected, err = d.SelectServiceRun(ctx, service.ID, person, device.ID, now)
+	selected, err = d.SelectServiceRun(ctx, service.ID, person, device, now)
 	if err != nil || selected.ServiceRunID != runs[0].RunID {
 		t.Fatalf("closed stream held capacity: %+v %v", selected, err)
 	}
-	active, err = d.AuthorizeServiceStream(ctx, otherIngress, service.ID, runs[1].RunID, assignments[1].ID, id(opaqueid.VisitorConnectionPrefix), runs[1].RunNumber, source, now)
+	active, err = d.AdmitDirectServiceVisitor(ctx, otherIngress, controlstate.PrimaryIngressPoolID, id(opaqueid.VisitorConnectionPrefix), port, source, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = d.RevokeVisitorDevice(ctx, person, device.ID, now); err != nil {
+	var token string
+	for _, run := range runs {
+		if run.RunID == active.RunID {
+			token = run.Token
+		}
+	}
+	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, active.RunID, token, active.ConnectionID, active.RunNumber, source, certificate.Raw, now); err != nil || !decision.Allowed {
+		t.Fatal("valid direct certificate denied", err)
+	}
+	if err = d.PromoteDirectServiceVisitor(ctx, otherIngress, active.ConnectionID, now); err != nil {
 		t.Fatal(err)
 	}
-	validity, err := d.RecheckServiceVisitor(ctx, otherIngress, service.ID, runs[1].RunID, assignments[1].ID, person, active.VisitorConnectionID, runs[1].RunNumber, source, now)
-	if err != nil || validity.Allowed {
+	if status, err := d.DirectServiceVisitorStatus(ctx, ingress, active.ConnectionID, now); err == nil && status.State == controlstate.DirectVisitorAllowed {
+		t.Fatal("direct reservation crossed ingress lease")
+	}
+	if err = d.RevokeVisitorDevice(ctx, person, device, now); err != nil {
+		t.Fatal(err)
+	}
+	validity, err := d.DirectServiceVisitorStatus(ctx, otherIngress, active.ConnectionID, now)
+	if err != nil || validity.State == controlstate.DirectVisitorAllowed {
 		t.Fatalf("revoked device kept active stream: %+v %v", validity, err)
 	}
-	if _, err = d.SelectServiceRun(ctx, service.ID, person, device.ID, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.SelectServiceRun(ctx, service.ID, person, device, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked device selected a run: %v", err)
 	}
 	if err = d.RevokePublisherGrant(ctx, team, publishers[0].ID, publishers[0].GrantID, person, now); err != nil {
@@ -252,10 +224,6 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	}
 	if _, err = d.GetServiceForPublisher(ctx, service.ID, publishers[0], now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked publisher still read service metadata: %v", err)
-	}
-	snapshot, err = d.ReadServiceSnapshot(ctx, ingress, now)
-	if err != nil || len(snapshot.Entries) != 1 || snapshot.Entries[0].ServiceRunID != runs[1].RunID {
-		t.Fatalf("one publisher tombstone removed sibling: %+v %v", snapshot, err)
 	}
 	var common, slots int
 	if err = conn.QueryRow(ctx, `SELECT count(*) FROM control.publisher_service_runs WHERE service_id=$1 AND closed_at IS NULL`, service.ID).Scan(&common); err != nil || common != 1 {
@@ -267,8 +235,8 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	if state, err := d.HeartbeatServiceRun(ctx, service.ID, runs[1].RunID, runs[1].Token, now, controlstate.ServiceRunHealth{Healthy: false, StreamCapacity: 1}); err != nil || state.State != "starting" {
 		t.Fatalf("unhealthy publisher stayed ready: %+v %v", state, err)
 	}
-	if snapshot, err := d.ReadServiceSnapshot(ctx, ingress, now); err != nil || len(snapshot.Entries) != 0 {
-		t.Fatalf("unhealthy publisher retained routing: %+v %v", snapshot, err)
+	if _, err := d.AdmitDirectServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, id(opaqueid.VisitorConnectionPrefix), port, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+		t.Fatal("unhealthy publisher retained admission", err)
 	}
 	if state, err := d.HeartbeatServiceRun(ctx, service.ID, runs[1].RunID, runs[1].Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 1}); err != nil || state.State != "ready" {
 		t.Fatalf("healthy pool sibling depended on a primary: %+v %v", state, err)
@@ -286,8 +254,8 @@ func TestIntegrationServicePoolsDeviceKeysAndAtomicCapacity(t *testing.T) {
 	if err != nil || updated.TrustRevision != 2 {
 		t.Fatalf("immutable trust replacement: %+v %v", updated, err)
 	}
-	if snapshot, err := d.ReadServiceSnapshot(ctx, ingress, now); err != nil || len(snapshot.Entries) != 0 {
-		t.Fatalf("trust replacement retained old run keys: %+v %v", snapshot, err)
+	if _, err := d.AdmitDirectServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, id(opaqueid.VisitorConnectionPrefix), port, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+		t.Fatal("trust replacement retained old run keys", err)
 	}
 	if _, err = d.ConfigureService(ctx, service.ID, person, metadata, now); !errors.Is(err, controlstate.ErrServiceConflict) {
 		t.Fatalf("stale trust revision replaced approved trust: %v", err)

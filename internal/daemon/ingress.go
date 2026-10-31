@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"strings"
 	"time"
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
@@ -19,7 +18,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -33,10 +31,7 @@ type ingressRuntime struct {
 	forwarder          *ingress.Forwarder
 	usage              *ingress.UsageReporter
 	recovery           *ingress.RecoveryReporter
-	private            *ingress.Connector
-	privateQUIC        *muxsession.QUICListener
-	serviceCertificate *ingressCertificateSource
-	privateOnly        bool
+	direct             *ingress.DirectServices
 	audit              *ingressServiceAudit
 }
 
@@ -54,30 +49,20 @@ func (d *daemon) publishIngressRuntime(runtime *ingressRuntime) {
 }
 
 type ingressProcessSettings struct {
-	controlEndpoint  string
-	controlAddress   string
-	clusterSecret    string
-	ingressID        string
-	listen           string
-	listener         net.Listener
-	runtime          ingressSettings
-	privateHostname  string
-	privateAddress   string
-	privateUDPListen string
+	controlEndpoint string
+	controlAddress  string
+	clusterSecret   string
+	ingressID       string
+	listen          string
+	listener        net.Listener
+	runtime         ingressSettings
 }
 
 func ingressProcessSettingsFrom(cfg daemonconfig.Config) ingressProcessSettings {
-	domain := strings.TrimPrefix(cfg.ControlHostname, "control.")
-	hostname := ""
-	if cfg.IngressID != "" && domain != "" {
-		hostname = cfg.IngressID + "." + domain
-	}
 	return ingressProcessSettings{
 		controlEndpoint: cfg.PrivateControlEndpoint(), controlAddress: cfg.PrivateControlAddress,
 		clusterSecret: cfg.ClusterSecret,
 		ingressID:     cfg.IngressID, listen: cfg.IngressListen, runtime: ingressSettingsFrom(cfg),
-		privateHostname: hostname, privateAddress: net.JoinHostPort(hostname, "443"),
-		privateUDPListen: cfg.IngressUDPListen,
 	}
 }
 
@@ -97,8 +82,6 @@ func (d *daemon) startIngress(ctx context.Context, settings ingressProcessSettin
 	}
 	if err := d.startIngressRuntime(ctx, settings.runtime, metrics, ingressRuntimeConfig{
 		client: privateClient, ingressID: settings.ingressID, listener: listener, clusterSecret: settings.clusterSecret,
-		privateHostname: settings.privateHostname, privateAddress: settings.privateAddress,
-		privateUDPListen: settings.privateUDPListen,
 	}); err != nil {
 		_ = listener.Close()
 		return err
@@ -107,17 +90,12 @@ func (d *daemon) startIngress(ctx context.Context, settings ingressProcessSettin
 }
 
 type ingressRuntimeConfig struct {
-	client               ingress.ControlClient
-	ingressID            string
-	listener             net.Listener
-	clusterSecret        string
-	configure            func(*ingress.Config)
-	privateHostname      string
-	privateAddress       string
-	privateUDPListen     string
-	disableConnectorQUIC bool
-	configurePrivate     func(*ingress.ConnectorConfig)
-	privateOnly          bool
+	client          ingress.ControlClient
+	ingressID       string
+	listener        net.Listener
+	clusterSecret   string
+	configure       func(*ingress.Config)
+	configureDirect func(*ingress.DirectServicesConfig)
 }
 
 type ingressSettings struct {
@@ -166,26 +144,20 @@ func (d *daemon) startIngressRuntime(
 	metrics *observability.Metrics,
 	runtimeConfig ingressRuntimeConfig,
 ) error {
-	runtime := &ingressRuntime{privateOnly: runtimeConfig.privateOnly}
+	runtime := &ingressRuntime{}
 	auditClient, ok := runtimeConfig.client.(ingressServiceObservationClient)
 	if !ok {
 		return errors.New("ingress service observation reporting is required")
 	}
 	runtime.audit = &ingressServiceAudit{ctx: ctx, client: auditClient, metrics: metrics}
-	if runtimeConfig.privateOnly && (runtimeConfig.privateHostname == "" || !runtimeConfig.disableConnectorQUIC) {
-		return errors.New("logical private ingress requires a hostname and shared listener")
-	}
 	owned := false
 	defer func() {
 		if !owned {
 			flush, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			_ = runtime.audit.Close(flush)
 			cancel()
-			if runtime.private != nil {
-				_ = runtime.private.Close()
-			}
-			if runtime.privateQUIC != nil {
-				_ = runtime.privateQUIC.Close()
+			if runtime.direct != nil {
+				_ = runtime.direct.Close()
 			}
 			if runtime.forwarder != nil {
 				_ = runtime.forwarder.Close()
@@ -201,10 +173,6 @@ func (d *daemon) startIngressRuntime(
 	var publicServer *ingress.Server
 	registration := ingressv1.IngressRegistration{IngressId: runtimeConfig.ingressID, IngressRunId: runID, ProtocolVersion: tunnelv1.Version, ConnectionCapacity: settings.visitorConnectionLimit}
 	registration.IngressPoolId, registration.ServicePorts = string(settings.ingressPoolID), settings.servicePortRanges.Ports()
-	if runtimeConfig.privateHostname != "" {
-		registration.ConnectorAddress = &runtimeConfig.privateAddress
-		registration.ConnectorTlsServerName = &runtimeConfig.privateHostname
-	}
 	controller, err := ingress.NewController(ingress.ControllerConfig{
 		Report: func(err error) {
 			logOperationalError(ctx, "renew ingress lease", failure.ServerControlConnectionFailed, err)
@@ -216,8 +184,8 @@ func (d *daemon) startIngressRuntime(
 		RoutingWait: settings.routingTableWait, Observer: metrics,
 		Load: func() int64 {
 			var private int64
-			if runtime.private != nil {
-				private = runtime.private.Load()
+			if runtime.direct != nil {
+				private = runtime.direct.Load()
 			}
 			if publicServer == nil {
 				return private
@@ -229,38 +197,32 @@ func (d *daemon) startIngressRuntime(
 		return err
 	}
 	runtime.controller = controller
-	if !runtimeConfig.privateOnly {
-		metrics.RegisterIngressRouting(controller.RoutingStatus)
-		metrics.RegisterIngressLease(func() time.Time {
-			deadline := controller.Lease().LeaseExpiresAt
-			if snapshot := d.ingressLeases.Load(); snapshot != nil {
-				for _, other := range snapshot.controllers {
-					deadline = minTime(deadline, other.Lease().LeaseExpiresAt)
-				}
+	metrics.RegisterIngressRouting(controller.RoutingStatus)
+	metrics.RegisterIngressLease(func() time.Time {
+		deadline := controller.Lease().LeaseExpiresAt
+		if snapshot := d.ingressLeases.Load(); snapshot != nil {
+			for _, other := range snapshot.controllers {
+				deadline = minTime(deadline, other.Lease().LeaseExpiresAt)
 			}
-			return deadline
-		})
-	}
+		}
+		return deadline
+	})
 	var recovery *ingress.RecoveryReporter
-	// every ingress lease participates in usage coverage, including an empty
-	// private-only identity sharing the public listener. its idle and final
-	// watermarks must not hold public URL usage buckets open.
+	// every actual ingress lease participates in public URL usage coverage.
 	usage, err := ingress.NewUsageReporter(controller, 0, func(err error) { logOperationalError(ctx, "report ingress usage", failure.ServerWorkerFailed, err) })
 	if err != nil {
 		return err
 	}
 	usage.SetObserver(metrics)
 	runtime.usage = usage
-	if !runtimeConfig.privateOnly {
-		recovery, err = ingress.NewRecoveryReporter(ctx, controller, settings.controlRetryInterval, func(err error) {
-			logOperationalError(ctx, "report ingress recovery", failure.ServerWorkerFailed, err)
-		})
-		if err != nil {
-			return err
-		}
-		runtime.recovery = recovery
-		recovery.SetObserver(metrics)
+	recovery, err = ingress.NewRecoveryReporter(ctx, controller, settings.controlRetryInterval, func(err error) {
+		logOperationalError(ctx, "report ingress recovery", failure.ServerWorkerFailed, err)
+	})
+	if err != nil {
+		return err
 	}
+	runtime.recovery = recovery
+	recovery.SetObserver(metrics)
 	forwardingTLS := d.relayClientTLS
 	if forwardingTLS == nil {
 		forwardingTLS = &tls.Config{MinVersion: tls.VersionTLS13}
@@ -323,55 +285,20 @@ func (d *daemon) startIngressRuntime(
 		runtimeConfig.configure(&ingressConfig)
 	}
 	ingressConfig.AuditSink = runtime.audit
-	if runtimeConfig.privateHostname != "" {
-		privateControl, ok := runtimeConfig.client.(ingress.PrivateControl)
-		if !ok {
-			return errors.New("private ingress control operations are required")
-		}
-		certificates, ok := runtimeConfig.client.(ingressCertificateClient)
-		if !ok {
-			return errors.New("private ingress certificate retrieval is required")
-		}
-		source := &ingressCertificateSource{id: runtimeConfig.ingressID, hostname: runtimeConfig.privateHostname}
-		runtime.serviceCertificate = source
-		transportTLS := source.TLSConfig()
-		d.start("manage ingress transport certificate", func() error {
-			return runIngressCertificate(ctx, certificates, controller, source, settings.controlRetryInterval)
-		})
-		privateConfig := ingress.ConnectorConfig{Hostname: runtimeConfig.privateHostname, TLSConfig: transportTLS, IngressPoolID: string(settings.ingressPoolID),
-			Control: privateControl, Forwarder: forwarder, Routing: new(ingress.ServiceRoutingTable), CurrentLease: controller.Lease, AuditSink: runtime.audit}
-		privateConfig.DirectControl, _ = runtimeConfig.client.(ingress.DirectControl)
-		if runtimeConfig.configurePrivate != nil {
-			runtimeConfig.configurePrivate(&privateConfig)
-		}
-		privateConfig.AuditSink = runtime.audit
-		private, err := ingress.NewConnector(privateConfig)
-		if err != nil {
-			return err
-		}
-		runtime.private = private
-		ingressConfig.DirectConnector, ingressConfig.ServicePortRanges = private, settings.servicePortRanges.Ranges()
-		ingressConfig.PrivateHostname, ingressConfig.Connector = runtimeConfig.privateHostname, private
-		if !runtimeConfig.disableConnectorQUIC {
-			address := runtimeConfig.privateUDPListen
-			if address == "" {
-				address = runtimeConfig.listener.Addr().String()
-			}
-			listener, err := muxsession.ListenConnectorQUIC(address, private.TransportTLSConfig(), muxsession.QUICConfig{})
-			if err != nil {
-				_ = private.Close()
-				return err
-			}
-			runtime.privateQUIC = listener
-		}
+	directControl, ok := runtimeConfig.client.(ingress.DirectControl)
+	if !ok {
+		return errors.New("direct service ingress control operations are required")
 	}
-	if runtimeConfig.privateOnly {
-		d.publishIngressRuntime(runtime)
-		owned = true
-		d.start("run private ingress control", func() error { return controller.Run(ctx) })
-		d.start("report private ingress idle coverage", func() error { return usage.Run(ctx) })
-		return nil
+	directConfig := ingress.DirectServicesConfig{IngressPoolID: string(settings.ingressPoolID), Control: directControl, Forwarder: forwarder, CurrentLease: controller.Lease, AuditSink: runtime.audit}
+	if runtimeConfig.configureDirect != nil {
+		runtimeConfig.configureDirect(&directConfig)
 	}
+	directConfig.AuditSink = runtime.audit
+	runtime.direct, err = ingress.NewDirectServices(directConfig)
+	if err != nil {
+		return err
+	}
+	ingressConfig.DirectServices, ingressConfig.ServicePortRanges = runtime.direct, settings.servicePortRanges.Ranges()
 	ingressConfig.Traffic, ingressConfig.Pending, err = daemonconfig.ValidateIngressTraffic(ingressConfig.Traffic, ingressConfig.Pending)
 	if err != nil {
 		_ = forwarder.Close()
@@ -403,9 +330,6 @@ func (d *daemon) startIngressRuntime(
 	d.start("run ingress control", func() error { return controller.Run(ctx) })
 	d.start("report ingress usage", func() error { return usage.Run(ctx) })
 	d.start("serve public ingress", server.Serve)
-	if runtime.privateQUIC != nil {
-		d.start("serve private QUIC ingress", func() error { return serveQUICSessions(ctx, runtime.privateQUIC, runtime.private.AcceptQUIC) })
-	}
 	log.Printf("public ingress listening on %s", runtimeConfig.listener.Addr())
 	return nil
 }

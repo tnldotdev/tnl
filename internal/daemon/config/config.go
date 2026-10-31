@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -46,7 +45,6 @@ type Config struct {
 	ControlClientIPHeader string   `name:"control-client-ip-header" env:"TNLD_CONTROL_CLIENT_IP_HEADER" default:"X-Forwarded-For" enum:"X-Forwarded-For,Fly-Client-IP" help:"Source header overwritten by the trusted control HTTPS proxy."`
 	PrivateControlListen  string   `name:"private-control-listen" env:"TNLD_PRIVATE_CONTROL_LISTEN" help:"Private control API listen address for ingress and relays."`
 	IngressListen         string   `name:"ingress-listen" env:"TNLD_INGRESS_LISTEN" help:"Public visitor TCP listen address."`
-	IngressUDPListen      string   `name:"ingress-udp-listen" env:"TNLD_INGRESS_UDP_LISTEN" help:"Private connector QUIC listen address for split ingress; defaults to the ingress TCP bind address."`
 	RelayTCPListen        string   `name:"relay-tcp-listen" env:"TNLD_RELAY_TCP_LISTEN" help:"Public TLS/TCP publisher-connection listen address."`
 	RelayUDPListen        string   `name:"relay-udp-listen" env:"TNLD_RELAY_UDP_LISTEN" help:"Public QUIC publisher-connection listen address."`
 	InternalRelayListen   string   `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address."`
@@ -225,14 +223,6 @@ func (c Config) Validate() (retErr error) {
 	if c.Role == RoleIngress && !validProcessID(c.IngressID) {
 		return errors.New("ingress ID is required and must be canonical")
 	}
-	if c.Role == RoleIngress {
-		domain := strings.TrimPrefix(c.ControlHostname, "control.")
-		if err := validateCanonicalHostname(c.IngressID+"."+domain, "private ingress hostname"); err != nil {
-			return err
-		}
-	} else if c.IngressUDPListen != "" {
-		return errors.New("ingress UDP listener is valid only for split ingress; standalone uses the relay UDP listener")
-	}
 	if c.Role == RoleRelay {
 		if !validProcessID(c.RelayServiceID) || !validProcessID(c.RelayID) {
 			return errors.New("relay service ID and relay ID are required and must be canonical")
@@ -259,7 +249,6 @@ func (c Config) Validate() (retErr error) {
 		{"control", failure.SettingControlListen, c.ControlListen},
 		{"private control", failure.SettingPrivateControlListen, c.PrivateControlListen},
 		{"ingress", failure.SettingIngressListen, c.IngressListen},
-		{"ingress UDP", failure.SettingIngressUDPListen, c.IngressUDPListen},
 		{"relay TCP", failure.SettingRelayTCPListen, c.RelayTCPListen},
 		{"relay UDP", failure.SettingRelayUDPListen, c.RelayUDPListen},
 		{"internal relay", failure.SettingInternalRelayListen, c.InternalRelayListen},

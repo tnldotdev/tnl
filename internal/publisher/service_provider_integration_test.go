@@ -145,9 +145,9 @@ func TestIntegrationManagedDatabaseProviders(t *testing.T) {
 				t.Run(fmt.Sprintf("native-command/direct=%t", direct), func(t *testing.T) {
 					front := server
 					if !direct {
-						front.Visitor = publisher.ConnectorVisitor{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
+						front.Visitor = publisher.NativeVisitor{Admission: publisher.NativeAdmissionFixture{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
 							return publisher.ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
-						}}
+						}}}
 					}
 					address := managedPublisherListener(t, front, "0.0.0.0:0")
 					container := *managedPostgresClient
@@ -248,9 +248,9 @@ func TestIntegrationManagedDatabaseProviders(t *testing.T) {
 			})
 			t.Run("connector-native-TLS-without-client-certificate", func(t *testing.T) {
 				private := server
-				private.Visitor = publisher.ConnectorVisitor{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
+				private.Visitor = publisher.NativeVisitor{Admission: publisher.NativeAdmissionFixture{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
 					return publisher.ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
-				}}
+				}}}
 				front := clientTLS.Clone()
 				front.Certificates = nil
 				front.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {

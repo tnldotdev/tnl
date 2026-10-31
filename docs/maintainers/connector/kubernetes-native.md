@@ -131,7 +131,7 @@ mise exec -- task go:test:integration:kubernetes KIND=/absolute/path/to/kind
 
 the opt-in target requires Docker, kubectl, and kind v0.30.0. it creates and removes
 a fresh digest-pinned Kubernetes 1.34 cluster and digest-pinned BusyBox pod. the
-qualified client was kubectl v1.36.1. both public certificate and private connector
+qualified client was kubectl v1.36.1. both public certificate and native
 admission exercise discovery/list, server-side apply, CRUD, rollout watch,
 WebSocket exec, SPDY exec, logs-follow, attach, copy and active port-forwarding.
 watch, exec, logs, attach and active port-forward connections close on revocation.
@@ -139,6 +139,7 @@ routine fixtures also check transparent WebSocket/SPDY upgrade bytes, target
 certificate rejection, bounded long watches, safe kubeconfig updates and real
 client-go v0.37.1 composed exec authentication.
 
-these frontend proofs use current-policy callbacks. the complete control,
-ingress, relay and connector topology still needs the parent's backend-adapter
-qualification after the serving enum/schema integration lands.
+these frontend proofs use a test-only local native admission or direct certificate
+checks. signed pair ownership and relay/process policy are covered by the native
+service and daemon suites, not by the protocol frontend fixture. the built CLI
+native-owner workflow separately exercises real control and relay connections.

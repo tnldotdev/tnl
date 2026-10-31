@@ -24,24 +24,21 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 	var result error
 	deadline := time.Now().Add(timeout)
 	for _, runtime := range d.ingresses {
-		if runtime.private != nil {
-			runtime.private.StopAccepting()
+		if runtime.direct != nil {
+			runtime.direct.StopAccepting()
 		}
 	}
 	// drain ingress visitors before closing usage and recovery reporters so a
 	// successful final report includes usage-tracked public URL visitor activity.
 	for _, runtime := range d.ingresses {
-		if runtime.privateQUIC != nil {
-			result = errors.Join(result, runtime.privateQUIC.StopAccepting())
-		}
 		if runtime.controller != nil && runtime.controller.Ready(time.Now()) {
 			result = errors.Join(result, shutdownStep("ingress_lease", func() error { return runtime.controller.Drain(drainCtx, deadline) }))
 		}
 		if runtime.server != nil {
 			result = errors.Join(result, shutdownStep("ingress_visitors", func() error { return runtime.server.Drain(drainCtx) }))
 		}
-		if runtime.private != nil {
-			result = errors.Join(result, shutdownStep("private_ingress_streams", func() error { return runtime.private.Drain(drainCtx) }))
+		if runtime.direct != nil {
+			result = errors.Join(result, shutdownStep("direct_service_streams", func() error { return runtime.direct.Drain(drainCtx) }))
 		}
 		if runtime.usage != nil {
 			result = errors.Join(result, shutdownStep("ingress_usage", func() error { return runtime.usage.Close(drainCtx) }))
@@ -87,11 +84,8 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 		d.cancel()
 	}
 	for _, runtime := range d.ingresses {
-		if runtime.private != nil {
-			result = errors.Join(result, runtime.private.Close())
-		}
-		if runtime.privateQUIC != nil {
-			result = errors.Join(result, runtime.privateQUIC.Close())
+		if runtime.direct != nil {
+			result = errors.Join(result, runtime.direct.Close())
 		}
 		if runtime.forwarder != nil {
 			result = errors.Join(result, runtime.forwarder.Close())

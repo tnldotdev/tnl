@@ -1,4 +1,15 @@
 schemas:
+  ServiceRunObservations:
+    type: object
+    additionalProperties: false
+    required: [run_number, events]
+    properties:
+      run_number: { type: integer, format: int64, minimum: 1 }
+      events:
+        type: array
+        minItems: 1
+        maxItems: 256
+        items: { $ref: "../openapi.yaml#/components/schemas/ServiceObservation" }
   ServiceObservation:
     type: object
     additionalProperties: false
@@ -26,7 +37,7 @@ schemas:
       occurred_at: { type: string, format: date-time }
       run_id: { type: string }
       run_number: { type: integer, format: int64, minimum: 0 }
-      connector_session_id: { type: string }
+      pair_id: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
       visitor_connection_id: { type: string }
       source_ip: { type: string }
       outcome:

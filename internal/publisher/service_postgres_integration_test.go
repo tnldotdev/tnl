@@ -37,9 +37,9 @@ func postgresManagedFixture(t *testing.T) (publisher.ServiceStream, endpointFixt
 	return publisher.ServiceStream{Protocol: config.ProtocolPostgres, Hostname: "orders.production.storefront.example.test", Target: *managedPostgresAddress,
 		TLS:       &tls.Config{Certificates: []tls.Certificate{certificates.server}, MinVersion: tls.VersionTLS12},
 		TargetTLS: &tls.Config{RootCAs: roots, ServerName: *managedPostgresHostname, MinVersion: tls.VersionTLS12},
-		Visitor: publisher.ConnectorVisitor{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
+		Visitor: publisher.NativeVisitor{Admission: publisher.NativeAdmissionFixture{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
 			return publisher.ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
-		}}}, certificates
+		}}}}, certificates
 }
 
 func managedPGConnect(t *testing.T, address string, verification *tls.Config) *pgx.Conn {

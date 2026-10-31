@@ -74,6 +74,21 @@ func (d *Database) AdmitDirectServiceVisitor(ctx context.Context, lease IngressL
 	}
 	if !existing {
 		result.ExpiresAt = minTime(now.Add(10*time.Second), current.LeaseExpiresAt.Time)
+	}
+	// retries retain their original setup bound but still need the current run
+	// and certificate. a saved pending row cannot revive expired serving state.
+	var runUntil time.Time
+	err = tx.QueryRow(ctx, `SELECT LEAST(run.publisher_expires_at,run.certificate_expires_at,g.expires_at)
+	    FROM control.service_runs run JOIN control.publisher_grants g ON g.id=run.publisher_grant_id
+	    JOIN control.publisher_identities publisher ON publisher.id=run.publisher_identity_id
+	    WHERE run.id=$1 AND run.service_id=$2 AND run.run_number=$3 AND run.state='ready' AND run.healthy
+	    AND run.closed_at IS NULL AND run.publisher_expires_at>$4 AND run.certificate_expires_at>$4
+	    AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>$4) AND publisher.revoked_at IS NULL`, result.RunID, result.ServiceID, result.RunNumber, now).Scan(&runUntil)
+	if err != nil {
+		return result, publisherLookupError(err, ErrServiceAccess)
+	}
+	result.ExpiresAt = minTime(result.ExpiresAt, runUntil)
+	if !existing {
 		_, err = tx.Exec(ctx, `INSERT INTO control.direct_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,source_ip,valid_until,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(visitor_connection_id) DO NOTHING`, visitor, result.ServiceID, result.RunID, result.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), port, source.Unmap(), result.ExpiresAt, now)
 		if err != nil {
 			return result, err

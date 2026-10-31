@@ -14,29 +14,15 @@ paths:
   /internal/v1/ingresses/{ingress_id}/visitor-policy:
     $ref: "./paths/visitor-policy.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1visitor-policy"
   /internal/v1/ingresses/{ingress_id}/direct-services/admit:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1admit"
+    $ref: "./paths/direct-services.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1admit"
   /internal/v1/ingresses/{ingress_id}/direct-services/status:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1status"
+    $ref: "./paths/direct-services.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1status"
   /internal/v1/ingresses/{ingress_id}/direct-services/promote:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1promote"
+    $ref: "./paths/direct-services.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1promote"
   /internal/v1/ingresses/{ingress_id}/direct-services/close:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1close"
+    $ref: "./paths/direct-services.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1close"
   /internal/v1/ingresses/{ingress_id}/service-observations:
     $ref: "./paths/reporting.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1service-observations"
-  /internal/v1/ingresses/{ingress_id}/transport-certificate:
-    $ref: "./paths/certs.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1transport-certificate"
-  /internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id}:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1streams~1{visitor_connection_id}"
-  /internal/v1/ingresses/{ingress_id}/connector-sessions/claim:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1connector-sessions~1claim"
-  /internal/v1/ingresses/{ingress_id}/services/snapshot:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1snapshot"
-  /internal/v1/ingresses/{ingress_id}/services/events:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1events"
-  /internal/v1/ingresses/{ingress_id}/services/claim:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1claim"
-  /internal/v1/ingresses/{ingress_id}/services/recheck:
-    $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1services~1recheck"
   /internal/v1/ingresses/register:
     $ref: "./paths/leases.yaml#/paths/~1internal~1v1~1ingresses~1register"
   /internal/v1/ingresses/{ingress_id}/renew:
@@ -70,42 +56,22 @@ components:
       $ref: "./schemas/visitor-policy.yaml#/schemas/IngressVisitorPolicyRequest"
     VisitorPolicyUpdate:
       $ref: "../../../public/v1/openapi.yaml#/components/schemas/VisitorPolicyUpdate"
-    IngressTransportCertificate:
-      $ref: "./schemas/certs.yaml#/schemas/IngressTransportCertificate"
     ServiceID:
-      $ref: "./schemas/admission.yaml#/schemas/ServiceID"
+      $ref: "./schemas/direct-services.yaml#/schemas/ServiceID"
     ServiceRunID:
-      $ref: "./schemas/admission.yaml#/schemas/ServiceRunID"
-    ConnectorSessionID:
-      $ref: "./schemas/admission.yaml#/schemas/ConnectorSessionID"
+      $ref: "./schemas/direct-services.yaml#/schemas/ServiceRunID"
     VisitorConnectionID:
-      $ref: "./schemas/admission.yaml#/schemas/VisitorConnectionID"
-    ConnectorSessionClaim:
-      $ref: "./schemas/admission.yaml#/schemas/ConnectorSessionClaim"
-    ConnectorSessionResult:
-      $ref: "./schemas/admission.yaml#/schemas/ConnectorSessionResult"
+      $ref: "./schemas/direct-services.yaml#/schemas/VisitorConnectionID"
     DirectServiceVisitorClaim:
-      $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorClaim"
+      $ref: "./schemas/direct-services.yaml#/schemas/DirectServiceVisitorClaim"
     DirectServiceVisitorLookup:
-      $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorLookup"
+      $ref: "./schemas/direct-services.yaml#/schemas/DirectServiceVisitorLookup"
     DirectServiceVisitorAdmission:
-      $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorAdmission"
+      $ref: "./schemas/direct-services.yaml#/schemas/DirectServiceVisitorAdmission"
     DirectServiceVisitorStatus:
-      $ref: "./schemas/admission.yaml#/schemas/DirectServiceVisitorStatus"
-    ServiceProjection:
-      $ref: "./schemas/admission.yaml#/schemas/ServiceProjection"
+      $ref: "./schemas/direct-services.yaml#/schemas/DirectServiceVisitorStatus"
     ServiceRelay:
-      $ref: "./schemas/admission.yaml#/schemas/ServiceRelay"
-    ServiceSnapshot:
-      $ref: "./schemas/admission.yaml#/schemas/ServiceSnapshot"
-    ServiceStreamClaim:
-      $ref: "./schemas/admission.yaml#/schemas/ServiceStreamClaim"
-    ServiceStreamResult:
-      $ref: "./schemas/admission.yaml#/schemas/ServiceStreamResult"
-    ServiceVisitorRecheck:
-      $ref: "./schemas/admission.yaml#/schemas/ServiceVisitorRecheck"
-    ServiceVisitorRecheckResult:
-      $ref: "./schemas/admission.yaml#/schemas/ServiceVisitorRecheckResult"
+      $ref: "./schemas/direct-services.yaml#/schemas/ServiceRelay"
     Identifier:
       $ref: "./schemas/common.yaml#/schemas/Identifier"
     IngressRegistration:

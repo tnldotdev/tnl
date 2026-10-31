@@ -337,7 +337,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 		t.Fatalf("guest trial did not record its first ready run: %v", err)
 	}
 	waitForReadyPublisherConnections(t, inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
-	waitForIngressRoutingCurrent(t, inspect, 2)
+	waitForIngressRoutingCurrent(t, inspect, 1)
 	localDemo.SetPublicURL(ready.PublicURL)
 	visitor := newIntegrationVisitor(t, pebble.roots, publicAddress, owner)
 	secret := make([]byte, 32)

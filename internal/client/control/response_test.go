@@ -115,6 +115,21 @@ func TestResponseProblemPrecedenceAndRetryAfter(t *testing.T) {
 	}
 }
 
+func TestResponseVisitorDenialRetainsTypedProblem(t *testing.T) {
+	err := responseError(http.StatusForbidden, nil, []byte(`{"code":"forbidden","title":"visitor access denied"}`))
+	var problem *ProblemError
+	reason, _, typed := failure.Describe(err)
+	if !typed || reason != failure.ServerDenied || !errors.As(err, &problem) || problem == nil || problem.Status != http.StatusForbidden || string(problem.Problem.Code) != "forbidden" {
+		t.Fatalf("visitor denial lost its typed terminal cause: %v", err)
+	}
+	// service selection deliberately hides denied device access as not found.
+	err = responseError(http.StatusNotFound, nil, []byte(`{"code":"not_found","title":"service not found or unavailable"}`))
+	reason, _, typed = failure.Describe(err)
+	if !errors.Is(err, ErrNotFound) || !typed || reason != failure.ServerResourceNotFound {
+		t.Fatalf("selection denial lost its typed terminal cause: %v", err)
+	}
+}
+
 type responseBody struct {
 	io.Reader
 	closed bool

@@ -115,10 +115,11 @@ func FuzzWireTraceContext(f *testing.F) {
 				t.Fatal("trace round trip", err)
 			}
 		}
-		entry := ConnectorVisitorEntry{TraceContext: tc, ProtocolVersion: 1, Kind: ConnectorVisitorStream, ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: 1}
+		entry := peerOpeningFixture()
+		entry.TraceContext = tc
 		wire.Reset()
-		if err := WriteConnectorVisitorEntry(&wire, entry); err == nil {
-			got, err := ReadConnectorVisitorEntry(&wire)
+		if err := WriteNativePeerVisitorEntry(&wire, entry); err == nil {
+			got, err := ReadNativePeerVisitorEntry(&wire)
 			if err != nil || got != entry {
 				t.Fatal("private trace round trip", err)
 			}
@@ -127,23 +128,28 @@ func FuzzWireTraceContext(f *testing.F) {
 }
 
 func TestTracePrivateGoldenAndEveryHeaderValidation(t *testing.T) {
-	entry := ConnectorVisitorEntry{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: 1, Kind: ConnectorVisitorStream, ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: 7}
-	const golden = `{"trace_context":{"traceparent":"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"},"protocol_version":1,"kind":"connector_visitor","service_id":"svc_aaaaaaaaaaaaaaaaaaaaaa","service_run_id":"srun_aaaaaaaaaaaaaaaaaaaaaa","run_number":7}`
+	entry := peerOpeningFixture()
+	entry.TraceContext = TraceContext{goldenTraceParent}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, readFixture(t, "native-peer-visitor-entry.json")); err != nil {
+		t.Fatal(err)
+	}
+	golden := `{"trace_context":{"traceparent":"` + goldenTraceParent + `"},` + strings.TrimPrefix(compact.String(), "{")
 	var wire bytes.Buffer
-	if err := WriteConnectorVisitorEntry(&wire, entry); err != nil {
+	if err := WriteNativePeerVisitorEntry(&wire, entry); err != nil {
 		t.Fatal(err)
 	}
 	want, _ := io.ReadAll(frame(golden))
 	if !bytes.Equal(wire.Bytes(), want) {
 		t.Fatalf("private entry golden changed: %s", wire.Bytes())
 	}
-	got, err := ReadConnectorVisitorEntry(&wire)
+	got, err := ReadNativePeerVisitorEntry(&wire)
 	if err != nil || got != entry {
 		t.Fatal(got, err)
 	}
 	for _, extra := range []string{`"baggage":"tenant=evil",`, `"tracestate":"vendor=state",`} {
 		bad := strings.Replace(golden, `"traceparent":`, extra+`"traceparent":`, 1)
-		if _, err := ReadConnectorVisitorEntry(frame(bad)); err == nil {
+		if _, err := ReadNativePeerVisitorEntry(frame(bad)); err == nil {
 			t.Fatal("accepted unknown private telemetry field")
 		}
 	}
@@ -151,7 +157,6 @@ func TestTracePrivateGoldenAndEveryHeaderValidation(t *testing.T) {
 	for _, validate := range []func() error{
 		func() error { return (VisitorStreamHeader{TraceContext: bad}).Validate() },
 		func() error { return (InternalForwardingHeader{TraceContext: bad}).Validate() },
-		func() error { return (ServiceStreamHeader{TraceContext: bad}).Validate() },
 		func() error {
 			return (ServiceForwardingHeader{ServiceStreamHeader: ServiceStreamHeader{TraceContext: bad}}).Validate()
 		},
@@ -168,44 +173,25 @@ func TestTracePrivateMaximumFieldsFitFrameCap(t *testing.T) {
 	h := ServiceForwardingHeader{ServiceStreamHeader: ServiceStreamHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: 1, Kind: ServiceForwardingStream,
 		ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: math.MaxUint64,
 		SourceIP: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", VisitorConnectionID: testOpaqueID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: testOpaqueID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: math.MaxUint64, ExpiresAt: now,
-		Connector: &ConnectorAdmission{SessionID: testOpaqueID(opaqueid.ConnectorSessionPrefix), Subject: VisitorSubject{Kind: VisitorHumanDevice, IdentityID: testOpaqueID(opaqueid.IdentityPrefix), DeviceID: testOpaqueID(opaqueid.VisitorDevicePrefix)}, GrantRevision: math.MaxUint64}},
+		Direct: &DirectAdmission{IngressID: strings.Repeat("\x01", 256), IngressRunID: testOpaqueID(opaqueid.IngressRunPrefix), IngressLeaseRevision: math.MaxUint64, DestinationPort: math.MaxUint16}},
 		ConnectionSlot: 1, RelayServiceID: strings.Repeat("\x01", 256), RelayID: strings.Repeat("\x01", 256), RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayLeaseRevision: math.MaxUint64, LeaseExpiresAt: now}
-	for _, direct := range []bool{false, true} {
-		if direct {
-			h.Connector = nil
-			h.Direct = &DirectAdmission{IngressID: strings.Repeat("\x01", 256), IngressRunID: testOpaqueID(opaqueid.IngressRunPrefix), IngressLeaseRevision: math.MaxUint64, DestinationPort: math.MaxUint16}
-		}
+	{
 		var wire bytes.Buffer
 		if err := WriteServiceForwardingHeader(&wire, h); err != nil {
 			t.Fatal("max private header no longer fits cap", err)
 		}
-		t.Logf("maximum private protocol header direct=%t: %d JSON bytes", direct, wire.Len()-4)
+		t.Logf("maximum direct service protocol header: %d JSON bytes", wire.Len()-4)
 		_, got, err := ReadForwardingHeader(&wire)
-		if err != nil || got == nil || got.TraceContext != h.TraceContext || got.Direct == nil && direct {
+		if err != nil || got == nil || got.TraceContext != h.TraceContext || got.Direct == nil {
 			t.Fatal(got, err)
 		}
-		h.Kind = ConnectorVisitorStream
-		if err := WriteServiceStreamHeader(&wire, h.ServiceStreamHeader); err != nil {
-			t.Fatal(err)
-		}
-		decoded, err := ReadServiceStreamHeader(&wire)
-		if err != nil || decoded.TraceContext != h.TraceContext {
-			t.Fatal(decoded, err)
-		}
-		h.Kind = ServiceForwardingStream
 		for _, mutate := range []func(*ServiceForwardingHeader){
 			func(bad *ServiceForwardingHeader) { bad.RelayServiceID += "x" },
 			func(bad *ServiceForwardingHeader) { bad.RelayID += "x" },
 			func(bad *ServiceForwardingHeader) {
-				if bad.Direct != nil {
-					admission := *bad.Direct
-					admission.IngressID += "x"
-					bad.Direct = &admission
-				} else {
-					admission := *bad.Connector
-					admission.Subject.DeviceID += "x"
-					bad.Connector = &admission
-				}
+				admission := *bad.Direct
+				admission.IngressID += "x"
+				bad.Direct = &admission
 			},
 		} {
 			bad := h

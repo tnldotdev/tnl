@@ -23,14 +23,6 @@ schemas:
           type: integer
           minimum: 1024
           maximum: 65535
-      connector_address:
-        type: string
-        maxLength: 512
-        description: Direct reachable endpoint for this ingress process; required for private visitor placement.
-      connector_tls_server_name:
-        type: string
-        maxLength: 253
-        description: Infrastructure TLS identity presented on the direct connector endpoint.
       ingress_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       ingress_run_id:

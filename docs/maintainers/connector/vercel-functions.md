@@ -12,7 +12,8 @@ mise exec node@24.20.0 -- task go:test:integration:vercel
 the Task requires Node `24.20.0` on `PATH`, Docker, Go, Task, pnpm, and Pebble.
 it never invokes mise internally. `tools/testharness` owns digest-pinned disposable
 PostgreSQL; the Go fixture reuses the separated runtime's real authority/control,
-two ingress processes, two relays, and native publishers. Pebble issues managed
+two ingress processes for public/direct coverage, two relays, and native
+publishers. native owners bypass ingress. Pebble issues managed
 visitor certificates through the existing DNS-01 fixture. only infrastructure
 addressing and OIDC signing-key discovery use local test adapters.
 

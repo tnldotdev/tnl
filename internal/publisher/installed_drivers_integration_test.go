@@ -76,12 +76,12 @@ func TestIntegrationInstalledDatabaseDrivers(t *testing.T) {
 				server := publisher.ServiceStream{Protocol: setting.protocol, Hostname: hostname, Target: *setting.address,
 					TLS:       &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12},
 					TargetTLS: &tls.Config{RootCAs: roots, ServerName: *setting.hostname, MinVersion: tls.VersionTLS12},
-					Visitor:   publisher.ConnectorVisitor{Check: check}}
+					Visitor:   publisher.NativeVisitor{Admission: publisher.NativeAdmissionFixture{Check: check}}}
 				address := managedIngressListener(t, server, func() publisher.ServiceVisitorAuthentication {
 					if name == "expiring" || name == "renewing" {
-						// each stream keeps its originally selected connector decision.
+						// each stream keeps its originally selected native decision.
 						lifetime := &installedDriverLifetime{renew: name == "renewing"}
-						return publisher.ConnectorVisitor{Check: lifetime.check}
+						return publisher.NativeVisitor{Admission: publisher.NativeAdmissionFixture{Check: lifetime.check}}
 					}
 					return server.Visitor
 				})

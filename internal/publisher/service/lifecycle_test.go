@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
@@ -18,8 +19,10 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -37,6 +40,44 @@ type lifecycleControl struct {
 	bad                                 error
 	approved                            *controlv1.Service
 	declaration                         controlv1.ServiceRunDeclaration
+}
+
+func (f *lifecycleControl) ReportServiceRunObservations(_ context.Context, service, run string, number int64, token credentials.ServiceRunToken, _ serviceaudit.Batch) error {
+	if service != f.prep.ServiceId || run != f.prep.ServiceRunId || number != f.prep.RunNumber || token.String() != f.setup.RunToken {
+		return ErrPrivateStream
+	}
+	return nil
+}
+
+func (f *lifecycleControl) ReadPublisherVisitorPolicy(_ context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+	if body.Resource.Kind != controlv1.VisitorResourceScopeKindService || body.Resource.Id != f.prep.ServiceId || body.RunId != f.prep.ServiceRunId || body.RunNumber != f.prep.RunNumber || token != f.setup.RunToken {
+		return controlv1.VisitorPolicyUpdate{}, ErrPrivateStream
+	}
+	now := time.Now()
+	revision := int64(1)
+	if f.approved != nil {
+		revision = f.approved.TrustRevision
+	}
+	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, SnapshotRequired: body.AfterRevision == 0, Policy: controlv1.VisitorPolicySnapshot{
+		Resource: body.Resource, Issuer: "https://control.example.test", Hostname: f.prep.Hostname, Port: f.prep.ServicePort, Enabled: true,
+		VisitorPolicyRevision: 1, MetadataRevision: revision, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime),
+		VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "lifecycle", PublicKey: ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize)).Public().(ed25519.PublicKey)}},
+	}}, nil
+}
+
+func (f *lifecycleControl) ListNativePeerPairs(_ context.Context, service, run, after string, token credentials.ServiceRunToken) (controlv1.NativePeerPairCandidates, error) {
+	if service != f.prep.ServiceId || run != f.prep.ServiceRunId || token.String() != f.setup.RunToken || after != "" {
+		return controlv1.NativePeerPairCandidates{}, ErrPrivateStream
+	}
+	return controlv1.NativePeerPairCandidates{Items: []controlv1.NativePeerPairCandidate{}}, nil
+}
+
+func (*lifecycleControl) DeliverNativePeerPair(context.Context, string, string, string, int64, credentials.ServiceRunToken) (controlv1.NativePeerPairDelivery, error) {
+	return controlv1.NativePeerPairDelivery{}, ErrPrivateStream
+}
+
+func (*lifecycleControl) ConfirmNativePeerPairPrepared(context.Context, string, string, string, controlv1.NativePeerPairPrepared, credentials.ServiceRunToken) error {
+	return ErrPrivateStream
 }
 
 func (f *lifecycleControl) GetPublisherService(context.Context, string) (controlv1.Service, error) {
@@ -310,9 +351,6 @@ func (f *lifecycleControl) MarkServiceCertificateInstalled(_ context.Context, se
 	}
 	f.installs++
 	return nil
-}
-func (f *lifecycleControl) AuthorizeServiceConnector(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
-	return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 }
 func (f *lifecycleControl) AuthorizeServiceClientCertificate(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error) {
 	return controlv1.ServiceClientCertificateDecision{}, nil

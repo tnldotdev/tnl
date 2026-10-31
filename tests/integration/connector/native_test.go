@@ -47,8 +47,8 @@ import (
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
 
-// this runs the built native owner and verifies TLS through its admitted ingress
-// streams. no saved human state or service outside these local fixtures participates.
+// this runs the built native owner and verifies TLS through two native relay
+// carriers. no saved human state or external service participates.
 func TestIntegrationConnectionNativeOwnerHTTP(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	runConnectionNativeOwner(t, "", "http", true)
@@ -211,8 +211,7 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 	}
 	port = allocated.Addr().(*net.TCPAddr).Port
 	_ = allocated.Close()
-	assignmentsByKey := make(map[string][]map[string]any)
-	trusts := make(map[string]controlv1.IngressTransportTrust)
+	native := connectorfixture.NewNative(t, ca, caKey, service, serviceRun, sessionID, managedHostname, providerAddress)
 	var revoked atomic.Bool
 	var certificateRequests atomic.Int64
 	var current authorityv1.WorkloadSession
@@ -303,45 +302,28 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 		case r.URL.Path == "/v1/workload/services":
 			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}}}})
 		case strings.HasSuffix(r.URL.Path, "/run"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocol, "trust_revision": 1, "expires_at": time.Now().Add(time.Minute), "subject": current.Subject, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}})
-		case strings.HasSuffix(r.URL.Path, "/ingress-assignments"):
-			var requested controlv1.CreateWorkloadIngressAssignmentsJSONBody
-			if err := json.NewDecoder(r.Body).Decode(&requested); err != nil {
-				t.Error(err)
-				w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocol, "trust_revision": 1, "expires_at": time.Now().Add(time.Minute), "subject": current.Subject, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}, "pair_ready": native.Ready})
+		case strings.Contains(r.URL.Path, "/native-peer-pairs"):
+			var requested controlv1.NativePeerPairRequest
+			var source controlv1.VisitorTokenWorkloadSource
+			if revoked.Load() || json.NewDecoder(r.Body).Decode(&requested) != nil || json.Unmarshal(requested.Source, &source) != nil || source.Credential != current.Credential {
+				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			count := 2
-			if requested.Count != nil {
-				count = *requested.Count
-			}
-			names := []string{"ingress-a", "ingress-b"}
-			if count == 1 {
-				if requested.ExcludeIngressId != nil && *requested.ExcludeIngressId == names[0] {
-					names = names[1:]
-				} else {
-					names = names[:1]
-				}
-			} else if count != 2 {
-				w.WriteHeader(http.StatusBadRequest)
+			pair, err := native.Prepare(r.Context(), requested, clientPublic)
+			if err != nil {
+				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			// rotation requests one fresh assignment, excluding the other slot.
-			// retries of the same request retain their original assignment.
-			assignments, ok := assignmentsByKey[requested.IdempotencyKey]
-			if !ok {
-				var issued map[string]controlv1.IngressTransportTrust
-				assignments, issued = connectorfixture.Ingress(t, ca, caKey, caPEM, service, sessionID, providerAddress, names...)
-				assignmentsByKey[requested.IdempotencyKey] = assignments
-				for id, trust := range issued {
-					trusts[id] = trust
-				}
+			_ = json.NewEncoder(w).Encode(pair)
+		case r.URL.Path == "/v1/visitor-tokens":
+			var requested controlv1.VisitorTokenRequest
+			var source controlv1.VisitorTokenWorkloadSource
+			if revoked.Load() || json.NewDecoder(r.Body).Decode(&requested) != nil || json.Unmarshal(requested.Source, &source) != nil || source.Credential != current.Credential || requested.Resource.Kind != "service" || requested.Resource.Id != service {
+				w.WriteHeader(http.StatusForbidden)
+				return
 			}
-			t.Logf("fixture ingress assignments requested=%d returned=%d", count, len(assignments))
-			_ = json.NewEncoder(w).Encode(map[string]any{"subject": current.Subject, "assignments": assignments})
-		case strings.HasSuffix(r.URL.Path, "/transport-trust"):
-			parts := strings.Split(r.URL.Path, "/")
-			_ = json.NewEncoder(w).Encode(trusts[parts[len(parts)-2]])
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: requested.Resource, Hostname: managedHostname, Port: port, VisitorToken: "fixture-native-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
 		case strings.HasSuffix(r.URL.Path, "/client-certificate"):
 			certificateRequests.Add(1)
 			w.WriteHeader(403)
@@ -351,6 +333,7 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 			}
 			w.WriteHeader(204)
 		default:
+			t.Error("unexpected native owner fixture request", r.URL.Path)
 			w.WriteHeader(404)
 		}
 	}))

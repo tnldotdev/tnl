@@ -2,7 +2,6 @@ package publisher_test
 
 import (
 	"context"
-	"crypto/tls"
 	"io"
 	"net"
 	"net/netip"
@@ -21,7 +20,6 @@ import (
 )
 
 type nativeIngressControl struct {
-	ingress.PrivateControl
 	port         int
 	service, run string
 	relays       []ingressv1.ServiceRelay
@@ -116,13 +114,13 @@ func managedIngressListener(t *testing.T, managed publisher.ServiceStream, visit
 	if len(visitors) != 0 {
 		forwarder.visitor = visitors[0]
 	}
-	connector, err := ingress.NewConnector(ingress.ConnectorConfig{Hostname: "ingress.example.test", TLSConfig: &tls.Config{Certificates: managed.TLS.Certificates}, Control: control, DirectControl: control, Forwarder: forwarder, Routing: new(ingress.ServiceRoutingTable), CurrentLease: func() ingressv1.IngressLease { return lease }})
+	connector, err := ingress.NewDirectServices(ingress.DirectServicesConfig{Control: control, Forwarder: forwarder, CurrentLease: func() ingressv1.IngressLease { return lease }})
 	if err != nil {
 		_ = front.Close()
 		_ = backend.Close()
 		t.Fatal(err)
 	}
-	server, err := ingress.New(backend, ingress.Config{DirectOnly: true, DirectConnector: connector, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 8})
+	server, err := ingress.New(backend, ingress.Config{DirectOnly: true, DirectServices: connector, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 8})
 	if err != nil {
 		t.Fatal(err)
 	}

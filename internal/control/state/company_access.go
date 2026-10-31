@@ -531,8 +531,7 @@ func closeInactiveCompanySubjects(ctx context.Context, tx pgx.Tx, q *controlstat
 			}
 		}
 	}
-	// take the private routing clock before the public routing clock, as
-	// publisher revocation does. both stay locked until this transaction commits.
+	// public routing changes commit with the authorization mutation.
 	for _, p := range publishers {
 		if p.service == "" {
 			if err = closeRevokedPublicPublications(ctx, tx, q, p.id, "", now); err != nil {
@@ -541,9 +540,6 @@ func closeInactiveCompanySubjects(ctx context.Context, tx pgx.Tx, q *controlstat
 		}
 	}
 	if err = pending.publish(ctx, q); err != nil {
-		return err
-	}
-	if _, err = tx.Exec(ctx, `UPDATE control.connector_visitor_streams stream SET closed_at=COALESCE(stream.closed_at,$2) FROM control.services service WHERE service.id=stream.service_id AND service.team_id=$1 AND NOT control.active_team_subject($1,stream.identity_id,$2)`, team, now); err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.direct_service_visitors visitor SET closed_at=COALESCE(visitor.closed_at,$2) FROM control.services service WHERE service.id=visitor.service_id AND service.team_id=$1 AND visitor.identity_id IS NOT NULL AND NOT control.active_team_subject($1,visitor.identity_id,$2)`, team, now)

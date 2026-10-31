@@ -120,7 +120,7 @@ func TestConnectionApprovedMetadataRefreshRetainsExactServiceScope(t *testing.T)
 	}
 }
 
-func TestConnectionCleanupRevokesSessionWhileFailedReleasesUseOneBudget(t *testing.T) {
+func TestConnectionCleanupRevokesSessionWhileFailedRequestsUseOneBudget(t *testing.T) {
 	entered, revoked := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	b := connectionBackendFixture(t, func(w http.ResponseWriter, r *http.Request, session authorityv1.WorkloadSession) {
@@ -137,10 +137,10 @@ func TestConnectionCleanupRevokesSessionWhileFailedReleasesUseOneBudget(t *testi
 	for range 3 {
 		b.workers.Go(func() {
 			<-b.lifetime.Done()
-			// use the production workload HTTP release, including a second failed
-			// release that must inherit the same exhausted caller budget.
-			for _, id := range []string{"cns_" + strings.Repeat("a", 22), "cns_" + strings.Repeat("b", 22)} {
-				err := b.workload.ReleaseIngressAssignment(b.cleanup(), id)
+			// native owners have no ingress handles to release. an in-flight
+			// workload operation and its retry still share the cleanup budget.
+			for range 2 {
+				_, err := b.workload.CheckService(b.cleanup(), b.services["api"].Id)
 				b.mu.Lock()
 				b.cleanupErr = errors.Join(b.cleanupErr, err)
 				b.mu.Unlock()

@@ -10,44 +10,13 @@ paths:
     post:
       operationId: selectWorkloadServiceRun
       security: [{ workloadAuth: [] }]
+      description: Check the selected workload credential and current service permission. pair_ready appears only for two exact ready connections on distinct live relay services; it is a signing snapshot, not a grant or a pair key.
       responses:
         "200":
           description: Current publisher selection for the workload subject
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/ServiceSelection" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/workload/ingress-assignments/{session_id}:
-    parameters:
-      - {
-          name: session_id,
-          in: path,
-          required: true,
-          schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionID" },
-        }
-    delete:
-      operationId: releaseWorkloadIngressAssignment
-      security: [{ workloadAuth: [] }]
-      responses:
-        "204": { description: This workload's exact assignment is released }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/workload/ingress-assignments/{session_id}/transport-trust:
-    parameters:
-      - {
-          name: session_id,
-          in: path,
-          required: true,
-          schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionID" },
-        }
-    get:
-      operationId: getWorkloadIngressTransportTrust
-      security: [{ workloadAuth: [] }]
-      responses:
-        "200":
-          description: Current trust for the workload-owned assigned ingress process
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/IngressTransportTrust" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/workload/services:
     get:
@@ -73,31 +42,6 @@ paths:
           content:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/WorkloadServiceAuthorization" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/workload/services/{service_id}/ingress-assignments:
-    parameters:
-      - { name: service_id, in: path, required: true, schema: { type: string } }
-    post:
-      operationId: createWorkloadIngressAssignments
-      security: [{ workloadAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [idempotency_key]
-              properties:
-                idempotency_key: { type: string, minLength: 1, maxLength: 128 }
-                count: { type: integer, minimum: 1, maximum: 2, default: 2 }
-                exclude_ingress_id: { type: string, minLength: 1, maxLength: 256 }
-      responses:
-        "200":
-          description: Independently claimable workload-owned assignments; a replacement reserves only its failed slot
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/WorkloadIngressAssignments" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/workload/services/{service_id}/client-certificate:
     parameters:

@@ -28,7 +28,6 @@ const (
 	SettingPrivateControlCert   Setting = "TNLD_PRIVATE_CONTROL_TLS_CERTIFICATE_FILE"
 	SettingPrivateControlKey    Setting = "TNLD_PRIVATE_CONTROL_TLS_PRIVATE_KEY_FILE"
 	SettingIngressListen        Setting = "TNLD_INGRESS_LISTEN"
-	SettingIngressUDPListen     Setting = "TNLD_INGRESS_UDP_LISTEN"
 	SettingRelayTCPListen       Setting = "TNLD_RELAY_TCP_LISTEN"
 	SettingRelayUDPListen       Setting = "TNLD_RELAY_UDP_LISTEN"
 	SettingInternalRelayListen  Setting = "TNLD_INTERNAL_RELAY_LISTEN"
@@ -60,7 +59,7 @@ func (setting Setting) valid() bool {
 		"OTEL_EXPORTER_OTLP_TRACES_INSECURE", "OTEL_EXPORTER_OTLP_TRACES_COMPRESSION", "OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE", "OTEL_EXPORTER_OTLP_TRACES_CLIENT_CERTIFICATE", "OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY":
 		return true
 	case SettingDatabaseURL, SettingDatabaseDirectURL, SettingStorageKey,
-		SettingMetricsListen, SettingControlListen, SettingPrivateControlListen, SettingIngressListen, SettingIngressUDPListen,
+		SettingMetricsListen, SettingControlListen, SettingPrivateControlListen, SettingIngressListen,
 		SettingPrivateControlCert, SettingPrivateControlKey,
 		SettingRelayTCPListen, SettingRelayUDPListen, SettingInternalRelayListen, SettingDNSServer,
 		SettingEmailURL, SettingWebhookSecret, SettingWebServiceSecret, SettingOIDCIssuer:

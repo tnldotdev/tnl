@@ -86,12 +86,42 @@ func (h *handler) ReportPublishRunServiceObservations(w http.ResponseWriter, r *
 		if body.Events[i].RunNumber == 0 {
 			body.Events[i].RunNumber = body.PublishRunNumber
 		}
-		if body.Events[i].ConnectorSessionID != "" {
+		if body.Events[i].PairID != "" {
 			serviceAuditError(w, serviceaudit.ErrInvalid)
 			return
 		}
 	}
 	result, err := store.IngestPublisherServiceObservations(r.Context(), auth, serviceaudit.Batch{Events: body.Events}, time.Now().UTC())
+	if err != nil {
+		serviceAuditError(w, err)
+		return
+	}
+	writeJSON(w, 200, result)
+}
+
+func (h *handler) ReportServiceRunObservations(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID) {
+	w.Header().Set("Cache-Control", "no-store")
+	var body struct {
+		RunNumber int64                      `json:"run_number"`
+		Events    []serviceaudit.Observation `json:"events"`
+	}
+	if decodeJSONLimited(w, r, &body, serviceaudit.MaxPayloadBytes) != nil || body.RunNumber < 1 {
+		serviceAuditError(w, serviceaudit.ErrInvalid)
+		return
+	}
+	token, ok := requestBearerToken(r)
+	if !ok {
+		writeBearerProblem(w)
+		return
+	}
+	store, ok := h.store.(interface {
+		IngestServiceRunObservations(context.Context, string, string, string, int64, serviceaudit.Batch, time.Time) (controlstate.ServiceObservationResult, error)
+	})
+	if !ok {
+		writeProblem(w, 503, controlv1.Unavailable, "service audit is unavailable")
+		return
+	}
+	result, err := store.IngestServiceRunObservations(r.Context(), serviceID, runID, token, body.RunNumber, serviceaudit.Batch{Events: body.Events}, time.Now().UTC())
 	if err != nil {
 		serviceAuditError(w, err)
 		return

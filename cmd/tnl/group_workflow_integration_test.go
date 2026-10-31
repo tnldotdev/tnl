@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -18,7 +19,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/connector"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 
 	"github.com/jackc/pgx/v5"
 
@@ -307,7 +308,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	localAddress := localListener.Addr().String()
 	_ = localListener.Close()
 	localConnectCtx, stopLocalConnect := context.WithCancel(t.Context())
-	f.command(t, localConnectCtx, stopLocalConnect, []string{"--config", configuration, "connect", internal, "--listen", localAddress, "--state-dir", person})
+	_, localJoined := f.command(t, localConnectCtx, stopLocalConnect, []string{"--config", configuration, "connect", internal, "--listen", localAddress, "--state-dir", person})
 	project, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configuration}, person)
 	if err != nil {
 		t.Fatal(err)
@@ -340,7 +341,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	aliasAddress := aliasListener.Addr().String()
 	_ = aliasListener.Close()
 	aliasCtx, stopAliasConnect := context.WithCancel(t.Context())
-	f.command(t, aliasCtx, stopAliasConnect, []string{"--config", configuration, "connect", "local-internal", "--listen", aliasAddress, "--state-dir", person})
+	_, aliasJoined := f.command(t, aliasCtx, stopAliasConnect, []string{"--config", configuration, "connect", "local-internal", "--listen", aliasAddress, "--state-dir", person})
 	workflowWait(t, 10*time.Second, func() bool {
 		response, err := localClient.Get("https://" + aliasAddress + "/private-app-override")
 		if err != nil {
@@ -350,6 +351,16 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		body, _ := io.ReadAll(response.Body)
 		return response.StatusCode == 200 && string(body) == "local application"
 	})
+	// join these owners before the app's deferred unregister replaces their run.
+	stopLocalConnect()
+	stopAliasConnect()
+	for _, joined := range []<-chan struct{}{localJoined, aliasJoined} {
+		select {
+		case <-joined:
+		case <-time.After(40 * time.Second):
+			t.Fatal("local CLI connector did not join")
+		}
+	}
 	bootstrap := strings.TrimSpace(string(cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "enroll", "--group", "cluster", "--members", "2", "--expires-in", "1h", "--state-dir", person})))
 	externalKey := strings.TrimSpace(string(cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "enroll", "--group", "external", "--members", "1", "--expires-in", "1h", "--state-dir", person})))
 	externalCtx, stopExternal := context.WithCancel(t.Context())
@@ -429,7 +440,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	address := listen.Addr().String()
 	_ = listen.Close()
 	connectCtx, stopConnect := context.WithCancel(t.Context())
-	f.command(t, connectCtx, stopConnect, []string{"--config", configuration, "connect", "api", "--listen", address, "--state-dir", person})
+	_, connectJoined := f.command(t, connectCtx, stopConnect, []string{"--config", configuration, "connect", "api", "--listen", address, "--state-dir", person}, connectorstream.ErrServiceConnection)
 	savedService, err := control.GetService(t.Context(), serviceID)
 	if err != nil {
 		t.Fatal(err)
@@ -452,9 +463,56 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	if err != nil || string(body) != "through the real private publisher" || operations.Load() != 1 {
 		t.Fatalf("private HTTP bytes or operation count changed: count=%d err=%v", operations.Load(), err)
 	}
-	taskCancels[0]()
-	http.DefaultTransport.(*http.Transport).CloseIdleConnections()
-	workflowWait(t, 15*time.Second, func() bool {
+	inspect, err := pgx.Connect(t.Context(), f.databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inspect.Close(context.Background())
+	var oldPair, oldRun, selectedPublisher string
+	if err := inspect.QueryRow(t.Context(), `SELECT id,service_run_id,publisher_identity_id FROM control.native_peer_pairs WHERE service_id=$1 AND publisher_prepared_until>now() AND expires_at>now()`, serviceID).Scan(&oldPair, &oldRun, &selectedPublisher); err != nil {
+		t.Fatal("selected native owner missing", err)
+	}
+	stoppedTask := -1
+	for i, state := range taskStates {
+		database, err := clientstate.OpenWithOptions(t.Context(), state, clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
+		if err != nil {
+			t.Fatal(err)
+		}
+		profile, err := database.Server(t.Context(), f.url)
+		if err != nil {
+			_ = database.Close()
+			t.Fatal(err)
+		}
+		_, found, err := profile.PublisherIdentity(t.Context(), selectedPublisher)
+		_ = database.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if found {
+			stoppedTask = i
+		}
+	}
+	if stoppedTask < 0 {
+		t.Fatal("native selection was not owned by either group task")
+	}
+	// losing the selected publisher ends this owner. a new invocation, not an
+	// automatic reconnect or transferred admission, can select the surviving run.
+	transition, cancelTransition := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancelTransition()
+	transitionUntil, _ := transition.Deadline()
+	taskCancels[stoppedTask]()
+	select {
+	case <-connectJoined:
+	case <-transition.Done():
+		t.Fatal("old native CLI owner did not end after publisher loss")
+	}
+	if response, err := client.Get("https://" + address + "/old-owner"); err == nil {
+		_ = response.Body.Close()
+		t.Fatal("terminal native owner still accepted application traffic")
+	}
+	successorCtx, stopSuccessor := context.WithCancel(t.Context())
+	_, successorJoined := f.command(t, successorCtx, stopSuccessor, []string{"--config", configuration, "connect", "api", "--listen", address, "--state-dir", person})
+	workflowWait(t, time.Until(transitionUntil), func() bool {
 		response, err := client.Get("https://" + address + "/surviving-replica")
 		if err != nil {
 			return false
@@ -462,14 +520,27 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		defer response.Body.Close()
 		return response.StatusCode == 200
 	})
+	var newPair, newRun, survivingPublisher string
+	if err := inspect.QueryRow(t.Context(), `SELECT pair.id,pair.service_run_id,pair.publisher_identity_id FROM control.native_peer_pairs pair JOIN control.service_runs run ON run.id=pair.service_run_id WHERE pair.service_id=$1 AND pair.publisher_prepared_until>now() AND pair.expires_at>now() AND run.closed_at IS NULL`, serviceID).Scan(&newPair, &newRun, &survivingPublisher); err != nil || newPair == oldPair || newRun == oldRun || survivingPublisher == selectedPublisher {
+		t.Fatal("new invocation did not select the surviving publisher with its own owner", err)
+	}
+	if operations.Load() != 1 {
+		t.Fatal("publisher loss replayed the previous HTTP operation")
+	}
 	audit := cliCall(t, t.Context(), []string{"--no-config", "audit", "list", "--team", team, "--service", serviceID, "--since", "1h", "--output", "json", "--server", f.url, "--state-dir", person})
+	stopSuccessor()
 	select {
-	case <-taskJoins[0]:
+	case <-successorJoined:
+	case <-time.After(40 * time.Second):
+		t.Fatal("surviving publisher's native CLI owner did not join")
+	}
+	select {
+	case <-taskJoins[stoppedTask]:
 	case <-time.After(35 * time.Second):
 		t.Fatal("stopped group task did not join")
 	}
 	restartCtx, stopRestart := context.WithCancel(t.Context())
-	restarted, _ := f.command(t, restartCtx, stopRestart, []string{"--no-config", "publisher", "serve", "--group", "cluster", "--project-key", applied.ProjectKey, "--instance", "one", "--enroll-key", bootstrap, "--server", f.url, "--state-dir", taskStates[0]})
+	restarted, _ := f.command(t, restartCtx, stopRestart, []string{"--no-config", "publisher", "serve", "--group", "cluster", "--project-key", applied.ProjectKey, "--instance", []string{"one", "two"}[stoppedTask], "--enroll-key", bootstrap, "--server", f.url, "--state-dir", taskStates[stoppedTask]})
 	select {
 	case <-restarted:
 	case <-time.After(25 * time.Second):
@@ -498,7 +569,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 }
 
 type cliWorkflow struct {
-	directConnector         *ingress.Connector
+	directServices          *ingress.DirectServices
 	url                     string
 	publicAddress           string
 	databaseURL             string
@@ -759,7 +830,7 @@ func cliCall(t *testing.T, ctx context.Context, args []string) []byte {
 	return output.Bytes()
 }
 
-func (f *cliWorkflow) command(t *testing.T, ctx context.Context, cancel context.CancelFunc, args []string) (<-chan struct{}, <-chan struct{}) {
+func (f *cliWorkflow) command(t *testing.T, ctx context.Context, cancel context.CancelFunc, args []string, expectedStop ...error) (<-chan struct{}, <-chan struct{}) {
 	t.Helper()
 	done := make(chan error, 1)
 	joined := make(chan struct{})
@@ -773,7 +844,11 @@ func (f *cliWorkflow) command(t *testing.T, ctx context.Context, cancel context.
 		cancel()
 		select {
 		case err := <-done:
-			if err != nil && !errors.Is(err, context.Canceled) {
+			expected := errors.Is(err, context.Canceled)
+			for _, allowed := range expectedStop {
+				expected = expected || errors.Is(err, allowed)
+			}
+			if err != nil && !expected {
 				t.Errorf("joined CLI lifecycle: %v", err)
 			}
 		case <-time.After(40 * time.Second):
@@ -848,7 +923,12 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, err := relay.NewController(relay.ControllerConfig{Client: client, Registration: relayv1.RelayRegistration{ProtocolVersion: 1, RelayServiceId: id, RelayId: id, RelayRunId: runID, RelayAddress: net.JoinHostPort("localhost", fmt.Sprint(public.Addr().(*net.TCPAddr).Port)), InternalRelayAddress: internal.Addr().String(), InternalNetworks: []string{"127.0.0.0/8"}, TlsServerName: "localhost", ConnectionCapacity: 128, StreamCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond})
+	publicKey, signingKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
+	controller, err := relay.NewController(relay.ControllerConfig{Client: client, Registration: relayv1.RelayRegistration{ProtocolVersion: 1, RelayServiceId: id, RelayId: id, RelayRunId: runID, PeerSigningPublicKey: &encodedKey, RelayAddress: net.JoinHostPort("localhost", fmt.Sprint(public.Addr().(*net.TCPAddr).Port)), InternalRelayAddress: internal.Addr().String(), InternalNetworks: []string{"127.0.0.0/8"}, TlsServerName: "localhost", ConnectionCapacity: 128, StreamCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -856,9 +936,10 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 	workflowWait(t, 5*time.Second, func() bool { return controller.Lease().RelayLeaseRevision > 0 })
 	registry, private := relay.NewRegistry(), relay.NewServiceRegistry()
 	t.Cleanup(func() { _ = registry.Close(); _ = private.Close() })
+	native := &relay.NativeConnectorAcceptor{CurrentLease: controller.Lease, SigningKey: signingKey, Claim: client, Publishers: private}
 	acceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{Select: func(service string) (relay.PublisherConnectionController, *relay.Registry, bool) {
 		return controller, registry, service == id
-	}, Private: &relay.ServicePublisherAcceptor{Select: func(service string) (relay.ServicePublisherTarget, bool) {
+	}, Native: func(service string) (*relay.NativeConnectorAcceptor, bool) { return native, service == id }, Private: &relay.ServicePublisherAcceptor{Select: func(service string) (relay.ServicePublisherTarget, bool) {
 		return relay.ServicePublisherTarget{Control: controller, Registry: private}, service == id
 	}}})
 	if err != nil {
@@ -890,7 +971,6 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 
 func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id string) {
 	t.Helper()
-	listener := workflowListen(t)
 	client, err := controlingress.NewDirectClient(controlingress.DirectConfig{Store: database, LeaseDuration: 30 * time.Second, RoutingPollInterval: 25 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
@@ -899,47 +979,30 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 	if err != nil {
 		t.Fatal(err)
 	}
-	address, name := listener.Addr().String(), "localhost"
 	routing := &ingress.RoutingTable{}
 	ports := make([]int, 16)
 	for index := range ports {
 		ports[index] = 20000 + index
 	}
-	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, RoutingTable: routing, Registration: ingressv1.IngressRegistration{ProtocolVersion: 1, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", ServicePorts: ports, ConnectionCapacity: 128, ConnectorAddress: &address, ConnectorTlsServerName: &name}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond, RoutingWait: time.Second})
+	controller, err := ingress.NewController(ingress.ControllerConfig{Client: client, RoutingTable: routing, Registration: ingressv1.IngressRegistration{ProtocolVersion: 1, IngressId: id, IngressRunId: runID, IngressPoolId: "ingress-a", ServicePorts: ports, ConnectionCapacity: 128}, RenewalInterval: 200 * time.Millisecond, RetryInterval: 25 * time.Millisecond, RoutingWait: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.workers.Go(func() { _ = controller.Run(f.ctx) })
 	workflowWait(t, 5*time.Second, func() bool { return controller.Ready(time.Now()) })
-	// certificates expire with their issuing lease deadline. fetch current
-	// material for later connectors after the controller renews that lease.
-	getCertificate := func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		lease := controller.Lease()
-		ctx, cancel := context.WithTimeout(hello.Context(), 5*time.Second)
-		defer cancel()
-		material, err := client.GetIngressTransportCertificate(ctx, id, ingressv1.GetIngressTransportCertificateJSONRequestBody{IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision})
-		if err != nil {
-			return nil, err
-		}
-		certificate, err := tls.X509KeyPair([]byte(material.Trust.CertificatePem), []byte(material.PrivateKeyPem))
-		return &certificate, err
-	}
 	forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{SignVisitorSource: controller.SignVisitorSource, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}, ClusterSecret: cliWorkflowClusterSecret})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = forwarder.Close() })
-	connector, err := ingress.NewConnector(ingress.ConnectorConfig{Hostname: name, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, GetCertificate: getCertificate}, Control: client, DirectControl: client, Forwarder: forwarder, Routing: &ingress.ServiceRoutingTable{}, CurrentLease: controller.Lease})
+	direct, err := ingress.NewDirectServices(ingress.DirectServicesConfig{Control: client, Forwarder: forwarder, CurrentLease: controller.Lease})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.directConnector == nil {
-		f.directConnector = connector
+	if f.directServices == nil {
+		f.directServices = direct
 	}
-	t.Cleanup(func() { _ = connector.Close() })
-	f.serve(t, listener, func(connection net.Conn) error {
-		return connector.Accept(f.ctx, connection, netip.MustParseAddrPort(connection.RemoteAddr().String()), netip.MustParseAddrPort(connection.LocalAddr().String()))
-	})
+	t.Cleanup(func() { _ = direct.Close() })
 	publicListener := workflowListen(t)
 	if f.publicAddress == "" {
 		f.publicAddress = publicListener.Addr().String()

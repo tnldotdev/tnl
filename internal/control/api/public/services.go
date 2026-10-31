@@ -10,9 +10,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/control/api/serviceaccess"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 type serviceVisitorStore interface {
@@ -31,7 +29,6 @@ type serviceVisitorStore interface {
 	ListAvailableServices(context.Context, string, string, time.Time) ([]controlstate.ServiceInventory, string, error)
 	EnrollVisitorDevice(context.Context, string, ed25519.PublicKey, time.Time) (controlstate.VisitorDevice, error)
 	RevokeVisitorDevice(context.Context, string, string, time.Time) error
-	CreateVisitorIngressAssignments(context.Context, string, string, string, string, time.Time) ([]controlstate.ConnectorSession, error)
 	SelectServiceRun(context.Context, string, string, string, time.Time) (controlstate.ServiceSelection, error)
 }
 
@@ -56,10 +53,6 @@ func serviceVisitorError(w http.ResponseWriter, operation string, err error) {
 		writeProblem(w, 404, controlv1.NotFound, "service not found or unavailable")
 	case errors.Is(err, controlstate.ErrServiceConflict):
 		writeProblem(w, 409, controlv1.Conflict, "service state or idempotency key conflicts with this request; read the current service and retry")
-	case errors.Is(err, controlstate.ErrInsufficientPrivateIngresses):
-		writeProblem(w, 503, controlv1.Unavailable, "two live ingress connector addresses are required")
-	case errors.Is(err, controlstate.ErrPrivateIngressUnavailable):
-		writeProblem(w, 503, controlv1.PlacementUnavailable, "no live ingress connector address has capacity; release unused assignments and retry")
 	default:
 		writeControlStateProblem(w, operation, err)
 	}
@@ -365,59 +358,6 @@ func (h *handler) ListAvailableServices(w http.ResponseWriter, r *http.Request, 
 		page.NextCursor = &next
 	}
 	writeJSON(w, 200, page)
-}
-
-func (h *handler) CreateVisitorIngressAssignments(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
-	var body controlv1.CreateVisitorIngressAssignmentsJSONBody
-	if decodeJSON(w, r, &body) != nil {
-		writeProblem(w, 400, controlv1.InvalidRequest, "device identity is required")
-		return
-	}
-	store, identity, ok := h.serviceVisitor(w, r)
-	if !ok {
-		return
-	}
-	sessions, err := store.CreateVisitorIngressAssignments(r.Context(), identity, body.DeviceId, id, body.IdempotencyKey, time.Now())
-	if err != nil {
-		serviceVisitorError(w, "create private connector session", err)
-		return
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	result := make([]controlv1.ConnectorSessionSetup, 0, 2)
-	for _, session := range sessions {
-		result = append(result, connectorSessionSetup(session))
-	}
-	writeJSON(w, 201, result)
-}
-
-func connectorSessionSetup(session controlstate.ConnectorSession) controlv1.ConnectorSessionSetup {
-	return controlv1.ConnectorSessionSetup{ConnectorSessionId: session.ID, ServiceId: session.ServiceID, SessionCredential: session.Credential, IngressId: session.IngressID, IngressAddress: session.IngressAddress, TlsServerName: session.TLSServerName, Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: session.IdentityID, DeviceID: session.DeviceID}), ExpiresAt: session.ExpiresAt}
-}
-
-func (h *handler) CreateVisitorIngressAssignment(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {
-	var body controlv1.CreateVisitorIngressAssignmentJSONBody
-	if decodeJSON(w, r, &body) != nil {
-		writeProblem(w, 400, controlv1.InvalidRequest, "device identity is required")
-		return
-	}
-	principal, ok := h.authorizeReads(w, r)
-	if !ok {
-		return
-	}
-	store, ok := h.store.(interface {
-		CreateVisitorIngressAssignment(context.Context, string, string, string, string, string, time.Time) (controlstate.ConnectorSession, error)
-	})
-	if !ok {
-		writeProblem(w, 503, controlv1.Unavailable, "services are unavailable")
-		return
-	}
-	session, err := store.CreateVisitorIngressAssignment(r.Context(), principal.identityID, body.DeviceId, id, optionalFeedbackString(body.ExcludeIngressId), body.IdempotencyKey, time.Now())
-	if err != nil {
-		serviceVisitorError(w, "create private connector assignment", err)
-		return
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 201, connectorSessionSetup(session))
 }
 
 func (h *handler) SelectServiceRun(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID) {

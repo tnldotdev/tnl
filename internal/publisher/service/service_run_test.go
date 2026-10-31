@@ -25,6 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -71,7 +72,8 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 					_, _ = io.WriteString(w, "loopback connector")
 				}))
 				defer target.Close()
-				p, bound, ref, verification := privateFixture(t, target.Listener.Addr().String())
+				bound, peer, verification, opening, _ := nativePeerFixture(t, target.Listener.Addr().String())
+				p := bound.prepared
 				p.managedPublic, p.managedProtocol = public, protocol
 				roots := x509.NewCertPool()
 				roots.AddCert(target.Certificate())
@@ -83,20 +85,17 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 				}
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
-				client, server := net.Pipe()
-				defer client.Close()
-				_ = client.SetDeadline(time.Now().Add(5 * time.Second))
+				client, server := nativeInnerPair(t, ctx, verification)
 				done := make(chan error, 1)
-				var ended atomic.Int32
-				go func() {
-					defer server.Close()
-					done <- bound.serveBody(ctx, ref, server, privateHeader(t, ref), func(context.Context) error { ended.Add(1); return nil })
-				}()
-				proxy, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
-				if _, err := client.Write(proxy); err != nil {
+				go func() { done <- peer.Serve(ctx, server) }()
+				raw, err := client.OpenStream(ctx)
+				if err != nil {
 					t.Fatal(err)
 				}
-				secure := tls.Client(client, verification)
+				if _, err := tunnelv1.WriteNativePeerVisitorOpening(raw, opening("L"), nil); err != nil {
+					t.Fatal(err)
+				}
+				secure := tls.Client(tunnel.NewNativeRequestWriter(raw), verification)
 				if err := secure.HandshakeContext(ctx); err != nil {
 					t.Fatal(err)
 				}
@@ -115,20 +114,78 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 				if err != nil || response.StatusCode != http.StatusOK || strings.TrimSpace(string(body)) != "loopback connector" {
 					t.Fatalf("loopback authority rejected: %d %q %v", response.StatusCode, body, err)
 				}
-				_ = client.Close()
+				_ = secure.Close()
+				peer.Close()
 				select {
 				case <-done:
 				case <-ctx.Done():
 					t.Fatal("connector publisher did not join")
 				}
-				if ended.Load() != 1 {
-					t.Fatal("service TLS close did not end its outer return stream exactly once", ended.Load())
+				bound.mu.Lock()
+				active, pending := bound.reservedStreams, bound.nativePending
+				bound.mu.Unlock()
+				if active != 0 || pending != 0 {
+					t.Fatal("native TLS close did not join its request and release charges", active, pending)
 				}
 				if p.managedPublic != public || p.managedHostname != verification.ServerName {
 					t.Fatal("connector changed approved public endpoint metadata")
 				}
 			})
 		}
+	}
+}
+
+func TestDirectServiceTLSCloseEndsReturnStreamExactlyOnce(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "direct") }))
+	defer target.Close()
+	p, bound, ref, verification := privateFixture(t, target.Listener.Addr().String())
+	p.managedProtocol = config.ProtocolHTTP
+	var err error
+	p.serviceHTTPRequests, err = publisher.NewServiceHTTPRequestLimits(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	client, server := net.Pipe()
+	defer client.Close()
+	_ = client.SetDeadline(time.Now().Add(5 * time.Second))
+	var ended atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		defer server.Close()
+		done <- bound.serveBody(ctx, ref, server, privateHeader(t, ref), func(context.Context) error { ended.Add(1); return nil })
+	}()
+	metadata, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:25443")})
+	if _, err := client.Write(metadata); err != nil {
+		t.Fatal(err)
+	}
+	secure := tls.Client(client, verification)
+	if err := secure.HandshakeContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := http.NewRequest(http.MethodGet, "https://"+p.managedHostname+":25443/", nil)
+	request.Close = true
+	if err := request.Write(secure); err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.ReadResponse(bufio.NewReader(secure), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil || string(body) != "direct" {
+		t.Fatal("direct response changed", string(body), err)
+	}
+	_ = client.Close()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("direct TLS close did not join")
+	}
+	if ended.Load() != 1 {
+		t.Fatal("direct TLS close did not end its return stream exactly once", ended.Load())
 	}
 }
 
@@ -152,11 +209,12 @@ func privateFixture(t *testing.T, target string) (*Prepared, *Bound, tunnelv1.Se
 		t.Fatal(err)
 	}
 	certificate, verification := managedTestCertificate(t, hostname)
+	verification.Certificates = []tls.Certificate{certificate}
 	if err := p.installManagedCertificate(certificate); err != nil {
 		t.Fatal(err)
 	}
 	p.managedVisitor = func(tunnelv1.ServiceForwardingHeader) publisher.ServiceVisitorAuthentication {
-		return publisher.ConnectorVisitor{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
+		return publisher.CertificateVisitor{Check: func(context.Context, *x509.Certificate) (publisher.ServiceVisitorDecision, error) {
 			return publisher.ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 		}}
 	}
@@ -180,7 +238,7 @@ func privateHeader(t *testing.T, ref tunnelv1.ServicePublisherConnectionRef) tun
 		}
 		return v
 	}
-	return tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, Connector: &tunnelv1.ConnectorAdmission{SessionID: id(opaqueid.ConnectorSessionPrefix), Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: id(opaqueid.IdentityPrefix), DeviceID: id(opaqueid.VisitorDevicePrefix)}, GrantRevision: 1}, SourceIP: "192.0.2.10", VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, ExpiresAt: time.Now().Add(time.Minute)}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID, RelayID: "relay-instance", RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 2, LeaseExpiresAt: time.Now().Add(time.Minute)}
+	return tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, Direct: &tunnelv1.DirectAdmission{IngressID: "ingress-a", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443}, SourceIP: "192.0.2.10", VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, ExpiresAt: time.Now().Add(time.Minute)}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID, RelayID: "relay-instance", RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 2, LeaseExpiresAt: time.Now().Add(time.Minute)}
 }
 
 func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {
@@ -212,7 +270,7 @@ func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {
 				header.SourceIP = "192.0.2.11"
 			case "denied":
 				p.managedVisitor = func(tunnelv1.ServiceForwardingHeader) publisher.ServiceVisitorAuthentication {
-					return publisher.ConnectorVisitor{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
+					return publisher.CertificateVisitor{Check: func(context.Context, *x509.Certificate) (publisher.ServiceVisitorDecision, error) {
 						return publisher.ServiceVisitorDecision{}, nil
 					}}
 				}
@@ -225,7 +283,7 @@ func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {
 			_ = client.SetDeadline(time.Now().Add(time.Second))
 			done := make(chan error, 1)
 			go func() { defer server.Close(); done <- bound.serveBody(t.Context(), ref, server, header, nil) }()
-			proxy, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
+			proxy, _ := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:25443")})
 			_, _ = client.Write(proxy)
 			secure := tls.Client(client, verification)
 			handshakeErr := secure.Handshake()

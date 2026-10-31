@@ -80,7 +80,6 @@ services:
       TNLD_INGRESS_ID: ingress-a
       TNLD_SERVICE_PORT_RANGES: 20000-20015
       TNLD_INGRESS_LISTEN: :443
-      TNLD_INGRESS_UDP_LISTEN: :443
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
       TNLD_ROLE: ingress
     ports:
@@ -105,7 +104,6 @@ services:
       TNLD_INGRESS_ID: ingress-b
       TNLD_SERVICE_PORT_RANGES: 20000-20015
       TNLD_INGRESS_LISTEN: :443
-      TNLD_INGRESS_UDP_LISTEN: :443
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
       TNLD_ROLE: ingress
     ports:

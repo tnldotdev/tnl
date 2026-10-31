@@ -98,6 +98,20 @@ func (c *wiringControl) IngestServiceObservations(_ context.Context, _ controlst
 	return controlstate.ServiceObservationResult{Accepted: len(batch.Events)}, nil
 }
 
+// these public URL wiring tests never admit a direct service visitor.
+func (*wiringControl) AdmitDirectServiceVisitor(context.Context, string, ingressv1.DirectServiceVisitorClaim) (ingressv1.DirectServiceVisitorAdmission, error) {
+	return ingressv1.DirectServiceVisitorAdmission{}, ingress.ErrServiceAdmission
+}
+func (*wiringControl) DirectServiceVisitorStatus(context.Context, string, ingressv1.DirectServiceVisitorLookup) (ingressv1.DirectServiceVisitorStatus, error) {
+	return ingressv1.DirectServiceVisitorStatus{}, ingress.ErrServiceAdmission
+}
+func (*wiringControl) PromoteDirectServiceVisitor(context.Context, string, ingressv1.DirectServiceVisitorLookup) error {
+	return ingress.ErrServiceAdmission
+}
+func (*wiringControl) CloseDirectServiceVisitor(context.Context, string, ingressv1.DirectServiceVisitorLookup) error {
+	return nil
+}
+
 func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprintf("committed_failure=%t", fail), func(t *testing.T) {

@@ -175,8 +175,8 @@ remain run-bound and use the configured readiness path. see
 [compose publisher](../../../deploy/publisher/compose/readme.md).
 
 the PostgreSQL baseline identity is
-`tnl-control-fresh-v1-permissions-serving-readiness`, at version 1. it adds verified
-session bindings and removes the former HTTP-only credential storage. use a
+`tnl-control-fresh-v1-relay-native-peers`, at version 1. it stores exact native
+owner/pair authority without native ingress assignments or session storage. use a
 fresh database and coordinated baseline rollout.
 
 ## local qualification

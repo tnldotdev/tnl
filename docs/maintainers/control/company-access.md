@@ -281,7 +281,7 @@ even before admission. sync never resurrects a removal tombstone or resets roles
 publisher records explicitly store team/member/guest ownership. member-owned
 credentials and public/private runs stop on offboarding. team-owned identities
 and groups continue independently of their creator; that person is audit history.
-private connector sessions and mTLS certificates retain their issuing control
+native peer pairs and mTLS certificates retain their issuing control
 session for live checks. public heartbeats fence visitor caches and in-flight
 decisions and close existing streams, including HTTP upgrades, on policy changes.
 other visitors reconnect conservatively; publisher runs remain available.

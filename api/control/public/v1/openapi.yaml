@@ -9,22 +9,22 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1native-peer-pairs"
+  /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1native-peer-pairs~1{pair_id}~1delivery"
+  /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/prepared:
+    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1native-peer-pairs~1{pair_id}~1prepared"
   /v1/visitor-policy:
     $ref: "./paths/visitor-policy.yaml#/paths/~1v1~1visitor-policy"
   /v1/visitor-tokens:
     $ref: "./paths/visitor-tokens.yaml#/paths/~1v1~1visitor-tokens"
   /v1/workload/services/{service_id}/run:
     $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1run"
-  /v1/workload/ingress-assignments/{session_id}:
-    $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1ingress-assignments~1{session_id}"
-  /v1/workload/ingress-assignments/{session_id}/transport-trust:
-    $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1ingress-assignments~1{session_id}~1transport-trust"
   /v1/workload/services:
     $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services"
   /v1/workload/services/{service_id}/authorization:
     $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1authorization"
-  /v1/workload/services/{service_id}/ingress-assignments:
-    $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1ingress-assignments"
   /v1/workload/services/{service_id}/client-certificate:
     $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1client-certificate"
   /v1/browser/service-login:
@@ -43,8 +43,6 @@ paths:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1start"
   /v1/services/{service_id}/client-certificates:
     $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1client-certificates"
-  /v1/services/{service_id}/runs/{service_run_id}/authorize-connector:
-    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1authorize-connector"
   /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1authorize-client-certificate"
   /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances:
@@ -57,8 +55,6 @@ paths:
     $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1namespace~1rename"
   /v1/projects/{project_key}/publisher-groups/{group_name}/rename:
     $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1rename"
-  /v1/visitor-ingress-assignments/{connector_session_id}:
-    $ref: "./paths/connectors.yaml#/paths/~1v1~1visitor-ingress-assignments~1{connector_session_id}"
   /v1/projects/{project_key}/public-metadata:
     $ref: "./paths/projects.yaml#/paths/~1v1~1projects~1{project_key}~1public-metadata"
   /v1/projects/{project_key}/local-services/{service}:
@@ -85,8 +81,8 @@ paths:
     $ref: "./paths/admin.yaml#/paths/~1v1~1teams~1{team_id}~1service-audit"
   /v1/publish-runs/{run_id}/service-observations:
     $ref: "./paths/observations.yaml#/paths/~1v1~1publish-runs~1{run_id}~1service-observations"
-  /v1/visitor-ingress-assignments/{connector_session_id}/transport-trust:
-    $ref: "./paths/connectors.yaml#/paths/~1v1~1visitor-ingress-assignments~1{connector_session_id}~1transport-trust"
+  /v1/services/{service_id}/runs/{service_run_id}/service-observations:
+    $ref: "./paths/observations.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1service-observations"
   /v1/publisher/service:
     $ref: "./paths/publishers.yaml#/paths/~1v1~1publisher~1service"
   /v1/visitor-devices:
@@ -109,12 +105,12 @@ paths:
     $ref: "./paths/services.yaml#/paths/~1v1~1service-invitations~1accept"
   /v1/visitor/services:
     $ref: "./paths/connectors.yaml#/paths/~1v1~1visitor~1services"
-  /v1/services/{service_id}/ingress-assignment:
-    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1ingress-assignment"
-  /v1/services/{service_id}/ingress-assignments:
-    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1ingress-assignments"
   /v1/services/{service_id}/select-run:
     $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1select-run"
+  /v1/services/{service_id}/native-peer-pairs:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1native-peer-pairs"
+  /v1/services/{service_id}/native-peer-pairs/{pair_id}/renew:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1native-peer-pairs~1{pair_id}~1renew"
   /v1/services/{service_id}/runs:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs"
   /v1/services/{service_id}/runs/{service_run_id}:
@@ -296,6 +292,14 @@ components:
     Problem:
       $ref: "./schemas/common.yaml#/responses/Problem"
   schemas:
+    NativePeerPairCandidate:
+      $ref: "./schemas/service-runs.yaml#/schemas/NativePeerPairCandidate"
+    NativePeerPairCandidates:
+      $ref: "./schemas/service-runs.yaml#/schemas/NativePeerPairCandidates"
+    NativePeerPairDelivery:
+      $ref: "./schemas/service-runs.yaml#/schemas/NativePeerPairDelivery"
+    NativePeerPairPrepared:
+      $ref: "./schemas/service-runs.yaml#/schemas/NativePeerPairPrepared"
     KubernetesAuth:
       $ref: "./schemas/common.yaml#/schemas/KubernetesAuth"
     VisitorSubject:
@@ -304,8 +308,6 @@ components:
       $ref: "./schemas/workloads.yaml#/schemas/WorkloadServiceAuthorization"
     WorkloadServices:
       $ref: "./schemas/workloads.yaml#/schemas/WorkloadServices"
-    WorkloadIngressAssignments:
-      $ref: "./schemas/workloads.yaml#/schemas/WorkloadIngressAssignments"
     VisitorResourceScope:
       $ref: "./schemas/browser-access.yaml#/schemas/VisitorResourceScope"
     VisitorTokenSource:
@@ -442,24 +444,32 @@ components:
       $ref: "./schemas/admin.yaml#/schemas/ServiceAuditPage"
     ServiceObservation:
       $ref: "./schemas/observations.yaml#/schemas/ServiceObservation"
+    ServiceRunObservations:
+      $ref: "./schemas/observations.yaml#/schemas/ServiceRunObservations"
     PublishRunServiceObservations:
       $ref: "./schemas/publish-runs.yaml#/schemas/PublishRunServiceObservations"
     ServiceObservationResult:
       $ref: "./schemas/observations.yaml#/schemas/ServiceObservationResult"
-    IngressTransportTrust:
-      $ref: "./schemas/connectors.yaml#/schemas/IngressTransportTrust"
     VisitorDevice:
       $ref: "./schemas/connectors.yaml#/schemas/VisitorDevice"
     ServiceSelection:
       $ref: "./schemas/services.yaml#/schemas/ServiceSelection"
+    NativePeerRelayLease:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerRelayLease"
+    NativePeerPairRelay:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerPairRelay"
+    NativePeerPairReady:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerPairReady"
+    NativePeerPairRequest:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerPairRequest"
+    NativePeerPair:
+      $ref: "./schemas/connectors.yaml#/schemas/NativePeerPair"
     ServiceID:
       $ref: "./schemas/services.yaml#/schemas/ServiceID"
     VisitorConnectionID:
       $ref: "./schemas/service-runs.yaml#/schemas/VisitorConnectionID"
     ServiceRunID:
       $ref: "./schemas/service-runs.yaml#/schemas/ServiceRunID"
-    ConnectorSessionID:
-      $ref: "./schemas/connectors.yaml#/schemas/ConnectorSessionID"
     ServiceInvitationID:
       $ref: "./schemas/services.yaml#/schemas/ServiceInvitationID"
     ServiceGrantID:
@@ -484,8 +494,6 @@ components:
       $ref: "./schemas/connectors.yaml#/schemas/IssueServiceClientCertificateRequest"
     ServiceClientCertificate:
       $ref: "./schemas/connectors.yaml#/schemas/ServiceClientCertificate"
-    AuthorizeServiceConnectorRequest:
-      $ref: "./schemas/service-runs.yaml#/schemas/AuthorizeServiceConnectorRequest"
     AuthorizeServiceClientCertificateRequest:
       $ref: "./schemas/service-runs.yaml#/schemas/AuthorizeServiceClientCertificateRequest"
     ServiceClientCertificateDecision:
@@ -508,8 +516,6 @@ components:
       $ref: "./schemas/services.yaml#/schemas/ServiceInvitation"
     ServiceInvitationPage:
       $ref: "./schemas/services.yaml#/schemas/ServiceInvitationPage"
-    ConnectorSessionSetup:
-      $ref: "./schemas/connectors.yaml#/schemas/ConnectorSessionSetup"
     ServiceRunPreparation:
       $ref: "./schemas/services.yaml#/schemas/ServiceRunPreparation"
     CreateServiceCertificateIssuanceRequest:

@@ -224,9 +224,6 @@ func (d *Database) ReadyServicePublisherConnection(ctx context.Context, connecti
 				return result, err
 			}
 		}
-		if err = serviceRoutingUpsert(ctx, tx, q, run, now); err != nil {
-			return result, err
-		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
@@ -286,15 +283,8 @@ func (d *Database) DisconnectServicePublisherConnection(ctx context.Context, con
 		if err != nil {
 			return result, err
 		}
-		if ready > 0 {
-			if err = serviceRoutingUpsert(ctx, tx, q, run, now); err != nil {
-				return result, err
-			}
-		} else {
+		if ready == 0 {
 			if _, err = q.DemoteServiceRun(ctx, controlstatedb.DemoteServiceRunParams{ID: runID, ServiceID: serviceID, RunNumber: runNumber}); err != nil {
-				return result, err
-			}
-			if err = serviceRunRoutingTombstone(ctx, q, serviceID, run.ID, run.RunNumber, now); err != nil {
 				return result, err
 			}
 		}

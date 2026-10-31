@@ -120,7 +120,7 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 			}
 			args := []string{"-F", "/dev/null", "-T", "-i", clientKey, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + known, "-o", "GlobalKnownHostsFile=/dev/null", "-o", "CheckHostIP=no", "-o", "ProxyCommand=" + strings.Join(proxyArgs, " "), username + "@" + endpoint.Hostname}
 			var before int
-			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.connector_sessions`).Scan(&before); err != nil {
+			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.native_peer_pairs`).Scan(&before); err != nil {
 				t.Fatal(err)
 			}
 			for _, remote := range []string{"cat", "printf 'remote-exit'; exit 7"} {
@@ -144,11 +144,11 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 				}
 			}
 			var after int
-			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.connector_sessions`).Scan(&after); err != nil {
+			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.native_peer_pairs pair WHERE pair.publisher_prepared_until IS NOT NULL AND (SELECT count(*) FROM control.native_peer_pair_leg_claims claim WHERE claim.pair_id=pair.id)=2`).Scan(&after); err != nil {
 				t.Fatal(err)
 			}
-			if after <= before {
-				t.Fatal("SSH skipped connector authentication")
+			if after != before+2 {
+				t.Fatal("SSH did not install two independent native owners with both relay claims")
 			}
 		})
 	}
@@ -196,7 +196,7 @@ func (f *cliWorkflow) connectDirectListener(t *testing.T, endpoint *controlv1.Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{DirectOnly: true, DirectConnector: f.directConnector, ServicePortRanges: []tcpport.Range{{First: endpoint.Port, Last: endpoint.Port}}, MaxConnections: 16, OnError: func(err error) { t.Logf("direct ingress: %v", err) }})
+	server, err := ingress.New(listener, ingress.Config{DirectOnly: true, DirectServices: f.directServices, ServicePortRanges: []tcpport.Range{{First: endpoint.Port, Last: endpoint.Port}}, MaxConnections: 16, OnError: func(err error) { t.Logf("direct ingress: %v", err) }})
 	if err != nil {
 		_ = listener.Close()
 		t.Fatal(err)

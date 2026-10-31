@@ -29,7 +29,7 @@ func TestNewAndValid(t *testing.T) {
 
 func TestPrivateIdentifiersAreDistinctFromPublicURLsAndEachOther(t *testing.T) {
 	private := []string{
-		ServicePrefix, ServiceRunPrefix, ConnectorSessionPrefix,
+		ServicePrefix, ServiceRunPrefix,
 		ServiceInvitationPrefix, ServiceGrantPrefix,
 	}
 	for _, prefix := range private {

@@ -48,6 +48,7 @@ func TestRelayCertificateSourceValidatesAndReloads(t *testing.T) {
 		name   string
 		mutate func(*relayv1.RelayTransportCertificate)
 	}{
+		{"service", func(c *relayv1.RelayTransportCertificate) { c.RelayServiceId = "relay-b" }},
 		{"identity", func(c *relayv1.RelayTransportCertificate) { c.TlsServerName = "relay-b.example.test" }},
 		{"key_pair", func(c *relayv1.RelayTransportCertificate) { c.PrivateKeyPem = string(first.privateKeyPEM) }},
 		{"expiry", func(c *relayv1.RelayTransportCertificate) { c.NotAfter = c.NotAfter.Add(-1) }},

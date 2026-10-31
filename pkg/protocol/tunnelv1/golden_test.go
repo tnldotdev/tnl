@@ -20,6 +20,35 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 			ConnectionAssignmentRevision: 3, RelayServiceID: "relay_service_1",
 		},
 	}, WriteControl, ReadControl)
+	nativeHello := Message{
+		Type: Hello, ProtocolVersion: Version, Role: NativeConnector,
+		NativePairLegProof: &NativePairLegProof{PairID: "npp_1234567890123456789012", DeliveryGeneration: 3,
+			ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 2,
+			PublisherIdentityID: "pub_1234567890123456789012", ConnectionSlot: 0,
+			PublisherConnectionID: "pc_1234567890123456789012", AssignmentRevision: 5,
+			RelayServiceID: "relay-a", RelayID: "node-a", RelayRunID: "process-a", RelayLeaseRevision: 3,
+			RequestedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Nonce: make([]byte, 32), Signature: make([]byte, 64)},
+	}
+	assertGoldenFrame(t, "control-native-hello", nativeHello, WriteControl, ReadControl)
+	nativeActivate := Message{Type: NativeLegActivate, ProtocolVersion: Version, RequestID: "activate_1", Role: NativeConnector,
+		NativeLegBinding: &NativeLegBinding{Nonce: make([]byte, 32)}}
+	assertGoldenFrame(t, "control-native-activate", nativeActivate, WriteControl, ReadControl)
+	nativeActivate.Type, nativeActivate.Role = NativeLegActivated, ""
+	assertGoldenFrame(t, "control-native-activated", nativeActivate, WriteControl, ReadControl)
+	nativeRenew := nativeHello
+	nativeRenew.Type, nativeRenew.RequestID = NativeLegRenew, "renew_1"
+	assertGoldenFrame(t, "control-native-renew", nativeRenew, WriteControl, ReadControl)
+	nativeAccepted := Message{Type: HelloAccepted, ProtocolVersion: Version,
+		NativePairLegAccepted: &NativePairLegAccepted{PairID: "npp_1234567890123456789012", DeliveryID: "AQEBAQEBAQEBAQEBAQEBAQ",
+			DeliveryGeneration: 3, ConnectionSlot: 1, SourceIP: "192.0.2.10",
+			ObservedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+			ExpiresAt:  time.Date(2026, 1, 2, 3, 5, 0, 0, time.UTC)}}
+	assertGoldenFrame(t, "control-native-accepted", nativeAccepted, WriteControl, ReadControl)
+	nativeRenewed := nativeAccepted
+	nativeRenewed.Type, nativeRenewed.RequestID = NativeLegRenewed, "renew_1"
+	assertGoldenFrame(t, "control-native-renewed", nativeRenewed, WriteControl, ReadControl)
+	assertGoldenFrame(t, "control-accepted", Message{Type: HelloAccepted, ProtocolVersion: Version}, WriteControl, ReadControl)
+	assertGoldenFrame(t, "native-peer-visitor-entry", peerOpeningFixture(), WriteNativePeerVisitorEntry, ReadNativePeerVisitorEntry)
 	assertGoldenFrame(t, "visitor-stream-header", VisitorStreamHeader{
 		ProtocolVersion: Version, Kind: VisitorStream, VisitorConnectionID: "visitor_connection_1",
 		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
@@ -42,7 +71,18 @@ func TestInvalidFixtures(t *testing.T) {
 		read func(io.Reader) error
 	}{
 		{"invalid-control-unknown-field", readControl},
+		{"invalid-native-publisher-role", readControl},
+		{"invalid-native-credential", readControl},
+		{"invalid-native-missing-proof", readControl},
+		{"invalid-native-receipt-on-hello", readControl},
+		{"invalid-native-receipt-on-ping", readControl},
+		{"invalid-native-receipt-source", readControl},
+		{"invalid-native-activation-null", readControl},
+		{"invalid-native-activation-foreign-field", readControl},
 		{"invalid-visitor-missing-field", readVisitor},
+		{"invalid-native-peer-unknown-field", readNativePeerVisitor},
+		{"invalid-native-peer-missing-field", readNativePeerVisitor},
+		{"invalid-native-peer-wrong-subject", readNativePeerVisitor},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := test.read(frame(string(readFixture(t, test.name+".json")))); err == nil {

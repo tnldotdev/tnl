@@ -26,29 +26,6 @@ schemas:
             protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
             endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
             kubernetes_auth: { $ref: "../openapi.yaml#/components/schemas/KubernetesAuth" }
-  WorkloadIngressAssignments:
-    type: object
-    additionalProperties: false
-    required: [subject, assignments]
-    properties:
-      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
-      assignments:
-        type: array
-        minItems: 1
-        maxItems: 2
-        items:
-          type: object
-          additionalProperties: false
-          required:
-            [id, service_id, credential, expires_at, ingress_id, ingress_address, tls_server_name]
-          properties:
-            id: { type: string }
-            service_id: { type: string }
-            credential: { type: string }
-            expires_at: { type: string, format: date-time }
-            ingress_id: { type: string }
-            ingress_address: { type: string }
-            tls_server_name: { type: string }
   WorkloadProvider:
     type: string
     enum: [github, vercel, fly, oidc]

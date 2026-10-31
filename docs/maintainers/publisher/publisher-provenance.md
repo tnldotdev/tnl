@@ -96,7 +96,7 @@ original signing identity. A newly provisioned identity needs a new binding;
 there is no automatic takeover of an observed slot.
 
 The fresh PostgreSQL baseline identity is now
-`tnl-control-fresh-v1-permissions-serving-readiness`.
+`tnl-control-fresh-v1-relay-native-peers`.
 This is part of the approved fresh-database rewrite, not an in-place migration.
 
 ## generated process environment

@@ -16,6 +16,9 @@ tnl clients ------------------> control
                                    v
 visitor ---> ingress ----------------> relay <=== publisher ---> target
                                       A or B
+
+native tnl <==== fixed relay A/B carriers ====> publisher ---> target
+                 retained inner QUIC
 ```
 
 Control owns durable server state and current authorization. Ingress receives
@@ -40,7 +43,7 @@ one local `tnl` process composes both capabilities.
 the role of everything it calls: `tnl publish` composes publisher operations,
 `tnl connect` composes connector operations, and `tnl apply` sends control an
 evaluated configuration. The daemon composes control, ingress, and relay.
-Standalone runs those same boundaries and two logical relay services in one
+Standalone runs one ingress and two logical relay services in one
 process against PostgreSQL.
 
 ## dependency direction
@@ -116,6 +119,10 @@ bundling and external consumers.
   one ready connection can sustain service while the other is replaced.
 - Ingress creates PROXY v2 metadata once; relay preserves it. No application
   bytes are replayed after the first visitor byte sent to a relay.
+- Native service owners bypass ingress. Two immutable relay carriers carry one
+  inner QUIC session; failover retains that session and its target sockets.
+  Readiness requires exact process/source claims, publisher installation, and
+  inner QUIC. A replacement owner or run terminates the old admissions.
 - A copied relay lease deadline is a routing observation. The connected relay
   checks its current lease, process identity, and exact connection claim before
   accepting a stream.

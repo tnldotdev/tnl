@@ -283,41 +283,12 @@ func (c *Client) CheckService(ctx context.Context, service string) (controlv1.Wo
 	}
 	return c.control.CheckWorkloadService(ctx, r.Credential, service)
 }
-func (c *Client) CreateIngressAssignments(ctx context.Context, service, key string) (controlv1.WorkloadIngressAssignments, error) {
-	r, err := c.Session()
-	if err != nil {
-		return controlv1.WorkloadIngressAssignments{}, err
-	}
-	return c.control.CreateWorkloadIngressAssignments(ctx, r.Credential, service, key)
-}
-
-func (c *Client) CreateIngressAssignment(ctx context.Context, service, key, exclude string) (controlv1.WorkloadIngressAssignments, error) {
-	r, err := c.Session()
-	if err != nil {
-		return controlv1.WorkloadIngressAssignments{}, err
-	}
-	return c.control.CreateWorkloadIngressAssignmentSet(ctx, r.Credential, service, key, 1, exclude)
-}
 func (c *Client) SelectServiceRun(ctx context.Context, service string) (controlv1.ServiceSelection, error) {
 	r, err := c.Session()
 	if err != nil {
 		return controlv1.ServiceSelection{}, err
 	}
 	return c.control.SelectWorkloadServiceRun(ctx, r.Credential, service)
-}
-func (c *Client) IngressTransportTrust(ctx context.Context, session string) (controlv1.IngressTransportTrust, error) {
-	r, err := c.Session()
-	if err != nil {
-		return controlv1.IngressTransportTrust{}, err
-	}
-	return c.control.GetWorkloadIngressTransportTrust(ctx, r.Credential, session)
-}
-func (c *Client) ReleaseIngressAssignment(ctx context.Context, session string) error {
-	r, err := c.Session()
-	if err != nil {
-		return err
-	}
-	return c.control.ReleaseWorkloadIngressAssignment(ctx, r.Credential, session)
 }
 func (c *Client) ServiceClientCertificate(ctx context.Context, service string) (controlv1.ServiceClientCertificate, error) {
 	r, err := c.Session()

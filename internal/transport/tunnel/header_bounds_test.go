@@ -61,43 +61,41 @@ func TestSessionMaximumForwardingHeaders(t *testing.T) {
 						})
 				})
 			}
-			for _, direct := range []bool{false, true} {
-				for _, publisher := range []bool{false, true} {
-					t.Run(fmt.Sprintf("private/direct=%t/publisher_binding=%t", direct, publisher), func(t *testing.T) {
-						h := maximumServiceHeader(text, direct)
-						hello := ingressBoundsHello()
-						if publisher {
-							hello.Role = tunnelv1.Publisher
-							hello.ServiceConnection = &tunnelv1.ServicePublisherConnectionRef{ServiceID: h.ServiceID, ServiceRunID: h.ServiceRunID,
-								RunNumber: h.RunNumber, PublisherConnectionID: h.PublisherConnectionID, ConnectionSlot: h.ConnectionSlot,
-								ConnectionAssignmentRevision: h.ConnectionAssignmentRevision, RelayServiceID: h.RelayServiceID}
-						}
-						client, peer := newHeaderBoundsPair(t, hello)
-						ctx := headerBoundsContext(t)
-						want := h
-						want.TraceContext = tunnelv1.TraceContext{TraceParent: boundsTraceParent}
-						checkMaximumTransfer(t, want, tunnelv1.MaxServiceHeaderBytes,
-							func() (net.Conn, error) { return client.OpenServiceForwardingStream(ctx, h) },
-							func() (muxsession.Stream, any, func() error, error) {
-								if publisher {
-									v, err := peer.AcceptServiceForwardingStream(ctx)
-									if err != nil {
-										return nil, nil, nil, err
-									}
-									return v.Stream(), v.Header, v.Accept, nil
-								}
-								v, err := peer.AcceptInternalForwardingStream(ctx)
+			for _, publisher := range []bool{false, true} {
+				t.Run(fmt.Sprintf("direct/publisher_binding=%t", publisher), func(t *testing.T) {
+					h := maximumServiceHeader(text)
+					hello := ingressBoundsHello()
+					if publisher {
+						hello.Role = tunnelv1.Publisher
+						hello.ServiceConnection = &tunnelv1.ServicePublisherConnectionRef{ServiceID: h.ServiceID, ServiceRunID: h.ServiceRunID,
+							RunNumber: h.RunNumber, PublisherConnectionID: h.PublisherConnectionID, ConnectionSlot: h.ConnectionSlot,
+							ConnectionAssignmentRevision: h.ConnectionAssignmentRevision, RelayServiceID: h.RelayServiceID}
+					}
+					client, peer := newHeaderBoundsPair(t, hello)
+					ctx := headerBoundsContext(t)
+					want := h
+					want.TraceContext = tunnelv1.TraceContext{TraceParent: boundsTraceParent}
+					checkMaximumTransfer(t, want, tunnelv1.MaxServiceHeaderBytes,
+						func() (net.Conn, error) { return client.OpenServiceForwardingStream(ctx, h) },
+						func() (muxsession.Stream, any, func() error, error) {
+							if publisher {
+								v, err := peer.AcceptServiceForwardingStream(ctx)
 								if err != nil {
 									return nil, nil, nil, err
 								}
-								request, ok := v.(*IncomingServiceForwardingStream)
-								if !ok {
-									return nil, nil, nil, errors.New("service header dispatched as public URL")
-								}
-								return request.Stream(), request.Header, request.Accept, nil
-							})
-					})
-				}
+								return v.Stream(), v.Header, v.Accept, nil
+							}
+							v, err := peer.AcceptInternalForwardingStream(ctx)
+							if err != nil {
+								return nil, nil, nil, err
+							}
+							request, ok := v.(*IncomingServiceForwardingStream)
+							if !ok {
+								return nil, nil, nil, errors.New("service header dispatched as public URL")
+							}
+							return request.Stream(), request.Header, request.Accept, nil
+						})
+				})
 			}
 		})
 	}
@@ -164,17 +162,13 @@ func maximumPublicHeader(text string) tunnelv1.InternalForwardingHeader {
 		RelayLeaseRevision: math.MaxUint64, PublicUrlExpiresAt: boundsTimestamp(), LeaseExpiresAt: boundsTimestamp(), AccessPending: true, ConfirmBeforeBytes: true}
 }
 
-func maximumServiceHeader(text string, direct bool) tunnelv1.ServiceForwardingHeader {
+func maximumServiceHeader(text string) tunnelv1.ServiceForwardingHeader {
 	h := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: 1, Kind: tunnelv1.ServiceForwardingStream,
 		ServiceID: boundsID(opaqueid.ServicePrefix), ServiceRunID: boundsID(opaqueid.ServiceRunPrefix), RunNumber: math.MaxUint64,
-		Connector: &tunnelv1.ConnectorAdmission{SessionID: boundsID(opaqueid.ConnectorSessionPrefix), Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: boundsID(opaqueid.IdentityPrefix), DeviceID: boundsID(opaqueid.VisitorDevicePrefix)}, GrantRevision: math.MaxUint64},
-		SourceIP:  "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", VisitorConnectionID: boundsID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: boundsID(opaqueid.PublisherConnectionPrefix),
+		Direct:   &tunnelv1.DirectAdmission{IngressID: text, IngressRunID: boundsID(opaqueid.IngressRunPrefix), IngressLeaseRevision: math.MaxUint64, DestinationPort: math.MaxUint16},
+		SourceIP: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", VisitorConnectionID: boundsID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: boundsID(opaqueid.PublisherConnectionPrefix),
 		ConnectionAssignmentRevision: math.MaxUint64, ExpiresAt: boundsTimestamp()}, ConnectionSlot: 1, RelayServiceID: text, RelayID: text,
 		RelayRunID: boundsID(opaqueid.RelayRunPrefix), RelayLeaseRevision: math.MaxUint64, LeaseExpiresAt: boundsTimestamp()}
-	if direct {
-		h.Connector = nil
-		h.Direct = &tunnelv1.DirectAdmission{IngressID: text, IngressRunID: boundsID(opaqueid.IngressRunPrefix), IngressLeaseRevision: math.MaxUint64, DestinationPort: math.MaxUint16}
-	}
 	return h
 }
 
@@ -229,7 +223,7 @@ func TestSessionForwardingBoundsRejectMalformedStreams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	private, err := json.Marshal(maximumServiceHeader(strings.Repeat("r", 256), true))
+	private, err := json.Marshal(maximumServiceHeader(strings.Repeat("r", 256)))
 	if err != nil {
 		t.Fatal(err)
 	}

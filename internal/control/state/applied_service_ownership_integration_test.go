@@ -360,10 +360,6 @@ func assertAppliedPrivateRetired(t *testing.T, d *Database, r ApplyProjectConfig
 			t.Fatal("retirement left a run or connection slot open", err)
 		}
 	}
-	var kind string
-	if err := d.pool.QueryRow(ctx, `SELECT kind FROM control.service_routing_events WHERE service_id=$1 AND service_run_id IS NULL ORDER BY revision DESC LIMIT 1`, resource.record.ID).Scan(&kind); err != nil || kind != "tombstone" {
-		t.Fatal("retirement did not invalidate ingress routing", err)
-	}
 }
 
 func readyAppliedServiceRun(t *testing.T, d *Database, access PublisherAccess, key ed25519.PrivateKey, service ServiceRecord, leases map[string]RelayLease, now time.Time) ServiceRunState {
@@ -465,7 +461,7 @@ func assertPrivateOwnershipRollback(t *testing.T, d *Database, r ApplyProjectCon
 func privateOwnershipSnapshot(t *testing.T, d *Database) map[string]string {
 	t.Helper()
 	result := map[string]string{}
-	for _, table := range []string{"applied_projects", "applied_project_services", "local_project_services", "project_publisher_groups", "publisher_group_service_grants", "services", "visitor_grants", "publisher_grants", "service_runs", "publisher_service_connection_slots", "service_routing_events", "service_routing_clock", "service_audit_events"} {
+	for _, table := range []string{"applied_projects", "applied_project_services", "local_project_services", "project_publisher_groups", "publisher_group_service_grants", "services", "visitor_grants", "publisher_grants", "service_runs", "publisher_service_connection_slots", "native_peer_pairs", "service_audit_events"} {
 		var rows string
 		if err := d.pool.QueryRow(t.Context(), `SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text),'[]'::jsonb)::text FROM control.`+table+` r`).Scan(&rows); err != nil {
 			t.Fatal(err)

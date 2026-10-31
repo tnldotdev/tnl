@@ -183,9 +183,6 @@ func (d *Database) ConfigureService(ctx context.Context, serviceID, actorID stri
 		if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET state='closed', closed_at=$2 WHERE service_id=$1 AND closed_at IS NULL`, serviceID, now); err != nil {
 			return result, err
 		}
-		if err = serviceRoutingTombstone(ctx, controlstatedb.New(tx), serviceID, now); err != nil {
-			return result, err
-		}
 	}
 	row, err = controlstatedb.New(tx).LockService(ctx, serviceID)
 	if err != nil {

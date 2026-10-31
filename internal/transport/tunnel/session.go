@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -41,6 +42,10 @@ func (e *StreamHeaderError) Unwrap() error { return e.Err }
 // AuthenticateFunc authorizes one publisher or ingress hello.
 type AuthenticateFunc func(context.Context, tunnelv1.Message) error
 
+// AuthenticateWithResultFunc may return a native receipt after authorizing a
+// hello. the handshake owns writing either the receipt or a protocol error.
+type AuthenticateWithResultFunc func(context.Context, tunnelv1.Message) (*tunnelv1.NativePairLegAccepted, error)
+
 // Session is an authenticated tunnelv1 session over an arbitrary transport.
 type Session struct {
 	transport           muxsession.Session
@@ -48,56 +53,113 @@ type Session struct {
 	role                tunnelv1.PeerRole
 	publisherConnection *tunnelv1.PublisherConnectionRef
 	serviceConnection   *tunnelv1.ServicePublisherConnectionRef
+	nativeLeg           *tunnelv1.NativePairLegProof
+	nativeControl       sync.Mutex
+	nativeActivated     bool
 
 	closeOnce sync.Once
 	closeErr  error
 }
 
+// BorrowServicePublisherTransport gives the service run owner the authenticated
+// outer transport for shared packet registration. it does not transfer ownership
+// or authorize any pair. the owner must use a single stream acceptor (the service
+// dispatcher for mixed streams) and join packet readers before closing Session.
+func (s *Session) BorrowServicePublisherTransport() (muxsession.Session, error) {
+	if s == nil || s.transport == nil || s.role != tunnelv1.Publisher || s.serviceConnection == nil {
+		return nil, &ProtocolError{Code: tunnelv1.Unauthenticated}
+	}
+	return s.transport, nil
+}
+
 // Dial performs the client side of the shared tunnelv1 handshake.
 func Dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Message) (result *Session, err error) {
+	if hello.Role == tunnelv1.NativeConnector {
+		return nil, errors.New("tunnel: native connector requires an expected delivery ID")
+	}
+	result, _, err = dial(ctx, transport, hello, "", false)
+	return result, err
+}
+
+// DialNative requires the delivery ID from the prepared pair, independently
+// of the signed leg proof and of the untrusted hello response.
+func DialNative(ctx context.Context, transport muxsession.Session, hello tunnelv1.Message, expectedDeliveryID string) (*Session, tunnelv1.NativePairLegAccepted, error) {
+	if hello.Role != tunnelv1.NativeConnector || hello.NativePairLegProof == nil {
+		return nil, tunnelv1.NativePairLegAccepted{}, errors.New("tunnel: native connector hello is required")
+	}
+	return dial(ctx, transport, hello, expectedDeliveryID, true)
+}
+
+func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Message, expectedDeliveryID string, native bool) (result *Session, receipt tunnelv1.NativePairLegAccepted, err error) {
 	if transport == nil {
-		return nil, errors.New("tunnel: transport session is required")
+		return nil, receipt, errors.New("tunnel: transport session is required")
 	}
 	if hello.Type != tunnelv1.Hello {
-		return nil, errors.New("tunnel: hello message is required")
+		return nil, receipt, errors.New("tunnel: hello message is required")
 	}
 	defer func() {
 		if err != nil {
 			err = errors.Join(controlContextError(ctx, err), transport.Close())
 		}
 	}()
+	if native {
+		if _, err := tunnelv1.ParsePeerDeliveryIdentifier(expectedDeliveryID); err != nil || hello.NativePairLegProof.Validate() != nil {
+			return nil, receipt, errors.New("tunnel: valid native leg and expected delivery ID are required")
+		}
+	}
+	started := time.Now()
 	control, err := transport.OpenStream(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("tunnel: open control stream: %w", err)
+		return nil, receipt, fmt.Errorf("tunnel: open control stream: %w", err)
 	}
 	finish, err := setupDeadline(ctx, control)
 	if err != nil {
-		return nil, err
+		return nil, receipt, err
 	}
 	defer func() {
 		err = errors.Join(err, finish(err == nil))
 		if err != nil {
 			result = nil
+			receipt = tunnelv1.NativePairLegAccepted{}
 		}
 	}()
 	if err := tunnelv1.WriteControl(control, hello); err != nil {
-		return nil, fmt.Errorf("tunnel: write hello: %w", err)
+		return nil, receipt, fmt.Errorf("tunnel: write hello: %w", err)
 	}
 	response, err := tunnelv1.ReadControl(control)
 	if err != nil {
-		return nil, fmt.Errorf("tunnel: read hello response: %w", err)
+		return nil, receipt, fmt.Errorf("tunnel: read hello response: %w", err)
 	}
 	if response.Type == tunnelv1.Error {
-		return nil, &ProtocolError{Code: response.Code}
+		return nil, receipt, &ProtocolError{Code: response.Code}
 	}
 	if response.Type != tunnelv1.HelloAccepted {
-		return nil, errors.New("tunnel: unexpected hello response")
+		return nil, receipt, errors.New("tunnel: unexpected hello response")
 	}
-	return authenticatedSession(transport, control, hello), nil
+	if native {
+		if response.NativePairLegAccepted == nil || response.NativePairLegAccepted.Match(*hello.NativePairLegProof, expectedDeliveryID, started, time.Now()) != nil {
+			return nil, receipt, errors.New("tunnel: native hello receipt does not match prepared pair")
+		}
+		receipt = *response.NativePairLegAccepted
+	} else if response.NativePairLegAccepted != nil {
+		return nil, receipt, errors.New("tunnel: unexpected native hello receipt")
+	}
+	return authenticatedSession(transport, control, hello), receipt, nil
 }
 
 // Accept performs the server side of the shared tunnelv1 handshake.
 func Accept(ctx context.Context, transport muxsession.Session, authenticate AuthenticateFunc) (result *Session, message tunnelv1.Message, err error) {
+	if authenticate == nil {
+		return nil, tunnelv1.Message{}, errors.New("tunnel: transport session and authenticator are required")
+	}
+	return AcceptWithResult(ctx, transport, func(ctx context.Context, hello tunnelv1.Message) (*tunnelv1.NativePairLegAccepted, error) {
+		return nil, authenticate(ctx, hello)
+	})
+}
+
+// AcceptWithResult shares the same handshake as Accept, adding a checked
+// native receipt to hello_accepted only after authentication succeeds.
+func AcceptWithResult(ctx context.Context, transport muxsession.Session, authenticate AuthenticateWithResultFunc) (result *Session, message tunnelv1.Message, err error) {
 	if transport == nil || authenticate == nil {
 		return nil, tunnelv1.Message{}, errors.New("tunnel: transport session and authenticator are required")
 	}
@@ -130,17 +192,24 @@ func Accept(ctx context.Context, transport muxsession.Session, authenticate Auth
 		}
 		return nil, tunnelv1.Message{}, errors.New("tunnel: first control message is not hello")
 	}
-	if err := authenticate(setupCtx, hello); err != nil {
+	receipt, authErr := authenticate(setupCtx, hello)
+	if authErr == nil && (receipt != nil && (hello.Role != tunnelv1.NativeConnector || receipt.Validate() != nil ||
+		receipt.PairID != hello.NativePairLegProof.PairID || receipt.DeliveryGeneration != hello.NativePairLegProof.DeliveryGeneration ||
+		receipt.ConnectionSlot != hello.NativePairLegProof.ConnectionSlot || !receipt.ExpiresAt.After(time.Now())) ||
+		hello.Role == tunnelv1.NativeConnector && receipt == nil) {
+		authErr = errors.New("tunnel: invalid native hello receipt")
+	}
+	if authErr != nil {
 		code := tunnelv1.Internal
 		var protocolError *ProtocolError
-		if errors.As(err, &protocolError) && validAuthenticationError(protocolError.Code) {
+		if errors.As(authErr, &protocolError) && validAuthenticationError(protocolError.Code) {
 			code = protocolError.Code
 		}
 		_ = writeProtocolError(control, code)
-		return nil, tunnelv1.Message{}, err
+		return nil, tunnelv1.Message{}, authErr
 	}
 	if err := tunnelv1.WriteControl(control, tunnelv1.Message{
-		Type: tunnelv1.HelloAccepted, ProtocolVersion: tunnelv1.Version,
+		Type: tunnelv1.HelloAccepted, ProtocolVersion: tunnelv1.Version, NativePairLegAccepted: receipt,
 	}); err != nil {
 		return nil, tunnelv1.Message{}, fmt.Errorf("tunnel: write hello response: %w", err)
 	}
@@ -156,6 +225,11 @@ func authenticatedSession(transport muxsession.Session, control muxsession.Strea
 	if hello.ServiceConnection != nil {
 		ref := *hello.ServiceConnection
 		s.serviceConnection = &ref
+	}
+	if hello.NativePairLegProof != nil {
+		proof := *hello.NativePairLegProof
+		proof.Nonce, proof.Signature = bytes.Clone(proof.Nonce), bytes.Clone(proof.Signature)
+		s.nativeLeg = &proof
 	}
 	return s
 }
@@ -367,6 +441,26 @@ func (s *Session) AcceptServiceForwardingStream(ctx context.Context) (*IncomingS
 	if err != nil {
 		return nil, err
 	}
+	return s.readServiceForwardingStream(ctx, stream)
+}
+
+// AcceptDispatchedServiceForwardingStream consumes the sole outer stream owner.
+func (s *Session) AcceptDispatchedServiceForwardingStream(ctx context.Context, d *ServiceStreamDispatcher) (*IncomingServiceForwardingStream, error) {
+	if s == nil || s.role != tunnelv1.Publisher || s.serviceConnection == nil || d == nil || d.owner != s {
+		return nil, errors.New("tunnel: claimed service publisher connection and matching dispatcher are required")
+	}
+	stream, err := d.AcceptForwardingStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := setHandshakeDeadline(ctx, stream); err != nil {
+		_ = stream.Close()
+		return nil, err
+	}
+	return s.readServiceForwardingStream(ctx, stream)
+}
+
+func (s *Session) readServiceForwardingStream(ctx context.Context, stream muxsession.Stream) (*IncomingServiceForwardingStream, error) {
 	header, err := tunnelv1.ReadServiceForwardingHeader(stream)
 	if err != nil {
 		_ = (&replyStream{Stream: stream}).forwardRejection(ctx, tunnelv1.InvalidMessage)
@@ -419,6 +513,9 @@ func (r *IncomingServiceForwardingStream) CloseWrite(ctx context.Context) error 
 }
 
 func (s *Session) acceptStream(ctx context.Context, kind string) (muxsession.Stream, error) {
+	if s.role == tunnelv1.NativeConnector {
+		return nil, errors.New("tunnel: native session has no application stream owner")
+	}
 	stream, err := s.transport.AcceptStream(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("tunnel: accept %s stream: %w", kind, err)

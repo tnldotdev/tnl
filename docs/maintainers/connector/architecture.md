@@ -1,7 +1,7 @@
 # connector architecture
 
 The connector owns a native visitor's connection to an approved service.
-It selects the exact service, prepares authenticated ingress paths and a local
+It selects the exact service, prepares two authenticated relay carriers and a local
 listener or stdio stream, and joins their cleanup. Publishing a service is a
 separate role even when the same native owner supports both SDK capabilities.
 
@@ -10,7 +10,7 @@ separate role even when the same native owner supports both SDK capabilities.
 | Owner                           | Responsibility                                                                                                                                                                     |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `internal/connector`            | Reusable context/service selection, foreground/installed operations, detached owner launch/backend, preparation, profile validation, handle operations, stdio, and joined shutdown |
-| `internal/connector/stream`     | Device/workload control adapter, assignment reservation/recovery, accepted peers, two ingress paths, inner TLS, bytes, and half-close                                              |
+| `internal/connector/stream`     | Device/workload control adapter, signed pair ownership, two relay carriers, retained inner QUIC, prepared openings, visitor TLS, bytes, and half-close                             |
 | `internal/connector/runtime`    | Bounded private owner IPC, handle validation, owner lock, atomic prepared snapshots, listener generations, and terminal close                                                      |
 | `internal/connector/workload`   | Ephemeral key, provider assertions, exchange/refresh, immutable session binding, and fixed expiry                                                                                  |
 | `internal/connector/kubeconfig` | Owned context projection, selected-user credentials, bounded exec helpers, locks, and cleanup                                                                                      |
@@ -40,12 +40,30 @@ ordinary connection never exports application client certificates. Explicit
 certificate export remains a client-state operation with its own key/CSR/storage
 locks.
 
-Preparation checks approved protocol, service/run, assignment, trust revision,
-and accepted transport peer before bytes. The connector authenticates two
-ingress paths; ingress observes the source and authorizes each visitor stream.
-The publisher verifies that admission before opening a target. The connector
-does not interpret publisher-to-target CA trust. Stream failure, metadata reload,
-and listener replacement never replay an admitted application stream.
+preparation checks the approved service/run, protocol, trust revision, and exact
+relay-process assignments. each relay claims the connector's accepted socket
+source; both claims must agree. control delivers that binding to the publisher,
+which installs its packet registrations and inner QUIC listener before reporting
+preparation. connector readiness also requires the actual inner QUIC handshake.
+
+startup retries the original signed creation within its original deadline; it
+does not sign a replacement owner. pair renewal cannot extend the publisher's
+independently observed installation deadline. both failed fixed carriers end the
+packet endpoint immediately; a single failure leaves the warm sibling usable.
+
+the connector prepares signed application openings before local arrival. the
+publisher checks each opening against its installed pair and current signed
+permission before target resolution, dialing, or a server-first greeting. the
+connector does not interpret publisher-to-target CA trust. an outer carrier loss
+can switch packet delivery to the warm sibling without changing the inner QUIC
+session or target socket. it cannot reconnect a carrier in place or transfer an
+admission to another assignment, source, pair, or run. stream failure, metadata
+reload, and listener replacement never replay application bytes.
+
+the publisher's bounded frame reader consumes permission renewals independently
+of application reads, including response-only HTTP. a newer verified revision
+waits only for local background policy under the existing guard's unchanged bound.
+it performs no RPC, grants nothing early, and cannot revive expiry.
 
 ## process and request lifetime
 
@@ -66,7 +84,7 @@ Human process lifetime is distinct from workload session lifetime. Workload
 assertion acquisition, refresh, connector renewal, certificate renewal, and
 reconnection cannot extend the original fixed session window or replace its
 verified subject. Late results cannot resurrect an expired/replaced owner.
-Shutdown shares the caller's cleanup budget across assignment release and session
+Shutdown shares the caller's cleanup budget across owned transport cleanup and session
 revocation, and joins operation/renewal workers before releasing owned context.
 
 See [the native IPC and lifecycle contract](connection-runtime.md),

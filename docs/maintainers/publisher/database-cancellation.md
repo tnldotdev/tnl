@@ -58,7 +58,7 @@ the second Task creates and removes digest-pinned TLS PostgreSQL and MySQL. the
 installed Node consumer uses packed SDK/native packages; the Python consumer
 installs a wheel containing the real native executable into an isolated uv
 environment. both read the real connection owner's prepared IPC. their sockets
-pass through trusted PROXY v2 metadata, the real ingress/direct connector, the
+pass through trusted PROXY v2 metadata, the real direct service ingress, the
 in-process relay-forwarder fixture, `ServiceStream`'s PostgreSQL negotiation and
 authentication bridge, then independently verified provider TLS. authority and
 placement decisions are fixtures; this is not a deployed relay or control test.

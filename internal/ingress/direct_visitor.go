@@ -17,16 +17,16 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// AcceptDirect selects by the trusted destination port and carries native TLS
+// AcceptDirect selects by the trusted destination port and carries application TLS
 // unchanged. publisher authentication promotes a bounded pending connection.
-func (p *Connector) AcceptDirect(ctx context.Context, connection net.Conn, source, destination netip.AddrPort) (retErr error) {
+func (p *DirectServices) AcceptDirect(ctx context.Context, connection net.Conn, source, destination netip.AddrPort) (retErr error) {
 	ctx, finishConnection := observability.Start(ctx, "ingress.direct_visitor_connection")
 	defer func() { finishConnection(retErr) }()
-	control := p.config.DirectControl
+	control := p.config.Control
 	if control == nil || connection == nil || !validPrivateSocketPair(source, destination) {
 		return ErrServiceAdmission
 	}
-	release, ok := p.acquireSession()
+	ctx, release, ok := p.acquireSession(ctx, connection)
 	if !ok {
 		return ErrServiceAdmission
 	}
@@ -52,12 +52,14 @@ func (p *Connector) AcceptDirect(ctx context.Context, connection net.Conn, sourc
 	}()
 	setup, finish := context.WithTimeout(ctx, p.config.PendingTimeout)
 	defer finish()
+	stopSetup := context.AfterFunc(p.admissions, finish)
+	defer stopSetup()
 	claimed, err := control.AdmitDirectServiceVisitor(setup, lease.IngressId, ingressv1.DirectServiceVisitorClaim{IngressRunId: lease.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision, IngressPoolId: p.config.IngressPoolID, DestinationPort: int(destination.Port()), ObservedSourceIp: source.Addr().Unmap().String(), VisitorConnectionId: visitor})
 	if err != nil {
 		return err
 	}
-	projection := ingressv1.ServiceProjection{ServiceId: claimed.ServiceId, ServiceRunId: &claimed.ServiceRunId, RunNumber: &claimed.RunNumber, Revision: 1, Kind: ingressv1.Upsert, ExpiresAt: claimed.ExpiresAt, ConnectedRelays: &claimed.ConnectedRelays}
-	if claimed.VisitorConnectionId != visitor || validateDirectProjection(projection, time.Now()) != nil || !admission.selectService(claimed.ServiceId) {
+	current, leaseErr := p.lease(time.Now())
+	if leaseErr != nil || !samePrivateLease(current, lease) || claimed.VisitorConnectionId != visitor || validateDirectAdmission(claimed, time.Now()) != nil || !admission.selectService(claimed.ServiceId) {
 		return ErrServiceAdmission
 	}
 	audit := serviceaudit.Observation{ServiceID: claimed.ServiceId, ServiceKind: "service", RunID: claimed.ServiceRunId, RunNumber: claimed.RunNumber, VisitorConnectionID: visitor, SourceIP: source.Addr().Unmap().String(), EventType: "connection.open", Outcome: "denied", Reason: "authorization"}
@@ -67,6 +69,9 @@ func (p *Connector) AcceptDirect(ctx context.Context, connection net.Conn, sourc
 			audit.EventType, audit.Outcome, audit.Reason = "connection.close", "closed", "closed"
 			if retErr != nil {
 				audit.Outcome, audit.Reason = "failed", "forwarding"
+			}
+			if errors.Is(retErr, ErrServiceAdmission) {
+				audit.Outcome, audit.Reason = "denied", "authorization"
 			}
 		}
 		serviceaudit.Emit(p.config.AuditSink, audit)
@@ -104,7 +109,7 @@ func (p *Connector) AcceptDirect(ctx context.Context, connection net.Conn, sourc
 		if err = connection.SetDeadline(time.Time{}); err != nil {
 			return err
 		}
-		// copying the first native protocol byte commits to this run. failures
+		// copying the first application protocol byte commits to this run. failures
 		// after this point close the connection, including server-first MySQL.
 		live, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -112,18 +117,22 @@ func (p *Connector) AcceptDirect(ctx context.Context, connection net.Conn, sourc
 		pending.upload.Store(64 << 10)
 		pending.download.Store(128 << 10)
 		done := make(chan struct{})
+		var guardErr error
 		go func() {
 			defer close(done)
 			defer cancel()
 			defer connection.Close()
 			defer backend.Close()
-			p.guardDirectVisitor(live, control, lease, lookup, claimed.ExpiresAt, pending, admission, onAuthorized)
+			guardErr = p.guardDirectVisitor(live, control, lease, lookup, claimed.ExpiresAt, pending, admission, onAuthorized)
 		}()
 		_, finishForward := observability.Start(ctx, "ingress.forward_connector_visitor")
 		_, err = streamcopy.Copy(pending, backend)
 		finishForward(err)
 		cancel()
 		<-done
+		if errors.Is(guardErr, ErrServiceAdmission) {
+			return ErrServiceAdmission
+		}
 		return err
 	}
 	return ErrServiceAdmission
@@ -131,22 +140,24 @@ func (p *Connector) AcceptDirect(ctx context.Context, connection net.Conn, sourc
 
 // direct admission uses the claim immediately, rather than installing history.
 // every included relay and the claim itself must still be current.
-func validateDirectProjection(p ingressv1.ServiceProjection, now time.Time) error {
-	if err := validatePrivateProjection(p); err != nil {
-		return err
+func validateDirectAdmission(p ingressv1.DirectServiceVisitorAdmission, now time.Time) error {
+	if !opaqueid.Valid(p.ServiceId, opaqueid.ServicePrefix) || !opaqueid.Valid(p.ServiceRunId, opaqueid.ServiceRunPrefix) || p.RunNumber < 1 || !p.ExpiresAt.After(now) || len(p.ConnectedRelays) < 1 || len(p.ConnectedRelays) > 2 {
+		return ErrServiceAdmission
 	}
-	if p.Kind != ingressv1.Upsert || !p.ExpiresAt.After(now) {
-		return ErrPrivateRoutingStale
-	}
-	for _, relay := range *p.ConnectedRelays {
-		if !relay.LeaseExpiresAt.After(now) {
-			return ErrPrivateRoutingStale
+	services, slots := make(map[string]bool, 2), make(map[int]bool, 2)
+	for _, relay := range p.ConnectedRelays {
+		if !opaqueid.Valid(relay.PublisherConnectionId, opaqueid.PublisherConnectionPrefix) || relay.ConnectionSlot < 0 || relay.ConnectionSlot > 1 || relay.ConnectionAssignmentRevision < 1 || relay.RelayLeaseRevision < 1 || relay.RelayServiceId == "" || relay.RelayId == "" || !opaqueid.Valid(relay.RelayRunId, opaqueid.RelayRunPrefix) || !relay.LeaseExpiresAt.After(now) || services[relay.RelayServiceId] || slots[relay.ConnectionSlot] {
+			return ErrServiceAdmission
 		}
+		if _, _, err := net.SplitHostPort(relay.InternalRelayAddress); err != nil {
+			return ErrServiceAdmission
+		}
+		services[relay.RelayServiceId], slots[relay.ConnectionSlot] = true, true
 	}
 	return nil
 }
 
-func (p *Connector) openPrivateRelay(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, proxy []byte, deadline time.Time) (net.Conn, error) {
+func (p *DirectServices) openPrivateRelay(ctx context.Context, relay ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader, proxy []byte, deadline time.Time) (net.Conn, error) {
 	if header.Validate() != nil {
 		return nil, ErrServiceAdmission
 	}
@@ -165,12 +176,12 @@ func (p *Connector) openPrivateRelay(ctx context.Context, relay ingressv1.Servic
 	return connection, nil
 }
 
-func (p *Connector) guardDirectVisitor(ctx context.Context, control DirectControl, lease ingressv1.IngressLease, lookup ingressv1.DirectServiceVisitorLookup, deadline time.Time, connection *pendingDirectConn, admission *privateStreamAdmission, onAuthorized func()) {
+func (p *DirectServices) guardDirectVisitor(ctx context.Context, control DirectControl, lease ingressv1.IngressLease, lookup ingressv1.DirectServiceVisitorLookup, deadline time.Time, connection *pendingDirectConn, admission *privateStreamAdmission, onAuthorized func()) error {
 	reserved := false
 	for {
 		current, err := p.liveLease(time.Now())
 		if err != nil || !samePrivateLease(current, lease) || !deadline.After(time.Now()) {
-			return
+			return ErrServiceAdmission
 		}
 		if current.Draining && current.DrainDeadline != nil {
 			deadline = privateMinTime(deadline, *current.DrainDeadline)
@@ -182,19 +193,18 @@ func (p *Connector) guardDirectVisitor(ctx context.Context, control DirectContro
 			switch status.State {
 			case ingressv1.DirectVisitorPending:
 				if connection.authorized.Load() {
-					return
+					return ErrServiceAdmission
 				}
 				deadline = privateMinTime(deadline, status.ValidUntil)
 			case ingressv1.DirectVisitorAuthenticated, ingressv1.DirectVisitorAllowed:
 				if !status.ValidUntil.After(time.Now()) {
-					return
+					return ErrServiceAdmission
 				}
 				if !reserved {
 					if !admission.promote() {
-						return
+						return ErrServiceAdmission
 					}
 					reserved = true
-					onAuthorized()
 				}
 				if status.State == ingressv1.DirectVisitorAuthenticated {
 					promote, cancel := context.WithTimeout(ctx, min(p.config.RecheckTimeout, time.Until(deadline)))
@@ -205,11 +215,12 @@ func (p *Connector) guardDirectVisitor(ctx context.Context, control DirectContro
 					}
 				}
 				if !connection.authorized.Swap(true) {
+					onAuthorized()
 					close(connection.promoted)
 				}
 				deadline = privateMinTime(status.ValidUntil, time.Now().Add(p.config.HardAuthorizationTTL))
 			default:
-				return
+				return ErrServiceAdmission
 			}
 		}
 		interval := 100 * time.Millisecond
@@ -220,7 +231,7 @@ func (p *Connector) guardDirectVisitor(ctx context.Context, control DirectContro
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return
+			return context.Cause(ctx)
 		case <-timer.C:
 		}
 	}

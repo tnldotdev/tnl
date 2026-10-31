@@ -113,7 +113,7 @@ func (f *standalonePublishFixture) waitReady(t *testing.T, handle *integrationPu
 		t.Fatalf("publisher ready event = %#v", ready)
 	}
 	waitForReadyPublisherConnections(t, f.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
-	waitForIngressRoutingCurrent(t, f.inspect, 2)
+	waitForIngressRoutingCurrent(t, f.inspect, 1)
 	return ready
 }
 

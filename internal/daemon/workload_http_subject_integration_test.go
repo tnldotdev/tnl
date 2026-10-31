@@ -76,7 +76,7 @@ func TestIntegrationWorkloadHTTPReplacementKeepsSubjectsSeparate(t *testing.T) {
 		verification := f.visitorRoots.Clone()
 		verification.ServerName = service.Endpoint.Hostname
 		verification.Certificates = []tls.Certificate{certificate}
-		transport := &http.Transport{TLSClientConfig: verification, DialContext: workloadDirectDialer(t, process.ingresses[0].private, service.Endpoint.Port)}
+		transport := &http.Transport{TLSClientConfig: verification, DialContext: workloadDirectDialer(t, process.ingresses[0].direct, service.Endpoint.Port)}
 		t.Cleanup(transport.CloseIdleConnections)
 		request, err := http.NewRequestWithContext(t.Context(), "GET", "https://"+net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port))+"/stream", nil)
 		if err != nil {

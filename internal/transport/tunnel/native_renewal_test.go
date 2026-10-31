@@ -1,0 +1,102 @@
+package tunnel
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
+)
+
+func nativeRenewalPair(t *testing.T) (*Session, *Session, tunnelv1.NativePairLegProof, tunnelv1.NativePairLegAccepted) {
+	t.Helper()
+	proof := tunnelv1.NativePairLegProof{PairID: "npp_1234567890123456789012", DeliveryGeneration: 1,
+		ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 1,
+		PublisherIdentityID: "pub_1234567890123456789012", PublisherConnectionID: "pc_1234567890123456789012", AssignmentRevision: 1,
+		RelayServiceID: "relay-a", RelayID: "node-a", RelayRunID: "run-a", RelayLeaseRevision: 1, RequestedAt: time.Now(), Nonce: make([]byte, 32), Signature: make([]byte, 64)}
+	receipt := tunnelv1.NativePairLegAccepted{PairID: proof.PairID, DeliveryID: "AQEBAQEBAQEBAQEBAQEBAQ", DeliveryGeneration: 1,
+		SourceIP: "127.0.0.1", ObservedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}
+	left, right := newMemoryPair(t)
+	type result struct {
+		session *Session
+		err     error
+	}
+	accepted := tunnelWorker(t, func() { _ = right.Close() }, func() result {
+		session, _, err := AcceptWithResult(t.Context(), right, func(context.Context, tunnelv1.Message) (*tunnelv1.NativePairLegAccepted, error) { return &receipt, nil })
+		return result{session, err}
+	})
+	client, _, err := DialNative(t.Context(), left, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version,
+		Role: tunnelv1.NativeConnector, NativePairLegProof: &proof}, receipt.DeliveryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := await(t, accepted)
+	if server.err != nil {
+		t.Fatal(server.err)
+	}
+	t.Cleanup(func() { _ = client.Close(); _ = server.session.Close() })
+	return client, server.session, proof, receipt
+}
+
+func TestNativeLegRenewalUsesExistingControlAndRejectsSubstitution(t *testing.T) {
+	client, server, proof, initial := nativeRenewalPair(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	calls := 0
+	done := tunnelWorker(t, func() { cancel(); _ = server.Close() }, func() error {
+		return server.HandleNativeLegControl(ctx, nil, func(_ context.Context, requested tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
+			calls++
+			if requested.Nonce[0] != byte(calls) {
+				t.Error("renewal lost fresh nonce")
+			}
+			if calls == 1 {
+				return tunnelv1.NativePairLegAccepted{}, &ProtocolError{Code: tunnelv1.Unavailable}
+			}
+			receipt := initial
+			receipt.ObservedAt, receipt.ExpiresAt = time.Now(), time.Now().Add(2*time.Minute)
+			return receipt, nil
+		})
+	})
+	changed := proof
+	changed.AssignmentRevision++
+	if _, err := client.RenewNativeLeg(t.Context(), "wrong", changed, initial); err == nil {
+		t.Fatal("renewal substituted the original assignment")
+	}
+	for index := 1; index <= 2; index++ {
+		proof.Nonce = bytes.Repeat([]byte{byte(index)}, 32)
+		proof.RequestedAt = time.Now()
+		receipt, err := client.RenewNativeLeg(t.Context(), "renew", proof, initial)
+		if index == 1 {
+			var unavailable *ProtocolError
+			if !errors.As(err, &unavailable) || unavailable.Code != tunnelv1.Unavailable {
+				t.Fatal("temporary error lost its synchronized retry boundary", err)
+			}
+		} else if err != nil || receipt.SourceIP != initial.SourceIP || !receipt.ExpiresAt.After(initial.ExpiresAt) {
+			t.Fatal("checked renewal failed", err)
+		}
+	}
+	cancel()
+	if err := await(t, done); err == nil || calls != 2 {
+		t.Fatal("native renewal worker did not join", err, calls)
+	}
+}
+
+func TestNativeLegRenewalRejectsChangedReceiptSource(t *testing.T) {
+	client, server, proof, initial := nativeRenewalPair(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := tunnelWorker(t, func() { cancel(); _ = server.Close() }, func() error {
+		return server.HandleNativeLegControl(ctx, nil, func(context.Context, tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
+			receipt := initial
+			receipt.SourceIP = "127.0.0.2"
+			return receipt, nil
+		})
+	})
+	if _, err := client.RenewNativeLeg(t.Context(), "renew", proof, initial); err == nil {
+		t.Fatal("renewal rebound the accepted source")
+	}
+	cancel()
+	_ = await(t, done)
+}
