@@ -297,6 +297,47 @@ func TestPublicCapacityCommitDrainRace(t *testing.T) {
 	}
 }
 
+func TestPublicCapacityDrainJoinsAdmittedTLSClose(t *testing.T) {
+	f := newPublicCapacityFixture(t, 1, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
+	idle := make(chan struct{})
+	markIdle := sync.OnceFunc(func() { close(idle) })
+	f.route.http.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateIdle {
+			markIdle()
+		}
+	}
+	visitor := openRetiringPublicVisitor(t, f)
+	response, err := capacityRequest(visitor.client, "/", false)
+	if err != nil || response.StatusCode != 204 {
+		t.Fatal("admission failed", err)
+	}
+	_ = response.Body.Close()
+	awaitPublisherTest(t, idle)
+	if err := visitor.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	awaitPublisherTest(t, visitor.stream.entered)
+	// TLS marks itself closed before the first physical close returns. another
+	// HTTP shutdown can finish, but the admitted visitor still owns its cleanup.
+	ctx, cancel := context.WithTimeout(f.ctx, 100*time.Millisecond)
+	defer cancel()
+	if err := f.route.Drain(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("drain completed before admitted TLS close joined: %v", err)
+	}
+	select {
+	case <-visitor.admission.done:
+		t.Fatal("drain released capacity before physical close joined")
+	default:
+	}
+	f.wait(0, 1)
+	visitor.stream.release()
+	awaitPublisherTest(t, visitor.admission.done)
+	if err := f.route.Drain(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.wait(0, 0)
+}
+
 func TestPublicCapacityDrainExpiredAndDeadlineContexts(t *testing.T) {
 	for _, admitted := range []bool{false, true} {
 		for _, expired := range []bool{false, true} {
