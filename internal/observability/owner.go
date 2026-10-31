@@ -283,6 +283,7 @@ func (m *Metrics) ForceFlush(ctx context.Context) error {
 // each provider starts independently; one slow signal cannot consume another's
 // entire budget. errors retain all causes but format only authored text.
 func providerWork(ctx context.Context, work ...func(context.Context) error) error {
+	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, ShutdownTimeout)
 	defer cancel()
 	results := make(chan error, len(work))
@@ -293,8 +294,9 @@ func providerWork(ctx context.Context, work ...func(context.Context) error) erro
 	for range work {
 		err = errors.Join(err, <-results)
 	}
-	// a provider may finish cleanup successfully after the shared bound expires.
-	err = errors.Join(err, context.Cause(ctx))
+	// cleanup can finish while caller cancellation is still reaching this child.
+	// retain the caller's cause as well as the helper's own timeout.
+	err = errors.Join(err, context.Cause(ctx), context.Cause(caller))
 	if err != nil {
 		return safeExportError("observability provider operation failed", err)
 	}

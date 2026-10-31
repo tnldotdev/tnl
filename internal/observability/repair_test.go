@@ -212,6 +212,37 @@ func TestProviderWorkPreservesCancellationWhenWorkersReturnSuccess(t *testing.T)
 	}
 }
 
+type delayedCancellationContext struct {
+	context.Context
+	done <-chan struct{}
+}
+
+func (c delayedCancellationContext) Done() <-chan struct{} { return c.done }
+
+func TestProviderWorkPreservesCallerCauseBeforeChildCancellation(t *testing.T) {
+	caller, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	forwarded := make(chan struct{})
+	defer close(forwarded)
+	// hold propagation to the helper's child after the caller has canceled.
+	// a provider can finish successfully in that same propagation window.
+	ctx := delayedCancellationContext{Context: caller, done: forwarded}
+	cause := errors.New("secret caller shutdown cause")
+	err := providerWork(ctx, func(worker context.Context) error {
+		cancel(cause)
+		if worker.Err() != nil {
+			t.Error("child cancellation was not held")
+		}
+		return nil
+	})
+	if !errors.Is(err, cause) {
+		t.Fatal("provider completion lost caller cancellation before child propagation", err)
+	}
+	if err.Error() != "observability provider operation failed" {
+		t.Fatal("provider completion exposed the caller cause", err)
+	}
+}
+
 func TestOwnerShutdownStartsTraceDrainWhileLogsAreSlow(t *testing.T) {
 	for _, expired := range []bool{false, true} {
 		t.Run(fmt.Sprint(expired), func(t *testing.T) {
