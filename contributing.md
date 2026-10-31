@@ -94,6 +94,8 @@ exclude only the two real-clock proofs, which CI runs separately through
 `go:test:integration:runtime:leases` and `go:test:integration:runtime:workload`.
 The multi-cycle Git identity proof runs separately through
 `go:test:integration:cli:identity`; ordinary CLI shards exclude only that proof.
+The CLI Task builds one executable before the child lifecycle deadlines start;
+the detached, SSH, and named workflows reuse it instead of compiling during startup.
 All matrix jobs contribute to the required `Go integration` result. CLI shards
 cover the named-app workflows; the management job adds their unique service
 share lookup checks. Native SDK checks run in the provider HTTP job, alongside
