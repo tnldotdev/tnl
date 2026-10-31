@@ -32,7 +32,7 @@ func realHTTPVisitor(t *testing.T, route *PublicURLServer) net.Conn {
 		defer close(done)
 		c, err := l.Accept()
 		if err == nil {
-			route.handleVisitorHeader(c, false, tunnelv1.VisitorStreamHeader{VisitorConnectionID: "test-visitor"})
+			serveTestPublicVisitor(t, route, c, tunnelv1.VisitorStreamHeader{VisitorConnectionID: "test-visitor"})
 		}
 	}()
 	c, err := net.Dial("tcp", l.Addr().String())
@@ -41,7 +41,7 @@ func realHTTPVisitor(t *testing.T, route *PublicURLServer) net.Conn {
 	}
 	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
 	t.Cleanup(func() { _ = c.Close(); awaitPublisherTest(t, done) })
-	header, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40001"), Destination: netip.MustParseAddrPort("203.0.113.10:443")})
+	header, err := encodeTestPublicMetadata(route, tunnelv1.VisitorStreamHeader{VisitorConnectionID: "test-visitor"}, proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40001"), Destination: netip.MustParseAddrPort("203.0.113.10:443")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestHTTPAuthorizationPrecedesPromotionAndTarget(t *testing.T) {
 }
 
 func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Number: 8}
+	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 8}
 	proof, err := NewReadinessProof(run, "/health")
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +140,7 @@ func TestReadinessProofIsExactSingleUseAndStripped(t *testing.T) {
 			return nil
 		}, promote: func(context.Context, Visitor) error { promoted++; return nil }}))
 		w := httptest.NewRecorder()
-		route.http.Handler.ServeHTTP(w, r)
+		serveTestPublicRequest(t, route, w, r)
 		if w.Code != test.status {
 			t.Fatalf("%s %s: status=%d", test.method, test.path, w.Code)
 		}
@@ -174,7 +174,7 @@ func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 	if forwarded.Load() != 0 {
 		t.Fatal("preflight sent an HTTP request to the target")
 	}
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Number: 8}
+	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 8}
 	proof, err := NewReadinessProof(run, "/health")
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 		r.Header.Set("Authorization", "caller-value")
 		r = r.WithContext(context.WithValue(r.Context(), denialContextKey{}, true))
 		w := httptest.NewRecorder()
-		route.http.Handler.ServeHTTP(w, r)
+		serveTestPublicRequest(t, route, w, r)
 		if w.Code != want {
 			t.Fatalf("readiness status = %d, want %d", w.Code, want)
 		}
@@ -266,7 +266,7 @@ func TestHTTPPublisherAcceptsVerifiedTargetTLSServerName(t *testing.T) {
 	r.Host = "route.example"
 	r.TLS = &tls.ConnectionState{ServerName: "route.example"}
 	w := httptest.NewRecorder()
-	route.http.Handler.ServeHTTP(w, r)
+	serveTestPublicRequest(t, route, w, r)
 	if w.Code != 204 {
 		t.Fatalf("publisher target TLS status=%d", w.Code)
 	}

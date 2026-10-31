@@ -87,18 +87,6 @@ func newTrafficAdmission(c TrafficConfig, p PendingConfig) *trafficAdmission {
 	return &trafficAdmission{config: c, pending: p, runs: map[trafficKey]*runTraffic{}, sources: map[netip.Prefix]*sourceTraffic{}, pendingURLs: map[trafficKey]*pendingTraffic{}}
 }
 
-func sourceNetwork(addr netip.Addr) netip.Prefix {
-	addr = addr.Unmap()
-	if !addr.IsValid() || addr.Zone() != "" {
-		return netip.Prefix{}
-	}
-	bits := addr.BitLen()
-	if addr.Is6() {
-		bits = 64
-	}
-	return netip.PrefixFrom(addr, bits).Masked()
-}
-
 func take(b *tokenBucket, rate, burst float64, now time.Time) bool {
 	if b.refill(rate, burst, now) < 1 {
 		return false
@@ -131,7 +119,7 @@ func (a *trafficAdmission) process() bool {
 }
 
 func (a *trafficAdmission) sourceLocked(addr netip.Addr) *sourceTraffic {
-	key := sourceNetwork(addr)
+	key := trafficlimits.SourceNetwork(addr)
 	if !key.IsValid() {
 		return nil
 	}

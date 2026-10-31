@@ -144,4 +144,51 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 	}
 }
 
+func TestPublisherVisitorPolicyHTTPMaximumPublicRunSourceKey(t *testing.T) {
+	body, _ := policyfixture.Maximum(t, time.Now().UTC())
+	body.Policy.Resource = controlv1.VisitorResourceScope{Kind: "public_url", Id: certificateTestPublicURLID}
+	body.Policy.Port = 443
+	body.Policy.VisitorPolicyRevision = math.MaxInt64 - 256
+	body.VisitorSourceKey = testVisitorSourceKeyBytes()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request controlv1.PublisherVisitorPolicyRequest
+		if json.NewDecoder(r.Body).Decode(&request) != nil || request.Resource != body.Policy.Resource || request.RunId != "pr_0123456789abcdefghijkl" || request.RunNumber != 1 {
+			t.Error("public publisher sent the wrong policy identity")
+			w.WriteHeader(400)
+			return
+		}
+		response := body
+		if request.AfterRevision != 0 {
+			response.SnapshotRequired = false
+			response.AfterRevision = body.Policy.VisitorPolicyRevision
+			response.Policy.VisitorPolicyRevision = math.MaxInt64
+			response.Revisions = make([]int64, 256)
+			for index := range response.Revisions {
+				response.Revisions[index] = response.AfterRevision + int64(index) + 1
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+	client, err := clientcontrol.New(server.URL, server.Client(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := prepareVisitorPolicy(t.Context(), client, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: certificateTestPublicURLID}, "pr_0123456789abcdefghijkl", 1, "fixture-run-secret", nil)
+	if err != nil {
+		t.Fatal("public run source key did not fit the unchanged maximum-policy HTTP budget", err)
+	}
+	defer policy.Close()
+	if err := policy.refresh(t.Context()); err != nil {
+		t.Fatal("maximum public delta did not fit the original preparation budget", err)
+	}
+	view, enabled, _ := policy.lease.Current()
+	if !enabled || view.VisitorPolicyRevision != math.MaxInt64 || policy.sourceKey != testPublicVisitorSourceKey {
+		t.Fatal("public preparation omitted source authority or policy history")
+	}
+}
+
 var _ visitorPolicyClient = (*clientcontrol.Client)(nil)

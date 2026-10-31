@@ -78,7 +78,7 @@ func TestFeedbackHTMLInjectionAndPerBrowserFailuresKeepAppCookies(t *testing.T) 
 			request.Header.Set("Cookie", cookies)
 		}
 		response := httptest.NewRecorder()
-		route.http.Handler.ServeHTTP(response, request)
+		serveTestPublicRequest(t, route, response, request)
 		return response
 	}
 	page := serve("/", "app_session=ok")
@@ -179,7 +179,7 @@ func TestFeedbackBrowserAuthorComesFromSessionFactNotVisitorToken(t *testing.T) 
 		r.Header.Set("Cookie", cookie)
 		response := httptest.NewRecorder()
 		client.page = controlv1.PreviewPageFeedbackRequest{}
-		route.http.Handler.ServeHTTP(response, r)
+		serveTestPublicRequest(t, route, response, r)
 		if cookie == "" {
 			if response.Code != http.StatusOK || client.page.Access.BrowserCookieSecret != nil {
 				t.Fatal("visitor token supplied verified author facts")

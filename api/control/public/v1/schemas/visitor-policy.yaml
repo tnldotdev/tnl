@@ -20,6 +20,16 @@ schemas:
         maxItems: 256
         items: { type: integer, format: int64, minimum: 1 }
       snapshot_required: { type: boolean }
+      visitor_source_key:
+        type: string
+        format: byte
+        maxLength: 44
+        description: Private public-run source key. Publishers receive the run master; ingress receives only the child key bound by visitor_source_authority. Never expose this value to a browser or relay.
+      visitor_source_authority:
+        type: string
+        format: byte
+        maxLength: 1368
+        description: Opaque tunnelv1 source authority for the exact ingress process and public run. Present only in ingress preparation responses; it supplies neither visitor permission nor capacity.
   VisitorPolicySnapshot:
     type: object
     additionalProperties: false

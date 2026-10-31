@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,20 +46,27 @@ type PublicURLServerConfig struct {
 	Limits                ApplicationLimits
 	VisitorPolicy         *visitorlease.Lease
 	VisitorTokens         *browserTokens
-	OnTargetFailure       func()
-	ObserveSummary        inspection.Observer
-	PromoteVisitor        PromoteVisitor
-	AdmitVisitor          AdmitVisitor
-	ReadinessProof        *ReadinessProof
-	OnWarning             func(string)
-	InspectionMode        inspection.Mode
-	Certificate           tls.Certificate
-	CertificatePlan       controlv1.CertificatePlan
+	VisitorSourceKey      [32]byte
+	// authorized visitor connections across both relays; zero uses traffic defaults.
+	StreamCapacity  int
+	OnTargetFailure func()
+	ObserveSummary  inspection.Observer
+	PromoteVisitor  PromoteVisitor
+	AdmitVisitor    AdmitVisitor
+	ReadinessProof  *ReadinessProof
+	OnWarning       func(string)
+	InspectionMode  inspection.Mode
+	Certificate     tls.Certificate
+	CertificatePlan controlv1.CertificatePlan
 }
 
 type PublicURLServer struct {
 	hostname           string
 	policy             *visitorlease.Lease
+	visitorSourceKey   [32]byte
+	sourceHistory      map[[32]byte]*visitorSourceHistory
+	sourceExpirations  visitorSourceExpirations
+	sourceTime         int64
 	certificatePlan    controlv1.CertificatePlan
 	tls                *tls.Config
 	certificate        atomic.Pointer[tls.Certificate]
@@ -71,7 +79,14 @@ type PublicURLServer struct {
 	started            bool
 	closed             bool
 	draining           bool
-	streams            map[net.Conn]struct{}
+	drainDone          chan struct{}
+	drainErr           error
+	streams            map[net.Conn]*publicVisitorAdmission
+	streamCapacity     int
+	authorizedStreams  int
+	pendingStreams     int
+	pendingRelays      map[string]int
+	pendingSources     map[netip.Prefix]int
 	handlers           sync.WaitGroup
 	httpDone           chan error
 	closeOnce          sync.Once
@@ -109,14 +124,55 @@ func (r *PublicURLServer) start() error {
 
 func (r *PublicURLServer) Drain(ctx context.Context) error {
 	r.stopAdmissions()
-	return r.http.Shutdown(ctx)
+	r.mu.Lock()
+	done := r.drainDone
+	r.mu.Unlock()
+	if done == nil {
+		return ctx.Err()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-done:
+		return errors.Join(r.drainErr, ctx.Err())
+	}
 }
 
 func (r *PublicURLServer) stopAdmissions() {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return
+	}
 	r.draining = true
-	r.mu.Unlock()
+	if r.drainDone == nil {
+		r.drainDone = make(chan struct{})
+		streams := make([]*publicVisitorAdmission, 0, len(r.streams))
+		for _, stream := range r.streams {
+			streams = append(streams, stream)
+		}
+		// one run-owned worker performs potentially blocking connection, queue,
+		// and HTTP shutdown. a drain caller bounds its wait; Close joins the work.
+		go r.drain(streams)
+	}
+}
+
+func (r *PublicURLServer) drain(streams []*publicVisitorAdmission) {
+	defer close(r.drainDone)
 	r.http.SetKeepAlivesEnabled(false)
+	var pending []<-chan struct{}
+	for _, stream := range streams {
+		if done := stream.stopPending(); done != nil {
+			pending = append(pending, done)
+		}
+	}
+	r.drainErr = r.http.Shutdown(r.life)
+	for _, done := range pending {
+		<-done
+	}
+	// net/http can finish while an admitted TLS connection's first close is
+	// still running. join the run-owned cleanup before reporting a drained run.
+	r.handlers.Wait()
 }
 
 func (r *PublicURLServer) Close() error {
@@ -131,9 +187,10 @@ func (r *PublicURLServer) Close() error {
 			r.certificateTimer = nil
 		}
 		started := r.started
+		drainDone := r.drainDone
 		streams := make([]net.Conn, 0, len(r.streams))
-		for stream := range r.streams {
-			streams = append(streams, stream)
+		for _, admission := range r.streams {
+			streams = append(streams, admission.connection)
 		}
 		r.mu.Unlock()
 		result := errors.Join(r.http.Close(), r.queue.Close())
@@ -141,6 +198,9 @@ func (r *PublicURLServer) Close() error {
 			_ = stream.Close()
 		}
 		r.handlers.Wait()
+		if drainDone != nil {
+			<-drainDone
+		}
 		if started {
 			result = errors.Join(result, <-r.httpDone)
 		}

@@ -15,13 +15,14 @@ type visitorPolicyClient interface {
 }
 
 type visitorPolicy struct {
-	lease   *visitorlease.Lease
-	client  visitorPolicyClient
-	request controlv1.PublisherVisitorPolicyRequest
-	token   string
-	cancel  context.CancelFunc
-	done    chan struct{}
-	gate    chan struct{}
+	lease     *visitorlease.Lease
+	client    visitorPolicyClient
+	request   controlv1.PublisherVisitorPolicyRequest
+	token     string
+	sourceKey [32]byte
+	cancel    context.CancelFunc
+	done      chan struct{}
+	gate      chan struct{}
 }
 
 func prepareVisitorPolicy(ctx context.Context, client visitorPolicyClient, scope visitorscope.Scope, run string, number int64, token string, report func(error)) (*visitorPolicy, error) {
@@ -89,7 +90,23 @@ func (p *visitorPolicy) refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return p.lease.Apply(request, update)
+	key := p.sourceKey
+	if p.request.Resource.Kind == "public_url" {
+		if response.VisitorSourceKey == nil || len(*response.VisitorSourceKey) != 32 || response.VisitorSourceAuthority != nil {
+			return visitorlease.ErrUpdate
+		}
+		key = [32]byte(*response.VisitorSourceKey)
+		if key == ([32]byte{}) || p.sourceKey != ([32]byte{}) && p.sourceKey != key {
+			return visitorlease.ErrUpdate
+		}
+	}
+	if err := p.lease.Apply(request, update); err != nil {
+		return err
+	}
+	if p.sourceKey == ([32]byte{}) {
+		p.sourceKey = key
+	}
+	return nil
 }
 
 // timer callbacks can lag their absolute deadline. neither a queued fetch nor

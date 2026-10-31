@@ -114,6 +114,7 @@ func (c *certificateTestControl) ReadPublisherVisitorPolicy(_ context.Context, b
 	now := time.Now()
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("v", 32)))
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
+		VisitorSourceKey: testVisitorSourceKeyBytes(),
 		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: c.setup.PublicUrl.CanonicalHostname, Port: 443, Issuer: "https://control.example.test",
 			VisitorPolicyRevision: 1, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true,
 			Anonymous:        c.setup.PublicUrl.AccessMode == "" || c.setup.PublicUrl.AccessMode == "anonymous",

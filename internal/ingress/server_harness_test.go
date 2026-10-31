@@ -138,8 +138,14 @@ func publicURLConfig(backends ...ingressbackend.Backend) Config {
 		if host != "route.example" {
 			return PublicURL{}, "not_found"
 		}
-		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, RecoveryEpisodeID: 7, Backends: backends, AllowAll: true}, ""
+		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, RecoveryEpisodeID: 7, Backends: backends, AllowAll: true, AttestSource: testBackendSourceProof}, ""
 	}}
+}
+
+// fake backends parse metadata but do not run publisher authentication. the
+// separated visitor fixtures exercise real source authentication instead.
+func testBackendSourceProof(string, netip.AddrPort, netip.AddrPort) (string, error) {
+	return "fixture-source-proof", nil
 }
 
 type backendResult struct {

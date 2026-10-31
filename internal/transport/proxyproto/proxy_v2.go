@@ -11,6 +11,7 @@ import (
 
 	proxy "github.com/pires/go-proxyproto"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 const (
@@ -32,6 +33,7 @@ const (
 	ErrorTruncatedHeader      ErrorCode = "truncated_header"
 	ErrorInvalidAddress       ErrorCode = "invalid_address"
 	ErrorDuplicateHeader      ErrorCode = "duplicate_header"
+	ErrorDuplicateSourceProof ErrorCode = "duplicate_source_proof"
 )
 
 type ProtocolError struct {
@@ -43,8 +45,9 @@ func (e *ProtocolError) Error() string {
 }
 
 type Header struct {
-	Source      netip.AddrPort
-	Destination netip.AddrPort
+	Source             netip.AddrPort
+	Destination        netip.AddrPort
+	VisitorSourceProof string
 }
 
 func Encode(header Header) ([]byte, error) {
@@ -59,6 +62,14 @@ func Encode(header Header) ([]byte, error) {
 	if encoded.Version != 2 || encoded.Command != proxy.PROXY ||
 		encoded.TransportProtocol != proxy.TCPv4 && encoded.TransportProtocol != proxy.TCPv6 {
 		return nil, protocolError(ErrorInvalidAddress)
+	}
+	if len(header.VisitorSourceProof) > tunnelv1.MaxVisitorSourceProofBytes {
+		return nil, protocolError(ErrorInvalidLength)
+	}
+	if header.VisitorSourceProof != "" {
+		if err := encoded.SetTLVs([]proxy.TLV{{Type: proxy.PP2Type(tunnelv1.VisitorSourceProofTLV), Value: []byte(header.VisitorSourceProof)}}); err != nil {
+			return nil, protocolError(ErrorInvalidLength)
+		}
 	}
 	bytes, err := encoded.Format()
 	if err != nil {
@@ -102,7 +113,8 @@ func Decode(reader io.Reader) (Header, io.Reader, error) {
 	if err != nil {
 		return Header{}, nil, proxyReadError(err)
 	}
-	if _, err := parsed.TLVs(); err != nil {
+	tlvs, err := parsed.TLVs()
+	if err != nil {
 		return Header{}, nil, protocolError(ErrorInvalidLength)
 	}
 	source, destination, ok := parsed.TCPAddrs()
@@ -112,6 +124,18 @@ func Decode(reader io.Reader) (Header, io.Reader, error) {
 	header, ok := headerFromTCP(family, source, destination)
 	if !ok {
 		return Header{}, nil, protocolError(ErrorInvalidAddress)
+	}
+	for _, tlv := range tlvs {
+		if tlv.Type != proxy.PP2Type(tunnelv1.VisitorSourceProofTLV) {
+			continue
+		}
+		if header.VisitorSourceProof != "" {
+			return Header{}, nil, protocolError(ErrorDuplicateSourceProof)
+		}
+		if len(tlv.Value) == 0 || len(tlv.Value) > tunnelv1.MaxVisitorSourceProofBytes {
+			return Header{}, nil, protocolError(ErrorInvalidLength)
+		}
+		header.VisitorSourceProof = string(tlv.Value)
 	}
 	return header, &duplicateGuard{reader: buffered}, nil
 }
@@ -184,8 +208,9 @@ func normalize(header Header) (Header, bool) {
 		return Header{}, false
 	}
 	return Header{
-		Source:      netip.AddrPortFrom(source, header.Source.Port()),
-		Destination: netip.AddrPortFrom(destination, header.Destination.Port()),
+		Source:             netip.AddrPortFrom(source, header.Source.Port()),
+		Destination:        netip.AddrPortFrom(destination, header.Destination.Port()),
+		VisitorSourceProof: header.VisitorSourceProof,
 	}, true
 }
 

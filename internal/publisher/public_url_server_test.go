@@ -51,15 +51,18 @@ func (*testVisitorControl) RevokeBrowserAccess(context.Context, string, uint64, 
 
 func newTestPublicURLServer(t *testing.T, config PublicURLServerConfig) (*PublicURLServer, error) {
 	t.Helper()
+	config.VisitorSourceKey = testPublicVisitorSourceKey
 	if config.PublicURLID == "" {
 		config.PublicURLID = certificateTestPublicURLID
 	}
+	if config.PublishRunID == "" {
+		config.PublishRunID = "pr_0123456789abcdefghijkl"
+	}
+	if config.PublishRunNumber == 0 {
+		config.PublishRunNumber = 1
+	}
 	if config.VisitorPolicy == nil {
-		run := config.PublishRunID
-		if run == "" {
-			run = "pr_0123456789abcdefghijkl"
-		}
-		policy, err := prepareVisitorPolicy(t.Context(), testHTTPPolicyClient{hostname: config.Hostname, anonymous: config.AccessMode != "restricted"}, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: config.PublicURLID}, run, max(1, int64(config.PublishRunNumber)), "fixture-run-token", nil)
+		policy, err := prepareVisitorPolicy(t.Context(), testHTTPPolicyClient{hostname: config.Hostname, anonymous: config.AccessMode != "restricted"}, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: config.PublicURLID}, config.PublishRunID, int64(config.PublishRunNumber), "fixture-run-token", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -82,6 +85,7 @@ func (f testHTTPPolicyClient) ReadPublisherVisitorPolicy(_ context.Context, body
 	now := time.Now()
 	key := ed25519.NewKeyFromSeed([]byte(strings.Repeat("v", 32)))
 	return controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
+		VisitorSourceKey: testVisitorSourceKeyBytes(),
 		Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Issuer: "https://control.example.test", Hostname: f.hostname, Port: 443,
 			ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: f.anonymous, VisitorPolicyRevision: 1, KeyRevision: 1,
 			VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "fixture", PublicKey: key.Public().(ed25519.PublicKey)}}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}}, nil
@@ -157,9 +161,12 @@ func TestDeniedVisitorCompletesTLSButCannotReachLocalService(t *testing.T) {
 	ingress, publisher := net.Pipe()
 	_ = ingress.SetDeadline(time.Now().Add(5 * time.Second))
 	handled := make(chan struct{})
-	go func() { route.handleVisitor(publisher, true); close(handled) }()
+	go func() {
+		serveTestPublicVisitor(t, route, publisher, tunnelv1.VisitorStreamHeader{AccessPending: true})
+		close(handled)
+	}()
 	t.Cleanup(func() { _ = ingress.Close(); awaitPublisherTest(t, handled) })
-	header, err := proxyproto.Encode(proxyproto.Header{
+	header, err := encodeTestPublicMetadata(route, tunnelv1.VisitorStreamHeader{AccessPending: true}, proxyproto.Header{
 		Source: netip.MustParseAddrPort("192.0.2.10:1234"), Destination: netip.MustParseAddrPort("127.0.0.1:443"),
 	})
 	if err != nil {
@@ -196,11 +203,16 @@ func TestDeniedVisitorCompletesTLSButCannotReachLocalService(t *testing.T) {
 }
 
 func TestRouteServerClosesStreamAfterMalformedProxyHeader(t *testing.T) {
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Handler: http.NotFoundHandler()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = route.Close() })
 	publisher, relay := net.Pipe()
 	_ = relay.SetDeadline(time.Now().Add(5 * time.Second))
 	handled := make(chan struct{})
 	go func() {
-		new(PublicURLServer).handle(publisher)
+		serveTestPublicVisitor(t, route, publisher, tunnelv1.VisitorStreamHeader{})
 		close(handled)
 	}()
 	t.Cleanup(func() { _ = relay.Close(); _ = publisher.Close(); awaitPublisherTest(t, handled) })
@@ -252,6 +264,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 
 	publicURLCertificate := publicURLTestCertificate(t, "route.example")
 	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
+		PublishRunID: "publish_run_1", PublishRunNumber: 1,
 		Hostname: "route.example", Target: upstream.URL, Certificate: publicURLCertificate,
 	})
 	if err != nil {
@@ -387,7 +400,7 @@ func TestRouteServerServesTransportNeutralPublisherConnection(t *testing.T) {
 	if err := stream.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	header, err := proxyproto.Encode(proxyproto.Header{
+	header, err := encodeTestPublicMetadata(route, tunnelv1.VisitorStreamHeader{PublicURLID: ref.PublicURLID, PublishRunID: ref.PublishRunID, PublishRunNumber: ref.PublishRunNumber, VisitorConnectionID: "visitor_connection_1"}, proxyproto.Header{
 		Source:      netip.MustParseAddrPort("192.0.2.10:1234"),
 		Destination: netip.MustParseAddrPort("127.0.0.1:443"),
 	})
@@ -538,11 +551,18 @@ func startHTTPTestRouteServer(t *testing.T, target string) *PublicURLServer {
 func openHTTPTestRouteServer(route *PublicURLServer, handled chan struct{}) (net.Conn, error) {
 	ingress, publisher := net.Pipe()
 	_ = ingress.SetDeadline(time.Now().Add(5 * time.Second))
+	a, err := reserveTestPublicSetup(route, publisher)
+	if err != nil {
+		_ = ingress.Close()
+		_ = publisher.Close()
+		return nil, err
+	}
+	streamHeader := testPublicStreamHeader(route, tunnelv1.VisitorStreamHeader{})
 	go func() {
-		route.handle(publisher)
+		route.handleVisitor(route.life, a, streamHeader)
 		close(handled)
 	}()
-	header, err := proxyproto.Encode(proxyproto.Header{
+	header, err := encodeTestPublicMetadata(route, streamHeader, proxyproto.Header{
 		Source:      netip.MustParseAddrPort("192.0.2.10:1234"),
 		Destination: netip.MustParseAddrPort("127.0.0.1:443"),
 	})

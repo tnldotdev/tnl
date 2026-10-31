@@ -76,6 +76,7 @@ type Controller struct {
 	publicPolicies    map[string]*publicRunPolicy
 	policyCancel      context.CancelFunc
 	policyDone        chan struct{}
+	sourceSequences   map[string]*publicRunSequence
 
 	mu                  sync.RWMutex
 	lease               ingressv1.IngressLease

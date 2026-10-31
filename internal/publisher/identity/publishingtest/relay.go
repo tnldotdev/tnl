@@ -20,6 +20,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -30,6 +31,14 @@ import (
 type relaySession struct {
 	session *tunnel.Session
 	ref     tunnelv1.PublisherConnectionRef
+}
+
+func publicSourceKey(setup controlv1.PublishRunSetup) ([32]byte, error) {
+	_, digest, err := credentials.ParsePublishRunToken(credentials.PublishRunToken(setup.PublishRunToken))
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return visitortoken.PublicVisitorSourceKey(digest[:], setup.PublishRun.Id, uint64(setup.PublishRun.PublishRunNumber))
 }
 
 func (f *Fixture) startRelay(ctx context.Context, setup controlv1.PublishRunSetup) (string, error) {
@@ -112,6 +121,7 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 			break
 		}
 	}
+	setup := f.setups[selected.ref.PublishRunID]
 	f.mu.Unlock()
 	if selected.session == nil {
 		return 0, nil, errors.New("publisher connection is not ready")
@@ -131,7 +141,32 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 		deadline = d
 	}
 	_ = stream.SetDeadline(deadline)
-	metadata, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("127.0.0.1:45123"), Destination: netip.MustParseAddrPort("127.0.0.1:443")})
+	master, err := publicSourceKey(setup)
+	if err != nil {
+		return 0, nil, err
+	}
+	now := time.Now()
+	authority, child, err := visitortoken.IssueVisitorSourceAuthority(master, tunnelv1.VisitorSourceAuthority{
+		PublicURLID: r.PublicURLID, PublishRunID: r.PublishRunID, PublishRunNumber: r.PublishRunNumber,
+		IngressID: "fixture-ingress", IngressRunID: "fixture-process", IngressLeaseRevision: 1, VisitorPolicyRevision: 1, ValidUntil: now.Add(10 * time.Second).Unix(),
+	}, now)
+	if err != nil {
+		return 0, nil, err
+	}
+	header := proxyproto.Header{Source: netip.MustParseAddrPort("127.0.0.1:45123"), Destination: netip.MustParseAddrPort("127.0.0.1:443")}
+	proof, err := visitortoken.SignVisitorSource(child, authority, f.sourceSequence.Add(1), tunnelv1.VisitorSourceBinding{
+		PublicURLID: r.PublicURLID, PublishRunID: r.PublishRunID, PublishRunNumber: r.PublishRunNumber,
+		VisitorID: id, Source: header.Source, Destination: header.Destination,
+	}, now)
+	if err != nil {
+		return 0, nil, err
+	}
+	wire, err := proof.MarshalBinary()
+	if err != nil {
+		return 0, nil, err
+	}
+	header.VisitorSourceProof = string(wire)
+	metadata, err := proxyproto.Encode(header)
 	if err != nil {
 		return 0, nil, err
 	}

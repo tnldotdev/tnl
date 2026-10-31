@@ -124,6 +124,48 @@ See [target discovery](aws-target-discovery.md), [bootstrap](aws-bootstrap.md),
 [generation](publisher-generation.md), [provenance](publisher-provenance.md), and
 [egress evidence](publisher-egress.md).
 
+## public visitor capacity
+
+Each public publish run owns one authorized visitor-connection counter across
+both relay sessions and all ingress processes. Its limit comes from the run's
+resolved traffic connection setting (32 by default); two runs configured with 10
+each can admit 20 connections in total. HTTP/2
+requests on one connection spend one connection slot, while request concurrency
+and rate limits still apply separately.
+
+[Public admission](../../../internal/publisher/public_url_capacity.go) bounds
+pending setups to four per registered relay service and eight per run. Opening
+headers cannot select the relay service. Pending pressure never evicts admitted
+connections, and a reconnect retains its service's retiring setup count. Capacity
+is reusable only after physical close, promotion work, and HTTP handlers join.
+Current request authorization precedes capacity commit; capacity is not an access
+proof. Ingress retains its local limits and exact-session sideband promotion.
+The setup deadline stays armed until that promotion succeeds. A drain caller can
+stop waiting at its deadline while the run still owns physical cleanup; `Close`
+joins the run's single shutdown worker and visitor retirement.
+
+Source evidence is separate from capacity and HTTP permission. Control derives a
+run master from the stored publish-run token digest; the publisher receives it
+through authenticated policy preparation. Ingress receives only a process-bound
+child key and a control-MACed delegation ending at the earliest policy, run, or
+process deadline. Neither key goes to a relay or browser.
+
+Ingress signs the exact run, visitor ID, sequence, and original endpoints once in
+[PROXY v2 metadata](../../../internal/transport/proxyproto/proxy_v2.go). The relay
+preserves it. The publisher authenticates it after metadata arrives, before TLS,
+then consumes a run-owned 256-sequence window per authenticated delegation MAC.
+Both relay connections share that history. Closing a visitor never clears it;
+only the immutable delegation deadline retires it. Policy-owner replacement keeps
+ingress's run sequence, so repeated delegation cannot reopen consumed evidence.
+These checks do not replace current visitor permission or change ingress's
+first-byte retry boundary.
+
+An unexpired source delegation may predate the publisher's installed policy, as
+when share redemption advances policy before ingress renews. It still proves
+origin, not access: HTTP permission and IP checks use the publisher's newer
+policy. Its signed revision cannot be rewritten and its original deadline does
+not move. A delegation newer than installed publisher policy is rejected.
+
 ## integration urls and aliases
 
 `integrations` elects one worker per saved project integration URL using shared

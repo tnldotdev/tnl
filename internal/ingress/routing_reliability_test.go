@@ -140,7 +140,7 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 				if entry.PolicyRevision > 1 {
 					backends = []ingressbackend.Backend{firstAttempt, after}
 				}
-				return PublicURL{ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber), Backends: backends, AllowAll: true}, ""
+				return PublicURL{ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber), Backends: backends, AllowAll: true, AttestSource: testBackendSourceProof}, ""
 			}})
 			advance(expires.Add(-time.Nanosecond))
 			if _, ok := controller.Lookup("route.example", now()); !ok {

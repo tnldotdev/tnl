@@ -94,6 +94,7 @@ func (c *metadataConn) Close() error {
 
 func (c *publicURLReaderConn) CloseWrite() error { return closeWrite(c.Conn) }
 func (c *metadataConn) CloseWrite() error        { return closeWrite(c.Conn) }
+func (c *doneConn) CloseWrite() error            { return closeWrite(c.Conn) }
 
 func closeWrite(conn net.Conn) error {
 	if half, ok := conn.(interface{ CloseWrite() error }); ok {
@@ -111,16 +112,23 @@ func tcpAddress(endpoint netip.AddrPort) net.Addr {
 
 type doneConn struct {
 	net.Conn
-	done chan struct{}
-	once sync.Once
+	done     chan struct{}
+	closing  chan struct{}
+	once     sync.Once
+	closeErr error
 }
 
 func newDoneConn(connection net.Conn) *doneConn {
-	return &doneConn{Conn: connection, done: make(chan struct{})}
+	return &doneConn{Conn: connection, done: make(chan struct{}), closing: make(chan struct{})}
 }
 
 func (c *doneConn) Close() error {
-	err := c.Conn.Close()
-	c.once.Do(func() { close(c.done) })
-	return err
+	// concurrent callers join the physical close, even when the underlying
+	// transport returns early from a second close while the first is retiring.
+	c.once.Do(func() {
+		close(c.closing)
+		c.closeErr = c.Conn.Close()
+		close(c.done)
+	})
+	return c.closeErr
 }

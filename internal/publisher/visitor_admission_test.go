@@ -24,7 +24,7 @@ import (
 )
 
 func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Number: 1}
+	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
 	proof, err := NewReadinessProof(run, "/health")
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +43,10 @@ func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer route.Close()
+	// concurrent probes share one owned visitor connection, just as HTTP/2 does.
+	// this isolates the request-level probe limit from pending connection limits.
+	session := &visitorSession{visitor: Visitor{Run: run, Source: netip.MustParseAddrPort("192.0.2.1:1234")}}
+	defer ownTestVisitorSession(t, route, session)()
 	defer func() { close(release); workers.Wait() }()
 	request := func(path, token string) *http.Request {
 		r := httptest.NewRequest("GET", path, nil)
@@ -51,7 +55,7 @@ func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
 		if token != "" {
 			r.Header.Set(publisherproxy.ReadinessProbeHeader, token)
 		}
-		return r
+		return r.WithContext(context.WithValue(r.Context(), visitorSessionKey{}, session))
 	}
 	for range 4 {
 		token, err := proof.Renew()
@@ -61,7 +65,7 @@ func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
 		r := request("/health", token)
 		workers.Go(func() {
 			w := httptest.NewRecorder()
-			route.http.Handler.ServeHTTP(w, r)
+			serveTestPublicRequest(t, route, w, r)
 			if w.Code != 204 {
 				t.Errorf("admitted probe status=%d", w.Code)
 			}
@@ -70,19 +74,19 @@ func TestReadinessHasIndependentBoundedProbeCapacity(t *testing.T) {
 	}
 	token, _ := proof.Renew()
 	rejected := httptest.NewRecorder()
-	route.http.Handler.ServeHTTP(rejected, request("/health", token))
+	serveTestPublicRequest(t, route, rejected, request("/health", token))
 	if rejected.Code != 503 {
 		t.Fatalf("unbounded probes: status=%d", rejected.Code)
 	}
 	ordinary := httptest.NewRecorder()
-	route.http.Handler.ServeHTTP(ordinary, request("/app", ""))
+	serveTestPublicRequest(t, route, ordinary, request("/app", ""))
 	if ordinary.Code != 204 || route.admission.used != 1 || route.admission.active != 0 {
 		t.Fatalf("probes spent application budgets: status=%d used=%d active=%d", ordinary.Code, route.admission.used, route.admission.active)
 	}
 }
 
 func TestReadinessProofDoesNotAuthorizeBodiesOrUpgrades(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Number: 1}
+	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
 	proof, _ := NewReadinessProof(run, "/health")
 	body := httptest.NewRequest("GET", "/health", strings.NewReader("private-body"))
 	body.Header.Set(publisherproxy.ReadinessProbeHeader, proof.HeaderValue())
@@ -112,9 +116,12 @@ func mixedVisitorClient(t *testing.T, route *PublicURLServer, h2, denied bool) *
 			}
 			visitor, engine := net.Pipe()
 			done := make(chan struct{})
-			go func() { route.handleVisitor(engine, denied); close(done) }()
+			go func() {
+				serveTestPublicVisitor(t, route, engine, tunnelv1.VisitorStreamHeader{AccessPending: denied})
+				close(done)
+			}()
 			t.Cleanup(func() { _ = visitor.Close(); awaitPublisherTest(t, done) })
-			header, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40001"), Destination: netip.MustParseAddrPort("203.0.113.10:443")})
+			header, err := encodeTestPublicMetadata(route, tunnelv1.VisitorStreamHeader{AccessPending: denied}, proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40001"), Destination: netip.MustParseAddrPort("203.0.113.10:443")})
 			if err == nil {
 				_, err = visitor.Write(header)
 			}
@@ -135,7 +142,7 @@ func TestReadinessDoesNotPromoteOrSpendApplicationBudgets(t *testing.T) {
 				name += "/denied"
 			}
 			t.Run(name, func(t *testing.T) {
-				run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Number: 1}
+				run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
 				proof, err := NewReadinessProof(run, "/health")
 				if err != nil {
 					t.Fatal(err)
@@ -221,7 +228,7 @@ func TestReadinessDoesNotPromoteOrSpendApplicationBudgets(t *testing.T) {
 }
 
 func TestReadinessDoesNotCacheRejectedApplicationPromotion(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Number: 1}
+	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
 	for _, h2 := range []bool{false, true} {
 		proof, _ := NewReadinessProof(run, "/health")
 		var calls atomic.Int32
@@ -285,7 +292,12 @@ func TestPromotionWaiterCancellationDoesNotCancelSharedDecision(t *testing.T) {
 			return nil
 		}
 	}}
-	t.Cleanup(v.close)
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Handler: http.NotFoundHandler()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = route.Close() })
+	t.Cleanup(ownTestVisitorSession(t, route, v))
 	firstCtx, cancel := context.WithCancel(t.Context())
 	first := make(chan error, 1)
 	go func() { first <- v.admit(firstCtx) }()
@@ -368,7 +380,7 @@ func TestHTTP2CanceledFirstRequestDoesNotPoisonConnection(t *testing.T) {
 }
 
 func TestHTTP2ProofDoesNotWaitForApplicationPromotion(t *testing.T) {
-	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Number: 1}
+	run := PublishRunIdentity{Hostname: "route.example", PublicURLID: certificateTestPublicURLID, PublishRunID: "pr_0123456789abcdefghijkl", Number: 1}
 	proof, _ := NewReadinessProof(run, "/health")
 	started, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
@@ -424,6 +436,12 @@ func TestPromotionCloseCancelsAndJoinsSharedWork(t *testing.T) {
 	life, cancel := context.WithCancel(t.Context())
 	started := make(chan struct{})
 	v := &visitorSession{life: life, cancel: cancel, promote: func(ctx context.Context, _ Visitor) error { close(started); <-ctx.Done(); return ctx.Err() }}
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Handler: http.NotFoundHandler()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = route.Close() })
+	t.Cleanup(ownTestVisitorSession(t, route, v))
 	result := make(chan error, 1)
 	go func() { result <- v.admit(t.Context()) }()
 	awaitPublisherTest(t, started)
