@@ -266,23 +266,3 @@ schemas:
         format: date-time
       enrollment_key:
         type: string
-  PublisherShare:
-    type: object
-    additionalProperties: false
-    required: [schema_version, share_id, expires_at, secret_fingerprint, cookie_hashes]
-    properties:
-      schema_version:
-        $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
-      share_id:
-        $ref: "../openapi.yaml#/components/schemas/ShareID"
-      expires_at:
-        type: string
-        format: date-time
-      secret_fingerprint:
-        type: string
-        pattern: "^[0-9a-f]{64}$"
-      cookie_hashes:
-        type: array
-        items:
-          type: string
-          pattern: "^[0-9a-f]{64}$"

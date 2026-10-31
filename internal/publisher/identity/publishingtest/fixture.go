@@ -38,6 +38,7 @@ type Fixture struct {
 	HTTP                                      *http.Client
 	Enrollments, Allocations, Runs, Deletions atomic.Int32
 	VisitorDecisions                          atomic.Int32
+	sourceSequence                            atomic.Uint64
 	mu                                        sync.Mutex
 	backend                                   *testutil.PublishingFixture
 	seed                                      *clientcontrol.Client
@@ -196,21 +197,41 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 		write(w, authorityv1.PublisherTokenResponse{AccessToken: token, TokenType: "Bearer", GrantId: b.GrantId, ExpiresIn: 300})
 		return
 	}
-	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/publish-runs/") && strings.HasSuffix(r.URL.Path, "/visitor-access") {
-		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/publish-runs/"), "/visitor-access")
+	if r.Method == http.MethodPost && r.URL.Path == "/v1/visitor-policy" {
+		var body controlv1.PublisherVisitorPolicyRequest
+		if json.NewDecoder(r.Body).Decode(&body) != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		f.mu.Lock()
-		setup, found := f.setups[id]
+		setup, found := f.setups[body.RunId]
 		f.mu.Unlock()
-		var body controlv1.HTTPVisitorRequest
-		if !found || json.NewDecoder(r.Body).Decode(&body) != nil || body.PublishRunNumber != setup.PublishRun.PublishRunNumber || r.Header.Get("Authorization") != "Bearer "+setup.PublishRunToken {
+		if !found || body.Resource.Kind != "public_url" || body.Resource.Id != setup.PublicUrl.Id || body.RunNumber != setup.PublishRun.PublishRunNumber || r.Header.Get("Authorization") != "Bearer "+setup.PublishRunToken {
 			denied(w)
 			return
 		}
-		f.VisitorDecisions.Add(1)
-		write(w, controlv1.HTTPVisitorResponse{VisitAllowed: true, ValidUntil: new(time.Now().Add(time.Minute))})
+		now := time.Now()
+		key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{17}, 32))
+		source, err := publicSourceKey(setup)
+		if err != nil {
+			f.t.Error(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		write(w, controlv1.VisitorPolicyUpdate{AfterRevision: body.AfterRevision, Revisions: []int64{}, SnapshotRequired: body.AfterRevision == 0,
+			VisitorSourceKey: new(source[:]),
+			Policy: controlv1.VisitorPolicySnapshot{Resource: body.Resource, Hostname: setup.PublicUrl.CanonicalHostname, Port: 443, Issuer: f.URL,
+				VisitorPolicyRevision: 1, KeyRevision: 1, ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true, Anonymous: true,
+				VerificationKeys: []controlv1.VisitorVerificationKey{{Id: "publishing-fixture", PublicKey: key.Public().(ed25519.PublicKey)}},
+				WorkloadLeases:   []controlv1.VisitorWorkloadLease{}}})
 		return
 	}
-	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/publish-runs/") && (strings.HasSuffix(r.URL.Path, "/share-access") || strings.HasSuffix(r.URL.Path, "/share-state")) {
+	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/publish-runs/") && strings.HasSuffix(r.URL.Path, "/visitor-access") {
+		f.VisitorDecisions.Add(1)
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/publish-runs/") && strings.HasSuffix(r.URL.Path, "/share-access") {
 		path := strings.TrimPrefix(r.URL.Path, "/v1/publish-runs/")
 		id, _, _ := strings.Cut(path, "/")
 		f.mu.Lock()
@@ -223,11 +244,7 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 			denied(w)
 			return
 		}
-		if strings.HasSuffix(path, "/share-access") {
-			w.WriteHeader(http.StatusNoContent)
-		} else {
-			write(w, controlv1.PublishRunShareState{SchemaVersion: 1, Shares: []controlv1.PublisherShare{}})
-		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/publish-runs/") && strings.HasSuffix(r.URL.Path, "/ready") {

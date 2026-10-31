@@ -45,6 +45,15 @@ type IngressRenewal struct {
 	IngressLeaseIdentity
 	ReportedConnections  uint64
 	RoutingTableRevision uint64
+	PreparedPublicRuns   []IngressPublicRunObservation
+}
+
+// IngressPublicRunObservation reports installed state, never a pending fetch.
+type IngressPublicRunObservation struct {
+	PublishRunID     string
+	PublishRunNumber int64
+	EntryRevision    int64
+	ValidUntil       time.Time
 }
 
 // IngressLease is the control-issued lease for one ingress process.
@@ -89,6 +98,9 @@ func (d *Database) RegisterIngress(
 	}
 	defer rollback(ctx, tx, "register ingress", &retErr)()
 	queries := controlstatedb.New(tx)
+	if err := queries.LockIngressPoolMembership(ctx, registration.IngressPoolID); err != nil {
+		return IngressLease{}, fmt.Errorf("lock ingress pool membership: %w", err)
+	}
 	row, err := queries.RegisterIngress(ctx, controlstatedb.RegisterIngressParams{
 		IngressID: registration.IngressID, IngressRunID: registration.IngressRunID,
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
@@ -131,6 +143,14 @@ func (d *Database) RenewIngress(
 	if leaseDuration <= 0 {
 		return IngressLease{}, errors.New("controlstate: ingress lease duration must be positive")
 	}
+	if len(renewal.PreparedPublicRuns) > 1000 {
+		return IngressLease{}, errors.New("too many public run observations")
+	}
+	for _, observation := range renewal.PreparedPublicRuns {
+		if !validStateText(observation.PublishRunID) || observation.PublishRunNumber <= 0 || observation.EntryRevision <= 0 || observation.ValidUntil.IsZero() {
+			return IngressLease{}, errors.New("invalid public run observation")
+		}
+	}
 	if err := d.requireOpen(); err != nil {
 		return IngressLease{}, err
 	}
@@ -163,6 +183,26 @@ func (d *Database) RenewIngress(
 	}
 	if err := ensureIngressUsageRun(ctx, queries, row); err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: renew ingress usage run: %w", err)
+	}
+	if !row.Draining {
+		if err := queries.DeleteExpiredIngressPublicRunObservations(ctx, controlstatedb.DeleteExpiredIngressPublicRunObservationsParams{
+			IngressID: row.IngressID, Now: timestamptz(now),
+		}); err != nil {
+			return IngressLease{}, fmt.Errorf("remove expired public run observations: %w", err)
+		}
+		for _, observation := range renewal.PreparedPublicRuns {
+			// stale observations can arrive after closure or projection expiry.
+			// discard them without turning a healthy lease renewal into a failure.
+			if _, err := queries.ObserveIngressPublicRun(ctx, controlstatedb.ObserveIngressPublicRunParams{
+				IngressID: row.IngressID, IngressRunID: row.IngressRunID, IngressLeaseRevision: row.IngressLeaseRevision,
+				IngressPoolID: row.IngressPoolID, LeaseExpiresAt: row.LeaseExpiresAt,
+				RoutingTableRevision: routingTableRevision,
+				PublishRunID:         observation.PublishRunID, PublishRunNumber: observation.PublishRunNumber,
+				EntryRevision: observation.EntryRevision, ValidUntil: timestamptz(observation.ValidUntil), Now: timestamptz(now),
+			}); err != nil {
+				return IngressLease{}, fmt.Errorf("record installed public run: %w", err)
+			}
+		}
 	}
 	visitorNetworkHashMasterKey, err := d.ensurePublicURLUsageConfiguration(ctx, queries, now)
 	if err != nil {

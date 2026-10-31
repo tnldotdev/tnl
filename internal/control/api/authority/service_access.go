@@ -23,7 +23,7 @@ type serviceAccessStore interface {
 	AcceptServiceInvitation(context.Context, string, string, time.Time) (controlstate.ServiceGrant, error)
 	RevokeServiceGrant(context.Context, string, string, string, time.Time) error
 	RevokeServiceInvitation(context.Context, string, string, string, time.Time) error
-	CreateServiceHTTPGrant(context.Context, string, string, controlv1.CreateServiceHTTPGrantRequest, time.Time) (controlv1.ServiceHTTPGrant, error)
+	CreateServiceHTTPGrant(context.Context, string, string, controlv1.CreateVisitorCredentialRequest, time.Time) (controlv1.VisitorCredential, error)
 	ListServiceHTTPGrants(context.Context, string, string, time.Time) ([]controlv1.ServiceHTTPGrantSummary, error)
 	RevokeServiceHTTPGrant(context.Context, string, string, string, time.Time) error
 }
@@ -236,8 +236,8 @@ func (h *handler) ListWebsiteServiceHTTPGrants(w http.ResponseWriter, r *http.Re
 	writeJSON(w, 200, rows)
 }
 
-func (h *handler) CreateWebsiteServiceHTTPGrant(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, _ authorityv1.CreateWebsiteServiceHTTPGrantParams) {
-	var body controlv1.CreateServiceHTTPGrantRequest
+func (h *handler) CreateWebsiteServiceVisitorCredential(w http.ResponseWriter, r *http.Request, id controlv1.ServiceID, _ authorityv1.CreateWebsiteServiceVisitorCredentialParams) {
+	var body controlv1.CreateVisitorCredentialRequest
 	s, actor, ok := h.serviceHuman(w, r, &body)
 	if !ok {
 		return

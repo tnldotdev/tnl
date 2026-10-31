@@ -120,7 +120,7 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 					return
 				}
 				group.Go(func() {
-					if err := a.forward(acceptCtx, incoming, session); err != nil && acceptCtx.Err() == nil {
+					if err := a.forward(acceptCtx, incoming); err != nil && acceptCtx.Err() == nil {
 						a.report(err)
 					}
 				})
@@ -138,18 +138,18 @@ func (a *ForwardingAcceptor) Accept(ctx context.Context, transport muxsession.Se
 	}
 }
 
-func (a *ForwardingAcceptor) forward(ctx context.Context, incoming tunnel.InternalForwardingRequest, ingressSession *tunnel.Session) (retErr error) {
+func (a *ForwardingAcceptor) forward(ctx context.Context, incoming tunnel.InternalForwardingRequest) (retErr error) {
 	switch request := incoming.(type) {
 	case *tunnel.IncomingServiceForwardingStream:
 		return a.forwardService(observability.ExtractWireTrace(ctx, request.Header.TraceContext), request)
 	case *tunnel.IncomingPublicForwardingStream:
-		return a.forwardPublic(observability.ExtractWireTrace(ctx, request.Header.TraceContext), request, ingressSession)
+		return a.forwardPublic(observability.ExtractWireTrace(ctx, request.Header.TraceContext), request)
 	default:
 		return incoming.Reject(tunnelv1.InvalidMessage)
 	}
 }
 
-func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel.IncomingPublicForwardingStream, ingressSession *tunnel.Session) (retErr error) {
+func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel.IncomingPublicForwardingStream) (retErr error) {
 	ctx, endSpan := observability.Start(ctx, "relay.open_visitor_stream")
 	observability.Visitor(ctx, incoming.Header.VisitorConnectionID)
 	finishOpen := startOperation(ctx, a.observer, "RelayOpenVisitorStream")
@@ -172,23 +172,20 @@ func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		return incoming.Reject(tunnelv1.StaleConnectionAssignment)
 	}
-	openVisitor := connection.OpenVisitor
+	events := tunnel.ReturnEvents{Rejected: incoming.ForwardRejection}
 	if incoming.Header.AccessPending {
-		remove, ok := connection.registerPending(incoming.Header, ingressSession, func() bool {
-			// ingress rechecks the current projection on promotion. a copied
-			// deadline from stream open may have been extended by a refresh.
-			current, ok := a.registry.candidate(incoming.Header, a.currentLease(), a.now(), false)
-			return ok && current == connection
-		})
-		if !ok {
-			a.streamRejected("stale_assignment")
-			rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
-			return incoming.Reject(tunnelv1.StaleConnectionAssignment)
+		want := incoming.Header.Admission()
+		want.Kind, want.RelayID, want.RelayRunID, want.RelayLeaseRevision = tunnelv1.PublisherPromotion, "", "", 0
+		events.Promoted = func(h tunnelv1.AdmissionHeader) error {
+			current, valid := a.registry.candidate(incoming.Header, a.currentLease(), a.now(), false)
+			if ctx.Err() != nil || h != want || !valid || current != connection {
+				return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+			}
+			return incoming.Promote(incoming.Header.Admission())
 		}
-		defer remove()
-		openVisitor = connection.OpenPendingVisitor
 	}
-	publisher, err := openVisitor(ctx, incoming.Header.VisitorConnectionID)
+	initial := incoming.TakeInitial()
+	publisher, err := connection.OpenVisitor(ctx, incoming.Header.VisitorConnectionID, incoming.Header.AccessPending, incoming.Header.ConfirmBeforeBytes, initial, events)
 	if err != nil {
 		a.streamRejected("publisher_unavailable")
 		code := tunnelv1.Unavailable
@@ -208,6 +205,7 @@ func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel
 	defer incoming.Stream().Close()
 	_, finishForward := observability.Start(ctx, "relay.forward_visitor")
 	copied, err := streamcopy.Copy(incoming.Stream(), publisher)
+	copied.LeftToRight += int64(len(initial))
 	finishForward(err)
 	if observer, ok := a.observer.(interface {
 		ObserveRelayTransfer(string, int64, int64, error)

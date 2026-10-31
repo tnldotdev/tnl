@@ -18,6 +18,7 @@ const defaultRoutingTablePageSize = 256
 const defaultRoutingTableWait = 25 * time.Second
 
 type Store interface {
+	visitorPolicyStore
 	RegisterIngress(context.Context, controlstate.IngressRegistration, time.Time, time.Duration) (controlstate.IngressLease, error)
 	RenewIngress(context.Context, controlstate.IngressRenewal, time.Time, time.Duration) (controlstate.IngressLease, error)
 	BeginIngressDrain(context.Context, controlstate.IngressLeaseIdentity, time.Time, time.Time) (controlstate.IngressLease, error)
@@ -357,8 +358,9 @@ func routingTableEntry(projection controlstate.IngressRoutingTableProjection) in
 		protocol = &value
 	}
 	return ingressv1.IngressRoutingTableEntry{
-		PublishRunClosed: &projection.PublishRunClosed,
-		PublishRunId:     projection.PublishRunID, PublicUrlId: projection.PublicURLID,
+		PublishRunReadyAt: projection.PublishRunReadyAt,
+		PublishRunClosed:  &projection.PublishRunClosed,
+		PublishRunId:      projection.PublishRunID, PublicUrlId: projection.PublicURLID,
 		PublishRunNumber: int64(projection.PublishRunNumber), CanonicalHostname: projection.CanonicalHostname,
 		IngressPoolId: poolID, ServiceProtocol: protocol,
 		PolicyRevision:  int64(projection.PolicyRevision),

@@ -9,6 +9,10 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/visitor-policy:
+    $ref: "./paths/visitor-policy.yaml#/paths/~1v1~1visitor-policy"
+  /v1/visitor-tokens:
+    $ref: "./paths/visitor-tokens.yaml#/paths/~1v1~1visitor-tokens"
   /v1/workload/services/{service_id}/run:
     $ref: "./paths/workloads.yaml#/paths/~1v1~1workload~1services~1{service_id}~1run"
   /v1/workload/ingress-assignments/{session_id}:
@@ -29,8 +33,6 @@ paths:
     $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1http-grants"
   /v1/services/{service_id}/http-grants/{grant_id}:
     $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1http-grants~1{grant_id}"
-  /v1/services/{service_id}/runs/{service_run_id}/http-authorize:
-    $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1http-authorize"
   /v1/services/{service_id}/runs/{service_run_id}/browser/handoff:
     $ref: "./paths/browser-access.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1browser~1handoff"
   /v1/services/{service_id}/runs/{service_run_id}/browser/session:
@@ -117,8 +119,6 @@ paths:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs"
   /v1/services/{service_id}/runs/{service_run_id}:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}"
-  /v1/publish-runs/{publish_run_id}/visitor-access:
-    $ref: "./paths/browser-access.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1visitor-access"
   /v1/visitor/public-urls:
     $ref: "./paths/browser-access.yaml#/paths/~1v1~1visitor~1public-urls"
   /v1/public-urls/{public_url_id}/visitor-grants:
@@ -213,8 +213,6 @@ paths:
     $ref: "./paths/publish-runs.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1heartbeat"
   /v1/publish-runs/{publish_run_id}/share-access:
     $ref: "./paths/publish-runs.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1share-access"
-  /v1/publish-runs/{publish_run_id}/share-state:
-    $ref: "./paths/publish-runs.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1share-state"
   /v1/publish-runs/{publish_run_id}/share-redemptions:
     $ref: "./paths/publish-runs.yaml#/paths/~1v1~1publish-runs~1{publish_run_id}~1share-redemptions"
   /v1/publish-runs/{publish_run_id}/feedback:
@@ -308,20 +306,50 @@ components:
       $ref: "./schemas/workloads.yaml#/schemas/WorkloadServices"
     WorkloadIngressAssignments:
       $ref: "./schemas/workloads.yaml#/schemas/WorkloadIngressAssignments"
-    HTTPAuthorizationSubject:
-      $ref: "./schemas/browser-access.yaml#/schemas/HTTPAuthorizationSubject"
-    CreateServiceHTTPGrantRequest:
-      $ref: "./schemas/browser-access.yaml#/schemas/CreateServiceHTTPGrantRequest"
-    ServiceHTTPGrant:
-      $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPGrant"
+    VisitorResourceScope:
+      $ref: "./schemas/browser-access.yaml#/schemas/VisitorResourceScope"
+    VisitorTokenSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenSource"
+    VisitorTokenControlSessionSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenControlSessionSource"
+    VisitorTokenBrowserSessionSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenBrowserSessionSource"
+    VisitorTokenDeviceSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenDeviceSource"
+    VisitorTokenWorkloadSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenWorkloadSource"
+    VisitorTokenShareSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenShareSource"
+    VisitorTokenShareSessionSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenShareSessionSource"
+    VisitorTokenGrantSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenGrantSource"
+    VisitorTokenRequest:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenRequest"
+    VisitorTokenResponse:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenResponse"
+    PublisherVisitorPolicyRequest:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/PublisherVisitorPolicyRequest"
+    VisitorPolicyUpdate:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorPolicyUpdate"
+    VisitorPolicySnapshot:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorPolicySnapshot"
+    VisitorPolicyIP:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorPolicyIP"
+    VisitorVerificationKey:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorVerificationKey"
+    VisitorWorkloadLease:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorWorkloadLease"
+    HashedIPPrefix:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/HashedIPPrefix"
+    CreateVisitorCredentialRequest:
+      $ref: "./schemas/browser-access.yaml#/schemas/CreateVisitorCredentialRequest"
+    VisitorCredential:
+      $ref: "./schemas/browser-access.yaml#/schemas/VisitorCredential"
     ServiceHTTPGrantSummary:
       $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPGrantSummary"
     ServiceInvitationCredential:
       $ref: "./schemas/services.yaml#/schemas/ServiceInvitationCredential"
-    ServiceHTTPCredential:
-      $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPCredential"
-    ServiceHTTPVisitorRequest:
-      $ref: "./schemas/browser-access.yaml#/schemas/ServiceHTTPVisitorRequest"
     ServiceBrowserRequest:
       $ref: "./schemas/browser-access.yaml#/schemas/ServiceBrowserRequest"
     ProjectPublicMetadata:
@@ -494,14 +522,10 @@ components:
       $ref: "./schemas/services.yaml#/schemas/ServiceRunSetup"
     ServiceRunState:
       $ref: "./schemas/services.yaml#/schemas/ServiceRunState"
-    HTTPVisitorRequest:
-      $ref: "./schemas/browser-access.yaml#/schemas/HTTPVisitorRequest"
     ServiceRunHeartbeat:
       $ref: "./schemas/services.yaml#/schemas/ServiceRunHeartbeat"
     ReplaceVisitorAccessRequest:
       $ref: "./schemas/browser-access.yaml#/schemas/ReplaceVisitorAccessRequest"
-    HTTPVisitorResponse:
-      $ref: "./schemas/browser-access.yaml#/schemas/HTTPVisitorResponse"
     CreateTeamVisitorGrantRequest:
       $ref: "./schemas/browser-access.yaml#/schemas/CreateTeamVisitorGrantRequest"
     CreateIdentityVisitorGrantRequest:
@@ -702,10 +726,6 @@ components:
       $ref: "./schemas/publish-runs.yaml#/schemas/EnableShareAccessRequest"
     RedeemShareRequest:
       $ref: "./schemas/publish-runs.yaml#/schemas/RedeemShareRequest"
-    PublishRunShareState:
-      $ref: "./schemas/publish-runs.yaml#/schemas/PublishRunShareState"
-    PublisherShare:
-      $ref: "./schemas/publishers.yaml#/schemas/PublisherShare"
     ShareRedemption:
       $ref: "./schemas/previews-and-shares.yaml#/schemas/ShareRedemption"
     PublishRunHeartbeat:

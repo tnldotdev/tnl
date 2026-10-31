@@ -33,10 +33,12 @@ func TestSessionParentCancellationDrainsAdmittedVisitor(t *testing.T) {
 		t.Run(transport, func(t *testing.T) {
 			h := newVisitorDrainHarness(t, transport, nil)
 			stream := h.admit()
+			// decoded setup is still pending; authorize and enter the target
+			// before drain to prove an admitted visitor can finish.
+			response := h.startVisitor(stream, true)
 			h.cancel()
 			awaitPublisherTest(t, h.draining)
 			h.assertAdmissionRejected()
-			response := h.startVisitor(stream, true)
 			h.unblock()
 			if err := awaitPublisherTest(t, response); err != nil {
 				t.Fatalf("admitted visitor did not finish: %v", err)
@@ -137,7 +139,7 @@ type visitorDrainHarness struct {
 
 type drainDecisionControl struct{ *certificateTestControl }
 
-func (*drainDecisionControl) RedeemBrowserHandoff(context.Context, string, uint64, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
+func (*drainDecisionControl) RedeemBrowserHandoff(context.Context, string, uint64, string, string, string, credentials.PublishRunToken) (controlv1.BrowserHandoffResponse, error) {
 	return controlv1.BrowserHandoffResponse{}, errors.New("no browser handoff")
 }
 
@@ -149,17 +151,8 @@ func (*drainDecisionControl) RevokeBrowserAccess(context.Context, string, uint64
 	return nil
 }
 
-func (*drainDecisionControl) AuthorizeHTTPVisitor(context.Context, string, controlv1.HTTPVisitorRequest, credentials.PublishRunToken) (controlv1.HTTPVisitorResponse, error) {
-	expires := time.Now().Add(time.Minute)
-	return controlv1.HTTPVisitorResponse{VisitAllowed: true, ValidUntil: &expires}, nil
-}
-
 func (*drainDecisionControl) EnableShareAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
 	return nil
-}
-
-func (*drainDecisionControl) GetPublishRunShareState(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunShareState, error) {
-	return controlv1.PublishRunShareState{Shares: []controlv1.PublisherShare{}}, nil
 }
 
 func (*drainDecisionControl) RedeemPublishRunShare(context.Context, string, controlv1.RedeemShareRequest, credentials.PublishRunToken) (controlv1.ShareRedemption, error) {
@@ -233,7 +226,7 @@ func newVisitorDrainHarness(t *testing.T, transport string, configure func(*cert
 
 func (h *visitorDrainHarness) admit() net.Conn {
 	h.t.Helper()
-	stream, err := h.relay.OpenVisitor(h.ctx, "visitor_drain")
+	stream, err := h.relay.OpenVisitor(h.ctx, "visitor_drain", false, true, nil, tunnel.ReturnEvents{})
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -246,7 +239,7 @@ func (h *visitorDrainHarness) admit() net.Conn {
 
 func (h *visitorDrainHarness) assertAdmissionRejected() {
 	h.t.Helper()
-	admitted, err := h.relay.OpenVisitor(h.ctx, "visitor_after_cancel")
+	admitted, err := h.relay.OpenVisitor(h.ctx, "visitor_after_cancel", false, true, nil, tunnel.ReturnEvents{})
 	if err == nil {
 		_ = admitted.Close()
 		h.t.Fatal("draining session admitted a new visitor")
@@ -259,7 +252,10 @@ func (h *visitorDrainHarness) assertAdmissionRejected() {
 
 func (h *visitorDrainHarness) startVisitor(stream net.Conn, keepAlive bool) <-chan error {
 	h.t.Helper()
-	metadata, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.1:4321"), Destination: netip.MustParseAddrPort("127.0.0.1:443")})
+	now := time.Now()
+	metadata, err := encodeTestPublicSource(testPublicVisitorSourceKey, tunnelv1.VisitorStreamHeader{
+		PublicURLID: h.control.setup.PublicUrl.Id, PublishRunID: h.control.setup.PublishRun.Id, PublishRunNumber: uint64(h.control.setup.PublishRun.PublishRunNumber), VisitorConnectionID: "visitor_drain",
+	}, 1, now, now.Add(10*time.Second), proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.1:4321"), Destination: netip.MustParseAddrPort("127.0.0.1:443")})
 	if err != nil {
 		h.t.Fatal(err)
 	}

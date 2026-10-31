@@ -110,8 +110,10 @@ bundling and external consumers.
   current PostgreSQL baseline requires a fresh database and coordinated server
   stop/start.
 - Publisher connection slots use different relay services. Initial routability
-  needs the certificate and both connections; afterward one ready connection can
-  sustain service while the other is replaced.
+  needs the certificate, DNS, both connections, and installed serving state on
+  every current ingress in the URL's pool. Each publish run prepares independently;
+  a starting sibling cannot remove a ready publisher from selection. Afterward
+  one ready connection can sustain service while the other is replaced.
 - Ingress creates PROXY v2 metadata once; relay preserves it. No application
   bytes are replayed after the first visitor byte sent to a relay.
 - A copied relay lease deadline is a routing observation. The connected relay

@@ -186,7 +186,7 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 		}
 		return nil
 	}
-	// nil promotion lets the publisher use its authenticated sideband. a
+	// nil promotion lets the publisher use its authenticated visitor stream. a
 	// successful ownership check must never substitute for that decision.
 	warning := cfg.OnWarning
 	cfg.OnWarning = func(reason string) {

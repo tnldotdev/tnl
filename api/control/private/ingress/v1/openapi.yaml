@@ -11,6 +11,8 @@ servers:
 security:
   - clusterAuth: []
 paths:
+  /internal/v1/ingresses/{ingress_id}/visitor-policy:
+    $ref: "./paths/visitor-policy.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1visitor-policy"
   /internal/v1/ingresses/{ingress_id}/direct-services/admit:
     $ref: "./paths/admission.yaml#/paths/~1internal~1v1~1ingresses~1{ingress_id}~1direct-services~1admit"
   /internal/v1/ingresses/{ingress_id}/direct-services/status:
@@ -64,6 +66,10 @@ components:
     Problem:
       $ref: "./schemas/common.yaml#/responses/Problem"
   schemas:
+    IngressVisitorPolicyRequest:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/IngressVisitorPolicyRequest"
+    VisitorPolicyUpdate:
+      $ref: "../../../public/v1/openapi.yaml#/components/schemas/VisitorPolicyUpdate"
     IngressTransportCertificate:
       $ref: "./schemas/certs.yaml#/schemas/IngressTransportCertificate"
     ServiceID:
@@ -118,6 +124,8 @@ components:
       $ref: "./schemas/routing.yaml#/schemas/IngressRoutingTableEntry"
     IngressTrafficLimits:
       $ref: "./schemas/leases.yaml#/schemas/IngressTrafficLimits"
+    IngressPublicRunObservation:
+      $ref: "./schemas/leases.yaml#/schemas/IngressPublicRunObservation"
     HashedIPPrefix:
       $ref: "./schemas/routing.yaml#/schemas/HashedIPPrefix"
     IngressRoutingTableEvent:

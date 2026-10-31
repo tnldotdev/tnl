@@ -54,6 +54,7 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.team_invitation_email_deliveries WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.acme_accounts WHERE account_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.service_client_certificate_issuer WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.visitor_token_keys WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.relay_services WHERE transport_private_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.relay_certificate_orders WHERE private_key_storage_key_id = $1) +
 			(SELECT count(*) FROM control.guest_retry_keys WHERE guest_retry_master_key_storage_key_id = $1) +
@@ -69,6 +70,7 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.ingress_transport_certificates WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.applied_projects WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.service_http_browser_logins WHERE storage_key_id=$1) +
+			(SELECT count(*) FROM control.service_http_browser_sessions WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.browser_login_attempts WHERE verifier_storage_key_id=$1) +
 			(SELECT count(*) FROM control.browser_access_sessions WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.browser_access_handoffs WHERE storage_key_id=$1) +
@@ -148,6 +150,18 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 			remaining--
 		}
 		return nil
+	}
+	if err := rotate(`SELECT ctid::text,id,seed_ciphertext FROM control.visitor_token_keys WHERE storage_key_id=$1 FOR UPDATE SKIP LOCKED LIMIT $2`,
+		func(rows pgx.Rows) (string, string, []byte, error) {
+			var row, id string
+			var ciphertext []byte
+			err := rows.Scan(&row, &id, &ciphertext)
+			return row, visitorSigningKeyContext(id), ciphertext, err
+		}, func(row, key string, ciphertext []byte) error {
+			_, err := tx.Exec(ctx, `UPDATE control.visitor_token_keys SET seed_ciphertext=$1,storage_key_id=$2 WHERE ctid=$3::tid AND storage_key_id=$4`, ciphertext, key, row, previousKeyID)
+			return err
+		}); err != nil {
+		return 0, err
 	}
 	if err := rotate(`SELECT ctid::text, seed_ciphertext FROM control.service_client_certificate_issuer WHERE storage_key_id=$1 FOR UPDATE SKIP LOCKED LIMIT $2`,
 		func(rows pgx.Rows) (string, string, []byte, error) {
@@ -337,6 +351,9 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		{`SELECT ctid::text, encode(state_digest,'hex'), verifier_ciphertext FROM control.service_http_browser_logins
 		  WHERE storage_key_id=$1 ORDER BY state_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"verifier_ciphertext", "storage_key_id", "control.service_http_browser_logins", func(id string) string { return "browser-access:" + id }},
+		{`SELECT ctid::text, encode(handoff_digest,'hex'), refresh_ciphertext FROM control.service_http_browser_sessions
+		  WHERE storage_key_id=$1 ORDER BY handoff_digest FOR UPDATE SKIP LOCKED LIMIT $2`,
+			"refresh_ciphertext", "storage_key_id", "control.service_http_browser_sessions", func(id string) string { return "browser-access:" + id }},
 		{`SELECT ctid::text, team_id || '/' || project_key, configuration_ciphertext FROM control.applied_projects
 		  WHERE storage_key_id=$1 ORDER BY team_id,project_key FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"configuration_ciphertext", "storage_key_id", "control.applied_projects", func(id string) string { return "applied-project/" + id }},

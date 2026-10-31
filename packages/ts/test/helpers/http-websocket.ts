@@ -200,6 +200,7 @@ async function waitForWebSocketOpen(socket: WebSocket): Promise<void> {
 export async function waitForWebSocketMessage(
   socket: WebSocket,
   timeout = 10_000,
+  accept: (message: string) => boolean = () => true,
 ): Promise<string> {
   try {
     return await new Promise<string>((resolve, reject) => {
@@ -214,8 +215,14 @@ export async function waitForWebSocketMessage(
         socket.off("close", onClose);
       };
       const onMessage = (data: Data) => {
-        cleanup();
-        resolve(webSocketDataString(data));
+        try {
+          const message = webSocketDataString(data);
+          if (!accept(message)) return;
+          cleanup();
+          resolve(message);
+        } catch (error) {
+          onError(error instanceof Error ? error : new Error(errorMessage(error)));
+        }
       };
       const onError = (error: Error) => {
         cleanup();
@@ -226,7 +233,7 @@ export async function waitForWebSocketMessage(
         () => onError(new Error("WebSocket did not send a message")),
         timeout,
       );
-      socket.once("message", onMessage);
+      socket.on("message", onMessage);
       socket.once("error", onError);
       socket.once("close", onClose);
     });

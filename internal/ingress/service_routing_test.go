@@ -49,12 +49,12 @@ func TestPrivateRoutingRejectsCrossFieldVariants(t *testing.T) {
 			other.ConnectionSlot = 1
 			*p.ConnectedRelays = append(*p.ConnectedRelays, other)
 		},
-		"expired relay": func(p *ingressv1.ServiceProjection) { (*p.ConnectedRelays)[0].LeaseExpiresAt = now },
+		"missing relay expiry": func(p *ingressv1.ServiceProjection) { (*p.ConnectedRelays)[0].LeaseExpiresAt = time.Time{} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			entry := clonePrivateProjection(valid)
 			change(&entry)
-			if _, err := parsePrivateProjection(entry, now); !errors.Is(err, ErrPrivateRoutingStale) {
+			if _, err := parsePrivateProjection(entry); !errors.Is(err, ErrPrivateRoutingStale) {
 				t.Fatalf("invalid variant accepted: %v", err)
 			}
 		})
@@ -62,18 +62,18 @@ func TestPrivateRoutingRejectsCrossFieldVariants(t *testing.T) {
 	// tombstones may already be expired when read; they still remove state.
 	tombstone := clonePrivateProjection(valid)
 	tombstone.Kind, tombstone.ConnectedRelays, tombstone.ExpiresAt = ingressv1.Tombstone, nil, now.Add(-time.Second)
-	if _, ok := mustParsePrivateProjection(t, tombstone, now).(serviceRunTombstone); !ok {
+	if _, ok := mustParsePrivateProjection(t, tombstone).(serviceRunTombstone); !ok {
 		t.Fatal("run tombstone not narrowed")
 	}
 	tombstone.ServiceRunId, tombstone.RunNumber = nil, nil
-	if _, ok := mustParsePrivateProjection(t, tombstone, now).(serviceTombstone); !ok {
+	if _, ok := mustParsePrivateProjection(t, tombstone).(serviceTombstone); !ok {
 		t.Fatal("service tombstone not narrowed")
 	}
 }
 
-func mustParsePrivateProjection(t *testing.T, p ingressv1.ServiceProjection, now time.Time) privateProjectionEvent {
+func mustParsePrivateProjection(t *testing.T, p ingressv1.ServiceProjection) privateProjectionEvent {
 	t.Helper()
-	parsed, err := parsePrivateProjection(p, now)
+	parsed, err := parsePrivateProjection(p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestPrivateRoutingPageRollbackAndExactTombstoneScope(t *testing.T) {
 	unrelated := serviceRoutingEntry(t, now)
 	unrelated.Revision = 3
 	var table ServiceRoutingTable
-	if err := table.ApplySnapshot(ingressv1.ServiceSnapshot{Revision: 3, Entries: []ingressv1.ServiceProjection{first, sibling, unrelated}}, now); err != nil {
+	if err := table.ApplySnapshot(ingressv1.ServiceSnapshot{Revision: 3, Entries: []ingressv1.ServiceProjection{first, sibling, unrelated}}); err != nil {
 		t.Fatal(err)
 	}
 	tombstone := clonePrivateProjection(first)
@@ -112,7 +112,7 @@ func TestPrivateRoutingPageRollbackAndExactTombstoneScope(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := table.ApplyEvents(3, invalid(), now); !errors.Is(err, ErrPrivateRoutingStale) {
+			if err := table.ApplyEvents(3, invalid()); !errors.Is(err, ErrPrivateRoutingStale) {
 				t.Fatalf("invalid page accepted: %v", err)
 			}
 			if revision, _ := table.Revision(); revision != 3 {
@@ -126,7 +126,7 @@ func TestPrivateRoutingPageRollbackAndExactTombstoneScope(t *testing.T) {
 			}
 		})
 	}
-	if err := table.ApplyEvents(3, ingressv1.ServiceSnapshot{Revision: 5, Entries: []ingressv1.ServiceProjection{tombstone, update}}, now); err != nil {
+	if err := table.ApplyEvents(3, ingressv1.ServiceSnapshot{Revision: 5, Entries: []ingressv1.ServiceProjection{tombstone, update}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := table.Lookup(first.ServiceId, *first.ServiceRunId, 1, now); ok {
@@ -136,7 +136,7 @@ func TestPrivateRoutingPageRollbackAndExactTombstoneScope(t *testing.T) {
 		t.Fatal("run tombstone removed sibling")
 	}
 	tombstone.ServiceRunId, tombstone.RunNumber, tombstone.Revision = nil, nil, 6
-	if err := table.ApplyEvents(5, ingressv1.ServiceSnapshot{Revision: 6, Entries: []ingressv1.ServiceProjection{tombstone}}, now); err != nil {
+	if err := table.ApplyEvents(5, ingressv1.ServiceSnapshot{Revision: 6, Entries: []ingressv1.ServiceProjection{tombstone}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := table.Lookup(sibling.ServiceId, run, 1, now); ok {
@@ -152,7 +152,7 @@ func TestPrivateRoutingAssignmentRollbackAndOwnedProjections(t *testing.T) {
 	entry := serviceRoutingEntry(t, now)
 	*entry.RunNumber = 2
 	var table ServiceRoutingTable
-	if err := table.ApplySnapshot(ingressv1.ServiceSnapshot{Revision: 1, Entries: []ingressv1.ServiceProjection{entry}}, now); err != nil {
+	if err := table.ApplySnapshot(ingressv1.ServiceSnapshot{Revision: 1, Entries: []ingressv1.ServiceProjection{entry}}); err != nil {
 		t.Fatal(err)
 	}
 	for name, change := range map[string]func(*ingressv1.ServiceProjection){
@@ -166,7 +166,7 @@ func TestPrivateRoutingAssignmentRollbackAndOwnedProjections(t *testing.T) {
 			bad := clonePrivateProjection(entry)
 			bad.Revision = 2
 			change(&bad)
-			if err := table.ApplyEvents(1, ingressv1.ServiceSnapshot{Revision: 2, Entries: []ingressv1.ServiceProjection{bad}}, now); !errors.Is(err, ErrPrivateRoutingStale) {
+			if err := table.ApplyEvents(1, ingressv1.ServiceSnapshot{Revision: 2, Entries: []ingressv1.ServiceProjection{bad}}); !errors.Is(err, ErrPrivateRoutingStale) {
 				t.Fatalf("stale assignment accepted: %v", err)
 			}
 		})
@@ -193,7 +193,7 @@ func TestPrivateRoutingConcurrentLookupAndAtomicPages(t *testing.T) {
 	now := time.Now()
 	entry := serviceRoutingEntry(t, now)
 	var table ServiceRoutingTable
-	if err := table.ApplySnapshot(ingressv1.ServiceSnapshot{Revision: 1, Entries: []ingressv1.ServiceProjection{entry}}, now); err != nil {
+	if err := table.ApplySnapshot(ingressv1.ServiceSnapshot{Revision: 1, Entries: []ingressv1.ServiceProjection{entry}}); err != nil {
 		t.Fatal(err)
 	}
 	var group sync.WaitGroup
@@ -212,7 +212,7 @@ func TestPrivateRoutingConcurrentLookupAndAtomicPages(t *testing.T) {
 	for revision := int64(2); revision <= 100; revision++ {
 		update := clonePrivateProjection(entry)
 		update.Revision = revision
-		if err := table.ApplyEvents(revision-1, ingressv1.ServiceSnapshot{Revision: revision, Entries: []ingressv1.ServiceProjection{update}}, now); err != nil {
+		if err := table.ApplyEvents(revision-1, ingressv1.ServiceSnapshot{Revision: revision, Entries: []ingressv1.ServiceProjection{update}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -223,18 +223,28 @@ func TestPrivateRoutingInvalidSnapshotKeepsInstalledState(t *testing.T) {
 	now := time.Now()
 	entry := serviceRoutingEntry(t, now)
 	var table ServiceRoutingTable
-	if err := table.ApplySnapshot(ingressv1.ServiceSnapshot{Revision: 3, Entries: []ingressv1.ServiceProjection{entry}}, now); err != nil {
+	if err := table.ApplySnapshot(ingressv1.ServiceSnapshot{Revision: 3, Entries: []ingressv1.ServiceProjection{entry}}); err != nil {
 		t.Fatal(err)
 	}
 	tombstone := clonePrivateProjection(entry)
 	tombstone.Kind, tombstone.ConnectedRelays = ingressv1.Tombstone, nil
+	updated := clonePrivateProjection(entry)
+	updated.Revision = 4
+	(*updated.ConnectedRelays)[0].ConnectionAssignmentRevision++
+	(*updated.ConnectedRelays)[0].PublisherConnectionId = privateTestID(t, opaqueid.PublisherConnectionPrefix)
+	malformed := serviceRoutingEntry(t, now)
+	malformed.Revision, malformed.ExpiresAt, malformed.RunNumber = 5, now.Add(-time.Second), nil
+	missingExpiry := clonePrivateProjection(entry)
+	(*missingExpiry.ConnectedRelays)[0].LeaseExpiresAt = time.Time{}
 	for name, snapshot := range map[string]ingressv1.ServiceSnapshot{
-		"older cursor":  {Revision: 2, Entries: []ingressv1.ServiceProjection{entry}},
-		"duplicate run": {Revision: 4, Entries: []ingressv1.ServiceProjection{entry, entry}},
-		"tombstone":     {Revision: 4, Entries: []ingressv1.ServiceProjection{tombstone}},
+		"older cursor":           {Revision: 2, Entries: []ingressv1.ServiceProjection{entry}},
+		"duplicate run":          {Revision: 4, Entries: []ingressv1.ServiceProjection{entry, entry}},
+		"tombstone":              {Revision: 4, Entries: []ingressv1.ServiceProjection{tombstone}},
+		"malformed expired tail": {Revision: 5, Entries: []ingressv1.ServiceProjection{updated, malformed}},
+		"missing relay expiry":   {Revision: 4, Entries: []ingressv1.ServiceProjection{missingExpiry}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := table.ApplySnapshot(snapshot, now); !errors.Is(err, ErrPrivateRoutingStale) {
+			if err := table.ApplySnapshot(snapshot); !errors.Is(err, ErrPrivateRoutingStale) {
 				t.Fatalf("invalid snapshot accepted: %v", err)
 			}
 			if revision, ready := table.Revision(); !ready || revision != 3 {

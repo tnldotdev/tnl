@@ -2,24 +2,19 @@ package state
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func hashServiceHTTPSecret(secret string) []byte {
-	digest := sha256.Sum256([]byte("service-http-grant/v1\x00" + secret))
-	return digest[:]
-}
-
-func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor string, input controlv1.CreateServiceHTTPGrantRequest, now time.Time) (result controlv1.ServiceHTTPGrant, retErr error) {
-	kind := serviceHTTPCredentialKind(input.Kind)
-	if !kind.grant() || !input.ExpiresAt.After(now) || input.ExpiresAt.After(now.Add(7*24*time.Hour)) {
+func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor string, input controlv1.CreateVisitorCredentialRequest, now time.Time) (result controlv1.VisitorCredential, retErr error) {
+	kind := string(input.Kind)
+	if input.Resource.Kind != "service" || input.Resource.Id != service || (kind != "token" && kind != "share") || !input.ExpiresAt.After(now) || input.ExpiresAt.After(now.Add(7*24*time.Hour)) {
 		return result, ErrServiceAccess
 	}
 	tx, err := d.beginServiceAccess(ctx, pgx.TxOptions{})
@@ -58,16 +53,26 @@ func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor st
 	if err != nil {
 		return result, err
 	}
-	secret = id + "." + secret
-	credential, err := parseServiceHTTPCredential(controlv1.ServiceHTTPCredential{Kind: controlv1.ServiceHTTPCredentialKind(kind), Secret: &secret})
+	secret = "vrf1." + id + "." + secret
+	_, digest, err := visitorRefreshDigest(secret)
 	if err != nil {
 		return result, err
 	}
-	err = q.InsertServiceHTTPGrant(ctx, controlstatedb.InsertServiceHTTPGrantParams{ID: id, ServiceID: service, Kind: string(credential.kind), SecretDigest: credential.digest[:], CreatedByIdentityID: actor, ControlSessionID: nullableText(companySessionID(ctx, actor)), ExpiresAt: timestamptz(input.ExpiresAt)})
+	err = q.InsertServiceHTTPGrant(ctx, controlstatedb.InsertServiceHTTPGrantParams{ID: id, ServiceID: service, Kind: kind, SecretDigest: digest[:], CreatedByIdentityID: actor, ControlSessionID: nullableText(companySessionID(ctx, actor)), ExpiresAt: timestamptz(input.ExpiresAt)})
 	if err != nil {
 		return result, err
 	}
-	result = controlv1.ServiceHTTPGrant{Subject: controlv1.HTTPAuthorizationSubject{Kind: "service", Id: service}, Id: id, Kind: controlv1.ServiceHTTPGrantKind(input.Kind), Secret: secret, ExpiresAt: input.ExpiresAt}
+	issuer, err := q.ReadVisitorTokenIssuer(ctx)
+	if err != nil {
+		return result, err
+	}
+	issued, err := d.issueVisitorToken(ctx, tx, issuer, visitorscope.Scope{Kind: visitorscope.Service, ID: service}, GrantTokenSource{Credential: secret}, now)
+	if err != nil {
+		return result, err
+	}
+	permission := issued.Permission
+	result = controlv1.VisitorCredential{GrantId: id, Kind: controlv1.VisitorCredentialKind(input.Kind), RefreshCredential: secret, ExpiresAt: input.ExpiresAt,
+		Permission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service}, Hostname: permission.Hostname, Port: int(permission.Port), VisitorPolicyRevision: permission.VisitorPolicyRevision, ExpiresAt: permission.ExpiresAt, VisitorToken: issued.Token.Reveal()}}
 	if input.Kind == "share" {
 		origin, err := serviceHTTPOrigin(endpoint)
 		if err != nil {
@@ -95,7 +100,7 @@ func (d *Database) ListServiceHTTPGrants(ctx context.Context, service, actor str
 	}
 	result = make([]controlv1.ServiceHTTPGrantSummary, 0, len(rows))
 	for _, row := range rows {
-		result = append(result, controlv1.ServiceHTTPGrantSummary{Subject: controlv1.HTTPAuthorizationSubject{Kind: "service", Id: service}, Id: row.ID, Kind: controlv1.ServiceHTTPGrantSummaryKind(row.Kind), ExpiresAt: row.ExpiresAt.Time, RevokedAt: optionalTime(row.RevokedAt)})
+		result = append(result, controlv1.ServiceHTTPGrantSummary{Subject: controlv1.VisitorResourceScope{Kind: "service", Id: service}, Id: row.ID, Kind: controlv1.ServiceHTTPGrantSummaryKind(row.Kind), ExpiresAt: row.ExpiresAt.Time, RevokedAt: optionalTime(row.RevokedAt)})
 	}
 	return result, tx.Commit(ctx)
 }

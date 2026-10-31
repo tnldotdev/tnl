@@ -15,6 +15,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	publisherv1 "github.com/tnldotdev/tnl/pkg/api/publisher/browser/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestBrowserAccessStatusSharesTheForwardingDecision(t *testing.T) {
@@ -24,7 +25,7 @@ func TestBrowserAccessStatusSharesTheForwardingDecision(t *testing.T) {
 		response.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
-	route, err := newTestPublicURLServer(PublicURLServerConfig{
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "route.example", Target: upstream.URL, Certificate: publicURLTestCertificate(t, "route.example"),
 		PreviewID: "pv_0123456789abcdefghijkl", PublicURLID: "url_0123456789abcdefghijkl", PublishRunNumber: 2,
 	})
@@ -44,9 +45,12 @@ func TestBrowserAccessStatusSharesTheForwardingDecision(t *testing.T) {
 			ingress, publisher := net.Pipe()
 			_ = ingress.SetDeadline(time.Now().Add(5 * time.Second))
 			finished := make(chan struct{})
-			go func() { route.handleVisitor(publisher, denied); close(finished) }()
+			go func() {
+				serveTestPublicVisitor(t, route, publisher, tunnelv1.VisitorStreamHeader{AccessPending: denied})
+				close(finished)
+			}()
 			t.Cleanup(func() { _ = ingress.Close(); awaitPublisherTest(t, finished) })
-			header, err := proxyproto.Encode(proxyproto.Header{
+			header, err := encodeTestPublicMetadata(route, tunnelv1.VisitorStreamHeader{AccessPending: denied}, proxyproto.Header{
 				Source: netip.MustParseAddrPort("192.0.2.10:1234"), Destination: netip.MustParseAddrPort("127.0.0.1:443"),
 			})
 			if err != nil {
@@ -61,7 +65,11 @@ func TestBrowserAccessStatusSharesTheForwardingDecision(t *testing.T) {
 			}
 			reader := bufio.NewReader(visitor)
 			for _, path := range []string{"/__tnl/access", "/"} {
-				if _, err := fmt.Fprintf(visitor, "GET %s HTTP/1.1\r\nHost: route.example\r\n\r\n", path); err != nil {
+				credential := ""
+				if denied {
+					credential = visitorTokenHeader + ": invalid-visitor-token\r\n"
+				}
+				if _, err := fmt.Fprintf(visitor, "GET %s HTTP/1.1\r\nHost: route.example\r\n%s\r\n", path, credential); err != nil {
 					t.Fatal(err)
 				}
 				response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodGet})

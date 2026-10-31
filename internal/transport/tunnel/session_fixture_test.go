@@ -236,7 +236,8 @@ func publisherHello() tunnelv1.Message {
 }
 func visitorStreamHeader() tunnelv1.VisitorStreamHeader {
 	return tunnelv1.VisitorStreamHeader{
-		ProtocolVersion: 1, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor_connection_1",
+		ConfirmBeforeBytes: true,
+		ProtocolVersion:    1, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor_connection_1",
 		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
 		PublisherConnectionID: "publisher_connection_1", ConnectionAssignmentRevision: 3,
 	}
@@ -244,7 +245,8 @@ func visitorStreamHeader() tunnelv1.VisitorStreamHeader {
 func internalForwardingHeader() tunnelv1.InternalForwardingHeader {
 	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
 	return tunnelv1.InternalForwardingHeader{
-		ProtocolVersion: 1, Kind: tunnelv1.InternalForwardingStream, VisitorConnectionID: "visitor_connection_1",
+		ConfirmBeforeBytes: true,
+		ProtocolVersion:    1, Kind: tunnelv1.InternalForwardingStream, VisitorConnectionID: "visitor_connection_1",
 		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
 		PublisherConnectionID: "publisher_connection_1", ConnectionSlot: 0, ConnectionAssignmentRevision: 3,
 		RelayServiceID: "relay_service_1", RelayID: "relay_1", RelayRunID: "relay_run_1", RelayLeaseRevision: 4,

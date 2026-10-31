@@ -178,7 +178,39 @@ func TestCopyResetClosesIdleOtherDirection(t *testing.T) {
 	reset := &failingConn{Conn: leftTCP, readErr: fmt.Errorf("read: %w", syscall.ECONNRESET)}
 	result := startCopy(t, reset, rightTCP, nil, nil)
 	got := copyResult(t, result)
-	if got.err != nil || !reset.closed.Load() {
+	if !errors.Is(got.err, syscall.ECONNRESET) || !reset.closed.Load() {
 		t.Fatalf("reset did not close the idle direction: result=%+v, err=%v, closed=%v", got.result, got.err, reset.closed.Load())
+	}
+}
+
+type unsupportedHalfCloseConn struct{ net.Conn }
+
+func (c unsupportedHalfCloseConn) CloseWrite() error { return errors.ErrUnsupported }
+
+func TestCopyUnsupportedHalfCloseKeepsResponseAndAccounting(t *testing.T) {
+	visitor, left := tcpPair(t)
+	right, publisher := tcpPair(t)
+	result := startCopy(t, left, unsupportedHalfCloseConn{right}, nil, nil)
+	if _, err := visitor.Write([]byte("request")); err != nil {
+		t.Fatal(err)
+	}
+	if err := visitor.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	var request [7]byte
+	if _, err := io.ReadFull(publisher, request[:]); err != nil || string(request[:]) != "request" {
+		t.Fatalf("request=%q error=%v", request, err)
+	}
+	if _, err := publisher.Write([]byte("response")); err != nil {
+		t.Fatal(err)
+	}
+	if err := publisher.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	if response, err := io.ReadAll(visitor); err != nil || string(response) != "response" {
+		t.Fatalf("response=%q error=%v", response, err)
+	}
+	if got := copyResult(t, result); got.err != nil || got.result != (Result{LeftToRight: 7, RightToLeft: 8}) {
+		t.Fatalf("response/accounting lost: %+v, %v", got.result, got.err)
 	}
 }

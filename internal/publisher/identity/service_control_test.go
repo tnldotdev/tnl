@@ -26,9 +26,9 @@ func (c *serviceBoundaryControl) HeartbeatServiceRunHealth(_ context.Context, _,
 	return controlv1.ServiceRunState{}, nil
 }
 
-func (c *serviceBoundaryControl) AuthorizeServiceHTTPVisitor(_ context.Context, _, _ string, token credentials.ServiceRunToken, _ controlv1.ServiceHTTPVisitorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+func (c *serviceBoundaryControl) CheckServiceBrowserSession(_ context.Context, _, _ string, token credentials.ServiceRunToken, _ controlv1.ServiceBrowserRequest) (controlv1.BrowserAccessResponse, error) {
 	c.token, c.calls = token, c.calls+1
-	return controlv1.ServiceClientCertificateDecision{}, nil
+	return controlv1.BrowserAccessResponse{}, nil
 }
 
 func TestServiceControlBindsRunTokenAndExactScope(t *testing.T) {
@@ -43,10 +43,10 @@ func TestServiceControlBindsRunTokenAndExactScope(t *testing.T) {
 	if _, err := n.HeartbeatServiceRunHealth(t.Context(), service, "run", token, controlv1.ServiceRunHeartbeat{}); err != nil || c.token != token || c.calls != 1 {
 		t.Fatal("service heartbeat changed its run token", err)
 	}
-	if _, err := n.AuthorizeServiceHTTPVisitor(t.Context(), service, "run", token, controlv1.ServiceHTTPVisitorRequest{}); err != nil || c.token != token || c.calls != 2 {
-		t.Fatal("service visitor authorization changed its run token", err)
+	if _, err := n.CheckServiceBrowserSession(t.Context(), service, "run", token, controlv1.ServiceBrowserRequest{}); err != nil || c.token != token || c.calls != 2 {
+		t.Fatal("service browser preparation changed its run token", err)
 	}
-	if _, err := n.AuthorizeServiceHTTPVisitor(t.Context(), "another-service", "run", token, controlv1.ServiceHTTPVisitorRequest{}); !errors.Is(err, ErrScope) || c.calls != 2 {
+	if _, err := n.CheckServiceBrowserSession(t.Context(), "another-service", "run", token, controlv1.ServiceBrowserRequest{}); !errors.Is(err, ErrScope) || c.calls != 2 {
 		t.Fatal("service control escaped its grant", err)
 	}
 }

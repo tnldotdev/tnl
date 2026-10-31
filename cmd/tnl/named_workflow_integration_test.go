@@ -40,7 +40,7 @@ func runNamedWorkflowProcess(t *testing.T, personal bool, noGit ...bool) {
 		// three git transitions each wait for a full owner shutdown and restart.
 		timeout = 4 * time.Minute
 	}
-	args := []string{"-test.run=^TestIntegrationCLINamedInvocationSelectionAndRealization$", "-test.v", "-test.timeout=" + timeout.String(), "-tnl-test-tier=integration", "-tnl-test-postgres-url=" + flag.Lookup("tnl-test-postgres-url").Value.String(), "-tnl-cli-workflow-child"}
+	args := []string{"-test.run=^TestIntegrationCLINamedInvocationSelectionAndRealization$", "-test.v", "-test.timeout=" + timeout.String(), "-tnl-test-tier=integration", "-tnl-test-postgres-url=" + flag.Lookup("tnl-test-postgres-url").Value.String(), "-tnl-cli-binary=" + *cliWorkflowBinary, "-tnl-cli-workflow-child"}
 	if personal {
 		args = append(args, "-tnl-cli-workflow-personal-team")
 	}
@@ -83,16 +83,7 @@ func TestIntegrationCLINamedInvocationSelectionAndRealization(t *testing.T) {
 		return
 	}
 	f := newCLIWorkflow(t)
-	repository, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin := filepath.Join(t.TempDir(), "tnl")
-	build := exec.CommandContext(t.Context(), "go", "build", "-buildvcs=false", "-o", bin, "./cmd/tnl")
-	build.Dir = repository
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build real CLI: %v\n%s", err, output)
-	}
+	bin := workflowExecutable(t)
 	root := t.TempDir()
 	for _, args := range [][]string{{"init", "--quiet", root}, {"-C", root, "remote", "add", "origin", "https://example.test/named/workflow.git"}} {
 		if *cliWorkflowNoGit {

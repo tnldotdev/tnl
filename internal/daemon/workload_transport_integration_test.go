@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,7 +54,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			}
 			echo := startPrivateEchoTarget(t)
 			httpTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Tnl-Access-Token") != "" {
+				if r.Header.Get("Tnl-Access-Token") != "" || r.Header.Get("Tnl-Visitor-Token") != "" {
 					t.Error("target received visitor credential")
 				}
 				if r.URL.Path == "/stream" {
@@ -216,8 +218,10 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	f, issuer := newWorkloadTransportFixture(t, nil)
 	process := startSeparatedPrivateIngress(t, f, 0, "tls-tcp", nil)
 	startSeparatedPrivateIngress(t, f, 1, "tls-tcp", nil)
+	var forwarded atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Tnl-Access-Token") != "" || strings.Contains(r.Header.Get("Cookie"), "__Host-tnl-browser") {
+		forwarded.Add(1)
+		if r.Header.Get("Tnl-Access-Token") != "" || r.Header.Get("Tnl-Visitor-Token") != "" || strings.Contains(r.Header.Get("Cookie"), "__Host-tnl-") {
 			t.Error("target received visitor credential")
 		}
 		_, _ = io.WriteString(w, "workload HTTP")
@@ -242,11 +246,11 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 		t.Fatal("workload inventory", err)
 	}
 	s := inventory.Services[0]
-	certificate, err := job.ClientTLSCertificate(t.Context(), s.Id)
+	grant, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), s.Id, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: s.Id}, Kind: "token", ExpiresAt: time.Now().Add(time.Minute)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant, err := f.identity.routes.CreateServiceHTTPGrant(t.Context(), s.Id, controlv1.CreateServiceHTTPGrantRequest{Kind: controlv1.CreateServiceHTTPGrantRequestKind("token"), ExpiresAt: time.Now().Add(time.Minute)})
+	certificate, err := job.ClientTLSCertificate(t.Context(), s.Id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,16 +260,20 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	tr := &http.Transport{TLSClientConfig: verification, DialContext: workloadDirectDialer(t, process.ingresses[0].private, s.Endpoint.Port)}
 	t.Cleanup(tr.CloseIdleConnections)
 	client := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	humanTLS := verification.Clone()
+	humanTLS.Certificates = nil
+	humanTransport := &http.Transport{TLSClientConfig: humanTLS, DialContext: tr.DialContext}
+	t.Cleanup(humanTransport.CloseIdleConnections)
+	humanClient := &http.Client{Transport: humanTransport, Timeout: 5 * time.Second, CheckRedirect: client.CheckRedirect}
 	endpoint := "https://" + net.JoinHostPort(s.Endpoint.Hostname, strconv.Itoa(s.Endpoint.Port))
-	request := func(path string, withHumanToken bool, status int) {
+	request := func(client *http.Client, path, header, credential string, status int) {
 		t.Helper()
 		r, err := http.NewRequestWithContext(t.Context(), "GET", endpoint+path, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		r.Header.Set("Cookie", "__Host-tnl-browser=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-		if withHumanToken {
-			r.Header.Set("Tnl-Access-Token", grant.Secret)
+		if header != "" {
+			r.Header.Set(header, credential)
 		}
 		response, err := client.Do(r)
 		if err != nil {
@@ -276,13 +284,48 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 			t.Fatalf("workload HTTP status %d, want %d", response.StatusCode, status)
 		}
 	}
-	request("/", false, 200)
-	request("/", true, 200)
+	currentPermission := func() controlv1.VisitorTokenResponse {
+		t.Helper()
+		source, err := json.Marshal(controlv1.VisitorTokenGrantSource{Kind: controlv1.VisitorTokenGrant, Credential: grant.RefreshCredential})
+		if err != nil {
+			t.Fatal(err)
+		}
+		permission, err := f.identity.routes.IssueVisitorToken(t.Context(), controlv1.VisitorTokenRequest{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: s.Id}, Source: source})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return permission
+	}
+	awaitServiceHTTPStatus(t, client, endpoint, "", "", 200)
+	request(client, "/", "", "", 200)
+	permission := currentPermission()
+	awaitServiceHTTPStatus(t, humanClient, endpoint, "Tnl-Visitor-Token", permission.VisitorToken, 200)
+	request(humanClient, "/", "Tnl-Visitor-Token", permission.VisitorToken, 200)
+	beforeMixedCredentials := forwarded.Load()
+	// a supplied certificate cannot switch subjects through another credential.
+	request(client, "/", "Tnl-Visitor-Token", permission.VisitorToken, 403)
+	request(client, "/", "Cookie", "__Host-tnl-browser=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 403)
+	request(client, "/", "Tnl-Visitor-Token", "invalid", 403)
+	request(client, "/", "Cookie", "__Host-tnl-visitor=invalid", 403)
+	if forwarded.Load() != beforeMixedCredentials {
+		t.Fatal("mixed certificate and HTTP credentials reached the target")
+	}
 	if err = job.Revoke(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	request("/", true, 403)
-	request("/__tnl/login", true, 403)
+	awaitServiceHTTPStatus(t, client, endpoint, "", "", 403)
+	request(client, "/", "", "", 403)
+	// workload revocation does not revoke an independent human credential, but
+	// the revoked certificate's connection cannot adopt that human's permission.
+	permission = currentPermission()
+	awaitServiceHTTPStatus(t, humanClient, endpoint, "Tnl-Visitor-Token", permission.VisitorToken, 200)
+	request(humanClient, "/", "Tnl-Visitor-Token", permission.VisitorToken, 200)
+	beforeMixedCredentials = forwarded.Load()
+	request(client, "/", "Tnl-Visitor-Token", permission.VisitorToken, 403)
+	request(client, "/__tnl/login", "Tnl-Visitor-Token", permission.VisitorToken, 403)
+	if forwarded.Load() != beforeMixedCredentials {
+		t.Fatal("revoked workload certificate selected a human credential")
+	}
 }
 
 func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, transport string, wrappers ...func(publisherservice.RunControl) publisherservice.RunControl) {

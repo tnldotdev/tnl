@@ -131,6 +131,9 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	for _, setup := range configure {
 		setup(&config, serviceTransport, ca)
 	}
+	if err := database.PrepareVisitorSigningKeys(t.Context(), config.ControlOrigin(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	serviceHTTP := &http.Client{Transport: serviceTransport, Timeout: 10 * time.Second}
 	t.Cleanup(serviceTransport.CloseIdleConnections)
 	secrets, err := serviceapi.NewBearerSecrets(serviceRuntimeClusterSecret, "")

@@ -69,29 +69,6 @@ paths:
           description: Publisher can check shares for this publish run
         default:
           $ref: "../openapi.yaml#/components/responses/Problem"
-  /v1/publish-runs/{publish_run_id}/share-state:
-    post:
-      operationId: getPublishRunShareState
-      summary: Read short-lived share access state for this publisher
-      security:
-        - publishRunAuth: []
-      parameters:
-        - $ref: "../openapi.yaml#/components/parameters/PublishRunID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "../openapi.yaml#/components/schemas/PublishRunVersionRequest"
-      responses:
-        "200":
-          description: Current share fingerprints and cookie hashes for this public URL
-          content:
-            application/json:
-              schema:
-                $ref: "../openapi.yaml#/components/schemas/PublishRunShareState"
-        default:
-          $ref: "../openapi.yaml#/components/responses/Problem"
   /v1/publish-runs/{publish_run_id}/share-redemptions:
     post:
       operationId: redeemPublishRunShare

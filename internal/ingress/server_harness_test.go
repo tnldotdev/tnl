@@ -21,6 +21,7 @@ import (
 	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 )
 
 const fixtureTimeout = 5 * time.Second
@@ -138,8 +139,14 @@ func publicURLConfig(backends ...ingressbackend.Backend) Config {
 		if host != "route.example" {
 			return PublicURL{}, "not_found"
 		}
-		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, RecoveryEpisodeID: 7, Backends: backends, AllowAll: true}, ""
+		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, RecoveryEpisodeID: 7, Backends: backends, AllowAll: true, AttestSource: testBackendSourceProof}, ""
 	}}
+}
+
+// fake backends parse metadata but do not run publisher authentication. the
+// separated visitor fixtures exercise real source authentication instead.
+func testBackendSourceProof(string, netip.AddrPort, netip.AddrPort) (string, error) {
+	return "fixture-source-proof", nil
 }
 
 type backendResult struct {
@@ -179,12 +186,20 @@ func newTLSBackend(t *testing.T, protos ...string) *tlsBackend {
 	})
 	return backend
 }
-func (b *tlsBackend) Open(_ context.Context, id string) (net.Conn, error) {
+func (b *tlsBackend) Start(ctx context.Context, id string, pending bool, proxy, initial []byte) (net.Conn, error) {
 	if b.opens.Add(1) != 1 {
 		return nil, errors.New("TLS fixture unexpectedly opened twice")
 	}
 	b.visitorID <- id
-	return b.connection, nil
+	return startTestBackend(ctx, b.connection, proxy, initial)
+}
+
+func startTestBackend(ctx context.Context, connection net.Conn, proxy, initial []byte) (net.Conn, error) {
+	n, err := writeSetup(ctx, connection, proxy, initial)
+	if err != nil {
+		return nil, &tunnel.OpeningError{Committed: n > 0, VisitorBytes: n, Err: errors.Join(err, connection.Close())}
+	}
+	return connection, nil
 }
 
 type testReaderConn struct {

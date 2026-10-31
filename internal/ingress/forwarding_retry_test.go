@@ -67,7 +67,7 @@ func TestForwarderRetryCanReuseConcurrentReplacement(t *testing.T) {
 	if err != nil || reused {
 		t.Fatalf("warm initial session: reused=%t error=%v", reused, err)
 	}
-	done := ingressWorker(t, cancel, func() error { _, err := backend.Open(ctx, "visitor_retry"); return err })
+	done := ingressWorker(t, cancel, func() error { _, err := backend.Start(ctx, "visitor_retry", false, nil, nil); return err })
 	if index := ingressAwait(t, connector.opened); index != 0 {
 		t.Fatalf("first attempt=%d", index)
 	}
@@ -136,13 +136,13 @@ func TestForwarderPreservesPooledSessionAfterVisitorStreamFailure(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := backend.Open(ingressContext(t), "visitor_failed"); !errors.Is(err, failure) {
+	if _, err := backend.Start(ingressContext(t), "visitor_failed", false, nil, nil); !errors.Is(err, failure) {
 		t.Fatalf("failed visitor stream = %v", err)
 	}
 	if session.Err() != nil || !forwarder.currentSession(backend.target.key(), session) {
 		t.Fatal("failed visitor invalidated a healthy pooled session")
 	}
-	connection, err := backend.Open(ingressContext(t), "visitor_next")
+	connection, err := backend.Start(ingressContext(t), "visitor_next", false, nil, nil)
 	if err != nil {
 		t.Fatalf("next visitor stream: %v", err)
 	}

@@ -47,12 +47,12 @@ func TestForwarderStaleProjectionPreservesReplacementSession(t *testing.T) {
 	entry.PublisherConnections[0].RelayRunId = "relay_run_2"
 	entry.PublisherConnections[0].RelayLeaseRevision++
 	current := mustOnlyBackend(t, forwarder, entry)
-	visitor, err := current.Open(ingressContext(t), "visitor_current")
+	visitor, err := current.Start(ingressContext(t), "visitor_current", false, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ownIngressConn(t, visitor)
-	_, err = stale.Open(ingressContext(t), "visitor_stale")
+	_, err = stale.Start(ingressContext(t), "visitor_stale", false, nil, nil)
 	var rejected *tunnel.ProtocolError
 	if !errors.As(err, &rejected) || rejected.Code != tunnelv1.StaleConnectionAssignment {
 		t.Fatalf("stale relay run rejection = %v", err)
@@ -157,7 +157,7 @@ func TestForwarderConcurrentOpensShareConnection(t *testing.T) {
 	t.Cleanup(func() { unblock(); cancel(); _ = f.Close(); ingressAwait(t, done) })
 	for i := range count {
 		workers.Go(func() {
-			connection, err := backend.Open(ctx, fmt.Sprintf("visitor_%d", i))
+			connection, err := backend.Start(ctx, fmt.Sprintf("visitor_%d", i), false, nil, nil)
 			if err != nil {
 				results <- err
 				return

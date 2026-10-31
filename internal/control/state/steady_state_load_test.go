@@ -19,7 +19,7 @@ func TestLoadSteadyState(t *testing.T) {
 	setupStarted := time.Now()
 	f := newControlLoadFixture(t)
 	sessions := readySteadyLoadSessions(t, f)
-	historyRevision := seedLoadRoutingHistory(t, f, 1, f.history)
+	historyRevision := seedLoadRoutingHistory(t, f, 2, f.history)
 	var ingresses [2]IngressLease
 	for index := range ingresses {
 		lease, err := f.database.RegisterIngress(t.Context(), IngressRegistration{
@@ -245,9 +245,9 @@ func readyLoadSessions(t *testing.T, f *controlLoadFixture, publisherLease, cred
 		for slot := range setup.PublisherConnections {
 			claimTestConnection(t, session, slot, f.now)
 		}
-		ready, err := f.database.MarkPublishRunReady(t.Context(), session.authentication(), f.now)
-		if err != nil || !ready.Routable {
-			t.Fatalf("ready route=%s routable=%t: %v", setup.PublicURLID, ready.Routable, err)
+		ready := readyTestServingRun(t, session, f.now)
+		if !ready.Routable {
+			t.Fatalf("ready route=%s routable=%t", setup.PublicURLID, ready.Routable)
 		}
 		sessions = append(sessions, session)
 	}

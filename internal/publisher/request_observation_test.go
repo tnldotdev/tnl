@@ -26,7 +26,7 @@ func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {
 	}))
 	defer upstream.Close()
 	var events []inspection.Summary
-	server, err := newTestPublicURLServer(PublicURLServerConfig{
+	server, err := newTestPublicURLServer(t, PublicURLServerConfig{
 		Hostname: "app.example", Target: upstream.URL,
 		ObserveSummary: func(event inspection.Summary) { events = append(events, event) },
 	})
@@ -51,7 +51,7 @@ func TestRequestObservationSeparatesLocalAndPublisherResponses(t *testing.T) {
 			request.Host = "other.example"
 		}
 		response := httptest.NewRecorder()
-		server.http.Handler.ServeHTTP(response, request)
+		serveTestPublicRequest(t, server, response, request)
 		if response.Code != test.status {
 			t.Fatalf("%s: status = %d", test.path, response.Code)
 		}
@@ -83,7 +83,7 @@ func TestRequestObservationNoneRecordsNothing(t *testing.T) {
 	}))
 	defer upstream.Close()
 	observed := 0
-	server, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "app.example", Target: upstream.URL,
+	server, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "app.example", Target: upstream.URL,
 		InspectionMode: inspection.None, ObserveSummary: func(inspection.Summary) { observed++ }})
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +94,7 @@ func TestRequestObservationNoneRecordsNothing(t *testing.T) {
 	request.Host = "app.example"
 	request.TLS = &tls.ConnectionState{ServerName: "app.example"}
 	response := httptest.NewRecorder()
-	server.http.Handler.ServeHTTP(response, request)
+	serveTestPublicRequest(t, server, response, request)
 	if response.Code != http.StatusNoContent || observed != 0 {
 		t.Fatalf("none mode response = %d, observations = %d", response.Code, observed)
 	}

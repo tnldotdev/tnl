@@ -63,10 +63,11 @@ tasks:
 
   test:live-authorization:
     dir: "{{.ROOT_DIR}}"
-    desc: Check public HTTP decision caching and live request authorization
+    desc: Check signed HTTP permissions, policy freshness, and live request authorization
     vars:
-      RUN: '{{default "Test(VisitorDecisionCache|HTTPDecisionCache|PublicHTTP|ServiceHTTPGuard)" .RUN}}'
+      RUN: '{{default "Test(LocalHTTPPermission|PublisherVisitorPolicy|BrowserToken|PublicHTTP|ServiceHTTP)" .RUN}}'
     cmds:
+      - go test {{.CLI_ARGS}} ./internal/security/visitortoken ./internal/policy/visitorlease -count=1
       - go test {{.CLI_ARGS}} ./internal/publisher -run='{{.RUN}}' -count=1
 
   test:http-streaming:
@@ -74,6 +75,12 @@ tasks:
     desc: Check native HTTP streaming, upload bounds, trailers and inspection over local wires
     cmds:
       - go test {{.CLI_ARGS}} ./internal/transport/httpstream ./internal/publisher/proxy ./internal/publisher -count=1 -timeout=3m
+
+  test:public-capacity:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check run-owned public connection capacity, relay setup fairness, and joined retirement
+    cmds:
+      - go test {{.CLI_ARGS}} ./internal/publisher -run='^TestPublicCapacity' -count=1 -timeout=3m
 
   test:database-native:
     dir: "{{.ROOT_DIR}}"
@@ -242,6 +249,7 @@ tasks:
       - go test ./internal/ingress/clienthello -run='^$' -fuzz='^FuzzInspectClientHello$' -fuzztime='{{.TIME}}'
       - go test ./internal/transport/proxyproto -run='^$' -fuzz='^FuzzDecode$' -fuzztime='{{.TIME}}'
       - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzReadFrames$' -fuzztime='{{.TIME}}'
+      - go test ./pkg/protocol/tunnelv1 -run='^$' -fuzz='^FuzzReturnFrame$' -fuzztime='{{.TIME}}'
       - task: :go:test:fuzz:publisher-observability
         vars:
           TIME: "{{.TIME}}"

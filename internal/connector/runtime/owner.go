@@ -53,15 +53,20 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 	if err != nil {
 		return err
 	}
-	if !expires.After(time.Now()) || expires.After(time.Now().Add(6*time.Hour+time.Second)) {
+	observed := time.Now()
+	if !expires.After(observed) || expires.After(observed.Add(6*time.Hour+time.Second)) {
 		return ErrExpired
 	}
+	// attach the received fixed expiry to this process's monotonic clock once.
+	// renewals may shorten this deadline, never re-anchor it to a changed wall clock.
+	localDeadline := observed.Add(expires.Sub(observed))
 	persistent := false
 	if provider, ok := backend.(interface{ Persistent() bool }); ok {
 		persistent = provider.Persistent()
 	}
 	if persistent {
 		expires = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+		localDeadline = expires
 	}
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -121,8 +126,9 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 		}
 		stateMu.Lock()
 		current := state
+		expired := !persistent && !time.Now().Before(localDeadline)
 		stateMu.Unlock()
-		if lifetime.Err() != nil || !current.ExpiresAt.After(time.Now()) {
+		if lifetime.Err() != nil || expired {
 			w.WriteHeader(410)
 			_, _ = io.WriteString(w, `{"code":"connections.expired"}`)
 			return
@@ -264,7 +270,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 	}
 	renew := time.NewTicker(30 * time.Second)
 	defer renew.Stop()
-	deadline := time.NewTimer(time.Until(expires))
+	deadline := time.NewTimer(time.Until(localDeadline))
 	defer deadline.Stop()
 	for {
 		select {
@@ -277,7 +283,11 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 		case <-deadline.C:
 			return ErrExpired
 		case <-renew.C:
-			bounded, done := context.WithTimeout(lifetime, 10*time.Second)
+			until := time.Now().Add(10 * time.Second)
+			if !persistent && localDeadline.Before(until) {
+				until = localDeadline
+			}
+			bounded, done := context.WithDeadline(lifetime, until)
 			bounded, finish := observability.ClientOperation(bounded, "native.connections.renew")
 			next, err := backend.Renew(bounded)
 			finish(err)
@@ -292,16 +302,31 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 				return err
 			}
 			stateMu.Lock()
-			if !next.After(time.Now()) || next.After(expires) {
+			narrowed, err := renewedOwnerDeadline(time.Now(), localDeadline, expires, next)
+			if err != nil {
 				stateMu.Unlock()
-				return ErrExpired
+				return err
 			}
+			localDeadline = narrowed
 			expires = next
 			state.ExpiresAt = next
-			deadline.Reset(time.Until(next))
+			deadline.Reset(time.Until(localDeadline))
 			stateMu.Unlock()
 		}
 	}
+}
+
+func renewedOwnerDeadline(now, deadline, previous, next time.Time) (time.Time, error) {
+	if !now.Before(deadline) || !next.After(now) || next.After(previous) {
+		return time.Time{}, ErrExpired
+	}
+	// subtract only the authority's reduction. rebuilding from next-now would
+	// extend the running owner after a backward wall-clock adjustment.
+	deadline = deadline.Add(next.Sub(previous))
+	if !now.Before(deadline) {
+		return time.Time{}, ErrExpired
+	}
+	return deadline, nil
 }
 
 func writeConnectionFailure(w http.ResponseWriter, err error) {

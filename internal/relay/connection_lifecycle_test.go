@@ -153,7 +153,7 @@ func TestRegistryInsertionReplacementAndStaleRemoval(t *testing.T) {
 	if err := registry.Insert(next); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.OpenVisitor(t.Context(), "visitor_1"); !errors.Is(err, net.ErrClosed) {
+	if _, err := first.OpenVisitor(t.Context(), "visitor_1", false, true, nil, tunnel.ReturnEvents{}); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("replaced connection still open: %v", err)
 	}
 	if registry.Remove(first) {
@@ -207,14 +207,14 @@ func TestPublisherConnectionDrainWaitsForStreamAndRejectsNewWork(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if incoming.Header != (tunnelv1.VisitorStreamHeader{ProtocolVersion: 1, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor_1", PublicURLID: "public_url_1", PublishRunID: "session_1", PublishRunNumber: 2, PublisherConnectionID: "connection_1", ConnectionAssignmentRevision: 3}) {
+		if incoming.Header != (tunnelv1.VisitorStreamHeader{ProtocolVersion: 1, Kind: tunnelv1.VisitorStream, VisitorConnectionID: "visitor_1", PublicURLID: "public_url_1", PublishRunID: "session_1", PublishRunNumber: 2, PublisherConnectionID: "connection_1", ConnectionAssignmentRevision: 3, ConfirmBeforeBytes: true}) {
 			_ = incoming.Stream.Close()
 			return errors.New("incorrect visitor header")
 		}
 		peer <- incoming
 		return incoming.Accept()
 	})
-	stream, err := connection.OpenVisitor(ctx, "visitor_1")
+	stream, err := connection.OpenVisitor(ctx, "visitor_1", false, true, nil, tunnel.ReturnEvents{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestPublisherConnectionDrainWaitsForStreamAndRejectsNewWork(t *testing.T) {
 	drained := relayWorker(t, func() { cancel(); _ = connection.Close() }, func() error { return registry.Drain(drainCtx) })
 	relayAwait(t, drainCtx.waiting)
 	assertRelayOperation(t, metrics, "RelayDrain", "success", 0)
-	if _, err := connection.OpenVisitor(ctx, "visitor_2"); !errors.Is(err, ErrDraining) {
+	if _, err := connection.OpenVisitor(ctx, "visitor_2", false, true, nil, tunnel.ReturnEvents{}); !errors.Is(err, ErrDraining) {
 		t.Fatalf("open during drain=%v", err)
 	}
 	if err := registry.Insert(connection); !errors.Is(err, ErrDraining) {
@@ -271,7 +271,7 @@ func TestPublisherConnectionCloseInterruptsPendingOpen(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 	result := relayWorker(t, func() { cancel(); _ = connection.session.Close() }, func() error {
-		stream, err := connection.OpenVisitor(ctx, "visitor_pending")
+		stream, err := connection.OpenVisitor(ctx, "visitor_pending", false, true, nil, tunnel.ReturnEvents{})
 		if stream != nil {
 			_ = stream.Close()
 		}
@@ -291,7 +291,7 @@ func TestPublisherConnectionCloseInterruptsPendingOpen(t *testing.T) {
 	if err := relayAwait(t, closed); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := connection.OpenVisitor(ctx, "visitor_after"); !errors.Is(err, net.ErrClosed) {
+	if _, err := connection.OpenVisitor(ctx, "visitor_after", false, true, nil, tunnel.ReturnEvents{}); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("open after close=%v", err)
 	}
 	connection.mu.Lock()
@@ -306,7 +306,7 @@ func TestPublisherConnectionDrainCancellationClosesPendingOpen(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 	opened := relayWorker(t, func() { cancel(); _ = connection.session.Close() }, func() error {
-		stream, err := connection.OpenVisitor(ctx, "visitor_pending")
+		stream, err := connection.OpenVisitor(ctx, "visitor_pending", false, true, nil, tunnel.ReturnEvents{})
 		if stream != nil {
 			_ = stream.Close()
 		}
@@ -328,7 +328,7 @@ func TestPublisherConnectionDrainCancellationClosesPendingOpen(t *testing.T) {
 	if err := relayAwait(t, opened); err == nil {
 		t.Fatal("pending open survived forced drain")
 	}
-	if _, err := connection.OpenVisitor(ctx, "after_drain"); !errors.Is(err, net.ErrClosed) {
+	if _, err := connection.OpenVisitor(ctx, "after_drain", false, true, nil, tunnel.ReturnEvents{}); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("forced drain did not close connection: %v", err)
 	}
 }

@@ -24,7 +24,7 @@ func TestHTTPServiceAuditRecordsFinalAuthorizationWithoutRequestSecrets(t *testi
 	const visitorID = "vc_0123456789ABCDEFGHIJKL"
 	var events []serviceaudit.Observation
 	forwarded := 0
-	route, err := newTestPublicURLServer(PublicURLServerConfig{Hostname: "route.example", PublicURLID: urlID, PublishRunID: runID, PublishRunNumber: 1,
+	route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", PublicURLID: urlID, PublishRunID: runID, PublishRunNumber: 1,
 		AuditSink: auditSinkFunc(func(o serviceaudit.Observation) bool { events = append(events, o); return true }),
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			forwarded++
@@ -44,10 +44,13 @@ func TestHTTPServiceAuditRecordsFinalAuthorizationWithoutRequestSecrets(t *testi
 		r.TLS = &tls.ConnectionState{ServerName: "route.example"}
 		r.Header.Set("Authorization", "Bearer never-audit-this")
 		r.Header.Set("Cookie", "secret=never-audit-this")
+		if denied {
+			r.Header.Set(visitorTokenHeader, "invalid-visitor-token")
+		}
 		r = r.WithContext(context.WithValue(r.Context(), denialContextKey{}, denied))
 		r = r.WithContext(context.WithValue(r.Context(), visitorSessionKey{}, &visitorSession{visitor: Visitor{Run: route.run, Header: tunnelv1.VisitorStreamHeader{VisitorConnectionID: visitorID}, Source: netip.MustParseAddrPort("192.0.2.7:1234")}}))
 		w := httptest.NewRecorder()
-		route.http.Handler.ServeHTTP(w, r)
+		serveTestPublicRequest(t, route, w, r)
 		if denied && w.Code != 403 || !denied && w.Code != 204 {
 			t.Fatalf("status %d", w.Code)
 		}

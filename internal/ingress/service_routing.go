@@ -48,8 +48,10 @@ func (serviceRunTombstone) privateProjectionEvent() {}
 func (serviceTombstone) privateProjectionEvent()    {}
 
 // parsePrivateProjection confines optional wire fields to the decode boundary.
-func parsePrivateProjection(p ingressv1.ServiceProjection, now time.Time) (privateProjectionEvent, error) {
-	if err := validatePrivateProjection(p, now); err != nil {
+// snapshots and event pages may age in transit. retain well-formed history;
+// Lookup enforces run and relay expiry when selecting a current path.
+func parsePrivateProjection(p ingressv1.ServiceProjection) (privateProjectionEvent, error) {
+	if err := validatePrivateProjection(p); err != nil {
 		return nil, err
 	}
 	if p.Kind == ingressv1.Upsert {
@@ -62,7 +64,7 @@ func parsePrivateProjection(p ingressv1.ServiceProjection, now time.Time) (priva
 	return serviceTombstone{serviceID: p.ServiceId}, nil
 }
 
-func validatePrivateProjection(p ingressv1.ServiceProjection, now time.Time) error {
+func validatePrivateProjection(p ingressv1.ServiceProjection) error {
 	if p.Revision <= 0 || !opaqueid.Valid(p.ServiceId, opaqueid.ServicePrefix) ||
 		p.ExpiresAt.IsZero() || !p.Kind.Valid() {
 		return ErrPrivateRoutingStale
@@ -70,7 +72,7 @@ func validatePrivateProjection(p ingressv1.ServiceProjection, now time.Time) err
 	if p.Kind == ingressv1.Upsert {
 		if p.ServiceRunId == nil || !opaqueid.Valid(*p.ServiceRunId, opaqueid.ServiceRunPrefix) ||
 			p.RunNumber == nil || *p.RunNumber <= 0 || p.ConnectedRelays == nil ||
-			len(*p.ConnectedRelays) < 1 || len(*p.ConnectedRelays) > 2 || !p.ExpiresAt.After(now) {
+			len(*p.ConnectedRelays) < 1 || len(*p.ConnectedRelays) > 2 {
 			return ErrPrivateRoutingStale
 		}
 		seen := make(map[string]bool, 2)
@@ -81,7 +83,7 @@ func validatePrivateProjection(p ingressv1.ServiceProjection, now time.Time) err
 				relay.ConnectionAssignmentRevision < 1 || relay.RelayLeaseRevision < 1 ||
 				relay.RelayServiceId == "" || relay.RelayId == "" ||
 				!opaqueid.Valid(relay.RelayRunId, opaqueid.RelayRunPrefix) || relay.InternalRelayAddress == "" ||
-				!relay.LeaseExpiresAt.After(now) || seen[relay.RelayServiceId] || slots[relay.ConnectionSlot] {
+				relay.LeaseExpiresAt.IsZero() || seen[relay.RelayServiceId] || slots[relay.ConnectionSlot] {
 				return ErrPrivateRoutingStale
 			}
 			seen[relay.RelayServiceId] = true
@@ -124,13 +126,13 @@ func (t *ServiceRoutingTable) Revision() (int64, bool) {
 	return t.revision, t.initialized
 }
 
-func (t *ServiceRoutingTable) ApplySnapshot(snapshot ingressv1.ServiceSnapshot, now time.Time) error {
+func (t *ServiceRoutingTable) ApplySnapshot(snapshot ingressv1.ServiceSnapshot) error {
 	if snapshot.Revision < 0 {
 		return ErrPrivateRoutingStale
 	}
 	services := make(map[serviceRunKey]serviceRunUpsert, len(snapshot.Entries))
 	for _, entry := range snapshot.Entries {
-		parsed, err := parsePrivateProjection(entry, now)
+		parsed, err := parsePrivateProjection(entry)
 		upsert, ok := parsed.(serviceRunUpsert)
 		if err != nil || !ok || entry.Revision > snapshot.Revision {
 			return ErrPrivateRoutingStale
@@ -149,7 +151,7 @@ func (t *ServiceRoutingTable) ApplySnapshot(snapshot ingressv1.ServiceSnapshot, 
 	return nil
 }
 
-func (t *ServiceRoutingTable) ApplyEvents(after int64, page ingressv1.ServiceSnapshot, now time.Time) error {
+func (t *ServiceRoutingTable) ApplyEvents(after int64, page ingressv1.ServiceSnapshot) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !t.initialized || after != t.revision || page.Revision < after {
@@ -161,7 +163,7 @@ func (t *ServiceRoutingTable) ApplyEvents(after int64, page ingressv1.ServiceSna
 	}
 	previous := after
 	for _, entry := range page.Entries {
-		parsed, err := parsePrivateProjection(entry, now)
+		parsed, err := parsePrivateProjection(entry)
 		if entry.Revision <= previous || entry.Revision > page.Revision || err != nil {
 			return ErrPrivateRoutingStale
 		}

@@ -1,6 +1,7 @@
 package publisher
 
 import (
+	"errors"
 	"io"
 	"net"
 	"net/netip"
@@ -80,20 +81,28 @@ func (c *publicURLReaderConn) Read(destination []byte) (int, error) {
 
 type metadataConn struct {
 	net.Conn
-	header  proxyproto.Header
-	denied  bool
-	session *visitorSession
+	header    proxyproto.Header
+	denied    bool
+	session   *visitorSession
+	endStream func() error
 }
 
 func (c *metadataConn) Close() error {
+	// TLS has sent its close-notify. finish the outer return stream before
+	// canceling the visitor lifetime, whose callback closes the raw connection.
+	var err error
+	if c.endStream != nil {
+		err = c.endStream()
+	}
 	if c.session != nil && c.session.cancel != nil {
 		c.session.cancel()
 	}
-	return c.Conn.Close()
+	return errors.Join(err, c.Conn.Close())
 }
 
 func (c *publicURLReaderConn) CloseWrite() error { return closeWrite(c.Conn) }
 func (c *metadataConn) CloseWrite() error        { return closeWrite(c.Conn) }
+func (c *doneConn) CloseWrite() error            { return closeWrite(c.Conn) }
 
 func closeWrite(conn net.Conn) error {
 	if half, ok := conn.(interface{ CloseWrite() error }); ok {
@@ -111,16 +120,23 @@ func tcpAddress(endpoint netip.AddrPort) net.Addr {
 
 type doneConn struct {
 	net.Conn
-	done chan struct{}
-	once sync.Once
+	done     chan struct{}
+	closing  chan struct{}
+	once     sync.Once
+	closeErr error
 }
 
 func newDoneConn(connection net.Conn) *doneConn {
-	return &doneConn{Conn: connection, done: make(chan struct{})}
+	return &doneConn{Conn: connection, done: make(chan struct{}), closing: make(chan struct{})}
 }
 
 func (c *doneConn) Close() error {
-	err := c.Conn.Close()
-	c.once.Do(func() { close(c.done) })
-	return err
+	// concurrent callers join the physical close, even when the underlying
+	// transport returns early from a second close while the first is retiring.
+	c.once.Do(func() {
+		close(c.closing)
+		c.closeErr = c.Conn.Close()
+		close(c.done)
+	})
+	return c.closeErr
 }

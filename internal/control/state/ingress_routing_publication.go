@@ -17,6 +17,7 @@ import (
 
 // IngressRoutingTableProjection is the stored public URL view used by ingress.
 type IngressRoutingTableProjection struct {
+	PublishRunReadyAt    *time.Time                               `json:"publish_run_ready_at,omitempty"`
 	PublishRunID         string                                   `json:"publish_run_id"`
 	PublishRunClosed     bool                                     `json:"publish_run_closed,omitempty"`
 	PublicURLID          string                                   `json:"public_url_id"`
@@ -77,7 +78,11 @@ func (pending *pendingIngressRoutingTableEvents) addPublisherConnectionChanges(
 	connections []controlstatedb.ListValidReadyPublisherConnectionsRow,
 	now time.Time,
 ) error {
-	if session.ReadyAt.Valid {
+	published, err := publishRunRoutingPublished(ctx, queries, session)
+	if err != nil {
+		return err
+	}
+	if published {
 		if _, err := pending.addRouteEvent(
 			ctx, queries, route, session, connections,
 			publicURLRoutingTableEventKind(len(connections) > 0), now,
@@ -154,6 +159,10 @@ func (pending *pendingIngressRoutingTableEvents) addEvent(
 		PublicUrlExpiresAt:   projectionExpiresAt,
 		PublisherConnections: make([]IngressRoutingTablePublisherConnection, 0, len(connections)),
 		Traffic:              &traffic,
+	}
+	if session.ReadyAt.Valid {
+		readyAt := session.ReadyAt.Time
+		projection.PublishRunReadyAt = &readyAt
 	}
 	var policyCiphertext []byte
 	policyStorageKeyID := ""

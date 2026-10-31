@@ -227,24 +227,3 @@ func (q *Queries) SetPreviewTeamAccess(ctx context.Context, arg SetPreviewTeamAc
 	_, err := q.db.Exec(ctx, setPreviewTeamAccess, arg.Enabled, arg.PreviewID)
 	return err
 }
-
-const teamAccessForPublicURL = `-- name: TeamAccessForPublicURL :one
-SELECT p.id AS preview_id, p.team_id, p.team_access_enabled
-FROM control.previews AS p
-JOIN control.preview_public_urls AS included ON included.preview_id = p.id
-WHERE included.public_url_id = $1
-  AND p.team_access_enabled = true LIMIT 1
-`
-
-type TeamAccessForPublicURLRow struct {
-	PreviewID         string
-	TeamID            string
-	TeamAccessEnabled bool
-}
-
-func (q *Queries) TeamAccessForPublicURL(ctx context.Context, publicUrlID string) (TeamAccessForPublicURLRow, error) {
-	row := q.db.QueryRow(ctx, teamAccessForPublicURL, publicUrlID)
-	var i TeamAccessForPublicURLRow
-	err := row.Scan(&i.PreviewID, &i.TeamID, &i.TeamAccessEnabled)
-	return i, err
-}

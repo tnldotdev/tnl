@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"net"
 	"sync"
 	"time"
 
@@ -43,6 +42,7 @@ func (r *PublicURLServer) ServePublisherConnection(
 		cancel()
 		_ = session.Close()
 		readers.Wait()
+		live.visitors.Wait()
 	}()
 	results := make(chan error, headerReaders)
 	for range headerReaders {
@@ -61,7 +61,7 @@ func (r *PublicURLServer) ServePublisherConnection(
 					_ = incoming.Stream.Close()
 					return
 				}
-				if err := r.acceptVisitorContext(acceptCtx, incoming, ref); err != nil {
+				if err := r.acceptVisitorForSession(acceptCtx, incoming, live); err != nil {
 					results <- err
 					return
 				}
@@ -79,36 +79,26 @@ func (r *PublicURLServer) ServePublisherConnection(
 	}
 }
 
-func (r *PublicURLServer) acceptVisitorContext(ctx context.Context, incoming *tunnel.IncomingVisitorStream, ref tunnelv1.PublisherConnectionRef) error {
-	code := r.validateIncomingPublicURL(incoming.Header, ref)
-	r.mu.Lock()
-	if r.closed || r.draining {
-		code = tunnelv1.Unavailable
+func (r *PublicURLServer) acceptVisitorForSession(ctx context.Context, incoming *tunnel.IncomingVisitorStream, live *livePublisherSession) error {
+	if live == nil || ctx.Err() != nil {
+		_ = incoming.Reject(tunnelv1.Unavailable)
+		return nil
 	}
+	code := r.validateIncomingPublicURL(incoming.Header, live.ref)
 	if code != "" {
-		r.mu.Unlock()
 		_ = incoming.Reject(code)
 		return nil
 	}
-	r.streams[incoming.Stream] = struct{}{}
-	r.handlers.Add(1)
-	r.mu.Unlock()
-	if err := incoming.Accept(); err != nil {
-		r.mu.Lock()
-		delete(r.streams, incoming.Stream)
-		r.mu.Unlock()
-		r.handlers.Done()
-		return err
+	admission, code := r.reservePublicSetup(live, incoming.Stream)
+	if code != "" {
+		_ = incoming.Reject(code)
+		return nil
 	}
-	go func() {
-		defer r.handlers.Done()
-		defer func() {
-			r.mu.Lock()
-			delete(r.streams, incoming.Stream)
-			r.mu.Unlock()
-		}()
-		r.handleVisitorHeaderContext(incoming.Context(), incoming.Stream, incoming.Header.AccessPending, incoming.Header)
-	}()
+	if err := incoming.Accept(); err != nil {
+		admission.retire()
+		return nil
+	}
+	go r.handleVisitor(incoming.Context(), admission, incoming.Header, incoming.Promote, incoming.CloseWrite)
 	return nil
 }
 
@@ -127,23 +117,10 @@ func (r *PublicURLServer) validateIncomingPublicURL(
 	return ""
 }
 
-func (r *PublicURLServer) handle(connection net.Conn) {
-	r.handleVisitor(connection, false)
-}
-
-func (r *PublicURLServer) handleVisitor(connection net.Conn, denied bool) {
-	r.handleVisitorHeader(connection, denied, tunnelv1.VisitorStreamHeader{})
-}
-
-func (r *PublicURLServer) handleVisitorHeader(connection net.Conn, denied bool, streamHeader tunnelv1.VisitorStreamHeader) {
-	r.handleVisitorHeaderContext(r.life, connection, denied, streamHeader)
-}
-
-func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, connection net.Conn, denied bool, streamHeader tunnelv1.VisitorStreamHeader) {
-	defer connection.Close()
-	if parent == nil {
-		parent = context.Background()
-	}
+func (r *PublicURLServer) handleVisitor(parent context.Context, admission *publicVisitorAdmission, streamHeader tunnelv1.VisitorStreamHeader, promoteStream func(context.Context) error, endStream func(context.Context) error) {
+	defer admission.retire()
+	connection := admission.connection
+	denied := streamHeader.AccessPending
 	parent = observability.NarrowIdentity(parent, observability.Identity{PublicURLID: r.run.PublicURLID})
 	parent = observability.WithFields(parent, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "direct", Exposure: "public"})
 	parent = observability.WithVisitor(parent, streamHeader.VisitorConnectionID)
@@ -152,35 +129,41 @@ func (r *PublicURLServer) handleVisitorHeaderContext(parent context.Context, con
 	life, endVisitor := observability.Start(life, "publisher.visitor")
 	var visitorErr error
 	defer func() { endVisitor(visitorErr) }()
-	stopClose := context.AfterFunc(life, func() { _ = connection.Close() })
-	defer stopClose()
+	closeDone := make(chan struct{})
+	stopClose := context.AfterFunc(life, func() { defer close(closeDone); _ = connection.Close() })
+	defer func() {
+		if !stopClose() {
+			<-closeDone
+		}
+	}()
 	_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
 	header, replay, err := proxyproto.Decode(connection)
 	if err != nil {
 		visitorErr = err
 		return
 	}
+	if err := admission.authenticateSource(streamHeader, header); err != nil {
+		visitorErr = err
+		return
+	}
 	promote := r.promote
-	if promote == nil && streamHeader.PublisherConnectionID != "" {
-		promote = r.defaultPromote
-	}
-	streamHeader.AccessPending = denied
-	session := &visitorSession{visitor: Visitor{Run: r.run, Header: streamHeader, Source: header.Source, Destination: header.Destination}, promote: promote, guard: r.guard, life: life, cancel: cancel}
-	defer session.close()
-	var pendingTimer *time.Timer
-	if denied {
-		pendingTimer = time.AfterFunc(visitorPromotionTimeout, cancel)
-		defer pendingTimer.Stop()
-	}
-	session.onPromoted = func() {
-		if pendingTimer != nil {
-			pendingTimer.Stop()
+	if promote == nil && streamHeader.PublisherConnectionID != "" && denied {
+		promote = func(ctx context.Context, visitor Visitor) error {
+			if err := context.Cause(ctx); err != nil {
+				return err
+			}
+			if r.resolvePublisherSession(visitor.Header.PublisherConnectionID) != admission.live.session {
+				return &tunnel.ProtocolError{Code: tunnelv1.Unavailable}
+			}
+			return promoteStream(ctx)
 		}
-		// net/http owns request-body read deadlines. clearing both deadlines
-		// here would let incomplete bodies hold application slots indefinitely.
-		_ = connection.SetWriteDeadline(time.Time{})
 	}
+	session := &visitorSession{visitor: Visitor{Run: r.run, Header: streamHeader, Source: header.Source, Destination: header.Destination}, promote: promote, guard: r.guard, life: life, cancel: cancel, capacity: admission}
+	defer session.close()
 	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: replay}, header: header, denied: denied, session: session}
+	if endStream != nil {
+		metadata.endStream = func() error { return endStream(life) }
+	}
 	tracked := newDoneConn(metadata)
 	secured := tls.Server(tracked, r.tls)
 	ctx, cancelHandshake := context.WithTimeout(life, 10*time.Second)

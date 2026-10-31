@@ -16,6 +16,7 @@ import (
 	controlvisitor "github.com/tnldotdev/tnl/internal/control/certificates/visitor"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -178,6 +179,17 @@ func (d *Database) CreateWorkloadIngressAssignmentSet(ctx context.Context, crede
 }
 
 func (d *Database) IssueWorkloadServiceClientCertificate(ctx context.Context, credential, service string, csrDER []byte, now time.Time) (result ServiceClientCertificate, retErr error) {
+	var protocol string
+	if err := d.pool.QueryRow(ctx, `SELECT protocol FROM control.services WHERE id=$1`, service).Scan(&protocol); err != nil {
+		return result, publisherLookupError(err, ErrServiceAccess)
+	}
+	if protocol == "http" {
+		issuer, err := controlstatedb.New(d.pool).ReadVisitorTokenIssuer(ctx)
+		if err != nil {
+			return result, err
+		}
+		return d.IssueVisitorClientCertificate(ctx, issuer, visitorscope.Scope{Kind: visitorscope.Service, ID: service}, WorkloadTokenSource{Credential: credential}, csrDER, now)
+	}
 	csr, err := controlvisitor.ValidateCSR(csrDER)
 	if err != nil {
 		return result, ErrCertificateIssuanceInvalid
@@ -258,7 +270,7 @@ func recheckWorkloadDirectVisitor(ctx context.Context, tx pgx.Tx, service, run s
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
 	deadline = minTime(deadline, until)
-	_, err = tx.Exec(ctx, `UPDATE control.direct_service_visitors SET workload_session_id=$2,certificate_digest=COALESCE(certificate_digest,$3::bytea),http_credential_kind=NULL,http_credential_digest=NULL,valid_until=$4 WHERE visitor_connection_id=$1`, visitor, session, certificateDigest, deadline)
+	_, err = tx.Exec(ctx, `UPDATE control.direct_service_visitors SET workload_session_id=$2,certificate_digest=COALESCE(certificate_digest,$3::bytea),valid_until=$4 WHERE visitor_connection_id=$1`, visitor, session, certificateDigest, deadline)
 	result.Allowed, result.ValidUntil = err == nil && deadline.After(now), deadline
 	return result, err
 }

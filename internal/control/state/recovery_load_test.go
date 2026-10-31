@@ -24,7 +24,7 @@ func TestLoadRelayRecovery(t *testing.T) {
 		t.Fatal("relay recovery requires at least two routes for affected and healthy work")
 	}
 	sessions := readySteadyLoadSessions(t, f)
-	historyRevision := seedLoadRoutingHistory(t, f, 1, f.history)
+	historyRevision := seedLoadRoutingHistory(t, f, 2, f.history)
 	failed := sessions[0].leases[sessions[0].setup.PublisherConnections[0].RelayServiceID]
 	var affected, unaffected []int
 	byID := make(map[string]int, f.routes)

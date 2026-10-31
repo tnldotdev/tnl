@@ -42,18 +42,37 @@ target: independently selected HTTP/TCP/database transport
 
 Ingress creates one PROXY v2 header carrying the original source/destination;
 relay preserves it and the TLS bytes. On restricted URLs, bounded pending capacity
-lasts until publisher authorization. The promotion sideband binds visitor, run,
-assignment, and connected relay. Ingress acknowledges ordinary capacity before
-target bytes. Promotion validates the current claim even when there is no spare
-new-stream capacity: the admitted visitor already owns its stream.
+lasts until publisher authorization. Acceptance, rejection, promotion, response
+data, and half-close use bounded return frames on that same visitor stream.
+Promotion binds visitor, run, assignment, and connected relay; ingress checks
+current policy and ordinary capacity before releasing the following response
+bytes. It is a one-way notification, not a second authorization RPC. Promotion
+validates the current claim even when there is no spare new-stream capacity:
+the admitted visitor already owns its stream.
 
-Ingress may try another connected relay before the first visitor byte is sent.
-A rejected open, failed PROXY-header write, or zero-byte ClientHello write can
-still be retried. The first visitor byte commits the stream, even if the rest of
-ClientHello fails. Copy/close then owns it; live connections are never replayed
-or migrated. Public and private setup reserve time for alternate relays before
-that boundary. A denied visitor may use separate admission to finish TLS at the
-publisher and receive HTTPS 403.
+the stream owner bounds acceptance, rejection, and promotion from writer
+acquisition through the last frame byte. cancellation resets only that stream,
+joins its interrupt callback, and preserves the context cause. a pre-canceled
+decision does no I/O. return-data writers share the same serialization; decision
+writers never borrow or clear each other's deadlines.
+
+public openings carry the header and a length-prefixed block of at most 64 KiB,
+then raw request bytes. ingress includes PROXY v2 and the inspected ClientHello;
+any excess prefix follows as raw bytes. a fresh exact session/assignment first
+confirms metadata through the publisher, then sends visitor bytes on that same
+stream. later openings pipeline the prefix without waiting for acceptance.
+confirmation is scoped to that session and assignment, not a recovery timer.
+private service openings retain metadata-only acceptance before application bytes.
+
+ingress may try another connected relay before the first visitor byte is sent.
+a rejected confirmation, failed PROXY-header write, or zero-byte ClientHello
+write can still be retried. the first visitor byte commits the stream, even if
+the rest of ClientHello fails or a later return frame rejects it. opening errors
+retain the exact visitor-byte count, excluding framing and PROXY metadata.
+copy/close then owns it; live connections are never replayed or migrated.
+public and private setup reserve time for alternate relays before that boundary.
+a denied visitor may use separate admission to finish TLS at the publisher and
+receive HTTPS 403.
 
 The routing table copies relay process identity and last advertised lease
 deadline. A renewal need not publish a new URL projection. The connected relay
@@ -71,14 +90,32 @@ session or its visitors, including while the newer session is connecting.
 
 ## authorization and tls boundaries
 
-Public HTTP decisions bind URL, run, selected credential digest, and trusted
-source. Rechecks occur within 30 seconds; structured control unavailability may
-reuse a positive result for at most two minutes and never past an earlier grant,
-credential, or run deadline. Unknown, denied, and malformed results fail closed.
-Each streaming request/WebSocket keeps its original live guard. A replacement
-credential authorizes future work, not that original operation. Denial cancels
-the target request and resets only the affected HTTP/2 stream; upgraded HTTP/1
-closes directly. No request is buffered for authorization or replayed.
+Public URL and direct service HTTP requests verify signed visitor permissions
+locally. Before serving, the publisher prepares a resource policy using its
+current run credential. Fetching through installation has a two-second budget;
+the policy expires within ten seconds of request start. Failed renewal cannot
+extend that deadline. Control-clock translation also bounds credential and
+parent expiry despite clock skew.
+
+[`visitortoken`](../../../internal/security/visitortoken/token.go) owns signature,
+resource, hostname, port, and proof verification. It depends on the shared exact
+resource value in `internal/policy/visitorscope`, not control state.
+[`visitorlease`](../../../internal/policy/visitorlease/lease.go) owns local policy
+installation and request guards; publisher runtime owns fetching and joins.
+These shared leaves let both HTTP frontends use one verifier without importing
+the control authority or copying its grant rules.
+
+Each request binds the trusted forwarding source and current policy. A request
+uses one `Tnl-Visitor-Token` header, signed cookie, or service client certificate.
+A supplied certificate cannot switch subjects through an HTTP credential;
+malformed or ambiguous credentials fail closed. Browser/share
+redemption and background renewal prepare permissions separately. Only that
+credential owner may renew an active guard for the same subject, within its
+parent deadline. Malformed renewal responses revoke that source's active requests;
+an outage or pending policy/key installation can only retain the last confirmed
+permission until its existing deadline. Expiry or revocation cancels the target request and resets only
+the affected HTTP/2 stream; upgraded HTTP/1 closes directly. Application requests
+perform no authorization RPC and never replay bytes.
 
 Private connector sessions authenticate two ingress paths and bind the observed
 source, exact service/session/subject, nonce, expiry, and key proof. Each stream

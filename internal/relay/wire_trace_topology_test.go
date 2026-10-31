@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,7 +173,11 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 				}
 				// internal ingress forwarding is TLS/yamux for both publisher transports.
 				address := traceMuxServer(t, relayCtx, tunnel.TransportTLSTCP, serverTLS, acceptor.Accept)
-				forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{Context: ingressCtx, TLSConfig: clientTLS, ClusterSecret: secret})
+				forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{Context: ingressCtx, TLSConfig: clientTLS, ClusterSecret: secret,
+					SignVisitorSource: func(ingressv1.IngressRoutingTableEntry, string, netip.AddrPort, netip.AddrPort) (string, error) {
+						panic("transport fixture does not attest visitor metadata")
+					},
+				})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -239,7 +244,7 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 						if e != nil {
 							t.Fatal(e)
 						}
-						stream, err = backends[0].Open(setup, fmt.Sprintf("visitor-%d", visitor))
+						stream, err = backends[0].Start(setup, fmt.Sprintf("visitor-%d", visitor), false, nil, nil)
 					}
 					if err != nil {
 						t.Fatal(err)

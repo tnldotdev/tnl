@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
 	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -20,40 +22,47 @@ import (
 
 const relaySessionSetupTimeout = 10 * time.Second
 
+type VisitorSourceSigner func(ingressv1.IngressRoutingTableEntry, string, netip.AddrPort, netip.AddrPort) (string, error)
+
 type ForwarderConfig struct {
-	Context         context.Context
-	TLSConfig       *tls.Config
-	ClusterSecret   string
-	TransportConfig muxsession.TLSYamuxConfig
-	Observer        OperationObserver
-	OnSessionClosed func(relayServiceID, relayID, origin string, cause error)
-	PromoteVisitor  func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult
+	SignVisitorSource VisitorSourceSigner
+	Context           context.Context
+	TLSConfig         *tls.Config
+	ClusterSecret     string
+	TransportConfig   muxsession.TLSYamuxConfig
+	Observer          OperationObserver
+	OnSessionClosed   func(relayServiceID, relayID, origin string, cause error)
+	PromoteVisitor    func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult
 }
 
 // Forwarder pools authenticated sessions to exact relay processes and opens
-// acknowledged internal-forwarding streams for visitor connections.
+// pipelined internal-forwarding streams for visitor connections.
 type Forwarder struct {
-	connector       relayConnector
-	observer        OperationObserver
-	context         context.Context
-	cancel          context.CancelFunc
-	onSessionClosed func(relayServiceID, relayID, origin string, cause error)
+	signVisitorSource VisitorSourceSigner
+	connector         relayConnector
+	observer          OperationObserver
+	context           context.Context
+	cancel            context.CancelFunc
+	onSessionClosed   func(relayServiceID, relayID, origin string, cause error)
 
 	mu        sync.Mutex
 	sessions  map[relaySessionKey]*relaySession
 	closed    bool
 	closeDone chan struct{}
 	closeErr  error
-	pending   map[string]*forwardingAdmission
 	promote   func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult
 }
 
 func NewForwarder(config ForwarderConfig) (*Forwarder, error) {
+	if config.SignVisitorSource == nil {
+		return nil, visitortoken.ErrVisitorSource
+	}
 	connector, err := newTLSRelayConnector(config.TLSConfig, config.ClusterSecret, config.TransportConfig)
 	if err != nil {
 		return nil, err
 	}
 	f := newForwarderContext(config.Context, connector)
+	f.signVisitorSource = config.SignVisitorSource
 	f.observer = config.Observer
 	f.onSessionClosed = config.OnSessionClosed
 	f.promote = config.PromoteVisitor
@@ -69,7 +78,7 @@ func newForwarderContext(owner context.Context, connector relayConnector) *Forwa
 		owner = context.Background()
 	}
 	ctx, cancel := context.WithCancel(owner)
-	return &Forwarder{connector: connector, context: ctx, cancel: cancel, sessions: make(map[relaySessionKey]*relaySession), pending: make(map[string]*forwardingAdmission)}
+	return &Forwarder{connector: connector, context: ctx, cancel: cancel, sessions: make(map[relaySessionKey]*relaySession)}
 }
 
 // Backends preserves control's publisher-connection order. every returned
@@ -151,6 +160,12 @@ func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicU
 		return PublicURL{}, errors.New("ingress: routing-table IP policy is inconsistent")
 	}
 	route := PublicURL{
+		AttestSource: func(visitorID string, source, destination netip.AddrPort) (string, error) {
+			if f.signVisitorSource == nil {
+				return "", visitortoken.ErrVisitorSource
+			}
+			return f.signVisitorSource(entry, visitorID, source, destination)
+		},
 		ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber),
 		PublishRunID:   entry.PublishRunId,
 		HashedIPPolicy: hashed, AllowAll: entry.IpPolicy == ingressv1.AllowAll, Backends: backends,
@@ -223,18 +238,7 @@ type forwardingBackend struct {
 	header    tunnelv1.InternalForwardingHeader
 }
 
-// Open waits for the relay to accept an internal forwarding stream. the caller
-// owns the stream, not the pooled session; acceptance does not establish visitor
-// TLS or prove that the local service is healthy.
-func (b forwardingBackend) Open(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
-	return b.open(ctx, visitorConnectionID, false)
-}
-
-func (b forwardingBackend) OpenPending(ctx context.Context, visitorConnectionID string) (net.Conn, error) {
-	return b.open(ctx, visitorConnectionID, true)
-}
-
-func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string, denied bool) (result net.Conn, retErr error) {
+func (b forwardingBackend) Start(ctx context.Context, visitorConnectionID string, denied bool, proxy, initial []byte) (result net.Conn, retErr error) {
 	ctx, finish := observability.Start(ctx, "ingress.relay_attempt")
 	defer func() { finish(retErr) }()
 	header := b.header
@@ -243,36 +247,57 @@ func (b forwardingBackend) open(ctx context.Context, visitorConnectionID string,
 	if err := header.Validate(); err != nil {
 		return nil, fmt.Errorf("ingress: internal forwarding header: %w", err)
 	}
+	var overflow []byte
+	if len(proxy) <= tunnelv1.MaxInitialBytes && len(initial) > tunnelv1.MaxInitialBytes-len(proxy) {
+		boundary := tunnelv1.MaxInitialBytes - len(proxy)
+		initial, overflow = initial[:boundary], initial[boundary:]
+	}
 	for attempt := 0; ; attempt++ {
 		session, reused, err := b.forwarder.session(ctx, b.target)
 		if err != nil {
 			return nil, err
 		}
 		started := time.Now()
-		var binding *forwardingAdmission
+		var events tunnel.ReturnEvents
 		if denied {
-			binding = &forwardingAdmission{session: session, header: header.Admission()}
-			b.forwarder.mu.Lock()
-			if b.forwarder.pending[visitorConnectionID] != nil {
+			events.Promoted = func(h tunnelv1.AdmissionHeader) error {
+				if h != header.Admission() || !b.forwarder.currentSession(b.target.key(), session) {
+					return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+				}
+				b.forwarder.mu.Lock()
+				handle := b.forwarder.promote
 				b.forwarder.mu.Unlock()
-				return nil, errors.New("ingress: duplicate pending visitor")
+				if handle == nil || b.forwarder.context.Err() != nil {
+					return &tunnel.ProtocolError{Code: tunnelv1.Unavailable}
+				}
+				result := handle(b.forwarder.context, h)
+				if result.Type != tunnelv1.StreamAccepted {
+					return &tunnel.ProtocolError{Code: result.Code}
+				}
+				return nil
 			}
-			b.forwarder.pending[visitorConnectionID] = binding
-			b.forwarder.mu.Unlock()
 		}
-		stream, err := session.OpenInternalForwardingStream(ctx, header)
+		header.ConfirmBeforeBytes = !b.forwarder.confirmedAssignment(b.target.key(), session, header)
+		stream, err := session.OpenInternalForwardingStream(ctx, header, proxy, initial, events)
+		if err == nil {
+			if header.ConfirmBeforeBytes {
+				b.forwarder.confirmAssignment(b.target.key(), session, header)
+			}
+			if len(overflow) != 0 {
+				n, writeErr := writeSetup(ctx, stream, nil, overflow)
+				if writeErr != nil {
+					written := int64(len(initial)) + n
+					err = &tunnel.OpeningError{Committed: written > 0, VisitorBytes: written, Err: errors.Join(writeErr, stream.Close())}
+				}
+			}
+		}
 		b.forwarder.observe("IngressForwardingAck", err, started)
 		if err == nil {
-			if binding != nil {
-				return &pendingForwardingConn{Conn: stream, remove: func() { b.forwarder.removeAdmission(visitorConnectionID, binding) }}, nil
-			}
 			return stream, nil
 		}
-		if binding != nil {
-			b.forwarder.removeAdmission(visitorConnectionID, binding)
-		}
 		var protocolError *tunnel.ProtocolError
-		if errors.As(err, &protocolError) || ctx.Err() != nil && session.Err() == nil {
+		var opening *tunnel.OpeningError
+		if errors.As(err, &protocolError) || errors.As(err, &opening) && opening.Committed || ctx.Err() != nil && session.Err() == nil {
 			return nil, err
 		}
 		// a failed stream does not invalidate a still-usable pooled session.
@@ -313,10 +338,55 @@ func (t relayTarget) key() relaySessionKey {
 type relaySessionKey relayTarget
 
 type relaySession struct {
-	ready   chan struct{}
-	cancel  context.CancelFunc
-	session *tunnel.Session
-	err     error
+	ready     chan struct{}
+	cancel    context.CancelFunc
+	session   *tunnel.Session
+	err       error
+	confirmed map[tunnelv1.AdmissionHeader]struct{}
+}
+
+func assignmentKey(h tunnelv1.InternalForwardingHeader) tunnelv1.AdmissionHeader {
+	key := h.Admission()
+	key.VisitorConnectionID = ""
+	return key
+}
+
+func (f *Forwarder) confirmedAssignment(key relaySessionKey, session *tunnel.Session, h tunnelv1.InternalForwardingHeader) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	entry := f.sessions[key]
+	if entry == nil || entry.session != session {
+		return false
+	}
+	_, ok := entry.confirmed[assignmentKey(h)]
+	return ok
+}
+
+func (f *Forwarder) confirmAssignment(key relaySessionKey, session *tunnel.Session, h tunnelv1.InternalForwardingHeader) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	entry := f.sessions[key]
+	if entry == nil || entry.session != session {
+		return
+	}
+	if entry.confirmed == nil {
+		entry.confirmed = make(map[tunnelv1.AdmissionHeader]struct{})
+	}
+	current := assignmentKey(h)
+	for old := range entry.confirmed {
+		if old.PublicURLID != current.PublicURLID || old.ConnectionSlot != current.ConnectionSlot {
+			continue
+		}
+		if old.PublishRunNumber > current.PublishRunNumber || old.PublishRunNumber == current.PublishRunNumber && old.ConnectionAssignmentRevision > current.ConnectionAssignmentRevision {
+			return
+		}
+		delete(entry.confirmed, old)
+	}
+	// a full cache keeps using pre-byte confirmation, without retaining unbounded
+	// historical public URLs on a long-lived relay session.
+	if len(entry.confirmed) < 4096 {
+		entry.confirmed[current] = struct{}{}
+	}
 }
 
 func (f *Forwarder) session(ctx context.Context, target relayTarget) (*tunnel.Session, bool, error) {
@@ -401,11 +471,6 @@ func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target rel
 		return
 	}
 	go f.removeWhenDone(key, entry, session)
-	go func() {
-		_ = session.ServeAdmissions(f.context, tunnelv1.IngressAdmissionStream, func(ctx context.Context, h tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult {
-			return f.promoteAdmission(ctx, session, h)
-		})
-	}()
 }
 
 func (f *Forwarder) currentSession(key relaySessionKey, session *tunnel.Session) bool {

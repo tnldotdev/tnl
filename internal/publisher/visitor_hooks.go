@@ -32,7 +32,7 @@ type Visitor struct {
 }
 
 // PromoteVisitor overrides ingress application promotion. the engine supplies
-// the exact-session sideband default. readiness never invokes this callback.
+// the stream-local default. readiness never invokes this callback.
 type PromoteVisitor func(context.Context, Visitor) error
 
 // AdmitVisitor checks current application ownership on every use, including
@@ -47,22 +47,20 @@ type visitorPromotion struct {
 }
 
 type visitorSession struct {
-	visitor    Visitor
-	promote    PromoteVisitor
-	guard      AdmitVisitor
-	life       context.Context
-	cancel     context.CancelFunc
-	onPromoted func()
-	mu         sync.Mutex
-	promotion  *visitorPromotion
-	closed     bool
-	workers    sync.WaitGroup
+	visitor   Visitor
+	promote   PromoteVisitor
+	guard     AdmitVisitor
+	life      context.Context
+	cancel    context.CancelFunc
+	capacity  *publicVisitorAdmission
+	mu        sync.Mutex
+	promotion *visitorPromotion
+	closed    bool
+	workers   sync.WaitGroup
+	requests  sync.WaitGroup
 }
 
 func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
-	if v == nil {
-		return nil
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -97,6 +95,9 @@ func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
 	if visitor.Readiness {
 		return nil
 	}
+	if err := v.capacity.commit(); err != nil {
+		return err
+	}
 	v.mu.Lock()
 	if v.closed {
 		v.mu.Unlock()
@@ -122,8 +123,13 @@ func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
 			if work.err == nil {
 				work.err = workCtx.Err()
 			}
-			if work.err == nil && v.onPromoted != nil {
-				v.onPromoted()
+			if work.err == nil {
+				work.err = v.capacity.completeSetup()
+			}
+			if work.err == nil {
+				// net/http owns request-body read deadlines. clear only the setup
+				// write deadline so incomplete bodies retain their bounded lifetime.
+				_ = v.capacity.connection.SetWriteDeadline(time.Time{})
 			}
 			// one shared decision is never replayed on an ambiguous transport
 			// failure. request cancellation affects only its own waiter.
@@ -146,6 +152,16 @@ func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
 	}
 }
 
+func (v *visitorSession) beginRequest() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.closed {
+		return false
+	}
+	v.requests.Add(1)
+	return true
+}
+
 func (v *visitorSession) close() {
 	v.mu.Lock()
 	v.closed = true
@@ -154,13 +170,15 @@ func (v *visitorSession) close() {
 	}
 	v.mu.Unlock()
 	v.workers.Wait()
+	v.requests.Wait()
 }
 
 type livePublisherSession struct {
-	session *tunnel.Session
-	ref     tunnelv1.PublisherConnectionRef
-	ctx     context.Context
-	cancel  context.CancelFunc
+	session  *tunnel.Session
+	ref      tunnelv1.PublisherConnectionRef
+	ctx      context.Context
+	cancel   context.CancelFunc
+	visitors sync.WaitGroup
 }
 
 type visitorSessionKey struct{}

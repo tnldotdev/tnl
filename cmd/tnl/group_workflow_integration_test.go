@@ -44,7 +44,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
@@ -408,7 +407,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		t.Fatal("public group lost service HTTP endpoint")
 	}
 	f.connectDirectListener(t, directService.Endpoint)
-	grant, err := control.CreateServiceHTTPGrant(t.Context(), directService.Id, controlv1.CreateServiceHTTPGrantRequest{Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
+	grant, err := control.CreateServiceHTTPGrant(t.Context(), directService.Id, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: directService.Id}, Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +416,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		request.Header.Set("Tnl-Access-Token", grant.Secret)
+		request.Header.Set("Tnl-Visitor-Token", grant.Permission.VisitorToken)
 		response, err := visitor.Do(request)
 		if err != nil {
 			return false
@@ -553,6 +552,10 @@ func newCLIWorkflow(t *testing.T) *cliWorkflow {
 	server.StartTLS()
 	t.Cleanup(server.Close)
 	f.url = server.URL
+	// match control startup before any publisher prepares its first policy view.
+	if err := database.PrepareVisitorSigningKeys(t.Context(), f.url, time.Now()); err != nil {
+		t.Fatal("workflow visitor signing preparation failed")
+	}
 	providerMux := http.NewServeMux()
 	provider := httptest.NewUnstartedServer(providerMux)
 	provider.TLS = f.tls.Clone()
@@ -921,7 +924,7 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 		certificate, err := tls.X509KeyPair([]byte(material.Trust.CertificatePem), []byte(material.PrivateKeyPem))
 		return &certificate, err
 	}
-	forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}, ClusterSecret: cliWorkflowClusterSecret})
+	forwarder, err := ingress.NewForwarder(ingress.ForwarderConfig{SignVisitorSource: controller.SignVisitorSource, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}, ClusterSecret: cliWorkflowClusterSecret})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -946,30 +949,9 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 		if reason != ingress.LookupCurrent {
 			return nil, reason
 		}
-		result := make([]ingress.PublicURL, 0, len(entries))
-		for _, entry := range entries {
-			backends, err := forwarder.Backends(entry)
-			if err != nil {
-				return nil, ingress.LookupNoBackends
-			}
-			var policy *ippolicy.Policy
-			if entry.IpPolicy == ingressv1.HashedAllowlist {
-				if entry.IpPolicyKey == nil || len(*entry.IpPolicyKey) != 32 {
-					return nil, ingress.LookupInvalidProjection
-				}
-				var key [32]byte
-				copy(key[:], *entry.IpPolicyKey)
-				hashes := make([]ippolicy.Entry, 0, len(entry.AllowedIpHashes))
-				for _, hash := range entry.AllowedIpHashes {
-					hashes = append(hashes, ippolicy.Entry{Family: string(hash.Family), Bits: hash.PrefixLength, Digest: hash.Digest})
-				}
-				built, err := ippolicy.New(key, hashes)
-				if err != nil {
-					return nil, ingress.LookupInvalidProjection
-				}
-				policy = &built
-			}
-			result = append(result, ingress.PublicURL{ID: entry.PublicUrlId, PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber), AllowAll: entry.IpPolicy == ingressv1.AllowAll, HashedIPPolicy: policy, Backends: backends, ServiceProtocol: "http", AccessMode: string(entry.AccessMode)})
+		result, err := forwarder.PublicURLs(entries)
+		if err != nil {
+			return nil, ingress.LookupInvalidProjection
 		}
 		return result, ingress.LookupCurrent
 	}})

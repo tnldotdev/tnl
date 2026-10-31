@@ -149,7 +149,7 @@ schemas:
   ShareRedemption:
     type: object
     additionalProperties: false
-    required: [schema_version, share_id, cookie_secret, expires_at, next_url, bridge]
+    required: [schema_version, share_id, cookie_secret, expires_at, next_url, bridge, permission]
     properties:
       schema_version:
         $ref: "../openapi.yaml#/components/schemas/ReviewSchemaVersion"
@@ -159,6 +159,8 @@ schemas:
         type: string
         minLength: 43
         maxLength: 43
+      permission:
+        $ref: "../openapi.yaml#/components/schemas/VisitorTokenResponse"
       expires_at:
         type: string
         format: date-time

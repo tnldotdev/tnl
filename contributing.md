@@ -94,6 +94,8 @@ exclude only the two real-clock proofs, which CI runs separately through
 `go:test:integration:runtime:leases` and `go:test:integration:runtime:workload`.
 The multi-cycle Git identity proof runs separately through
 `go:test:integration:cli:identity`; ordinary CLI shards exclude only that proof.
+The CLI Task builds one executable before the child lifecycle deadlines start;
+the detached, SSH, and named workflows reuse it instead of compiling during startup.
 All matrix jobs contribute to the required `Go integration` result. CLI shards
 cover the named-app workflows; the management job adds their unique service
 share lookup checks. Native SDK checks run in the provider HTTP job, alongside
@@ -181,10 +183,13 @@ publishers for the project together. The app-workflows tier covers these fences
 and once-per-run automatic readiness with its bounded retry budget.
 
 For public HTTP live authorization, run `task go:test:live-authorization`, then
-`task go:test:live-authorization -- -race`. These use deterministic clocks for
-long HTTP/WebSocket renewal, denial, outage deadlines, and HTTP/2 isolation.
+`task go:test:live-authorization -- -race`. These check the shared signed-permission
+verifier and local policy lease, then use deterministic clocks for long
+HTTP/WebSocket renewal, denial, outage deadlines, and HTTP/2 isolation.
 `task go:test:integration:live-authorization` owns disposable PostgreSQL for
 browser and alias handoffs, current visitor authorization, and HTTP logout.
+`task go:test:integration:share-token` checks the CLI's signed share permission
+output and its exact scope and expiry against disposable PostgreSQL.
 
 For ingress production wiring, pool selection, lifetime traffic totals, pending
 promotion, private relay fallback, and server-first half-closes, run
@@ -193,6 +198,10 @@ promotion, private relay fallback, and server-first half-closes, run
 retirement evidence and real split/standalone forwarding.
 `task go:test:integration:local-oidc` checks the actual UID-65532 provider with a
 mode-0600 key on a Linux-native filesystem, including on Docker Desktop.
+
+For public publish-run connection capacity, run `task go:test:public-capacity -- -race`.
+`task go:test:integration:public-capacity` owns disposable PostgreSQL and checks
+two-ingress and standalone limits over QUIC and TLS/TCP, plus the transport matrix.
 
 For native HTTP forwarding, run `task go:test:http-streaming` and
 `task go:test:http-streaming -- -race` through `mise exec --`. these use local

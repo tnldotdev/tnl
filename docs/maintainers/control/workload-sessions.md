@@ -173,7 +173,7 @@ authenticated local connector for both public and services. see
 and authenticated rotating-assertion attachment.
 
 certificate issuance requires a CSR signed by the already-bound workload key.
-the service-scoped certificate and private connector handle expire at the fixed
+non-HTTP service certificates and private connector handles expire at the fixed
 session deadline, at most six hours. they prove key possession; every admission
 and active authorization still checks the current renewable 90-second lease,
 service rights, revocation, and infrastructure deadlines. renewing a lease does
@@ -182,6 +182,13 @@ cannot admit a new stream even while its certificate remains valid. active
 streams recheck within 30 seconds and close by their last successful decision's
 deadline if control is unavailable. cleanup may release only an exact owned
 connector handle after session expiry or revocation.
+
+direct HTTP certificates carry a signed resource permission capped by the current
+workload lease. the publisher verifies that permission and key possession locally,
+then binds each request to its ten-second policy view and the workload's current
+key-bound lease. a renewed workload cannot extend the certificate's own expiry;
+prepare a new certificate for later requests. see
+[HTTP authorization](../transport/architecture.md#authorization-and-tls-boundaries).
 
 `New` in `internal/connector/workload` owns the ephemeral key. `Exchange`, `Renew`,
 `Revoke`, `ListServices`, `CheckService`, `CreateIngressAssignments`, and
@@ -356,7 +363,7 @@ verification before dialing.
 ## verify
 
 the fresh PostgreSQL baseline and control's matching identity are
-`tnl-control-fresh-v1-services`.
+`tnl-control-fresh-v1-permissions-serving-readiness`.
 its connector constraint allows workload auth material through six hours;
 current authorization remains bounded by the renewable lease. it requires the
 same fresh-database, coordinated-baseline rollout as the assembled services work.

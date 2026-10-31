@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitorcert"
 )
 
@@ -80,6 +81,21 @@ func (d *Database) IssueServiceClientCertificate(ctx context.Context, service, i
 	}
 	if _, err := controlvisitor.ValidateCSR(csr); err != nil {
 		return result, ErrCertificateIssuanceInvalid
+	}
+	var protocol string
+	if err := d.pool.QueryRow(ctx, `SELECT protocol FROM control.services WHERE id=$1`, service).Scan(&protocol); err != nil {
+		return result, publisherLookupError(err, ErrServiceAccess)
+	}
+	if protocol == "http" {
+		principal, _ := ctx.Value(controlPrincipalKey{}).(ControlPrincipal)
+		if principal.IdentityID != identity {
+			return result, ErrServiceAccess
+		}
+		issuer, err := controlstatedb.New(d.pool).ReadVisitorTokenIssuer(ctx)
+		if err != nil {
+			return result, err
+		}
+		return d.IssueVisitorClientCertificate(ctx, issuer, visitorscope.Scope{Kind: visitorscope.Service, ID: service}, DeviceTokenSource{DeviceID: device}, csr, now)
 	}
 	issuer, err := d.ServiceClientIssuer(ctx)
 	if err != nil {

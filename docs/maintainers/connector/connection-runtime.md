@@ -113,14 +113,24 @@ existing ownership-based qualification rule.
 | prepared snapshot                | one service adapter's transport identity and current authorization deadline; existing driver settings do not update     |
 | admitted operation               | its original subject/session and exact run; bounded live decisions renew only within that original authorization window |
 
-public HTTP responses and WebSocket upgrades retain live guards just as managed
-HTTP and PostgreSQL streams do. guards recheck current access within 30 seconds
+the caller-prepared owner attaches its received expiry to the local monotonic
+clock once. renewal can shorten that deadline, never restart the countdown after
+a wall-clock change. renewal contexts end at that bound, and IPC rejects new work
+after it even while a backend's late response is still pending. SDK-owned persistent
+processes retain their separate process lifetime.
+
+native connector HTTP and PostgreSQL streams retain live guards. those guards
+recheck current access within 30 seconds
 and fail closed at the last successful decision deadline during a control outage,
 at most two minutes and never beyond an earlier credential/session/run deadline.
 renewal can keep an authorized operation alive within its original scope; a fresh
 session cannot extend that operation's original deadline. denied or failed
 operations close without replay. pool reuse and stable listener ports do not
 replace these checks.
+
+public URL and direct service HTTP requests instead use signed permissions and
+a ten-second local policy view; see
+[HTTP authorization](../transport/architecture.md#authorization-and-tls-boundaries).
 
 ## machine lifecycle, schema 1
 

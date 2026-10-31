@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"sync"
@@ -63,7 +64,7 @@ func TestIngressEnforcesProxySourceAndPublicURLAllowlist(t *testing.T) {
 		if host != "route.example" {
 			return PublicURL{}, "not_found"
 		}
-		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []ingressbackend.Backend{backend}, HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24")}, ""
+		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []ingressbackend.Backend{backend}, HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24"), AttestSource: testBackendSourceProof}, ""
 	}}
 	server, address := startIngress(t, config)
 	malformed := ingressClient(t, address, "route.example", "198.51.100.1:40001")
@@ -110,10 +111,6 @@ type gatedDeniedBackend struct {
 	*gatedOpenBackend
 }
 
-func (b gatedDeniedBackend) OpenPending(ctx context.Context, id string) (net.Conn, error) {
-	return b.Open(ctx, id)
-}
-
 func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	release := make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
@@ -127,7 +124,7 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 				return PublicURL{}, "not_found"
 			}
 			return PublicURL{ID: "public_url_test", PublishRunNumber: 1, AccessMode: "restricted", Backends: []ingressbackend.Backend{backend},
-				HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24")}, ""
+				HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24"), AttestSource: testBackendSourceProof}, ""
 		},
 	}
 	_, address := startIngress(t, config)
@@ -151,11 +148,14 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	}
 }
 
-func (b *gatedOpenBackend) Open(ctx context.Context, _ string) (net.Conn, error) {
+func (b *gatedOpenBackend) Start(ctx context.Context, _ string, _ bool, proxy, initial []byte) (net.Conn, error) {
 	close(b.entered)
 	select {
 	case <-b.release:
-		return b.connection, b.err
+		if b.err != nil {
+			return nil, b.err
+		}
+		return startTestBackend(ctx, b.connection, proxy, initial)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -203,7 +203,11 @@ func TestIngressRecordsPublisherSetupFailures(t *testing.T) {
 			a, b := net.Pipe()
 			ownIngressConn(t, a)
 			ownIngressConn(t, b)
-			_ = b.Close()
+			if tracking {
+				ingressWorker(t, func() { _ = b.Close() }, func() error { _, err := io.Copy(io.Discard, b); return err })
+			} else {
+				_ = b.Close()
+			}
 			release := make(chan struct{})
 			unblock := sync.OnceFunc(func() { close(release) })
 			t.Cleanup(unblock)
@@ -226,8 +230,15 @@ func TestIngressRecordsPublisherSetupFailures(t *testing.T) {
 			}
 			u := ingressAwait(t, usage.opened)
 			ingressAwait(t, u.closed)
-			if u.publisherOpeningAt.IsZero() || u.publisherOpenedAt.IsZero() || u.publisherFailures != 1 || u.streams+u.policyDenials+u.capacityDenials != 0 {
+			if u.publisherOpeningAt.IsZero() || u.policyDenials+u.capacityDenials != 0 {
 				t.Fatalf("usage=%+v", u)
+			}
+			if tracking {
+				if u.publisherOpenedAt.IsZero() || u.streams != 1 || u.publisherFailures != 0 || u.ingressBytes == 0 {
+					t.Fatalf("committed tracking failure lost usage: %+v", u)
+				}
+			} else if !u.publisherOpenedAt.IsZero() || u.publisherFailures != 1 || u.streams != 0 || u.ingressBytes != 0 {
+				t.Fatalf("zero-byte setup failure usage: %+v", u)
 			}
 		})
 	}

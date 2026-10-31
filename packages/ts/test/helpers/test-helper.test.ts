@@ -119,6 +119,40 @@ describe("test resource ownership", () => {
       expect(socket.listenerCount(event)).toBe(0);
     }
   });
+
+  test("retains a matching WebSocket message after coalesced progress frames", async () => {
+    const { port } = await serveWebSocket();
+    const socket = await openTestWebSocket(port, "/");
+    const message = waitForWebSocketMessage(socket, 50, (value) => value === "built");
+    // ws can emit several frames from one read before promise continuations run.
+    socket.emit("message", Buffer.from("building"));
+    socket.emit("message", Buffer.from("built"));
+    await expect(message).resolves.toBe("built");
+    for (const event of ["error", "close", "message"]) expect(socket.listenerCount(event)).toBe(0);
+  });
+
+  test("rejects a malformed matching WebSocket frame and closes its socket", async () => {
+    const { port } = await serveWebSocket();
+    const socket = await openTestWebSocket(port, "/");
+    const message = waitForWebSocketMessage(socket, 50, () => {
+      throw new Error("invalid fixture frame");
+    });
+    socket.emit("message", Buffer.from("malformed"));
+    await expect(message).rejects.toThrow("invalid fixture frame");
+    expect(socket.readyState).toBe(socket.CLOSED);
+    for (const event of ["error", "close", "message"]) expect(socket.listenerCount(event)).toBe(0);
+  });
+
+  test("does not renew the WebSocket deadline when progress frames arrive", async () => {
+    const { port } = await serveWebSocket();
+    const socket = await openTestWebSocket(port, "/");
+    const message = waitForWebSocketMessage(socket, 50, (value) => value === "built");
+    const progress = setInterval(() => socket.emit("message", Buffer.from("building")), 1);
+    onTestFinished(() => clearInterval(progress));
+    await expect(message).rejects.toThrow("did not send a message");
+    expect(socket.readyState).toBe(socket.CLOSED);
+    for (const event of ["error", "close", "message"]) expect(socket.listenerCount(event)).toBe(0);
+  });
 });
 
 test("environment baselines isolate tests/subprocesses and restore inherited values after failure", async () => {

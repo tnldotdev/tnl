@@ -425,10 +425,15 @@ func serveConnections(ctx context.Context, config Config, single bool, consume c
 			defer cancelConnection()
 			stopPath := context.AfterFunc(path.lifetime, cancelConnection)
 			defer stopPath()
-			stop := context.AfterFunc(connectionCtx, func() { _ = local.Close(); _ = provider.Close() })
-			defer stop()
+			closed := make(chan struct{})
+			stop := context.AfterFunc(connectionCtx, func() { defer close(closed); _ = local.Close(); _ = provider.Close() })
+			defer func() {
+				if !stop() {
+					<-closed
+				}
+			}()
 			_, err = streamcopy.Copy(local, provider)
-			return err
+			return errors.Join(err, context.Cause(connectionCtx))
 		}
 		return ErrServiceConnection
 	}

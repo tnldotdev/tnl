@@ -377,11 +377,15 @@ func (d *Database) AuthenticateAccessToken(
 	token credentials.AccessToken,
 	now time.Time,
 ) (ControlPrincipal, error) {
+	return d.authenticateAccessToken(ctx, controlstatedb.New(d.pool), token, now)
+}
+
+func (d *Database) authenticateAccessToken(ctx context.Context, queries *controlstatedb.Queries, token credentials.AccessToken, now time.Time) (ControlPrincipal, error) {
 	tokenID, digest, err := credentials.ParseAccessToken(token)
 	if err != nil {
 		return ControlPrincipal{}, ErrControlAuthentication
 	}
-	row, err := controlstatedb.New(d.pool).GetControlSessionByAccessID(ctx, tokenID.String())
+	row, err := queries.GetControlSessionByAccessID(ctx, tokenID.String())
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ControlPrincipal{}, ErrControlAuthentication
 	}
@@ -400,7 +404,7 @@ func (d *Database) AuthenticateAccessToken(
 		if err != nil {
 			return ControlPrincipal{}, fmt.Errorf("controlstate: re-encrypt control-session retry secret: %w", err)
 		}
-		if err := controlstatedb.New(d.pool).RotateControlSessionRetrySecret(ctx, controlstatedb.RotateControlSessionRetrySecretParams{
+		if err := queries.RotateControlSessionRetrySecret(ctx, controlstatedb.RotateControlSessionRetrySecretParams{
 			RetrySecretCiphertext: rotated, RetrySecretStorageKeyID: d.storageKey.CurrentID(), ID: row.ID,
 			PreviousKeyID: row.RetrySecretStorageKeyID, PreviousCiphertext: row.RetrySecretCiphertext,
 		}); err != nil {

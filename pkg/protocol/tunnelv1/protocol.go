@@ -108,8 +108,6 @@ type StreamKind string
 const (
 	VisitorStream            StreamKind = "visitor"
 	InternalForwardingStream StreamKind = "internal_forward"
-	PublisherAdmissionStream StreamKind = "publisher_admission"
-	IngressAdmissionStream   StreamKind = "ingress_admission"
 	ConnectorVisitorStream   StreamKind = "connector_visitor"
 	ServiceForwardingStream  StreamKind = "service_forward"
 )
@@ -127,7 +125,8 @@ type VisitorStreamHeader struct {
 	ConnectionAssignmentRevision uint64       `json:"connection_assignment_revision"`
 	// AccessPending is trusted ingress state: this visitor has only bounded
 	// pending authorization capacity until an authenticated promotion is accepted.
-	AccessPending bool `json:"access_pending,omitempty"`
+	AccessPending      bool `json:"access_pending,omitempty"`
+	ConfirmBeforeBytes bool `json:"confirm_before_bytes,omitempty"`
 }
 
 // InternalForwardingHeader identifies one visitor connection sent from ingress to a connected relay.
@@ -149,6 +148,7 @@ type InternalForwardingHeader struct {
 	PublicUrlExpiresAt           time.Time    `json:"public_url_expires_at"`
 	LeaseExpiresAt               time.Time    `json:"lease_expires_at"`
 	AccessPending                bool         `json:"access_pending,omitempty"`
+	ConfirmBeforeBytes           bool         `json:"confirm_before_bytes,omitempty"`
 }
 
 type StreamResponseType string
@@ -158,7 +158,7 @@ const (
 	StreamRejected StreamResponseType = "rejected"
 )
 
-// StreamResponse is sent before PROXY v2 metadata or visitor bytes are written.
+// StreamResponse is a local admission result; ReturnFrame owns its wire form.
 type StreamResponse struct {
 	Type StreamResponseType `json:"type"`
 	Code ErrorCode          `json:"code,omitempty"`
@@ -216,24 +216,6 @@ func ReadInternalForwardingHeader(reader io.Reader) (InternalForwardingHeader, e
 		return InternalForwardingHeader{}, err
 	}
 	return header, nil
-}
-
-func WriteStreamResponse(writer io.Writer, response StreamResponse) error {
-	if err := response.Validate(); err != nil {
-		return err
-	}
-	return writeJSONFrame(writer, response, MaxHeaderBytes)
-}
-
-func ReadStreamResponse(reader io.Reader) (StreamResponse, error) {
-	var response StreamResponse
-	if err := readJSONFrame(reader, &response, MaxHeaderBytes); err != nil {
-		return StreamResponse{}, err
-	}
-	if err := response.Validate(); err != nil {
-		return StreamResponse{}, err
-	}
-	return response, nil
 }
 
 func (m Message) Validate() error {

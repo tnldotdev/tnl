@@ -227,7 +227,7 @@ paths:
                   }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
     post:
-      operationId: createWebsiteServiceHTTPGrant
+      operationId: createWebsiteServiceVisitorCredential
       security: [{ webServiceAuth: [] }]
       description: Requires current management and visit access. Company-session-bound credential issuance still requires a control session; this bridge never creates a session or relaxes credential rechecks.
       requestBody:
@@ -236,7 +236,7 @@ paths:
           application/json:
             schema:
               {
-                $ref: "../../../public/v1/openapi.yaml#/components/schemas/CreateServiceHTTPGrantRequest",
+                $ref: "../../../public/v1/openapi.yaml#/components/schemas/CreateVisitorCredentialRequest",
               }
       responses:
         "201":
@@ -244,7 +244,7 @@ paths:
           content:
             application/json:
               schema:
-                { $ref: "../../../public/v1/openapi.yaml#/components/schemas/ServiceHTTPGrant" }
+                { $ref: "../../../public/v1/openapi.yaml#/components/schemas/VisitorCredential" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/service/services/{service_id}/http-grants/{grant_id}:
     parameters:

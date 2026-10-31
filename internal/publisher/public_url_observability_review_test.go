@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -47,14 +50,14 @@ func TestPublicURLTruncatedTargetBodyAbortsVisitorResponse(t *testing.T) {
 			traceID := trace.SpanContextFromContext(owner).TraceID()
 			checked := make(chan struct{}, 1)
 			summaries := make(chan inspection.Summary, 1)
-			route, err := newTestPublicURLServer(PublicURLServerConfig{Context: owner, Hostname: "route.example", PublicURLID: "url-truncated", Target: upstream.URL,
+			route, err := newTestPublicURLServer(t, PublicURLServerConfig{Context: owner, Hostname: "route.example", PublicURLID: certificateTestPublicURLID, Target: upstream.URL,
 				ObserveSummary: func(summary inspection.Summary) { summaries <- summary },
 				Certificate:    publicURLTestCertificate(t, "route.example"), AdmitRequest: func(r *http.Request) error {
 					if r.Context().Value(http.ServerContextKey) == nil || r.Context().Value(http.LocalAddrContextKey) == nil {
 						t.Error("visitor scope discarded net/http server context")
 					}
 					id := observability.IdentityFromContext(r.Context())
-					if id.TeamID != "team" || id.PublicURLID != "url-truncated" || observability.FromContext(r.Context()) != metrics || trace.SpanContextFromContext(r.Context()).TraceID() != traceID {
+					if id.TeamID != "team" || id.PublicURLID != certificateTestPublicURLID || observability.FromContext(r.Context()) != metrics || trace.SpanContextFromContext(r.Context()).TraceID() != traceID {
 						t.Error("request lost its publisher ownership or visitor trace")
 					}
 					checked <- struct{}{}
@@ -165,11 +168,11 @@ func TestPublicURLManagerRecoveryReachesRegisteredHTTPVisitorsAndStaysRunLocal(t
 			start := func(label string) run {
 				t.Helper()
 				control := newCertificateTestControl(t, "route.example", publicURLCertificateTestPlan())
-				control.setup.PublicUrl.Id += label
-				control.setup.PublishRun.Id += label
+				control.setup.PublicUrl.Id = "url_" + strings.Repeat(label, 22)
+				control.setup.PublishRun.Id = "pr_" + strings.Repeat(label, 22)
 				control.setup.PublishRun.PublicUrlId = control.setup.PublicUrl.Id
 				runOwner := observability.NarrowIdentity(ctx, observability.Identity{PublicURLID: control.setup.PublicUrl.Id})
-				route, err := newTestPublicURLServer(PublicURLServerConfig{Context: runOwner, Hostname: "route.example", Target: target.URL, PublicURLID: control.setup.PublicUrl.Id,
+				route, err := newTestPublicURLServer(t, PublicURLServerConfig{Context: runOwner, Hostname: "route.example", Target: target.URL, PublicURLID: control.setup.PublicUrl.Id,
 					PublishRunID: control.setup.PublishRun.Id, PublishRunNumber: 1, Certificate: publicURLTestCertificate(t, "route.example"), PromoteVisitor: func(context.Context, Visitor) error { return nil }})
 				if err != nil {
 					t.Fatal(err)
@@ -210,11 +213,11 @@ func TestPublicURLManagerRecoveryReachesRegisteredHTTPVisitorsAndStaysRunLocal(t
 				}
 				transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: rootsForCertificate(t, *route.certificate.Load()), ServerName: "route.example"},
 					DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-						stream, err := result.peers[1].OpenVisitor(ctx, "review-visitor")
+						stream, err := result.peers[1].OpenVisitor(ctx, "vc_0123456789abcdefghijkl", false, true, nil, tunnel.ReturnEvents{})
 						if err != nil {
 							return nil, err
 						}
-						metadata, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40001"), Destination: netip.MustParseAddrPort("203.0.113.10:443")})
+						metadata, err := encodeTestPublicMetadata(route, tunnelv1.VisitorStreamHeader{VisitorConnectionID: "vc_0123456789abcdefghijkl"}, proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40001"), Destination: netip.MustParseAddrPort("203.0.113.10:443")})
 						if err == nil {
 							_, err = stream.Write(metadata)
 						}

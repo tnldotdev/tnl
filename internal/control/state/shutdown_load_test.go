@@ -22,7 +22,7 @@ func TestLoadShutdown(t *testing.T) {
 		t.Fatal("shutdown load requires at least two routes")
 	}
 	sessions := readySteadyLoadSessions(t, f)
-	initialRevision := seedLoadRoutingHistory(t, f, 1, f.history)
+	initialRevision := seedLoadRoutingHistory(t, f, 2, f.history)
 	closing := len(sessions) / 2
 	byID := make(map[string]int, len(sessions))
 	for index, session := range sessions {

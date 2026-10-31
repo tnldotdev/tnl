@@ -1,0 +1,110 @@
+schemas:
+  PublisherVisitorPolicyRequest:
+    type: object
+    additionalProperties: false
+    required: [resource, run_id, run_number, after_revision]
+    properties:
+      resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
+      run_id: { type: string, maxLength: 64 }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      after_revision: { type: integer, format: int64, minimum: 0 }
+  VisitorPolicyUpdate:
+    type: object
+    additionalProperties: false
+    required: [policy, after_revision, revisions, snapshot_required]
+    properties:
+      policy: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicySnapshot" }
+      after_revision: { type: integer, format: int64, minimum: 0 }
+      revisions:
+        type: array
+        maxItems: 256
+        items: { type: integer, format: int64, minimum: 1 }
+      snapshot_required: { type: boolean }
+      visitor_source_key:
+        type: string
+        format: byte
+        maxLength: 44
+        description: Private public-run source key. Publishers receive the run master; ingress receives only the child key bound by visitor_source_authority. Never expose this value to a browser or relay.
+      visitor_source_authority:
+        type: string
+        format: byte
+        maxLength: 1368
+        description: Opaque tunnelv1 source authority for the exact ingress process and public run. Present only in ingress preparation responses; it supplies neither visitor permission nor capacity.
+  VisitorPolicySnapshot:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        resource,
+        hostname,
+        port,
+        issuer,
+        visitor_policy_revision,
+        key_revision,
+        observed_at,
+        valid_until,
+        enabled,
+        anonymous,
+        verification_keys,
+        workload_leases,
+      ]
+    properties:
+      resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
+      hostname: { type: string, maxLength: 253 }
+      port: { type: integer, minimum: 1, maximum: 65535 }
+      issuer: { type: string, format: uri, maxLength: 256 }
+      visitor_policy_revision: { type: integer, format: int64, minimum: 1 }
+      key_revision: { type: integer, format: int64, minimum: 1 }
+      observed_at: { type: string, format: date-time }
+      valid_until: { type: string, format: date-time }
+      enabled: { type: boolean }
+      anonymous: { type: boolean }
+      verification_keys:
+        type: array
+        maxItems: 64
+        items: { $ref: "../openapi.yaml#/components/schemas/VisitorVerificationKey" }
+      workload_leases:
+        type: array
+        maxItems: 4096
+        items: { $ref: "../openapi.yaml#/components/schemas/VisitorWorkloadLease" }
+      ip: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicyIP" }
+  VisitorVerificationKey:
+    type: object
+    additionalProperties: false
+    required: [id, public_key]
+    properties:
+      id: { type: string, maxLength: 128 }
+      public_key: { type: string, format: byte, maxLength: 44 }
+  VisitorWorkloadLease:
+    type: object
+    additionalProperties: false
+    required: [session_id, key_sha256, expires_at]
+    properties:
+      session_id: { type: string, pattern: "^wls_[A-Za-z0-9]{22}$" }
+      key_sha256: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+      expires_at: { type: string, format: date-time }
+  VisitorPolicyIP:
+    type: object
+    additionalProperties: false
+    required: [key, prefixes]
+    properties:
+      key: { type: string, format: byte, maxLength: 44 }
+      prefixes:
+        type: array
+        maxItems: 2048
+        items: { $ref: "../openapi.yaml#/components/schemas/HashedIPPrefix" }
+  HashedIPPrefix:
+    type: object
+    additionalProperties: false
+    required: [family, prefix_length, digest]
+    properties:
+      family:
+        type: string
+        enum: [ipv4, ipv6]
+      prefix_length:
+        type: integer
+        minimum: 0
+        maximum: 128
+      digest:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{43}$"

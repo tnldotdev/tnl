@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"testing"
 	"time"
@@ -60,7 +59,9 @@ func testManagedMySQLNativeAuthSwitch(t *testing.T, password string) {
 	}
 	defer listener.Close()
 	backendDone := make(chan error, 1)
+	backendJoined := make(chan struct{})
 	go func() {
+		defer close(backendJoined)
 		connection, err := listener.Accept()
 		if err != nil {
 			backendDone <- err
@@ -123,6 +124,9 @@ func testManagedMySQLNativeAuthSwitch(t *testing.T, password string) {
 		}
 		_, err = secured.Write(nativeMySQLPacket(1, []byte{0, 0, 0, 2, 0, 0, 0}))
 		backendDone <- err
+		// keep the backend alive until the owner cancels; a premature full close
+		// is a failed half-close, not evidence of successful native cancellation.
+		<-ctx.Done()
 	}()
 	front, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -160,15 +164,22 @@ func testManagedMySQLNativeAuthSwitch(t *testing.T, password string) {
 	if err := <-backendDone; err != nil {
 		t.Fatal(err)
 	}
-	_ = database.Close()
+	joined := time.NewTimer(time.Second)
+	defer joined.Stop()
 	cancel()
+	_ = database.Close()
 	select {
 	case err := <-forwardDone:
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
-			t.Fatal(err)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal("native cancellation cause was not retained", err)
 		}
-	case <-time.After(time.Second):
+	case <-joined.C:
 		t.Fatal("native adapter did not join")
+	}
+	select {
+	case <-backendJoined:
+	case <-joined.C:
+		t.Fatal("native backend did not join within the same cancellation budget")
 	}
 }
 

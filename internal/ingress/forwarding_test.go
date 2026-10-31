@@ -51,8 +51,8 @@ func TestForwarderPoolsExactRelaySessionAndPreservesBytes(t *testing.T) {
 		t.Fatalf("backends = %d; want 1", len(backends))
 	}
 
-	for _, visitorConnectionID := range []string{"visitor_connection_1", "visitor_connection_2"} {
-		connection, err := backends[0].Open(ingressContext(t), visitorConnectionID)
+	for index, visitorConnectionID := range []string{"visitor_connection_1", "visitor_connection_2"} {
+		connection, err := backends[0].Start(ingressContext(t), visitorConnectionID, false, nil, nil)
 		if err != nil {
 			t.Fatalf("Open(%q): %v", visitorConnectionID, err)
 		}
@@ -68,6 +68,7 @@ func TestForwarderPoolsExactRelaySessionAndPreservesBytes(t *testing.T) {
 
 		request := ingressAwait(t, requests)
 		want := forwardingTestHeader(entry, visitorConnectionID)
+		want.ConfirmBeforeBytes = index == 0
 		if request.header != want || request.payload != "ping" {
 			t.Fatalf("forwarded request = %#v; want header %#v and payload ping", request, want)
 		}
@@ -78,7 +79,7 @@ func TestForwarderPoolsExactRelaySessionAndPreservesBytes(t *testing.T) {
 
 	entry.PublisherConnections[0].RelayRunId = "relay_run_2"
 	entry.PublisherConnections[0].RelayLeaseRevision++
-	connection, err := mustOnlyBackend(t, forwarder, entry).Open(ingressContext(t), "visitor_connection_3")
+	connection, err := mustOnlyBackend(t, forwarder, entry).Start(ingressContext(t), "visitor_connection_3", false, nil, nil)
 	if err != nil {
 		t.Fatalf("Open replacement lease: %v", err)
 	}
@@ -92,7 +93,9 @@ func TestForwarderPoolsExactRelaySessionAndPreservesBytes(t *testing.T) {
 	}
 	_ = connection.Close()
 	request := ingressAwait(t, requests)
-	if want := forwardingTestHeader(entry, "visitor_connection_3"); request.header != want || request.payload != "next" {
+	want := forwardingTestHeader(entry, "visitor_connection_3")
+	want.ConfirmBeforeBytes = true
+	if request.header != want || request.payload != "next" {
 		t.Fatalf("replacement request = %#v; want header %#v and payload next", request, want)
 	}
 	if got := server.accepted.Load(); got != 2 {
@@ -139,7 +142,7 @@ func TestForwarderRejectsMismatchedRelayCertificate(t *testing.T) {
 	forwarder := newTestForwarder(t, material)
 
 	backend := mustOnlyBackend(t, forwarder, forwardingTestEntry(time.Now(), server.address()))
-	_, err := backend.Open(ingressContext(t), "visitor_connection_1")
+	_, err := backend.Start(ingressContext(t), "visitor_connection_1", false, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "certificate") {
 		t.Fatalf("Open error = %v; want relay hostname rejection", err)
 	}
@@ -171,7 +174,7 @@ func TestForwarderPreservesStaleAssignmentRejection(t *testing.T) {
 	backend := mustOnlyBackend(t, forwarder, forwardingTestEntry(time.Now(), server.address()))
 
 	for _, visitorConnectionID := range []string{"visitor_connection_1", "visitor_connection_2"} {
-		_, err := backend.Open(ingressContext(t), visitorConnectionID)
+		_, err := backend.Start(ingressContext(t), visitorConnectionID, false, nil, nil)
 		var protocolError *tunnel.ProtocolError
 		if !errors.As(err, &protocolError) || protocolError.Code != tunnelv1.StaleConnectionAssignment {
 			t.Fatalf("Open(%q) error = %v; want stale connection assignment", visitorConnectionID, err)
@@ -311,8 +314,9 @@ func issueForwardingTestCertificate(
 func newTestForwarder(t *testing.T, material forwardingTestMaterial) *Forwarder {
 	t.Helper()
 	forwarder, err := NewForwarder(ForwarderConfig{
-		TLSConfig:     &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots},
-		ClusterSecret: forwardingClusterSecret,
+		SignVisitorSource: testForwardingSourceSigner,
+		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots},
+		ClusterSecret:     forwardingClusterSecret,
 	})
 	if err != nil {
 		t.Fatalf("NewForwarder: %v", err)

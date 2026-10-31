@@ -18,13 +18,6 @@ import (
 
 const shareHandoffLifetime = time.Minute
 
-type PublisherShare struct {
-	ID                string
-	SecretFingerprint [32]byte
-	ExpiresAt         time.Time
-	CookieHashes      [][32]byte
-}
-
 type ShareRedemption struct {
 	ShareID      string
 	CookieSecret string
@@ -51,69 +44,6 @@ func (d *Database) EnableShareAccess(ctx context.Context, authentication Publish
 		return fmt.Errorf("controlstate: enable share access: %w", err)
 	}
 	return nil
-}
-
-func (d *Database) PublishRunShareState(ctx context.Context, authentication PublishRunAuthentication, now time.Time) ([]PublisherShare, error) {
-	if err := validatePublishRunAuthentication(authentication); err != nil {
-		return nil, err
-	}
-	if err := d.requireOpen(); err != nil {
-		return nil, err
-	}
-	queries := controlstatedb.New(d.pool)
-	if err := requireShareCapableRun(ctx, queries, authentication, now); err != nil {
-		return nil, err
-	}
-	if err := queries.DeleteExpiredShareCookies(ctx, timestamptz(now)); err != nil {
-		return nil, fmt.Errorf("controlstate: remove expired share cookies: %w", err)
-	}
-	if err := queries.DeleteFinishedShareHandoffs(ctx, timestamptz(now)); err != nil {
-		return nil, fmt.Errorf("controlstate: remove finished share handoffs: %w", err)
-	}
-	shareCount, err := queries.CountActiveSharesForPublicURL(ctx, controlstatedb.CountActiveSharesForPublicURLParams{
-		PublicURLID: authentication.PublicURLID, Now: timestamptz(now),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("controlstate: count publisher shares: %w", err)
-	}
-	cookieCount, err := queries.CountActiveShareCookiesForPublicURL(ctx, controlstatedb.CountActiveShareCookiesForPublicURLParams{
-		PublicURLID: authentication.PublicURLID, Now: timestamptz(now),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("controlstate: count publisher share cookies: %w", err)
-	}
-	if shareCount > 256 || cookieCount > 2048 {
-		return nil, ErrShareLimit
-	}
-	rows, err := queries.ListActiveSharesForPublicURL(ctx, controlstatedb.ListActiveSharesForPublicURLParams{
-		PublicURLID: authentication.PublicURLID, Now: timestamptz(now),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("controlstate: list publisher shares: %w", err)
-	}
-	cookies, err := queries.ListActiveShareCookiesForPublicURL(ctx, controlstatedb.ListActiveShareCookiesForPublicURLParams{
-		PublicURLID: authentication.PublicURLID, Now: timestamptz(now),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("controlstate: list share cookies: %w", err)
-	}
-	result := make([]PublisherShare, 0, len(rows))
-	for _, row := range rows {
-		if len(row.SecretDigest) != 32 {
-			return nil, errors.New("controlstate: share secret fingerprint is invalid")
-		}
-		entry := PublisherShare{ID: row.ID, ExpiresAt: row.ExpiresAt.Time}
-		copy(entry.SecretFingerprint[:], row.SecretDigest)
-		for _, cookie := range cookies {
-			if cookie.ShareID == row.ID && len(cookie.TokenDigest) == 32 && cookie.ExpiresAt.Time.After(now) {
-				var digest [32]byte
-				copy(digest[:], cookie.TokenDigest)
-				entry.CookieHashes = append(entry.CookieHashes, digest)
-			}
-		}
-		result = append(result, entry)
-	}
-	return result, nil
 }
 
 func (d *Database) RedeemShare(ctx context.Context, authentication PublishRunAuthentication, shareID string, secret, handoff []byte, now time.Time) (result ShareRedemption, retErr error) {

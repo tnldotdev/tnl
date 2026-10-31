@@ -5,9 +5,15 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Check browser and alias authorization in disposable PostgreSQL
     vars:
-      RUN: '{{default "^TestIntegration(Alias(OwnerBrowserHandoffs|BrowserHTTP)|Browser|FinalVisitor|ControlBrowser)" .RUN}}'
+      RUN: '{{default "^TestIntegration(Alias(OwnerBrowserHandoffs|BrowserHTTP)|Browser|FinalVisitor|ControlBrowser|Visitor(Token|Policy|Signing|Share)|ConcurrentVisitor|ServiceHTTPSubject|FeedbackCombined|ReplaceVisitorAccess|ExactURLShare)" .RUN}}'
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/control/api/public -run='{{.RUN}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  share-token:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check CLI share token preparation and exact signed permission output with disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationShareTokenPreparesExactPermission$' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   auth:
     dir: "{{.ROOT_DIR}}"
@@ -20,6 +26,12 @@ tasks:
     desc: Check provider workload sessions, saved policy races, and visitor admission with signed local issuer fixtures
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/control/api/public -run='^TestIntegration(Workload|MigrationRejectsSiblingWorkloadBaselines)' -count=1 -timeout=5m -args -tnl-test-tier=integration
+
+  public-capacity:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check public capacity across two ingress processes and standalone with both transports
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegration(PublicRunCapacity|PublisherTransportMatrix)$' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
   workload-runtime:
     dir: "{{.ROOT_DIR}}"
@@ -62,7 +74,10 @@ tasks:
       - sh: test "$(uname -s)" = Linux
         msg: App workflow CLI integration requires isolated Linux client-state protection
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - task: :go:test:integration:cli
+        vars:
+          RUN: "{{.RUN}}"
+          TIMEOUT: 8m
 
   connections:
     dir: "{{.ROOT_DIR}}"
@@ -184,6 +199,7 @@ tasks:
     cmds:
       - task: :go:test:integration:service-claims
       - task: :go:test:integration:service-access
+      - task: :go:test:integration:share-token
       - task: :go:test:integration:aws-bootstrap
       - task: :go:test:integration:tcp-lifecycle
       - task: :go:test:integration:sshd
@@ -238,7 +254,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Check ingress terminal retirement and production role forwarding with disposable PostgreSQL
     vars:
-      RUN: '{{default "^TestIntegration(IngressTerminalRetirementProof|PublicURLRecovery|RouteRoutingTableLifecycle|ExpiredIngressRestartsAndRecoversVisitors|StandalonePublish|SplitPublish)" .RUN}}'
+      RUN: '{{default "^TestIntegration(IngressTerminalRetirementProof|PublicStreamTransports|PublicURLRecovery|RouteRoutingTableLifecycle|ExpiredIngressRestartsAndRecoversVisitors|StandalonePublish|SplitPublish)" .RUN}}'
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/daemon -run='{{.RUN}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
 
@@ -255,11 +271,17 @@ tasks:
       RUN: '{{default "^TestIntegrationCLI" .RUN}}'
       SHARD: '{{default "1/1" .SHARD}}'
       SKIP: '{{default "^$" .SKIP}}'
+      TIMEOUT: '{{default "10m" .TIMEOUT}}'
     preconditions:
       - sh: test "$(uname -s)" = Linux
         msg: CLI integration tests require Linux for isolated credential protection
     cmds:
-      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -skip='{{.SKIP}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
+      - |
+        set -eu
+        build_dir="$(mktemp -d "${TMPDIR:-/tmp}/tnl-cli.XXXXXXXX")"
+        trap 'rm -rf "$build_dir"' EXIT
+        go build -buildvcs=false -o "$build_dir/tnl" ./cmd/tnl
+        go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./cmd/tnl -run='{{.RUN}}' -skip='{{.SKIP}}' -count=1 -timeout='{{.TIMEOUT}}' -args -tnl-test-tier=integration -tnl-cli-binary="$build_dir/tnl"
 
   cli:shard:
     dir: "{{.ROOT_DIR}}"

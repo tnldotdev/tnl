@@ -2,79 +2,23 @@ package ingress
 
 import (
 	"context"
-	"crypto/tls"
-	"io"
 	"net"
 	"sync"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/observability"
-	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 )
 
 type pendingTLSBackend struct{ connection net.Conn }
 
-func (b pendingTLSBackend) Open(context.Context, string) (net.Conn, error) { return b.connection, nil }
-
-func (b pendingTLSBackend) OpenPending(ctx context.Context, id string) (net.Conn, error) {
-	return b.Open(ctx, id)
+func (b pendingTLSBackend) Start(ctx context.Context, _ string, _ bool, proxy, initial []byte) (net.Conn, error) {
+	return startTestBackend(ctx, b.connection, proxy, initial)
 }
 
 func TestRestrictedVisitorForwardingHasSuccessfulOutcome(t *testing.T) {
-	// TCP half-close semantics matter here: net.Pipe reports ErrClosedPipe when
-	// the fixture ends, which correctly records a failed copy rather than success.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	certificate := testCertificate(t, "route.example")
-	result := make(chan error, 1)
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			result <- err
-			return
-		}
-		defer conn.Close()
-		_, replay, err := proxyproto.Decode(conn)
-		if err != nil {
-			result <- err
-			return
-		}
-		secured := tls.Server(&testReaderConn{Conn: conn, reader: replay}, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12})
-		data := make([]byte, 4)
-		_, err = io.ReadFull(secured, data)
-		if err == nil {
-			_, err = secured.Write([]byte("pong"))
-		}
-		_ = secured.Close()
-		result <- err
-	}()
-	connection, err := net.Dial("tcp", listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer connection.Close()
-	backend := pendingTLSBackend{connection}
-	metrics := &testMetrics{visitorOutcomes: make(chan string, 1)}
-	config := publicURLConfig(backend)
-	lookup := config.Lookup
-	config.Lookup = func(host string) (PublicURL, LookupReason) {
-		url, reason := lookup(host)
-		url.AccessMode = "restricted"
-		return url, reason
-	}
-	config.Metrics = metrics
-	_, address := startIngress(t, config)
-	visitor := ingressClient(t, address, "route.example", "")
-	exchangePing(t, visitor)
-	if err := ingressAwait(t, result); err != nil {
-		t.Fatal(err)
-	}
-	_ = visitor.Close()
-	if outcome := ingressAwait(t, metrics.visitorOutcomes); outcome != "forwarded" {
-		t.Fatalf("restricted visitor reached publisher but was reported as %s", outcome)
+	result := restrictedCompletionFixture(t, false)
+	if result.outcome != "forwarded" || result.err != nil || result.halfClose != nil {
+		t.Fatal("clean restricted visitor completion was not successful", result)
 	}
 }
 

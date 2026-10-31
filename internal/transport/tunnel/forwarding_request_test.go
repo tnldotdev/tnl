@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -56,9 +55,11 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 				defer peer.Close()
 				wrote := tunnelWorker(t, func() { _ = client.Close() }, func() error {
 					if private {
-						return tunnelv1.WriteServiceForwardingHeader(peer, maximumServiceHeader("relay", true))
+						_, err := tunnelv1.WriteServiceOpening(peer, maximumServiceHeader("relay", true))
+						return err
 					}
-					return tunnelv1.WriteInternalForwardingHeader(peer, maximumPublicHeader("relay"))
+					_, err := tunnelv1.WriteForwardingOpening(peer, maximumPublicHeader("relay"), nil, nil)
+					return err
 				})
 				incoming, err := (&Session{transport: server}).AcceptInternalForwardingStream(ctx)
 				if err != nil {
@@ -67,19 +68,19 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 				if err := await(t, wrote); err != nil {
 					t.Fatal(err)
 				}
-				counted := &responseCountingStream{Stream: incoming.Stream()}
+				counted := &responseCountingStream{Stream: incoming.Stream().(*replyStream).Stream}
 				var copiedAccept func() error
 				var copiedReject func(tunnelv1.ErrorCode) error
 				switch value := incoming.(type) {
 				case *IncomingPublicForwardingStream:
-					value.response.stream = counted
+					value.response.Stream = counted
 					if private {
 						t.Fatal("private request dispatched as public")
 					}
 					copy := *value
 					copiedAccept, copiedReject = copy.Accept, copy.Reject
 				case *IncomingServiceForwardingStream:
-					value.response.stream = counted
+					value.response.Stream = counted
 					if !private {
 						t.Fatal("public request dispatched as private")
 					}
@@ -93,19 +94,19 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 					response = tunnelv1.StreamResponse{Type: tunnelv1.StreamRejected, Code: tunnelv1.Unavailable}
 				}
 				read := tunnelWorker(t, func() { _ = client.Close() }, func() error {
-					got, err := tunnelv1.ReadStreamResponse(peer)
+					got, err := tunnelv1.ReadReturnFrame(peer)
 					if err != nil {
 						return err
 					}
-					if got != response {
+					if got.Kind != tunnelv1.ReturnAccepted && !reject || got.Kind != tunnelv1.ReturnRejected && reject || got.Code != response.Code {
 						return errors.New("wrong response")
 					}
 					if !reject {
-						var payload [4]byte
-						if _, err := io.ReadFull(peer, payload[:]); err != nil {
+						payload, err := tunnelv1.ReadReturnFrame(peer)
+						if err != nil {
 							return err
 						}
-						if string(payload[:]) != "body" {
+						if payload.Kind != tunnelv1.ReturnData || string(payload.Data) != "body" {
 							return errors.New("duplicate response corrupted visitor bytes")
 						}
 					}
@@ -128,7 +129,11 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 				}
 				group.Wait()
 				var expected bytes.Buffer
-				if err := tunnelv1.WriteStreamResponse(&expected, response); err != nil {
+				kind := tunnelv1.ReturnAccepted
+				if reject {
+					kind = tunnelv1.ReturnRejected
+				}
+				if err := tunnelv1.WriteReturnFrame(&expected, tunnelv1.ReturnFrame{Kind: kind, Code: response.Code}); err != nil {
 					t.Fatal(err)
 				}
 				if counted.bytes.Load() != int64(expected.Len()) {
@@ -185,8 +190,8 @@ func TestServiceForwardingMissingIdentityFieldsFailBeforeDispatch(t *testing.T) 
 				return err
 			})
 			read := tunnelWorker(t, func() { _ = client.Close() }, func() error {
-				got, err := tunnelv1.ReadStreamResponse(peer)
-				if err == nil && (got.Type != tunnelv1.StreamRejected || got.Code != tunnelv1.InvalidMessage) {
+				got, err := tunnelv1.ReadReturnFrame(peer)
+				if err == nil && (got.Kind != tunnelv1.ReturnRejected || got.Code != tunnelv1.InvalidMessage) {
 					return errors.New("missing private identity was accepted")
 				}
 				return err

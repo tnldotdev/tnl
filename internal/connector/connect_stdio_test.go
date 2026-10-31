@@ -3,9 +3,11 @@ package connector
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
+	"syscall"
 	"testing"
 	"time"
 
@@ -49,8 +51,13 @@ func TestConnectStdioHalfCloseRemoteEOFAndCancellationJoin(t *testing.T) {
 			defer network.Close()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			stop := context.AfterFunc(ctx, func() { _ = local.Close(); _ = network.Close() })
-			defer stop()
+			closed := make(chan struct{})
+			stop := context.AfterFunc(ctx, func() { defer close(closed); _ = local.Close(); _ = network.Close() })
+			defer func() {
+				if !stop() {
+					<-closed
+				}
+			}()
 			done := make(chan error, 1)
 			go func() { _, err := streamcopy.Copy(local, network); done <- err }()
 			payload := []byte("SSH-2.0-client\r\n\x00\xff")
@@ -82,8 +89,19 @@ func TestConnectStdioHalfCloseRemoteEOFAndCancellationJoin(t *testing.T) {
 			}
 			select {
 			case err := <-done:
-				if err != nil {
-					t.Fatal("stdio copy", err)
+				switch mode {
+				case "cancel":
+					if !errors.Is(err, net.ErrClosed) {
+						t.Fatal("canceled stdio lost its closed-socket cause", err)
+					}
+				case "child-exit":
+					if !errors.Is(err, syscall.EPIPE) {
+						t.Fatal("child exit hid its broken-pipe cause", err)
+					}
+				default:
+					if err != nil {
+						t.Fatal("clean stdio half-close failed", err)
+					}
 				}
 			case <-time.After(3 * time.Second):
 				t.Fatal("stdio did not join while the other input pipe remained open")

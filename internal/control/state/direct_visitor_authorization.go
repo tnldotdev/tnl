@@ -43,7 +43,7 @@ func recheckDirectServiceVisitor(ctx context.Context, tx pgx.Tx, service, run st
 	if !deadline.After(now) {
 		return result, nil
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.direct_service_visitors SET identity_id=$2,device_id=$3,certificate_digest=COALESCE(certificate_digest,$4::bytea),http_credential_kind=NULL,http_credential_digest=NULL,valid_until=$5 WHERE visitor_connection_id=$1`, visitor, identity, device, certificateDigest, deadline)
+	_, err = tx.Exec(ctx, `UPDATE control.direct_service_visitors SET identity_id=$2,device_id=$3,certificate_digest=COALESCE(certificate_digest,$4::bytea),valid_until=$5 WHERE visitor_connection_id=$1`, visitor, identity, device, certificateDigest, deadline)
 	result.Allowed, result.ValidUntil = err == nil, deadline
 	return result, err
 }
