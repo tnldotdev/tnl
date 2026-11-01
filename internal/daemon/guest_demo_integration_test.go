@@ -215,12 +215,16 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address)
 	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDPAddress, pebble.directoryURL)
 	cfg.GuestDemoEnabled = true
-	if err := cfg.Validate(); err != nil {
-		t.Fatal(err)
-	}
 	owner := newRuntimeTopology(t)
 	ca := newIntegrationTestCA(t)
 	controlCertificate := ca.issueServer(t, cfg.ServerHostname())
+	// this boundary tests guest issuance and visitor access, not infrastructure
+	// DNS-01 polling. automatic relay issuance has its own real DNS/Pebble suite.
+	relayCertificate := ca.issueServer(t, cfg.StandaloneRelayHostname())
+	cfg.RelayTLSCertificateFile, cfg.RelayTLSPrivateKeyFile = relayCertificate.certificateFile, relayCertificate.privateKeyFile
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
 	controlTLS, err := staticServerTLS(controlCertificate.certificateFile, controlCertificate.privateKeyFile)
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +234,12 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{
 		dns: dns, listeners: listeners,
 		acmeHTTPClient: pebble.httpClient,
-		relayClientTLS: &tls.Config{RootCAs: pebble.roots, MinVersion: tls.VersionTLS13}, owner: owner,
+		relayClientTLS: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}, owner: owner,
+	})
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Log(integrationPublisherDiagnostics(inspect, pebble.logPath))
+		}
 	})
 	waitForProcessReady(t, process)
 	controlHTTP, _ := newIntegrationHTTPSClient(t, ca.roots, publicControl, false, owner)
@@ -283,7 +292,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	relayTLS := &tls.Config{RootCAs: pebble.roots, MinVersion: tls.VersionTLS13}
+	relayTLS := &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}
 	quic := redirectIntegrationConnector(relayUDPAddress, muxsession.QUICConnector{TLSConfig: relayTLS})
 	tcp := redirectIntegrationConnector(publicAddress, muxsession.TLSYamuxConnector{TLSConfig: relayTLS})
 	hostname := "demo-1." + issued.Namespace

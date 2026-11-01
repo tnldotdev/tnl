@@ -116,6 +116,18 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			}
 			stopRenew := renewRuntimeWorkload(t, job, session.ExpiresAt)
 			paths := openWorkloadPaths(t, f, job, byName, pg, transport)
+			t.Cleanup(func() {
+				if !t.Failed() {
+					return
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				var bindings string
+				err := f.inspect.QueryRowContext(ctx, `SELECT COALESCE(jsonb_agg(jsonb_build_object(
+					'service_id',service_id,'expires_at',expires_at,'publisher_prepared_until',publisher_prepared_until))::text,'[]')
+					FROM control.connector_peer_pairs WHERE subject_kind='workload_session' AND subject_id=$1`, session.Id).Scan(&bindings)
+				t.Logf("workload retained bindings: %s: %v", bindings, err)
+			})
 			paths.step(t, 0)
 			nativeBinding := workloadNativeRuntimeBinding(t, f, session.Id, session.ExpiresAt)
 			unrenewed, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
@@ -466,6 +478,10 @@ type workloadRuntimePaths struct {
 
 func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.Client, services map[string]string, pg *pgx.ConnConfig, transport string) *workloadRuntimePaths {
 	t.Helper()
+	source, err := job.Session()
+	if err != nil {
+		t.Fatal(err)
+	}
 	p := &workloadRuntimePaths{}
 	for _, name := range []string{"private-tcp", "private-http", "public-tcp", "public-http", "db"} {
 		service := services[name]
@@ -495,7 +511,11 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			quic = privateDisabledConnector()
 		}
 		go func() {
-			done <- connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(ready); return nil }})
+			err := connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(ready); return nil }})
+			if err != nil && ctx.Err() == nil {
+				t.Logf("workload connector %s/%s source=%s ended: %v", transport, name, source.Id, err)
+			}
+			done <- err
 		}()
 		t.Cleanup(func() {
 			cancel()
@@ -535,7 +555,10 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			p.connections = append(p.connections, conn)
 			t.Cleanup(func() { _ = conn.Close() })
 		} else {
-			tr := &http.Transport{TLSClientConfig: verification, DialContext: dial}
+			// step probes cross a 95-second gap, beyond the server's one-minute
+			// idle timeout. use fresh probe sockets; the separate streaming
+			// responses below must retain their original streams across renewal.
+			tr := &http.Transport{TLSClientConfig: verification, DialContext: dial, DisableKeepAlives: true}
 			t.Cleanup(tr.CloseIdleConnections)
 			client := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 			endpoint := "https://" + net.JoinHostPort(run.Endpoint.Hostname, strconv.Itoa(run.Endpoint.Port))
