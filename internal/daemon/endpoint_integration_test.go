@@ -184,14 +184,21 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err = f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 				t.Fatal(err)
 			}
+			revocation, stopRevocation := context.WithTimeout(t.Context(), client.Timeout)
+			defer stopRevocation()
+			if _, err := f.identity.routes.SelectServiceRun(revocation, service.Id, device.Subject.DeviceID); !defaultConnectorRevocationDenied(err) {
+				t.Fatalf("control did not deny the exact revoked device: %v", err)
+			}
 			select {
 			case err := <-connectorDone:
 				connectorJoined = true
 				var denial *tunnel.ProtocolError
-				if !defaultConnectorRevocationDenied(err) && !(errors.As(err, &denial) && denial.Code == tunnelv1.Unauthenticated) {
-					t.Fatalf("revoked connector did not stop with a current access denial: %v", err)
+				// revocation may close both relay legs before their denial reply
+				// arrives. control above must independently deny this exact device.
+				if !defaultConnectorRevocationDenied(err) && !(errors.As(err, &denial) && denial.Code == tunnelv1.Unauthenticated) && !errors.Is(err, connectorstream.ErrServiceConnection) {
+					t.Fatalf("revoked connector did not stop after current access denial: %v", err)
 				}
-			case <-time.After(client.Timeout):
+			case <-revocation.Done():
 				t.Fatal("revoked connector owner did not join within the request budget")
 			}
 			transport.CloseIdleConnections()

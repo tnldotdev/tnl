@@ -55,6 +55,11 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 		acmeHTTPClient: pebble.httpClient, serviceHTTPClient: &http.Client{Timeout: 10 * time.Second},
 		relayClientTLS: &tls.Config{RootCAs: pebble.roots, MinVersion: tls.VersionTLS13}, owner: owner,
 	})
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Log(integrationPublisherDiagnostics(inspect, pebble.logPath))
+		}
+	})
 	waitForProcessReady(t, process)
 	controlHTTP, _ := newIntegrationHTTPSClient(t, ca.roots, publicControl, false, owner)
 	identity := newIntegrationPublishingIdentity(t, "https://"+cfg.ServerHostname(), controlHTTP, hostnameLabel, owner)
