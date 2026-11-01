@@ -261,7 +261,7 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 		if err != nil {
 			return result, err
 		}
-		if live, err := d.publisherRunLive(ctx, q, url, run, now); err != nil || !live {
+		if live, err := d.publisherRunLive(ctx, q, url, row, now); err != nil || !live {
 			if err != nil {
 				return result, err
 			}

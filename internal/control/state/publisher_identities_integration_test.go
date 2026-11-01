@@ -347,6 +347,11 @@ func TestIntegrationPublisherRunRetryAndHeartbeatRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// the baseline retains this compatibility view, but retries, live authority,
+	// and revocation must use the binding already stored on each publish run.
+	if _, err := d.pool.Exec(t.Context(), `DROP VIEW control.publish_run_publisher_grants`); err != nil {
+		t.Fatal(err)
+	}
 	repeated, err := d.CreatePublishRun(t.Context(), r, now, time.Minute, time.Minute)
 	if err != nil || repeated.PublishRunToken != setup.PublishRunToken || repeated.PublishRunID != setup.PublishRunID {
 		t.Fatalf("identity run retry = %+v, %v", repeated, err)

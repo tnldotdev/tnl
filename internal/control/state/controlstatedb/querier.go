@@ -234,7 +234,6 @@ type Querier interface {
 	GetPublisherDomain(ctx context.Context, arg GetPublisherDomainParams) (ControlDomain, error)
 	GetPublisherGrant(ctx context.Context, arg GetPublisherGrantParams) (ControlPublisherGrant, error)
 	GetPublisherKey(ctx context.Context, arg GetPublisherKeyParams) (ControlPublisherIdentityKey, error)
-	GetPublisherRun(ctx context.Context, publishRunID string) (ControlPublishRunPublisherGrant, error)
 	GetPublisherRuntime(ctx context.Context, publisherIdentityID string) (ControlPublisherRuntime, error)
 	GetRelayDNSChallengeContext(ctx context.Context, orderID string) (GetRelayDNSChallengeContextRow, error)
 	// claims and readiness share the relay-service guard across processes.

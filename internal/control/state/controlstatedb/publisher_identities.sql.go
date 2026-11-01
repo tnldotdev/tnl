@@ -172,17 +172,6 @@ func (q *Queries) GetPublisherKey(ctx context.Context, arg GetPublisherKeyParams
 	return i, err
 }
 
-const getPublisherRun = `-- name: GetPublisherRun :one
-SELECT publish_run_id, publisher_identity_id, publisher_grant_id FROM control.publish_run_publisher_grants WHERE publish_run_id = $1
-`
-
-func (q *Queries) GetPublisherRun(ctx context.Context, publishRunID string) (ControlPublishRunPublisherGrant, error) {
-	row := q.db.QueryRow(ctx, getPublisherRun, publishRunID)
-	var i ControlPublishRunPublisherGrant
-	err := row.Scan(&i.PublishRunID, &i.PublisherIdentityID, &i.PublisherGrantID)
-	return i, err
-}
-
 const insertPublisherAccess = `-- name: InsertPublisherAccess :exec
 INSERT INTO control.publisher_access_tokens(access_token_digest, publisher_identity_id, grant_id, key_id, created_at, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6)
