@@ -190,7 +190,6 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (meta.PublicMetadat
 	lifetime, cancel := context.WithCancel(observability.Independent(context.WithoutCancel(ctx)))
 	b.cancel = cancel
 	b.lifetime = lifetime
-	metadata := meta.Metadata{Version: meta.Version, Services: map[string]meta.Service{}}
 	services := map[string]controlv1.Service{}
 	if b.scope.Workload != "" {
 		_, key, err := ed25519.GenerateKey(rand.Reader)
@@ -235,11 +234,9 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (meta.PublicMetadat
 		if err != nil {
 			return meta.PublicMetadata{}, time.Time{}, err
 		}
-		for _, service := range inventory.Services {
-			if _, duplicate := services[service.Service]; duplicate {
-				return meta.PublicMetadata{}, time.Time{}, connectorruntime.ErrInvalid
-			}
-			services[service.Service] = controlv1.Service{Id: service.Id, Name: service.Service, TeamId: session.TeamId, Protocol: service.Protocol, Enabled: true, Endpoint: &service.Endpoint, KubernetesAuth: service.KubernetesAuth}
+		services, err = workloadInventoryServices(inventory, session.TeamId)
+		if err != nil {
+			return meta.PublicMetadata{}, time.Time{}, err
 		}
 	} else {
 		session, err := b.openSession(ctx, SessionOptions{ServerURL: b.scope.Server, StateDir: b.stateDir, ProjectTeam: b.scope.TeamID}, "tnl connect", io.Discard)
@@ -261,35 +258,12 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (meta.PublicMetadat
 			services[name] = service
 		}
 	}
-	for _, name := range b.scope.Services {
-		service, ok := services[name]
-		if !ok {
-			continue
-		}
-		if err := ValidateService(service); err != nil {
-			delete(services, name)
-			continue
-		}
-		endpoint := service.Endpoint
-		if string(service.Protocol) != config.Protocol(b.project.Config.Services[name]) {
-			delete(services, name)
-			continue
-		}
-		value, err := meta.NewEndpoint(endpoint.Hostname, endpoint.Hostname, string(service.Protocol), endpoint.Port, endpoint.Public)
-		if err != nil {
-			delete(services, name)
-			continue
-		}
-		metadata.Services[name] = value
-		if metadata.Namespace == "" {
-			metadata.Namespace = endpoint.Hostname
-		}
-	}
-	if err := metadata.Validate(); err != nil {
+	services, metadata, err := projectConnectionMetadata(b.project.Config, b.scope.Services, services)
+	if err != nil {
 		return meta.PublicMetadata{}, time.Time{}, err
 	}
 	b.services = services
-	b.metadata = metadata.Public(false)
+	b.metadata = metadata
 	b.mu.Lock()
 	b.publishLocked()
 	b.mu.Unlock()
@@ -410,20 +384,15 @@ func (b *nativeConnectionBackend) refreshService(ctx context.Context, name strin
 		if err != nil {
 			return service, err
 		}
-		found := false
-		for _, s := range inventory.Services {
-			if s.Service != name || s.Id != approved.Id {
-				continue
-			}
-			if found {
-				return service, connectorruntime.ErrInvalid
-			}
-			found = true
-			service = controlv1.Service{Id: s.Id, Name: name, TeamId: approved.TeamId, Protocol: s.Protocol, Enabled: true, Endpoint: &s.Endpoint, KubernetesAuth: s.KubernetesAuth}
+		services, err := workloadInventoryServices(inventory, approved.TeamId)
+		if err != nil {
+			return service, err
 		}
-		if !found {
+		current, found := services[name]
+		if !found || current.Id != approved.Id {
 			return service, connectorruntime.ErrUnauthorized
 		}
+		service = current
 	} else if b.human != nil {
 		var err error
 		service, err = Select(ctx, b.human.authenticated.Control, b.project.Project, name, b.teamID)
@@ -434,11 +403,7 @@ func (b *nativeConnectionBackend) refreshService(ctx context.Context, name strin
 			return service, connectorruntime.ErrUnauthorized
 		}
 	}
-	if ValidateService(service) != nil || string(service.Protocol) != config.Protocol(b.project.Config.Services[name]) {
-		return service, connectorruntime.ErrInvalid
-	}
-	endpoint := service.Endpoint
-	value, err := meta.NewEndpoint(endpoint.Hostname, endpoint.Hostname, string(service.Protocol), endpoint.Port, endpoint.Public)
+	value, err := connectionServiceMetadata(service, config.Protocol(b.project.Config.Services[name]))
 	if err != nil {
 		return service, err
 	}
@@ -713,23 +678,12 @@ func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, 
 		if err != nil {
 			return err
 		}
-		services := map[string]controlv1.Service{}
-		metadata := meta.Metadata{Version: meta.Version, Services: map[string]meta.Service{}}
-		for _, s := range inventory.Services {
-			if !slices.Contains(b.scope.Services, s.Service) || string(s.Protocol) != config.Protocol(b.project.Config.Services[s.Service]) {
-				continue
-			}
-			value, err := meta.NewEndpoint(s.Endpoint.Hostname, s.Endpoint.Hostname, string(s.Protocol), s.Endpoint.Port, s.Endpoint.Public)
-			if err != nil {
-				continue
-			}
-			services[s.Service] = controlv1.Service{Id: s.Id, Name: s.Service, TeamId: session.TeamId, Protocol: s.Protocol, Enabled: true, Endpoint: &s.Endpoint, KubernetesAuth: s.KubernetesAuth}
-			metadata.Services[s.Service] = value
-			if metadata.Namespace == "" {
-				metadata.Namespace = value.Namespace
-			}
+		services, err := workloadInventoryServices(inventory, session.TeamId)
+		if err != nil {
+			return err
 		}
-		if err := metadata.Validate(); err != nil {
+		services, metadata, err := projectConnectionMetadata(b.project.Config, b.scope.Services, services)
+		if err != nil {
 			return err
 		}
 		b.mu.Lock()
@@ -739,7 +693,7 @@ func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, 
 		}
 		b.workload = next
 		b.deadline = session.ExpiresAt
-		b.services, b.metadata = services, metadata.Public(false)
+		b.services, b.metadata = services, metadata
 		b.rememberAssertion(assertion, identity.AssertionExpiresAt, session)
 		b.replacement = nil
 		b.replacementScope = connectorruntime.Context{}
