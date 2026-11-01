@@ -210,7 +210,6 @@ func (s *Server) Handler() http.Handler {
 				}
 				return publication.Service != name
 			})
-			snapshot.Events = nil
 		}
 		publisherprotocol.Write(w, 200, snapshot)
 	})

@@ -57,7 +57,6 @@ type Snapshot struct {
 	ObservedAt    time.Time                `json:"observed_at"`
 	Services      []Service                `json:"services"`
 	Publications  []clientstate.TunnelInfo `json:"publications,omitempty"`
-	Events        []Event                  `json:"-"`
 }
 
 func Identity(project, state string) string {
@@ -108,7 +107,7 @@ func ListSnapshotsFrom(ctx context.Context, database *clientstate.Database) ([]S
 }
 
 // CommitSnapshot commits app services and one event using the native project
-// journal. the returned cursor/history replace the caller's view only on success.
+// journal. the returned cursor replaces the caller's view only on success.
 // publications written concurrently remain part of the same native snapshot.
 func CommitSnapshot(ctx context.Context, database *clientstate.Database, snapshot *Snapshot, kind string, service *Service) error {
 	if snapshot == nil {
@@ -138,26 +137,19 @@ func CommitSnapshot(ctx context.Context, database *clientstate.Database, snapsho
 		return err
 	}
 	snapshot.SchemaVersion, snapshot.Cursor, snapshot.ObservedAt = persisted.SchemaVersion, persisted.Cursor, persisted.ObservedAt
-	snapshot.Publications, snapshot.Events = persisted.Publications, persisted.Events
+	snapshot.Publications = persisted.Publications
 	return nil
 }
 
 func decodeSnapshot(native clientstate.RuntimeSnapshot) (Snapshot, error) {
 	result := Snapshot{SchemaVersion: 1, Project: native.Project, Cursor: native.Cursor, ObservedAt: native.ObservedAt,
-		Services: make([]Service, 0, len(native.Services)), Publications: native.Publications, Events: make([]Event, 0, len(native.Events))}
+		Services: make([]Service, 0, len(native.Services)), Publications: native.Publications}
 	for _, value := range native.Services {
 		var service Service
 		if err := json.Unmarshal(value, &service); err != nil {
 			return Snapshot{}, err
 		}
 		result.Services = append(result.Services, service)
-	}
-	for _, value := range native.Events {
-		event, err := decodeEvent(value)
-		if err != nil {
-			return Snapshot{}, err
-		}
-		result.Events = append(result.Events, event)
 	}
 	return result, nil
 }
@@ -174,32 +166,8 @@ func decodeEvent(native clientstate.RuntimeEvent) (Event, error) {
 	return event, nil
 }
 
-func EventsAfter(snapshot Snapshot, cursor string) ([]Event, error) {
-	native := clientstate.RuntimeSnapshot{Cursor: snapshot.Cursor, Events: make([]clientstate.RuntimeEvent, 0, len(snapshot.Events))}
-	for _, event := range snapshot.Events {
-		payload, err := json.Marshal(event)
-		if err != nil {
-			return nil, err
-		}
-		native.Events = append(native.Events, clientstate.RuntimeEvent{Cursor: event.Cursor, Type: event.Type, At: event.At, Payload: payload})
-	}
-	resumed, err := clientstate.RuntimeEventsAfter(native, cursor)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]Event, 0, len(resumed))
-	for _, entry := range resumed {
-		event, err := decodeEvent(entry)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, event)
-	}
-	return result, nil
-}
-
 // EventsAfterFrom resumes directly from native state without loading unrelated
-// snapshot payloads. both native resume and snapshot-based resume are exclusive.
+// snapshot payloads. resume is exclusive of the supplied cursor.
 func EventsAfterFrom(ctx context.Context, database *clientstate.Database, project, cursor string) ([]Event, error) {
 	native, err := database.RuntimeEventsAfter(ctx, project, cursor)
 	if err != nil {
