@@ -344,24 +344,6 @@ func (q *Queries) ExpireServiceConnectionSlot(ctx context.Context, arg ExpireSer
 	return result.RowsAffected(), nil
 }
 
-const expireServiceRunPreparation = `-- name: ExpireServiceRunPreparation :execrows
-UPDATE control.service_runs SET state = 'closed', closed_at = $1
-WHERE id = $2 AND state = 'prepared' AND closed_at IS NULL AND preparation_expires_at <= $1
-`
-
-type ExpireServiceRunPreparationParams struct {
-	Now pgtype.Timestamptz
-	ID  string
-}
-
-func (q *Queries) ExpireServiceRunPreparation(ctx context.Context, arg ExpireServiceRunPreparationParams) (int64, error) {
-	result, err := q.db.Exec(ctx, expireServiceRunPreparation, arg.Now, arg.ID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const findServiceInvitationRequest = `-- name: FindServiceInvitationRequest :one
 SELECT id, service_id, team_id, normalized_email, token_digest, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, accepted_at, accepted_identity_id, revoked_at FROM control.service_invitations
 WHERE created_by_identity_id = $1

@@ -403,13 +403,8 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	material, err := f.identity.state.EnsureServiceClientCertificate(t.Context(), person.Identity.Id, service.Id, device.Id, func(ctx context.Context, csr []byte) (controlv1.ServiceClientCertificate, error) {
-		return f.identity.routes.IssueServiceClientCertificate(ctx, service.Id, device.Id, csr)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	mtls := &http.Client{Transport: newTransport(&material.Certificate), Timeout: 10 * time.Second}
+	material := issueServiceClientCertificate(t, f, service.Id, device.Id)
+	mtls := &http.Client{Transport: newTransport(&material), Timeout: 10 * time.Second}
 	awaitServiceHTTPStatus(t, mtls, base, "", "", 200)
 	closeResponse(request(mtls, "/", "", "", 200))
 	source, err := json.Marshal(controlv1.VisitorTokenGrantSource{Kind: "grant", Credential: transition.RefreshCredential})
@@ -429,8 +424,8 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	}
 	closeResponse(request(mtls, "/", "", "", 200))
 	closeResponse(request(mtls, "/", "Tnl-Access-Token", "invalid", 403))
-	serviceHTTPCurl(t, f, listener.Addr().String(), service, material.Certificate)
-	certificateDigest := sha256.Sum256(material.Certificate.Certificate[0])
+	serviceHTTPCurl(t, f, listener.Addr().String(), service, material)
+	certificateDigest := sha256.Sum256(material.Certificate[0])
 	if _, err = f.inspect.ExecContext(t.Context(), `UPDATE control.service_client_certificates SET revoked_at=now() WHERE certificate_digest=$1`, certificateDigest[:]); err != nil {
 		t.Fatal(err)
 	}
@@ -441,13 +436,8 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	material, err = f.identity.state.EnsureServiceClientCertificate(t.Context(), person.Identity.Id, service.Id, device.Id, func(ctx context.Context, csr []byte) (controlv1.ServiceClientCertificate, error) {
-		return f.identity.routes.IssueServiceClientCertificate(ctx, service.Id, device.Id, csr)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	mtls = &http.Client{Transport: newTransport(&material.Certificate), Timeout: 10 * time.Second}
+	material = issueServiceClientCertificate(t, f, service.Id, device.Id)
+	mtls = &http.Client{Transport: newTransport(&material), Timeout: 10 * time.Second}
 	awaitServiceHTTPStatus(t, mtls, base, "", "", 200)
 	closeResponse(request(mtls, "/", "", "", 200))
 	if err = f.identity.routes.RevokeVisitorDevice(t.Context(), device.Id); err != nil {

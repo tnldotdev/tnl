@@ -85,26 +85,6 @@ WHERE connections.publish_run_id = sqlc.arg(publish_run_id)
   AND services.enabled
 ORDER BY connections.connection_slot;
 
--- name: LockInvalidReadyPublisherConnections :many
-SELECT connections.*
-FROM control.publish_run_connection_slots AS connections
-LEFT JOIN control.relay_leases AS relays
-  ON relays.relay_service_id = connections.relay_service_id
- AND relays.relay_id = connections.connected_relay_id
- AND relays.relay_run_id = connections.connected_relay_run_id
- AND relays.relay_lease_revision = connections.connected_relay_lease_revision
-LEFT JOIN control.relay_services AS services
-  ON services.relay_service_id = connections.relay_service_id
-WHERE connections.state = 'ready'
-  AND (
-      relays.relay_id IS NULL
-      OR relays.lease_expires_at <= sqlc.arg(now)
-      OR relays.draining
-      OR NOT services.enabled
-  )
-ORDER BY connections.publish_run_id, connections.connection_slot
-FOR UPDATE OF connections SKIP LOCKED;
-
 -- name: ExpirePublisherConnection :one
 UPDATE control.publish_run_connection_slots
 SET state = 'expired',

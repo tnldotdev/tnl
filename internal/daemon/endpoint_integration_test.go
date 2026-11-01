@@ -180,7 +180,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			checkManagedPublicEndpointTLS(t, f, publicServiceIngress, applied, service, device.Subject.DeviceID, person.Identity.Id)
+			checkManagedPublicEndpointTLS(t, f, publicServiceIngress, applied, service, device.Subject.DeviceID)
 			if err = f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 				t.Fatal(err)
 			}
@@ -210,15 +210,10 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 	}
 }
 
-func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, connector *ingress.PublicServices, applied controlv1.AppliedProjectConfiguration, service controlv1.Service, device, identity string) {
+func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, connector *ingress.PublicServices, applied controlv1.AppliedProjectConfiguration, service controlv1.Service, device string) {
 	t.Helper()
 	ctx := t.Context()
-	material, err := f.identity.state.EnsureServiceClientCertificate(ctx, identity, service.Id, device, func(ctx context.Context, csr []byte) (controlv1.ServiceClientCertificate, error) {
-		return f.identity.routes.IssueServiceClientCertificate(ctx, service.Id, device, csr)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	material := issueServiceClientCertificate(t, f, service.Id, device)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -238,7 +233,7 @@ func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, con
 			t.Error(err)
 		}
 	})
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: f.visitorRoots.RootCAs, ServerName: service.Endpoint.Hostname, MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{material.Certificate}}, DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: f.visitorRoots.RootCAs, ServerName: service.Endpoint.Hostname, MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{material}}, DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 		connection, err := (&net.Dialer{}).DialContext(ctx, network, listener.Addr().String())
 		if err != nil {
 			return nil, err

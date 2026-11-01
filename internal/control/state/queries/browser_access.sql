@@ -35,17 +35,6 @@ FROM control.browser_access_sessions AS session
 JOIN control.browser_session_run_bindings AS included ON included.session_digest = session.token_digest
 WHERE session.token_digest = sqlc.arg(token_digest) AND included.public_url_id = sqlc.arg(public_url_id);
 
--- name: ListReadyPreviewBrowserHostnames :many
-SELECT DISTINCT url.id AS public_url_id, url.canonical_hostname
-FROM control.preview_public_urls AS included
-JOIN control.public_urls AS url ON url.id = included.public_url_id
-JOIN control.publish_runs AS run ON run.public_url_id = url.id
-WHERE included.preview_id = sqlc.arg(preview_id)
-  AND url.lifecycle_state = 'enabled'
-  AND run.state = 'ready' AND run.publisher_expires_at > sqlc.arg(now)
-  AND run.share_capable = true
-ORDER BY url.id LIMIT 32;
-
 -- name: LockBrowserAccessSession :one
 SELECT token_digest, preview_id, public_url_id, identity_id, display_name,
        access_ciphertext, refresh_ciphertext, storage_key_id, access_expires_at, expires_at, revoked_at, parent_control_session_id

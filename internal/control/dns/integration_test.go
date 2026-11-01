@@ -16,8 +16,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/control/storagekey"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
@@ -29,14 +32,18 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 		name, domain, reference := "managed_opaque_reference", "tunnels.example.test", hostedManagedAuthorityReference
 		if custom {
 			name, domain = "custom", "custom.example.test"
-			authority, err := database.CreateDNSAuthority(t.Context(), controlstate.CreateDNSAuthorityRequest{
-				TeamID: "external_team", DomainID: "external_domain_custom", CanonicalDomain: domain,
-				IdempotencyKey: "claim", RequestDigest: sha256.Sum256([]byte("claim")),
-			}, time.Now())
+			var err error
+			reference, err = opaqueid.New(opaqueid.DNSAuthorityPrefix)
 			if err != nil {
 				t.Fatal(err)
 			}
-			reference = authority.Reference
+			digest := sha256.Sum256([]byte("claim"))
+			if err := controlstatedb.New(sql).CreateCustomDNSAuthority(t.Context(), controlstatedb.CreateCustomDNSAuthorityParams{
+				AuthorityReference: reference, TeamID: "external_team", DomainID: "external_domain_custom", CanonicalDomain: domain,
+				CreateIdempotencyKey: "claim", CreateRequestDigest: digest[:], CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			}); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := sql.Exec(t.Context(), `UPDATE control.dns_authorities SET state = 'ready', provider_zone_id = 'ZCLAIMED', nameservers = ARRAY['ns-1.example.test', 'ns-2.example.test'] WHERE authority_reference = $1`, reference); err != nil {
 				t.Fatal(err)
 			}

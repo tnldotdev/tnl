@@ -358,12 +358,7 @@ func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			material, err := f.identity.state.EnsureServiceClientCertificate(t.Context(), person.Identity.Id, service.Id, device.ID, func(ctx context.Context, csr []byte) (controlv1.ServiceClientCertificate, error) {
-				return f.identity.routes.IssueServiceClientCertificate(ctx, service.Id, device.ID, csr)
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
+			material := issueServiceClientCertificate(t, f, service.Id, device.ID)
 			ctx, cancel := context.WithCancel(collector.process(t, "ingress"))
 			defer cancel()
 			local, remote := net.Pipe()
@@ -382,7 +377,7 @@ func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
 					t.Error("public service visitor did not join")
 				}
 			})
-			connection := tls.Client(local, &tls.Config{RootCAs: f.visitorRoots.RootCAs, ServerName: service.Endpoint.Hostname, MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{material.Certificate}})
+			connection := tls.Client(local, &tls.Config{RootCAs: f.visitorRoots.RootCAs, ServerName: service.Endpoint.Hostname, MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{material}})
 			_ = connection.SetDeadline(time.Now().Add(5 * time.Second))
 			if _, err := io.WriteString(connection, "observed\n"); err != nil {
 				t.Fatal(err)

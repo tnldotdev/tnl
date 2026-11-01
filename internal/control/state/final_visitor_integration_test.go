@@ -157,9 +157,21 @@ func TestIntegrationFinalVisitorLiveIPExpiryAndRunBoundary(t *testing.T) {
 	for slot := range publishRunConnectionCount {
 		claimTestConnection(t, *f, slot, f.now)
 	}
-	grants, err := d.MutateVisitorIPs(t.Context(), auth.PublicURLID, f.request.ActingIdentityID, "set", "", []VisitorIPGrantInput{{Prefix: "192.0.2.0/24", ExpiresAt: &expiry}}, f.now)
+	url, err := d.GetPublicURL(t.Context(), f.request.ActingIdentityID, auth.PublicURLID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ReplaceVisitorAccess(t.Context(), url.ID, f.request.ActingIdentityID, VisitorAccessAnonymous, []string{"192.0.2.0/24"}, url.MutationRevision, f.now); err != nil {
+		t.Fatal(err)
+	}
+	q := controlstatedb.New(d.pool)
+	grants, err := d.readVisitorIPs(t.Context(), q, url.ID, f.now)
 	if err != nil || len(grants) != 1 {
 		t.Fatalf("set IP grants: %+v %v", grants, err)
+	}
+	// expiration is a persisted-state boundary, not another public mutation API.
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.visitor_ip_grants SET expires_at=$2 WHERE id=$1`, grants[0].ID, expiry); err != nil {
+		t.Fatal(err)
 	}
 	check := func(at time.Time, want bool) {
 		t.Helper()
@@ -191,15 +203,23 @@ func TestIntegrationFinalVisitorLiveIPExpiryAndRunBoundary(t *testing.T) {
 	if count, err := d.ExpireVisitorIPs(t.Context(), expiry); err != nil || count != 0 {
 		t.Fatalf("expiry worker retry: %d %v", count, err)
 	}
-	if _, err = d.MutateVisitorIPs(t.Context(), auth.PublicURLID, f.request.ActingIdentityID, "add", "", []VisitorIPGrantInput{{Prefix: "198.51.100.9/32"}}, f.now); err != nil {
+	url, err = d.GetPublicURL(t.Context(), f.request.ActingIdentityID, auth.PublicURLID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	current, err := d.MutateVisitorIPs(t.Context(), auth.PublicURLID, f.request.ActingIdentityID, "list", "", nil, f.now)
-	if err != nil || len(current) != 1 {
+	url, err = d.ReplaceVisitorAccess(t.Context(), url.ID, f.request.ActingIdentityID, VisitorAccessAnonymous, []string{"198.51.100.9/32"}, url.MutationRevision, expiry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := d.readVisitorIPs(t.Context(), q, url.ID, expiry)
+	if err != nil || len(current) != 1 || current[0].Prefix != "198.51.100.9/32" {
 		t.Fatal(current, err)
 	}
-	if _, err = d.MutateVisitorIPs(t.Context(), auth.PublicURLID, f.request.ActingIdentityID, "remove", current[0].ID, nil, f.now); err != nil {
+	if _, err = d.ReplaceVisitorAccess(t.Context(), url.ID, f.request.ActingIdentityID, VisitorAccessAnonymous, nil, url.MutationRevision, expiry); err != nil {
 		t.Fatal(err)
+	}
+	if current, err := d.readVisitorIPs(t.Context(), q, url.ID, expiry); err != nil || len(current) != 0 {
+		t.Fatal("replaced IP set retained a grant", current, err)
 	}
 	wrong := auth
 	wrong.PublishRunNumber++
@@ -389,7 +409,11 @@ func TestIntegrationFinalVisitorAdminBrowserHandoffHasIndependentSessionAndFollo
 func TestIntegrationFinalVisitorHTTPDecisionUsesShareWithoutIPGrant(t *testing.T) {
 	f, auth := finalVisitorRun(t, "http")
 	d := f.database
-	if _, err := d.MutateVisitorIPs(t.Context(), auth.PublicURLID, f.request.ActingIdentityID, "set", "", nil, f.now); err != nil {
+	url, err := d.GetPublicURL(t.Context(), f.request.ActingIdentityID, auth.PublicURLID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ReplaceVisitorAccess(t.Context(), url.ID, f.request.ActingIdentityID, VisitorAccessRestricted, nil, url.MutationRevision, f.now); err != nil {
 		t.Fatal(err)
 	}
 	input := preparedVisitorInput{SourceIP: "192.0.2.9"}

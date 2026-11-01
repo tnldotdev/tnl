@@ -63,10 +63,6 @@ SELECT * FROM control.publisher_access_tokens WHERE access_token_digest = sqlc.a
 -- permits the heartbeat to commit before a waiting release closes its run.
 SELECT * FROM control.domains WHERE id = sqlc.arg(id) AND state = 'ready' AND released_at IS NULL AND (kind = 'managed' OR team_id = sqlc.arg(team_id));
 
--- name: AttachPublisherRun :exec
-UPDATE control.publish_runs SET publisher_identity_id=sqlc.arg(publisher_identity_id),publisher_grant_id=sqlc.arg(publisher_grant_id)
-WHERE id=sqlc.arg(publish_run_id) AND publisher_identity_id IS NULL;
-
 -- name: GetPublisherRun :one
 SELECT * FROM control.publish_run_publisher_grants WHERE publish_run_id = sqlc.arg(publish_run_id);
 

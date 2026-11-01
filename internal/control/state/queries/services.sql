@@ -219,10 +219,6 @@ UPDATE control.service_runs SET state = 'closed', closed_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND service_id = sqlc.arg(service_id)
     AND run_number = sqlc.arg(run_number) AND closed_at IS NULL;
 
--- name: ExpireServiceRunPreparation :execrows
-UPDATE control.service_runs SET state = 'closed', closed_at = sqlc.arg(now)
-WHERE id = sqlc.arg(id) AND state = 'prepared' AND closed_at IS NULL AND preparation_expires_at <= sqlc.arg(now);
-
 -- name: InsertServiceConnectionSlot :one
 INSERT INTO control.service_connection_slots(publisher_connection_id, service_run_id,
     service_id, run_number, connection_slot, connection_assignment_revision,

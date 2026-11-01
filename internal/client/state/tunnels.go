@@ -31,10 +31,7 @@ const (
 
 type TunnelCommand string
 
-const (
-	TunnelCommandPublish TunnelCommand = "publish"
-	TunnelCommandDev     TunnelCommand = "dev"
-)
+const TunnelCommandPublish TunnelCommand = "publish"
 
 type TunnelState string
 
@@ -58,7 +55,7 @@ type BeginTunnelOptions struct {
 	IntegrationGroup string
 }
 
-// Tunnel is the write handle for one local publish or dev invocation.
+// Tunnel is the write handle for one local publication.
 type Tunnel struct {
 	database *Database
 	id       string
@@ -114,7 +111,7 @@ type TunnelInfo struct {
 // BeginTunnel registers a local tunnel and maintains its liveness lease until
 // Finish joins the heartbeat worker.
 func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) (*Tunnel, error) {
-	if options.Command != TunnelCommandPublish && options.Command != TunnelCommandDev {
+	if options.Command != TunnelCommandPublish {
 		return nil, errors.New("clientstate: invalid tunnel command")
 	}
 	server, err := CanonicalServer(options.Server)
@@ -134,7 +131,7 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 		if err != nil {
 			return nil, err
 		}
-	} else if options.Command != TunnelCommandDev {
+	} else {
 		return nil, errors.New("clientstate: publish tunnel target is required")
 	}
 	if options.Project == "" || !filepath.IsAbs(options.Project) {
@@ -220,20 +217,6 @@ func (t *Tunnel) Context() context.Context { return t.ctx }
 // CancelWithCause stops this tunnel when a local reporting boundary fails.
 // Finish records the original cause after joining lease maintenance.
 func (t *Tunnel) CancelWithCause(err error) { t.cancel(err) }
-
-func (t *Tunnel) SetDevTarget(ctx context.Context, framework, target string) error {
-	target, err := targetsyntax.NormalizeTarget(target)
-	if err != nil {
-		return err
-	}
-	if !validFramework(framework) {
-		return errors.New("clientstate: invalid tunnel framework")
-	}
-	rows, err := t.database.queries.SetTunnelDevTarget(ctx, clientstatedb.SetTunnelDevTargetParams{
-		Target: target, Framework: sql.NullString{String: framework, Valid: true}, Now: t.database.now().UTC().UnixNano(), ID: t.id,
-	})
-	return tunnelUpdateResult(rows, err)
-}
 
 func (t *Tunnel) SetPublicURL(ctx context.Context, publicURLID, hostname string) error {
 	hostname, err := naming.CanonicalizeHostname(hostname)
@@ -447,16 +430,4 @@ func tunnelUpdateResult(rows int64, err error) error {
 		return errors.New("clientstate: tunnel is no longer active")
 	}
 	return nil
-}
-
-func validFramework(value string) bool {
-	if len(value) == 0 || len(value) > 32 {
-		return false
-	}
-	for _, character := range value {
-		if character < 'a' || character > 'z' {
-			return false
-		}
-	}
-	return strings.TrimSpace(value) == value
 }

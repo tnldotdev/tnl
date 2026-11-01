@@ -21,7 +21,10 @@ func TestIntegrationStorageRotationVisitorIPGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	grants, err := d.MutateVisitorIPs(t.Context(), u.ID, request.ActingIdentityID, "set", "", []VisitorIPGrantInput{{Prefix: "192.0.2.0/24"}}, now)
+	if _, err := d.ReplaceVisitorAccess(t.Context(), u.ID, request.ActingIdentityID, VisitorAccessRestricted, []string{"192.0.2.0/24"}, u.MutationRevision, now); err != nil {
+		t.Fatal(err)
+	}
+	grants, err := d.readVisitorIPs(t.Context(), controlstatedb.New(d.pool), u.ID, now)
 	if err != nil || len(grants) != 1 {
 		t.Fatal(grants, err)
 	}
@@ -41,7 +44,7 @@ func TestIntegrationStorageRotationVisitorIPGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(reopened.Close)
-	listed, err := reopened.MutateVisitorIPs(t.Context(), u.ID, request.ActingIdentityID, "list", "", nil, now)
+	listed, err := reopened.readVisitorIPs(t.Context(), controlstatedb.New(reopened.pool), u.ID, now)
 	if err != nil || len(listed) != 1 || listed[0] != grants[0] {
 		t.Fatalf("underlying visitor grant after retiring key A = %+v, %v", listed, err)
 	}

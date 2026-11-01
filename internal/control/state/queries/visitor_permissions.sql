@@ -99,9 +99,6 @@ SELECT * FROM control.visitor_ip_grants WHERE public_url_id = $1 AND revoked_at 
 -- name: RevokeVisitorIPGrants :exec
 UPDATE control.visitor_ip_grants SET revoked_at = $2 WHERE public_url_id = $1 AND revoked_at IS NULL;
 
--- name: RemoveVisitorIPGrant :execrows
-UPDATE control.visitor_ip_grants SET revoked_at = $3 WHERE public_url_id = $1 AND id = $2 AND revoked_at IS NULL;
-
 -- name: MarkVisitorIPSet :exec
 INSERT INTO control.visitor_ip_policy_sets(public_url_id) VALUES ($1) ON CONFLICT DO NOTHING;
 

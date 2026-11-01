@@ -657,24 +657,6 @@ func (q *Queries) ReadyBrowserHosts(ctx context.Context, arg ReadyBrowserHostsPa
 	return items, nil
 }
 
-const removeVisitorIPGrant = `-- name: RemoveVisitorIPGrant :execrows
-UPDATE control.visitor_ip_grants SET revoked_at = $3 WHERE public_url_id = $1 AND id = $2 AND revoked_at IS NULL
-`
-
-type RemoveVisitorIPGrantParams struct {
-	PublicURLID string
-	ID          string
-	RevokedAt   pgtype.Timestamptz
-}
-
-func (q *Queries) RemoveVisitorIPGrant(ctx context.Context, arg RemoveVisitorIPGrantParams) (int64, error) {
-	result, err := q.db.Exec(ctx, removeVisitorIPGrant, arg.PublicURLID, arg.ID, arg.RevokedAt)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const revokeVisitorGrant = `-- name: RevokeVisitorGrant :exec
 UPDATE control.visitor_grants SET revoked_at = COALESCE(revoked_at, $2) WHERE id = $1
 `

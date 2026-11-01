@@ -35,9 +35,7 @@ type Querier interface {
 	// delta, and update denials atomically. reject any missing required step and
 	// roll back the whole page.
 	ApplyIngressUsageReport(ctx context.Context, arg ApplyIngressUsageReportParams) (ApplyIngressUsageReportRow, error)
-	AttachPublisherRun(ctx context.Context, arg AttachPublisherRunParams) error
 	BeginAdminRelayDrain(ctx context.Context, arg BeginAdminRelayDrainParams) (BeginAdminRelayDrainRow, error)
-	BeginDNSAuthorityRelease(ctx context.Context, arg BeginDNSAuthorityReleaseParams) (ControlDnsAuthority, error)
 	BeginGuestPublishRun(ctx context.Context, arg BeginGuestPublishRunParams) (int64, error)
 	BeginIngressDrain(ctx context.Context, arg BeginIngressDrainParams) (ControlIngressLease, error)
 	BeginRelayDrain(ctx context.Context, arg BeginRelayDrainParams) (BeginRelayDrainRow, error)
@@ -123,7 +121,6 @@ type Querier interface {
 	CreateInvitationEmail(ctx context.Context, arg CreateInvitationEmailParams) error
 	CreateManagedDomain(ctx context.Context, arg CreateManagedDomainParams) error
 	CreateOIDCIdentity(ctx context.Context, arg CreateOIDCIdentityParams) (ControlIdentity, error)
-	CreateOrGetDNSAuthority(ctx context.Context, arg CreateOrGetDNSAuthorityParams) (ControlDnsAuthority, error)
 	CreateOrganizationTeam(ctx context.Context, arg CreateOrganizationTeamParams) (CreateOrganizationTeamRow, error)
 	CreateOwnerMembership(ctx context.Context, arg CreateOwnerMembershipParams) error
 	CreatePersonalTeam(ctx context.Context, arg CreatePersonalTeamParams) error
@@ -165,7 +162,6 @@ type Querier interface {
 	EnsureVisitorTokenIssuer(ctx context.Context, issuer string) error
 	ExpirePublisherConnection(ctx context.Context, arg ExpirePublisherConnectionParams) (ControlPublishRunConnectionSlot, error)
 	ExpireServiceConnectionSlot(ctx context.Context, arg ExpireServiceConnectionSlotParams) (int64, error)
-	ExpireServiceRunPreparation(ctx context.Context, arg ExpireServiceRunPreparationParams) (int64, error)
 	ExpireTeamInvitations(ctx context.Context, arg ExpireTeamInvitationsParams) ([]string, error)
 	ExpireVisitorIPGrants(ctx context.Context, arg ExpireVisitorIPGrantsParams) error
 	ExpiringVisitorIPURLs(ctx context.Context, expiresAt pgtype.Timestamptz) ([]string, error)
@@ -200,7 +196,6 @@ type Querier interface {
 	GetCurrentIdentityConnection(ctx context.Context, teamID string) (ControlIdentityConnection, error)
 	GetCustomDomainByIdempotency(ctx context.Context, arg GetCustomDomainByIdempotencyParams) (GetCustomDomainByIdempotencyRow, error)
 	GetDNSAuthority(ctx context.Context, authorityReference string) (ControlDnsAuthority, error)
-	GetDNSAuthorityByReleaseIdempotency(ctx context.Context, releaseIdempotencyKey pgtype.Text) (ControlDnsAuthority, error)
 	GetDNSChallengeChange(ctx context.Context, arg GetDNSChallengeChangeParams) (GetDNSChallengeChangeRow, error)
 	GetDNSChallengeContext(ctx context.Context, arg GetDNSChallengeContextParams) (GetDNSChallengeContextRow, error)
 	GetDNSChallengeSubject(ctx context.Context, arg GetDNSChallengeSubjectParams) (GetDNSChallengeSubjectRow, error)
@@ -365,9 +360,7 @@ type Querier interface {
 	ListPublisherCertificateCheckpoints(ctx context.Context, publisherIdentityID string) ([][]byte, error)
 	ListPublisherGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGrant, error)
 	ListPublisherGroupMemberStatus(ctx context.Context, arg ListPublisherGroupMemberStatusParams) ([]ListPublisherGroupMemberStatusRow, error)
-	ListPublisherGroupServiceGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGroupServiceGrant, error)
 	ListPublisherIdentities(ctx context.Context, arg ListPublisherIdentitiesParams) ([]ControlPublisherIdentity, error)
-	ListReadyPreviewBrowserHostnames(ctx context.Context, arg ListReadyPreviewBrowserHostnamesParams) ([]ListReadyPreviewBrowserHostnamesRow, error)
 	ListReadyShareHostnames(ctx context.Context, arg ListReadyShareHostnamesParams) ([]ListReadyShareHostnamesRow, error)
 	ListRelayDNSChallengePresentations(ctx context.Context, tlsServerName string) ([]ListRelayDNSChallengePresentationsRow, error)
 	ListRelayServiceAssignmentTotals(ctx context.Context) ([]ListRelayServiceAssignmentTotalsRow, error)
@@ -426,7 +419,6 @@ type Querier interface {
 	// taking ingress lease locks beneath the public URL/run locks.
 	LockIngressPoolMembership(ctx context.Context, id string) error
 	LockIngressRoutingTableClock(ctx context.Context) (int64, error)
-	LockInvalidReadyPublisherConnections(ctx context.Context, now pgtype.Timestamptz) ([]ControlPublishRunConnectionSlot, error)
 	LockInvitationByTokenDigest(ctx context.Context, arg LockInvitationByTokenDigestParams) (LockInvitationByTokenDigestRow, error)
 	LockLocalPublicURLTeamForMutation(ctx context.Context, publicUrlID string) (string, error)
 	// local authority mutations lock the team before identities, memberships,
@@ -483,7 +475,6 @@ type Querier interface {
 	MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderInstalledParams) (ControlAcmeOrder, error)
 	MarkCustomDomainReleasing(ctx context.Context, arg MarkCustomDomainReleasingParams) (int64, error)
 	MarkDNSAuthorityReleasing(ctx context.Context, arg MarkDNSAuthorityReleasingParams) (int64, error)
-	MarkExpiredIngressUsageRunIncomplete(ctx context.Context, arg MarkExpiredIngressUsageRunIncompleteParams) error
 	MarkExpiredIngressUsageRunsIncomplete(ctx context.Context, now pgtype.Timestamptz) ([]ControlIngressUsageRun, error)
 	MarkGuestRunReady(ctx context.Context, arg MarkGuestRunReadyParams) (int64, error)
 	MarkIngressUsageRunReported(ctx context.Context, arg MarkIngressUsageRunReportedParams) (ControlIngressUsageRun, error)
@@ -552,7 +543,6 @@ type Querier interface {
 	RejectPublicURLUsageDelivery(ctx context.Context, arg RejectPublicURLUsageDeliveryParams) (ControlPublicUrlUsageDelivery, error)
 	ReleaseInvitedMemberSlug(ctx context.Context, arg ReleaseInvitedMemberSlugParams) (int64, error)
 	RemoveTeamMembership(ctx context.Context, arg RemoveTeamMembershipParams) (int64, error)
-	RemoveVisitorIPGrant(ctx context.Context, arg RemoveVisitorIPGrantParams) (int64, error)
 	// only a fresh signed renewal after the last successful authorization can
 	// extend the same pair; an expired row never regains serving authority.
 	RenewConnectorPeerPair(ctx context.Context, arg RenewConnectorPeerPairParams) (ControlConnectorPeerPair, error)

@@ -1,61 +1,13 @@
--- name: CreateOrGetDNSAuthority :one
-INSERT INTO control.dns_authorities (
-    authority_reference,
-    team_id,
-    domain_id,
-    canonical_domain,
-    create_idempotency_key,
-    create_request_digest,
-    provider,
-    state,
-    available_at,
-    created_at,
-    updated_at
-) VALUES (
-    sqlc.arg(authority_reference),
-    sqlc.arg(team_id),
-    sqlc.arg(domain_id),
-    sqlc.arg(canonical_domain),
-    sqlc.arg(create_idempotency_key),
-    sqlc.arg(create_request_digest),
-    'route53',
-    'pending',
-    sqlc.arg(created_at),
-    sqlc.arg(created_at),
-    sqlc.arg(created_at)
-)
-ON CONFLICT (create_idempotency_key) DO UPDATE
-SET updated_at = dns_authorities.updated_at
-WHERE dns_authorities.create_request_digest = EXCLUDED.create_request_digest
-RETURNING *;
-
 -- name: GetDNSAuthority :one
 SELECT *
 FROM control.dns_authorities
 WHERE authority_reference = sqlc.arg(authority_reference);
-
--- name: GetDNSAuthorityByReleaseIdempotency :one
-SELECT *
-FROM control.dns_authorities
-WHERE release_idempotency_key = sqlc.arg(release_idempotency_key);
 
 -- name: LockDNSAuthority :one
 SELECT *
 FROM control.dns_authorities
 WHERE authority_reference = sqlc.arg(authority_reference)
 FOR UPDATE;
-
--- name: BeginDNSAuthorityRelease :one
-UPDATE control.dns_authorities
-SET state = 'releasing',
-    release_idempotency_key = COALESCE(release_idempotency_key, sqlc.arg(release_idempotency_key)),
-    work_revision = work_revision + 1,
-    available_at = sqlc.arg(updated_at),
-    last_error = NULL,
-    updated_at = sqlc.arg(updated_at)
-WHERE authority_reference = sqlc.arg(authority_reference)
-  AND state IN ('pending', 'ready', 'failed')
-RETURNING *;
 
 -- name: ClaimDNSAuthorityWork :one
 WITH candidate AS (

@@ -38,15 +38,6 @@ func (q *Queries) DeletePublisherIdentity(ctx context.Context, arg DeletePublish
 	return err
 }
 
-const deletePublisherJobFileManifest = `-- name: DeletePublisherJobFileManifest :exec
-DELETE FROM publisher_job_file_manifest WHERE id = 1
-`
-
-func (q *Queries) DeletePublisherJobFileManifest(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, deletePublisherJobFileManifest)
-	return err
-}
-
 const deletePublisherJobRegistry = `-- name: DeletePublisherJobRegistry :exec
 DELETE FROM publisher_job_registry WHERE id = 1
 `
