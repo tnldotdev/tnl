@@ -15,7 +15,8 @@ concurrency:
 jobs:
   templates:
     name: Offline template contracts
-    runs-on: ubuntu-latest
+    # pinned python 3.13.9 has no setup-python build for ubuntu 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Check out repository
