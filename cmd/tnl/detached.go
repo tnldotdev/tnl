@@ -404,7 +404,9 @@ func startDetachedProcess(binary string, args []string, environment ...[]string)
 	if len(environment) != 0 {
 		cmd.Env = environment[0]
 	}
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, io.Discard, io.Discard
+	// nil uses the null device directly. io.Discard creates parent-owned pipes;
+	// writes after the launcher exits can otherwise kill the child with SIGPIPE.
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return nil, err
