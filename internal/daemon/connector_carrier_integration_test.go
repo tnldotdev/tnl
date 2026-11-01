@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -72,7 +73,8 @@ func TestIntegrationConnectorCarrierSwitchRetainsApplicationAndTarget(t *testing
 				if tcp {
 					config.RelayQUIC, config.RelayTCP = privateDisabledConnector(), recorded
 				}
-				listener := startRuntimeConnector(t, f, service, config)
+				listener, stopConnector := startRuntimeConnector(t, f, service, config)
+				defer stopConnector()
 				var carriers [2]nativeOuter
 				for i := range carriers {
 					select {
@@ -156,7 +158,7 @@ func TestRevokedConnectorOwnerStopClassification(t *testing.T) {
 	}
 }
 
-func startRuntimeConnector(t *testing.T, f *privateSeparatedFixture, service controlv1.Service, config connectorstream.Config, expectedStop ...func(error) bool) net.Listener {
+func startRuntimeConnector(t *testing.T, f *privateSeparatedFixture, service controlv1.Service, config connectorstream.Config, expectedStop ...func(error) bool) (net.Listener, func()) {
 	t.Helper()
 	listener := serviceRuntimeListener(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -165,7 +167,9 @@ func startRuntimeConnector(t *testing.T, f *privateSeparatedFixture, service con
 	config.ServiceTLS, config.TransportTLS = f.visitorRoots, f.roots
 	config.Ready = func() error { close(ready); return nil }
 	go func() { done <- connectorstream.Serve(ctx, listener, config) }()
-	t.Cleanup(func() {
+	// callers defer this join before testing cancels their publishers' contexts.
+	// cleanup remains a fallback for a failed startup, not the lifetime owner.
+	stop := sync.OnceFunc(func() {
 		cancel()
 		select {
 		case err := <-done:
@@ -180,6 +184,7 @@ func startRuntimeConnector(t *testing.T, f *privateSeparatedFixture, service con
 			t.Error("connector did not join")
 		}
 	})
+	t.Cleanup(stop)
 	select {
 	case <-ready:
 	case err := <-done:
@@ -188,5 +193,5 @@ func startRuntimeConnector(t *testing.T, f *privateSeparatedFixture, service con
 	case <-time.After(35 * time.Second):
 		t.Fatal("connector never became ready")
 	}
-	return listener
+	return listener, stop
 }

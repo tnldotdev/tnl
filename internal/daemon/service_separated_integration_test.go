@@ -189,7 +189,8 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 			} else {
 				quic = privateDisabledConnector()
 			}
-			listener := startRuntimeConnector(t, f, service, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp}, revokedConnectorOwnerStop)
+			listener, stopConnector := startRuntimeConnector(t, f, service, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp}, revokedConnectorOwnerStop)
+			defer stopConnector()
 			connection, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
 			if err != nil {
 				t.Fatal(err)

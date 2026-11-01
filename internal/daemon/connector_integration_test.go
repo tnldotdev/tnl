@@ -109,7 +109,8 @@ func TestIntegrationPreparedConnectorHasNoArrivalRPCOrSigning(t *testing.T) {
 				} else {
 					tls = privateDisabledConnector()
 				}
-				listener := startRuntimeConnector(t, f, service, connectorstream.Config{Control: held, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tls})
+				listener, stopConnector := startRuntimeConnector(t, f, service, connectorstream.Config{Control: held, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tls})
+				defer func() { unblock(); stopConnector() }()
 				held.held.Store(true)
 				for index := range 2 {
 					connection, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
