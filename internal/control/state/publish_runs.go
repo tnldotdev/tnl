@@ -227,17 +227,8 @@ func (d *Database) createPublishRun(
 		PublicURLID: request.PublicURLID, IdempotencyKey: request.IdempotencyKey,
 	})
 	if err == nil {
-		if request.PublisherIdentityID != "" {
-			bound, err := queries.GetPublisherRun(ctx, existing.ID)
-			if err != nil || bound.PublisherIdentityID != request.PublisherIdentityID || bound.PublisherGrantID != request.PublisherGrantID {
-				return PublishRunSetup{}, ErrPublishRunIdempotency
-			}
-		} else {
-			if _, err := queries.GetPublisherRun(ctx, existing.ID); err == nil {
-				return PublishRunSetup{}, ErrPublishRunIdempotency
-			} else if !errors.Is(err, pgx.ErrNoRows) {
-				return PublishRunSetup{}, err
-			}
+		if existing.PublisherIdentityID.String != request.PublisherIdentityID || existing.PublisherGrantID.String != request.PublisherGrantID {
+			return PublishRunSetup{}, ErrPublishRunIdempotency
 		}
 		storedDigest, _, digestErr := d.openSecret(existing.RequestDigestStorageKeyID.String,
 			publishRunRequestDigestContext(existing.ID), existing.RequestDigestCiphertext)
@@ -280,8 +271,8 @@ func (d *Database) createPublishRun(
 			return PublishRunSetup{}, ErrPublishRunConflict
 		}
 		var samePublisher bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.publish_runs r LEFT JOIN control.publish_run_publisher_grants p ON p.publish_run_id=r.id
-		    WHERE r.public_url_id=$1 AND r.closed_at IS NULL AND (p.publisher_identity_id=$2 OR p.publisher_identity_id IS NULL))`, route.ID, request.PublisherIdentityID).Scan(&samePublisher); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.publish_runs r
+		    WHERE r.public_url_id=$1 AND r.closed_at IS NULL AND (r.publisher_identity_id=$2 OR r.publisher_identity_id IS NULL))`, route.ID, request.PublisherIdentityID).Scan(&samePublisher); err != nil {
 			return PublishRunSetup{}, err
 		}
 		if samePublisher {
