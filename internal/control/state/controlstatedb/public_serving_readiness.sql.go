@@ -110,7 +110,7 @@ func (q *Queries) ObserveIngressPublicRun(ctx context.Context, arg ObserveIngres
 
 const publishRunServingPrepared = `-- name: PublishRunServingPrepared :one
 WITH receivers AS (
-    SELECT id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, service_ports, connector_address, connector_tls_server_name, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at FROM control.ingress_leases
+    SELECT id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, service_ports, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at FROM control.ingress_leases
     WHERE ingress_pool_id = $5
       AND lease_expires_at > $4 AND NOT draining
       AND protocol_version = 1 AND connection_capacity > 0

@@ -17,7 +17,7 @@ import (
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
-// Operations composes native connector operations with the client's sign-in UI.
+// Operations composes connector operations with the client's sign-in UI.
 // the opener resolves a human client context; connector owns its lifetime.
 type Operations struct {
 	OpenSession SessionOpener
@@ -29,7 +29,7 @@ type SessionOptions struct {
 
 type SessionOpener func(context.Context, SessionOptions, string, io.Writer) (*Session, error)
 
-// Session is the signed-in client context used by a native connector.
+// Session is the signed-in client context used by a connector.
 type Session struct {
 	database          *clientstate.Database
 	store             *clientstate.Store

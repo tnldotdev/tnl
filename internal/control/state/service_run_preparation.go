@@ -5,13 +5,11 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -147,9 +145,6 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 		if _, err = q.CloseServiceRun(ctx, controlstatedb.CloseServiceRunParams{
 			ID: active.ID, ServiceID: serviceID, RunNumber: active.RunNumber, Now: timestamptz(now),
 		}); err != nil {
-			return result, err
-		}
-		if err = serviceRunRoutingTombstone(ctx, q, serviceID, active.ID, active.RunNumber, now); err != nil {
 			return result, err
 		}
 	}
@@ -312,43 +307,6 @@ func privateConnectedRelays(ctx context.Context, tx pgx.Tx, runID string, now ti
 	}
 	rows.Close()
 	return relays, lastRelayExpiry, nil
-}
-
-func serviceRoutingUpsert(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, run controlstatedb.ControlServiceRun, now time.Time) error {
-	relays, lastRelayExpiry, err := privateConnectedRelays(ctx, tx, run.ID, now)
-	if err != nil {
-		return err
-	}
-	expires := run.PublisherExpiresAt.Time
-	if lastRelayExpiry.Before(expires) {
-		expires = lastRelayExpiry
-	}
-	if serviceRunLifecycleState(run.State) != serviceRunReady || !run.ReadyAt.Valid || len(relays) < 1 || len(relays) > 2 || !expires.After(now) {
-		return ErrServiceAccess
-	}
-	encoded, err := json.Marshal(relays)
-	if err != nil {
-		return err
-	}
-	clock, err := q.LockServiceRoutingClock(ctx)
-	if err != nil {
-		return err
-	}
-	event, err := q.InsertServiceRoutingEvent(ctx, controlstatedb.InsertServiceRoutingEventParams{
-		ServiceID: run.ServiceID, ServiceRunID: text(run.ID),
-		RunNumber: pgtype.Int8{Int64: run.RunNumber, Valid: true}, Kind: "upsert", Projection: encoded,
-		ExpiresAt: timestamptz(expires), Now: timestamptz(now),
-	})
-	if err != nil {
-		return err
-	}
-	if event.Revision <= clock {
-		return ErrServiceConflict
-	}
-	_, err = q.AdvanceServiceRoutingClock(ctx, controlstatedb.AdvanceServiceRoutingClockParams{
-		Revision: event.Revision, Now: timestamptz(now),
-	})
-	return err
 }
 
 func replenishServiceConnections(ctx context.Context, q *controlstatedb.Queries, seed credentials.AssignmentSeed, run controlstatedb.ControlServiceRun, now time.Time) error {
@@ -533,13 +491,6 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 				return result, err
 			}
 		}
-		if err = serviceRoutingUpsert(ctx, tx, q, run, now); err != nil {
-			return result, err
-		}
-	} else if demoted {
-		if err = serviceRunRoutingTombstone(ctx, q, serviceID, run.ID, run.RunNumber, now); err != nil {
-			return result, err
-		}
 	}
 	connections, err := privateAssignments(ctx, q, seed, run)
 	if err != nil {
@@ -589,9 +540,6 @@ func (d *Database) CloseServiceRun(ctx context.Context, serviceID, runID, token 
 	}
 	if count != 1 {
 		return ErrServiceAccess
-	}
-	if err = serviceRunRoutingTombstone(ctx, q, serviceID, run.ID, run.RunNumber, now); err != nil {
-		return err
 	}
 	return tx.Commit(ctx)
 }

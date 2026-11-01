@@ -137,7 +137,7 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
         assert process.stdout is not None
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout, selectors.EVENT_READ)
-            assert selector.select(10), "native owner did not become ready"
+            assert selector.select(10), "connector owner did not become ready"
         return _connections._object(
             json.loads(process.stdout.readline()),
             {
@@ -214,7 +214,7 @@ def test_prepared_native_cli_and_python_verified_tls(
         try:
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
-                assert selector.select(10), "native owner did not become ready"
+                assert selector.select(10), "connector owner did not become ready"
             value = cast(dict[str, object], json.loads(process.stdout.readline()))
             assert value["schema"] == 1 and value["state"] == "ready"
             handle_path = value["connection_handle"]
@@ -258,7 +258,7 @@ def test_prepared_native_cli_and_python_verified_tls(
             with pytest.raises(tnl.TnlError):
                 tnl.connect("missing", directory=tmp_path).snapshot()
             handle.close()
-            assert process.poll() is None  # a mounted native owner is not SDK-owned.
+            assert process.poll() is None  # a mounted connector owner is not SDK-owned.
             os.chmod(handle_path, 0o644)
             with pytest.raises(tnl.TnlError):
                 tnl.connect("database", directory=tmp_path).snapshot()

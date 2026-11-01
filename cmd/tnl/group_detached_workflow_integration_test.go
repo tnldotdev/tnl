@@ -37,7 +37,8 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 	}
 	identity := filepath.Join(t.TempDir(), "old.json")
 	cliCall(t, t.Context(), []string{"--no-config", "publisher", "provision", "--server", f.url, "--team", team, "--group", "production", "--project-key", "detached", "--instance", "replica-1", "--output-file", identity, "--state-dir", person})
-	if _, err := control.RenamePublisherGroup(t.Context(), "detached", "production", controlv1.RenamePublisherGroupRequest{TeamId: team, Name: "live", ExpectedRevision: applied.Revision}); err != nil {
+	renamed, err := control.RenamePublisherGroup(t.Context(), "detached", "production", controlv1.RenamePublisherGroupRequest{TeamId: team, Name: "live", ExpectedRevision: applied.Revision})
+	if err != nil {
 		t.Fatal(err)
 	}
 	binary := workflowExecutable(t)
@@ -47,6 +48,7 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, selector := range []string{"live", "production"} {
+		t.Logf("detached selector=%s", selector)
 		command := exec.CommandContext(t.Context(), binary, "--no-config", "--no-telemetry", "publisher", "serve", "--detach", "--group", selector, "--instance", "replica-1", "--identity-file", identity, "--state-dir", task)
 		command.Env = append(os.Environ(), "SSL_CERT_FILE="+caFile, "GODEBUG=x509usefallbackroots=0")
 		if output, err := command.CombinedOutput(); err != nil {
@@ -67,8 +69,13 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 		}
 		t.Cleanup(func() { _, _ = detachedRequest(task, id, "stop") })
 		workflowWait(t, 25*time.Second, func() bool {
+			// a previous invocation's healthy member is not this child's ready run.
+			state, _, err := detachedStatus(task, id)
+			if err != nil || state != "ready" {
+				return false
+			}
 			status, err := control.GetProjectConfiguration(t.Context(), team, "detached")
-			return err == nil && len(status.Members) == 1 && status.Members[0].Healthy && status.Members[0].GroupName == "live"
+			return err == nil && len(status.Members) == 1 && status.Members[0].Healthy && status.Members[0].GroupName == "live" && status.Members[0].ObservedRevision == renamed.Revision
 		})
 		service, err := control.GetService(t.Context(), *applied.Services[0].ServiceId)
 		if err != nil {

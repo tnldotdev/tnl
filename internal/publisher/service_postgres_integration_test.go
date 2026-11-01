@@ -37,9 +37,9 @@ func postgresManagedFixture(t *testing.T) (publisher.ServiceStream, endpointFixt
 	return publisher.ServiceStream{Protocol: config.ProtocolPostgres, Hostname: "orders.production.storefront.example.test", Target: *managedPostgresAddress,
 		TLS:       &tls.Config{Certificates: []tls.Certificate{certificates.server}, MinVersion: tls.VersionTLS12},
 		TargetTLS: &tls.Config{RootCAs: roots, ServerName: *managedPostgresHostname, MinVersion: tls.VersionTLS12},
-		Visitor: publisher.ConnectorVisitor{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
+		Visitor: publisher.ConnectorVisitor{Admission: publisher.NativeAdmissionFixture{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
 			return publisher.ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
-		}}}, certificates
+		}}}}, certificates
 }
 
 func managedPGConnect(t *testing.T, address string, verification *tls.Config) *pgx.Conn {
@@ -156,7 +156,7 @@ func TestIntegrationManagedPostgresCancelOwnership(t *testing.T) {
 			}
 			var attempts int
 			if err := client.QueryRow(t.Context(), "SELECT last_value FROM cancel_attempt").Scan(&attempts); err != nil || attempts != 1 || client.PgConn().PID() != pid {
-				t.Fatal("query replayed or original native session was replaced", attempts, err)
+				t.Fatal("query replayed or original connector session was replaced", attempts, err)
 			}
 			t.Log("real ingress -> ServiceStream postgres -> verified provider TLS: unbound cancel refused; PgSleep ended only at statement_timeout; same PID, one execution, independent session usable")
 		})

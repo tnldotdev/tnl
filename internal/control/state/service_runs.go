@@ -12,7 +12,7 @@ import (
 )
 
 // publisher authentication authorizes the exact prepared run and captured
-// endpoint. the service's WebPKI certificate authenticates native visitor TLS.
+// endpoint. the service's WebPKI certificate authenticates connector visitor TLS.
 func (d *Database) StartServiceRun(ctx context.Context, service, id string, number int64, publisher PublisherIdentity, now time.Time) (result ServiceRunState, retErr error) {
 	if _, err := checkedServiceRunBinding(service, id, number); err != nil || !servicePublisherMatches(publisher, service) {
 		return result, ErrServiceAccess

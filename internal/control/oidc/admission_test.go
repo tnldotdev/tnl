@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestDirectAdmissionUsesVerifiedTypedClaims(t *testing.T) {
+func TestPublicServiceAdmissionUsesVerifiedTypedClaims(t *testing.T) {
 	p := newTestProvider(t, "")
 	v, err := NewVerifier(VerifierConfig{Issuer: p.issuer, ClientID: "server", HTTPClient: p.client})
 	if err != nil {

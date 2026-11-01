@@ -2,7 +2,6 @@ package tunnelv1
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 
@@ -59,24 +58,4 @@ func (s VisitorSubject) Validate() error {
 		}
 	}
 	return ErrInvalidVisitorSubject
-}
-
-// VisitorConnectorClaim is the subject-aware private authentication source
-// contract. transport adapters carry this proof without inventing device IDs.
-type VisitorConnectorClaim struct {
-	Subject    VisitorSubject `json:"subject"`
-	ServiceID  string         `json:"service_id"`
-	SessionID  string         `json:"connector_session_id"`
-	Credential string         `json:"session_credential"`
-	Nonce      []byte         `json:"nonce"`
-	Signature  []byte         `json:"signature"`
-}
-
-func (c VisitorConnectorClaim) Digest() ([]byte, error) {
-	if c.Subject.Validate() != nil || !opaqueid.Valid(c.ServiceID, opaqueid.ServicePrefix) || !opaqueid.Valid(c.SessionID, opaqueid.ConnectorSessionPrefix) || len(c.Nonce) != 32 || len(c.Credential) != 43 || !validCredential(c.Credential) {
-		return nil, errors.New("invalid visitor connector claim")
-	}
-	data, _ := json.Marshal([]any{"tnl-visitor-connector/v1", c.Subject, c.ServiceID, c.SessionID, c.Credential, c.Nonce})
-	digest := sha256.Sum256(data)
-	return digest[:], nil
 }

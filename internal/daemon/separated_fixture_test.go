@@ -274,7 +274,6 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 		cfg.ControlHostname, cfg.IngressID = "control."+separatedDomain, component+"-separated"
 		cfg.IngressListen = "0.0.0.0:443"
 		if *runtimeLoadWorkload == "connect" {
-			cfg.IngressUDPListen = "0.0.0.0:443"
 		}
 	case daemonconfig.RoleRelay:
 		cfg.ControlHostname = "control." + separatedDomain

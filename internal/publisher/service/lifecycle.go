@@ -13,6 +13,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
@@ -27,10 +28,13 @@ import (
 // prepares and starts runs, and only the run token can renew or close one.
 type RunControl interface {
 	ManagedControl
+	connectorPolicyControl
+	ConnectorPeerControl
 	GetPublisherService(context.Context, string) (controlv1.Service, error)
 	PrepareServiceRun(context.Context, string, string, string, controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error)
 	HeartbeatServiceRunHealth(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error)
 	CloseServiceRun(context.Context, string, string, credentials.ServiceRunToken) error
+	ReportServiceRunObservations(context.Context, string, string, int64, credentials.ServiceRunToken, serviceaudit.Batch) error
 }
 
 type SlotSession = tunnel.SlotSession
@@ -220,7 +224,25 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if err != nil {
 		return err
 	}
-	defer bound.Invalidate()
+	// close and join visitors before flushing their final observations. the
+	// reporter outlives caller cancellation but retains a fixed shutdown budget.
+	audit, err := serviceaudit.NewQueue(context.WithoutCancel(ctx), serviceaudit.QueueConfig{
+		Metrics: observability.FromContext(ctx),
+		Report: func(ctx context.Context, batch serviceaudit.Batch) error {
+			return config.Control.ReportServiceRunObservations(ctx, config.ServiceID, setup.ServiceRunId, setup.RunNumber, runToken, batch)
+		},
+	})
+	if err != nil {
+		bound.Invalidate()
+		return err
+	}
+	bound.audit = audit
+	defer func() {
+		bound.Invalidate()
+		flush, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = audit.Close(flush)
+	}()
 	bound.streamCapacity = int(config.StreamCapacity)
 	var certificateDone <-chan error
 	{
@@ -259,7 +281,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			}
 		}()
 		bound.mu.Lock()
-		active := len(bound.active)
+		active := bound.reservedStreams
 		bound.mu.Unlock()
 		status.TargetHealthy = config.Healthy(ctx)
 		state, err = config.Control.HeartbeatServiceRunHealth(ctx, config.ServiceID, setup.ServiceRunId, runToken,
@@ -276,6 +298,18 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if err != nil {
 		return errors.Join(ErrPrivateStream, err)
 	}
+	if err := bound.PrepareConnectorPolicy(ctx, config.Control, runToken); err != nil {
+		return err
+	}
+	peers, stopPeers := context.WithCancel(ctx)
+	peersDone := make(chan error, 1)
+	go func() { peersDone <- bound.ServeConnectorPeers(peers, config.Control, runToken) }()
+	defer func() {
+		stopPeers()
+		if peersDone != nil {
+			result = errors.Join(result, <-peersDone)
+		}
+	}()
 	paths, err := tunnel.NewSlots(context.WithoutCancel(ctx), tunnel.SlotsConfig{SingleUse: true, Connect: func(ctx context.Context, slot uint8, preferTCP bool) (tunnel.SlotSession, error) {
 		if config.Connect != nil {
 			return config.Connect(ctx, bound, slot)
@@ -327,6 +361,13 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		}
 		expires := time.NewTimer(time.Until(state.PublisherExpiresAt))
 		select {
+		case err := <-peersDone:
+			expires.Stop()
+			peersDone = nil
+			if ctx.Err() != nil {
+				return nil
+			}
+			return errors.Join(ErrPrivateStream, err)
 		case err := <-certificateDone:
 			expires.Stop()
 			certificateDone = nil

@@ -131,8 +131,11 @@ func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
 	}
 	ingressServer := httptest.NewTLSServer(ingressHandler)
 	t.Cleanup(ingressServer.Close)
-	lease, err := d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: "audit-ingress", IngressRunID: "audit-process", ProtocolVersion: 1, ConnectionCapacity: 10,
-		ConnectorAddress: "127.0.0.1:9441", ConnectorTLSServerName: "private.example.test"}, now, time.Hour)
+	ingressRun, err := opaqueid.New(opaqueid.IngressRunPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: "audit-ingress", IngressRunID: ingressRun, ProtocolVersion: 1, ConnectionCapacity: 10}, now, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

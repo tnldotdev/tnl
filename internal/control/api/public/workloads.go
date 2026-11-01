@@ -14,12 +14,8 @@ import (
 type WorkloadVisitorStore interface {
 	ListWorkloadServices(context.Context, string, time.Time) ([]controlstate.WorkloadService, error)
 	CheckWorkloadService(context.Context, string, string, time.Time) (controlstate.WorkloadServiceAuthorization, error)
-	CreateWorkloadIngressAssignments(context.Context, string, string, string, time.Time) (controlstate.WorkloadIngressAssignments, error)
 	IssueWorkloadServiceClientCertificate(context.Context, string, string, []byte, time.Time) (controlstate.ServiceClientCertificate, error)
-	CreateWorkloadIngressAssignmentSet(context.Context, string, string, string, int, string, time.Time) (controlstate.WorkloadIngressAssignments, error)
 	SelectWorkloadServiceRun(context.Context, string, string, time.Time) (controlstate.ServiceSelection, error)
-	GetWorkloadIngressTransportTrust(context.Context, string, string, time.Time) (controlstate.IngressTransportTrust, error)
-	ReleaseWorkloadIngressAssignment(context.Context, string, string, time.Time) error
 }
 
 func (h *handler) workloadVisitor(w http.ResponseWriter, r *http.Request) (WorkloadVisitorStore, string, bool) {
@@ -37,10 +33,6 @@ func (h *handler) workloadVisitor(w http.ResponseWriter, r *http.Request) (Workl
 	return store, token, true
 }
 func workloadVisitorProblem(w http.ResponseWriter, err error) {
-	if errors.Is(err, controlstate.ErrServiceConflict) {
-		writeProblem(w, 409, controlv1.Conflict, "workload ingress assignment is no longer claimable; request fresh assignments")
-		return
-	}
 	if errors.Is(err, controlstate.ErrCertificateIssuanceInvalid) {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid workload certificate signing request")
 		return
@@ -81,32 +73,14 @@ func (h *handler) CheckWorkloadService(w http.ResponseWriter, r *http.Request, s
 	}
 	writeJSON(w, 200, result)
 }
-func (h *handler) CreateWorkloadIngressAssignments(w http.ResponseWriter, r *http.Request, service string) {
-	store, token, ok := h.workloadVisitor(w, r)
-	if !ok {
-		return
-	}
-	var body controlv1.CreateWorkloadIngressAssignmentsJSONRequestBody
-	if decodeJSONLimited(w, r, &body, 4096) != nil {
-		writeProblem(w, 400, controlv1.InvalidRequest, "invalid workload ingress assignment request")
-		return
-	}
-	count := 2
-	if body.Count != nil {
-		count = *body.Count
-	}
-	result, err := store.CreateWorkloadIngressAssignmentSet(r.Context(), token, service, body.IdempotencyKey, count, optionalFeedbackString(body.ExcludeIngressId), time.Now())
-	if err != nil {
-		workloadVisitorProblem(w, err)
-		return
-	}
-	writeJSON(w, 200, result)
-}
-
 func privateSelectionResponse(selected controlstate.ServiceSelection) controlv1.ServiceSelection {
-	return controlv1.ServiceSelection{ServiceId: selected.ServiceID, ServiceRunId: selected.ServiceRunID, RunNumber: selected.RunNumber,
+	result := controlv1.ServiceSelection{ServiceId: selected.ServiceID, ServiceRunId: selected.ServiceRunID, RunNumber: selected.RunNumber,
 		Subject: visitorsubject.Wire(selected.Subject), ExpiresAt: selected.ExpiresAt,
 		Protocol: controlv1.ServiceProtocol(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: endpointResponse(selected.Endpoint)}
+	if selected.PairReady != nil {
+		result.PairReady = &controlv1.ConnectorPeerPairReady{PublisherIdentityId: selected.PairReady.PublisherIdentityID, Relays: connectorPairRelays(selected.PairReady.Relays)}
+	}
+	return result
 }
 
 func (h *handler) SelectWorkloadServiceRun(w http.ResponseWriter, r *http.Request, service string) {
@@ -122,30 +96,6 @@ func (h *handler) SelectWorkloadServiceRun(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, 200, privateSelectionResponse(result))
 }
 
-func (h *handler) GetWorkloadIngressTransportTrust(w http.ResponseWriter, r *http.Request, session string) {
-	store, token, ok := h.workloadVisitor(w, r)
-	if !ok {
-		return
-	}
-	result, err := store.GetWorkloadIngressTransportTrust(r.Context(), token, session, time.Now())
-	if err != nil {
-		workloadVisitorProblem(w, err)
-		return
-	}
-	writeJSON(w, 200, ingressTransportTrustResponse(result))
-}
-
-func (h *handler) ReleaseWorkloadIngressAssignment(w http.ResponseWriter, r *http.Request, session string) {
-	store, token, ok := h.workloadVisitor(w, r)
-	if !ok {
-		return
-	}
-	if err := store.ReleaseWorkloadIngressAssignment(r.Context(), token, session, time.Now()); err != nil {
-		workloadVisitorProblem(w, err)
-		return
-	}
-	w.WriteHeader(204)
-}
 func (h *handler) IssueWorkloadServiceClientCertificate(w http.ResponseWriter, r *http.Request, service string) {
 	store, token, ok := h.workloadVisitor(w, r)
 	if !ok {

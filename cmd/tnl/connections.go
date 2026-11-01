@@ -73,7 +73,7 @@ func (o connectionsStartOptions) options() connector.OwnerStartOptions {
 func runConnections(ctx context.Context, command string, flags connectionsCommand, output io.Writer) (result error) {
 	defer func() {
 		if reason := connector.Reason(result); reason != "" {
-			result = failure.Wrap("manage native connections", reason, result)
+			result = failure.Wrap("manage connector connections", reason, result)
 		}
 	}()
 	write := func(value any, err error) error {

@@ -16,9 +16,10 @@ import (
 )
 
 type serviceConnection struct {
-	ref   tunnelv1.ServicePublisherConnectionRef
-	lease relayv1.RelayLease
-	paths *streamLifetime
+	ref     tunnelv1.ServicePublisherConnectionRef
+	lease   relayv1.RelayLease
+	paths   *streamLifetime
+	packets *connectorPacketSession
 }
 
 // ServiceRegistry contains only exact locally claimed private assignments.
@@ -99,6 +100,9 @@ func (r *ServiceRegistry) insert(c *serviceConnection) error {
 	}
 	r.mu.Unlock()
 	if replaced != nil {
+		if replaced.packets != nil {
+			replaced.packets.Close()
+		}
 		_ = replaced.paths.Close()
 	}
 	return nil
@@ -113,6 +117,9 @@ func (r *ServiceRegistry) remove(c *serviceConnection) {
 		}
 	}
 	r.mu.Unlock()
+	if c.packets != nil {
+		c.packets.Close()
+	}
 	_ = c.paths.Close()
 }
 
@@ -158,6 +165,9 @@ func (r *ServiceRegistry) Close() error {
 	r.mu.Unlock()
 	var result error
 	for _, c := range r.snapshot() {
+		if c.packets != nil {
+			c.packets.Close()
+		}
 		result = errors.Join(result, c.paths.Close())
 	}
 	return result
@@ -171,7 +181,15 @@ func (r *ServiceRegistry) Drain(ctx context.Context) error {
 	var mu sync.Mutex
 	var result error
 	for _, c := range r.snapshot() {
-		group.Go(func() { err := c.paths.Drain(ctx); mu.Lock(); result = errors.Join(result, err); mu.Unlock() })
+		group.Go(func() {
+			if c.packets != nil {
+				c.packets.Close()
+			}
+			err := c.paths.Drain(ctx)
+			mu.Lock()
+			result = errors.Join(result, err)
+			mu.Unlock()
+		})
 	}
 	group.Wait()
 	return result
@@ -218,7 +236,7 @@ func (a *ServicePublisherAcceptor) claim(ctx context.Context, message tunnelv1.M
 	return claim, nil
 }
 
-func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, acceptor *PublisherAcceptor, finishAdmission func(error)) (result error) {
+func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, outer muxsession.Session, acceptor *PublisherAcceptor, finishAdmission func(error)) (result error) {
 	defer c.target.Registry.release(c)
 	ready := false
 	unexpected := false
@@ -244,6 +262,15 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, accep
 	}
 	paths := newStreamLifetime(session)
 	connection := &serviceConnection{ref: c.ref, lease: c.lease, paths: paths}
+	if acceptor.connector != nil {
+		packets, err := newConnectorPacketSession(ctx, outer)
+		if err != nil {
+			_ = session.Close()
+			return err
+		}
+		connection.packets = packets
+		defer packets.Close()
+	}
 	if err := c.target.Registry.insert(connection); err != nil {
 		var protocol *tunnel.ProtocolError
 		if errors.As(err, &protocol) && protocol.Code == tunnelv1.CapacityExceeded {
@@ -261,7 +288,12 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, accep
 	finishAdmission(nil)
 	stop := context.AfterFunc(ctx, func() { _ = session.Close() })
 	defer stop()
-	err := session.HandlePublisherDrain(ctx, paths.Drain)
+	err := session.HandlePublisherDrain(ctx, func(drain context.Context) error {
+		if connection.packets != nil {
+			connection.packets.Close()
+		}
+		return paths.Drain(drain)
+	})
 	unexpected = err != nil && ctx.Err() == nil && !errors.Is(err, net.ErrClosed)
 	if err != nil {
 		if ctx.Err() != nil || errors.Is(err, muxsession.ErrClosed) || errors.Is(err, net.ErrClosed) {

@@ -1,4 +1,27 @@
 paths:
+  /v1/services/{service_id}/runs/{service_run_id}/service-observations:
+    post:
+      operationId: reportServiceRunObservations
+      description: Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+      security: [{ serviceRunAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: service_run_id
+          in: path
+          required: true
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunObservations" }
+      responses:
+        "200":
+          description: Accepted and duplicate observation counters
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ServiceObservationResult" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/publish-runs/{run_id}/service-observations:
     post:
       operationId: reportPublishRunServiceObservations

@@ -22,6 +22,21 @@ func (f connectServiceReaderFunc) ListAvailableServices(ctx context.Context) ([]
 	return f(ctx)
 }
 
+func TestConnectStartsBeforeAuthorization(t *testing.T) {
+	starting := false
+	denied := errors.New("authorization denied")
+	operations := Operations{OpenSession: func(context.Context, SessionOptions, string, io.Writer) (*Session, error) {
+		if !starting {
+			t.Fatal("authorization began before the starting notification")
+		}
+		return nil, denied
+	}}
+	err := operations.Start(t.Context(), StartOptions{Starting: func(context.Context) { starting = true }}, nil, io.Discard, io.Discard)
+	if !errors.Is(err, denied) {
+		t.Fatalf("authorization failure was lost: %v", err)
+	}
+}
+
 func TestConnectMetadataLifecycle(t *testing.T) {
 	for _, scenario := range []string{"tls-on-off", "tls-off-on", "public-to-private", "private-to-public", "wrapped", "joined", "revoked", "protocol-change", "protocol-constraint", "invalid-trust", "ordinary-error"} {
 		t.Run(scenario, func(t *testing.T) {

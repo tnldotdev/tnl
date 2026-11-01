@@ -336,7 +336,7 @@
       "key": "tnl.access_path",
       "values": [
         "connector",
-        "direct"
+        "public_endpoint"
       ],
       "semantics": "visitor admission path",
       "dimension_policy": "bounded"

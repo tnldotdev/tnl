@@ -14,9 +14,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
-	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
-	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationServiceAuditTransactionalManagement(t *testing.T) {
@@ -187,21 +184,15 @@ func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	lease := registerTestIngress(t, d, now)
-	session, _ := opaqueid.New(opaqueid.ConnectorSessionPrefix)
 	visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	// seed the already-authenticated admission facts; the transport suite owns
 	// device proof and stream handshake. audit must independently check this scope.
-	_, err = d.pool.Exec(t.Context(), `INSERT INTO control.connector_sessions(id,credential_digest,service_id,identity_id,device_id,assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,created_at,expires_at,bound_at,source_ip,ingress_id,ingress_run_id,ingress_lease_revision)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$9,'192.0.2.9',$6,$7,$8)`, session, make([]byte, 32), service.ID, creation.ActingIdentityID, device.ID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now, now.Add(time.Minute))
+	_, err = d.pool.Exec(t.Context(), `INSERT INTO control.public_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,identity_id,device_id,certificate_digest,source_ip,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,valid_until,created_at)
+		VALUES($1,$2,$3,$4,$5,$6,$12,'192.0.2.9',$7,$8,$9,25443,$10,$11)`, visitor, service.ID, run.RunID, run.RunNumber, creation.ActingIdentityID, device.ID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now.Add(time.Minute), now, make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = d.pool.Exec(t.Context(), `INSERT INTO control.connector_visitor_streams(visitor_connection_id,service_id,service_run_id,run_number,connector_session_id,identity_id,device_id,source_ip,grant_revision,valid_until,created_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,'192.0.2.9',1,$8,$9)`, visitor, service.ID, run.RunID, run.RunNumber, session, creation.ActingIdentityID, device.ID, now.Add(time.Minute), now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "service", RunID: run.RunID, RunNumber: run.RunNumber, VisitorConnectionID: visitor, SourceIP: "192.0.2.9", EventType: "connection.open", Outcome: "allowed", OccurredAt: now, ConnectorSessionID: session}
+	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "service", RunID: run.RunID, RunNumber: run.RunNumber, VisitorConnectionID: visitor, SourceIP: "192.0.2.9", EventType: "connection.open", Outcome: "allowed", OccurredAt: now}
 	batch := serviceaudit.Batch{Events: []serviceaudit.Observation{o}}
 	if result, err := d.IngestIngressServiceObservations(t.Context(), lease.IngressLeaseIdentity, batch, now); err != nil || result.Accepted != 1 {
 		t.Fatalf("valid private scope: %+v %v", result, err)
@@ -221,12 +212,10 @@ func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 	if _, err = d.IngestIngressServiceObservations(t.Context(), other.IngressLeaseIdentity, batch, now); !errors.Is(err, ErrServiceAuditAccess) {
 		t.Fatalf("another ingress manufactured private visitor: %v", err)
 	}
-	// denial before admission still requires the authenticated connector's source.
+	// a direct denial still needs the exact pending reservation and run.
 	o.EventID = serviceaudit.NewID()
-	o.VisitorConnectionID, _ = opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	o.Outcome = "denied"
 	o.Reason = "authorization"
-	o.RunID, o.RunNumber = "", 0
 	batch.Events = []serviceaudit.Observation{o}
 	if _, err = d.IngestIngressServiceObservations(t.Context(), lease.IngressLeaseIdentity, batch, now); err != nil {
 		t.Fatal("lost pre-admission denial", err)
@@ -239,27 +228,32 @@ func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 		if e.EventType == "connection.open" && (e.ActorIdentityID != creation.ActingIdentityID || e.DeviceID != device.ID) {
 			t.Fatalf("identity not derived from authenticated scope: %+v", e)
 		}
-		if e.ID == o.EventID && (e.RunID != "" || e.PublisherIdentityID != "") {
-			t.Fatalf("session denial invented a run or publisher: %+v", e)
+		if e.ID == o.EventID && (e.RunID != run.RunID || e.PublisherIdentityID != publisher.ID) {
+			t.Fatalf("direct denial lost the selected run or publisher: %+v", e)
 		}
 	}
-	// syntax-valid run claims cannot turn a session denial into an admission,
-	// even if that run exists for the service.
+	// an unrelated visitor cannot borrow a real run or its identity.
 	o.EventID = serviceaudit.NewID()
-	o.RunID, o.RunNumber = run.RunID, run.RunNumber
+	o.VisitorConnectionID = mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
 	if _, err = d.IngestIngressServiceObservations(t.Context(), lease.IngressLeaseIdentity, serviceaudit.Batch{Events: []serviceaudit.Observation{o}}, now); !errors.Is(err, ErrServiceAuditAccess) {
 		t.Fatalf("session denial asserted an unadmitted run: %v", err)
 	}
-	o.RunID, o.RunNumber = "", 0
+	o.VisitorConnectionID = visitor
 	for _, change := range []func(*serviceaudit.Observation){
 		func(o *serviceaudit.Observation) { o.SourceIP = "192.0.2.10" },
 		func(o *serviceaudit.Observation) { o.ServiceID = "svc_0123456789ABCDEFGHIJKL" },
-		func(o *serviceaudit.Observation) { o.ConnectorSessionID = "cns_0123456789ABCDEFGHIJKL" },
-		func(o *serviceaudit.Observation) { o.VisitorConnectionID = visitor },
+		func(o *serviceaudit.Observation) { o.RunID = ""; o.RunNumber = 0 },
+		func(o *serviceaudit.Observation) {
+			o.VisitorConnectionID = mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
+		},
 	} {
 		bad := o
 		change(&bad)
-		if _, err = d.IngestIngressServiceObservations(t.Context(), lease.IngressLeaseIdentity, serviceaudit.Batch{Events: []serviceaudit.Observation{bad}}, now); !errors.Is(err, ErrServiceAuditAccess) {
+		want := ErrServiceAuditAccess
+		if bad.Validate() != nil {
+			want = serviceaudit.ErrInvalid
+		}
+		if _, err = d.IngestIngressServiceObservations(t.Context(), lease.IngressLeaseIdentity, serviceaudit.Batch{Events: []serviceaudit.Observation{bad}}, now); !errors.Is(err, want) {
 			t.Fatalf("session denial escaped its bound scope: %v", err)
 		}
 	}
@@ -370,11 +364,6 @@ func TestIntegrationServiceAuditCrossTeamClockOrder(t *testing.T) {
 	}
 	teams := []string{creation.TeamID, other.ID}
 	sort.Strings(teams)
-	public, _, _ := ed25519.GenerateKey(rand.Reader)
-	device, err := d.EnrollVisitorDevice(t.Context(), creation.ActingIdentityID, public, now)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var leases []IngressLease
 	for _, id := range []string{"audit-clock-a", "audit-clock-b"} {
 		lease, err := d.RegisterIngress(t.Context(), IngressRegistration{IngressID: id, IngressRunID: id + "-process", ProtocolVersion: 1, ConnectionCapacity: 10}, now, time.Hour)
@@ -391,24 +380,35 @@ func TestIntegrationServiceAuditCrossTeamClockOrder(t *testing.T) {
 		}
 		services = append(services, s)
 	}
+	// HTTP transport denials derive only service/run/source, never a person.
+	var runs []ServiceRunPreparation
+	for _, s := range services {
+		actor := creation
+		actor.TeamID = s.TeamID
+		enrollment := publisherEnrollment(t, d, actor, PublisherScope{TeamID: s.TeamID, Kind: "service", ServiceID: s.ID}, now)
+		public, _, _ := ed25519.GenerateKey(rand.Reader)
+		publisher, err := d.RedeemPublisherEnrollment(t.Context(), enrollment.Key, public, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, err := d.PrepareServiceRun(t.Context(), s.ID, publisher, "audit-clock", now, s.ServiceMetadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runs = append(runs, run)
+	}
 	var batches []serviceaudit.Batch
 	for index, lease := range leases {
 		var batch serviceaudit.Batch
-		for _, s := range services {
-			session, _ := opaqueid.New(opaqueid.ConnectorSessionPrefix)
+		for serviceIndex, s := range services {
 			visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
-			digest := sha256.Sum256([]byte(session))
-			_, err = d.pool.Exec(t.Context(), `INSERT INTO control.connector_sessions(id,credential_digest,service_id,identity_id,device_id,assigned_ingress_id,assigned_ingress_run_id,assigned_ingress_lease_revision,created_at,expires_at,bound_at,source_ip,ingress_id,ingress_run_id,ingress_lease_revision)
-				VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$9,'192.0.2.9',$6,$7,$8)`, session, digest[:], s.ID, creation.ActingIdentityID, device.ID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now, now.Add(time.Minute))
+			run := runs[serviceIndex]
+			_, err = d.pool.Exec(t.Context(), `INSERT INTO control.public_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,source_ip,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,valid_until,created_at)
+				VALUES($1,$2,$3,$4,'192.0.2.9',$5,$6,$7,25443,$8,$9)`, visitor, s.ID, run.RunID, run.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now.Add(time.Minute), now)
 			if err != nil {
 				t.Fatal(err)
 			}
-			o, err := serviceaudit.NewPrivateSessionDenial(ingressv1.ConnectorSessionResult{ServiceId: s.ID, ConnectorSessionId: session,
-				Subject: visitorsubject.Wire(tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: creation.ActingIdentityID, DeviceID: device.ID}), ObservedSourceIp: "192.0.2.9", ExpiresAt: now.Add(time.Minute)}, visitor)
-			if err != nil {
-				t.Fatal(err)
-			}
-			o.OccurredAt = now
+			o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: s.ID, ServiceKind: "service", RunID: run.RunID, RunNumber: run.RunNumber, VisitorConnectionID: visitor, SourceIP: "192.0.2.9", EventType: "connection.open", Outcome: "denied", Reason: "authorization", OccurredAt: now}
 			batch.Events = append(batch.Events, o)
 		}
 		if index == 1 {

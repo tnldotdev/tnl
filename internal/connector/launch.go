@@ -173,7 +173,7 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 			return nil
 		}
 		if result.err == nil && result.status.State == "failed" && result.status.Reason != "" {
-			startupError = failure.Wrap("prepare native connections", failure.Reason(result.status.Reason), connectorruntime.ErrUnavailable)
+			startupError = failure.Wrap("prepare connector connections", failure.Reason(result.status.Reason), connectorruntime.ErrUnavailable)
 		}
 	case <-ctx.Done():
 		startupError = context.Cause(ctx)

@@ -122,7 +122,7 @@ func (r *PublicURLServer) handleVisitor(parent context.Context, admission *publi
 	connection := admission.connection
 	denied := streamHeader.AccessPending
 	parent = observability.NarrowIdentity(parent, observability.Identity{PublicURLID: r.run.PublicURLID})
-	parent = observability.WithFields(parent, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "direct", Exposure: "public"})
+	parent = observability.WithFields(parent, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "public_endpoint", Exposure: "public"})
 	parent = observability.WithVisitor(parent, streamHeader.VisitorConnectionID)
 	life, cancel := context.WithCancel(parent)
 	defer cancel()

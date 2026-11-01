@@ -7,8 +7,6 @@ INSERT INTO control.ingress_leases (
     connection_capacity,
     ingress_pool_id,
     service_ports,
-    connector_address,
-    connector_tls_server_name,
     registered_at,
     renewed_at,
     lease_expires_at
@@ -20,8 +18,6 @@ INSERT INTO control.ingress_leases (
     sqlc.arg(connection_capacity),
     sqlc.arg(ingress_pool_id),
     sqlc.arg(service_ports),
-    sqlc.arg(connector_address),
-    sqlc.arg(connector_tls_server_name),
     sqlc.arg(registered_at),
     sqlc.arg(renewed_at),
     sqlc.arg(lease_expires_at)
@@ -38,8 +34,6 @@ ON CONFLICT (ingress_id) DO UPDATE SET
     connection_capacity = EXCLUDED.connection_capacity,
     ingress_pool_id = EXCLUDED.ingress_pool_id,
     service_ports = EXCLUDED.service_ports,
-    connector_address = EXCLUDED.connector_address,
-    connector_tls_server_name = EXCLUDED.connector_tls_server_name,
     reported_connections = CASE
         WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
          AND control.ingress_leases.lease_expires_at > EXCLUDED.registered_at
@@ -80,9 +74,7 @@ ON CONFLICT (ingress_id) DO UPDATE SET
     END
 WHERE (control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
     AND control.ingress_leases.ingress_pool_id=EXCLUDED.ingress_pool_id
-    AND control.ingress_leases.service_ports=EXCLUDED.service_ports
-    AND control.ingress_leases.connector_address=EXCLUDED.connector_address
-    AND control.ingress_leases.connector_tls_server_name=EXCLUDED.connector_tls_server_name)
+    AND control.ingress_leases.service_ports=EXCLUDED.service_ports)
    OR control.ingress_leases.lease_expires_at <= EXCLUDED.registered_at
 RETURNING *;
 

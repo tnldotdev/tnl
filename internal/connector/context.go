@@ -212,7 +212,7 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 	if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) || (scope.Workload == "") != (request.Assertion == "") {
 		return connectorruntime.ErrInvalid
 	}
-	backend := &nativeConnectionBackend{openSession: o.OpenSession, project: project, scope: scope, stateDir: options.StateDir, assertion: request.Assertion, directory: options.OwnerDirectory, runnerTemp: options.RunnerTemp, parentPID: options.ParentPID}
+	backend := &connectorConnectionBackend{openSession: o.OpenSession, project: project, scope: scope, stateDir: options.StateDir, assertion: request.Assertion, directory: options.OwnerDirectory, runnerTemp: options.RunnerTemp, parentPID: options.ParentPID}
 	if options.ParentPID == 0 {
 		backend.initialServices = slices.Clone(scope.Services)
 	}

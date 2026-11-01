@@ -3,7 +3,7 @@ version: "3"
 tasks:
   test:client-tracing:
     dir: "{{.ROOT_DIR}}"
-    desc: Check SDK and framework tracing, native carriers and lifecycle cleanup
+    desc: Check SDK and framework tracing, connector carriers and lifecycle cleanup
     deps: [":js:build"]
     cmds:
       - pnpm exec vitest run packages/ts/test/native/tracing.test.ts packages/ts/test/publisher/app-runtime.test.ts packages/ts/test/connector/connection.test.ts packages/ts/test/connector/connection-fetch.test.ts packages/ts/test/connector/connection-owner-recovery.test.ts packages/ts/test/publisher/adhoc-open.test.ts packages/ts/test/publisher/adhoc-fetch.test.ts packages/ts/test/frameworks/vite.test.ts packages/ts/test/frameworks/next.test.ts
@@ -35,7 +35,7 @@ tasks:
 
   test:connections:
     dir: "{{.ROOT_DIR}}"
-    desc: Check native connection snapshots, verified workload owner selection, streaming fetch and provider acquisition
+    desc: Check connector connection snapshots, verified workload owner selection, streaming fetch and provider acquisition
     deps: [":js:build"]
     cmds:
       - pnpm exec vitest run packages/ts/test/connector/connection.test.ts packages/ts/test/connector/awaitable-connection.test.ts packages/ts/test/connector/connection-fetch.test.ts packages/ts/test/connector/connection-ipc.test.ts packages/ts/test/connector/connection-installed.test.ts packages/ts/test/connector/connection-owner-recovery.test.ts packages/ts/test/connector/workload-native.test.ts packages/ts/test/connector/workload-provider.test.ts packages/ts/test/connector/workload-contract.test.ts packages/ts/test/project/service-metadata.test.ts

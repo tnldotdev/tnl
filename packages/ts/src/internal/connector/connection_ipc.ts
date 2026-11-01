@@ -67,7 +67,7 @@ export async function prepareExternal(filename: string, service: string): Promis
   }
 }
 
-/** private capability loading mirrors native ownership/symlink/size checks. */
+/** private capability loading mirrors connector ownership/symlink/size checks. */
 export async function ownerIPC(filename: string): Promise<OwnerIPC> {
   try {
     if (

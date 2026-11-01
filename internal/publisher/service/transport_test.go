@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -85,7 +86,7 @@ func TestPrivatePublisherProductionSlotQUICAndTLSNoReplayAfterPathLoss(t *testin
 				}
 			}
 			if transport == tunnel.TransportQUIC {
-				udp, err := muxsession.ListenQUIC(listener.Addr().String(), serverTLS, muxsession.QUICConfig{})
+				udp, err := muxsession.ListenQUIC(listener.Addr().String(), serverTLS, muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -131,7 +132,7 @@ func TestPrivatePublisherProductionSlotQUICAndTLSNoReplayAfterPathLoss(t *testin
 				t.Fatal(err)
 			}
 			defer stream.Close()
-			proxy, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:443")})
+			proxy, err := proxyproto.Encode(proxyproto.Header{Source: netip.MustParseAddrPort("192.0.2.10:40000"), Destination: netip.MustParseAddrPort("203.0.113.1:25443")})
 			if err != nil {
 				t.Fatal(err)
 			}

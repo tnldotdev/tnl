@@ -98,7 +98,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		base = context.Background()
 	}
 	base = observability.NarrowIdentity(base, observability.Identity{PublicURLID: config.PublicURLID})
-	base = observability.WithFields(base, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "direct", Exposure: "public"})
+	base = observability.WithFields(base, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "public_endpoint", Exposure: "public"})
 	base = observability.WithPublisherRecovery(base)
 	life, cancelLife := context.WithCancel(context.WithoutCancel(base))
 	route := &PublicURLServer{

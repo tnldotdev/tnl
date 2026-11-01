@@ -56,7 +56,7 @@ role, issuer/session provenance, and recovery remain separate. Workload sessions
 are key-bound visitor authority with exact saved service rights and a fixed
 window; runtime assertions cannot apply configuration or create human sessions.
 
-For public URL and direct service HTTP, `state/visitor_tokens.go` turns one
+For public URL and public service HTTP, `state/visitor_tokens.go` turns one
 authenticated source into a signed permission. Both resource kinds use
 `control.visitor_identity_permission` and `control.visitor_grants`; browser,
 share, device, and workload parents still bound their own lifetimes. HTTP client
@@ -106,7 +106,7 @@ coordination in-process.
 `TNLD_SERVER_DOMAIN` selects infrastructure independently of
 `TNLD_MANAGED_DOMAIN`. Public URL DNS points to ingress. Managed endpoint DNS
 selects loopback for private reachability and ingress only after port inventory
-and ready-publisher checks for direct exposure. Returning to private denies
+and ready-publisher checks for public endpoint access. Returning to private denies
 cached public DNS at admission. DNS work retains captured domain ownership
 through issuance and cleanup after a move.
 

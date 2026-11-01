@@ -141,9 +141,9 @@ func testManagedMySQLNativeAuthSwitch(t *testing.T, password string) {
 			return
 		}
 		defer connection.Close()
-		forwardDone <- (ServiceStream{Protocol: config.ProtocolMySQL, Hostname: "service.example.test", Target: listener.Addr().String(), TLS: &tls.Config{Certificates: []tls.Certificate{certificate}}, TargetTLS: &tls.Config{ServerName: "service.example.test", RootCAs: roots}, Visitor: ConnectorVisitor{Check: func(context.Context) (ServiceVisitorDecision, error) {
+		forwardDone <- (ServiceStream{Protocol: config.ProtocolMySQL, Hostname: "service.example.test", Target: listener.Addr().String(), TLS: &tls.Config{Certificates: []tls.Certificate{certificate}}, TargetTLS: &tls.Config{ServerName: "service.example.test", RootCAs: roots}, Visitor: ConnectorVisitor{Admission: NativeAdmissionFixture{Check: func(context.Context) (ServiceVisitorDecision, error) {
 			return ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
-		}}}).Forward(ctx, connection)
+		}}}}).Forward(ctx, connection)
 	}()
 	const key = "managed-native-switch"
 	if err := mysql.RegisterTLSConfig(key, &tls.Config{ServerName: "service.example.test", RootCAs: roots, GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {

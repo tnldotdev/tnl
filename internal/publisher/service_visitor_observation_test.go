@@ -21,7 +21,7 @@ func TestManagedVisitorRepresentationsDispatchAfterTLS(t *testing.T) {
 	const host = "web.production.storefront.example.test"
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "target") }))
 	defer target.Close()
-	for _, kind := range []string{"HTTP", "connector", "certificate"} {
+	for _, kind := range []string{"HTTP", "native", "certificate"} {
 		for _, pointer := range []bool{false, true} {
 			name := kind + "/value"
 			if pointer {
@@ -30,7 +30,10 @@ func TestManagedVisitorRepresentationsDispatchAfterTLS(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				called := make(chan struct{}, 8)
 				allowed := func() (publisher.ServiceVisitorDecision, error) {
-					called <- struct{}{}
+					select {
+					case called <- struct{}{}:
+					default:
+					}
 					return publisher.ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 				}
 				var visitor publisher.ServiceVisitorAuthentication
@@ -55,8 +58,8 @@ func TestManagedVisitorRepresentationsDispatchAfterTLS(t *testing.T) {
 					if pointer {
 						visitor = &v
 					}
-				case "connector":
-					v := publisher.ConnectorVisitor{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) { return allowed() }}
+				case "native":
+					v := publisher.ConnectorVisitor{Admission: publisher.NativeAdmissionFixture{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) { return allowed() }}}
 					visitor = v
 					if pointer {
 						visitor = &v

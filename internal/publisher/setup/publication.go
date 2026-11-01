@@ -10,7 +10,7 @@ import (
 )
 
 // EnsurePublication uses an isolated setup store, not the operator's profile.
-// the native owner journal retains a pending secret before redemption and the
+// the connector owner journal retains a pending secret before redemption and the
 // resulting exact-URL signing identity before any privileged installation.
 func EnsurePublication(ctx context.Context, store *clientstate.Store, operator publisheridentity.OwnerControl, control publisheridentity.NativeControl, authority publisheridentity.EnrollmentAuthority, server string, publicURL controlv1.PublicURL) (credentialfile.File, error) {
 	_, identity, err := publisheridentity.EnsureOwner(ctx, store, operator, authority, publicURL)

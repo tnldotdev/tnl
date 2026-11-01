@@ -31,7 +31,7 @@ func kubeFrontend(t *testing.T, target, targetName string, targetRoots *x509.Cer
 		}
 		return publisher.ServiceVisitorDecision{Allowed: !revoked.Load(), ValidUntil: until}, nil
 	}
-	var auth publisher.ServiceVisitorAuthentication = publisher.ConnectorVisitor{Check: check}
+	var auth publisher.ServiceVisitorAuthentication = publisher.ConnectorVisitor{Admission: publisher.NativeAdmissionFixture{Check: check}}
 	if public {
 		auth = publisher.CertificateVisitor{Check: func(ctx context.Context, _ *x509.Certificate) (publisher.ServiceVisitorDecision, error) {
 			return check(ctx)

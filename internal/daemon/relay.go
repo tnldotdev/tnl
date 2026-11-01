@@ -2,7 +2,10 @@ package daemon
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -32,6 +35,7 @@ type relayRuntime struct {
 	registry           *relay.Registry
 	serviceRegistry    *relay.ServiceRegistry
 	publisher          *relay.PublisherAcceptor
+	connector          *relay.ConnectorAcceptor
 	transportTLS       *tls.Config
 	tcpListener        net.Listener
 	udpListener        *muxsession.QUICListener
@@ -116,6 +120,7 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 	}
 	udpListener, err := muxsession.ListenQUIC(settings.udpListen, transportTLS, muxsession.QUICConfig{Config: &quic.Config{
 		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
+		EnableDatagrams: true,
 	}})
 	if err != nil {
 		_ = tcpListener.Close()
@@ -212,6 +217,11 @@ func (d *daemon) startRelayRuntime(
 		return nil, fmt.Errorf("create relay process run ID: %w", err)
 	}
 	runtime.configuredIdentity, runtime.processRunID = runtimeConfig.relayID, runID
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
 	registry := relay.NewRegistry()
 	serviceRegistry := relay.NewServiceRegistry()
 	serviceRegistry.Instrument(runtimeConfig.metrics)
@@ -223,7 +233,8 @@ func (d *daemon) startRelayRuntime(
 		Client:   runtimeConfig.client,
 		Registration: relayv1.RelayRegistration{
 			RelayServiceId: runtimeConfig.relayServiceID, RelayId: runtimeConfig.relayID, RelayRunId: runID,
-			ProtocolVersion: tunnelv1.Version, RelayAddress: runtimeConfig.relayAddress,
+			PeerSigningPublicKey: &encodedKey,
+			ProtocolVersion:      tunnelv1.Version, RelayAddress: runtimeConfig.relayAddress,
 			TlsServerName: runtimeConfig.tlsServerName, InternalRelayAddress: runtimeConfig.internalAddress,
 			InternalNetworks: []string{}, ConnectionCapacity: settings.publisherConnectionLimit,
 			StreamCapacity: settings.streamCapacity,
@@ -272,9 +283,17 @@ func (d *daemon) startRelayRuntime(
 		return nil, err
 	}
 	runtime.controller = controller
+	claim, ok := runtimeConfig.client.(relay.ConnectorPeerLegClaimClient)
+	if !ok {
+		return nil, errors.New("relay connector admission requires the accepted-socket claim client")
+	}
+	runtime.connector = &relay.ConnectorAcceptor{CurrentLease: controller.Lease, SigningKey: privateKey, Claim: claim, Publishers: serviceRegistry}
 	publisherAcceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{
 		Observer: runtimeConfig.metrics,
 		Control:  controller, Registry: registry,
+		Connector: func(id string) (*relay.ConnectorAcceptor, bool) {
+			return runtime.connector, id == runtimeConfig.relayServiceID
+		},
 		Private: &relay.ServicePublisherAcceptor{Select: func(id string) (relay.ServicePublisherTarget, bool) {
 			return relay.ServicePublisherTarget{Control: controller, Registry: serviceRegistry}, id == runtimeConfig.relayServiceID
 		}},

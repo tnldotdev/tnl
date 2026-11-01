@@ -106,7 +106,7 @@ func TestIntegrationCLINamedPublisherCredentialFileWithoutPersonSession(t *testi
 	address := listener.Addr().String()
 	_ = listener.Close()
 	connectCtx, stopConnect := context.WithCancel(t.Context())
-	f.command(t, connectCtx, stopConnect, []string{"--no-config", "connect", saved.Id, "--listen", address, "--server", f.url, "--state-dir", person})
+	_, connectorJoined := f.command(t, connectCtx, stopConnect, []string{"--no-config", "connect", saved.Id, "--listen", address, "--server", f.url, "--state-dir", person})
 	client := workflowNativeHTTPClient(t, f, saved.Endpoint.Hostname)
 	workflowWait(t, 15*time.Second, func() bool {
 		response, err := client.Get("https://" + address + "/private-api")
@@ -131,6 +131,12 @@ func TestIntegrationCLINamedPublisherCredentialFileWithoutPersonSession(t *testi
 	}
 	if _, err := os.Stat(filepath.Join(root, ".tnl", "local", "project.json")); !os.IsNotExist(err) {
 		t.Fatalf("credential-owned named publication entered browser preparation: %v", err)
+	}
+	stopConnect()
+	select {
+	case <-connectorJoined:
+	case <-time.After(20 * time.Second):
+		t.Fatal("foreground connector did not join before publisher shutdown")
 	}
 	stop()
 	select {

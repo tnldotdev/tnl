@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -375,9 +374,4 @@ func (r WorkloadSession) ExecutionReference() string {
 		return ""
 	}
 	return r.GitHub.RunID + "/" + r.GitHub.RunAttempt + "/" + r.GitHub.CheckRunID
-}
-
-func workloadRequestScope(id, key string) string {
-	digest := sha256.Sum256([]byte(key))
-	return "workload-ingress/" + id + "/" + hex.EncodeToString(digest[:])
 }

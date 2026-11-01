@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -19,7 +20,7 @@ type admissionControl struct {
 	err   error
 }
 
-func (c *admissionControl) AuthorizeServiceConnector(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error) {
+func (c *admissionControl) AuthorizeServiceClientCertificate(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error) {
 	call := c.calls.Add(1)
 	if c.err != nil {
 		return controlv1.ServiceClientCertificateDecision{}, c.err
@@ -27,7 +28,7 @@ func (c *admissionControl) AuthorizeServiceConnector(context.Context, string, st
 	return controlv1.ServiceClientCertificateDecision{Allowed: true, Admitted: call > 1, ValidUntil: time.Now().Add(time.Minute)}, nil
 }
 
-func TestConnectorAuthorizationWaitsForAdmissionAndPreservesInfrastructureCause(t *testing.T) {
+func TestDirectAuthorizationWaitsForAdmissionAndPreservesInfrastructureCause(t *testing.T) {
 	for _, infrastructureFailure := range []bool{false, true} {
 		t.Run(map[bool]string{false: "pending-then-admitted", true: "infrastructure-failure"}[infrastructureFailure], func(t *testing.T) {
 			cfg, control := lifecycleFixture(t)
@@ -49,9 +50,9 @@ func TestConnectorAuthorizationWaitsForAdmissionAndPreservesInfrastructureCause(
 				t.Fatal(err)
 			}
 			defer cancel()
-			visitor := prepared.managedVisitor(tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{Connector: &tunnelv1.ConnectorAdmission{}}})
-			connector := visitor.(publisher.ConnectorVisitor)
-			decision, err := connector.Check(t.Context())
+			visitor := prepared.managedVisitor(tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{PublicService: &tunnelv1.PublicServiceAdmission{}}})
+			certificate := visitor.(publisher.CertificateVisitor)
+			decision, err := certificate.Check(t.Context(), &x509.Certificate{})
 			if infrastructureFailure {
 				if !errors.Is(err, cause) || decision.Allowed || c.calls.Load() != 1 {
 					t.Fatal("infrastructure failure lost its cause or was admitted", decision, err)

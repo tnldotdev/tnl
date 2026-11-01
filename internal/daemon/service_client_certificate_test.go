@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// direct visitor tests issue their own client material; native connectors do not
+// public endpoint tests issue their own client material; connectors do not
 // export application client certificates or maintain a local certificate cache.
 func issueServiceClientCertificate(t *testing.T, f *privateSeparatedFixture, service, device string) tls.Certificate {
 	t.Helper()

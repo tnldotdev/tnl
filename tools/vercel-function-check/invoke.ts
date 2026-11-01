@@ -99,19 +99,14 @@ try {
     "verified warm IPC must add no control work",
   );
   assert.equal(warmBudget.ipc.length - both.ipc.length, 8);
+  const targetsBeforeTraffic = (await stats()).targets;
   const warmTraffic = await Promise.all(Array.from({ length: 4 }, () => request(warm, "both")));
   assert(warmTraffic.every((result) => result.ok));
-  const trafficCalls = (await stats()).calls;
-  let streamControlDelta = 0;
-  for (const [key, count] of Object.entries(trafficCalls)) {
-    const delta = count - (prepared.calls[key] ?? 0);
-    // pg creates four new sockets; HTTP can reuse its verified keepalive pool.
-    if (key.endsWith("/run")) {
-      assert(delta >= 0 && delta <= 4);
-      streamControlDelta += delta;
-    } else assert.equal(delta, 0, `unexpected warm control work: ${key}`);
-  }
-  assert(streamControlDelta >= 4 && streamControlDelta <= 8);
+  const traffic = await stats();
+  assert.deepEqual(traffic.calls, prepared.calls, "prepared streams must add no control work");
+  // pg creates four target sockets; HTTP can reuse its verified keepalive pool.
+  const targetDelta = traffic.targets - targetsBeforeTraffic;
+  assert(targetDelta >= 4 && targetDelta <= 8);
 
   const rotated = await request(warm, "both", tokens.rotated);
   assert.equal(rotated.ok, true);
@@ -203,7 +198,8 @@ try {
     coldHelpers: first.helpers,
     warmHelperDelta: warmBudget.helpers.length - first.helpers.length,
     warmPrepareControlDelta: 0,
-    warmStreamControlDelta: streamControlDelta,
+    warmStreamControlDelta: 0,
+    warmTargetConnections: targetDelta,
     warmIPCDelta: warmBudget.ipc.length - both.ipc.length,
     rotationHelperDelta: rotation.helpers.length - warmBudget.helpers.length,
     ownersPerIsolate: [first.owners.length, second.owners.length],
@@ -212,7 +208,7 @@ try {
     controlBudgets: {
       coldHTTP: incremental.calls,
       both: prepared.calls,
-      warmTraffic: trafficCalls,
+      warmTraffic: traffic.calls,
     },
     concurrentContextIsolation: true,
     negatives,

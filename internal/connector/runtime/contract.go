@@ -1,4 +1,4 @@
-// package connectionruntime owns one bounded native connection session and its
+// package connectionruntime owns one bounded connector session and its
 // private local IPC. public runtime metadata never contains capabilities or keys.
 package runtime
 
@@ -21,8 +21,8 @@ var (
 	ErrInvalid      = errors.New("connection request is invalid")
 	ErrUnauthorized = errors.New("connection handle is not owned by this project or user")
 	ErrExpired      = errors.New("connection session expired; prepare it again")
-	ErrUnavailable  = errors.New("native connection is unavailable")
-	ErrTransport    = errors.New("native connector or verified preflight adapter is not installed")
+	ErrUnavailable  = errors.New("connector connection is unavailable")
+	ErrTransport    = errors.New("connector or verified preflight adapter is not installed")
 	ErrTeam         = errors.New("workload requires a configured team selector")
 	ErrCleanup      = errors.New("connection owner cleanup failed")
 	ErrUnprepared   = errors.New("service is not prepared; await its connection handle first")
@@ -92,8 +92,8 @@ type Connection struct {
 	TransportID string      `json:"transport_id,omitempty"`
 }
 
-func (Connection) String() string   { return "private native connection" }
-func (Connection) GoString() string { return "private native connection" }
+func (Connection) String() string   { return "private connector connection" }
+func (Connection) GoString() string { return "private connector connection" }
 
 // Prepared pairs one owner's public metadata with its current private snapshot.
 // readers never re-evaluate project configuration, Git, or authentication.

@@ -1,0 +1,14 @@
+{
+  "type": "ping",
+  "protocol_version": 1,
+  "request_id": "req",
+  "connector_pair_leg_accepted": {
+    "pair_id": "cpp_1234567890123456789012",
+    "delivery_id": "AQEBAQEBAQEBAQEBAQEBAQ",
+    "delivery_generation": 3,
+    "connection_slot": 1,
+    "source_ip": "192.0.2.10",
+    "observed_at": "2026-01-02T03:04:05Z",
+    "expires_at": "2026-01-02T03:05:00Z"
+  }
+}

@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -26,18 +25,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/ingress"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
-	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
-	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // real clock: the original 90-second lease and certificate are crossed twice.
@@ -119,10 +114,22 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 					t.Fatal("configuration keys did not retain exact saved service IDs")
 				}
 			}
-			assertWorkloadConnectorProof(t, job, byName["private-tcp"], transport)
 			stopRenew := renewRuntimeWorkload(t, job, session.ExpiresAt)
-			paths := openWorkloadPaths(t, f, job, byName, pg)
+			paths := openWorkloadPaths(t, f, job, byName, pg, transport)
+			t.Cleanup(func() {
+				if !t.Failed() {
+					return
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				var bindings string
+				err := f.inspect.QueryRowContext(ctx, `SELECT COALESCE(jsonb_agg(jsonb_build_object(
+					'service_id',service_id,'expires_at',expires_at,'publisher_prepared_until',publisher_prepared_until))::text,'[]')
+					FROM control.connector_peer_pairs WHERE subject_kind='workload_session' AND subject_id=$1`, session.Id).Scan(&bindings)
+				t.Logf("workload retained bindings: %s: %v", bindings, err)
+			})
 			paths.step(t, 0)
+			nativeBinding := workloadNativeRuntimeBinding(t, f, session.Id, session.ExpiresAt)
 			unrenewed, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
 			if err != nil {
 				t.Fatal(err)
@@ -133,7 +140,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			unrenewedPaths := openWorkloadPaths(t, f, unrenewed, byName, pg)
+			unrenewedPaths := openWorkloadPaths(t, f, unrenewed, byName, pg, transport)
 			unrenewedPaths.step(t, 0)
 			// a second ephemeral key cannot steal the execution or reuse its cert.
 			other, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
@@ -149,7 +156,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			if _, err = other.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", issuer.Sign(t, claims), keys); err != nil {
 				t.Fatal(err)
 			}
-			revokedPaths := openWorkloadPaths(t, f, other, byName, pg)
+			revokedPaths := openWorkloadPaths(t, f, other, byName, pg, transport)
 			revokedPaths.step(t, 0)
 			if err = other.Revoke(t.Context()); err != nil {
 				t.Fatal(err)
@@ -158,6 +165,9 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			for i, at := range []time.Time{session.LeaseExpiresAt.Add(5 * time.Second), session.LeaseExpiresAt.Add(95 * time.Second)} {
 				waitRuntimeTime(t, at)
 				paths.step(t, int(time.Until(session.ExpiresAt).Seconds()))
+				if workloadNativeRuntimeBinding(t, f, session.Id, session.ExpiresAt) != nativeBinding {
+					t.Fatal("workload renewal replaced its connector owners or exact bindings")
+				}
 				before, _ := job.Session()
 				replayed, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", assertion, keys)
 				if err != nil || !replayed.ExpiresAt.Equal(session.ExpiresAt) || !replayed.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
@@ -177,8 +187,8 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			}
 			for len(opened) > 0 {
 				o := <-opened
-				if o.header.Connector != nil && (o.header.Connector.Subject.Kind != tunnelv1.VisitorWorkloadSession || o.header.Connector.Subject.IdentityID != "" || o.header.SourceIP != "127.0.0.1") {
-					t.Fatal("transport lost subject/source binding")
+				if o.header.PublicService == nil || o.header.SourceIP != "127.0.0.1" {
+					t.Fatal("direct transport lost destination/source binding")
 				}
 			}
 			waitRuntimeTime(t, session.ExpiresAt.Add(time.Second))
@@ -187,8 +197,8 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			if _, err = job.Renew(t.Context()); err == nil {
 				t.Fatal("hard-expired job renewed")
 			}
-			if _, err = job.CreateIngressAssignments(t.Context(), byName["private-tcp"], "expired"); err == nil {
-				t.Fatal("hard-expired job received a handle")
+			if _, err = job.SelectServiceRun(t.Context(), byName["private-tcp"]); err == nil {
+				t.Fatal("hard-expired job received a native signing snapshot")
 			}
 			if _, err = job.ClientTLSCertificate(t.Context(), byName["public-tcp"]); err == nil {
 				t.Fatal("hard-expired job received a certificate")
@@ -257,7 +267,7 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	verification := f.visitorRoots.Clone()
 	verification.ServerName = s.Endpoint.Hostname
 	verification.Certificates = []tls.Certificate{certificate}
-	tr := &http.Transport{TLSClientConfig: verification, DialContext: workloadDirectDialer(t, process.ingresses[0].private, s.Endpoint.Port)}
+	tr := &http.Transport{TLSClientConfig: verification, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].publicServices, s.Endpoint.Port)}
 	t.Cleanup(tr.CloseIdleConnections)
 	client := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	humanTLS := verification.Clone()
@@ -366,7 +376,11 @@ func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, tr
 		} else {
 			quic = privateDisabledConnector()
 		}
-		ctx, cancel := context.WithCancel(t.Context())
+		publisherContext := t.Context()
+		if f.processContext != nil {
+			publisherContext = f.processContext("publisher")
+		}
+		ctx, cancel := context.WithCancel(publisherContext)
 		var control publisherservice.RunControl = native
 		for _, wrap := range wrappers {
 			control = wrap(control)
@@ -462,8 +476,12 @@ type workloadRuntimePaths struct {
 	database    *pgx.Conn
 }
 
-func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.Client, services map[string]string, pg *pgx.ConnConfig) *workloadRuntimePaths {
+func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.Client, services map[string]string, pg *pgx.ConnConfig, transport string) *workloadRuntimePaths {
 	t.Helper()
+	source, err := job.Session()
+	if err != nil {
+		t.Fatal(err)
+	}
 	p := &workloadRuntimePaths{}
 	for _, name := range []string{"private-tcp", "private-http", "public-tcp", "public-http", "db"} {
 		service := services[name]
@@ -486,8 +504,18 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 		address = listener.Addr().String()
 		ctx, cancel := context.WithCancel(t.Context())
 		ready, done := make(chan struct{}), make(chan error, 1)
+		quic, tcp := f.connectors()
+		if transport == "quic" {
+			tcp = privateDisabledConnector()
+		} else {
+			quic = privateDisabledConnector()
+		}
 		go func() {
-			done <- connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, Ready: func() error { close(ready); return nil }})
+			err := connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(ready); return nil }})
+			if err != nil && ctx.Err() == nil {
+				t.Logf("workload connector %s/%s source=%s ended: %v", transport, name, source.Id, err)
+			}
+			done <- err
 		}()
 		t.Cleanup(func() {
 			cancel()
@@ -527,7 +555,10 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			p.connections = append(p.connections, conn)
 			t.Cleanup(func() { _ = conn.Close() })
 		} else {
-			tr := &http.Transport{TLSClientConfig: verification, DialContext: dial}
+			// step probes cross a 95-second gap, beyond the server's one-minute
+			// idle timeout. use fresh probe sockets; the separate streaming
+			// responses below must retain their original streams across renewal.
+			tr := &http.Transport{TLSClientConfig: verification, DialContext: dial, DisableKeepAlives: true}
 			t.Cleanup(tr.CloseIdleConnections)
 			client := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 			endpoint := "https://" + net.JoinHostPort(run.Endpoint.Hostname, strconv.Itoa(run.Endpoint.Port))
@@ -546,6 +577,21 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 		}
 	}
 	return p
+}
+
+func workloadNativeRuntimeBinding(t *testing.T, f *privateSeparatedFixture, session string, expiry time.Time) string {
+	t.Helper()
+	var count int
+	var valid bool
+	var binding string
+	err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),COALESCE(bool_and(pair.expires_at<=$2 AND pair.publisher_prepared_until IS NOT NULL
+		AND (SELECT count(*)=2 AND bool_and(host(source_ip)='127.0.0.1') FROM control.connector_peer_pair_leg_claims claim WHERE claim.pair_id=pair.id)),false),
+		COALESCE(jsonb_agg(jsonb_build_array(pair.id,pair.service_id,pair.service_run_id,pair.run_number,pair.owner_key,encode(pair.delivery_id,'hex'),pair.delivery_generation,encode(pair.key_ciphertext,'hex'),pair.slots) ORDER BY pair.id)::text,'')
+		FROM control.connector_peer_pairs pair WHERE pair.subject_kind='workload_session' AND pair.subject_id=$1`, session, expiry).Scan(&count, &valid, &binding)
+	if err != nil || count != 5 || !valid {
+		t.Fatalf("workload native source/install/fixed-expiry scope: pairs=%d valid=%t: %v", count, valid, err)
+	}
+	return binding
 }
 
 func (p *workloadRuntimePaths) step(t *testing.T, step int) {
@@ -630,13 +676,13 @@ func (p *workloadRuntimePaths) denied(t *testing.T, bound time.Duration) {
 	}
 }
 
-func workloadDirectDialer(t *testing.T, connector *ingress.Connector, port int) func(context.Context, string, string) (net.Conn, error) {
+func workloadPublicEndpointDialer(t *testing.T, connector *ingress.PublicServices, port int) func(context.Context, string, string) (net.Conn, error) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{DirectOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, DirectConnector: connector, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 64})
+	server, err := ingress.New(listener, ingress.Config{PublicServicesOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: connector, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 64})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -664,84 +710,5 @@ func workloadDirectDialer(t *testing.T, connector *ingress.Connector, port int) 
 			return nil, err
 		}
 		return conn, nil
-	}
-}
-
-func assertWorkloadConnectorProof(t *testing.T, job *workload.Client, service, transport string) {
-	t.Helper()
-	control, err := connectorstream.NewWorkloadControl(job)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = control.(interface{ Close() error }).Close() }()
-	signer, err := control.ConnectorSigner(t.Context(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, err := control.ConnectorAssignment(t.Context(), service, signer.Subject, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nonce, _ := tunnelv1.NewConnectorSessionNonce()
-	hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: 1, Kind: "connector_session", ServiceID: service, SessionID: a.SessionID, Credential: a.Credential, Subject: signer.Subject, Nonce: nonce}
-	dial := func(h tunnelv1.ConnectorSessionHello) (*tunnel.ConnectorSession, error) {
-		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-		defer cancel()
-		var connector muxsession.Connector = muxsession.ConnectorQUIC{TLSConfig: a.TransportTLS}
-		if transport == "tls-tcp" {
-			connector = muxsession.ConnectorMuxTLS{TLSConfig: a.TransportTLS}
-		}
-		mux, err := connector.Connect(ctx, a.Endpoint)
-		if err != nil {
-			return nil, err
-		}
-		session, err := tunnel.DialConnector(ctx, mux, h)
-		if err != nil {
-			_ = mux.Close()
-		}
-		return session, err
-	}
-	for _, subject := range []tunnelv1.VisitorSubject{{Kind: tunnelv1.VisitorHumanDevice, IdentityID: "ident_aaaaaaaaaaaaaaaaaaaaaa", DeviceID: "vdev_aaaaaaaaaaaaaaaaaaaaaa"}, {Kind: tunnelv1.VisitorWorkloadSession, WorkloadSessionID: "wls_bbbbbbbbbbbbbbbbbbbbbb"}} {
-		bad := hello
-		bad.Subject = subject
-		digest, _ := bad.Claim().Digest()
-		bad.Signature = job.Sign(digest)
-		if peer, err := dial(bad); err == nil {
-			_ = peer.Close()
-			t.Fatal("spoofed subject authenticated")
-		}
-	}
-	digest, _ := hello.Claim().Digest()
-	_, wrongKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hello.Signature = ed25519.Sign(wrongKey, digest)
-	if bad, err := dial(hello); err == nil {
-		_ = bad.Close()
-		t.Fatal("another key authenticated with the workload handle")
-	}
-	hello.Signature = job.Sign(digest)
-	peer, err := dial(hello)
-	if err != nil {
-		t.Fatal("authentic ephemeral key", err)
-	}
-	defer peer.Close()
-	if replay, err := dial(hello); err == nil {
-		_ = replay.Close()
-		t.Fatal("connector credential replay")
-	}
-	stream, err := peer.OpenStream(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer stream.Close()
-	run, _ := opaqueid.New(opaqueid.ServiceRunPrefix)
-	if err = tunnelv1.WriteConnectorVisitorEntry(stream, tunnelv1.ConnectorVisitorEntry{ProtocolVersion: 1, Kind: tunnelv1.ConnectorVisitorStream, ServiceID: service, ServiceRunID: run, RunNumber: 1}); err != nil {
-		t.Fatal(err)
-	}
-	_ = stream.SetReadDeadline(time.Now().Add(3 * time.Second))
-	if _, err = tunnelv1.ReadConnectorVisitorAccepted(bufio.NewReader(stream)); err == nil {
-		t.Fatal("spoofed run admitted")
 	}
 }

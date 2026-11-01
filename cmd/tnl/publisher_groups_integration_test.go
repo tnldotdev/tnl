@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,7 +16,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -166,7 +169,31 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 	var visitorClients []*http.Client
 	var visitorAddresses []string
 	var visitorKeys [][]byte
-	for i, team := range teams {
+	visitorJoined := make([]<-chan struct{}, len(teams))
+	startVisitor := func(index int) {
+		t.Helper()
+		ctx, cancel := context.WithCancel(t.Context())
+		ready, joined := f.command(t, ctx, cancel, []string{"--no-config", "connect", "api", "--team", teams[index], "--listen", visitorAddresses[index], "--server", f.url, "--state-dir", person}, connectorstream.ErrServiceConnection, clientcontrol.ErrNotFound)
+		visitorJoined[index] = joined
+		select {
+		case <-ready:
+		case <-time.After(25 * time.Second):
+			t.Fatal("connector was not ready")
+		}
+	}
+	joinVisitor := func(index int) {
+		t.Helper()
+		select {
+		case <-visitorJoined[index]:
+		case <-time.After(10 * time.Second):
+			t.Fatal("old connector did not join after publisher termination")
+		}
+		if connection, err := net.DialTimeout("tcp", visitorAddresses[index], time.Second); err == nil {
+			_ = connection.Close()
+			t.Fatal("old connector listener survived publisher termination")
+		}
+	}
+	for i := range teams {
 		service, err := session.Authenticated().Control.GetService(t.Context(), *applied[i].Services[0].ServiceId)
 		if err != nil {
 			t.Fatal(err)
@@ -174,17 +201,10 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 		listener := workflowListen(t)
 		address := listener.Addr().String()
 		_ = listener.Close()
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		ready, _ := f.command(t, ctx, cancel, []string{"--no-config", "connect", "api", "--team", team, "--listen", address, "--server", f.url, "--state-dir", person})
-		select {
-		case <-ready:
-		case <-time.After(25 * time.Second):
-			t.Fatal("connector was not ready")
-		}
 		client := workflowNativeHTTPClient(t, f, service.Endpoint.Hostname)
 		visitorClients = append(visitorClients, client)
 		visitorAddresses = append(visitorAddresses, address)
+		startVisitor(i)
 		var visitorKey []byte
 		workflowWait(t, 10*time.Second, func() bool {
 			response, err := client.Get("https://" + address + "/scoped")
@@ -224,6 +244,7 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 	if err := registry.WaitStopped(stopCtx, jobA); err != nil {
 		t.Fatal(err)
 	}
+	joinVisitor(0)
 	if current(1) != runs[1] {
 		t.Fatal("stopping A changed B's publish run")
 	}
@@ -231,6 +252,7 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	ready()
+	startVisitor(0)
 	if current(0).issuance != runs[0].issuance || current(1) != runs[1] {
 		t.Fatal("restarting A lost its certificate or restarted B")
 	}
@@ -268,6 +290,8 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 	if current(0).id == beforeUpdate.id {
 		t.Fatal("A target update did not replace its assignment")
 	}
+	joinVisitor(0)
+	startVisitor(0)
 	assertVisitor(0, "updated-team-a")
 	assertVisitor(1, "team-b-token")
 	if err := session.Authenticated().Control.RevokePublisherGroupMember(t.Context(), teams[0], applied[0].ProjectKey, "production", identities[0].Member.PublisherIdentityId); err != nil {
@@ -285,12 +309,14 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 	if current(1) != runs[1] {
 		t.Fatal("revoking A restarted B")
 	}
+	joinVisitor(0)
 	assertVisitor(1, "team-b-token")
 	stop()
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
 	close(done)
+	joinVisitor(1)
 	// a new invocation keeps B's durable issuance; revoked A stays blocked.
 	stop, done = start()
 	workflowWait(t, 25*time.Second, func() bool {
@@ -308,12 +334,14 @@ func TestIntegrationFixedGroupsCrossTeamIsolation(t *testing.T) {
 	if current(1).issuance != runs[1].issuance {
 		t.Fatal("process restart replaced B's certificate files")
 	}
+	startVisitor(1)
 	assertVisitor(1, "team-b-token")
 	stop()
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
 	close(done)
+	joinVisitor(1)
 	// alternate paths and instance labels cannot create another owner for a key.
 	duplicate := identities[1]
 	duplicate.Instance = "other-instance"

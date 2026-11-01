@@ -28,7 +28,7 @@ func ProjectPublisherScope(server, publicURLID string) string {
 }
 
 // reserveConfiguredURL uses team authority only to create or edit saved state.
-// HTTP app and alias targets stay private to the native owner.
+// HTTP app and alias targets stay private to the connector owner.
 func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg publisher.Config) (controlv1.PublicURL, error) {
 	if cfg.Purpose != controlv1.App && cfg.Purpose != controlv1.Alias || cfg.Ephemeral || cfg.ServiceProtocol != controlv1.Http {
 		return controlv1.PublicURL{}, publisherCLIError("project publications require a saved HTTP app or alias public URL")

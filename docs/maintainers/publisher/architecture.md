@@ -54,7 +54,7 @@ including provenance and server/team selection. After changing configuration,
 restart the project's apps and named local publishers together. A mismatched
 owner fails with restart instructions.
 
-The native owner binds loopback HTTP and writes a descriptor in a verified
+The connector owner binds loopback HTTP and writes a descriptor in a verified
 mode-0700 state directory. Apps receive service-scoped capabilities; ad-hoc
 callers receive invocation-scoped capabilities. Owner credentials, signing keys,
 and control sessions remain native. See the

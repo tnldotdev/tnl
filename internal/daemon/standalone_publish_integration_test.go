@@ -487,7 +487,7 @@ func TestIntegrationPublisherRestartReusesCertificate(t *testing.T) {
 		`, firstReady.PublicURLID, firstReady.PublishRunNumber).Scan(&closed)
 		return err == nil && closed, err
 	})
-	waitForIngressRoutingCurrent(t, fixture.inspect, 2)
+	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
 	response, _, unavailableErr := fixture.visitor.requestURL(http.MethodGet, firstReady.PublicURL+"/unavailable", nil)
 	if unavailableErr == nil && response.StatusCode == http.StatusOK {
 		t.Fatal("route remained available after the publisher stopped")

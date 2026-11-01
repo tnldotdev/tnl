@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { build } from "esbuild";
-import { nativeJSON } from "../src/native.ts";
+import { connectorJSON } from "../src/native.ts";
 
 const operation = process.argv[2];
 if (operation === "prepare") {
@@ -44,7 +44,7 @@ if (operation === "prepare") {
   const saved = JSON.parse(await readFile(path.join(session, "cleanup.json"), "utf8")) as {
     binary: string;
   };
-  const result = await nativeJSON(saved.binary, ["status", "--handle", handle], {
+  const result = await connectorJSON(saved.binary, ["status", "--handle", handle], {
     cwd: session,
     timeout: 5000,
   });

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,9 +19,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/connector"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -125,8 +128,6 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	listener := workflowListen(t)
 	address := listener.Addr().String()
 	_ = listener.Close()
-	connectCtx, stopConnect := context.WithCancel(t.Context())
-	defer stopConnect()
 	if len(applied.Services) != 1 || applied.Services[0].ServiceId == nil {
 		t.Fatal("missing service binding")
 	}
@@ -240,17 +241,35 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			t.Fatal("restored identity did not run its assigned private publisher")
 		}
 		assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, int64(replacement+1), true)
-		if replacement == 1 {
-			// connector readiness now verifies managed TLS. start only after the
-			// recovered publisher has installed the paused certificate, then keep
-			// this same connector through the later publisher replacements.
-			connectReady, _ := f.command(t, connectCtx, stopConnect, []string{"--no-config", "connect", "api", "--team", team, "--listen", address, "--server", f.url, "--state-dir", person})
+		var stopConnect context.CancelFunc
+		var connectorJoined <-chan struct{}
+		startConnector := func() {
+			t.Helper()
+			// a new publisher run needs a new connector invocation, not a retained
+			// session with its old signed run, source, or replay history.
+			connectCtx, cancel := context.WithCancel(t.Context())
+			stopConnect = cancel
+			connectReady, joined := f.command(t, connectCtx, cancel, []string{"--no-config", "connect", "api", "--team", team, "--listen", address, "--server", f.url, "--state-dir", person}, connectorstream.ErrServiceConnection, clientcontrol.ErrNotFound)
+			connectorJoined = joined
 			select {
 			case <-connectReady:
 			case <-time.After(25 * time.Second):
 				t.Fatal("connector did not verify the recovered publisher")
 			}
 		}
+		joinConnector := func() {
+			t.Helper()
+			select {
+			case <-connectorJoined:
+			case <-time.After(10 * time.Second):
+				t.Fatal("old connector did not join after publisher replacement")
+			}
+			if connection, err := net.DialTimeout("tcp", address, time.Second); err == nil {
+				_ = connection.Close()
+				t.Fatal("old connector listener survived publisher replacement")
+			}
+		}
+		startConnector()
 		if _, supplied := os.LookupEnv("TNL_GROUP_IDENTITY"); supplied {
 			t.Fatal("injected identity remains in the worker environment")
 		}
@@ -293,6 +312,8 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			t.Fatal("replacement attempted enrollment")
 		}
 		if replacement == 3 {
+			stopConnect()
+			joinConnector()
 			oldHostname := service.Endpoint.Hostname
 			cliCall(t, t.Context(), []string{"--config", configuration, "publisher", "namespace", "rename", "production", "new-dns", "--expected-revision", strconv.FormatInt(applied.Revision, 10), "--request-id", "dns-move", "--state-dir", person})
 			project, err := loadProjectConfiguration(t.Context(), cli{ConfigPath: configuration}, person)
@@ -306,6 +327,15 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			if selected.Endpoint == nil || selected.Endpoint.Hostname == oldHostname || selected.Id != service.Id {
 				t.Fatal("source-bound service kept old hostname or changed identity")
 			}
+			device, err := session.Store().EnsureEnrolledVisitorDevice(t.Context(), session.Identity().Identity.Id, control.EnrollVisitorDevice)
+			if err != nil {
+				t.Fatal(err)
+			}
+			workflowWait(t, 25*time.Second, func() bool {
+				run, err := control.SelectServiceRun(t.Context(), service.Id, device.ID)
+				return err == nil && run.Endpoint != nil && run.Endpoint.Hostname == selected.Endpoint.Hostname
+			})
+			startConnector()
 			newClient := workflowNativeHTTPClient(t, f, selected.Endpoint.Hostname)
 			workflowWait(t, 25*time.Second, func() bool {
 				response, err := newClient.Get("https://" + address + "/renamed-dns")
@@ -331,6 +361,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 		case <-time.After(20 * time.Second):
 			t.Fatal("group worker did not join before task-state deletion")
 		}
+		joinConnector()
 		assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, int64(replacement+1), false)
 		if err := os.RemoveAll(task); err != nil {
 			t.Fatal(err)

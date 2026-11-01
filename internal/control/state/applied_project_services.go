@@ -264,9 +264,6 @@ func (d *Database) retireProjectResource(ctx context.Context, tx pgx.Tx, q *cont
 		if _, err := tx.Exec(ctx, `UPDATE control.visitor_grants SET revoked_at=COALESCE(revoked_at,$2) WHERE service_id=$1`, s.ServiceID.String, now); err != nil {
 			return err
 		}
-		if err := serviceRoutingTombstone(ctx, q, s.ServiceID.String, now); err != nil {
-			return err
-		}
 	} else if s.PublicURLID.Valid {
 		u, err := q.LockPublicURLForRun(ctx, s.PublicURLID.String)
 		if err != nil {

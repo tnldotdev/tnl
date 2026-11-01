@@ -1,4 +1,4 @@
-// package workloadclient is the native visitor authentication adapter for a
+// package workloadclient is the connector visitor authentication adapter for a
 // provider workload. the caller owns its in-memory lifetime and renewal loop.
 package workload
 
@@ -60,7 +60,7 @@ func New(server string, httpClient *http.Client) (*Client, error) {
 	return NewWithKey(server, httpClient, key)
 }
 
-// NewWithKey lets a native connection owner retain its own ephemeral key for
+// NewWithKey lets a connector owner retain its own ephemeral key for
 // protected SDK snapshots. the client copies the key and never exports it.
 func NewWithKey(server string, httpClient *http.Client, key ed25519.PrivateKey) (*Client, error) {
 	if len(key) != ed25519.PrivateKeySize || !ed25519.NewKeyFromSeed(key.Seed()).Equal(key) {
@@ -283,41 +283,12 @@ func (c *Client) CheckService(ctx context.Context, service string) (controlv1.Wo
 	}
 	return c.control.CheckWorkloadService(ctx, r.Credential, service)
 }
-func (c *Client) CreateIngressAssignments(ctx context.Context, service, key string) (controlv1.WorkloadIngressAssignments, error) {
-	r, err := c.Session()
-	if err != nil {
-		return controlv1.WorkloadIngressAssignments{}, err
-	}
-	return c.control.CreateWorkloadIngressAssignments(ctx, r.Credential, service, key)
-}
-
-func (c *Client) CreateIngressAssignment(ctx context.Context, service, key, exclude string) (controlv1.WorkloadIngressAssignments, error) {
-	r, err := c.Session()
-	if err != nil {
-		return controlv1.WorkloadIngressAssignments{}, err
-	}
-	return c.control.CreateWorkloadIngressAssignmentSet(ctx, r.Credential, service, key, 1, exclude)
-}
 func (c *Client) SelectServiceRun(ctx context.Context, service string) (controlv1.ServiceSelection, error) {
 	r, err := c.Session()
 	if err != nil {
 		return controlv1.ServiceSelection{}, err
 	}
 	return c.control.SelectWorkloadServiceRun(ctx, r.Credential, service)
-}
-func (c *Client) IngressTransportTrust(ctx context.Context, session string) (controlv1.IngressTransportTrust, error) {
-	r, err := c.Session()
-	if err != nil {
-		return controlv1.IngressTransportTrust{}, err
-	}
-	return c.control.GetWorkloadIngressTransportTrust(ctx, r.Credential, session)
-}
-func (c *Client) ReleaseIngressAssignment(ctx context.Context, session string) error {
-	r, err := c.Session()
-	if err != nil {
-		return err
-	}
-	return c.control.ReleaseWorkloadIngressAssignment(ctx, r.Credential, session)
 }
 func (c *Client) ServiceClientCertificate(ctx context.Context, service string) (controlv1.ServiceClientCertificate, error) {
 	r, err := c.Session()

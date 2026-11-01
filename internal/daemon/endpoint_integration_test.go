@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -22,8 +23,10 @@ import (
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationEndpointProductionPath(t *testing.T) {
@@ -31,13 +34,13 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 	for _, standalone := range []bool{false, true} {
 		t.Run(map[bool]string{false: "split", true: "standalone"}[standalone], func(t *testing.T) {
 			f := newServiceRuntimeFixtureTiming(t, standalone, nil, false)
-			var directIngress *ingress.Connector
+			var publicServiceIngress *ingress.PublicServices
 			if !standalone {
 				process := startSeparatedPrivateIngress(t, f, 0, "quic", nil)
-				directIngress = process.ingresses[0].private
+				publicServiceIngress = process.ingresses[0].publicServices
 				startSeparatedPrivateIngress(t, f, 1, "quic", nil)
 			} else {
-				directIngress = f.composed.ingresses[0].private
+				publicServiceIngress = f.composed.ingresses[0].publicServices
 			}
 			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/once" {
@@ -124,21 +127,21 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			control := &separatedVisitorControl{Control: production}
-			if standalone {
-				control.dialAddress = f.sharedQUIC
-			}
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}
 			connectorCtx, stopConnector := context.WithCancel(t.Context())
 			connectorReady, connectorDone := make(chan struct{}), make(chan error, 1)
+			connectorJoined := false
 			go func() {
-				connectorDone <- connectorstream.Serve(connectorCtx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "http", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(connectorReady); return nil }})
+				connectorDone <- connectorstream.Serve(connectorCtx, listener, connectorstream.Config{Control: production, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "http", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(connectorReady); return nil }})
 			}()
 			t.Cleanup(func() {
 				stopConnector()
+				if connectorJoined {
+					return
+				}
 				select {
 				case err := <-connectorDone:
 					if err != nil {
@@ -170,15 +173,33 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil || response.StatusCode != http.StatusOK || string(body) != "native TLS reaches the publisher" {
 				t.Fatal(response.StatusCode, string(body), err)
 			}
-			// the authenticated connector is sufficient, but its device revocation
-			// still prevents a fresh native HTTPS connection without client mTLS.
+			// arrivals use prepared permission, not a control RPC. revocation must
+			// terminate this owner on its background refresh within the existing
+			// client request budget, without an application client certificate.
 			device, err := production.ConnectorSigner(t.Context(), person.Identity.Id)
 			if err != nil {
 				t.Fatal(err)
 			}
-			checkManagedDirectTLS(t, f, directIngress, applied, service, device.Subject.DeviceID)
+			checkManagedPublicEndpointTLS(t, f, publicServiceIngress, applied, service, device.Subject.DeviceID)
 			if err = f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 				t.Fatal(err)
+			}
+			revocation, stopRevocation := context.WithTimeout(t.Context(), client.Timeout)
+			defer stopRevocation()
+			if _, err := f.identity.routes.SelectServiceRun(revocation, service.Id, device.Subject.DeviceID); !defaultConnectorRevocationDenied(err) {
+				t.Fatalf("control did not deny the exact revoked device: %v", err)
+			}
+			select {
+			case err := <-connectorDone:
+				connectorJoined = true
+				var denial *tunnel.ProtocolError
+				// revocation may close both relay legs before their denial reply
+				// arrives. control above must independently deny this exact device.
+				if !defaultConnectorRevocationDenied(err) && !(errors.As(err, &denial) && denial.Code == tunnelv1.Unauthenticated) && !errors.Is(err, connectorstream.ErrServiceConnection) {
+					t.Fatalf("revoked connector did not stop after current access denial: %v", err)
+				}
+			case <-revocation.Done():
+				t.Fatal("revoked connector owner did not join within the request budget")
 			}
 			transport.CloseIdleConnections()
 			if response, err = client.Get("https://" + service.Endpoint.Hostname + "/once"); err == nil {
@@ -189,7 +210,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 	}
 }
 
-func checkManagedDirectTLS(t *testing.T, f *privateSeparatedFixture, connector *ingress.Connector, applied controlv1.AppliedProjectConfiguration, service controlv1.Service, device string) {
+func checkManagedPublicEndpointTLS(t *testing.T, f *privateSeparatedFixture, connector *ingress.PublicServices, applied controlv1.AppliedProjectConfiguration, service controlv1.Service, device string) {
 	t.Helper()
 	ctx := t.Context()
 	material := issueServiceClientCertificate(t, f, service.Id, device)
@@ -197,7 +218,7 @@ func checkManagedDirectTLS(t *testing.T, f *privateSeparatedFixture, connector *
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{DirectOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, DirectConnector: connector, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, MaxConnections: 64})
+	server, err := ingress.New(listener, ingress.Config{PublicServicesOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: connector, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, MaxConnections: 64})
 	if err != nil {
 		_ = listener.Close()
 		t.Fatal(err)

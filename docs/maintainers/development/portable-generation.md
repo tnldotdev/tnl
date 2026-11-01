@@ -44,7 +44,7 @@ control, so an unapplied remote declaration does not block local listeners.
 Applied remote endpoints still come from control; other lookup failures remain
 errors.
 
-`TnlConnectionRegistry` defines the server-only native connection result boundary.
+`TnlConnectionRegistry` defines the server-only connector connection result boundary.
 PostgreSQL returns loopback `{host, port, ssl}` with the managed TLS server name.
 MySQL returns the managed `host`, local `port`, a fresh mutable `ssl` object with
 `verifyIdentity: true`, and mysql2's loopback `stream` factory. HTTP returns

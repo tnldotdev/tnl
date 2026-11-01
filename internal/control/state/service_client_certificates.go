@@ -195,9 +195,9 @@ func (d *Database) AuthorizeServiceClientCertificate(ctx context.Context, servic
 	}
 	digest := sha256.Sum256(der)
 	if subject.WorkloadSessionID != "" {
-		result, err = recheckWorkloadDirectVisitor(ctx, tx, service, runID, number, visitor, subject.WorkloadSessionID, source, digest[:], now)
+		result, err = recheckWorkloadPublicServiceVisitor(ctx, tx, service, runID, number, visitor, subject.WorkloadSessionID, source, digest[:], now)
 	} else {
-		result, err = recheckDirectServiceVisitor(ctx, tx, service, runID, number, visitor, subject.IdentityID, subject.DeviceID, source, digest[:], now)
+		result, err = recheckPublicServiceVisitor(ctx, tx, service, runID, number, visitor, subject.IdentityID, subject.DeviceID, source, digest[:], now)
 	}
 	if err != nil {
 		return result, err

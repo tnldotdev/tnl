@@ -98,6 +98,20 @@ func (c *wiringControl) IngestServiceObservations(_ context.Context, _ controlst
 	return controlstate.ServiceObservationResult{Accepted: len(batch.Events)}, nil
 }
 
+// these public URL wiring tests never admit a public service visitor.
+func (*wiringControl) AdmitPublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {
+	return ingressv1.PublicServiceVisitorAdmission{}, ingress.ErrServiceAdmission
+}
+func (*wiringControl) PublicServiceVisitorStatus(context.Context, string, ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {
+	return ingressv1.PublicServiceVisitorStatus{}, ingress.ErrServiceAdmission
+}
+func (*wiringControl) PromotePublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorLookup) error {
+	return ingress.ErrServiceAdmission
+}
+func (*wiringControl) ClosePublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorLookup) error {
+	return nil
+}
+
 func TestProductionIngressPoolForwardingAndNoReplay(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprintf("committed_failure=%t", fail), func(t *testing.T) {

@@ -88,7 +88,7 @@ or automatically restart active SQL sessions.
 
 The Kubernetes transport receives the discovered verifier before validation;
 it never evaluates `FromTrust(kubernetes, nil)` on this path. The same verified
-snapshot is used by native preparation and new target captures. Changed
+snapshot is used by connector preparation and new target captures. Changed
 assignment definitions are joined before replacement workers prepare their own
 publication; they do not reuse a different selector's resource pin.
 

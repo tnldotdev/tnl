@@ -17,7 +17,7 @@ import (
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
-func TestIntegrationCompanyDeviceDirectAdmissionAndReauthentication(t *testing.T) {
+func TestIntegrationCompanyDevicePublicServiceAdmissionAndReauthentication(t *testing.T) {
 	f := newCompanyHTTPFixture(t, "company_direct_device")
 	ctx := t.Context()
 	d := f.d

@@ -22,6 +22,7 @@ type standalonePublishFixture struct {
 	inspect                        *sql.DB
 	publicAddress, relayUDPAddress string
 	pebble                         integrationPebble
+	relayTLS                       *tls.Config
 	process                        *integrationProcess
 	identity                       *integrationPublishingIdentity
 	visitor                        *integrationVisitor
@@ -37,6 +38,11 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDPAddress, pebble.directoryURL)
 	ca := newIntegrationTestCA(t)
 	controlCertificate := ca.issueServer(t, cfg.ServerHostname())
+	// publication fixtures exercise public URL issuance. relay DNS-01 polling
+	// belongs to the dedicated automatic relay certificate suite.
+	relayCertificate := ca.issueServer(t, cfg.StandaloneRelayHostname())
+	cfg.RelayTLSCertificateFile, cfg.RelayTLSPrivateKeyFile = relayCertificate.certificateFile, relayCertificate.privateKeyFile
+	relayTLS := &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}
 	controlTLS, err := staticServerTLS(controlCertificate.certificateFile, controlCertificate.privateKeyFile)
 	if err != nil {
 		t.Fatal(err)
@@ -53,13 +59,18 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{
 		dns: dns, listeners: listeners,
 		acmeHTTPClient: pebble.httpClient, serviceHTTPClient: &http.Client{Timeout: 10 * time.Second},
-		relayClientTLS: &tls.Config{RootCAs: pebble.roots, MinVersion: tls.VersionTLS13}, owner: owner,
+		relayClientTLS: relayTLS, owner: owner,
+	})
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Log(integrationPublisherDiagnostics(inspect, pebble.logPath))
+		}
 	})
 	waitForProcessReady(t, process)
 	controlHTTP, _ := newIntegrationHTTPSClient(t, ca.roots, publicControl, false, owner)
 	identity := newIntegrationPublishingIdentity(t, "https://"+cfg.ServerHostname(), controlHTTP, hostnameLabel, owner)
 	return &standalonePublishFixture{owner: owner, databaseURL: databaseURL, inspect: inspect, publicAddress: publicAddress,
-		relayUDPAddress: relayUDPAddress, pebble: pebble, process: process, identity: identity,
+		relayUDPAddress: relayUDPAddress, pebble: pebble, relayTLS: relayTLS, process: process, identity: identity,
 		visitor: newIntegrationVisitor(t, pebble.roots, publicAddress, owner)}
 }
 
@@ -96,9 +107,8 @@ func standalonePublishConfig(t *testing.T, databaseURL string, publicListener ne
 }
 
 func (f *standalonePublishFixture) connectors() (muxsession.Connector, muxsession.Connector) {
-	relayTLS := &tls.Config{RootCAs: f.pebble.roots, MinVersion: tls.VersionTLS13}
-	return redirectIntegrationConnector(f.relayUDPAddress, muxsession.QUICConnector{TLSConfig: relayTLS}),
-		redirectIntegrationConnector(f.publicAddress, muxsession.TLSYamuxConnector{TLSConfig: relayTLS})
+	return redirectIntegrationConnector(f.relayUDPAddress, muxsession.QUICConnector{TLSConfig: f.relayTLS}),
+		redirectIntegrationConnector(f.publicAddress, muxsession.TLSYamuxConnector{TLSConfig: f.relayTLS})
 }
 
 func (f *standalonePublishFixture) startPublisher(t *testing.T, target string, quicConnector, tcpConnector muxsession.Connector) *integrationPublisher {
@@ -113,7 +123,7 @@ func (f *standalonePublishFixture) waitReady(t *testing.T, handle *integrationPu
 		t.Fatalf("publisher ready event = %#v", ready)
 	}
 	waitForReadyPublisherConnections(t, f.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
-	waitForIngressRoutingCurrent(t, f.inspect, 2)
+	waitForIngressRoutingCurrent(t, f.inspect, 1)
 	return ready
 }
 

@@ -340,30 +340,6 @@ func (q *Queries) RotateServiceHTTPBrowserSession(ctx context.Context, arg Rotat
 	return err
 }
 
-const serviceDirectBinding = `-- name: ServiceDirectBinding :one
-SELECT destination_port,identity_id,device_id,workload_session_id FROM control.direct_service_visitors
-WHERE visitor_connection_id=$1
-`
-
-type ServiceDirectBindingRow struct {
-	DestinationPort   int32
-	IdentityID        pgtype.Text
-	DeviceID          pgtype.Text
-	WorkloadSessionID pgtype.Text
-}
-
-func (q *Queries) ServiceDirectBinding(ctx context.Context, visitorConnectionID string) (ServiceDirectBindingRow, error) {
-	row := q.db.QueryRow(ctx, serviceDirectBinding, visitorConnectionID)
-	var i ServiceDirectBindingRow
-	err := row.Scan(
-		&i.DestinationPort,
-		&i.IdentityID,
-		&i.DeviceID,
-		&i.WorkloadSessionID,
-	)
-	return i, err
-}
-
 const serviceHTTPAppliedConfiguration = `-- name: ServiceHTTPAppliedConfiguration :one
 SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service FROM control.applied_project_services service
 JOIN control.applied_projects project ON project.team_id=service.team_id AND project.project_key=service.project_key
@@ -475,7 +451,7 @@ SELECT (v.promoted_at IS NOT NULL)::boolean AS admitted,LEAST($1::timestamptz+in
      AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
      WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
      AND relay.lease_expires_at>$1 AND NOT relay.draining))::timestamptz AS valid_until
-FROM control.direct_service_visitors v
+FROM control.public_service_visitors v
 JOIN control.services service ON service.id=v.service_id AND service.public AND service.enabled
     AND service.deleted_at IS NULL AND service.protocol='http' AND service.service_port=v.destination_port
 JOIN control.service_runs run ON run.id=v.service_run_id AND run.service_id=service.id
@@ -524,5 +500,29 @@ func (q *Queries) ServiceHTTPTransportBinding(ctx context.Context, arg ServiceHT
 	)
 	var i ServiceHTTPTransportBindingRow
 	err := row.Scan(&i.Admitted, &i.ValidUntil)
+	return i, err
+}
+
+const servicePublicEndpointBinding = `-- name: ServicePublicEndpointBinding :one
+SELECT destination_port,identity_id,device_id,workload_session_id FROM control.public_service_visitors
+WHERE visitor_connection_id=$1
+`
+
+type ServicePublicEndpointBindingRow struct {
+	DestinationPort   int32
+	IdentityID        pgtype.Text
+	DeviceID          pgtype.Text
+	WorkloadSessionID pgtype.Text
+}
+
+func (q *Queries) ServicePublicEndpointBinding(ctx context.Context, visitorConnectionID string) (ServicePublicEndpointBindingRow, error) {
+	row := q.db.QueryRow(ctx, servicePublicEndpointBinding, visitorConnectionID)
+	var i ServicePublicEndpointBindingRow
+	err := row.Scan(
+		&i.DestinationPort,
+		&i.IdentityID,
+		&i.DeviceID,
+		&i.WorkloadSessionID,
+	)
 	return i, err
 }
