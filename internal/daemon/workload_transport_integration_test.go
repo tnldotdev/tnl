@@ -364,7 +364,11 @@ func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, tr
 		} else {
 			quic = privateDisabledConnector()
 		}
-		ctx, cancel := context.WithCancel(t.Context())
+		publisherContext := t.Context()
+		if f.processContext != nil {
+			publisherContext = f.processContext("publisher")
+		}
+		ctx, cancel := context.WithCancel(publisherContext)
 		var control publisherservice.RunControl = native
 		for _, wrap := range wrappers {
 			control = wrap(control)

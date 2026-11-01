@@ -48,7 +48,9 @@ func PrepareConnector(ctx context.Context, session muxsession.Session, run Run, 
 
 // setup retains the caller's original preparation deadline; lifetime owns the
 // promoted stream after preparation succeeds. stopping setup cannot close it.
-func prepareConnector(lifetime, setup context.Context, session muxsession.Session, run Run, entry tunnelv1.ConnectorPeerVisitorEntry) (*PreparedConnector, error) {
+func prepareConnector(lifetime, setup context.Context, session muxsession.Session, run Run, entry tunnelv1.ConnectorPeerVisitorEntry) (_ *PreparedConnector, result error) {
+	setup, finish := observability.ClientOperation(setup, "connector.visitor_setup")
+	defer func() { finish(result) }()
 	ctx := lifetime
 	if ctx == nil || ctx.Err() != nil || session == nil || !validProtocol(run.Protocol) || run.Endpoint == nil || run.ServiceTLS == nil || run.ServiceTLS.InsecureSkipVerify || len(run.ServiceTLS.Certificates) != 0 || run.ServiceTLS.GetClientCertificate != nil || !run.ValidUntil.After(time.Now()) ||
 		run.ServiceID != entry.ServiceID || run.ServiceRunID != entry.ServiceRunID || run.RunNumber != entry.RunNumber || run.TrustRevision < 1 || uint64(run.TrustRevision) != entry.MetadataRevision {

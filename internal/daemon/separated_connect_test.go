@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -115,13 +116,13 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 		if err != nil {
 			t.Fatal(err)
 		}
-		var quic muxsession.Connector = muxsession.QUICConnector{TLSConfig: separatedRelayTLS(t)}
+		var quicConnector muxsession.Connector = muxsession.QUICConnector{TLSConfig: separatedRelayTLS(t), Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}
 		var tcp muxsession.Connector = muxsession.TLSYamuxConnector{TLSConfig: separatedRelayTLS(t)}
 		transport := "quic"
 		if index%2 == 0 {
 			tcp = privateDisabledConnector()
 		} else {
-			quic = privateDisabledConnector()
+			quicConnector = privateDisabledConnector()
 			transport = "tls-tcp"
 		}
 		ready, done := make(chan struct{}), make(chan error, 1)
@@ -132,7 +133,7 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 				Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool},
 				Ready:    func() error { close(ready); return nil },
 				Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
-					return bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
+					return bound.ConnectSlotWithTransports(ctx, slot, false, quicConnector, tcp)
 				},
 			})
 			done <- err

@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -22,8 +23,10 @@ import (
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationEndpointProductionPath(t *testing.T) {
@@ -130,11 +133,15 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			}
 			connectorCtx, stopConnector := context.WithCancel(t.Context())
 			connectorReady, connectorDone := make(chan struct{}), make(chan error, 1)
+			connectorJoined := false
 			go func() {
 				connectorDone <- connectorstream.Serve(connectorCtx, listener, connectorstream.Config{Control: production, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "http", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(connectorReady); return nil }})
 			}()
 			t.Cleanup(func() {
 				stopConnector()
+				if connectorJoined {
+					return
+				}
 				select {
 				case err := <-connectorDone:
 					if err != nil {
@@ -166,8 +173,9 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil || response.StatusCode != http.StatusOK || string(body) != "native TLS reaches the publisher" {
 				t.Fatal(response.StatusCode, string(body), err)
 			}
-			// the authenticated connector is sufficient, but its device revocation
-			// still prevents a fresh native HTTPS connection without client mTLS.
+			// arrivals use prepared permission, not a control RPC. revocation must
+			// terminate this owner on its background refresh within the existing
+			// client request budget, without an application client certificate.
 			device, err := production.ConnectorSigner(t.Context(), person.Identity.Id)
 			if err != nil {
 				t.Fatal(err)
@@ -175,6 +183,16 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			checkManagedPublicEndpointTLS(t, f, publicServiceIngress, applied, service, device.Subject.DeviceID, person.Identity.Id)
 			if err = f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 				t.Fatal(err)
+			}
+			select {
+			case err := <-connectorDone:
+				connectorJoined = true
+				var denial *tunnel.ProtocolError
+				if !defaultConnectorRevocationDenied(err) && !(errors.As(err, &denial) && denial.Code == tunnelv1.Unauthenticated) {
+					t.Fatalf("revoked connector did not stop with a current access denial: %v", err)
+				}
+			case <-time.After(client.Timeout):
+				t.Fatal("revoked connector owner did not join within the request budget")
 			}
 			transport.CloseIdleConnections()
 			if response, err = client.Get("https://" + service.Endpoint.Hostname + "/once"); err == nil {

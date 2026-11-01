@@ -140,6 +140,10 @@ func (f *connectorFixture) serveConnectorPeer(p *fixtureConnectorPeer, ready cha
 	for {
 		stream, err := session.AcceptStream(f.ctx)
 		if err != nil {
+			// inner close packets are queued on the borrowed carriers. keep the
+			// fixture's packet transport alive until its owning context ends,
+			// rather than discarding that close during session teardown.
+			<-f.ctx.Done()
 			return
 		}
 		workers.Go(func() { defer stream.Close(); f.visitor(f.ctx, stream, p) })
