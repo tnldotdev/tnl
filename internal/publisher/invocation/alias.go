@@ -48,7 +48,7 @@ func prepareAliasServices(ctx context.Context, state *clientstate.Database, proj
 	return services, nil
 }
 
-func aliasDomainName(alias config.Alias, effective config.TNL) string {
+func aliasDomainName(alias config.Alias, effective clientproject.ResolvedService) string {
 	if alias.Domain != nil {
 		return *alias.Domain
 	}

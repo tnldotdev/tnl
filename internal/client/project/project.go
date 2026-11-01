@@ -150,49 +150,67 @@ func (p Project) AppService(cwd, selected string) (string, error) {
 	return name, nil
 }
 
-// EffectiveService merges one named service over the root defaults.
-func (p Project) EffectiveService(name string) (config.TNL, error) {
+// ResolvedService contains inherited settings for one service, not a parsed
+// project document. target discovery and trust resolution happen separately.
+type ResolvedService struct {
+	Name       *string
+	Server     *string
+	Team       *string
+	Feedback   *bool
+	OAuth      bool
+	Inspection *config.Inspection
+	Tunnel     *config.Tunnel
+	Publish    *config.Publish
+	Readiness  *config.Readiness
+	Webhooks   map[string]config.Webhook
+}
+
+// EffectiveService merges one named service over the applicable root defaults.
+func (p Project) EffectiveService(name string) (ResolvedService, error) {
 	if err := config.ValidateTNL(p.Config); err != nil {
-		return config.TNL{}, err
+		return ResolvedService{}, err
 	}
 	base := p.Config
-	result := config.TNL{
-		Name: base.Name, Server: base.Server, Team: base.Team, Feedback: base.Feedback, OAuth: base.OAuth,
-		Inspection: config.MergeInspection(base.Inspection, nil),
-		Webhooks:   base.Webhooks, Tunnel: cloneTunnel(base.Tunnel), Publish: config.ServicePublish(config.Service{}),
+	var service config.Service
+	if name != "" {
+		var found bool
+		service, found = base.Services[name]
+		if !found {
+			return ResolvedService{}, fmt.Errorf("service %q is not configured", name)
+		}
 	}
-	if name == "" {
-		if result.Name != nil {
+	result := ResolvedService{
+		Name: base.Name, Server: base.Server, Team: base.Team,
+		Publish: config.ServicePublish(service),
+	}
+	if name != "" {
+		savedName := config.ServiceName(name, service)
+		result.Name = &savedName
+	}
+	// private services start with only their own settings; public URL defaults
+	// are selected here rather than copied into every service and then cleared.
+	if name == "" || config.IsPublicService(service) {
+		result.Feedback, result.OAuth, result.Webhooks = base.Feedback, base.OAuth, base.Webhooks
+		result.Inspection = config.MergeInspection(base.Inspection, service.Inspection)
+		result.Tunnel = mergeTunnel(base.Tunnel, service.Tunnel)
+		if name == "" {
+			if result.Name != nil {
+				if result.Tunnel == nil {
+					result.Tunnel = &config.Tunnel{}
+				}
+				result.Tunnel.Name = result.Name
+			}
+		} else {
 			if result.Tunnel == nil {
 				result.Tunnel = &config.Tunnel{}
 			}
-			result.Tunnel.Name = result.Name
+			if result.Tunnel.PublicURL == nil && service.Name != nil {
+				result.Tunnel.Name = result.Name
+			}
 		}
-		return result, nil
-	}
-	service, found := base.Services[name]
-	if !found {
-		return config.TNL{}, fmt.Errorf("service %q is not configured", name)
-	}
-	savedName := config.ServiceName(name, service)
-	result.Name = &savedName
-	result.Inspection = config.MergeInspection(result.Inspection, service.Inspection)
-	if !config.IsPublicService(service) {
-		// services never inherit public URL policy, even when the
-		// project also publishes HTTP services.
-		result.Tunnel = nil
-		result.Feedback, result.OAuth, result.Webhooks = nil, false, nil
-		result.Inspection = config.MergeInspection(nil, service.Inspection)
 	} else {
-		result.Tunnel = mergeTunnel(result.Tunnel, service.Tunnel)
-		if result.Tunnel == nil {
-			result.Tunnel = &config.Tunnel{}
-		}
-		if result.Tunnel.PublicURL == nil && service.Name != nil {
-			result.Tunnel.Name = &savedName
-		}
+		result.Inspection = config.MergeInspection(nil, service.Inspection)
 	}
-	result.Publish = config.ServicePublish(service)
 	if service.HTTP != nil {
 		result.Readiness = service.HTTP.Readiness
 		if service.HTTP.Open != nil && config.IsPublicService(service) {

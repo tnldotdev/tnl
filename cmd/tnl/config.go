@@ -311,7 +311,7 @@ func applyProtocolLimits(flags *tunnelFlags, protocol string) error {
 	return validateTunnelFlags(*flags)
 }
 
-func applyInspection(flags *tunnelFlags, effective config.TNL) {
+func applyInspection(flags *tunnelFlags, effective clientproject.ResolvedService) {
 	flags.inspection = effective.Inspection
 	if effective.Inspection != nil {
 		if !flags.inspectionModeFromCLI && effective.Inspection.Mode != nil {
