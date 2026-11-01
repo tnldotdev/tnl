@@ -168,7 +168,7 @@ func privateFixture(t *testing.T, target string) (*Prepared, *Bound, tunnelv1.Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	return p, bound, bound.assignments[setup.PublisherConnections[0].PublisherConnectionId], verification
+	return p, bound, p.connectionRef(bound.connections[0]), verification
 }
 
 func privateHeader(t *testing.T, ref tunnelv1.ServicePublisherConnectionRef) tunnelv1.ServiceForwardingHeader {
@@ -262,5 +262,74 @@ func TestManagedCertificateAndRunIdentityCannotBeSubstituted(t *testing.T) {
 	bound.Invalidate()
 	if _, _, err := bound.Hello(0); !errors.Is(err, ErrPrivateStream) {
 		t.Fatal("closed run reopened")
+	}
+}
+
+func TestServiceConnectionSlotsRejectDuplicateClaimsWithoutPartialUpdate(t *testing.T) {
+	for _, name := range []string{"duplicate-slot", "duplicate-id", "duplicate-relay", "negative-slot", "out-of-range-slot"} {
+		t.Run(name, func(t *testing.T) {
+			p, bound, first, _ := privateFixture(t, "127.0.0.1:1")
+			connections := []controlv1.ConnectionAssignment{bound.connections[0], bound.connections[1]}
+			var err error
+			connections[0].PublisherConnectionId, err = opaqueid.New(opaqueid.PublisherConnectionPrefix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			connections[0].ConnectionAssignmentRevision++
+			switch name {
+			case "duplicate-slot":
+				connections[1].ConnectionSlot = 0
+			case "duplicate-id":
+				connections[1].PublisherConnectionId = connections[0].PublisherConnectionId
+				connections[1].ConnectionAssignmentRevision++
+			case "duplicate-relay":
+				connections[0].RelayServiceId = connections[1].RelayServiceId
+			case "negative-slot":
+				connections[1].ConnectionSlot = -1
+			case "out-of-range-slot":
+				connections[1].ConnectionSlot = 2
+			}
+			if _, err := p.Activate(controlv1.ServiceRunSetup{ServiceId: p.Preparation.ServiceId, ServiceRunId: p.Preparation.ServiceRunId,
+				RunNumber: p.Preparation.RunNumber, RunToken: "run-token", PublisherConnections: connections}); !errors.Is(err, ErrPrivateStream) {
+				t.Fatal("accepted invalid initial slots", err)
+			}
+			state := controlv1.ServiceRunState{ServiceId: p.Preparation.ServiceId, ServiceRunId: p.Preparation.ServiceRunId,
+				RunNumber: p.Preparation.RunNumber, State: "ready", PublisherExpiresAt: time.Now().Add(time.Minute), PublisherConnections: connections}
+			if err := bound.ApplyHeartbeat(state); !errors.Is(err, ErrPrivateStream) {
+				t.Fatal("accepted invalid replacement slots", err)
+			}
+			if !bound.current(first) {
+				t.Fatal("rejected heartbeat partially replaced the first slot")
+			}
+		})
+	}
+}
+
+func TestServiceConnectionSlotsReplaceExactClaimInEitherOrder(t *testing.T) {
+	p, bound, first, _ := privateFixture(t, "127.0.0.1:1")
+	second := p.connectionRef(bound.connections[1])
+	replacement := bound.connections[0]
+	var err error
+	replacement.PublisherConnectionId, err = opaqueid.New(opaqueid.PublisherConnectionPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement.ConnectionAssignmentRevision++
+	state := controlv1.ServiceRunState{ServiceId: p.Preparation.ServiceId, ServiceRunId: p.Preparation.ServiceRunId,
+		RunNumber: p.Preparation.RunNumber, State: "ready", PublisherExpiresAt: time.Now().Add(time.Minute),
+		PublisherConnections: []controlv1.ConnectionAssignment{bound.connections[1], replacement}}
+	if err := bound.ApplyHeartbeat(state); err != nil {
+		t.Fatal(err)
+	}
+	if bound.current(first) || !bound.current(second) || !bound.current(p.connectionRef(replacement)) {
+		t.Fatal("replacement lost the sibling or retained a stale claim")
+	}
+	first.ConnectionSlot = 255
+	if bound.current(first) {
+		t.Fatal("out-of-range slot matched a current claim")
+	}
+	_, hello, err := bound.Hello(0)
+	if err != nil || hello.ServiceConnection == nil || *hello.ServiceConnection != p.connectionRef(replacement) {
+		t.Fatal("hello did not use the current assignment", err)
 	}
 }
