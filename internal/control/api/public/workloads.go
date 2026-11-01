@@ -78,7 +78,7 @@ func privateSelectionResponse(selected controlstate.ServiceSelection) controlv1.
 		Subject: visitorsubject.Wire(selected.Subject), ExpiresAt: selected.ExpiresAt,
 		Protocol: controlv1.ServiceProtocol(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: endpointResponse(selected.Endpoint)}
 	if selected.PairReady != nil {
-		result.PairReady = &controlv1.NativePeerPairReady{PublisherIdentityId: selected.PairReady.PublisherIdentityID, Relays: nativePairRelays(selected.PairReady.Relays)}
+		result.PairReady = &controlv1.ConnectorPeerPairReady{PublisherIdentityId: selected.PairReady.PublisherIdentityID, Relays: connectorPairRelays(selected.PairReady.Relays)}
 	}
 	return result
 }

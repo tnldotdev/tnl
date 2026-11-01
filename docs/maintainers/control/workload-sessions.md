@@ -148,15 +148,15 @@ expand an existing session. apply and exchange serialize on the same team lock.
 
 the control API accepts the workload credential only at:
 
-| method | endpoint                                                      |
-| ------ | ------------------------------------------------------------- |
-| `GET`  | `/v1/workload/services`                                       |
-| `POST` | `/v1/workload/services/{service_id}/authorization`            |
-| `POST` | `/v1/workload/services/{service_id}/client-certificate`       |
-| `POST` | `/v1/workload/services/{service_id}/run`                      |
-| `POST` | `/v1/services/{service_id}/native-peer-pairs`                 |
-| `POST` | `/v1/services/{service_id}/native-peer-pairs/{pair_id}/renew` |
-| `POST` | `/v1/visitor-tokens`                                          |
+| method | endpoint                                                         |
+| ------ | ---------------------------------------------------------------- |
+| `GET`  | `/v1/workload/services`                                          |
+| `POST` | `/v1/workload/services/{service_id}/authorization`               |
+| `POST` | `/v1/workload/services/{service_id}/client-certificate`          |
+| `POST` | `/v1/workload/services/{service_id}/run`                         |
+| `POST` | `/v1/services/{service_id}/connector-peer-pairs`                 |
+| `POST` | `/v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew` |
+| `POST` | `/v1/visitor-tokens`                                             |
 
 inventory contains each authorized configuration service key, its exact saved
 service ID, protocol, and visitor endpoint. EKS services also expose the approved
@@ -165,7 +165,7 @@ native client authentication. human visitor inventory exposes the same hint.
 neither inventory exposes RDS selectors, publisher target addresses, CA bundles,
 or application credentials. the job cannot read management configuration.
 
-HTTP uses the same key-bound native owner and session as the other protocols.
+HTTP uses the same key-bound connector owner and session as the other protocols.
 the SDK no longer mints a separate HTTP-only credential. public native access
 can use the session's service-scoped client certificate; SDK access uses the
 authenticated local connector for both public and connector-only services. see
@@ -179,7 +179,7 @@ and active authorization still checks the current renewable 90-second lease,
 service rights, revocation, and infrastructure deadlines. renewing a lease does
 not replace the certificate or disconnect admitted streams. an expired lease
 cannot admit a new stream even while its certificate remains valid. active
-native streams use background permission renewal and the publisher's local
+connector streams use background permission renewal and the publisher's local
 policy guard. direct certificate visitors retain bounded control rechecks.
 neither path may outlive its last confirmed authority during an outage.
 
@@ -191,7 +191,7 @@ prepare a new certificate for later requests. see
 [HTTP authorization](../transport/architecture.md#authorization-and-tls-boundaries).
 
 `New` in `internal/connector/workload` owns the ephemeral key. `Exchange`, `Renew`,
-`Revoke`, `ListServices`, `CheckService`, `PrepareNativePeerPair`, and
+`Revoke`, `ListServices`, `CheckService`, `PrepareConnectorPeerPair`, and
 `ServiceClientCertificate` return generated contract types. `SelectServiceRun`
 returns the selected publisher run and approved protocol, trust revision, and
 managed endpoint. native creation binds one independently signed owner to two
@@ -229,7 +229,7 @@ authority. fingerprints must match the applied source.
 the Node SDK reads this same schema from its fixed `.tnl/generated/workloads.json`
 artifact path for all workload protocols. it acquires a platform assertion
 for each await or HTTP request, verifies identity through control, and selects a
-bounded native owner by that verified identity and policy. explicit `TNL_WORKLOAD` or the server-only
+bounded connector owner by that verified identity and policy. explicit `TNL_WORKLOAD` or the server-only
 `configureWorkload` source selects the saved policy. see
 [sdk calls](../connector/platform-access.md#sdk-calls) for the
 callback and token-file API, provider selection, cache, and error boundaries.
@@ -267,7 +267,7 @@ connector. public native clients connect directly with the workload's
 a denied workload never falls back to browser approval or another credential.
 
 `tcpconnect.NewControl` remains the human adapter. both adapters implement
-`ConnectorSigner`, `PrepareNativePeerPair`, `VisitorPermission`, and
+`ConnectorSigner`, `PrepareConnectorPeerPair`, `VisitorPermission`, and
 `ResolveService`. `tcpconnect.Signer` carries `Subject`, `PublicKey`, and
 `Sign`, with no raw signing key. `NewControlWithConfig(ControlConfig)` exposes
 the signer, pair preparation, permission, resolution, and close hooks for native
@@ -293,7 +293,7 @@ the publisher admits each stream using that installed pair and a current signed
 permission, without an arrival-time control request. its guard checks the subject,
 source, service/run, metadata, and policy before target resolution, dialing,
 greetings, and later use. human visitors use the same path with their actual
-enrolled device. native owner/run replacement ends old admissions rather than
+enrolled device. connector owner/run replacement ends old admissions rather than
 transferring them. see [service boundaries](services.md).
 
 workload audit rows identify the session; its durable execution references identify
@@ -355,7 +355,7 @@ verification before dialing.
 ## verify
 
 the fresh PostgreSQL baseline and control's matching identity are
-`tnl-control-fresh-v1-relay-native-peers`.
+`tnl-control-fresh-v1-relay-connector-peers`.
 workload certificates can last through six hours; current authorization remains
 bounded by the renewable lease. it requires the
 same fresh-database, coordinated-baseline rollout as the assembled services work.

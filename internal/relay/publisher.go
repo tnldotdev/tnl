@@ -33,7 +33,7 @@ type PublisherAcceptorConfig struct {
 	Report                func(error)
 	Observer              OperationObserver
 	Private               *ServicePublisherAcceptor
-	Native                func(string) (*NativeConnectorAcceptor, bool)
+	Connector             func(string) (*ConnectorAcceptor, bool)
 }
 
 // PublisherAcceptor authenticates and owns publisher connections.
@@ -47,7 +47,7 @@ type PublisherAcceptor struct {
 	report           func(error)
 	observer         OperationObserver
 	private          *ServicePublisherAcceptor
-	native           func(string) (*NativeConnectorAcceptor, bool)
+	connector        func(string) (*ConnectorAcceptor, bool)
 }
 
 func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, error) {
@@ -71,9 +71,9 @@ func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, e
 		control: config.Control, registry: config.Registry, selectTarget: config.Select,
 		readyDelta: config.ReadyConnectionsDelta, connectionExited: config.ConnectionExited,
 		capacity: config.CapacityRejected, report: config.Report,
-		observer: config.Observer,
-		private:  config.Private,
-		native:   config.Native,
+		observer:  config.Observer,
+		private:   config.Private,
+		connector: config.Connector,
 	}, nil
 }
 
@@ -84,33 +84,33 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 	ready := false
 	control, registry := a.control, a.registry
 	var private *privateClaim
-	var native *NativeConnectorAcceptor
-	var nativeClaim nativeConnectorClaim
-	var releaseNative func()
+	var connector *ConnectorAcceptor
+	var connectorClaimed connectorClaim
+	var releaseConnector func()
 	defer func() {
-		if releaseNative != nil {
-			releaseNative()
+		if releaseConnector != nil {
+			releaseConnector()
 		}
 	}()
-	session, hello, err := tunnel.AcceptWithResult(ctx, transport, func(authCtx context.Context, message tunnelv1.Message) (*tunnelv1.NativePairLegAccepted, error) {
-		if message.Role == tunnelv1.NativeConnector {
-			if a.native == nil || message.NativePairLegProof == nil {
+	session, hello, err := tunnel.AcceptWithResult(ctx, transport, func(authCtx context.Context, message tunnelv1.Message) (*tunnelv1.ConnectorPairLegAccepted, error) {
+		if message.Role == tunnelv1.Connector {
+			if a.connector == nil || message.ConnectorPairLegProof == nil {
 				return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 			}
 			var ok bool
-			native, ok = a.native(message.NativePairLegProof.RelayServiceID)
-			if !ok || native == nil {
+			connector, ok = a.connector(message.ConnectorPairLegProof.RelayServiceID)
+			if !ok || connector == nil {
 				return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 			}
 			var err error
-			releaseNative, err = native.reserve(*message.NativePairLegProof)
+			releaseConnector, err = connector.reserve(*message.ConnectorPairLegProof)
 			if err == nil {
-				nativeClaim, err = native.claim(authCtx, transport, *message.NativePairLegProof)
+				connectorClaimed, err = connector.claim(authCtx, transport, *message.ConnectorPairLegProof)
 			}
 			if err != nil {
 				return nil, err
 			}
-			return &nativeClaim.receipt, nil
+			return &connectorClaimed.receipt, nil
 		}
 		if message.ServiceConnection != nil {
 			var err error
@@ -143,13 +143,13 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		}
 		return nil, nil
 	})
-	if native != nil {
+	if connector != nil {
 		finishAdmission(err)
 		if err != nil {
 			return err
 		}
 		defer session.Close()
-		return native.serve(ctx, transport, session, *hello.NativePairLegProof, nativeClaim)
+		return connector.serve(ctx, transport, session, *hello.ConnectorPairLegProof, connectorClaimed)
 	}
 	if private != nil {
 		return errors.Join(err, private.serve(ctx, session, transport, a, finishAdmission))

@@ -120,8 +120,8 @@ func TestPeerServiceDispatcherOnAuthenticatedTLSYamux(t *testing.T) {
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
 		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber,
 		PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
-		Direct:   &tunnelv1.DirectAdmission{IngressID: "ingress-a", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443},
-		SourceIP: "192.0.2.1", VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().Add(time.Minute),
+		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443},
+		SourceIP:      "192.0.2.1", VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().Add(time.Minute),
 	}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID, RelayID: "relay-one-process",
 		RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}
 	wrong, err := server.OpenStream(ctx)

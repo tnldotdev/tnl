@@ -106,7 +106,7 @@ func TestIntegrationVisitorSigningBootstrapWait(t *testing.T) {
 			if _, err := d.signVisitorPermission(ctx, first, testVisitorIssuer, signingTestPermission(now), now); err != nil {
 				t.Fatal(err)
 			}
-			done, join := nativePairWorker(t, ctx, func(ctx context.Context) error {
+			done, join := connectorPairWorker(t, ctx, func(ctx context.Context) error {
 				if mode == "prepare" {
 					return other.PrepareVisitorSigningKeys(ctx, testVisitorIssuer, now)
 				}
@@ -175,7 +175,7 @@ func TestIntegrationVisitorSigningRotationWait(t *testing.T) {
 				} else if _, err := controlstatedb.New(gate).LockVisitorTokenSigningKey(ctx); err != nil {
 					t.Fatal(err)
 				}
-				rotated, joinRotation := nativePairWorker(t, ctx, func(ctx context.Context) error {
+				rotated, joinRotation := connectorPairWorker(t, ctx, func(ctx context.Context) error {
 					return other.RotateVisitorSigningKey(ctx, testVisitorIssuer, emergency, now)
 				})
 				defer joinRotation()
@@ -189,7 +189,7 @@ func TestIntegrationVisitorSigningRotationWait(t *testing.T) {
 						t.Fatal(err)
 					}
 					defer rollbackTestTransaction(t, tx)
-					done, joinIssue := nativePairWorker(t, ctx, func(ctx context.Context) error {
+					done, joinIssue := connectorPairWorker(t, ctx, func(ctx context.Context) error {
 						_, err := d.issueVisitorToken(ctx, tx, testVisitorIssuer, scope, BrowserTokenSource{}, now)
 						return err
 					})

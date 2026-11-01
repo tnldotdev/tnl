@@ -20,79 +20,79 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func prepareNativePair(ctx context.Context, control Control, signer Signer, run Run, owner string, previous *controlv1.NativePeerPair) (controlv1.NativePeerPair, [32]byte, time.Time, controlv1.NativePeerPairRequest, error) {
+func prepareConnectorPair(ctx context.Context, control Control, signer Signer, run Run, owner string, previous *controlv1.ConnectorPeerPair) (controlv1.ConnectorPeerPair, [32]byte, time.Time, controlv1.ConnectorPeerPairRequest, error) {
 	var key [32]byte
-	var body controlv1.NativePeerPairRequest
+	var body controlv1.ConnectorPeerPairRequest
 	if run.PairReady == nil {
-		return controlv1.NativePeerPair{}, key, time.Time{}, body, failure.Wrap("prepare native relay carriers", failure.ConnectionUnavailable, ErrServiceConnection)
+		return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, failure.Wrap("prepare connector relay carriers", failure.ConnectionUnavailable, ErrServiceConnection)
 	}
 	if len(run.PairReady.Relays) != 2 || !opaqueid.Valid(run.PairReady.PublisherIdentityId, opaqueid.PublisherIdentityPrefix) || signer.Subject.Validate() != nil {
-		return controlv1.NativePeerPair{}, key, time.Time{}, body, ErrServiceConnection
+		return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, ErrServiceConnection
 	}
-	body = controlv1.NativePeerPairRequest{Action: "create", IdempotencyKey: owner, ServiceRunId: run.ServiceRunID, RunNumber: int64(run.RunNumber), PublisherIdentityId: run.PairReady.PublisherIdentityId,
+	body = controlv1.ConnectorPeerPairRequest{Action: "create", IdempotencyKey: owner, ServiceRunId: run.ServiceRunID, RunNumber: int64(run.RunNumber), PublisherIdentityId: run.PairReady.PublisherIdentityId,
 		Subject: visitorsubject.Wire(signer.Subject), ExpectedRelays: run.PairReady.Relays, RequestedAt: time.Now().UTC().Truncate(time.Microsecond)}
 	if previous != nil {
 		body.Action, body.PreviousPairId, body.PreviousGeneration = "renew", &previous.PairId, &previous.DeliveryGeneration
 	}
-	message, err := controlv1.NativePeerPairProofMessage(run.ServiceID, body)
+	message, err := controlv1.ConnectorPeerPairProofMessage(run.ServiceID, body)
 	if err != nil {
-		return controlv1.NativePeerPair{}, key, time.Time{}, body, err
+		return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, err
 	}
 	signature := signer.Sign(message)
 	if !ed25519.Verify(signer.PublicKey, message, signature) {
-		return controlv1.NativePeerPair{}, key, time.Time{}, body, ErrServiceConnection
+		return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, ErrServiceConnection
 	}
 	body.Signature = base64.RawURLEncoding.EncodeToString(signature)
 	started := time.Now()
 	// an uncertain reply repeats this exact signed request, not a new owner or
 	// timestamp. the caller's bounded preparation/renewal context is the ceiling.
-	var pair controlv1.NativePeerPair
+	var pair controlv1.ConnectorPeerPair
 	for {
-		pair, err = control.PrepareNativePeerPair(ctx, run.ServiceID, body)
-		if err == nil || !nativeTemporary(err) {
+		pair, err = control.PrepareConnectorPeerPair(ctx, run.ServiceID, body)
+		if err == nil || !connectorTemporary(err) {
 			break
 		}
 		timer := time.NewTimer(100 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return controlv1.NativePeerPair{}, key, time.Time{}, body, context.Cause(ctx)
+			return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, context.Cause(ctx)
 		case <-timer.C:
 		}
 	}
 	if err != nil {
-		return controlv1.NativePeerPair{}, key, time.Time{}, body, err
+		return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, err
 	}
 	secret, keyErr := base64.RawURLEncoding.Strict().DecodeString(pair.Key)
 	defer clear(secret)
 	_, idErr := tunnelv1.ParsePeerDeliveryIdentifier(pair.DeliveryId)
 	duration := pair.ExpiresAt.Sub(pair.ObservedAt)
 	until := started.Add(duration)
-	if keyErr != nil || len(secret) != 32 || idErr != nil || !opaqueid.Valid(pair.PairId, "npp_") || pair.DeliveryGeneration < 1 || pair.ServiceId != run.ServiceID || pair.ServiceRunId != run.ServiceRunID || pair.RunNumber != int64(run.RunNumber) || pair.PublisherIdentityId != run.PairReady.PublisherIdentityId || !visitorsubject.Equal(pair.Subject, signer.Subject) ||
+	if keyErr != nil || len(secret) != 32 || idErr != nil || !opaqueid.Valid(pair.PairId, "cpp_") || pair.DeliveryGeneration < 1 || pair.ServiceId != run.ServiceID || pair.ServiceRunId != run.ServiceRunID || pair.RunNumber != int64(run.RunNumber) || pair.PublisherIdentityId != run.PairReady.PublisherIdentityId || !visitorsubject.Equal(pair.Subject, signer.Subject) ||
 		pair.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute || !until.After(time.Now()) || ctx.Err() != nil || len(pair.Relays) != 2 {
-		return controlv1.NativePeerPair{}, key, time.Time{}, body, ErrServiceConnection
+		return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, ErrServiceConnection
 	}
 	for slot, relay := range pair.Relays {
 		if relay != body.ExpectedRelays[slot] {
-			return controlv1.NativePeerPair{}, key, time.Time{}, body, ErrServiceConnection
+			return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, ErrServiceConnection
 		}
 	}
 	copy(key[:], secret)
 	if key == [32]byte{} || previous != nil && (pair.PairId != previous.PairId || pair.DeliveryId != previous.DeliveryId || pair.DeliveryGeneration != previous.DeliveryGeneration || pair.Key != previous.Key) {
-		return controlv1.NativePeerPair{}, [32]byte{}, time.Time{}, body, ErrServiceConnection
+		return controlv1.ConnectorPeerPair{}, [32]byte{}, time.Time{}, body, ErrServiceConnection
 	}
 	return pair, key, until, body, nil
 }
 
-// awaitNativePublisher repeats the original signed create only to observe the
+// awaitConnectorPublisher repeats the original signed create only to observe the
 // installation barrier. it cannot renew authority or reset startup's deadline.
-func awaitNativePublisher(ctx context.Context, control Control, service string, request controlv1.NativePeerPairRequest, expected controlv1.NativePeerPair) (time.Time, error) {
+func awaitConnectorPublisher(ctx context.Context, control Control, service string, request controlv1.ConnectorPeerPairRequest, expected controlv1.ConnectorPeerPair) (time.Time, error) {
 	for {
 		if err := context.Cause(ctx); err != nil {
 			return time.Time{}, err
 		}
 		started := time.Now()
-		pair, err := control.PrepareNativePeerPair(ctx, service, request)
+		pair, err := control.PrepareConnectorPeerPair(ctx, service, request)
 		if err == nil {
 			if pair.PairId != expected.PairId || pair.DeliveryId != expected.DeliveryId || pair.DeliveryGeneration != expected.DeliveryGeneration || pair.Key != expected.Key ||
 				pair.ServiceId != expected.ServiceId || pair.ServiceRunId != expected.ServiceRunId || pair.RunNumber != expected.RunNumber || pair.PublisherIdentityId != expected.PublisherIdentityId ||
@@ -108,7 +108,7 @@ func awaitNativePublisher(ctx context.Context, control Control, service string, 
 					return started.Add(remaining), context.Cause(ctx)
 				}
 			}
-		} else if !nativeTemporary(err) {
+		} else if !connectorTemporary(err) {
 			return time.Time{}, err
 		}
 		timer := time.NewTimer(50 * time.Millisecond)
@@ -121,24 +121,24 @@ func awaitNativePublisher(ctx context.Context, control Control, service string, 
 	}
 }
 
-type nativeRelayLeg struct {
+type connectorRelayLeg struct {
 	session   *tunnel.Session
 	packets   *peer.SharedSession
 	carrier   peer.Carrier
-	proof     tunnelv1.NativePairLegProof
-	receipt   tunnelv1.NativePairLegAccepted
+	proof     tunnelv1.ConnectorPairLegProof
+	receipt   tunnelv1.ConnectorPairLegAccepted
 	transport tunnel.Transport
 	until     time.Time
-	relay     controlv1.NativePeerPairRelay
+	relay     controlv1.ConnectorPeerPairRelay
 }
 
-func (l *nativeRelayLeg) Close() error {
+func (l *connectorRelayLeg) Close() error {
 	return errors.Join(l.carrier.Close(), l.packets.Close(), l.session.Close())
 }
 
-func nativeLegProof(signer Signer, pair controlv1.NativePeerPair, slot int) (tunnelv1.NativePairLegProof, error) {
+func connectorLegProof(signer Signer, pair controlv1.ConnectorPeerPair, slot int) (tunnelv1.ConnectorPairLegProof, error) {
 	relay := pair.Relays[slot]
-	proof := tunnelv1.NativePairLegProof{PairID: pair.PairId, DeliveryGeneration: pair.DeliveryGeneration, ServiceID: pair.ServiceId, ServiceRunID: pair.ServiceRunId, RunNumber: pair.RunNumber, PublisherIdentityID: pair.PublisherIdentityId,
+	proof := tunnelv1.ConnectorPairLegProof{PairID: pair.PairId, DeliveryGeneration: pair.DeliveryGeneration, ServiceID: pair.ServiceId, ServiceRunID: pair.ServiceRunId, RunNumber: pair.RunNumber, PublisherIdentityID: pair.PublisherIdentityId,
 		ConnectionSlot: slot, PublisherConnectionID: relay.PublisherConnectionId, AssignmentRevision: relay.AssignmentRevision, RelayServiceID: relay.RelayLease.RelayServiceId, RelayID: relay.RelayLease.RelayId, RelayRunID: relay.RelayLease.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLease.RelayLeaseRevision), RequestedAt: time.Now().UTC().Truncate(time.Microsecond), Nonce: make([]byte, 32)}
 	if _, err := rand.Read(proof.Nonce); err != nil {
 		return proof, err
@@ -154,10 +154,10 @@ func nativeLegProof(signer Signer, pair controlv1.NativePeerPair, slot int) (tun
 	return proof, nil
 }
 
-// connectNativeLeg joins both raced candidates before selecting one. candidates
+// connectConnectorLeg joins both raced candidates before selecting one. candidates
 // are passive until activation, so a losing QUIC/TCP attempt cannot spend the
 // publisher's registration or replace a sibling's replay state.
-func connectNativeLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.NativePeerPair, key [32]byte, slot int) (*nativeRelayLeg, error) {
+func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int) (*connectorRelayLeg, error) {
 	roots := config.TransportTLS
 	if roots == nil {
 		roots = &tls.Config{MinVersion: tls.VersionTLS13}
@@ -170,7 +170,7 @@ func connectNativeLeg(ctx, lifetime context.Context, config Config, signer Signe
 		tcpConnector = muxsession.TLSYamuxConnector{TLSConfig: roots}
 	}
 	type result struct {
-		leg   *nativeRelayLeg
+		leg   *connectorRelayLeg
 		outer muxsession.Session
 		err   error
 	}
@@ -179,7 +179,7 @@ func connectNativeLeg(ctx, lifetime context.Context, config Config, signer Signe
 	defer cancel()
 	start := func(connector muxsession.Connector, transport tunnel.Transport) {
 		go func() {
-			proof, err := nativeLegProof(signer, pair, slot)
+			proof, err := connectorLegProof(signer, pair, slot)
 			if err != nil {
 				results <- result{err: err}
 				return
@@ -197,12 +197,12 @@ func connectNativeLeg(ctx, lifetime context.Context, config Config, signer Signe
 				}
 			}
 			started := time.Now()
-			session, receipt, err := tunnel.DialNative(race, outer, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.NativeConnector, NativePairLegProof: &proof}, pair.DeliveryId)
+			session, receipt, err := tunnel.DialConnector(race, outer, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Connector, ConnectorPairLegProof: &proof}, pair.DeliveryId)
 			if err != nil {
 				results <- result{err: err}
 				return
 			}
-			results <- result{leg: &nativeRelayLeg{session: session, proof: proof, receipt: receipt, transport: transport, until: started.Add(receipt.ExpiresAt.Sub(receipt.ObservedAt)), relay: pair.Relays[slot]}, outer: outer}
+			results <- result{leg: &connectorRelayLeg{session: session, proof: proof, receipt: receipt, transport: transport, until: started.Add(receipt.ExpiresAt.Sub(receipt.ObservedAt)), relay: pair.Relays[slot]}, outer: outer}
 		}()
 	}
 	primary, fallback := quicConnector, tcpConnector
@@ -272,7 +272,7 @@ func connectNativeLeg(ctx, lifetime context.Context, config Config, signer Signe
 	}
 	request, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 	if err == nil {
-		err = l.session.ActivateNativeLeg(ctx, request)
+		err = l.session.ActivateConnectorLeg(ctx, request)
 	}
 	if err != nil {
 		return nil, err

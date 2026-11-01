@@ -9,11 +9,11 @@ import (
 	"time"
 )
 
-func TestNativePreparationKeepsOriginalStartupDeadline(t *testing.T) {
+func TestConnectorPreparationKeepsOriginalStartupDeadline(t *testing.T) {
 	f := newConnectorFixture(t, "quic")
 	ownerSetup, stopOwner := context.WithTimeout(t.Context(), 3*time.Second)
 	defer stopOwner()
-	p, err := prepareNativeConnection(t.Context(), ownerSetup, f.config, f.device)
+	p, err := prepareConnectorConnection(t.Context(), ownerSetup, f.config, f.device)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestNativePreparationKeepsOriginalStartupDeadline(t *testing.T) {
 	deadline, _ := setup.Deadline()
 	done := make(chan error, 1)
 	go func() {
-		prepared, err := prepareNative(p.ctx, setup, p.session, run, entry)
+		prepared, err := prepareConnector(p.ctx, setup, p.session, run, entry)
 		if prepared != nil {
 			_ = prepared.Close()
 		}
@@ -58,10 +58,10 @@ func TestNativePreparationKeepsOriginalStartupDeadline(t *testing.T) {
 	}
 }
 
-func TestNativePreparationPromotesStreamToOwnerLifetime(t *testing.T) {
+func TestConnectorPreparationPromotesStreamToOwnerLifetime(t *testing.T) {
 	f := newConnectorFixture(t, "quic")
 	setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
-	p, err := prepareNativeConnection(t.Context(), setup, f.config, f.device)
+	p, err := prepareConnectorConnection(t.Context(), setup, f.config, f.device)
 	stop()
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestNativePreparationPromotesStreamToOwnerLifetime(t *testing.T) {
 	}
 }
 
-func TestNativeRevokedOwnerDoesNotCloseSiblingOwner(t *testing.T) {
+func TestConnectorRevokedOwnerDoesNotCloseSiblingOwner(t *testing.T) {
 	f := newConnectorFixture(t, "quic")
 	healthy := f.local(t)
 	check := func(c net.Conn, message string) {
@@ -104,7 +104,7 @@ func TestNativeRevokedOwnerDoesNotCloseSiblingOwner(t *testing.T) {
 	check(healthy, "before")
 	setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
 	defer stop()
-	p, err := prepareNativeConnection(t.Context(), setup, f.config, f.device)
+	p, err := prepareConnectorConnection(t.Context(), setup, f.config, f.device)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,11 +137,11 @@ func TestNativeRevokedOwnerDoesNotCloseSiblingOwner(t *testing.T) {
 	}
 }
 
-func TestNativeInstallationDeadlineStopsOwnerBeforePairExpiry(t *testing.T) {
+func TestConnectorInstallationDeadlineStopsOwnerBeforePairExpiry(t *testing.T) {
 	f := newConnectorFixture(t, "quic")
 	setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
 	defer stop()
-	p, err := prepareNativeConnection(t.Context(), setup, f.config, f.device)
+	p, err := prepareConnectorConnection(t.Context(), setup, f.config, f.device)
 	if err != nil {
 		t.Fatal(err)
 	}

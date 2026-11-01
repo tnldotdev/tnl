@@ -44,13 +44,13 @@ type ServiceSelection struct {
 	ServiceID, ServiceRunID, IdentityID, DeviceID string
 	RunNumber                                     int64
 	ExpiresAt                                     time.Time
-	PairReady                                     *NativePeerPairReady
+	PairReady                                     *ConnectorPeerPairReady
 }
 
-// NativePeerPairReady is a credential-free signing hint, never delivery authority.
-type NativePeerPairReady struct {
+// ConnectorPeerPairReady is a credential-free signing hint, never delivery authority.
+type ConnectorPeerPairReady struct {
 	PublisherIdentityID string
-	Relays              [2]NativePeerPairRelay
+	Relays              [2]ConnectorPeerPairRelay
 }
 
 // access is evaluated inside the team/service admission lock. the deadline
@@ -118,7 +118,7 @@ func (d *Database) SelectVisitorServiceRun(ctx context.Context, serviceID string
 	if err != nil {
 		return result, err
 	}
-	result.PairReady, err = nativePairReadySelection(ctx, tx, result.ServiceRunID, serviceID, result.RunNumber, now)
+	result.PairReady, err = connectorPairReadySelection(ctx, tx, result.ServiceRunID, serviceID, result.RunNumber, now)
 	if err != nil {
 		return result, err
 	}

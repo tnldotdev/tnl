@@ -26,12 +26,12 @@ func TestNetworkPolicyDenialAuditedAtIngress(t *testing.T) {
 	}
 }
 
-func TestDirectVisitorAuditCorrelatesAdmissionAndRevocationClose(t *testing.T) {
-	connector, control, forwarder, _ := directTestSetup(t)
+func TestPublicServiceVisitorAuditCorrelatesAdmissionAndRevocationClose(t *testing.T) {
+	connector, control, forwarder, _ := publicServiceTestSetup(t)
 	events := make(chan serviceaudit.Observation, 2)
 	connector.config.AuditSink = auditSinkFunc(func(o serviceaudit.Observation) bool { events <- o; return true })
 	connector.config.RecheckInterval = 20 * time.Millisecond
-	stream, stop := directActiveStream(t, connector, forwarder)
+	stream, stop := publicServiceActiveStream(t, connector, forwarder)
 	defer stop()
 	var opened serviceaudit.Observation
 	select {

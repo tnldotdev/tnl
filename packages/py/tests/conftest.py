@@ -27,7 +27,7 @@ def isolated_provider_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--tnl-binary", help="built native tnl for connection contract checks")
-    parser.addoption("--tnl-connection-owner", help="built native connection owner test fixture")
+    parser.addoption("--tnl-connection-owner", help="built connector owner test fixture")
     parser.addoption("--tnl-app-owner", help="built native configured-app test fixture")
 
 

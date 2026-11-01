@@ -1,8 +1,0 @@
-{
-  "type": "native_leg_activate",
-  "protocol_version": 1,
-  "request_id": "activate_1",
-  "role": "native_connector",
-  "native_leg_binding": { "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" },
-  "native_pair_leg_proof": null
-}

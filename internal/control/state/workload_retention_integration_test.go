@@ -64,7 +64,7 @@ func drainWorkloadHistory(t *testing.T, d *Database, now time.Time, limit int) i
 func workloadHistoryCounts(t *testing.T, d *Database) map[string]int64 {
 	t.Helper()
 	counts := map[string]int64{}
-	for _, table := range []string{"workload_sessions", "workload_session_services", "workload_assertions", "workload_client_certificates", "workload_audit", "direct_service_visitors"} {
+	for _, table := range []string{"workload_sessions", "workload_session_services", "workload_assertions", "workload_client_certificates", "workload_audit", "public_service_visitors"} {
 		var count int64
 		if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.`+table).Scan(&count); err != nil {
 			t.Fatal(err)
@@ -240,17 +240,17 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 		if _, err := d.pool.Exec(ctx, `INSERT INTO control.workload_client_certificates VALUES($1,$2,$3,$1,'certificate',$4)`, cert[:], s.ID, service.ID, s.ExpiresAt); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := d.pool.Exec(ctx, `INSERT INTO control.direct_service_visitors(workload_session_id,visitor_connection_id,service_id,service_run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,source_ip,certificate_digest,valid_until,created_at) VALUES($1,$2,$3,$4,$5,'retention','old-run',1,12345,'192.0.2.1',$6,$7,$8)`, s.ID, visitor, service.ID, run.RunID, run.RunNumber, cert[:], s.LeaseExpiresAt, at); err != nil {
+		if _, err := d.pool.Exec(ctx, `INSERT INTO control.public_service_visitors(workload_session_id,visitor_connection_id,service_id,service_run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,source_ip,certificate_digest,valid_until,created_at) VALUES($1,$2,$3,$4,$5,'retention','old-run',1,12345,'192.0.2.1',$6,$7,$8)`, s.ID, visitor, service.ID, run.RunID, run.RunNumber, cert[:], s.LeaseExpiresAt, at); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// retained live decisions, certificate, and JTI each pin a different old
 	// subject. these defensive seeds also exercise stale dependent deadlines.
-	if _, err := d.pool.Exec(ctx, `UPDATE control.direct_service_visitors SET valid_until=$2 WHERE visitor_connection_id=$1`, visitors[0], now.Add(time.Minute)); err != nil {
+	if _, err := d.pool.Exec(ctx, `UPDATE control.public_service_visitors SET valid_until=$2 WHERE visitor_connection_id=$1`, visitors[0], now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	direct := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	if _, err := d.pool.Exec(ctx, `INSERT INTO control.direct_service_visitors(workload_session_id,visitor_connection_id,service_id,service_run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,source_ip,certificate_digest,valid_until,created_at) VALUES($1,$2,$3,$4,$5,'retention','old-run',1,12345,'192.0.2.1',$6,$7,$8)`, sessions[1].ID, direct, service.ID, run.RunID, run.RunNumber, certificates[1], now.Add(time.Minute), now.Add(-49*24*time.Hour)); err != nil {
+	if _, err := d.pool.Exec(ctx, `INSERT INTO control.public_service_visitors(workload_session_id,visitor_connection_id,service_id,service_run_id,run_number,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,source_ip,certificate_digest,valid_until,created_at) VALUES($1,$2,$3,$4,$5,'retention','old-run',1,12345,'192.0.2.1',$6,$7,$8)`, sessions[1].ID, direct, service.ID, run.RunID, run.RunNumber, certificates[1], now.Add(time.Minute), now.Add(-49*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.pool.Exec(ctx, `UPDATE control.workload_client_certificates SET expires_at=$2 WHERE workload_session_id=$1`, sessions[2].ID, now.Add(time.Hour)); err != nil {
@@ -294,7 +294,7 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 		t.Fatal("active subject snapshot changed", err)
 	}
 	var storedVisitor, storedCert, storedDirect bool
-	if err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.direct_service_visitors WHERE visitor_connection_id=$1),EXISTS(SELECT 1 FROM control.workload_client_certificates WHERE certificate_digest=$2),EXISTS(SELECT 1 FROM control.direct_service_visitors WHERE visitor_connection_id=$3)`, visitors[0], certificates[1], direct).Scan(&storedVisitor, &storedCert, &storedDirect); err != nil || !storedVisitor || !storedCert || !storedDirect {
+	if err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.public_service_visitors WHERE visitor_connection_id=$1),EXISTS(SELECT 1 FROM control.workload_client_certificates WHERE certificate_digest=$2),EXISTS(SELECT 1 FROM control.public_service_visitors WHERE visitor_connection_id=$3)`, visitors[0], certificates[1], direct).Scan(&storedVisitor, &storedCert, &storedDirect); err != nil || !storedVisitor || !storedCert || !storedDirect {
 		t.Fatal("live admission references were erased", err)
 	}
 	// the older run sweeper must neither erase these workload handles early nor

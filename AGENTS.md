@@ -181,6 +181,13 @@ not _inbox_, for the collection of threads.
 
 ## visitor connections
 
+Use **connector access** for service traffic through a local `tnl` connector and
+relays, without ingress. Use **public endpoint access** for service traffic sent
+to its public hostname and port through ingress and a relay. Public reachability
+does not remove the service's visitor access rules. Do not call these paths
+_native access_ or _direct access_; native binaries and protocol-native database
+TLS negotiation are separate concepts.
+
 | Term                      | Definition                                                                                                      |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | **visitor connection**    | One public TCP connection from a visitor to a public URL hostname.                                              |
@@ -350,7 +357,7 @@ implementation.
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cmd/{tnl,tnld,tnlbench}`                                           | Flags, process composition, and presentation; reusable operations live below commands                                                                               |
 | `internal/publisher`                                                | Publication runtime; children own app state, local process/API, invocation operations, identity, groups, targets, and browser assets                                |
-| `internal/connector`                                                | Visitor-side selection, native owner and connection operations; `stream`, `runtime`, `workload`, and `kubeconfig` own their narrower lifetimes                      |
+| `internal/connector`                                                | Visitor-side selection, connector owner and connection operations; `stream`, `runtime`, `workload`, and `kubeconfig` own their narrower lifetimes                   |
 | `internal/control`                                                  | Serving APIs, PostgreSQL state, authorization, certificates, DNS, OIDC, delivery, and maintenance                                                                   |
 | `internal/{ingress,relay,daemon}`                                   | Visitor acceptance, publisher streams, and server process composition, respectively                                                                                 |
 | `internal/client`                                                   | Shared auth/state/team selection, project evaluation/resolution/init/generation, and installed service jobs                                                         |
@@ -380,7 +387,7 @@ Use these practical boundaries when placing a change:
 | Change                                 | Owner and boundary                                                                                                                                                                               |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Replace an app registration            | `internal/publisher/app` cancels and joins the old publication before replacement; `publisher/local` composes the process and API                                                                |
-| Renew a native connection owner        | `internal/connector/runtime` owns the renewal loop and fixed-expiry fence; connector operations provide the backend and join its work                                                            |
+| Renew a connector owner                | `internal/connector/runtime` owns the renewal loop and fixed-expiry fence; connector operations provide the backend and join its work                                                            |
 | Authorize certificate issuance         | `internal/control/state` checks the current run, publisher grant, and certificate plan; certificate workers execute approved work                                                                |
 | Retry a visitor connection             | `internal/ingress` chooses another eligible relay only before sending the first visitor byte                                                                                                     |
 | Claim a publisher connection           | `internal/relay` owns local reservation, current lease/claim validation, connected-session lifetime, and release; control state authorizes the durable claim                                     |

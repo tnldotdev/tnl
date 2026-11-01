@@ -61,7 +61,7 @@ func TestManagedAuthorizationTimingDistinguishesDenialAndInfrastructure(t *testi
 					for _, label := range point.Label {
 						labels[label.GetName()] = label.GetValue()
 					}
-					if labels["tnl_operation"] == "visitor_authorization" && labels["tnl_outcome"] == outcome && labels["tnl_exposure"] == "public" && labels["tnl_access_path"] == "direct" && labels["tnl_service_protocol"] == "tcp" {
+					if labels["tnl_operation"] == "visitor_authorization" && labels["tnl_outcome"] == outcome && labels["tnl_exposure"] == "public" && labels["tnl_access_path"] == "public_endpoint" && labels["tnl_service_protocol"] == "tcp" {
 						measured += point.GetHistogram().GetSampleCount()
 					}
 				}

@@ -37,7 +37,7 @@ schemas:
       occurred_at: { type: string, format: date-time }
       run_id: { type: string }
       run_number: { type: integer, format: int64, minimum: 0 }
-      pair_id: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
+      pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
       visitor_connection_id: { type: string }
       source_ip: { type: string }
       outcome:

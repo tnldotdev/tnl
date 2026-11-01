@@ -200,8 +200,8 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 	ingress, relayIngress := privateRelayPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Ingress, Credential: strings.Repeat("s", 32)})
 	header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
 		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
-		Direct:   &tunnelv1.DirectAdmission{IngressID: "ingress-a", IngressRunID: privateRelayID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 7, DestinationPort: 25443},
-		SourceIP: "192.0.2.4", VisitorConnectionID: privateRelayID(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().Add(time.Minute)},
+		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: privateRelayID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 7, DestinationPort: 25443},
+		SourceIP:      "192.0.2.4", VisitorConnectionID: privateRelayID(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().Add(time.Minute)},
 		ConnectionSlot: 0, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -217,7 +217,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		if err != nil {
 			return err
 		}
-		if *incoming.Header.Direct != *header.Direct || incoming.Header.VisitorConnectionID != header.VisitorConnectionID {
+		if *incoming.Header.PublicService != *header.PublicService || incoming.Header.VisitorConnectionID != header.VisitorConnectionID {
 			return errors.New("relay rewrote authorized private identity")
 		}
 		if err := incoming.Accept(); err != nil {

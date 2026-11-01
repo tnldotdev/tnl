@@ -14,22 +14,22 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-type NativePeerControl interface {
+type ConnectorPeerControl interface {
 	peerDeliveryControl
-	ListNativePeerPairs(context.Context, string, string, string, credentials.ServiceRunToken) (controlv1.NativePeerPairCandidates, error)
-	ConfirmNativePeerPairPrepared(context.Context, string, string, string, controlv1.NativePeerPairPrepared, credentials.ServiceRunToken) error
+	ListConnectorPeerPairs(context.Context, string, string, string, credentials.ServiceRunToken) (controlv1.ConnectorPeerPairCandidates, error)
+	ConfirmConnectorPeerPairPrepared(context.Context, string, string, string, controlv1.ConnectorPeerPairPrepared, credentials.ServiceRunToken) error
 }
 
-// ServeNativePeers discovers and installs exact pairs before application arrival.
+// ServeConnectorPeers discovers and installs exact pairs before application arrival.
 // the bounded workers do not own serving authority: each retained peer keeps its
 // deadline, replay history and streams while a control request is outstanding.
-func (b *Bound) ServeNativePeers(ctx context.Context, control NativePeerControl, token credentials.ServiceRunToken) error {
+func (b *Bound) ServeConnectorPeers(ctx context.Context, control ConnectorPeerControl, token credentials.ServiceRunToken) error {
 	if b == nil || control == nil || token == "" {
 		return ErrPrivateStream
 	}
 	life, cancel := context.WithCancel(ctx)
-	jobs := make(chan controlv1.NativePeerPairCandidate, maxNativePeerOwners)
-	finished := make(chan string, maxNativePeerOwners)
+	jobs := make(chan controlv1.ConnectorPeerPairCandidate, maxConnectorPeerOwners)
+	finished := make(chan string, maxConnectorPeerOwners)
 	var workers, serving sync.WaitGroup
 	for range 4 {
 		workers.Go(func() {
@@ -38,7 +38,7 @@ func (b *Bound) ServeNativePeers(ctx context.Context, control NativePeerControl,
 				case <-life.Done():
 					return
 				case candidate := <-jobs:
-					b.prepareNativePeer(life, control, token, candidate, &serving)
+					b.prepareConnectorPeer(life, control, token, candidate, &serving)
 					select {
 					case finished <- candidate.PairId:
 					case <-life.Done():
@@ -61,7 +61,7 @@ func (b *Bound) ServeNativePeers(ctx context.Context, control NativePeerControl,
 			delete(pending, id)
 		case <-timer.C:
 			call, stop := context.WithTimeout(life, 2*time.Second)
-			page, err := control.ListNativePeerPairs(call, b.prepared.Preparation.ServiceId, b.prepared.Preparation.ServiceRunId, after, token)
+			page, err := control.ListConnectorPeerPairs(call, b.prepared.Preparation.ServiceId, b.prepared.Preparation.ServiceRunId, after, token)
 			if err == nil {
 				err = context.Cause(call)
 			}
@@ -77,10 +77,10 @@ func (b *Bound) ServeNativePeers(ctx context.Context, control NativePeerControl,
 				continue
 			}
 			if !validPeerCandidates(page, after) {
-				return failure.Wrap("reconcile native peer pairs", failure.ServerResponseInvalid, ErrPrivateStream)
+				return failure.Wrap("reconcile connector peer pairs", failure.ServerResponseInvalid, ErrPrivateStream)
 			}
 			for _, candidate := range page.Items {
-				if !pending[candidate.PairId] && len(pending) < maxNativePeerOwners && b.peerNeedsPreparation(candidate) {
+				if !pending[candidate.PairId] && len(pending) < maxConnectorPeerOwners && b.peerNeedsPreparation(candidate) {
 					pending[candidate.PairId] = true
 					jobs <- candidate
 				}
@@ -94,26 +94,26 @@ func (b *Bound) ServeNativePeers(ctx context.Context, control NativePeerControl,
 	}
 }
 
-func validPeerCandidates(page controlv1.NativePeerPairCandidates, after string) bool {
-	if page.Items == nil || len(page.Items) > maxNativePeerOwners {
+func validPeerCandidates(page controlv1.ConnectorPeerPairCandidates, after string) bool {
+	if page.Items == nil || len(page.Items) > maxConnectorPeerOwners {
 		return false
 	}
 	for _, item := range page.Items {
-		if !opaqueid.Valid(item.PairId, "npp_") || item.PairId <= after || item.DeliveryGeneration < 1 {
+		if !opaqueid.Valid(item.PairId, "cpp_") || item.PairId <= after || item.DeliveryGeneration < 1 {
 			return false
 		}
 		after = item.PairId
 	}
-	return page.NextAfter == nil || len(page.Items) == maxNativePeerOwners && *page.NextAfter == after
+	return page.NextAfter == nil || len(page.Items) == maxConnectorPeerOwners && *page.NextAfter == after
 }
 
-func (b *Bound) peerNeedsPreparation(candidate controlv1.NativePeerPairCandidate) bool {
+func (b *Bound) peerNeedsPreparation(candidate controlv1.ConnectorPeerPairCandidate) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
 		return false
 	}
-	if p := b.nativePeers[candidate.PairId]; p != nil {
+	if p := b.connectorPeers[candidate.PairId]; p != nil {
 		return p.currentLocked() && p.binding.generation == candidate.DeliveryGeneration && (!p.prepared || !b.peerRelaysCurrentLocked(p.binding) || time.Until(p.binding.until) < 15*time.Second)
 	}
 	for _, slot := range b.packetSlots {
@@ -129,7 +129,7 @@ func (b *Bound) peerNeedsPreparation(candidate controlv1.NativePeerPairCandidate
 	return true
 }
 
-func (b *Bound) prepareNativePeer(ctx context.Context, control NativePeerControl, token credentials.ServiceRunToken, candidate controlv1.NativePeerPairCandidate, serving *sync.WaitGroup) {
+func (b *Bound) prepareConnectorPeer(ctx context.Context, control ConnectorPeerControl, token credentials.ServiceRunToken, candidate controlv1.ConnectorPeerPairCandidate, serving *sync.WaitGroup) {
 	call, stop := context.WithTimeout(ctx, 2*time.Second)
 	binding, err := PreparePeerBinding(call, control, b.prepared.Preparation.ServiceId, b.prepared.Preparation.ServiceRunId, candidate.PairId, candidate.DeliveryGeneration, token)
 	stop()
@@ -140,7 +140,7 @@ func (b *Bound) prepareNativePeer(ctx context.Context, control NativePeerControl
 	installation := ErrPrivateStream
 	defer func() { finish(installation) }()
 	b.mu.Lock()
-	p := b.nativePeers[candidate.PairId]
+	p := b.connectorPeers[candidate.PairId]
 	b.mu.Unlock()
 	if p == nil {
 		p, err = b.BindPeer(ctx, binding)
@@ -171,11 +171,11 @@ func (b *Bound) prepareNativePeer(ctx context.Context, control NativePeerControl
 	// a newly created workload may precede the next background policy snapshot.
 	// installation cannot advertise readiness until that local snapshot includes
 	// its current parent lease. arrivals neither fetch policy nor retry admission.
-	if !b.nativePeerPolicyCurrent(binding) {
+	if !b.connectorPeerPolicyCurrent(binding) {
 		return
 	}
 	installation = nil
-	err = control.ConfirmNativePeerPairPrepared(confirm, binding.serviceID, binding.runID, binding.pairID, controlv1.NativePeerPairPrepared{
+	err = control.ConfirmConnectorPeerPairPrepared(confirm, binding.serviceID, binding.runID, binding.pairID, controlv1.ConnectorPeerPairPrepared{
 		DeliveryId: base64.RawURLEncoding.EncodeToString(binding.delivery[:]), DeliveryGeneration: binding.generation, BindingExpiresAt: binding.authorityUntil,
 	}, token)
 	if err != nil || confirm.Err() != nil {
@@ -188,7 +188,7 @@ func (b *Bound) prepareNativePeer(ctx context.Context, control NativePeerControl
 	b.mu.Unlock()
 }
 
-func (b *Bound) nativePeerPolicyCurrent(binding PeerBinding) bool {
+func (b *Bound) connectorPeerPolicyCurrent(binding PeerBinding) bool {
 	view, enabled, _ := b.prepared.policy.Current()
 	if !enabled || view.MetadataRevision != b.prepared.metadataRevision {
 		return false

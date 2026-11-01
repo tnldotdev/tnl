@@ -20,7 +20,7 @@ func TestPeerDeliveryIdentifier(t *testing.T) {
 		t.Fatal("delivery header lost identifier", err)
 	}
 	for _, invalid := range []string{
-		"", "npp_0123456789ABCDEFGHIJKL", encoded + "=", encoded[:21], encoded + "A",
+		"", "cpp_0123456789ABCDEFGHIJKL", encoded + "=", encoded[:21], encoded + "A",
 		base64.StdEncoding.EncodeToString(id[:]), base64.RawURLEncoding.EncodeToString(make([]byte, 16)),
 		encoded[:21] + "B", // nonzero unused pad bits in the final character
 		"!!!!!!!!!!!!!!!!!!!!!!",

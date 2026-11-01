@@ -21,7 +21,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func connectionBackendFixture(t *testing.T, handle func(http.ResponseWriter, *http.Request, authorityv1.WorkloadSession)) *nativeConnectionBackend {
+func connectionBackendFixture(t *testing.T, handle func(http.ResponseWriter, *http.Request, authorityv1.WorkloadSession)) *connectorConnectionBackend {
 	t.Helper()
 	id := "wls_" + strings.Repeat("s", 22)
 	team := "tm_" + strings.Repeat("t", 22)
@@ -45,7 +45,7 @@ func connectionBackendFixture(t *testing.T, handle func(http.ResponseWriter, *ht
 	if _, err := client.Exchange(t.Context(), team, "project", strings.Repeat("a", 64), "worker", "assertion", []string{"api", "db"}); err != nil {
 		t.Fatal(err)
 	}
-	b := &nativeConnectionBackend{scope: connectorruntime.Context{Services: []string{"api", "db"}}, nativeConnectionSession: nativeConnectionSession{workload: client, deadline: session.ExpiresAt}, prepared: map[string]*preparedConnection{}, services: map[string]controlv1.Service{}, metadata: meta.PublicMetadata{Services: map[string]meta.Service{}}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}}}}}
+	b := &connectorConnectionBackend{scope: connectorruntime.Context{Services: []string{"api", "db"}}, connectorConnectionSession: connectorConnectionSession{workload: client, deadline: session.ExpiresAt}, prepared: map[string]*preparedConnection{}, services: map[string]controlv1.Service{}, metadata: meta.PublicMetadata{Services: map[string]meta.Service{}}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}}}}}
 	for i, name := range []string{"api", "db"} {
 		protocol := []controlv1.ServiceProtocol{"http", "postgres"}[i]
 		b.services[name] = controlv1.Service{Id: ids[i], Protocol: protocol, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: name + ".example.test", Port: 15443 + i}}
@@ -137,7 +137,7 @@ func TestConnectionCleanupRevokesSessionWhileFailedRequestsUseOneBudget(t *testi
 	for range 3 {
 		b.workers.Go(func() {
 			<-b.lifetime.Done()
-			// native owners have no ingress handles to release. an in-flight
+			// connector owners have no ingress handles to release. an in-flight
 			// workload operation and its retry still share the cleanup budget.
 			for range 2 {
 				_, err := b.workload.CheckService(b.cleanup(), b.services["api"].Id)
@@ -173,7 +173,7 @@ func TestConnectionCleanupRevokesSessionWhileFailedRequestsUseOneBudget(t *testi
 }
 
 func TestConnectionCloseHonorsCallerBudget(t *testing.T) {
-	b := &nativeConnectionBackend{}
+	b := &connectorConnectionBackend{}
 	blocked := make(chan struct{})
 	b.workers.Go(func() { <-blocked })
 	ctx, cancel := context.WithCancel(t.Context())

@@ -7,7 +7,7 @@ import (
 
 // NativeAdmissionFixture supplies only the consumer's local decision in protocol
 // and target tests. it does not construct a production admission or prove a pair.
-// service's real native owner tests cover signed entry, capacity and joined life.
+// service's real connector owner tests cover signed entry, capacity and joined life.
 type NativeAdmissionFixture struct {
 	Check func(context.Context) (ServiceVisitorDecision, error)
 }

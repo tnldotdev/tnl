@@ -271,7 +271,7 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 }
 
 func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
-	d, now, _, leases := newNativePairPrerequisites(t)
+	d, now, _, leases := newConnectorPairPrerequisites(t)
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
@@ -323,34 +323,34 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	}
 	source := netip.MustParseAddr("192.0.2.44")
 	lease := ingresses[0]
-	request := NativePeerPairRequest{ServiceID: service.ID, ServiceRunID: run.RunID, RunNumber: run.RunNumber, PublisherIdentityID: access.PublisherIdentity.ID, Subject: session.Subject, Source: WorkloadTokenSource{Credential: session.Credential}, IdempotencyKey: "connect", Action: "create", RequestedAt: now, ExpectedRelays: testNativePairRelays(run, leases)}
+	request := ConnectorPeerPairRequest{ServiceID: service.ID, ServiceRunID: run.RunID, RunNumber: run.RunNumber, PublisherIdentityID: access.PublisherIdentity.ID, Subject: session.Subject, Source: WorkloadTokenSource{Credential: session.Credential}, IdempotencyKey: "connect", Action: "create", RequestedAt: now, ExpectedRelays: testConnectorPairRelays(run, leases)}
 	message, err := request.proof().Message()
 	if err != nil {
 		t.Fatal(err)
 	}
 	request.Signature = ed25519.Sign(key, message)
-	pair, err := d.PrepareNativePeerPair(ctx, request, now)
+	pair, err := d.PrepareConnectorPeerPair(ctx, request, now)
 	if err != nil || pair.Subject != session.Subject || pair.Subject.IdentityID != "" || pair.Subject.DeviceID != "" || !pair.ExpiresAt.Equal(session.ExpiresAt) {
 		t.Fatal("native workload subject/fixed expiry changed", err)
 	}
-	retry, err := d.PrepareNativePeerPair(ctx, request, now)
+	retry, err := d.PrepareConnectorPeerPair(ctx, request, now)
 	if err != nil || retry.ID != pair.ID || retry.Key != pair.Key || retry.DeliveryID != pair.DeliveryID || retry.DeliveryGeneration != pair.DeliveryGeneration || !retry.ExpiresAt.Equal(pair.ExpiresAt) {
 		t.Fatal("native lost-reply instability", err)
 	}
 	for slot, relay := range pair.Relays {
-		if _, err := testClaimNativePeerPairLeg(t, d, ctx, relay.RelayLease, source, testNativeLegProof(t, pair, slot, now, key), now); err != nil {
+		if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, relay.RelayLease, source, testConnectorLegProof(t, pair, slot, now, key), now); err != nil {
 			t.Fatal(err)
 		}
 	}
 	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	delivered, err := d.DeliverNativePeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, now.Add(time.Second))
+	delivered, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, now.Add(time.Second))
 	if err != nil || !delivered.ExpiresAt.Equal(session.ExpiresAt) {
 		t.Fatal("native workload recheck deadline", err)
 	}
-	if _, err := d.DeliverNativePeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, session.Credential, now); !errors.Is(err, ErrServiceAccess) {
+	if _, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, session.Credential, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("workload credential authenticated as publisher run", err)
 	}
-	if err := d.ConfirmNativePeerPairPrepared(ctx, service.ID, run.RunID, pair.ID, run.Token, NativePeerPairPrepared{DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: delivered.ExpiresAt}, now); err != nil {
+	if err := d.ConfirmConnectorPeerPairPrepared(ctx, service.ID, run.RunID, pair.ID, run.Token, ConnectorPeerPairPrepared{DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: delivered.ExpiresAt}, now); err != nil {
 		t.Fatal(err)
 	}
 	csr, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
@@ -371,18 +371,18 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		t.Fatal("certificate used a human subject", subject, err)
 	}
 	direct := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	if _, err = d.AdmitDirectServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, direct, port, source, now); err != nil {
+	if _, err = d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, direct, port, source, now); err != nil {
 		t.Fatal(err)
 	}
 	decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, now)
 	if err != nil || !decision.Allowed || decision.Admitted || !decision.ValidUntil.Equal(session.ExpiresAt) {
 		t.Fatal("public workload certificate authorization", decision, err)
 	}
-	if err = d.PromoteDirectServiceVisitor(ctx, lease.IngressLeaseIdentity, direct, now); err != nil {
+	if err = d.PromotePublicServiceVisitor(ctx, lease.IngressLeaseIdentity, direct, now); err != nil {
 		t.Fatal(err)
 	}
-	status, err := d.DirectServiceVisitorStatus(ctx, lease.IngressLeaseIdentity, direct, now.Add(time.Second))
-	if err != nil || status.State != DirectVisitorAllowed {
+	status, err := d.PublicServiceVisitorStatus(ctx, lease.IngressLeaseIdentity, direct, now.Add(time.Second))
+	if err != nil || status.State != PublicServiceVisitorAllowed {
 		t.Fatal("public active recheck", status, err)
 	}
 	for _, connector := range []bool{false, true} {
@@ -398,7 +398,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 			t.Fatal("audit scanned workload as a human", err)
 		}
 	}
-	if _, err := d.DeliverNativePeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, session.ExpiresAt); err == nil {
+	if _, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, session.ExpiresAt); err == nil {
 		t.Fatal("native authority outlived job")
 	}
 	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, session.ExpiresAt); !errors.Is(err, ErrServiceAccess) {
@@ -410,7 +410,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if _, err = d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.DeliverNativePeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, now.Add(2*time.Second)); err == nil {
+	if _, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, now.Add(2*time.Second)); err == nil {
 		t.Fatal("native authority survived policy removal")
 	}
 	if decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, now.Add(2*time.Second)); !errors.Is(err, ErrServiceAccess) || decision.Allowed {
@@ -482,7 +482,7 @@ func TestIntegrationWorkloadApplyRaceAndExplicitScope(t *testing.T) {
 		t.Fatal("apply failed to fence concurrent starts", active, err)
 	}
 	var people, devices int
-	if err = d.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.identities WHERE id IN(SELECT subject_id FROM control.native_peer_pairs WHERE subject_kind='workload_session')),(SELECT count(*) FROM control.visitor_devices WHERE id IN(SELECT subject_id FROM control.native_peer_pairs WHERE subject_kind='workload_session'))`).Scan(&people, &devices); err != nil || people != 0 || devices != 0 {
+	if err = d.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM control.identities WHERE id IN(SELECT subject_id FROM control.connector_peer_pairs WHERE subject_kind='workload_session')),(SELECT count(*) FROM control.visitor_devices WHERE id IN(SELECT subject_id FROM control.connector_peer_pairs WHERE subject_kind='workload_session'))`).Scan(&people, &devices); err != nil || people != 0 || devices != 0 {
 		t.Fatal("workload created a person or enrolled device", people, devices, err)
 	}
 }

@@ -135,7 +135,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 			}
 			verification.Certificates = append(verification.Certificates, certificate)
 		}
-		tr := &http.Transport{TLSClientConfig: verification, DialContext: workloadDirectDialer(t, process.ingresses[0].direct, endpoints[name].Port)}
+		tr := &http.Transport{TLSClientConfig: verification, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].publicServices, endpoints[name].Port)}
 		t.Cleanup(tr.CloseIdleConnections)
 		return &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}

@@ -1,4 +1,4 @@
-// package workloadclient is the native visitor authentication adapter for a
+// package workloadclient is the connector visitor authentication adapter for a
 // provider workload. the caller owns its in-memory lifetime and renewal loop.
 package workload
 
@@ -60,7 +60,7 @@ func New(server string, httpClient *http.Client) (*Client, error) {
 	return NewWithKey(server, httpClient, key)
 }
 
-// NewWithKey lets a native connection owner retain its own ephemeral key for
+// NewWithKey lets a connector owner retain its own ephemeral key for
 // protected SDK snapshots. the client copies the key and never exports it.
 func NewWithKey(server string, httpClient *http.Client, key ed25519.PrivateKey) (*Client, error) {
 	if len(key) != ed25519.PrivateKeySize || !ed25519.NewKeyFromSeed(key.Seed()).Equal(key) {

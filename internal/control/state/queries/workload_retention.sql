@@ -1,9 +1,9 @@
 -- each phase has its own budget so a busy leaf cannot starve its parents.
 -- select only unreferenced candidates before LIMIT; never cascade subject state.
 
--- name: CleanupWorkloadDirectVisitors :execrows
-DELETE FROM control.direct_service_visitors WHERE visitor_connection_id IN (
-    SELECT visitor.visitor_connection_id FROM control.direct_service_visitors visitor
+-- name: CleanupWorkloadPublicServiceVisitors :execrows
+DELETE FROM control.public_service_visitors WHERE visitor_connection_id IN (
+    SELECT visitor.visitor_connection_id FROM control.public_service_visitors visitor
     WHERE visitor.workload_session_id IS NOT NULL
       AND (visitor.valid_until < sqlc.arg(before_time) OR visitor.closed_at < sqlc.arg(before_time))
     ORDER BY visitor.valid_until, visitor.visitor_connection_id LIMIT sqlc.arg(batch_size)
@@ -14,7 +14,7 @@ DELETE FROM control.direct_service_visitors WHERE visitor_connection_id IN (
 DELETE FROM control.workload_client_certificates WHERE certificate_digest IN (
     SELECT cert.certificate_digest FROM control.workload_client_certificates cert
     WHERE cert.expires_at < sqlc.arg(before_time)
-      AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors visitor WHERE visitor.certificate_digest = cert.certificate_digest)
+      AND NOT EXISTS (SELECT 1 FROM control.public_service_visitors visitor WHERE visitor.certificate_digest = cert.certificate_digest)
     ORDER BY cert.expires_at, cert.certificate_digest LIMIT sqlc.arg(batch_size)
     FOR UPDATE SKIP LOCKED
 );
@@ -44,7 +44,7 @@ DELETE FROM control.workload_session_services WHERE (workload_session_id, servic
       AND NOT EXISTS (SELECT 1 FROM control.workload_assertions child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.public_service_visitors child WHERE child.workload_session_id = session.id)
     ORDER BY session.expires_at, rights.workload_session_id, rights.service_id LIMIT sqlc.arg(batch_size)
     FOR UPDATE OF rights SKIP LOCKED
 );
@@ -59,7 +59,7 @@ DELETE FROM control.workload_sessions WHERE id IN (
       AND NOT EXISTS (SELECT 1 FROM control.workload_assertions child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.public_service_visitors child WHERE child.workload_session_id = session.id)
     ORDER BY session.expires_at, session.id LIMIT sqlc.arg(batch_size)
     FOR UPDATE SKIP LOCKED
 );

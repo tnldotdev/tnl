@@ -10,7 +10,7 @@ import (
 )
 
 func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
-	f := newNativePairFixture(t)
+	f := newConnectorPairFixture(t)
 	d, now, ctx := f.d, f.now, f.visitor
 	var issuance string
 	if err := d.pool.QueryRow(ctx, `SELECT certificate_issuance_id FROM control.service_runs WHERE id=$1`, f.run.RunID).Scan(&issuance); err != nil {
@@ -26,16 +26,16 @@ func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
 	}
 	pair := f.create(t)
 	if pair.ExpiresAt.After(expires) {
-		t.Fatal("native preparation outlived service certificate")
+		t.Fatal("connector preparation outlived service certificate")
 	}
 	for slot := range pair.Relays {
 		f.claim(t, pair, slot, now)
 	}
-	delivery, err := d.DeliverNativePeerPair(ctx, pair.ServiceID, pair.ServiceRunID, pair.ID, pair.DeliveryGeneration, f.run.Token, now)
+	delivery, err := d.DeliverConnectorPeerPair(ctx, pair.ServiceID, pair.ServiceRunID, pair.ID, pair.DeliveryGeneration, f.run.Token, now)
 	if err != nil || delivery.ExpiresAt.After(expires) {
 		t.Fatal("installed native authority outlived service certificate", err)
 	}
-	// direct admission has the same certificate boundary, without a native session.
+	// direct admission has the same certificate boundary, without a connector session.
 	var port int
 	if err := d.pool.QueryRow(ctx, `UPDATE control.services SET public=true WHERE id=$1 RETURNING service_port`, pair.ServiceID).Scan(&port); err != nil {
 		t.Fatal(err)
@@ -45,8 +45,8 @@ func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-	admit := func() (DirectVisitorAdmission, error) {
-		return d.AdmitDirectServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, port, netip.MustParseAddr("192.0.2.4"), now)
+	admit := func() (PublicServiceVisitorAdmission, error) {
+		return d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, port, netip.MustParseAddr("192.0.2.4"), now)
 	}
 	initial, err := admit()
 	if err != nil || initial.ExpiresAt.After(expires) {
@@ -59,10 +59,10 @@ func TestIntegrationPrivateVisitorCertificateDeadline(t *testing.T) {
 		if _, err := d.SelectServiceRun(ctx, pair.ServiceID, pair.Subject.IdentityID, pair.Subject.DeviceID, now); !errors.Is(err, ErrServiceAccess) {
 			t.Fatal("missing/expired certificate selected a native run", err)
 		}
-		if _, err := d.PrepareNativePeerPair(ctx, f.request, now); !errors.Is(err, ErrServiceAccess) {
+		if _, err := d.PrepareConnectorPeerPair(ctx, f.request, now); !errors.Is(err, ErrServiceAccess) {
 			t.Fatal("missing/expired certificate recovered native authority", err)
 		}
-		if _, err := d.DeliverNativePeerPair(ctx, pair.ServiceID, pair.ServiceRunID, pair.ID, pair.DeliveryGeneration, f.run.Token, now); !errors.Is(err, ErrServiceAccess) {
+		if _, err := d.DeliverConnectorPeerPair(ctx, pair.ServiceID, pair.ServiceRunID, pair.ID, pair.DeliveryGeneration, f.run.Token, now); !errors.Is(err, ErrServiceAccess) {
 			t.Fatal("native recheck ignored missing/expired certificate", err)
 		}
 		if _, err := admit(); !errors.Is(err, ErrServiceAccess) {

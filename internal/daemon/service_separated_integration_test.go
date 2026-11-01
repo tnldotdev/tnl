@@ -69,12 +69,12 @@ func startSeparatedPrivateIngress(t *testing.T, f *privateSeparatedFixture, inde
 	id := fmt.Sprintf("private-ingress-%d", index)
 	if err := d.startIngressRuntime(ctx, ingressSettingsFrom(f.controlConfig), metrics, ingressRuntimeConfig{
 		client: client, ingressID: id, listener: listener, clusterSecret: serviceRuntimeClusterSecret,
-		configureDirect: func(config *ingress.DirectServicesConfig) {
+		configurePublicServices: func(config *ingress.PublicServicesConfig) {
 			if !f.defaultTiming {
 				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
 			}
-			if f.configureDirect != nil {
-				f.configureDirect(config)
+			if f.configurePublicServices != nil {
+				f.configurePublicServices(config)
 			}
 			config.Forwarder = observingServiceForwarder{ServiceForwarder: config.Forwarder, id: id, opened: opened}
 		},
@@ -189,7 +189,7 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 			} else {
 				quic = privateDisabledConnector()
 			}
-			listener := startNativeRuntimeConnector(t, f, service, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp}, revokedNativeOwnerStop)
+			listener := startRuntimeConnector(t, f, service, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp}, revokedConnectorOwnerStop)
 			connection, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
 			if err != nil {
 				t.Fatal(err)
@@ -204,10 +204,10 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 				t.Fatal("native application bytes changed", err)
 			}
 			var pairCount, claimCount int
-			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.native_peer_pairs WHERE service_id=$1 AND publisher_prepared_until>now()`, service.Id).Scan(&pairCount); err != nil || pairCount != 1 {
+			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.connector_peer_pairs WHERE service_id=$1 AND publisher_prepared_until>now()`, service.Id).Scan(&pairCount); err != nil || pairCount != 1 {
 				t.Fatal("native installation missing", pairCount, err)
 			}
-			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.native_peer_pair_leg_claims claim JOIN control.native_peer_pairs pair ON pair.id=claim.pair_id WHERE pair.service_id=$1 AND claim.confirmed_until>now()`, service.Id).Scan(&claimCount); err != nil || claimCount != 2 {
+			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.connector_peer_pair_leg_claims claim JOIN control.connector_peer_pairs pair ON pair.id=claim.pair_id WHERE pair.service_id=$1 AND claim.confirmed_until>now()`, service.Id).Scan(&claimCount); err != nil || claimCount != 2 {
 				t.Fatal("native readiness omitted exact relay claims", claimCount, err)
 			}
 			target.mu.Lock()
@@ -218,7 +218,7 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 			}
 			after, err := control.ResolveService(t.Context(), service.Id)
 			if err != nil || after.ServiceRunID != selected.ServiceRunID || after.RunNumber != selected.RunNumber || after.Endpoint == nil || selected.Endpoint == nil || *after.Endpoint != *selected.Endpoint {
-				t.Fatal("native preparation changed the saved endpoint or publisher run", err)
+				t.Fatal("connector preparation changed the saved endpoint or publisher run", err)
 			}
 			if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 				t.Fatal(err)
@@ -227,14 +227,14 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 			if _, err := connection.Read(make([]byte, 1)); err == nil {
 				t.Fatal("revocation kept the native TCP stream open")
 			} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
-				t.Fatal("revocation did not close the admitted native stream", err)
+				t.Fatal("revocation did not close the admitted connector stream", err)
 			}
 			if _, err := control.ResolveService(t.Context(), service.Id); err == nil {
 				t.Fatal("revoked device selected another publisher run")
 			}
 			var publicURLs int
 			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.public_urls`).Scan(&publicURLs); err != nil || publicURLs != 0 {
-				t.Fatal("native connector created public URL state", publicURLs, err)
+				t.Fatal("connector created public URL state", publicURLs, err)
 			}
 		})
 	}

@@ -1,5 +1,5 @@
 schemas:
-  NativePeerRelayLease:
+  ConnectorPeerRelayLease:
     type: object
     additionalProperties: false
     required: [relay_service_id, relay_id, relay_run_id, relay_lease_revision]
@@ -8,7 +8,7 @@ schemas:
       relay_id: { type: string, minLength: 1 }
       relay_run_id: { type: string, minLength: 1 }
       relay_lease_revision: { type: integer, format: int64, minimum: 1 }
-  NativePeerPairRelay:
+  ConnectorPeerPairRelay:
     type: object
     additionalProperties: false
     required:
@@ -16,10 +16,10 @@ schemas:
     properties:
       publisher_connection_id: { type: string, minLength: 1 }
       assignment_revision: { type: integer, format: int64, minimum: 1 }
-      relay_lease: { $ref: "../openapi.yaml#/components/schemas/NativePeerRelayLease" }
+      relay_lease: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerRelayLease" }
       relay_address: { type: string, minLength: 1 }
       tls_server_name: { type: string, minLength: 1 }
-  NativePeerPairReady:
+  ConnectorPeerPairReady:
     type: object
     additionalProperties: false
     description: A short-lived, credential-free snapshot for signing an exact pair request. It never grants a relay claim.
@@ -30,11 +30,11 @@ schemas:
         type: array
         minItems: 2
         maxItems: 2
-        items: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairRelay" }
-  NativePeerPairRequest:
+        items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRelay" }
+  ConnectorPeerPairRequest:
     type: object
     additionalProperties: false
-    description: Sign the canonical NativePeerPairProofMessage Go v1 array, not the snake_case HTTP object. Source is selected by kind; a device uses the sole control bearer, a workload uses its credential and no control bearer. Each connector owner creates with a distinct idempotency key and retains that stable owner key across create, renew and replace. A pair ID and generation alone never prove ownership. Replacement also names the exact predecessor and issues a new pair, delivery ID, key and generation; it does not transfer a running session. An uncertain response repeats the exact signed request, including its timestamp, action and owner key.
+    description: Sign the canonical ConnectorPeerPairProofMessage Go v1 array, not the snake_case HTTP object. Source is selected by kind; a device uses the sole control bearer, a workload uses its credential and no control bearer. Each connector owner creates with a distinct idempotency key and retains that stable owner key across create, renew and replace. A pair ID and generation alone never prove ownership. Replacement also names the exact predecessor and issues a new pair, delivery ID, key and generation; it does not transfer a running session. An uncertain response repeats the exact signed request, including its timestamp, action and owner key.
     required:
       [
         service_run_id,
@@ -64,19 +64,19 @@ schemas:
         type: string
         format: date-time
         description: Retain this timestamp on an uncertain reply retry. A successful fresh renewal supersedes earlier create or replace reply proofs; those proofs cannot recover the later renewal's bound.
-      previous_pair_id: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
+      previous_pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
       previous_generation: { type: integer, format: int64, minimum: 1 }
       expected_relays:
         type: array
         minItems: 2
         maxItems: 2
-        items: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairRelay" }
+        items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRelay" }
       signature:
         {
           type: string,
-          description: Unpadded base64url Ed25519 signature over NativePeerPairProofMessage.,
+          description: Unpadded base64url Ed25519 signature over ConnectorPeerPairProofMessage.,
         }
-  NativePeerPair:
+  ConnectorPeerPair:
     type: object
     additionalProperties: false
     required:
@@ -95,7 +95,7 @@ schemas:
         expires_at,
       ]
     properties:
-      pair_id: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
+      pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
       run_number: { type: integer, format: int64, minimum: 1 }
@@ -121,7 +121,7 @@ schemas:
         type: array
         minItems: 2
         maxItems: 2
-        items: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairRelay" }
+        items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRelay" }
       expires_at: { type: string, format: date-time }
   VisitorDevice:
     type: object

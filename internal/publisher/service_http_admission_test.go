@@ -30,7 +30,7 @@ func TestServiceHTTPAdmissionPreservesApplicationAuthWithoutClientCertificate(t 
 	}))
 	defer upstream.Close()
 	var allowed atomic.Bool
-	server := publisher.ServiceStream{Protocol: config.ProtocolHTTP, Hostname: hostname, Target: strings.TrimPrefix(upstream.URL, "https://"), TargetTLS: upstream.Client().Transport.(*http.Transport).TLSClientConfig.Clone(), TLS: &tls.Config{Certificates: []tls.Certificate{certificates.server}}, Visitor: publisher.NativeVisitor{Admission: publisher.NativeAdmissionFixture{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
+	server := publisher.ServiceStream{Protocol: config.ProtocolHTTP, Hostname: hostname, Target: strings.TrimPrefix(upstream.URL, "https://"), TargetTLS: upstream.Client().Transport.(*http.Transport).TLSClientConfig.Clone(), TLS: &tls.Config{Certificates: []tls.Certificate{certificates.server}}, Visitor: publisher.ConnectorVisitor{Admission: publisher.NativeAdmissionFixture{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
 		return publisher.ServiceVisitorDecision{Allowed: allowed.Load(), ValidUntil: time.Now().Add(time.Minute)}, nil
 	}}}}
 	server.TargetTLS.ServerName = "127.0.0.1"

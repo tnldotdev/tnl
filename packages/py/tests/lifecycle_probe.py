@@ -234,7 +234,7 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
         _, result = os.waitpid(pid, 0)
         assert os.waitstatus_to_exitcode(result) == 0
         assert process.poll() is None
-        # the parent's IPC socket and its native owner still work after child exit.
+        # the parent's IPC socket and its connector owner still work after child exit.
         assert asyncio.run(prepare()).port == db.port
         with socket.create_connection((db.host, db.port), timeout=5) as raw:
             raw.sendall(struct.pack("!II", 8, 80877103))

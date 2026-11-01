@@ -1,0 +1,19 @@
+{
+  "protocol_version": 1,
+  "kind": "connector_peer_visitor",
+  "pair_id": "cpp_1234567890123456789012",
+  "delivery_id": "AQEBAQEBAQEBAQEBAQEBAQ",
+  "delivery_generation": 3,
+  "service_id": "svc_1234567890123456789012",
+  "service_run_id": "srun_1234567890123456789012",
+  "run_number": 4,
+  "subject": { "kind": "browser", "identity_id": "ident_1234567890123456789012" },
+  "source_ip": "192.0.2.10",
+  "visitor_connection_id": "vc_1234567890123456789012",
+  "metadata_revision": 5,
+  "permission": {
+    "visitor_token": "token",
+    "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  }
+}

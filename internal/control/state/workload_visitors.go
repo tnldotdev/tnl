@@ -137,7 +137,7 @@ func (d *Database) IssueWorkloadServiceClientCertificate(ctx context.Context, cr
 
 // recheck uses the same run, publisher, ingress, relay and source constraints as
 // human direct admission, then intersects them with the workload's live lease.
-func recheckWorkloadDirectVisitor(ctx context.Context, tx pgx.Tx, service, run string, number int64, visitor, session string, source netip.Addr, certificateDigest []byte, now time.Time) (result ServiceVisitorValidity, err error) {
+func recheckWorkloadPublicServiceVisitor(ctx context.Context, tx pgx.Tx, service, run string, number int64, visitor, session string, source netip.Addr, certificateDigest []byte, now time.Time) (result ServiceVisitorValidity, err error) {
 	until, _, err := VisitorSubjectAccess(ctx, tx, service, workloadSubject(session), now)
 	if err != nil {
 		return result, err
@@ -145,7 +145,7 @@ func recheckWorkloadDirectVisitor(ctx context.Context, tx pgx.Tx, service, run s
 	var deadline time.Time
 	err = tx.QueryRow(ctx, `SELECT v.promoted_at IS NOT NULL,LEAST($8::timestamptz+interval '90 seconds',run.publisher_expires_at,run.certificate_expires_at,g.expires_at,ingress.lease_expires_at,cert.expires_at,
         (SELECT max(relay.lease_expires_at) FROM control.service_connection_slots slot JOIN control.relay_leases relay ON relay.relay_id=slot.relay_id AND relay.relay_run_id=slot.relay_run_id AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open AND relay.lease_expires_at>$8 AND NOT relay.draining))
-        FROM control.direct_service_visitors v JOIN control.services s ON s.id=v.service_id AND s.public AND s.enabled AND s.deleted_at IS NULL AND s.service_port=v.destination_port
+        FROM control.public_service_visitors v JOIN control.services s ON s.id=v.service_id AND s.public AND s.enabled AND s.deleted_at IS NULL AND s.service_port=v.destination_port
         JOIN control.service_runs run ON run.id=v.service_run_id AND run.service_id=s.id AND run.run_number=v.run_number AND run.state='ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at>$8 AND run.certificate_expires_at>$8
         JOIN control.ingress_leases ingress ON ingress.ingress_id=v.ingress_id AND ingress.ingress_run_id=v.ingress_run_id AND ingress.ingress_lease_revision=v.ingress_lease_revision AND ingress.lease_expires_at>$8
         JOIN control.publisher_grants g ON g.id=run.publisher_grant_id AND g.service_id=s.id AND g.revoked_at IS NULL AND(g.expires_at IS NULL OR g.expires_at>$8)
@@ -158,7 +158,7 @@ func recheckWorkloadDirectVisitor(ctx context.Context, tx pgx.Tx, service, run s
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
 	deadline = minTime(deadline, until)
-	_, err = tx.Exec(ctx, `UPDATE control.direct_service_visitors SET workload_session_id=$2,certificate_digest=COALESCE(certificate_digest,$3::bytea),valid_until=$4 WHERE visitor_connection_id=$1`, visitor, session, certificateDigest, deadline)
+	_, err = tx.Exec(ctx, `UPDATE control.public_service_visitors SET workload_session_id=$2,certificate_digest=COALESCE(certificate_digest,$3::bytea),valid_until=$4 WHERE visitor_connection_id=$1`, visitor, session, certificateDigest, deadline)
 	result.Allowed, result.ValidUntil = err == nil && deadline.After(now), deadline
 	return result, err
 }

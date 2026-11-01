@@ -118,8 +118,8 @@ func FuzzWireTraceContext(f *testing.F) {
 		entry := peerOpeningFixture()
 		entry.TraceContext = tc
 		wire.Reset()
-		if err := WriteNativePeerVisitorEntry(&wire, entry); err == nil {
-			got, err := ReadNativePeerVisitorEntry(&wire)
+		if err := WriteConnectorPeerVisitorEntry(&wire, entry); err == nil {
+			got, err := ReadConnectorPeerVisitorEntry(&wire)
 			if err != nil || got != entry {
 				t.Fatal("private trace round trip", err)
 			}
@@ -131,25 +131,25 @@ func TestTracePrivateGoldenAndEveryHeaderValidation(t *testing.T) {
 	entry := peerOpeningFixture()
 	entry.TraceContext = TraceContext{goldenTraceParent}
 	var compact bytes.Buffer
-	if err := json.Compact(&compact, readFixture(t, "native-peer-visitor-entry.json")); err != nil {
+	if err := json.Compact(&compact, readFixture(t, "connector-peer-visitor-entry.json")); err != nil {
 		t.Fatal(err)
 	}
 	golden := `{"trace_context":{"traceparent":"` + goldenTraceParent + `"},` + strings.TrimPrefix(compact.String(), "{")
 	var wire bytes.Buffer
-	if err := WriteNativePeerVisitorEntry(&wire, entry); err != nil {
+	if err := WriteConnectorPeerVisitorEntry(&wire, entry); err != nil {
 		t.Fatal(err)
 	}
 	want, _ := io.ReadAll(frame(golden))
 	if !bytes.Equal(wire.Bytes(), want) {
 		t.Fatalf("private entry golden changed: %s", wire.Bytes())
 	}
-	got, err := ReadNativePeerVisitorEntry(&wire)
+	got, err := ReadConnectorPeerVisitorEntry(&wire)
 	if err != nil || got != entry {
 		t.Fatal(got, err)
 	}
 	for _, extra := range []string{`"baggage":"tenant=evil",`, `"tracestate":"vendor=state",`} {
 		bad := strings.Replace(golden, `"traceparent":`, extra+`"traceparent":`, 1)
-		if _, err := ReadNativePeerVisitorEntry(frame(bad)); err == nil {
+		if _, err := ReadConnectorPeerVisitorEntry(frame(bad)); err == nil {
 			t.Fatal("accepted unknown private telemetry field")
 		}
 	}
@@ -173,25 +173,25 @@ func TestTracePrivateMaximumFieldsFitFrameCap(t *testing.T) {
 	h := ServiceForwardingHeader{ServiceStreamHeader: ServiceStreamHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: 1, Kind: ServiceForwardingStream,
 		ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: math.MaxUint64,
 		SourceIP: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", VisitorConnectionID: testOpaqueID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: testOpaqueID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: math.MaxUint64, ExpiresAt: now,
-		Direct: &DirectAdmission{IngressID: strings.Repeat("\x01", 256), IngressRunID: testOpaqueID(opaqueid.IngressRunPrefix), IngressLeaseRevision: math.MaxUint64, DestinationPort: math.MaxUint16}},
+		PublicService: &PublicServiceAdmission{IngressID: strings.Repeat("\x01", 256), IngressRunID: testOpaqueID(opaqueid.IngressRunPrefix), IngressLeaseRevision: math.MaxUint64, DestinationPort: math.MaxUint16}},
 		ConnectionSlot: 1, RelayServiceID: strings.Repeat("\x01", 256), RelayID: strings.Repeat("\x01", 256), RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayLeaseRevision: math.MaxUint64, LeaseExpiresAt: now}
 	{
 		var wire bytes.Buffer
 		if err := WriteServiceForwardingHeader(&wire, h); err != nil {
 			t.Fatal("max private header no longer fits cap", err)
 		}
-		t.Logf("maximum direct service protocol header: %d JSON bytes", wire.Len()-4)
+		t.Logf("maximum public service protocol header: %d JSON bytes", wire.Len()-4)
 		_, got, err := ReadForwardingHeader(&wire)
-		if err != nil || got == nil || got.TraceContext != h.TraceContext || got.Direct == nil {
+		if err != nil || got == nil || got.TraceContext != h.TraceContext || got.PublicService == nil {
 			t.Fatal(got, err)
 		}
 		for _, mutate := range []func(*ServiceForwardingHeader){
 			func(bad *ServiceForwardingHeader) { bad.RelayServiceID += "x" },
 			func(bad *ServiceForwardingHeader) { bad.RelayID += "x" },
 			func(bad *ServiceForwardingHeader) {
-				admission := *bad.Direct
+				admission := *bad.PublicService
 				admission.IngressID += "x"
-				bad.Direct = &admission
+				bad.PublicService = &admission
 			},
 		} {
 			bad := h
@@ -210,7 +210,7 @@ func TestForwardingDispatchSelectedKindCapsAndUnknownFields(t *testing.T) {
 	private := ServiceForwardingHeader{ServiceStreamHeader: ServiceStreamHeader{TraceContext: TraceContext{goldenTraceParent}, ProtocolVersion: Version, Kind: ServiceForwardingStream,
 		ServiceID: testOpaqueID(opaqueid.ServicePrefix), ServiceRunID: testOpaqueID(opaqueid.ServiceRunPrefix), RunNumber: 1, SourceIP: "192.0.2.1",
 		VisitorConnectionID: testOpaqueID(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: testOpaqueID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 1, ExpiresAt: time.Now(),
-		Direct: &DirectAdmission{IngressID: "i", IngressRunID: testOpaqueID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 1024}},
+		PublicService: &PublicServiceAdmission{IngressID: "i", IngressRunID: testOpaqueID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 1024}},
 		RelayServiceID: "s", RelayID: "i", RelayRunID: testOpaqueID(opaqueid.RelayRunPrefix), RelayLeaseRevision: 1, LeaseExpiresAt: time.Now()}
 	for _, test := range []struct {
 		name   string

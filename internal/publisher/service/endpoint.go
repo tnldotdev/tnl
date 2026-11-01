@@ -144,7 +144,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 		}
 	}
 	prepared.managedVisitor = func(header tunnelv1.ServiceForwardingHeader) publisher.ServiceVisitorAuthentication {
-		if header.Direct != nil {
+		if header.PublicService != nil {
 			if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
 				frontend := httpFrontend
 				frontend.Header = header

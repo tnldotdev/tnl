@@ -20,13 +20,13 @@ func TestClientTraceLaunchAndIndependentAttempts(t *testing.T) {
 	if len(environment) != 3 || environment[2] != LaunchTraceparent+"="+parent.TraceParent {
 		t.Fatal("stale launch carrier survived")
 	}
-	child, finish := ClientOperation(ExtractLaunch(WithMetrics(t.Context(), f.owner), strings.TrimPrefix(environment[2], LaunchTraceparent+"=")), "native.connections.startup")
+	child, finish := ClientOperation(ExtractLaunch(WithMetrics(t.Context(), f.owner), strings.TrimPrefix(environment[2], LaunchTraceparent+"=")), "connector.connections.startup")
 	finish(nil)
 	end(nil)
-	_, finish = ClientOperation(Independent(child), "native.connections.renew")
+	_, finish = ClientOperation(Independent(child), "connector.connections.renew")
 	finish(nil)
 	spans := f.exported(t)
-	launch, startup, renewal := spans["client.connections.launch"], spans["native.connections.startup"], spans["native.connections.renew"]
+	launch, startup, renewal := spans["client.connections.launch"], spans["connector.connections.startup"], spans["connector.connections.renew"]
 	if launch == nil || startup == nil || renewal == nil || !bytes.Equal(startup.ParentSpanId, launch.SpanId) || !bytes.Equal(startup.TraceId, launch.TraceId) {
 		t.Fatal("launch lost parentage")
 	}
@@ -77,7 +77,7 @@ func TestClientTraceIPCParentIsPerRequestAndCanonical(t *testing.T) {
 	}
 	count := 0
 	for _, span := range f.spans {
-		if span.Name == "native.connections.status" {
+		if span.Name == "connector.connections.status" {
 			count++
 		}
 	}
@@ -121,7 +121,7 @@ func TestClientTracePreparedReadAndPreparationHaveDistinctOperations(t *testing.
 		})).ServeHTTP(httptest.NewRecorder(), request)
 	}
 	spans := f.exported(t)
-	if spans["native.connections.prepare"] == nil || spans["native.connections.read"] == nil {
+	if spans["connector.connections.prepare"] == nil || spans["connector.connections.read"] == nil {
 		t.Fatal("async preparation or synchronous prepared read lost its operation")
 	}
 }

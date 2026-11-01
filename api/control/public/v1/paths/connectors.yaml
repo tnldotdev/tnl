@@ -48,7 +48,7 @@ paths:
           required: true
           schema: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
       responses:
-        "204": { description: Device and its native peer pairs revoked }
+        "204": { description: Device and its connector peer pairs revoked }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/visitor/services:
     get:
@@ -94,9 +94,9 @@ paths:
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/services/{service_id}/native-peer-pairs:
+  /v1/services/{service_id}/connector-peer-pairs:
     post:
-      operationId: prepareNativePeerPair
+      operationId: prepareConnectorPeerPair
       security: [{}, { bearerAuth: [] }]
       description: Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
@@ -104,17 +104,17 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairRequest" }
+            schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRequest" }
       responses:
         "200":
           description: Exact pair delivered only to its signed device or workload source; never cache
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/NativePeerPair" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPair" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/services/{service_id}/native-peer-pairs/{pair_id}/renew:
+  /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew:
     post:
-      operationId: renewNativePeerPair
+      operationId: renewConnectorPeerPair
       security: [{}, { bearerAuth: [] }]
       description: Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
       parameters:
@@ -123,17 +123,17 @@ paths:
             name: pair_id,
             in: path,
             required: true,
-            schema: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" },
+            schema: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" },
           }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairRequest" }
+            schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRequest" }
       responses:
         "200":
           description: Renewed exact pair delivered only to its signed source; never cache
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/NativePeerPair" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPair" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }

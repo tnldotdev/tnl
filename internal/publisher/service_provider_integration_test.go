@@ -145,7 +145,7 @@ func TestIntegrationManagedDatabaseProviders(t *testing.T) {
 				t.Run(fmt.Sprintf("native-command/direct=%t", direct), func(t *testing.T) {
 					front := server
 					if !direct {
-						front.Visitor = publisher.NativeVisitor{Admission: publisher.NativeAdmissionFixture{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
+						front.Visitor = publisher.ConnectorVisitor{Admission: publisher.NativeAdmissionFixture{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
 							return publisher.ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 						}}}
 					}
@@ -248,7 +248,7 @@ func TestIntegrationManagedDatabaseProviders(t *testing.T) {
 			})
 			t.Run("connector-native-TLS-without-client-certificate", func(t *testing.T) {
 				private := server
-				private.Visitor = publisher.NativeVisitor{Admission: publisher.NativeAdmissionFixture{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
+				private.Visitor = publisher.ConnectorVisitor{Admission: publisher.NativeAdmissionFixture{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
 					return publisher.ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 				}}}
 				front := clientTLS.Clone()

@@ -18,7 +18,7 @@ func (target ServiceHTTPTarget) dial(ctx context.Context) (net.Conn, error) {
 		}
 		defer finish()
 	}
-	if target.native != nil {
+	if target.connector != nil {
 		life, cancel := context.WithCancel(ctx)
 		done := make(chan struct{})
 		stop := context.AfterFunc(target.lifetime, func() { defer close(done); cancel() })
@@ -32,8 +32,8 @@ func (target ServiceHTTPTarget) dial(ctx context.Context) (net.Conn, error) {
 	}
 	setup, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if target.native != nil {
-		if err := nativeCheck(ctx, target.native); err != nil {
+	if target.connector != nil {
+		if err := connectorCheck(ctx, target.connector); err != nil {
 			return nil, err
 		}
 	}
@@ -44,24 +44,24 @@ func (target ServiceHTTPTarget) dial(ctx context.Context) (net.Conn, error) {
 	if target.track != nil {
 		target.track(conn)
 	}
-	if target.native != nil {
-		if err := nativeCheck(ctx, target.native); err != nil {
+	if target.connector != nil {
+		if err := connectorCheck(ctx, target.connector); err != nil {
 			_ = conn.Close()
 			return nil, err
 		}
-		conn = &nativeServiceConn{conn: conn, ctx: target.lifetime, admission: target.native}
+		conn = &connectorServiceConn{conn: conn, ctx: target.lifetime, admission: target.connector}
 	}
 	secured, err := target.Transport.Secure(setup, conn)
 	if err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
-	if target.native != nil {
-		if err := nativeCheck(ctx, target.native); err != nil {
+	if target.connector != nil {
+		if err := connectorCheck(ctx, target.connector); err != nil {
 			_ = secured.Close()
 			return nil, err
 		}
-		secured = &nativeServiceConn{conn: secured, ctx: target.lifetime, admission: target.native}
+		secured = &connectorServiceConn{conn: secured, ctx: target.lifetime, admission: target.connector}
 	}
 	return secured, nil
 }

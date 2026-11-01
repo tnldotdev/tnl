@@ -28,8 +28,8 @@ import (
 // prepares and starts runs, and only the run token can renew or close one.
 type RunControl interface {
 	ManagedControl
-	nativePolicyControl
-	NativePeerControl
+	connectorPolicyControl
+	ConnectorPeerControl
 	GetPublisherService(context.Context, string) (controlv1.Service, error)
 	PrepareServiceRun(context.Context, string, string, string, controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error)
 	HeartbeatServiceRunHealth(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error)
@@ -298,12 +298,12 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if err != nil {
 		return errors.Join(ErrPrivateStream, err)
 	}
-	if err := bound.PrepareNativePolicy(ctx, config.Control, runToken); err != nil {
+	if err := bound.PrepareConnectorPolicy(ctx, config.Control, runToken); err != nil {
 		return err
 	}
 	peers, stopPeers := context.WithCancel(ctx)
 	peersDone := make(chan error, 1)
-	go func() { peersDone <- bound.ServeNativePeers(peers, config.Control, runToken) }()
+	go func() { peersDone <- bound.ServeConnectorPeers(peers, config.Control, runToken) }()
 	defer func() {
 		stopPeers()
 		if peersDone != nil {

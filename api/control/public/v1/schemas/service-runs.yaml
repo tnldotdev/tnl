@@ -1,13 +1,13 @@
 schemas:
-  NativePeerPairCandidate:
+  ConnectorPeerPairCandidate:
     type: object
     additionalProperties: false
     description: A pair to reconcile, not delivery authority or permission to open an application stream.
     required: [pair_id, delivery_generation]
     properties:
-      pair_id: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
+      pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
       delivery_generation: { type: integer, format: int64, minimum: 1 }
-  NativePeerPairCandidates:
+  ConnectorPeerPairCandidates:
     type: object
     additionalProperties: false
     required: [items]
@@ -15,12 +15,12 @@ schemas:
       items:
         type: array
         maxItems: 64
-        items: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairCandidate" }
+        items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairCandidate" }
       next_after:
         type: string
-        pattern: "^npp_[A-Za-z0-9]{22}$"
+        pattern: "^cpp_[A-Za-z0-9]{22}$"
         description: Continue after this pair ID; restart from the first page on the next reconciliation pass.
-  NativePeerPairPrepared:
+  ConnectorPeerPairPrepared:
     type: object
     additionalProperties: false
     description: Report installation of the exact independently prepared binding; this does not renew pair or application authority.
@@ -32,7 +32,7 @@ schemas:
         type: string
         format: date-time
         description: The original control-clock expires_at from the installed delivery response, not a new local deadline.
-  NativePeerPairDelivery:
+  ConnectorPeerPairDelivery:
     type: object
     additionalProperties: false
     description: Existing pair delivery for the authenticated publisher run only; never grants an application stream.
@@ -53,7 +53,7 @@ schemas:
         expires_at,
       ]
     properties:
-      pair_id: { type: string, pattern: "^npp_[A-Za-z0-9]{22}$" }
+      pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
       service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
       service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
       run_number: { type: integer, format: int64, minimum: 1 }
@@ -71,7 +71,7 @@ schemas:
         type: array
         minItems: 2
         maxItems: 2
-        items: { $ref: "../openapi.yaml#/components/schemas/NativePeerPairRelay" }
+        items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRelay" }
       expires_at: { type: string, format: date-time }
   VisitorConnectionID:
     type: string

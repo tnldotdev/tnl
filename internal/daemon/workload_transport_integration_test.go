@@ -154,7 +154,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 				waitRuntimeTime(t, at)
 				paths.step(t, int(time.Until(session.ExpiresAt).Seconds()))
 				if workloadNativeRuntimeBinding(t, f, session.Id, session.ExpiresAt) != nativeBinding {
-					t.Fatal("workload renewal replaced its native owners or exact bindings")
+					t.Fatal("workload renewal replaced its connector owners or exact bindings")
 				}
 				before, _ := job.Session()
 				replayed, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", assertion, keys)
@@ -175,7 +175,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			}
 			for len(opened) > 0 {
 				o := <-opened
-				if o.header.Direct == nil || o.header.SourceIP != "127.0.0.1" {
+				if o.header.PublicService == nil || o.header.SourceIP != "127.0.0.1" {
 					t.Fatal("direct transport lost destination/source binding")
 				}
 			}
@@ -255,7 +255,7 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	verification := f.visitorRoots.Clone()
 	verification.ServerName = s.Endpoint.Hostname
 	verification.Certificates = []tls.Certificate{certificate}
-	tr := &http.Transport{TLSClientConfig: verification, DialContext: workloadDirectDialer(t, process.ingresses[0].direct, s.Endpoint.Port)}
+	tr := &http.Transport{TLSClientConfig: verification, DialContext: workloadPublicEndpointDialer(t, process.ingresses[0].publicServices, s.Endpoint.Port)}
 	t.Cleanup(tr.CloseIdleConnections)
 	client := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	humanTLS := verification.Clone()
@@ -558,9 +558,9 @@ func workloadNativeRuntimeBinding(t *testing.T, f *privateSeparatedFixture, sess
 	var valid bool
 	var binding string
 	err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*),COALESCE(bool_and(pair.expires_at<=$2 AND pair.publisher_prepared_until IS NOT NULL
-		AND (SELECT count(*)=2 AND bool_and(host(source_ip)='127.0.0.1') FROM control.native_peer_pair_leg_claims claim WHERE claim.pair_id=pair.id)),false),
+		AND (SELECT count(*)=2 AND bool_and(host(source_ip)='127.0.0.1') FROM control.connector_peer_pair_leg_claims claim WHERE claim.pair_id=pair.id)),false),
 		COALESCE(jsonb_agg(jsonb_build_array(pair.id,pair.service_id,pair.service_run_id,pair.run_number,pair.owner_key,encode(pair.delivery_id,'hex'),pair.delivery_generation,encode(pair.key_ciphertext,'hex'),pair.slots) ORDER BY pair.id)::text,'')
-		FROM control.native_peer_pairs pair WHERE pair.subject_kind='workload_session' AND pair.subject_id=$1`, session, expiry).Scan(&count, &valid, &binding)
+		FROM control.connector_peer_pairs pair WHERE pair.subject_kind='workload_session' AND pair.subject_id=$1`, session, expiry).Scan(&count, &valid, &binding)
 	if err != nil || count != 5 || !valid {
 		t.Fatalf("workload native source/install/fixed-expiry scope: pairs=%d valid=%t: %v", count, valid, err)
 	}
@@ -649,13 +649,13 @@ func (p *workloadRuntimePaths) denied(t *testing.T, bound time.Duration) {
 	}
 }
 
-func workloadDirectDialer(t *testing.T, connector *ingress.DirectServices, port int) func(context.Context, string, string) (net.Conn, error) {
+func workloadPublicEndpointDialer(t *testing.T, connector *ingress.PublicServices, port int) func(context.Context, string, string) (net.Conn, error) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{DirectOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, DirectServices: connector, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 64})
+	server, err := ingress.New(listener, ingress.Config{PublicServicesOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: connector, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 64})
 	if err != nil {
 		t.Fatal(err)
 	}

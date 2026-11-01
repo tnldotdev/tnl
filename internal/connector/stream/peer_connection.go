@@ -20,19 +20,19 @@ import (
 )
 
 type preparedOpening struct {
-	entry tunnelv1.NativePeerVisitorEntry
+	entry tunnelv1.ConnectorPeerVisitorEntry
 	until time.Time
 }
 
-type nativeUse struct {
-	entry    tunnelv1.NativePeerVisitorEntry
-	prepared *PreparedNative
+type connectorUse struct {
+	entry    tunnelv1.ConnectorPeerVisitorEntry
+	prepared *PreparedConnector
 }
 
-// nativeConnection owns one selected run and retained inner QUIC connection.
+// connectorConnection owns one selected run and retained inner QUIC connection.
 // background workers own authority renewal and proof generation;
 // local arrivals consume immutable signed openings and never call control.
-type nativeConnection struct {
+type connectorConnection struct {
 	ctx           context.Context
 	cancel        context.CancelCauseFunc
 	config        Config
@@ -44,17 +44,17 @@ type nativeConnection struct {
 	session       muxsession.Session
 	mu            sync.Mutex
 	run           Run
-	pair          controlv1.NativePeerPair
+	pair          controlv1.ConnectorPeerPair
 	key           [32]byte
 	until         time.Time
 	preparedUntil time.Time
 	source        string
 	permission    controlv1.VisitorTokenResponse
-	legs          [2]*nativeRelayLeg
+	legs          [2]*connectorRelayLeg
 	legDone       [2]bool
 	openings      []preparedOpening
-	active        map[*nativeUse]struct{}
-	warm          *nativeUse
+	active        map[*connectorUse]struct{}
+	warm          *connectorUse
 	changed       chan struct{}
 	refill        chan struct{}
 	workers       sync.WaitGroup
@@ -62,7 +62,7 @@ type nativeConnection struct {
 	once          sync.Once
 }
 
-func nativeTemporary(err error) bool {
+func connectorTemporary(err error) bool {
 	if _, definition, ok := failure.Describe(err); ok {
 		return definition.Retry == failure.RetryLater
 	}
@@ -70,9 +70,9 @@ func nativeTemporary(err error) bool {
 	return errors.As(err, &network) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
-func prepareNativeConnection(ctx, setup context.Context, config Config, signer Signer) (_ *nativeConnection, result error) {
+func prepareConnectorConnection(ctx, setup context.Context, config Config, signer Signer) (_ *connectorConnection, result error) {
 	life, cancel := context.WithCancelCause(ctx)
-	p := &nativeConnection{ctx: life, cancel: cancel, config: config, signer: signer, changed: make(chan struct{}), refill: make(chan struct{}, 1), active: make(map[*nativeUse]struct{})}
+	p := &connectorConnection{ctx: life, cancel: cancel, config: config, signer: signer, changed: make(chan struct{}), refill: make(chan struct{}, 1), active: make(map[*connectorUse]struct{})}
 	defer func() {
 		if result != nil {
 			p.Close()
@@ -86,12 +86,12 @@ func prepareNativeConnection(ctx, setup context.Context, config Config, signer S
 	if result != nil {
 		return nil, result
 	}
-	if result = validateNativeRun(config, p.run); result != nil {
+	if result = validateConnectorRun(config, p.run); result != nil {
 		return nil, result
 	}
 	p.run.ServiceTLS = config.ServiceTLS
-	var create controlv1.NativePeerPairRequest
-	p.pair, p.key, p.until, create, result = prepareNativePair(setup, config.Control, signer, p.run, p.owner, nil)
+	var create controlv1.ConnectorPeerPairRequest
+	p.pair, p.key, p.until, create, result = prepareConnectorPair(setup, config.Control, signer, p.run, p.owner, nil)
 	if result != nil {
 		return nil, result
 	}
@@ -101,7 +101,7 @@ func prepareNativeConnection(ctx, setup context.Context, config Config, signer S
 	var starts sync.WaitGroup
 	for slot := range 2 {
 		starts.Go(func() {
-			p.legs[slot], results[slot] = connectNativeLeg(setup, life, config, signer, p.pair, p.key, slot)
+			p.legs[slot], results[slot] = connectConnectorLeg(setup, life, config, signer, p.pair, p.key, slot)
 		})
 	}
 	starts.Wait()
@@ -112,14 +112,14 @@ func prepareNativeConnection(ctx, setup context.Context, config Config, signer S
 		return nil, ErrServiceConnection
 	}
 	p.source = p.legs[0].receipt.SourceIP
-	if p.preparedUntil, result = awaitNativePublisher(setup, config.Control, p.run.ServiceID, create, p.pair); result != nil {
+	if p.preparedUntil, result = awaitConnectorPublisher(setup, config.Control, p.run.ServiceID, create, p.pair); result != nil {
 		return nil, result
 	}
 	p.endpoint, result = peer.New(life, peer.Config{Key: p.key, Role: 0, Paths: [2]peer.Carrier{p.legs[0].carrier, p.legs[1].carrier}})
 	if result != nil {
 		return nil, result
 	}
-	if result = awaitNativePaths(setup, p.endpoint); result != nil {
+	if result = awaitConnectorPaths(setup, p.endpoint); result != nil {
 		return nil, result
 	}
 	p.transport = &quic.Transport{Conn: p.endpoint}
@@ -127,14 +127,14 @@ func prepareNativeConnection(ctx, setup context.Context, config Config, signer S
 	trust.ServerName, trust.NextProtos = p.run.Endpoint.Hostname, []string{muxsession.ALPN}
 	p.connection, result = p.transport.Dial(setup, p.endpoint.RemoteAddr(), trust, &quic.Config{InitialPacketSize: tunnelv1.MaxPeerPacketBytes, DisablePathMTUDiscovery: true, MaxIncomingStreams: 0, MaxIncomingUniStreams: 1, MaxIdleTimeout: 30 * time.Second, KeepAlivePeriod: 10 * time.Second})
 	if result != nil {
-		return nil, failure.Wrap("prepare native peer TLS", failure.ConnectionTLSRejected, result)
+		return nil, failure.Wrap("prepare connector peer TLS", failure.ConnectionTLSRejected, result)
 	}
 	p.session, result = muxsession.AdoptQUIC(p.connection)
 	if result != nil {
 		return nil, result
 	}
 	p.permission, result = config.Control.VisitorPermission(setup, config.ServiceID)
-	if result != nil || !validNativePermission(p.run, p.permission) || setup.Err() != nil {
+	if result != nil || !validConnectorPermission(p.run, p.permission) || setup.Err() != nil {
 		return nil, errors.Join(ErrServiceConnection, result, context.Cause(setup))
 	}
 	if result = p.fillOpenings(); result != nil {
@@ -147,11 +147,11 @@ func prepareNativeConnection(ctx, setup context.Context, config Config, signer S
 		opening := p.openings[0]
 		p.openings = p.openings[1:]
 		p.mu.Unlock()
-		prepared, err := prepareNative(life, setup, p.session, p.run, opening.entry)
+		prepared, err := prepareConnector(life, setup, p.session, p.run, opening.entry)
 		if err != nil {
 			return nil, err
 		}
-		p.warm = &nativeUse{entry: opening.entry, prepared: prepared}
+		p.warm = &connectorUse{entry: opening.entry, prepared: prepared}
 		p.active[p.warm] = struct{}{}
 	}
 	if setup.Err() != nil || !p.currentLocked() {
@@ -178,7 +178,7 @@ func prepareNativeConnection(ctx, setup context.Context, config Config, signer S
 	return p, nil
 }
 
-func awaitNativePaths(ctx context.Context, endpoint *peer.Endpoint) error {
+func awaitConnectorPaths(ctx context.Context, endpoint *peer.Endpoint) error {
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -196,7 +196,7 @@ func awaitNativePaths(ctx context.Context, endpoint *peer.Endpoint) error {
 	}
 }
 
-func validateNativeRun(config Config, run Run) error {
+func validateConnectorRun(config Config, run Run) error {
 	if run.ServiceID != config.ServiceID || !opaqueid.Valid(run.ServiceRunID, opaqueid.ServiceRunPrefix) || run.RunNumber == 0 || !run.ValidUntil.After(time.Now()) || run.PairReady != nil && len(run.PairReady.Relays) != 2 {
 		return ErrServiceConnection
 	}
@@ -206,19 +206,19 @@ func validateNativeRun(config Config, run Run) error {
 	return nil
 }
 
-func validNativePermission(run Run, permission controlv1.VisitorTokenResponse) bool {
+func validConnectorPermission(run Run, permission controlv1.VisitorTokenResponse) bool {
 	return permission.Resource.Kind == controlv1.VisitorResourceScopeKindService && permission.Resource.Id == run.ServiceID && run.Endpoint != nil && permission.Hostname == run.Endpoint.Hostname && permission.Port == run.Endpoint.Port && permission.VisitorToken != "" && permission.ExpiresAt.After(time.Now())
 }
 
-func (p *nativeConnection) currentLocked() bool {
+func (p *connectorConnection) currentLocked() bool {
 	return p.ctx.Err() == nil && p.until.After(time.Now()) && p.preparedUntil.After(time.Now()) && p.run.ValidUntil.After(time.Now()) && p.permission.ExpiresAt.After(time.Now())
 }
 
-func (p *nativeConnection) notifyLocked() { close(p.changed); p.changed = make(chan struct{}) }
+func (p *connectorConnection) notifyLocked() { close(p.changed); p.changed = make(chan struct{}) }
 
-func nativeOpening(signer Signer, entry tunnelv1.NativePeerVisitorEntry, token string) (tunnelv1.NativePeerVisitorEntry, error) {
-	entry.Permission = tunnelv1.NativeVisitorPermission{Token: token, PublicKey: base64.RawURLEncoding.EncodeToString(signer.PublicKey), Signature: base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))}
-	message, err := tunnelv1.NativePeerProofMessage(entry, nil)
+func connectorOpening(signer Signer, entry tunnelv1.ConnectorPeerVisitorEntry, token string) (tunnelv1.ConnectorPeerVisitorEntry, error) {
+	entry.Permission = tunnelv1.ConnectorVisitorPermission{Token: token, PublicKey: base64.RawURLEncoding.EncodeToString(signer.PublicKey), Signature: base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))}
+	message, err := tunnelv1.ConnectorPeerProofMessage(entry, nil)
 	if err != nil {
 		return entry, err
 	}
@@ -230,7 +230,7 @@ func nativeOpening(signer Signer, entry tunnelv1.NativePeerVisitorEntry, token s
 	return entry, nil
 }
 
-func (p *nativeConnection) fillOpenings() error {
+func (p *connectorConnection) fillOpenings() error {
 	p.mu.Lock()
 	if !p.currentLocked() {
 		p.mu.Unlock()
@@ -245,7 +245,7 @@ func (p *nativeConnection) fillOpenings() error {
 		if err != nil {
 			return err
 		}
-		entry, err := nativeOpening(p.signer, tunnelv1.NativePeerVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.NativePeerVisitorStream, PairID: pair.PairId, DeliveryID: pair.DeliveryId, DeliveryGeneration: pair.DeliveryGeneration,
+		entry, err := connectorOpening(p.signer, tunnelv1.ConnectorPeerVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorPeerVisitorStream, PairID: pair.PairId, DeliveryID: pair.DeliveryId, DeliveryGeneration: pair.DeliveryGeneration,
 			ServiceID: run.ServiceID, ServiceRunID: run.ServiceRunID, RunNumber: run.RunNumber, Subject: p.signer.Subject, SourceIP: source, VisitorConnectionID: visitor, MetadataRevision: uint64(run.TrustRevision)}, permission.VisitorToken)
 		if err != nil {
 			return err
@@ -261,10 +261,10 @@ func (p *nativeConnection) fillOpenings() error {
 	return nil
 }
 
-func (p *nativeConnection) watch() {
+func (p *connectorConnection) watch() {
 	for {
 		p.mu.Lock()
-		until := earliestNativeDeadline(p.until, p.preparedUntil, p.run.ValidUntil, p.permission.ExpiresAt)
+		until := earliestConnectorDeadline(p.until, p.preparedUntil, p.run.ValidUntil, p.permission.ExpiresAt)
 		changed := p.changed
 		if !p.currentLocked() {
 			p.cancel(ErrServiceConnection)
@@ -286,7 +286,7 @@ func (p *nativeConnection) watch() {
 	}
 }
 
-func earliestNativeDeadline(values ...time.Time) time.Time {
+func earliestConnectorDeadline(values ...time.Time) time.Time {
 	until := values[0]
 	for _, value := range values[1:] {
 		if value.Before(until) {
@@ -296,7 +296,7 @@ func earliestNativeDeadline(values ...time.Time) time.Time {
 	return until
 }
 
-func (p *nativeConnection) refresh() {
+func (p *connectorConnection) refresh() {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -308,24 +308,24 @@ func (p *nativeConnection) refresh() {
 		p.mu.Lock()
 		run, previous, until := p.run, p.pair, p.until
 		p.mu.Unlock()
-		call, stop := context.WithDeadline(p.ctx, minNativeCall(until))
+		call, stop := context.WithDeadline(p.ctx, minConnectorCall(until))
 		next, err := p.config.Control.ResolveService(call, run.ServiceID)
 		if err == nil {
-			err = validateNativeRun(p.config, next)
+			err = validateConnectorRun(p.config, next)
 		}
 		if err == nil && (next.ServiceRunID != run.ServiceRunID || next.RunNumber != run.RunNumber || next.PairReady != nil && next.PairReady.PublisherIdentityId != run.PairReady.PublisherIdentityId) {
 			err = ErrServiceConnection
 		}
-		var pair controlv1.NativePeerPair
+		var pair controlv1.ConnectorPeerPair
 		var key [32]byte
 		var bound time.Time
 		if err == nil {
-			pair, key, bound, _, err = prepareNativePair(call, p.config.Control, p.signer, next, p.owner, &previous)
+			pair, key, bound, _, err = prepareConnectorPair(call, p.config.Control, p.signer, next, p.owner, &previous)
 		}
 		var permission controlv1.VisitorTokenResponse
 		if err == nil {
 			permission, err = p.config.Control.VisitorPermission(call, run.ServiceID)
-			if err == nil && !validNativePermission(next, permission) {
+			if err == nil && !validConnectorPermission(next, permission) {
 				err = ErrServiceConnection
 			}
 		}
@@ -334,7 +334,7 @@ func (p *nativeConnection) refresh() {
 		}
 		stop()
 		if err != nil {
-			if !nativeTemporary(err) && p.ctx.Err() == nil {
+			if !connectorTemporary(err) && p.ctx.Err() == nil {
 				p.cancel(err)
 				return
 			}
@@ -354,7 +354,7 @@ func (p *nativeConnection) refresh() {
 		}
 		p.run, p.pair, p.until, p.permission = next, pair, bound, permission
 		p.openings = nil
-		active := make([]*nativeUse, 0, len(p.active))
+		active := make([]*connectorUse, 0, len(p.active))
 		for stream := range p.active {
 			if stream.prepared != nil {
 				active = append(active, stream)
@@ -366,9 +366,9 @@ func (p *nativeConnection) refresh() {
 			p.cancel(err)
 			return
 		}
-		renewUntil := minNativeCall(earliestNativeDeadline(bound, next.ValidUntil, permission.ExpiresAt))
+		renewUntil := minConnectorCall(earliestConnectorDeadline(bound, next.ValidUntil, permission.ExpiresAt))
 		for _, stream := range active {
-			entry, err := nativeOpening(p.signer, stream.entry, permission.VisitorToken)
+			entry, err := connectorOpening(p.signer, stream.entry, permission.VisitorToken)
 			if err == nil {
 				err = stream.prepared.writer.RenewUntil(entry.Permission, renewUntil)
 			}
@@ -379,11 +379,11 @@ func (p *nativeConnection) refresh() {
 	}
 }
 
-func minNativeCall(until time.Time) time.Time {
-	return earliestNativeDeadline(until, time.Now().Add(2*time.Second))
+func minConnectorCall(until time.Time) time.Time {
+	return earliestConnectorDeadline(until, time.Now().Add(2*time.Second))
 }
 
-func (p *nativeConnection) maintainLeg(slot int) {
+func (p *connectorConnection) maintainLeg(slot int) {
 	defer func() {
 		p.mu.Lock()
 		p.legDone[slot] = true
@@ -415,19 +415,19 @@ func (p *nativeConnection) maintainLeg(slot int) {
 		p.mu.Lock()
 		pair, until := p.pair, p.until
 		p.mu.Unlock()
-		call, stop := context.WithDeadline(p.ctx, minNativeCall(earliestNativeDeadline(until, leg.until)))
-		var proof tunnelv1.NativePairLegProof
+		call, stop := context.WithDeadline(p.ctx, minConnectorCall(earliestConnectorDeadline(until, leg.until)))
+		var proof tunnelv1.ConnectorPairLegProof
 		err := ErrServiceConnection
 		if pair.Relays[slot] == leg.relay {
-			proof, err = nativeLegProof(p.signer, pair, slot)
+			proof, err = connectorLegProof(p.signer, pair, slot)
 		}
-		var receipt tunnelv1.NativePairLegAccepted
+		var receipt tunnelv1.ConnectorPairLegAccepted
 		started := time.Now()
 		if err == nil {
 			request, keyErr := opaqueid.New(opaqueid.IdempotencyPrefix)
 			err = keyErr
 			if err == nil {
-				receipt, err = leg.session.RenewNativeLeg(call, request, proof, leg.receipt)
+				receipt, err = leg.session.RenewConnectorLeg(call, request, proof, leg.receipt)
 			}
 		}
 		if err == nil && call.Err() == nil && leg.until.After(time.Now()) {
@@ -443,7 +443,7 @@ func (p *nativeConnection) maintainLeg(slot int) {
 			_ = leg.Close()
 			return
 		}
-		if !nativeTemporary(err) {
+		if !connectorTemporary(err) {
 			p.cancel(err)
 			return
 		}
@@ -452,13 +452,13 @@ func (p *nativeConnection) maintainLeg(slot int) {
 	}
 }
 
-func (p *nativeConnection) Forward(ctx context.Context, local net.Conn) error {
+func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) error {
 	p.mu.Lock()
 	if !p.currentLocked() || ctx.Err() != nil || len(p.active) >= p.config.MaxConnections && p.warm == nil {
 		p.mu.Unlock()
 		return ErrServiceConnection
 	}
-	var use *nativeUse
+	var use *connectorUse
 	run := p.run
 	if p.warm != nil {
 		use, p.warm = p.warm, nil
@@ -470,7 +470,7 @@ func (p *nativeConnection) Forward(ctx context.Context, local net.Conn) error {
 			p.mu.Unlock()
 			return ErrServiceConnection
 		}
-		use = &nativeUse{entry: p.openings[0].entry}
+		use = &connectorUse{entry: p.openings[0].entry}
 		p.openings = p.openings[1:]
 		p.active[use] = struct{}{}
 	}
@@ -492,7 +492,7 @@ func (p *nativeConnection) Forward(ctx context.Context, local net.Conn) error {
 				<-stopped
 			}
 		}()
-		prepared, err := prepareNative(p.ctx, setup, p.session, run, use.entry)
+		prepared, err := prepareConnector(p.ctx, setup, p.session, run, use.entry)
 		if err != nil {
 			return err
 		}
@@ -509,7 +509,7 @@ func (p *nativeConnection) Forward(ctx context.Context, local net.Conn) error {
 	return use.prepared.Forward(ctx, local)
 }
 
-func (p *nativeConnection) Close() {
+func (p *connectorConnection) Close() {
 	p.once.Do(func() {
 		p.mu.Lock()
 		p.cancel(context.Canceled)

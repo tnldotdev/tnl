@@ -7,13 +7,13 @@ does not become a permanent trace parent for its handle's later operations.
 ## process and operation ownership
 
 `cmd/tnl` creates one `internal/observability` owner after parsing and before
-dispatching native connection commands. finite commands record their result;
+dispatching connector connection commands. finite commands record their result;
 publishers, connectors, app owners, and watch loops record startup and finite
 attempts. startup ends at the owned readiness boundary, not process exit.
 shutdown joins native work before stopping exporters.
 
 finite CLI invocations give exporter shutdown **250 milliseconds total**, with a
-fresh context. persistent native owners retain the existing five-second budget
+fresh context. persistent connector owners retain the existing five-second budget
 and batch processors. neither an unavailable receiver nor a failed flush changes
 a successful command, readiness, registration, or publication result. invalid
 export configuration still returns the authored configuration error.
@@ -104,7 +104,7 @@ GOMAXPROCS=2 GOFLAGS=-p=2 mise exec -- task js:test:client-tracing
 GOMAXPROCS=2 GOFLAGS=-p=2 mise exec -- task go:test:connections
 ```
 
-the native connection tier exercises the real CLI launcher, detached owner,
+the connector connection tier exercises the real CLI launcher, detached owner,
 backend workers, and per-read IPC against a local HTTPS OTLP receiver. it checks
 the exact parent/span chain, a different trace for a later caller, absence of
 parents in the handle, and unchanged application requests. routine tracing tests

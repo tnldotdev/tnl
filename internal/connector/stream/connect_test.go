@@ -56,7 +56,7 @@ type connectorFixture struct {
 	wrongInnerCertificate atomic.Bool
 	ctx                   context.Context
 	workers               sync.WaitGroup
-	peers                 map[string]*fixtureNativePeer
+	peers                 map[string]*fixtureConnectorPeer
 	activationConflict    [2]atomic.Bool
 	rejected              [2]atomic.Int64
 	helloNonces           [2][][]byte
@@ -117,7 +117,7 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 	roots.AppendCertsFromPEM(root)
 	serverTLS := &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13}
 	ctx, cancel := context.WithCancel(t.Context())
-	f.ctx, f.peers = ctx, make(map[string]*fixtureNativePeer)
+	f.ctx, f.peers = ctx, make(map[string]*fixtureConnectorPeer)
 	workers := &f.workers
 	t.Cleanup(func() {
 		cancel()
@@ -186,10 +186,10 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 			}
 		})
 	}
-	f.run.PairReady = &controlv1.NativePeerPairReady{PublisherIdentityId: connectorID(t, opaqueid.PublisherIdentityPrefix)}
+	f.run.PairReady = &controlv1.ConnectorPeerPairReady{PublisherIdentityId: connectorID(t, opaqueid.PublisherIdentityPrefix)}
 	for slot, endpoint := range f.endpoints {
-		f.run.PairReady.Relays = append(f.run.PairReady.Relays, controlv1.NativePeerPairRelay{PublisherConnectionId: connectorID(t, opaqueid.PublisherConnectionPrefix), AssignmentRevision: 1, RelayAddress: endpoint.Address, TlsServerName: endpoint.ServerName,
-			RelayLease: controlv1.NativePeerRelayLease{RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayId: fmt.Sprintf("node-%d", slot), RelayRunId: fmt.Sprintf("run-%d", slot), RelayLeaseRevision: 1}})
+		f.run.PairReady.Relays = append(f.run.PairReady.Relays, controlv1.ConnectorPeerPairRelay{PublisherConnectionId: connectorID(t, opaqueid.PublisherConnectionPrefix), AssignmentRevision: 1, RelayAddress: endpoint.Address, TlsServerName: endpoint.ServerName,
+			RelayLease: controlv1.ConnectorPeerRelayLease{RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayId: fmt.Sprintf("node-%d", slot), RelayRunId: fmt.Sprintf("run-%d", slot), RelayLeaseRevision: 1}})
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -259,12 +259,12 @@ func TestOpaquePreflightVerifiesTLSBeforeReadyWithoutApplicationBytes(t *testing
 
 func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Session, slot uint8) {
 	defer transport.Close()
-	var native *fixtureNativePeer
-	session, hello, err := tunnel.AcceptWithResult(ctx, transport, func(_ context.Context, hello tunnelv1.Message) (*tunnelv1.NativePairLegAccepted, error) {
+	var native *fixtureConnectorPeer
+	session, hello, err := tunnel.AcceptWithResult(ctx, transport, func(_ context.Context, hello tunnelv1.Message) (*tunnelv1.ConnectorPairLegAccepted, error) {
 		f.assignments[slot].Add(1)
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		proof := hello.NativePairLegProof
+		proof := hello.ConnectorPairLegProof
 		if proof == nil || f.failed[slot] {
 			return nil, &tunnel.ProtocolError{Code: tunnelv1.Unavailable}
 		}
@@ -281,7 +281,7 @@ func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Sess
 	}
 	f.mu.Lock()
 	f.sessions[slot] = append(f.sessions[slot], transport)
-	f.helloNonces[slot] = append(f.helloNonces[slot], bytes.Clone(hello.NativePairLegProof.Nonce))
+	f.helloNonces[slot] = append(f.helloNonces[slot], bytes.Clone(hello.ConnectorPairLegProof.Nonce))
 	f.mu.Unlock()
 	packets, err := peer.NewSharedSession(ctx, transport)
 	if err != nil {
@@ -294,28 +294,28 @@ func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Sess
 		return
 	}
 	defer carrier.Close()
-	_ = session.HandleNativeLegControl(ctx, func(_ context.Context, selection tunnelv1.NativeLegBinding) error {
+	_ = session.HandleConnectorLegControl(ctx, func(_ context.Context, selection tunnelv1.ConnectorLegBinding) error {
 		if f.activationConflict[slot].Load() {
 			f.rejected[slot].Add(1)
 			return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		if len(native.nonces[slot]) != 0 || !selection.Matches(*hello.NativePairLegProof) {
+		if len(native.nonces[slot]) != 0 || !selection.Matches(*hello.ConnectorPairLegProof) {
 			return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		}
-		native.nonces[slot] = bytes.Clone(hello.NativePairLegProof.Nonce)
+		native.nonces[slot] = bytes.Clone(hello.ConnectorPairLegProof.Nonce)
 		native.paths[slot] <- carrier
 		return nil
-	}, func(context.Context, tunnelv1.NativePairLegProof) (tunnelv1.NativePairLegAccepted, error) {
+	}, func(context.Context, tunnelv1.ConnectorPairLegProof) (tunnelv1.ConnectorPairLegAccepted, error) {
 		return native.receipt(int(slot)), nil
 	})
 }
 
-func (f *connectorFixture) visitor(ctx context.Context, raw muxsession.Stream, native *fixtureNativePeer) {
+func (f *connectorFixture) visitor(ctx context.Context, raw muxsession.Stream, native *fixtureConnectorPeer) {
 	stream := net.Conn(raw)
 	_ = stream.SetDeadline(time.Now().Add(3 * time.Second))
-	entry, initial, err := tunnelv1.ReadNativePeerVisitorOpening(stream)
+	entry, initial, err := tunnelv1.ReadConnectorPeerVisitorOpening(stream)
 	if err != nil {
 		return
 	}
@@ -328,7 +328,7 @@ func (f *connectorFixture) visitor(ctx context.Context, raw muxsession.Stream, n
 	f.opened.Add(1)
 	public, _ := base64.RawURLEncoding.DecodeString(entry.Permission.PublicKey)
 	signature, _ := base64.RawURLEncoding.DecodeString(entry.Permission.Signature)
-	message, proofErr := tunnelv1.NativePeerProofMessage(entry, initial)
+	message, proofErr := tunnelv1.ConnectorPeerProofMessage(entry, initial)
 	if f.wrongAdmission.Load() || proofErr != nil || !bytes.Equal(public, f.device.PublicKey) || !ed25519.Verify(public, message, signature) || entry.Subject != f.device.Subject || entry.PairID != native.pair.PairId || entry.SourceIP != "127.0.0.1" {
 		return
 	}
@@ -339,7 +339,7 @@ func (f *connectorFixture) visitor(ctx context.Context, raw muxsession.Stream, n
 	if replay {
 		return
 	}
-	reader := tunnel.NewNativeRequestReader(raw, initial, func(tunnelv1.NativeVisitorPermission) error { return nil })
+	reader := tunnel.NewConnectorRequestReader(raw, initial, func(tunnelv1.ConnectorVisitorPermission) error { return nil })
 	defer reader.Finish()
 	stream = reader
 	certificate := f.certificate
@@ -493,7 +493,7 @@ func TestManagedConnectorReadinessAcrossReachabilityAndProtocols(t *testing.T) {
 						if _, err := io.ReadFull(local, got); err != nil || string(got) != "native" {
 							t.Fatal("native bytes", err)
 						}
-						// the publisher checks current policy on each native opening;
+						// the publisher checks current policy on each connector opening;
 						// local arrival must not call control to make that decision.
 						f.denied.Store(true)
 						denied, err := net.DialTimeout("tcp", f.localAddress, time.Second)
@@ -614,7 +614,7 @@ func TestConnectorInvalidAdmissionOrServiceCertificateNeverForwardsOrRetries(t *
 				t.Fatal("invalid admission or service certificate forwarded application bytes")
 			}
 			if f.opened.Load() != 2 || f.application.Load() != 0 {
-				t.Fatalf("rejected native stream replayed or forwarded: streams=%d app=%d", f.opened.Load(), f.application.Load())
+				t.Fatalf("rejected connector stream replayed or forwarded: streams=%d app=%d", f.opened.Load(), f.application.Load())
 			}
 		})
 	}
@@ -634,7 +634,7 @@ func TestConnectorRevokedSessionStopsOnlyItsActiveStreams(t *testing.T) {
 			check(healthy)
 			revoked := f.local(t)
 			check(revoked)
-			// both active streams belong to the retained native owner, not either
+			// both active streams belong to the retained connector owner, not either
 			// packet carrier. losing a carrier must not revoke or replay them.
 			f.mu.Lock()
 			f.failed[0] = true

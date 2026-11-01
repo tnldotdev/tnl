@@ -68,7 +68,7 @@ func PrepareServiceHTTP(ctx context.Context, f ServiceHTTP) (ServiceHTTP, func()
 
 func (f ServiceHTTP) Forward(ctx context.Context, client *tls.Conn, target ServiceHTTPTarget) error {
 	h := f.Header
-	if f.Policy == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.Direct == nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.Direct.DestinationPort != f.Port || f.Port < 1024 || h.Validate() != nil {
+	if f.Policy == nil || f.Subject.Kind != visitorscope.Service || !f.Subject.Valid() || h.PublicService == nil || h.ServiceID != f.Subject.ID || h.ServiceRunID != f.RunID || h.RunNumber != uint64(f.Number) || h.PublicService.DestinationPort != f.Port || f.Port < 1024 || h.Validate() != nil {
 		return ErrEndpoint
 	}
 	source, err := netip.ParseAddr(h.SourceIP)

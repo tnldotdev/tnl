@@ -12,8 +12,8 @@ type generatedServer struct {
 
 var _ relayv1.ServerInterface = generatedServer{}
 
-func (s generatedServer) ClaimNativePeerPairLeg(w http.ResponseWriter, r *http.Request, pairID string, slot int) {
-	s.handler.claimNativePeerPairLeg(w, r, pairID, slot)
+func (s generatedServer) ClaimConnectorPeerPairLeg(w http.ResponseWriter, r *http.Request, pairID string, slot int) {
+	s.handler.claimConnectorPeerPairLeg(w, r, pairID, slot)
 }
 
 func (s generatedServer) ClaimServicePublisherConnection(w http.ResponseWriter, r *http.Request, id relayv1.Identifier) {

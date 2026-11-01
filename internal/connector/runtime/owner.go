@@ -22,7 +22,7 @@ import (
 // Serve owns private IPC and joins cleanup. process-owned adapters distinguish
 // their process lifetime from bounded session and per-service authorization.
 func Serve(ctx context.Context, scope Context, directory, executable string, backend Backend, output io.Writer) (result error) {
-	startup, finishStartup := observability.ClientOperation(ctx, "native.connections.startup")
+	startup, finishStartup := observability.ClientOperation(ctx, "connector.connections.startup")
 	defer func() { finishStartup(result) }()
 	if scope.Validate() != nil || backend == nil {
 		return ErrInvalid
@@ -35,7 +35,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 		closeOnce.Do(func() {
 			cleanup, done := context.WithTimeout(observability.Independent(context.WithoutCancel(ctx)), 15*time.Second)
 			defer done()
-			cleanup, finish := observability.ClientOperation(cleanup, "native.connections.shutdown")
+			cleanup, finish := observability.ClientOperation(cleanup, "connector.connections.shutdown")
 			closeError = backend.Close(cleanup)
 			finish(closeError)
 			result = errors.Join(result, closeError)
@@ -288,7 +288,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 				until = localDeadline
 			}
 			bounded, done := context.WithDeadline(lifetime, until)
-			bounded, finish := observability.ClientOperation(bounded, "native.connections.renew")
+			bounded, finish := observability.ClientOperation(bounded, "connector.connections.renew")
 			next, err := backend.Renew(bounded)
 			finish(err)
 			done()

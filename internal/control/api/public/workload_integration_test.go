@@ -115,8 +115,8 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	if certificate, err := job.ClientTLSCertificate(ctx, service); err != nil || certificate.PrivateKey == nil || certificate.Leaf == nil {
 		t.Fatal("native workload TLS adapter", err)
 	}
-	t.Run("native peer pair", func(t *testing.T) {
-		exerciseWorkloadNativePeerPair(t, d, job, server, human.Identity.Identity.ID, team, service, session.Credential, databaseURL)
+	t.Run("connector peer pair", func(t *testing.T) {
+		exerciseWorkloadConnectorPeerPair(t, d, job, server, human.Identity.Identity.ID, team, service, session.Credential, databaseURL)
 	})
 	if t.Failed() {
 		return

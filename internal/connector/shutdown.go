@@ -8,7 +8,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 )
 
-func (b *nativeConnectionBackend) Close(ctx context.Context) error {
+func (b *connectorConnectionBackend) Close(ctx context.Context) error {
 	var result error
 	b.mu.Lock()
 	b.closed = true

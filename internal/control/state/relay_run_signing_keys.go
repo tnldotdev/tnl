@@ -9,7 +9,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
 
-// superseded bindings outlive the signed native peer pair and leg proof windows.
+// superseded bindings outlive the signed connector peer pair and leg proof windows.
 // the current run has no supersession timestamp, regardless of its age.
 const relayRunSigningKeyRetention = 10 * time.Minute
 

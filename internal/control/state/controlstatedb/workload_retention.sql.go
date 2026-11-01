@@ -57,7 +57,7 @@ const cleanupWorkloadCertificates = `-- name: CleanupWorkloadCertificates :execr
 DELETE FROM control.workload_client_certificates WHERE certificate_digest IN (
     SELECT cert.certificate_digest FROM control.workload_client_certificates cert
     WHERE cert.expires_at < $1
-      AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors visitor WHERE visitor.certificate_digest = cert.certificate_digest)
+      AND NOT EXISTS (SELECT 1 FROM control.public_service_visitors visitor WHERE visitor.certificate_digest = cert.certificate_digest)
     ORDER BY cert.expires_at, cert.certificate_digest LIMIT $2
     FOR UPDATE SKIP LOCKED
 )
@@ -76,10 +76,10 @@ func (q *Queries) CleanupWorkloadCertificates(ctx context.Context, arg CleanupWo
 	return result.RowsAffected(), nil
 }
 
-const cleanupWorkloadDirectVisitors = `-- name: CleanupWorkloadDirectVisitors :execrows
+const cleanupWorkloadPublicServiceVisitors = `-- name: CleanupWorkloadPublicServiceVisitors :execrows
 
-DELETE FROM control.direct_service_visitors WHERE visitor_connection_id IN (
-    SELECT visitor.visitor_connection_id FROM control.direct_service_visitors visitor
+DELETE FROM control.public_service_visitors WHERE visitor_connection_id IN (
+    SELECT visitor.visitor_connection_id FROM control.public_service_visitors visitor
     WHERE visitor.workload_session_id IS NOT NULL
       AND (visitor.valid_until < $1 OR visitor.closed_at < $1)
     ORDER BY visitor.valid_until, visitor.visitor_connection_id LIMIT $2
@@ -87,15 +87,15 @@ DELETE FROM control.direct_service_visitors WHERE visitor_connection_id IN (
 )
 `
 
-type CleanupWorkloadDirectVisitorsParams struct {
+type CleanupWorkloadPublicServiceVisitorsParams struct {
 	BeforeTime pgtype.Timestamptz
 	BatchSize  int32
 }
 
 // each phase has its own budget so a busy leaf cannot starve its parents.
 // select only unreferenced candidates before LIMIT; never cascade subject state.
-func (q *Queries) CleanupWorkloadDirectVisitors(ctx context.Context, arg CleanupWorkloadDirectVisitorsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, cleanupWorkloadDirectVisitors, arg.BeforeTime, arg.BatchSize)
+func (q *Queries) CleanupWorkloadPublicServiceVisitors(ctx context.Context, arg CleanupWorkloadPublicServiceVisitorsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, cleanupWorkloadPublicServiceVisitors, arg.BeforeTime, arg.BatchSize)
 	if err != nil {
 		return 0, err
 	}
@@ -112,7 +112,7 @@ DELETE FROM control.workload_session_services WHERE (workload_session_id, servic
       AND NOT EXISTS (SELECT 1 FROM control.workload_assertions child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.public_service_visitors child WHERE child.workload_session_id = session.id)
     ORDER BY session.expires_at, rights.workload_session_id, rights.service_id LIMIT $2
     FOR UPDATE OF rights SKIP LOCKED
 )
@@ -142,7 +142,7 @@ DELETE FROM control.workload_sessions WHERE id IN (
       AND NOT EXISTS (SELECT 1 FROM control.workload_assertions child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.direct_service_visitors child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.public_service_visitors child WHERE child.workload_session_id = session.id)
     ORDER BY session.expires_at, session.id LIMIT $2
     FOR UPDATE SKIP LOCKED
 )

@@ -88,16 +88,16 @@ type Bound struct {
 }
 
 type boundState struct {
-	assignments     map[string]tunnelv1.ServicePublisherConnectionRef
-	connections     [2]controlv1.ConnectionAssignment
-	mu              sync.Mutex
-	active          map[net.Conn]struct{}
-	closed          bool
-	reservedStreams int
-	nativePending   int
-	nativePeers     map[string]*PeerSession
-	packetSlots     [2]*Claimed
-	closePolicy     func()
+	assignments      map[string]tunnelv1.ServicePublisherConnectionRef
+	connections      [2]controlv1.ConnectionAssignment
+	mu               sync.Mutex
+	active           map[net.Conn]struct{}
+	closed           bool
+	reservedStreams  int
+	connectorPending int
+	connectorPeers   map[string]*PeerSession
+	packetSlots      [2]*Claimed
+	closePolicy      func()
 }
 
 func (Bound) String() string   { return "private publisher run" }
@@ -215,7 +215,7 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 		next[current.ConnectionSlot] = current
 	}
 	b.connections, b.assignments = next, refs
-	for _, p := range b.nativePeers {
+	for _, p := range b.connectorPeers {
 		if !b.peerRelaysCurrentLocked(p.binding) {
 			obsolete = append(obsolete, p)
 		}
@@ -244,7 +244,7 @@ func (b *Bound) current(ref tunnelv1.ServicePublisherConnectionRef) bool {
 }
 
 // reserveStream is the run's shared final capacity, across both relay slots and
-// native peers. only joined physical cleanup returns this debit.
+// connector peers. only joined physical cleanup returns this debit.
 func (b *Bound) reserveStream(ref tunnelv1.ServicePublisherConnectionRef) (func(), bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -433,8 +433,8 @@ func (b *Bound) Invalidate() {
 	}
 	b.mu.Lock()
 	b.closed = true
-	peers := make([]*PeerSession, 0, len(b.nativePeers))
-	for _, p := range b.nativePeers {
+	peers := make([]*PeerSession, 0, len(b.connectorPeers))
+	for _, p := range b.connectorPeers {
 		peers = append(peers, p)
 	}
 	streams := make([]net.Conn, 0, len(b.active))
@@ -476,13 +476,13 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	if err != nil || metadata.Source.Addr().String() != header.SourceIP {
 		return ErrPrivateStream
 	}
-	if header.Direct != nil && (metadata.Destination.Port() != header.Direct.DestinationPort || header.Direct.DestinationPort != b.prepared.servicePort) {
+	if header.PublicService != nil && (metadata.Destination.Port() != header.PublicService.DestinationPort || header.PublicService.DestinationPort != b.prepared.servicePort) {
 		return ErrPrivateStream
 	}
 	authority := ""
 	// direct visitors use the exact managed origin. admitted connector clients
 	// can use a loopback authority, including an owned kubeconfig's local server.
-	if b.prepared.managedPublic && header.Direct != nil {
+	if b.prepared.managedPublic && header.PublicService != nil {
 		authority = net.JoinHostPort(b.prepared.managedHostname, strconv.Itoa(int(b.prepared.servicePort)))
 	}
 	connection := &replayConn{Conn: stream, reader: replay}
@@ -494,7 +494,7 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 
 func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor publisher.ServiceVisitorAuthentication, authority string) error {
 	check := func() error {
-		if native, ok := visitor.(publisher.NativeVisitor); ok {
+		if native, ok := visitor.(publisher.ConnectorVisitor); ok {
 			_, err := native.Admission.CheckUse(ctx)
 			return err
 		}
@@ -507,7 +507,7 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor pub
 	if b.prepared.targetResolver != nil {
 		resolve := ctx
 		cancel := func() {}
-		if native, ok := visitor.(publisher.NativeVisitor); ok {
+		if native, ok := visitor.(publisher.ConnectorVisitor); ok {
 			resolve, cancel = context.WithDeadline(ctx, native.Admission.SetupDeadline())
 		}
 		var err error

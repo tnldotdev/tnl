@@ -19,7 +19,7 @@ type serviceConnection struct {
 	ref     tunnelv1.ServicePublisherConnectionRef
 	lease   relayv1.RelayLease
 	paths   *streamLifetime
-	packets *nativePacketSession
+	packets *connectorPacketSession
 }
 
 // ServiceRegistry contains only exact locally claimed private assignments.
@@ -262,8 +262,8 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, outer
 	}
 	paths := newStreamLifetime(session)
 	connection := &serviceConnection{ref: c.ref, lease: c.lease, paths: paths}
-	if acceptor.native != nil {
-		packets, err := newNativePacketSession(ctx, outer)
+	if acceptor.connector != nil {
+		packets, err := newConnectorPacketSession(ctx, outer)
 		if err != nil {
 			_ = session.Close()
 			return err

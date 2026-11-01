@@ -2,7 +2,7 @@
 
 `task go:test:integration:vercel` builds an installed-package Nitro Vercel Node
 function and invokes it from an artifact-only directory. the function starts its
-own packaged native connection owner using a generated workload manifest and
+own packaged connector owner using a generated workload manifest and
 signed local Vercel OIDC assertions delivered through request context.
 
 ```console
@@ -12,8 +12,8 @@ mise exec node@24.20.0 -- task go:test:integration:vercel
 the Task requires Node `24.20.0` on `PATH`, Docker, Go, Task, pnpm, and Pebble.
 it never invokes mise internally. `tools/testharness` owns digest-pinned disposable
 PostgreSQL; the Go fixture reuses the separated runtime's real authority/control,
-two ingress processes for public/direct coverage, two relays, and native
-publishers. native owners bypass ingress. Pebble issues managed
+two ingress processes for public URL and public service coverage, two relays, and native
+publishers. connector owners bypass ingress. Pebble issues managed
 visitor certificates through the existing DNS-01 fixture. only infrastructure
 addressing and OIDC signing-key discovery use local test adapters.
 
@@ -67,7 +67,7 @@ probes are excluded. full counters are retained in the invocation evidence.
 
 body streaming, cancellation, fixed session expiry, wrong TLS identity, and
 owner-death recovery stay in their existing lower-level tests. see
-[native connection runtime](connection-runtime.md),
+[connector connection runtime](connection-runtime.md),
 [workload sessions](../control/workload-sessions.md), and `task go:test:integration:provider-http`.
 
 ## linux function execution

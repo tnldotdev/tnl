@@ -50,7 +50,7 @@ func TestDirectAuthorizationWaitsForAdmissionAndPreservesInfrastructureCause(t *
 				t.Fatal(err)
 			}
 			defer cancel()
-			visitor := prepared.managedVisitor(tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{Direct: &tunnelv1.DirectAdmission{}}})
+			visitor := prepared.managedVisitor(tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{PublicService: &tunnelv1.PublicServiceAdmission{}}})
 			certificate := visitor.(publisher.CertificateVisitor)
 			decision, err := certificate.Check(t.Context(), &x509.Certificate{})
 			if infrastructureFailure {

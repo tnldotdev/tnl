@@ -60,7 +60,7 @@ func TestConnectionSharedOwnerSubprocess(t *testing.T) {
 	if err := json.Unmarshal(data, &input); err != nil {
 		t.Fatal(err)
 	}
-	b := &nativeConnectionBackend{scope: input.Scope, assertion: "first", parentPID: input.ParentPID, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}, Workloads: map[string]config.Workload{"worker": {Provider: "vercel", Services: []string{"api", "db"}}}}}}}
+	b := &connectorConnectionBackend{scope: input.Scope, assertion: "first", parentPID: input.ParentPID, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}, Workloads: map[string]config.Workload{"worker": {Provider: "vercel", Services: []string{"api", "db"}}}}}}}
 	if err := connectorruntime.Serve(t.Context(), input.Scope, input.Directory, "/fixture/tnl", b, os.Stdout); err != nil {
 		t.Fatal(err)
 	}
@@ -145,10 +145,10 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 	serviceNames := []string{"api", "db"}
 	protocols := []string{"http", "postgres"}
 	session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: ids, ExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second)}
-	natives := map[string]*connectorfixture.Native{}
+	natives := map[string]*connectorfixture.Connector{}
 	const serviceRun = "srun_rrrrrrrrrrrrrrrrrrrrrr"
 	for i, target := range []string{application.Listener.Addr().String(), dbListener.Addr().String()} {
-		natives[ids[i]] = connectorfixture.NewNative(t, ca, caKey, ids[i], serviceRun, id, serviceNames[i]+".example.test", target)
+		natives[ids[i]] = connectorfixture.NewConnector(t, ca, caKey, ids[i], serviceRun, id, serviceNames[i]+".example.test", target)
 	}
 	var publicMu sync.Mutex
 	var clientPublic ed25519.PublicKey
@@ -201,9 +201,9 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 				i = 1
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocols[i], "trust_revision": 1, "expires_at": now.Add(time.Minute), "subject": session.Subject, "endpoint": controlv1.ServiceEndpoint{Hostname: serviceNames[i] + ".example.test", Port: 15443 + i}, "pair_ready": natives[service].Ready})
-		case strings.Contains(r.URL.Path, "/native-peer-pairs"):
+		case strings.Contains(r.URL.Path, "/connector-peer-pairs"):
 			parts := strings.Split(r.URL.Path, "/")
-			var body controlv1.NativePeerPairRequest
+			var body controlv1.ConnectorPeerPairRequest
 			var source controlv1.VisitorTokenWorkloadSource
 			fixture := natives[parts[3]]
 			if fixture == nil || json.NewDecoder(r.Body).Decode(&body) != nil || json.Unmarshal(body.Source, &source) != nil || source.Credential != session.Credential {
@@ -231,7 +231,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 				w.WriteHeader(403)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: body.Resource, Hostname: serviceNames[i] + ".example.test", Port: 15443 + i, VisitorToken: "fixture-native-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: body.Resource, Hostname: serviceNames[i] + ".example.test", Port: 15443 + i, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(204)
 		default:

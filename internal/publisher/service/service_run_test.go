@@ -72,7 +72,7 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 					_, _ = io.WriteString(w, "loopback connector")
 				}))
 				defer target.Close()
-				bound, peer, verification, opening, _ := nativePeerFixture(t, target.Listener.Addr().String())
+				bound, peer, verification, opening, _ := connectorPeerFixture(t, target.Listener.Addr().String())
 				p := bound.prepared
 				p.managedPublic, p.managedProtocol = public, protocol
 				roots := x509.NewCertPool()
@@ -85,17 +85,17 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 				}
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
-				client, server := nativeInnerPair(t, ctx, verification)
+				client, server := connectorInnerPair(t, ctx, verification)
 				done := make(chan error, 1)
 				go func() { done <- peer.Serve(ctx, server) }()
 				raw, err := client.OpenStream(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := tunnelv1.WriteNativePeerVisitorOpening(raw, opening("L"), nil); err != nil {
+				if _, err := tunnelv1.WriteConnectorPeerVisitorOpening(raw, opening("L"), nil); err != nil {
 					t.Fatal(err)
 				}
-				secure := tls.Client(tunnel.NewNativeRequestWriter(raw), verification)
+				secure := tls.Client(tunnel.NewConnectorRequestWriter(raw), verification)
 				if err := secure.HandshakeContext(ctx); err != nil {
 					t.Fatal(err)
 				}
@@ -122,7 +122,7 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 					t.Fatal("connector publisher did not join")
 				}
 				bound.mu.Lock()
-				active, pending := bound.reservedStreams, bound.nativePending
+				active, pending := bound.reservedStreams, bound.connectorPending
 				bound.mu.Unlock()
 				if active != 0 || pending != 0 {
 					t.Fatal("native TLS close did not join its request and release charges", active, pending)
@@ -135,7 +135,7 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 	}
 }
 
-func TestDirectServiceTLSCloseEndsReturnStreamExactlyOnce(t *testing.T) {
+func TestPublicServiceTLSCloseEndsReturnStreamExactlyOnce(t *testing.T) {
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "direct") }))
 	defer target.Close()
 	p, bound, ref, verification := privateFixture(t, target.Listener.Addr().String())
@@ -238,7 +238,7 @@ func privateHeader(t *testing.T, ref tunnelv1.ServicePublisherConnectionRef) tun
 		}
 		return v
 	}
-	return tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, Direct: &tunnelv1.DirectAdmission{IngressID: "ingress-a", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443}, SourceIP: "192.0.2.10", VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, ExpiresAt: time.Now().Add(time.Minute)}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID, RelayID: "relay-instance", RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 2, LeaseExpiresAt: time.Now().Add(time.Minute)}
+	return tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream, ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443}, SourceIP: "192.0.2.10", VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix), PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision, ExpiresAt: time.Now().Add(time.Minute)}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID, RelayID: "relay-instance", RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 2, LeaseExpiresAt: time.Now().Add(time.Minute)}
 }
 
 func TestServiceStreamRejectsStaleAdmissionsBeforeTargetDial(t *testing.T) {

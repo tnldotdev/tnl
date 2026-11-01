@@ -27,7 +27,7 @@ type ServiceVisitorDecision struct {
 	ValidUntil time.Time
 }
 
-// ServiceStream terminates native client TLS at the publisher. the already
+// ServiceStream terminates visitor TLS at the publisher. the already
 // selected service owns its certificate name; SNI cannot select another target.
 // target trust is independent of the public WebPKI identity presented to clients.
 type ServiceStream struct {
@@ -44,20 +44,20 @@ type ServiceStream struct {
 }
 
 func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result error) {
-	var afterNativeEOF func()
+	var afterConnectorEOF func()
 	if reader, ok := visitor.(interface{ ContinueAfterTLSCloseNotify() }); ok {
-		afterNativeEOF = reader.ContinueAfterTLSCloseNotify
+		afterConnectorEOF = reader.ContinueAfterTLSCloseNotify
 	}
 	var valid bool
 	s.Visitor, valid = normalizeManagedVisitor(s.Visitor)
 	protocol, _ := observability.ParseProtocol(string(s.Protocol))
-	fields := observability.Fields{Component: "publisher", ServiceProtocol: protocol, AccessPath: "direct", Exposure: "private"}
+	fields := observability.Fields{Component: "publisher", ServiceProtocol: protocol, AccessPath: "public_endpoint", Exposure: "private"}
 	if s.Public {
 		fields.Exposure = "public"
 	}
-	var native ServiceNativeAdmission
-	if v, ok := s.Visitor.(NativeVisitor); ok {
-		native = v.Admission
+	var connector ServiceConnectorAdmission
+	if v, ok := s.Visitor.(ConnectorVisitor); ok {
+		connector = v.Admission
 		fields.AccessPath = "connector"
 	}
 	if _, ok := s.Visitor.(PublicHTTPVisitor); ok {
@@ -76,25 +76,25 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	if _, ok := s.Visitor.(PublicHTTPVisitor); ok && s.Protocol != config.ProtocolHTTP {
 		return ErrEndpoint
 	}
-	if native != nil {
-		if err := nativeCheck(ctx, native); err != nil {
+	if connector != nil {
+		if err := connectorCheck(ctx, connector); err != nil {
 			return err
 		}
-		visitor = &nativeServiceConn{conn: visitor, ctx: ctx, admission: native}
+		visitor = &connectorServiceConn{conn: visitor, ctx: ctx, admission: connector}
 	}
-	// native HTTP handlers and upgraded copies are part of the stream lifetime,
+	// connector HTTP handlers and upgraded copies are part of the stream lifetime,
 	// not merely net/http's connection close notification.
 	var handlerMu sync.Mutex
 	var handlers sync.WaitGroup
 	acceptHandlers := true
 	life, cancelLife := context.WithCancel(ctx)
-	if native != nil {
+	if connector != nil {
 		ctx = life
 	}
 	defer cancelLife()
 	setupUntil := time.Now().Add(10 * time.Second)
-	if native != nil && native.SetupDeadline().Before(setupUntil) {
-		setupUntil = native.SetupDeadline()
+	if connector != nil && connector.SetupDeadline().Before(setupUntil) {
+		setupUntil = connector.SetupDeadline()
 	}
 	setup, cancelSetup := context.WithDeadline(ctx, setupUntil)
 	defer cancelSetup()
@@ -109,7 +109,7 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		return err
 	}
 	// keep the raw target socket separately from TLS wrappers. cancellation may
-	// race with dialing or block in a native read that does not accept a context.
+	// race with dialing or block in a connector read that does not accept a context.
 	var socketsMu sync.Mutex
 	var targetSocket net.Conn
 	closeSockets := func() {
@@ -138,15 +138,15 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	trackTarget := func(conn net.Conn) {
 		socketsMu.Lock()
 		targetSocket = conn
-		canceled := setup.Err() != nil || native != nil && life.Err() != nil
+		canceled := setup.Err() != nil || connector != nil && life.Err() != nil
 		socketsMu.Unlock()
 		if canceled {
 			_ = conn.Close()
 		}
 	}
-	if native != nil {
+	if connector != nil {
 		defer func() {
-			native.Stop()
+			connector.Stop()
 			handlerMu.Lock()
 			acceptHandlers = false
 			handlerMu.Unlock()
@@ -155,8 +155,8 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 			handlers.Wait()
 		}()
 	}
-	enterNativeWork := func() (func(), bool) {
-		if native == nil {
+	enterConnectorWork := func() (func(), bool) {
+		if connector == nil {
 			return func() {}, true
 		}
 		handlerMu.Lock()
@@ -168,23 +168,23 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		return handlers.Done, true
 	}
 	wrapHandler := func(next http.Handler) http.Handler {
-		if native == nil {
+		if connector == nil {
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			finish, ok := enterNativeWork()
+			finish, ok := enterConnectorWork()
 			if !ok {
 				return
 			}
 			defer finish()
-			if nativeCheck(r.Context(), native) == nil {
+			if connectorCheck(r.Context(), connector) == nil {
 				next.ServeHTTP(w, r)
 			}
 		})
 	}
 	dial := func(call context.Context) (net.Conn, error) {
-		if native != nil {
-			if err := nativeCheck(call, native); err != nil {
+		if connector != nil {
+			if err := connectorCheck(call, connector); err != nil {
 				return nil, err
 			}
 		}
@@ -193,12 +193,12 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 			return nil, err
 		}
 		trackTarget(conn)
-		if native != nil {
-			if err := nativeCheck(call, native); err != nil {
+		if connector != nil {
+			if err := connectorCheck(call, connector); err != nil {
 				_ = conn.Close()
 				return nil, err
 			}
-			conn = &nativeServiceConn{conn: conn, ctx: ctx, admission: native}
+			conn = &connectorServiceConn{conn: conn, ctx: ctx, admission: connector}
 		}
 		return conn, nil
 	}
@@ -210,8 +210,8 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		if !stopped {
 			return context.Canceled
 		}
-		if native != nil {
-			if err := native.FinishSetup(); err != nil {
+		if connector != nil {
+			if err := connector.FinishSetup(); err != nil {
 				return err
 			}
 		}
@@ -262,8 +262,8 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	}
 	secured := tls.Server(visitor, frontTLS)
 	var client net.Conn = secured
-	if native != nil {
-		client = &nativeServiceConn{conn: secured, ctx: ctx, admission: native, afterEOF: afterNativeEOF}
+	if connector != nil {
+		client = &connectorServiceConn{conn: secured, ctx: ctx, admission: connector, afterEOF: afterConnectorEOF}
 	}
 	tlsCtx, tlsDone := observability.PublisherOperation(setup, "visitor_tls")
 	err = secured.HandshakeContext(tlsCtx)
@@ -303,7 +303,7 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 			return err
 		}
 		admissionDone(nil)
-		return s.forwardKubernetes(ctx, client, secured.ConnectionState(), ServiceHTTPTarget{Address: s.Target, Transport: transport, native: native, lifetime: ctx, track: trackTarget, enter: enterNativeWork}, decision, wrapHandler)
+		return s.forwardKubernetes(ctx, client, secured.ConnectionState(), ServiceHTTPTarget{Address: s.Target, Transport: transport, connector: connector, lifetime: ctx, track: trackTarget, enter: enterConnectorWork}, decision, wrapHandler)
 	}
 	if s.Protocol == config.ProtocolHTTP {
 		admissionDone(nil)
@@ -322,7 +322,7 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		if s.TargetTLS != nil {
 			scheme = "https"
 		}
-		target := ServiceHTTPTarget{Address: s.Target, Transport: transport, native: native, lifetime: ctx, track: trackTarget, enter: enterNativeWork}
+		target := ServiceHTTPTarget{Address: s.Target, Transport: transport, connector: connector, lifetime: ctx, track: trackTarget, enter: enterConnectorWork}
 		return httpstream.Serve(live, client, &url.URL{Scheme: scheme, Host: s.Target}, target.dial, func(next http.Handler) http.Handler {
 			return wrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// connector admission is the credential, but every HTTP request still
@@ -366,8 +366,8 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	if err != nil {
 		return err
 	}
-	if native != nil {
-		backend = &nativeServiceConn{conn: backend, ctx: ctx, admission: native}
+	if connector != nil {
+		backend = &connectorServiceConn{conn: backend, ctx: ctx, admission: connector}
 	}
 	if s.Protocol == config.ProtocolPostgres {
 		_, authDone := observability.PublisherOperation(setup, "native_auth")

@@ -62,7 +62,7 @@ func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, erro
 			(SELECT count(*) FROM control.public_urls WHERE request_digest_storage_key_id = $1) +
 			(SELECT count(*) FROM control.publish_runs WHERE request_digest_storage_key_id = $1) +
 			(SELECT count(*) FROM control.service_runs WHERE assignment_seed_storage_key_id = $1) +
-			(SELECT count(*) FROM control.native_peer_pairs WHERE storage_key_id = $1) +
+			(SELECT count(*) FROM control.connector_peer_pairs WHERE storage_key_id = $1) +
 			(SELECT count(*) FROM control.workload_sessions WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.applied_projects WHERE storage_key_id=$1) +
 			(SELECT count(*) FROM control.service_http_browser_logins WHERE storage_key_id=$1) +
@@ -364,9 +364,9 @@ func (d *Database) ReencryptStorageSecrets(ctx context.Context, limit int) (rota
 		{`SELECT ctid::text, id, assignment_seed_ciphertext FROM control.service_runs
 		  WHERE assignment_seed_storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"assignment_seed_ciphertext", "assignment_seed_storage_key_id", "control.service_runs", serviceAssignmentSeedContext},
-		{`SELECT ctid::text, id, key_ciphertext FROM control.native_peer_pairs
+		{`SELECT ctid::text, id, key_ciphertext FROM control.connector_peer_pairs
 		  WHERE storage_key_id=$1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
-			"key_ciphertext", "storage_key_id", "control.native_peer_pairs", nativePeerPairKeyContext},
+			"key_ciphertext", "storage_key_id", "control.connector_peer_pairs", connectorPeerPairKeyContext},
 		{`SELECT ctid::text, public_url_id, policy_ciphertext FROM control.ingress_routing_table_events
 		  WHERE policy_storage_key_id = $1 ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2`,
 			"policy_ciphertext", "policy_storage_key_id", "control.ingress_routing_table_events", publicURLIPPolicyContext},

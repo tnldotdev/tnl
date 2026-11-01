@@ -155,7 +155,7 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				}
 				control := production
 				quic, tcp := f.connectors()
-				listener := startNativeRuntimeConnector(t, f, service, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp}, revokedNativeOwnerStop)
+				listener := startRuntimeConnector(t, f, service, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp}, revokedConnectorOwnerStop)
 				verification := f.visitorRoots.Clone()
 				verification.ServerName = service.Endpoint.Hostname
 				transport := &http.Transport{Proxy: nil, TLSClientConfig: verification}

@@ -1,6 +1,6 @@
 # platform access integration
 
-provider workloads use the native connection owner for HTTP, PostgreSQL, MySQL,
+provider workloads use the connector owner for HTTP, PostgreSQL, MySQL,
 opaque TCP, and Kubernetes. the SDK acquires a runtime assertion; authority
 verifies it against saved policy. application protocols share native key,
 session, renewal, and private IPC ownership.
@@ -49,10 +49,10 @@ repository owner, run, attempt, and check-run IDs remain part of the identity.
 the binding grants no visitor access and cannot replace key proof.
 
 SDK caches select an owner only after this operation succeeds. they never decode
-JWT claims to reuse a native owner. owners are bounded to 32 per SDK instance;
+JWT claims to reuse a connector owner. owners are bounded to 32 per SDK instance;
 service name and assertion digest are not owner keys.
 
-the native owner creates its ephemeral Ed25519 key and exchanges the assertion
+the connector owner creates its ephemeral Ed25519 key and exchanges the assertion
 with an explicit requested service subset. exchange retains its key and nonce
 across a lost-response retry. session credentials remain native-private.
 
@@ -175,7 +175,7 @@ remain run-bound and use the configured readiness path. see
 [compose publisher](../../../deploy/publisher/compose/readme.md).
 
 the PostgreSQL baseline identity is
-`tnl-control-fresh-v1-relay-native-peers`, at version 1. it stores exact native
+`tnl-control-fresh-v1-relay-connector-peers`, at version 1. it stores exact native
 owner/pair authority without native ingress assignments or session storage. use a
 fresh database and coordinated baseline rollout.
 

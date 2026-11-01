@@ -65,18 +65,18 @@ func (f *lifecycleControl) ReadPublisherVisitorPolicy(_ context.Context, body co
 	}}, nil
 }
 
-func (f *lifecycleControl) ListNativePeerPairs(_ context.Context, service, run, after string, token credentials.ServiceRunToken) (controlv1.NativePeerPairCandidates, error) {
+func (f *lifecycleControl) ListConnectorPeerPairs(_ context.Context, service, run, after string, token credentials.ServiceRunToken) (controlv1.ConnectorPeerPairCandidates, error) {
 	if service != f.prep.ServiceId || run != f.prep.ServiceRunId || token.String() != f.setup.RunToken || after != "" {
-		return controlv1.NativePeerPairCandidates{}, ErrPrivateStream
+		return controlv1.ConnectorPeerPairCandidates{}, ErrPrivateStream
 	}
-	return controlv1.NativePeerPairCandidates{Items: []controlv1.NativePeerPairCandidate{}}, nil
+	return controlv1.ConnectorPeerPairCandidates{Items: []controlv1.ConnectorPeerPairCandidate{}}, nil
 }
 
-func (*lifecycleControl) DeliverNativePeerPair(context.Context, string, string, string, int64, credentials.ServiceRunToken) (controlv1.NativePeerPairDelivery, error) {
-	return controlv1.NativePeerPairDelivery{}, ErrPrivateStream
+func (*lifecycleControl) DeliverConnectorPeerPair(context.Context, string, string, string, int64, credentials.ServiceRunToken) (controlv1.ConnectorPeerPairDelivery, error) {
+	return controlv1.ConnectorPeerPairDelivery{}, ErrPrivateStream
 }
 
-func (*lifecycleControl) ConfirmNativePeerPairPrepared(context.Context, string, string, string, controlv1.NativePeerPairPrepared, credentials.ServiceRunToken) error {
+func (*lifecycleControl) ConfirmConnectorPeerPairPrepared(context.Context, string, string, string, controlv1.ConnectorPeerPairPrepared, credentials.ServiceRunToken) error {
 	return ErrPrivateStream
 }
 

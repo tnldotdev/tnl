@@ -153,7 +153,7 @@ when control requests `max_age=0`; it does not need hosted custom claims:
 
 Each rule applies only to the configured exact issuer. `subjects` are exact
 subjects; an optional claim rule may match signed `tid`, `hd`, or a `groups`
-entry. Subjects and the claim are alternative admission conditions. No email
+entry. Subjects and the claim are alterconnector admission conditions. No email
 merging or role claims are used. A rule seeds its team source once and supplies
 eligibility inside the session transaction. First-time members are admitted as
 members; removed memberships, demotions, manual suspensions, and bindings to

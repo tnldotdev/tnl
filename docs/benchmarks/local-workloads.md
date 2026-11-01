@@ -88,7 +88,7 @@ evidence. A local Docker profile is not a production capacity limit. See the
 [local capacity results](local-capacity.md) for measured comparisons and the
 [capacity plan](capacity-plan.md) for how to qualify a limit.
 
-## native connector load
+## connector load
 
 Measure the `tnl connect` path with the same disposable separated topology:
 
@@ -126,9 +126,9 @@ explicitly when measuring its saturation point. The runtime resource overrides
 also apply to this target.
 
 `SCENARIO=latency` supports `RTT=20ms`, `50ms`, or `100ms`.
-`NETWORK_PATH=connector` delays native connector-to-relay traffic, `forwarding`
+`NETWORK_PATH=connector` delays connector-to-relay traffic, `forwarding`
 delays ingress-to-relay traffic for direct/public visitors, and `publisher` delays
-relay-to-publisher traffic. native service traffic bypasses ingress.
+relay-to-publisher traffic. connector service traffic bypasses ingress.
 `SCENARIO=packet-loss LOSS=0.1` or `1` uses the same paths. Impairments apply before
 startup and remain active through all traffic windows; qdisc/filter evidence records
 both directions. Direct traffic and control API traffic are outside those filters.
@@ -137,6 +137,6 @@ Results include `connect-startup.json`, per-phase `*-setup.json`, raw request
 samples, publisher-transport cohorts, process resources, server metrics, and
 `connect-cleanup.json`. `*-latency.json` reports exact mean/p50/p95/p99 from request
 start separately from scheduled-slot latency, so generator delay remains visible.
-Failures, missed offers, queue expiry, resource rejection, and live native owners
+Failures, missed offers, queue expiry, resource rejection, and live connector owners
 through an open publisher run after cleanup fail the run. CI runs the race-enabled smoke and adds latency runs to
 the scheduled workload; timings are measurements, not machine-dependent pass limits.

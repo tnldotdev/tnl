@@ -35,7 +35,7 @@ type relayRuntime struct {
 	registry           *relay.Registry
 	serviceRegistry    *relay.ServiceRegistry
 	publisher          *relay.PublisherAcceptor
-	native             *relay.NativeConnectorAcceptor
+	connector          *relay.ConnectorAcceptor
 	transportTLS       *tls.Config
 	tcpListener        net.Listener
 	udpListener        *muxsession.QUICListener
@@ -283,16 +283,16 @@ func (d *daemon) startRelayRuntime(
 		return nil, err
 	}
 	runtime.controller = controller
-	claim, ok := runtimeConfig.client.(relay.NativePeerLegClaimClient)
+	claim, ok := runtimeConfig.client.(relay.ConnectorPeerLegClaimClient)
 	if !ok {
-		return nil, errors.New("relay native admission requires the accepted-socket claim client")
+		return nil, errors.New("relay connector admission requires the accepted-socket claim client")
 	}
-	runtime.native = &relay.NativeConnectorAcceptor{CurrentLease: controller.Lease, SigningKey: privateKey, Claim: claim, Publishers: serviceRegistry}
+	runtime.connector = &relay.ConnectorAcceptor{CurrentLease: controller.Lease, SigningKey: privateKey, Claim: claim, Publishers: serviceRegistry}
 	publisherAcceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{
 		Observer: runtimeConfig.metrics,
 		Control:  controller, Registry: registry,
-		Native: func(id string) (*relay.NativeConnectorAcceptor, bool) {
-			return runtime.native, id == runtimeConfig.relayServiceID
+		Connector: func(id string) (*relay.ConnectorAcceptor, bool) {
+			return runtime.connector, id == runtimeConfig.relayServiceID
 		},
 		Private: &relay.ServicePublisherAcceptor{Select: func(id string) (relay.ServicePublisherTarget, bool) {
 			return relay.ServicePublisherTarget{Control: controller, Registry: serviceRegistry}, id == runtimeConfig.relayServiceID

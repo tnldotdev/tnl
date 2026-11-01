@@ -19,7 +19,7 @@ import (
 
 // preparation is incremental and failure is local to the requested service.
 // the exchanged service-ID snapshot is independent of this listener map.
-func (b *nativeConnectionBackend) prepareService(ctx context.Context, name string, previous *preparedConnection, service controlv1.Service, client *workload.Client) (*preparedConnection, error) {
+func (b *connectorConnectionBackend) prepareService(ctx context.Context, name string, previous *preparedConnection, service controlv1.Service, client *workload.Client) (*preparedConnection, error) {
 	if !slices.Contains(b.scope.Services, name) {
 		return nil, connectorruntime.ErrUnavailable
 	}

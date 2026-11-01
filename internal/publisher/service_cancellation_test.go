@@ -68,7 +68,7 @@ func TestManagedSetupCancellationClosesBothNativeSockets(t *testing.T) {
 			if phase == "mysql greeting" || phase == "mysql auth" {
 				protocol = config.ProtocolMySQL
 			}
-			stream := ServiceStream{Protocol: protocol, Hostname: "service.example.test", Target: target.Addr().String(), TLS: &tls.Config{Certificates: []tls.Certificate{certificate}}, Visitor: NativeVisitor{Admission: NativeAdmissionFixture{Check: func(context.Context) (ServiceVisitorDecision, error) {
+			stream := ServiceStream{Protocol: protocol, Hostname: "service.example.test", Target: target.Addr().String(), TLS: &tls.Config{Certificates: []tls.Certificate{certificate}}, Visitor: ConnectorVisitor{Admission: NativeAdmissionFixture{Check: func(context.Context) (ServiceVisitorDecision, error) {
 				return ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
 			}}}}
 			if phase == "postgres negotiation" {

@@ -31,7 +31,7 @@ type ingressRuntime struct {
 	forwarder          *ingress.Forwarder
 	usage              *ingress.UsageReporter
 	recovery           *ingress.RecoveryReporter
-	direct             *ingress.DirectServices
+	publicServices     *ingress.PublicServices
 	audit              *ingressServiceAudit
 }
 
@@ -90,12 +90,12 @@ func (d *daemon) startIngress(ctx context.Context, settings ingressProcessSettin
 }
 
 type ingressRuntimeConfig struct {
-	client          ingress.ControlClient
-	ingressID       string
-	listener        net.Listener
-	clusterSecret   string
-	configure       func(*ingress.Config)
-	configureDirect func(*ingress.DirectServicesConfig)
+	client                  ingress.ControlClient
+	ingressID               string
+	listener                net.Listener
+	clusterSecret           string
+	configure               func(*ingress.Config)
+	configurePublicServices func(*ingress.PublicServicesConfig)
 }
 
 type ingressSettings struct {
@@ -156,8 +156,8 @@ func (d *daemon) startIngressRuntime(
 			flush, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			_ = runtime.audit.Close(flush)
 			cancel()
-			if runtime.direct != nil {
-				_ = runtime.direct.Close()
+			if runtime.publicServices != nil {
+				_ = runtime.publicServices.Close()
 			}
 			if runtime.forwarder != nil {
 				_ = runtime.forwarder.Close()
@@ -184,8 +184,8 @@ func (d *daemon) startIngressRuntime(
 		RoutingWait: settings.routingTableWait, Observer: metrics,
 		Load: func() int64 {
 			var private int64
-			if runtime.direct != nil {
-				private = runtime.direct.Load()
+			if runtime.publicServices != nil {
+				private = runtime.publicServices.Load()
 			}
 			if publicServer == nil {
 				return private
@@ -285,20 +285,20 @@ func (d *daemon) startIngressRuntime(
 		runtimeConfig.configure(&ingressConfig)
 	}
 	ingressConfig.AuditSink = runtime.audit
-	directControl, ok := runtimeConfig.client.(ingress.DirectControl)
+	publicServiceControl, ok := runtimeConfig.client.(ingress.PublicServiceControl)
 	if !ok {
-		return errors.New("direct service ingress control operations are required")
+		return errors.New("public service ingress control operations are required")
 	}
-	directConfig := ingress.DirectServicesConfig{IngressPoolID: string(settings.ingressPoolID), Control: directControl, Forwarder: forwarder, CurrentLease: controller.Lease, AuditSink: runtime.audit}
-	if runtimeConfig.configureDirect != nil {
-		runtimeConfig.configureDirect(&directConfig)
+	publicServicesConfig := ingress.PublicServicesConfig{IngressPoolID: string(settings.ingressPoolID), Control: publicServiceControl, Forwarder: forwarder, CurrentLease: controller.Lease, AuditSink: runtime.audit}
+	if runtimeConfig.configurePublicServices != nil {
+		runtimeConfig.configurePublicServices(&publicServicesConfig)
 	}
-	directConfig.AuditSink = runtime.audit
-	runtime.direct, err = ingress.NewDirectServices(directConfig)
+	publicServicesConfig.AuditSink = runtime.audit
+	runtime.publicServices, err = ingress.NewPublicServices(publicServicesConfig)
 	if err != nil {
 		return err
 	}
-	ingressConfig.DirectServices, ingressConfig.ServicePortRanges = runtime.direct, settings.servicePortRanges.Ranges()
+	ingressConfig.PublicServices, ingressConfig.ServicePortRanges = runtime.publicServices, settings.servicePortRanges.Ranges()
 	ingressConfig.Traffic, ingressConfig.Pending, err = daemonconfig.ValidateIngressTraffic(ingressConfig.Traffic, ingressConfig.Pending)
 	if err != nil {
 		_ = forwarder.Close()

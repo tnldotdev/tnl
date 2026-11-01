@@ -74,8 +74,8 @@ func RecordServiceAudit(ctx context.Context, tx pgx.Tx, event serviceaudit.Event
 			OR $4::text IN ('invitation.accept','grant.create','device.enroll','device.revoke','certificate.client.issue') AND (
 			    EXISTS(SELECT 1 FROM control.visitor_grants g WHERE g.service_id=$3 AND g.identity_id=person.id)
 			    OR EXISTS(SELECT 1 FROM control.visitor_grants g WHERE g.public_url_id=$3 AND g.identity_id=person.id)
-			    OR EXISTS(SELECT 1 FROM control.direct_service_visitors v WHERE v.service_id=$3 AND v.identity_id=person.id)
-			    OR EXISTS(SELECT 1 FROM control.native_peer_audit_bindings b WHERE b.service_id=$3 AND b.identity_id=person.id)
+			    OR EXISTS(SELECT 1 FROM control.public_service_visitors v WHERE v.service_id=$3 AND v.identity_id=person.id)
+			    OR EXISTS(SELECT 1 FROM control.connector_peer_audit_bindings b WHERE b.service_id=$3 AND b.identity_id=person.id)
 			)))`, event.ActorIdentityID, event.TeamID, event.ServiceID, event.EventType).Scan(&exists); err != nil {
 			return err
 		}
@@ -384,7 +384,7 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 		} else {
 			// direct admission identity is recovered
 			// only from the publisher-authenticated record, never the report.
-			err = tx.QueryRow(ctx, `SELECT s.team_id,v.identity_id,v.device_id,r.publisher_identity_id FROM control.direct_service_visitors v
+			err = tx.QueryRow(ctx, `SELECT s.team_id,v.identity_id,v.device_id,r.publisher_identity_id FROM control.public_service_visitors v
 				JOIN control.services s ON s.id=v.service_id JOIN control.service_runs r ON r.id=v.service_run_id
 				WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4
 				AND v.ingress_id=$5 AND v.ingress_run_id=$6 AND v.ingress_lease_revision=$7 AND host(v.source_ip)=$8
@@ -428,8 +428,8 @@ func auditDeviceMutation(ctx context.Context, tx pgx.Tx, identity, device, opera
 	rows, err := tx.Query(ctx, `SELECT DISTINCT s.team_id,s.id FROM control.services s WHERE
 		EXISTS(SELECT 1 FROM control.team_memberships m WHERE m.team_id=s.team_id AND m.identity_id=$1 AND m.removed_at IS NULL)
 		OR EXISTS(SELECT 1 FROM control.visitor_grants g WHERE g.service_id=s.id AND g.identity_id=$1)
-		OR EXISTS(SELECT 1 FROM control.direct_service_visitors v WHERE v.service_id=s.id AND v.device_id=$2)
-		OR EXISTS(SELECT 1 FROM control.native_peer_audit_bindings b WHERE b.service_id=s.id AND b.device_id=$2)
+		OR EXISTS(SELECT 1 FROM control.public_service_visitors v WHERE v.service_id=s.id AND v.device_id=$2)
+		OR EXISTS(SELECT 1 FROM control.connector_peer_audit_bindings b WHERE b.service_id=s.id AND b.device_id=$2)
 		ORDER BY s.team_id,s.id`, identity, device)
 	if err != nil {
 		return err

@@ -26,7 +26,7 @@ func NewWorkloadControl(client *workload.Client) (Control, error) {
 		return nil, err
 	}
 	c := &workloadControl{client, subject}
-	return NewControlWithConfig(ControlConfig{Signer: c.signer, Resolve: c.resolve, Pair: client.PrepareNativePeerPair, Permission: client.VisitorPermission, Close: func() error { return nil }})
+	return NewControlWithConfig(ControlConfig{Signer: c.signer, Resolve: c.resolve, Pair: client.PrepareConnectorPeerPair, Permission: client.VisitorPermission, Close: func() error { return nil }})
 }
 func (c *workloadControl) signer(_ context.Context, identity string) (Signer, error) {
 	s, err := c.client.Subject()

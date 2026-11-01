@@ -52,8 +52,8 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
 		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber,
 		PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
-		Direct:   &tunnelv1.DirectAdmission{IngressID: "ingress-a", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443},
-		SourceIP: "192.0.2.1", VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix),
+		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443},
+		SourceIP:      "192.0.2.1", VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix),
 		ExpiresAt: time.Now().Add(time.Minute),
 	}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID,
 		RelayID: "relay-one-process", RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 2,
@@ -127,7 +127,7 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 func TestServicePublisherTransportRequiresClaimedPublisherRole(t *testing.T) {
 	client, _ := newMemoryPair(t)
 	for _, session := range []*Session{nil, {}, {transport: client}, {transport: client, role: tunnelv1.Publisher},
-		{transport: client, role: tunnelv1.NativeConnector, serviceConnection: &tunnelv1.ServicePublisherConnectionRef{}}} {
+		{transport: client, role: tunnelv1.Connector, serviceConnection: &tunnelv1.ServicePublisherConnectionRef{}}} {
 		borrowed, err := session.BorrowServicePublisherTransport()
 		var rejected *ProtocolError
 		if borrowed != nil || !errors.As(err, &rejected) || rejected.Code != tunnelv1.Unauthenticated {

@@ -44,7 +44,7 @@ func (b PairBinding) authentic(frame []byte, sender uint8) bool {
 		return false
 	}
 	mac := hmac.New(sha256.New, b.Key[:])
-	_, _ = mac.Write([]byte(nativePacketDomain))
+	_, _ = mac.Write([]byte(connectorPacketDomain))
 	_, _ = mac.Write([]byte{0})
 	_, _ = mac.Write(unsigned)
 	return hmac.Equal(p.MAC[:], mac.Sum(nil))

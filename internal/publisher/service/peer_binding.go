@@ -23,26 +23,26 @@ type PeerBinding struct {
 	key                                   [32]byte
 	source                                netip.Addr
 	subject                               tunnelv1.VisitorSubject
-	relays                                [2]controlv1.NativePeerPairRelay
+	relays                                [2]controlv1.ConnectorPeerPairRelay
 	until                                 time.Time
 	authorityUntil                        time.Time
 }
 
-func (PeerBinding) String() string   { return "native peer binding" }
-func (PeerBinding) GoString() string { return "native peer binding" }
+func (PeerBinding) String() string   { return "connector peer binding" }
+func (PeerBinding) GoString() string { return "connector peer binding" }
 
 type peerDeliveryControl interface {
-	DeliverNativePeerPair(context.Context, string, string, string, int64, credentials.ServiceRunToken) (controlv1.NativePeerPairDelivery, error)
+	DeliverConnectorPeerPair(context.Context, string, string, string, int64, credentials.ServiceRunToken) (controlv1.ConnectorPeerPairDelivery, error)
 }
 
 // PreparePeerBinding runs before application arrival. request transit spends
 // the returned authority interval; application input never selects source IP.
 func PreparePeerBinding(ctx context.Context, control peerDeliveryControl, serviceID, runID, pairID string, generation int64, token credentials.ServiceRunToken) (PeerBinding, error) {
-	if control == nil || !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) || !opaqueid.Valid(runID, opaqueid.ServiceRunPrefix) || !opaqueid.Valid(pairID, "npp_") || generation < 1 || token == "" {
+	if control == nil || !opaqueid.Valid(serviceID, opaqueid.ServicePrefix) || !opaqueid.Valid(runID, opaqueid.ServiceRunPrefix) || !opaqueid.Valid(pairID, "cpp_") || generation < 1 || token == "" {
 		return PeerBinding{}, ErrPrivateStream
 	}
 	started := time.Now()
-	d, err := control.DeliverNativePeerPair(ctx, serviceID, runID, pairID, generation, token)
+	d, err := control.DeliverConnectorPeerPair(ctx, serviceID, runID, pairID, generation, token)
 	if err != nil {
 		return PeerBinding{}, err
 	}
@@ -74,8 +74,8 @@ func PreparePeerBinding(ctx context.Context, control peerDeliveryControl, servic
 	return b, nil
 }
 
-func (b PeerBinding) expected() tunnelv1.NativePeerSession {
-	return tunnelv1.NativePeerSession{PairID: b.pairID, DeliveryID: base64.RawURLEncoding.EncodeToString(b.delivery[:]), DeliveryGeneration: b.generation,
+func (b PeerBinding) expected() tunnelv1.ConnectorPeerSession {
+	return tunnelv1.ConnectorPeerSession{PairID: b.pairID, DeliveryID: base64.RawURLEncoding.EncodeToString(b.delivery[:]), DeliveryGeneration: b.generation,
 		ServiceID: b.serviceID, ServiceRunID: b.runID, RunNumber: b.number, Subject: b.subject, SourceIP: b.source.String(), ExpiresAt: b.until}
 }
 

@@ -11,10 +11,10 @@ import (
 )
 
 func TestNativeWorkloadInstallationWaitsForBackgroundPolicy(t *testing.T) {
-	b, p, _, _, control := nativePeerFixture(t, "127.0.0.1:1")
+	b, p, _, _, control := connectorPeerFixture(t, "127.0.0.1:1")
 	binding := p.bindingSnapshot()
 	binding.subject = tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorWorkloadSession, WorkloadSessionID: "wls_aaaaaaaaaaaaaaaaaaaaaa"}
-	if b.nativePeerPolicyCurrent(binding) {
+	if b.connectorPeerPolicyCurrent(binding) {
 		t.Fatal("installation became ready before its workload appeared in local policy")
 	}
 	apply := func(parents []controlv1.VisitorWorkloadLease) {
@@ -34,16 +34,16 @@ func TestNativeWorkloadInstallationWaitsForBackgroundPolicy(t *testing.T) {
 	}
 	parent := controlv1.VisitorWorkloadLease{SessionId: binding.subject.WorkloadSessionID, KeySha256: "fixture", ExpiresAt: time.Now().Add(time.Minute)}
 	apply([]controlv1.VisitorWorkloadLease{parent})
-	if !b.nativePeerPolicyCurrent(binding) {
+	if !b.connectorPeerPolicyCurrent(binding) {
 		t.Fatal("current background workload could not become ready")
 	}
 	parent.ExpiresAt = time.Now().Add(-time.Second)
 	apply([]controlv1.VisitorWorkloadLease{parent})
-	if b.nativePeerPolicyCurrent(binding) {
+	if b.connectorPeerPolicyCurrent(binding) {
 		t.Fatal("expired workload retained installation readiness")
 	}
 	apply(nil)
-	if b.nativePeerPolicyCurrent(binding) {
+	if b.connectorPeerPolicyCurrent(binding) {
 		t.Fatal("removed workload retained installation readiness")
 	}
 	if control.calls != 1 {

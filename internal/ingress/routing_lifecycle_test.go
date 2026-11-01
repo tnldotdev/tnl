@@ -119,10 +119,10 @@ func (f stalledServiceForwarder) OpenPrivate(ctx context.Context, relay ingressv
 	return f.alternate.OpenPrivate(ctx, relay, header)
 }
 
-func TestDirectVisitorStalledRelayLeavesAlternateBudget(t *testing.T) {
+func TestPublicServiceVisitorStalledRelayLeavesAlternateBudget(t *testing.T) {
 	for _, proxy := range []bool{false, true} {
 		t.Run(fmt.Sprintf("proxy=%t", proxy), func(t *testing.T) {
-			p, _, forwarder, _ := directTestSetup(t)
+			p, _, forwarder, _ := publicServiceTestSetup(t)
 			p.config.PendingTimeout = 600 * time.Millisecond
 			p.config.Forwarder = stalledServiceForwarder{alternate: forwarder, stallProxy: proxy}
 			connection, visitor := net.Pipe()
@@ -130,7 +130,7 @@ func TestDirectVisitorStalledRelayLeavesAlternateBudget(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				done <- p.AcceptDirect(ctx, connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"))
+				done <- p.AcceptPublic(ctx, connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"))
 			}()
 			t.Cleanup(func() {
 				cancel()
@@ -176,7 +176,7 @@ func tcpPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
 func TestPendingDirectMySQLServerFirstHalfClose(t *testing.T) {
 	visitor, ingress := tcpPair(t)
 	upstream, mysql := tcpPair(t)
-	pending := &pendingDirectConn{Conn: ingress, ctx: t.Context(), promoted: make(chan struct{})}
+	pending := &pendingPublicServiceConn{Conn: ingress, ctx: t.Context(), promoted: make(chan struct{})}
 	pending.upload.Store(64 << 10)
 	pending.download.Store(128 << 10)
 	done := make(chan error, 1)

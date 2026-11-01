@@ -1,24 +1,24 @@
 # transport architecture
 
-Ingress owns public/direct visitor acceptance and the retry commitment. Relay owns its lease,
+Ingress owns public URL and public service visitor acceptance and the retry commitment. Relay owns its lease,
 publisher claim registry, capacity, and streams. Shared transport packages supply
 bounded handshakes and copying mechanics without deciding placement or visitor
 authorization.
 
 ## implementation map
 
-| Owner                                                   | Responsibility                                                                                                               |
-| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `internal/ingress`                                      | Public/direct dispatch, public URL routing, pool selection, admission/promotion, live guards, usage, and forwarding lifetime |
-| `internal/ingress/clienthello`                          | Bounded ClientHello hostname inspection                                                                                      |
-| `internal/ingress/backend`, `internal/ingress/pool`     | Forwarding interface/projections and shared pool identity                                                                    |
-| `internal/relay`                                        | Cohesive lease/claim registry, authenticated publisher sessions, stream admission/accounting, and drain                      |
-| `internal/transport/tunnel`                             | Shared tunnel handshakes, accepted peers, slots, and transport races                                                         |
-| `internal/transport/muxsession`                         | QUIC and TLS/TCP-yamux multiplexed byte streams                                                                              |
-| `internal/transport/peer`                               | Two-carrier authenticated packet delivery for a native pair's retained inner QUIC session                                    |
-| `internal/transport/{proxyproto,streamcopy,httpstream}` | PROXY v2, joined bidirectional copies/half-close, and HTTP body/trailer ownership                                            |
-| `internal/transport/targettransport`                    | Protocol-aware publisher-to-target TLS preflight and handshake                                                               |
-| `pkg/protocol/tunnelv1`                                 | Sole handwritten frame/message wire contract                                                                                 |
+| Owner                                                   | Responsibility                                                                                                                               |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `internal/ingress`                                      | Public URL and public service dispatch, public URL routing, pool selection, admission/promotion, live guards, usage, and forwarding lifetime |
+| `internal/ingress/clienthello`                          | Bounded ClientHello hostname inspection                                                                                                      |
+| `internal/ingress/backend`, `internal/ingress/pool`     | Forwarding interface/projections and shared pool identity                                                                                    |
+| `internal/relay`                                        | Cohesive lease/claim registry, authenticated publisher sessions, stream admission/accounting, and drain                                      |
+| `internal/transport/tunnel`                             | Shared tunnel handshakes, accepted peers, slots, and transport races                                                                         |
+| `internal/transport/muxsession`                         | QUIC and TLS/TCP-yamux multiplexed byte streams                                                                                              |
+| `internal/transport/peer`                               | Two-carrier authenticated packet delivery for a connector pair's retained inner QUIC session                                                 |
+| `internal/transport/{proxyproto,streamcopy,httpstream}` | PROXY v2, joined bidirectional copies/half-close, and HTTP body/trailer ownership                                                            |
+| `internal/transport/targettransport`                    | Protocol-aware publisher-to-target TLS preflight and handshake                                                                               |
+| `pkg/protocol/tunnelv1`                                 | Sole handwritten frame/message wire contract                                                                                                 |
 
 Routing, admission, usage, and visitor state remain cohesive in the ingress root;
 the draft `ingress/{routing,admission,usage}` packages were not created. Relay also
@@ -63,7 +63,7 @@ any excess prefix follows as raw bytes. a fresh exact session/assignment first
 confirms metadata through the publisher, then sends visitor bytes on that same
 stream. later openings pipeline the prefix without waiting for acceptance.
 confirmation is scoped to that session and assignment, not a recovery timer.
-direct service openings retain metadata-only acceptance before application bytes.
+public service openings retain metadata-only acceptance before application bytes.
 
 ingress may try another connected relay before the first visitor byte is sent.
 a rejected confirmation, failed PROXY-header write, or zero-byte ClientHello
@@ -71,7 +71,7 @@ write can still be retried. the first visitor byte commits the stream, even if
 the rest of ClientHello fails or a later return frame rejects it. opening errors
 retain the exact visitor-byte count, excluding framing and PROXY metadata.
 copy/close then owns it; live connections are never replayed or migrated.
-public and direct setup reserve time for alternate relays before that boundary.
+public URL and public service setup reserve time for alternate relays before that boundary.
 a denied visitor may use separate admission to finish TLS at the publisher and
 receive HTTPS 403.
 
@@ -91,7 +91,7 @@ session or its visitors, including while the newer session is connecting.
 
 ## authorization and tls boundaries
 
-Public URL and direct service HTTP requests verify signed visitor permissions
+Public URL and public service HTTP requests verify signed visitor permissions
 locally. Before serving, the publisher prepares a resource policy using its
 current run credential. Fetching through installation has a two-second budget;
 the policy expires within ten seconds of request start. Failed renewal cannot
@@ -118,19 +118,19 @@ permission until its existing deadline. Expiry or revocation cancels the target 
 the affected HTTP/2 stream; upgraded HTTP/1 closes directly. Application requests
 perform no authorization RPC and never replay bytes.
 
-native connectors prepare two relay carriers bound to one signed owner, exact
+connectors prepare two relay carriers bound to one signed owner, exact
 publisher run, relay-process claims, and agreed socket source. their inner QUIC
 session carries signed application openings; the publisher's current local guard
 fences target resolution, dialing, greetings, and subsequent stream use. pair,
 claim, and permission renewal retain their own fixed deadlines. a changed binding
-requires a new session, not a retained-stream handoff. native visitor TLS verifies
+requires a new session, not a retained-stream handoff. connector visitor TLS verifies
 the service hostname. publicly reachable service HTTP instead selects one browser,
 share, token, or optional client-certificate credential, checks Host including the
 allocated port, and promotes ingress capacity before target access. Reachability
 does not imply anonymous access. See [services](../control/services.md)
 and [connector architecture](../connector/architecture.md).
 
-native traffic does not use ingress, PROXY v2, or ingress service-routing history.
+connector traffic does not use ingress, PROXY v2, or ingress service-routing history.
 its source comes from the two agreeing relay-process claims. the bounded native
 frame reader keeps permission renewal independent of application reads and joins
 its worker and callbacks before releasing admission. relay transport uses

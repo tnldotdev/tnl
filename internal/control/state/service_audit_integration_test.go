@@ -187,7 +187,7 @@ func TestIntegrationServiceAuditPrivateSourceScope(t *testing.T) {
 	visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	// seed the already-authenticated admission facts; the transport suite owns
 	// device proof and stream handshake. audit must independently check this scope.
-	_, err = d.pool.Exec(t.Context(), `INSERT INTO control.direct_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,identity_id,device_id,certificate_digest,source_ip,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,valid_until,created_at)
+	_, err = d.pool.Exec(t.Context(), `INSERT INTO control.public_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,identity_id,device_id,certificate_digest,source_ip,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,valid_until,created_at)
 		VALUES($1,$2,$3,$4,$5,$6,$12,'192.0.2.9',$7,$8,$9,25443,$10,$11)`, visitor, service.ID, run.RunID, run.RunNumber, creation.ActingIdentityID, device.ID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now.Add(time.Minute), now, make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
@@ -403,7 +403,7 @@ func TestIntegrationServiceAuditCrossTeamClockOrder(t *testing.T) {
 		for serviceIndex, s := range services {
 			visitor, _ := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 			run := runs[serviceIndex]
-			_, err = d.pool.Exec(t.Context(), `INSERT INTO control.direct_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,source_ip,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,valid_until,created_at)
+			_, err = d.pool.Exec(t.Context(), `INSERT INTO control.public_service_visitors(visitor_connection_id,service_id,service_run_id,run_number,source_ip,ingress_id,ingress_run_id,ingress_lease_revision,destination_port,valid_until,created_at)
 				VALUES($1,$2,$3,$4,'192.0.2.9',$5,$6,$7,25443,$8,$9)`, visitor, s.ID, run.RunID, run.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), now.Add(time.Minute), now)
 			if err != nil {
 				t.Fatal(err)

@@ -240,9 +240,9 @@ tasks:
 
   tcp-lifecycle:
     dir: "{{.ROOT_DIR}}"
-    desc: Check native owner capacity, signed retries, and lost publisher responses in disposable PostgreSQL
+    desc: Check connector owner capacity, signed retries, and lost publisher responses in disposable PostgreSQL
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./internal/control/state ./internal/relay -run='^TestIntegration(PrivatePublisherRecoversCommittedLostResponses|NativePeerPairPublicDevice|WorkloadHTTPAndNativeAdapter|NativePeerPairExactAuthority|NativePeerPairWorkloadCredentialAndSelectedService|NativePeerPairRelayClaimHTTPDirect)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./internal/control/state ./internal/relay -run='^TestIntegration(PrivatePublisherRecoversCommittedLostResponses|ConnectorPeerPairPublicDevice|WorkloadHTTPAndNativeAdapter|ConnectorPeerPairExactAuthority|ConnectorPeerPairWorkloadCredentialAndSelectedService|ConnectorPeerPairRelayClaimHTTPDirect)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   service-claims:
     dir: "{{.ROOT_DIR}}"

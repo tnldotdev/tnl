@@ -13,32 +13,32 @@ import (
 // each of which may expand sixfold in JSON, plus fixed opaque IDs and metadata.
 const MaxServiceHeaderBytes = 8 << 10
 
-// ServiceStreamHeader is trusted direct ingress state forwarded through a relay.
-// it has no native visitor identity: the publisher authenticates application TLS
-// before target access. native visitors use the separate inner peer protocol.
+// ServiceStreamHeader is trusted public service ingress state forwarded through a relay.
+// it has no connector visitor identity: the publisher authenticates application TLS
+// before target access. connector visitors use the separate inner peer protocol.
 type ServiceStreamHeader struct {
-	TraceContext                 TraceContext     `json:"trace_context,omitzero"`
-	ProtocolVersion              uint32           `json:"protocol_version"`
-	Kind                         StreamKind       `json:"kind"`
-	ServiceID                    string           `json:"service_id"`
-	ServiceRunID                 string           `json:"service_run_id"`
-	Direct                       *DirectAdmission `json:"direct,omitempty"`
-	SourceIP                     string           `json:"source_ip"`
-	RunNumber                    uint64           `json:"run_number"`
-	VisitorConnectionID          string           `json:"visitor_connection_id"`
-	PublisherConnectionID        string           `json:"publisher_connection_id"`
-	ConnectionAssignmentRevision uint64           `json:"connection_assignment_revision"`
-	ExpiresAt                    time.Time        `json:"expires_at"`
+	TraceContext                 TraceContext            `json:"trace_context,omitzero"`
+	ProtocolVersion              uint32                  `json:"protocol_version"`
+	Kind                         StreamKind              `json:"kind"`
+	ServiceID                    string                  `json:"service_id"`
+	ServiceRunID                 string                  `json:"service_run_id"`
+	PublicService                *PublicServiceAdmission `json:"public_service,omitempty"`
+	SourceIP                     string                  `json:"source_ip"`
+	RunNumber                    uint64                  `json:"run_number"`
+	VisitorConnectionID          string                  `json:"visitor_connection_id"`
+	PublisherConnectionID        string                  `json:"publisher_connection_id"`
+	ConnectionAssignmentRevision uint64                  `json:"connection_assignment_revision"`
+	ExpiresAt                    time.Time               `json:"expires_at"`
 }
 
-type DirectAdmission struct {
+type PublicServiceAdmission struct {
 	IngressID            string `json:"ingress_id"`
 	IngressRunID         string `json:"ingress_run_id"`
 	IngressLeaseRevision uint64 `json:"ingress_lease_revision"`
 	DestinationPort      uint16 `json:"destination_port"`
 }
 
-func (a DirectAdmission) valid() bool {
+func (a PublicServiceAdmission) valid() bool {
 	return validIdentifier(a.IngressID) && opaqueid.Valid(a.IngressRunID, opaqueid.IngressRunPrefix) && a.IngressLeaseRevision > 0 && a.DestinationPort >= 1024
 }
 
@@ -52,8 +52,8 @@ func (h ServiceStreamHeader) validate() error {
 		!validPrivateSourceIP(h.SourceIP) ||
 		!opaqueid.Valid(h.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) ||
 		!opaqueid.Valid(h.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) ||
-		h.ConnectionAssignmentRevision == 0 || h.ExpiresAt.IsZero() || h.Direct == nil || !h.Direct.valid() {
-		return errors.New("tunnelv1: invalid direct service stream header")
+		h.ConnectionAssignmentRevision == 0 || h.ExpiresAt.IsZero() || h.PublicService == nil || !h.PublicService.valid() {
+		return errors.New("tunnelv1: invalid public service stream header")
 	}
 	return nil
 }
@@ -63,8 +63,8 @@ func validPrivateSourceIP(value string) bool {
 	return err == nil && addr.IsValid() && addr.Zone() == "" && addr.String() == value
 }
 
-// ServiceForwardingHeader carries the current relay lease and direct service/run
-// admission. it never accepts public URL IDs or a native connector admission.
+// ServiceForwardingHeader carries the current relay lease and public service/run
+// admission. it never accepts public URL IDs or a connector admission.
 type ServiceForwardingHeader struct {
 	ServiceStreamHeader
 	ConnectionSlot     uint8     `json:"connection_slot"`
@@ -81,7 +81,7 @@ func (h ServiceForwardingHeader) Validate() error {
 	}
 	if h.ConnectionSlot > 1 || !validIdentifier(h.RelayServiceID) || !validIdentifier(h.RelayID) ||
 		!opaqueid.Valid(h.RelayRunID, opaqueid.RelayRunPrefix) || h.RelayLeaseRevision == 0 || h.LeaseExpiresAt.IsZero() {
-		return errors.New("tunnelv1: invalid direct service forwarding header")
+		return errors.New("tunnelv1: invalid public service forwarding header")
 	}
 	return nil
 }

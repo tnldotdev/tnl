@@ -19,8 +19,8 @@ type ServiceVisitorAuthentication interface {
 	authorize(context.Context, tls.ConnectionState) (ServiceVisitorDecision, error)
 }
 
-// ServiceHTTPFrontend authorizes HTTP requests after mandatory verified native
-// visitor TLS. it owns request-level admission before opening a target connection.
+// ServiceHTTPFrontend authorizes HTTP requests after verified visitor TLS. it
+// owns request-level admission before opening a target connection.
 type ServiceHTTPFrontend interface {
 	Forward(context.Context, *tls.Conn, ServiceHTTPTarget) error
 }
@@ -28,7 +28,7 @@ type ServiceHTTPFrontend interface {
 type ServiceHTTPTarget struct {
 	Address   string
 	Transport targettransport.Transport
-	native    ServiceNativeAdmission
+	connector ServiceConnectorAdmission
 	lifetime  context.Context
 	track     func(net.Conn)
 	enter     func() (func(), bool)
@@ -45,23 +45,23 @@ func (PublicHTTPVisitor) authorize(context.Context, tls.ConnectionState) (Servic
 	return ServiceVisitorDecision{}, ErrEndpoint
 }
 
-// ServiceNativeAdmission is consumed only by the native forwarding path. the
+// ServiceConnectorAdmission is consumed only by the connector forwarding path. the
 // concrete service admission owns construction, physical-owner checks and C;
 // this interface does not turn a permission guard or a callback into admission.
-type ServiceNativeAdmission interface {
+type ServiceConnectorAdmission interface {
 	CheckUse(context.Context) (time.Time, error)
 	SetupDeadline() time.Time
 	FinishSetup() error
 	Stop()
 }
 
-// NativeVisitor is supplied by a real, stream-owned service admission after
+// ConnectorVisitor is supplied by a real, stream-owned service admission after
 // signed possession verification. HTTP request guards do not implement admission.
-type NativeVisitor struct{ Admission ServiceNativeAdmission }
+type ConnectorVisitor struct{ Admission ServiceConnectorAdmission }
 
-func (v NativeVisitor) valid() bool                  { return !nilManagedValue(v.Admission) }
-func (NativeVisitor) clientAuth() tls.ClientAuthType { return tls.NoClientCert }
-func (v NativeVisitor) authorize(ctx context.Context, _ tls.ConnectionState) (ServiceVisitorDecision, error) {
+func (v ConnectorVisitor) valid() bool                  { return !nilManagedValue(v.Admission) }
+func (ConnectorVisitor) clientAuth() tls.ClientAuthType { return tls.NoClientCert }
+func (v ConnectorVisitor) authorize(ctx context.Context, _ tls.ConnectionState) (ServiceVisitorDecision, error) {
 	until, err := v.Admission.CheckUse(ctx)
 	return ServiceVisitorDecision{Allowed: err == nil, ValidUntil: until}, err
 }
@@ -91,9 +91,9 @@ func normalizeManagedVisitor(visitor ServiceVisitorAuthentication) (ServiceVisit
 		if v != nil {
 			return *v, v.valid()
 		}
-	case NativeVisitor:
+	case ConnectorVisitor:
 		return v, v.valid()
-	case *NativeVisitor:
+	case *ConnectorVisitor:
 		if v != nil {
 			return *v, v.valid()
 		}

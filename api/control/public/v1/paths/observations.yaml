@@ -2,7 +2,7 @@ paths:
   /v1/services/{service_id}/runs/{service_run_id}/service-observations:
     post:
       operationId: reportServiceRunObservations
-      description: Report bounded native connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+      description: Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
       security: [{ serviceRunAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }

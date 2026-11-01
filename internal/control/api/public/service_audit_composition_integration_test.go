@@ -196,7 +196,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, err := d.AdmitDirectServiceVisitor(ctx, lease.IngressLeaseIdentity, controlstate.PrimaryIngressPoolID, pendingID, prepared.ServicePort, netip.MustParseAddr("127.0.0.1"), now)
+	pending, err := d.AdmitPublicServiceVisitor(ctx, lease.IngressLeaseIdentity, controlstate.PrimaryIngressPoolID, pendingID, prepared.ServicePort, netip.MustParseAddr("127.0.0.1"), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if _, err := d.IngestIngressServiceObservations(ctx, lease.IngressLeaseIdentity, serviceaudit.Batch{Events: []serviceaudit.Observation{unpromoted}}, now); !errors.Is(err, controlstate.ErrServiceAuditAccess) {
 		t.Fatal("unpromoted HTTP transport reported allowed access", err)
 	}
-	if err := d.CloseDirectServiceVisitor(ctx, lease.IngressLeaseIdentity, pendingID, now); err != nil {
+	if err := d.ClosePublicServiceVisitor(ctx, lease.IngressLeaseIdentity, pendingID, now); err != nil {
 		t.Fatal(err)
 	}
 	var dropped uint64
@@ -239,7 +239,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	if err != nil {
 		t.Fatal(err)
 	}
-	connector, err := ingress.NewDirectServices(ingress.DirectServicesConfig{Control: direct, Forwarder: target,
+	connector, err := ingress.NewPublicServices(ingress.PublicServicesConfig{Control: direct, Forwarder: target,
 		AuditSink: sink, CurrentLease: func() ingressv1.IngressLease {
 			return ingressv1.IngressLease{IngressId: lease.IngressID, IngressRunId: lease.IngressRunID, IngressLeaseRevision: int64(lease.IngressLeaseRevision), LeaseExpiresAt: lease.LeaseExpiresAt}
 		}})
@@ -282,7 +282,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 	forwarded := make(chan error, 1)
 	go func() {
 		defer accepted.Close()
-		forwarded <- connector.AcceptDirect(ctx, accepted, netip.MustParseAddrPort("127.0.0.1:40000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.1"), uint16(prepared.ServicePort)))
+		forwarded <- connector.AcceptPublic(ctx, accepted, netip.MustParseAddrPort("127.0.0.1:40000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.1"), uint16(prepared.ServicePort)))
 	}()
 	_ = valid.SetDeadline(time.Now().Add(5 * time.Second))
 	const secretPayload = "private-query-target-and-command-never-audit"

@@ -87,7 +87,7 @@ jobs:
       - name: Run relay-kill fallback workload
         run: task go:test:load:runtime SCENARIO=relay-kill RPS=160 RESULTS=bench-results/ci-relay-kill
 
-      - name: Run native connector load smoke
+      - name: Run connector load smoke
         run: task go:test:load:connect RACE=1 RESULTS=bench-results/ci-connect
 
       - name: Run reference and extended fault workloads

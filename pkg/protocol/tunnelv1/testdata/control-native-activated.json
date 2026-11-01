@@ -1,6 +1,0 @@
-{
-  "type": "native_leg_activated",
-  "protocol_version": 1,
-  "request_id": "activate_1",
-  "native_leg_binding": { "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
-}

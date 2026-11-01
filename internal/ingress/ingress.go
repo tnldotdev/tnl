@@ -1,4 +1,4 @@
-// package ingress routes HTTPS by exact SNI and direct services by destination.
+// package ingress routes HTTPS by exact SNI and public services by destination.
 // public visitor TLS terminates at the publisher.
 package ingress
 
@@ -85,9 +85,9 @@ type Config struct {
 	HandleControl             func(net.Conn) bool
 	RelayHostname             string
 	HandleRelay               func(net.Conn) bool
-	DirectServices            *DirectServices
+	PublicServices            *PublicServices
 	ServicePortRanges         []tcpport.Range
-	DirectOnly                bool
+	PublicServicesOnly        bool
 	RequireProxyHeader        bool
 	TrustedProxyPeers         []netip.Prefix
 	MaxConnections            int
@@ -132,7 +132,7 @@ type Server struct {
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
-	if listener == nil || !config.DirectOnly && config.Lookup == nil && config.LookupPool == nil || config.DirectOnly && config.DirectServices == nil {
+	if listener == nil || !config.PublicServicesOnly && config.Lookup == nil && config.LookupPool == nil || config.PublicServicesOnly && config.PublicServices == nil {
 		return nil, errors.New("ingress: listener and route lookup are required")
 	}
 	if config.MaxConnections <= 0 {
@@ -295,8 +295,8 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 	_ = public.SetReadDeadline(time.Time{})
 	// native database negotiation is not a TLS ClientHello. select a managed
 	// service by its trusted destination before attempting HTTPS inspection.
-	if s.config.DirectOnly || s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
-		if s.config.DirectServices == nil || !s.servicePorts.Contains(int(destination.Port())) {
+	if s.config.PublicServicesOnly || s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
+		if s.config.PublicServices == nil || !s.servicePorts.Contains(int(destination.Port())) {
 			return nil
 		}
 		finishInspection()
@@ -306,7 +306,7 @@ func (s *Server) handle(public net.Conn, finishInspection func()) error {
 			return nil
 		}
 		defer release()
-		return s.config.DirectServices.AcceptDirect(s.openContext, &readerConn{Conn: public, reader: reader}, source, destination)
+		return s.config.PublicServices.AcceptPublic(s.openContext, &readerConn{Conn: public, reader: reader}, source, destination)
 	}
 	inspected := &readerConn{Conn: public, reader: reader}
 	hello, err := clienthello.InspectClientHello(inspected)

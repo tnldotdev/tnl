@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-relay-native-peers')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-relay-connector-peers')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-relay-native-peers');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-relay-connector-peers');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2005,7 +2005,7 @@ CREATE TABLE control.visitor_devices (
     UNIQUE (identity_id, public_key), UNIQUE (id, identity_id)
 );
 
--- direct service certificates bind the client's enrolled key to one service.
+-- public service certificates bind the client's enrolled key to one service.
 CREATE TABLE control.service_client_certificates (
     control_session_id text REFERENCES control.control_sessions(id),
     certificate_digest bytea PRIMARY KEY CHECK (octet_length(certificate_digest)=32),
@@ -2029,7 +2029,7 @@ CREATE TABLE control.service_certificate_requests (
 
 -- direct admission starts without an identity. TLS key possession and current
 -- service permission bind the identity before application bytes are forwarded.
-CREATE TABLE control.direct_service_visitors (
+CREATE TABLE control.public_service_visitors (
     workload_session_id text REFERENCES control.workload_sessions(id),
     visitor_connection_id text PRIMARY KEY CHECK (visitor_connection_id ~ '^vc_[A-Za-z0-9]{22}$'),
     service_id text NOT NULL,
@@ -2053,12 +2053,12 @@ CREATE TABLE control.direct_service_visitors (
     CHECK (((identity_id IS NOT NULL OR workload_session_id IS NOT NULL))=(certificate_digest IS NOT NULL)),
     CHECK (workload_session_id IS NULL OR (identity_id IS NULL AND device_id IS NULL))
 );
-CREATE INDEX direct_service_visitors_capacity ON control.direct_service_visitors(service_run_id,valid_until) WHERE closed_at IS NULL;
-CREATE INDEX direct_service_visitors_workload ON control.direct_service_visitors(workload_session_id) WHERE workload_session_id IS NOT NULL;
-CREATE INDEX direct_service_visitors_certificate ON control.direct_service_visitors(certificate_digest) WHERE certificate_digest IS NOT NULL;
-CREATE INDEX direct_service_visitors_workload_retention ON control.direct_service_visitors(valid_until,visitor_connection_id) WHERE workload_session_id IS NOT NULL;
+CREATE INDEX public_service_visitors_capacity ON control.public_service_visitors(service_run_id,valid_until) WHERE closed_at IS NULL;
+CREATE INDEX public_service_visitors_workload ON control.public_service_visitors(workload_session_id) WHERE workload_session_id IS NOT NULL;
+CREATE INDEX public_service_visitors_certificate ON control.public_service_visitors(certificate_digest) WHERE certificate_digest IS NOT NULL;
+CREATE INDEX public_service_visitors_workload_retention ON control.public_service_visitors(valid_until,visitor_connection_id) WHERE workload_session_id IS NOT NULL;
 CREATE VIEW control.service_visitor_capacity AS
-SELECT visitor_connection_id,service_run_id,valid_until,closed_at FROM control.direct_service_visitors;
+SELECT visitor_connection_id,service_run_id,valid_until,closed_at FROM control.public_service_visitors;
 
 -- managed HTTP credentials are never public URL/preview credentials. runs are
 -- captured at login, so a later replacement cannot redeem an earlier handoff.
@@ -2767,9 +2767,9 @@ CREATE TRIGGER visitor_key_changed AFTER UPDATE ON control.visitor_token_keys FO
     EXECUTE FUNCTION control.visitor_verification_keys_changed();
 
 
-CREATE SEQUENCE control.native_peer_delivery_generation AS bigint;
-CREATE TABLE control.native_peer_pairs (
-    id text PRIMARY KEY CHECK (id ~ '^npp_[A-Za-z0-9]{22}$'),
+CREATE SEQUENCE control.connector_peer_delivery_generation AS bigint;
+CREATE TABLE control.connector_peer_pairs (
+    id text PRIMARY KEY CHECK (id ~ '^cpp_[A-Za-z0-9]{22}$'),
     service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
     service_run_id text NOT NULL,
     run_number bigint NOT NULL CHECK (run_number >= 1),
@@ -2785,7 +2785,7 @@ CREATE TABLE control.native_peer_pairs (
     publisher_prepared_until timestamptz,
     key_digest bytea NOT NULL CHECK (octet_length(key_digest)=32),
     key_ciphertext bytea NOT NULL,
-    delivery_id bytea NOT NULL CONSTRAINT native_peer_pairs_delivery_id_nonzero CHECK (octet_length(delivery_id)=16 AND delivery_id<>decode(repeat('00',16),'hex')),
+    delivery_id bytea NOT NULL CONSTRAINT connector_peer_pairs_delivery_id_nonzero CHECK (octet_length(delivery_id)=16 AND delivery_id<>decode(repeat('00',16),'hex')),
     storage_key_id text NOT NULL CHECK (storage_key_id<>''),
     slots jsonb NOT NULL CHECK (jsonb_typeof(slots)='array' AND jsonb_array_length(slots)=2),
     delivery_generation bigint NOT NULL CHECK (delivery_generation>=1),
@@ -2795,23 +2795,23 @@ CREATE TABLE control.native_peer_pairs (
     replay_fence_until timestamptz NOT NULL,
     expires_at timestamptz NOT NULL,
     FOREIGN KEY (service_run_id,service_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT,
-    CONSTRAINT native_peer_pairs_owner_key UNIQUE (subject_kind,subject_id,service_run_id,owner_key),
-    CONSTRAINT native_peer_pairs_stable_owner_key CHECK (owner_key=idempotency_key),
-    CONSTRAINT native_peer_pairs_request_key UNIQUE (subject_kind,subject_id,service_run_id,idempotency_key),
-    CONSTRAINT native_peer_pairs_delivery_id_key UNIQUE (delivery_id),
+    CONSTRAINT connector_peer_pairs_owner_key UNIQUE (subject_kind,subject_id,service_run_id,owner_key),
+    CONSTRAINT connector_peer_pairs_stable_owner_key CHECK (owner_key=idempotency_key),
+    CONSTRAINT connector_peer_pairs_request_key UNIQUE (subject_kind,subject_id,service_run_id,idempotency_key),
+    CONSTRAINT connector_peer_pairs_delivery_id_key UNIQUE (delivery_id),
     CHECK (last_authorized_at>=created_at AND expires_at>last_authorized_at
         AND expires_at<=last_authorized_at+interval '5 minutes'),
     CHECK ((subject_kind='human_device') = (parent_control_session_id IS NOT NULL)),
     CHECK (replay_fence_until=last_request_at+interval '5 minutes')
 );
 
-CREATE TABLE control.native_peer_pair_leg_claims (
-    pair_id text NOT NULL REFERENCES control.native_peer_pairs(id) ON DELETE CASCADE,
+CREATE TABLE control.connector_peer_pair_leg_claims (
+    pair_id text NOT NULL REFERENCES control.connector_peer_pairs(id) ON DELETE CASCADE,
     connection_slot smallint NOT NULL CHECK (connection_slot IN (0,1)),
     requested_at timestamptz NOT NULL,
     checked_at timestamptz NOT NULL,
     confirmed_until timestamptz NOT NULL,
-    CONSTRAINT native_peer_claim_fixed_bound CHECK (confirmed_until>checked_at AND confirmed_until<=checked_at+interval '5 minutes'),
+    CONSTRAINT connector_peer_claim_fixed_bound CHECK (confirmed_until>checked_at AND confirmed_until<=checked_at+interval '5 minutes'),
     nonce_digest bytea NOT NULL CHECK (octet_length(nonce_digest)=32),
     source_ip inet NOT NULL,
     relay_id text NOT NULL,
@@ -2820,14 +2820,14 @@ CREATE TABLE control.native_peer_pair_leg_claims (
     PRIMARY KEY(pair_id,connection_slot)
 );
 
-CREATE INDEX native_peer_pairs_expiry ON control.native_peer_pairs(expires_at);
+CREATE INDEX connector_peer_pairs_expiry ON control.connector_peer_pairs(expires_at);
 
-CREATE INDEX native_peer_pairs_run_inventory ON control.native_peer_pairs(service_run_id,id COLLATE "C");
+CREATE INDEX connector_peer_pairs_run_inventory ON control.connector_peer_pairs(service_run_id,id COLLATE "C");
 
 -- installed audit scope survives pair replacement without retaining delivery
 -- secrets or serving authority. only publisher installation can create it.
-CREATE TABLE control.native_peer_audit_bindings (
-    pair_id text PRIMARY KEY CHECK (pair_id ~ '^npp_[A-Za-z0-9]{22}$'),
+CREATE TABLE control.connector_peer_audit_bindings (
+    pair_id text PRIMARY KEY CHECK (pair_id ~ '^cpp_[A-Za-z0-9]{22}$'),
     service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
     service_run_id text NOT NULL,
     run_number bigint NOT NULL CHECK (run_number>=1),
@@ -2841,7 +2841,7 @@ CREATE TABLE control.native_peer_audit_bindings (
     CHECK (expires_at>created_at),
     FOREIGN KEY (service_run_id,service_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT
 );
-CREATE INDEX native_peer_audit_expiry ON control.native_peer_audit_bindings(expires_at);
+CREATE INDEX connector_peer_audit_expiry ON control.connector_peer_audit_bindings(expires_at);
 
 CREATE TABLE control.relay_run_signing_keys (
     relay_id text NOT NULL CHECK (relay_id <> ''),

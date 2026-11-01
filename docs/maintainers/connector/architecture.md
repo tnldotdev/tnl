@@ -1,9 +1,9 @@
 # connector architecture
 
-The connector owns a native visitor's connection to an approved service.
+The connector owns a connector visitor's connection to an approved service.
 It selects the exact service, prepares two authenticated relay carriers and a local
 listener or stdio stream, and joins their cleanup. Publishing a service is a
-separate role even when the same native owner supports both SDK capabilities.
+separate role even when the same connector owner supports both SDK capabilities.
 
 ## implementation map
 

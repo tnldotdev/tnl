@@ -67,7 +67,7 @@ func (s *Server) admitClass(kind connectionKind, key string) (release func(), re
 	case relayConnection:
 		limit, resource = s.config.MaxRelayConnections, "relay_tcp_connections"
 	case serviceConnection:
-		limit, resource = s.config.MaxServiceConnections, "direct_service_connections"
+		limit, resource = s.config.MaxServiceConnections, "public_service_connections"
 	}
 	if s.admitted[kind] >= limit {
 		return nil, resource

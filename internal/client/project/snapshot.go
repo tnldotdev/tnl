@@ -17,7 +17,7 @@ type projectSnapshot struct {
 	LabelParts          WorktreeLabel `json:"label_parts"`
 }
 
-// Snapshot transfers an already evaluated configuration to a native owner. it
+// Snapshot transfers an already evaluated configuration to a connector owner. it
 // stays in the private process pipe; metadata and journals never contain it.
 func (p Project) Snapshot() ([]byte, string, error) {
 	parts := p.Worktree.labelParts

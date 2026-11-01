@@ -59,7 +59,7 @@ func TestManagedVisitorRepresentationsDispatchAfterTLS(t *testing.T) {
 						visitor = &v
 					}
 				case "native":
-					v := publisher.NativeVisitor{Admission: publisher.NativeAdmissionFixture{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) { return allowed() }}}
+					v := publisher.ConnectorVisitor{Admission: publisher.NativeAdmissionFixture{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) { return allowed() }}}
 					visitor = v
 					if pointer {
 						visitor = &v

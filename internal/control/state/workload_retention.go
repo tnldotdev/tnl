@@ -34,7 +34,7 @@ func (d *Database) CleanupWorkloads(ctx context.Context, now time.Time, limit in
 		run  func() (int64, error)
 	}{
 		{"direct visitors", func() (int64, error) {
-			return q.CleanupWorkloadDirectVisitors(ctx, controlstatedb.CleanupWorkloadDirectVisitorsParams{BeforeTime: visitorsBefore, BatchSize: batch})
+			return q.CleanupWorkloadPublicServiceVisitors(ctx, controlstatedb.CleanupWorkloadPublicServiceVisitorsParams{BeforeTime: visitorsBefore, BatchSize: batch})
 		}},
 		{"certificates", func() (int64, error) {
 			return q.CleanupWorkloadCertificates(ctx, controlstatedb.CleanupWorkloadCertificatesParams{BeforeTime: before, BatchSize: batch})

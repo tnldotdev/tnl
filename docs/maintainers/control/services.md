@@ -5,6 +5,11 @@ every service captures a control-owned hostname, port, ready team domain, and
 certificate plan. public reachability changes where DNS points; it does not
 change the port or make access anonymous.
 
+**connector access** carries application traffic through a local `tnl`, a relay,
+and the publisher; it bypasses ingress. **public endpoint access** accepts an
+ordinary client at the service's public hostname and port, through ingress, a
+relay, and the publisher. both paths keep the service's visitor access rules.
+
 for commands and configuration, use the public [services](https://tnl.dev/docs/services),
 [publisher groups](https://tnl.dev/docs/publisher-groups), and
 [service access](https://tnl.dev/docs/service-access) guides. the contracts live in
@@ -72,18 +77,18 @@ capacity under the selected relay lease lock. see
 [`service_runs.go`](../../../internal/control/state/service_runs.go), and
 [`relay`](../../../internal/relay).
 
-## authenticate the native owner and each stream
+## authenticate the connector owner and each stream
 
 a connector prepares one signed owner and exactly two fixed relay carriers.
 control checks the current subject, publisher run, and both relay processes;
 each relay signs its accepted socket source, and both sources must agree.
 the publisher installs that exact pair before the connector completes inner
-QUIC and reports readiness. native service traffic never passes through ingress.
+QUIC and reports readiness. connector service traffic never passes through ingress.
 
 each application stream needs a signed opening and its own publisher admission.
 the publisher checks the installed pair, subject, source, run, metadata, and
 current signed permission before target resolution, dialing, or greetings.
-native visitor TLS verifies the service hostname without an application client
+connector visitor TLS verifies the service hostname without an application client
 certificate. carrier failover preserves inner QUIC and the target socket; carrier,
 owner, or run replacement cannot transfer an admission or replay bytes.
 
@@ -98,22 +103,22 @@ encrypted pair keys participate in storage-key rotation. see
 ## retain current authorization
 
 inventory, an installed pair, and a previously accepted credential are not ongoing
-authorization. background workers refresh native authority; application arrivals
+authorization. background workers refresh connector authority; application arrivals
 perform no control RPC. the publisher's local guard fences every use. a verified
 newer permission may wait for background policy only within the existing guard's
 unchanged deadline. expiry cannot be revived. workers join before capacity is released.
 
-publicly reachable services retain direct ingress admission, trusted PROXY v2
+public endpoint access retains ingress admission, trusted PROXY v2
 metadata, capacity promotion, relay selection, and the first-visitor-byte retry
-boundary. direct database clients use mTLS. ingress rechecks their current
+boundary. public endpoint database clients use mTLS. ingress rechecks their current
 authorization within the last decision's bound; unavailable control cannot extend it.
 
-direct HTTP application requests use the publisher's shared local permission
+public endpoint HTTP requests use the publisher's shared local permission
 verifier and ten-second policy lease. ingress admission checks transport and run
 capacity; it does not authorize the HTTP credential. policy renewal happens
 outside request admission, and stale policy closes guarded requests.
 
-native owner expiry closes its streams. replacement joins the old runner before
+connector owner expiry closes its streams. replacement joins the old runner before
 reopening the reserved local port. it never replays admitted application bytes. workload
 renewal may shorten its fixed expiry but cannot extend it. see
 [workload sessions](workload-sessions.md) and
@@ -126,7 +131,7 @@ contracts without importing persistence. publishers own target trust; connectors
 never receive it. infrastructure transport certificates, visitor service
 certificates, and target trust are distinct.
 
-native readiness needs two distinct live relay services, not two ingress processes.
+connector readiness needs two distinct live relay services, not two ingress processes.
 standalone composes one ingress and two logical relay services. relay transport
 TLS uses the relay address's certificate; there is no native ingress listener,
 certificate, assignment, or service-routing history. see [self-hosting](https://tnl.dev/docs/self-hosting)

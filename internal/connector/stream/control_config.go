@@ -6,12 +6,12 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// ControlConfig supplies background native authority operations, never ingress
+// ControlConfig supplies background connector authority operations, never ingress
 // assignments. application arrivals consume the already prepared connection.
 type ControlConfig struct {
 	Signer       func(context.Context, string) (Signer, error)
 	Resolve      func(context.Context, string) (Run, error)
-	Pair         func(context.Context, string, controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error)
+	Pair         func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error)
 	Permission   func(context.Context, string) (controlv1.VisitorTokenResponse, error)
 	Close        func() error
 	CloseContext func(context.Context) error
@@ -34,7 +34,7 @@ func (c *configuredControl) ConnectorSigner(ctx context.Context, id string) (Sig
 func (c *configuredControl) ResolveService(ctx context.Context, id string) (Run, error) {
 	return c.config.Resolve(ctx, id)
 }
-func (c *configuredControl) PrepareNativePeerPair(ctx context.Context, id string, body controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error) {
+func (c *configuredControl) PrepareConnectorPeerPair(ctx context.Context, id string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
 	return c.config.Pair(ctx, id, body)
 }
 func (c *configuredControl) VisitorPermission(ctx context.Context, id string) (controlv1.VisitorTokenResponse, error) {

@@ -54,7 +54,7 @@ func memoryPair() (*memoryCarrier, *memoryCarrier) {
 	return &memoryCarrier{in: a, out: b, stop: make(chan struct{})}, &memoryCarrier{in: b, out: a, stop: make(chan struct{})}
 }
 
-func TestPeerEndpointNativeRoles(t *testing.T) {
+func TestPeerEndpointConnectorRoles(t *testing.T) {
 	for role, label := range []string{"connector", "publisher"} {
 		left, _ := memoryPair()
 		right, _ := memoryPair()
@@ -65,16 +65,16 @@ func TestPeerEndpointNativeRoles(t *testing.T) {
 		t.Cleanup(func() { _ = endpoint.Close() })
 		other := []string{"publisher", "connector"}[role]
 		if endpoint.LocalAddr().Network() != "tnl-peer" || endpoint.LocalAddr().String() != label || endpoint.RemoteAddr().String() != other {
-			t.Fatal("native endpoint lost its connector/publisher roles")
+			t.Fatal("peer endpoint lost its connector/publisher roles")
 		}
 	}
 }
 
-func TestPeerNativeFrameMACCompatibility(t *testing.T) {
+func TestPeerConnectorFrameMACGolden(t *testing.T) {
 	// fixed v1 frames use key 01 followed by 31 zero bytes. the MAC input is
-	// the original domain, NUL, then canonical packet bytes, independent of
+	// the connector_peer domain, NUL, then canonical packet bytes, independent of
 	// the production domain constant and test packet-signing helpers.
-	native, err := hex.DecodeString("0101000100000000000000002a0003000361626359c3e91ef5a75ff587ec6eebecaba1bdde4fcd6adeb517f4e835be5f0574c62b")
+	connector, err := hex.DecodeString("0101000100000000000000002a00030003616263d1475c7153bdd3e6f0b4bf86d5c3d142368d3a697b196273d7514a424636c06d")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,18 +88,25 @@ func TestPeerNativeFrameMACCompatibility(t *testing.T) {
 	endpoint.enqueue(RelayB, tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: 42, Total: 3, Payload: []byte("abc")})
 	select {
 	case got := <-endpoint.paths[RelayB].queue:
-		if !bytes.Equal(got, native) {
-			t.Fatalf("native frame bytes changed: %x", got)
+		if !bytes.Equal(got, connector) {
+			t.Fatalf("connector frame bytes changed: %x", got)
 		}
 	default:
-		t.Fatal("native frame was not queued")
+		t.Fatal("connector frame was not queued")
 	}
 	binding := PairBinding{Delivery: tunnelv1.PeerDelivery{Pair: [16]byte{1}, Generation: 1}, Key: key, Role: 1, Path: RelayB}
-	if _, ok := authenticatePacket(native, key, 1, RelayB); !ok || !binding.valid() || !binding.authentic(native, 0) {
-		t.Fatal("native endpoint or binding rejected the existing MAC domain")
+	if _, ok := authenticatePacket(connector, key, 1, RelayB); !ok || !binding.valid() || !binding.authentic(connector, 0) {
+		t.Fatal("connector endpoint or binding rejected the connector MAC domain")
 	}
 	if _, ok := authenticatePacket(retired, key, 1, RelayB); ok || binding.authentic(retired, 0) {
 		t.Fatal("endpoint or binding accepted a retired-domain frame")
+	}
+	legacy, err := hex.DecodeString("0101000100000000000000002a0003000361626359c3e91ef5a75ff587ec6eebecaba1bdde4fcd6adeb517f4e835be5f0574c62b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := authenticatePacket(legacy, key, 1, RelayB); ok || binding.authentic(legacy, 0) {
+		t.Fatal("endpoint or binding accepted the retired native MAC domain")
 	}
 }
 
@@ -138,7 +145,7 @@ func TestPeerRejectsWrongKeyDirectionPathAndReplay(t *testing.T) {
 	} {
 		p, k := valid, key
 		mutate(&p, &k)
-		if err := attacker.Send(ctx, encode(p, k, "native_peer")); err != nil {
+		if err := attacker.Send(ctx, encode(p, k, "connector_peer")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -146,7 +153,7 @@ func TestPeerRejectsWrongKeyDirectionPathAndReplay(t *testing.T) {
 	if err := attacker.Send(ctx, encode(valid, key, "public_ingress")); err != nil {
 		t.Fatal(err)
 	}
-	if err := attacker.Send(ctx, encode(valid, key, "native_peer")); err != nil {
+	if err := attacker.Send(ctx, encode(valid, key, "connector_peer")); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
@@ -156,7 +163,7 @@ func TestPeerRejectsWrongKeyDirectionPathAndReplay(t *testing.T) {
 	if n, _, err := e.ReadFrom(b[:]); err != nil || string(b[:n]) != "abc" {
 		t.Fatal("valid packet missing", err)
 	}
-	if err := attacker.Send(ctx, encode(valid, key, "native_peer")); err != nil {
+	if err := attacker.Send(ctx, encode(valid, key, "connector_peer")); err != nil {
 		t.Fatal(err)
 	}
 	_ = e.SetReadDeadline(time.Now().Add(25 * time.Millisecond))

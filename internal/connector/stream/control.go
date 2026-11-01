@@ -27,7 +27,7 @@ func (*controlAdapter) String() string   { return "private connector control" }
 func (*controlAdapter) GoString() string { return "private connector control" }
 
 // NewControl borrows the signed-in identity's protected, server-scoped device.
-// each native connection creates its own signed owner key at preparation.
+// each connector connection creates its own signed owner key at preparation.
 func NewControl(client *clientcontrol.Client, profile *clientstate.Store, identityID string) (Control, error) {
 	if client == nil || profile == nil || !opaqueid.Valid(identityID, opaqueid.IdentityPrefix) {
 		return nil, ErrServiceConnection
@@ -69,18 +69,18 @@ func (c *controlAdapter) ResolveService(ctx context.Context, service string) (Ru
 	return Run{ServiceID: service, ServiceRunID: selected.ServiceRunId, RunNumber: uint64(selected.RunNumber), ValidUntil: selected.ExpiresAt, Protocol: string(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: selected.Endpoint, PairReady: selected.PairReady}, nil
 }
 
-func (c *controlAdapter) PrepareNativePeerPair(ctx context.Context, service string, body controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error) {
+func (c *controlAdapter) PrepareConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
 	device, err := c.ConnectorSigner(ctx, c.identityID)
 	if err != nil {
-		return controlv1.NativePeerPair{}, err
+		return controlv1.ConnectorPeerPair{}, err
 	}
 	if !visitorsubject.Equal(body.Subject, device.Subject) {
-		return controlv1.NativePeerPair{}, ErrServiceConnection
+		return controlv1.ConnectorPeerPair{}, ErrServiceConnection
 	}
 	if body.Action == "renew" && body.PreviousPairId != nil {
-		return c.client.RenewDeviceNativePeerPair(ctx, service, *body.PreviousPairId, device.Subject.DeviceID, body)
+		return c.client.RenewDeviceConnectorPeerPair(ctx, service, *body.PreviousPairId, device.Subject.DeviceID, body)
 	}
-	return c.client.PrepareDeviceNativePeerPair(ctx, service, device.Subject.DeviceID, body)
+	return c.client.PrepareDeviceConnectorPeerPair(ctx, service, device.Subject.DeviceID, body)
 }
 
 func (c *controlAdapter) VisitorPermission(ctx context.Context, service string) (controlv1.VisitorTokenResponse, error) {

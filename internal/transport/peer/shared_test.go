@@ -172,7 +172,7 @@ func signedPacket(t *testing.T, binding PairBinding, p tunnelv1.PeerPacket) []by
 		t.Fatal(err)
 	}
 	mac := hmac.New(sha256.New, binding.Key[:])
-	_, _ = mac.Write([]byte("native_peer"))
+	_, _ = mac.Write([]byte("connector_peer"))
 	_, _ = mac.Write([]byte{0})
 	_, _ = mac.Write(unsigned)
 	copy(p.MAC[:], mac.Sum(nil))

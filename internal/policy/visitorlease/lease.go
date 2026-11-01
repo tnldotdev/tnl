@@ -162,12 +162,12 @@ type Guard struct {
 	anonymous      bool
 	renewable      bool
 	confirmedUntil time.Time
-	native         *nativePermission
+	connector      *connectorPermission
 }
 
 func (g *Guard) allowedLocked(now time.Time) bool {
 	l := g.lease
-	if g.native != nil && g.native.metadata != l.update.View.MetadataRevision {
+	if g.connector != nil && g.connector.metadata != l.update.View.MetadataRevision {
 		return false
 	}
 	if g.anonymous {

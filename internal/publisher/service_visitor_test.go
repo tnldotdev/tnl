@@ -33,7 +33,7 @@ func (undeclaredVisitor) authorize(context.Context, tls.ConnectionState) (Servic
 
 func TestManagedVisitorNormalizationValuePointerAndTypedNil(t *testing.T) {
 	public := PublicHTTPVisitor{Frontend: visitorFrontendFunc(func(context.Context, *tls.Conn, ServiceHTTPTarget) error { return nil })}
-	native := NativeVisitor{Admission: new(nativeAdapterAdmission)}
+	native := ConnectorVisitor{Admission: new(connectorAdapterAdmission)}
 	certificate := CertificateVisitor{Check: func(context.Context, *x509.Certificate) (ServiceVisitorDecision, error) {
 		return ServiceVisitorDecision{}, nil
 	}}
@@ -56,9 +56,9 @@ func TestManagedVisitorNormalizationValuePointerAndTypedNil(t *testing.T) {
 		})
 	}
 	var nilFrontend *nilVisitorFrontend
-	for _, invalid := range []ServiceVisitorAuthentication{nil, (*PublicHTTPVisitor)(nil), (*NativeVisitor)(nil), (*CertificateVisitor)(nil),
+	for _, invalid := range []ServiceVisitorAuthentication{nil, (*PublicHTTPVisitor)(nil), (*ConnectorVisitor)(nil), (*CertificateVisitor)(nil),
 		PublicHTTPVisitor{}, &PublicHTTPVisitor{}, PublicHTTPVisitor{Frontend: nilFrontend}, &PublicHTTPVisitor{Frontend: nilFrontend}, PublicHTTPVisitor{Frontend: visitorFrontendFunc(nil)},
-		NativeVisitor{}, &NativeVisitor{}, NativeVisitor{Admission: (*nativeAdapterAdmission)(nil)}, CertificateVisitor{}, &CertificateVisitor{}, undeclaredVisitor{}, (*undeclaredVisitor)(nil)} {
+		ConnectorVisitor{}, &ConnectorVisitor{}, ConnectorVisitor{Admission: (*connectorAdapterAdmission)(nil)}, CertificateVisitor{}, &CertificateVisitor{}, undeclaredVisitor{}, (*undeclaredVisitor)(nil)} {
 		if _, ok := normalizeManagedVisitor(invalid); ok {
 			t.Fatal("invalid visitor was normalized")
 		}

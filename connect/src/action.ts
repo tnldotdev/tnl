@@ -11,7 +11,7 @@ import {
   serviceKey,
   type Cleanup,
 } from "./contract.js";
-import { nativeJSON } from "./native.js";
+import { connectorJSON } from "./native.js";
 import { selectBinary } from "./resolve.js";
 import { ActionError, checkCancelled, ownedError, safeActionMessage } from "./errors.js";
 
@@ -29,7 +29,7 @@ export async function cleanup(owned: Cleanup): Promise<void> {
     }
     await privatePath(owned.session, owned.session, true);
     if (owned.handle !== undefined) {
-      const stopped = await nativeJSON(owned.binary, ["stop", "--handle", owned.handle], {
+      const stopped = await connectorJSON(owned.binary, ["stop", "--handle", owned.handle], {
         cwd: owned.session,
         timeout: 30_000,
       });
@@ -172,7 +172,7 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
     owned = { session, binary };
     await save();
     const commandOptions = { cwd: directory, timeout: 30_000, signal: options.signal };
-    checkCapabilities(await nativeJSON(binary, ["capabilities"], commandOptions));
+    checkCapabilities(await connectorJSON(binary, ["capabilities"], commandOptions));
     const scopeArgs = [
       "--directory",
       directory,
@@ -181,7 +181,7 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
       ...services.flatMap((key) => ["--service", key]),
     ];
     const parsed = contextSchema.safeParse(
-      await nativeJSON(binary, ["context", ...scopeArgs], commandOptions),
+      await connectorJSON(binary, ["context", ...scopeArgs], commandOptions),
     );
     if (!parsed.success)
       throw new ActionError("TNL_ACTION_CONTEXT_INVALID", { cause: parsed.error });
@@ -237,7 +237,7 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
     checkCancelled(options.signal);
     owned.start_attempted = true;
     await save();
-    const started = await nativeJSON(binary, ["start", ...scopeArgs, "--runner-temp", session], {
+    const started = await connectorJSON(binary, ["start", ...scopeArgs, "--runner-temp", session], {
       ...commandOptions,
       timeout: timeout * 1000,
       input: JSON.stringify({ schema: 1, context, assertion }),

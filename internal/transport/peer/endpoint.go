@@ -22,8 +22,8 @@ const (
 	packetQueue = 64
 	// a fixed ring bounds incomplete fragments independently of sender input.
 	reassemblySlots = 64
-	// preserve the native frame MAC domain independently of carrier selection.
-	nativePacketDomain = "native_peer"
+	// connector frame authentication is independent of carrier selection.
+	connectorPacketDomain = "connector_peer"
 )
 
 var ErrConfiguration = errors.New("peer packet configuration is invalid")
@@ -232,7 +232,7 @@ func (e *Endpoint) enqueue(index int, packet tunnelv1.PeerPacket) {
 		return
 	}
 	mac := hmac.New(sha256.New, e.config.Key[:])
-	_, _ = mac.Write([]byte(nativePacketDomain))
+	_, _ = mac.Write([]byte(connectorPacketDomain))
 	_, _ = mac.Write([]byte{0})
 	_, _ = mac.Write(unsigned)
 	copy(packet.MAC[:], mac.Sum(nil))
@@ -384,7 +384,7 @@ func authenticatePacket(frame []byte, key [32]byte, role uint8, index int) (tunn
 	}
 	unsigned, _ := packet.AuthenticatedBytes()
 	mac := hmac.New(sha256.New, key[:])
-	_, _ = mac.Write([]byte(nativePacketDomain))
+	_, _ = mac.Write([]byte(connectorPacketDomain))
 	_, _ = mac.Write([]byte{0})
 	_, _ = mac.Write(unsigned)
 	return packet, hmac.Equal(packet.MAC[:], mac.Sum(nil))

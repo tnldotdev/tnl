@@ -39,7 +39,7 @@ import (
 var vercelArtifacts = flag.String("tnl-vercel-artifacts", "", "directory for local Vercel function artifacts and nonsecret evidence")
 var vercelLinuxNodeImage = flag.String("tnl-vercel-linux-node-image", "", "optional local digest-pinned Node 24.20.0 Linux x64 image; requires Docker host networking")
 
-// the artifact owns its native visitor process. only local infrastructure TLS
+// the artifact owns its connector visitor process. only local infrastructure TLS
 // and issuer key discovery are redirected; authority and data paths are real.
 func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
@@ -245,9 +245,9 @@ func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 		t.Log(strings.TrimSpace(string(result)))
 	}
 	seen := map[string]bool{}
-	rows, err := f.inspect.QueryContext(t.Context(), `SELECT DISTINCT pair.service_id FROM control.native_peer_pairs pair
+	rows, err := f.inspect.QueryContext(t.Context(), `SELECT DISTINCT pair.service_id FROM control.connector_peer_pairs pair
 		WHERE pair.subject_kind='workload_session' AND pair.publisher_prepared_until IS NOT NULL
-		AND (SELECT count(*)=2 AND bool_and(host(source_ip)='127.0.0.1') FROM control.native_peer_pair_leg_claims claim WHERE claim.pair_id=pair.id)`)
+		AND (SELECT count(*)=2 AND bool_and(host(source_ip)='127.0.0.1') FROM control.connector_peer_pair_leg_claims claim WHERE claim.pair_id=pair.id)`)
 	if err != nil {
 		t.Fatal(err)
 	}

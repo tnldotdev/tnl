@@ -126,7 +126,7 @@ func (o Observation) Validate() error {
 		!opaqueid.Valid(o.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) || !ValidReason(o.Reason) {
 		return ErrInvalid
 	}
-	if o.PairID != "" && (!opaqueid.Valid(o.PairID, "npp_") || o.ServiceKind != "service" || o.RunID == "") {
+	if o.PairID != "" && (!opaqueid.Valid(o.PairID, "cpp_") || o.ServiceKind != "service" || o.RunID == "") {
 		return ErrInvalid
 	}
 	serviceDenial := o.RunID == "" && o.RunNumber == 0 && o.EventType == "connection.open" &&

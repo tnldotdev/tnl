@@ -83,11 +83,11 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 	if _, err = d.pool.Exec(ctx, `DELETE FROM control.service_client_certificates WHERE certificate_digest IN(SELECT certificate_digest FROM control.service_client_certificates WHERE expires_at<$1 ORDER BY expires_at LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
 		return count, err
 	}
-	if _, err = d.pool.Exec(ctx, `DELETE FROM control.direct_service_visitors WHERE visitor_connection_id IN(SELECT visitor_connection_id FROM control.direct_service_visitors WHERE valid_until<$1 OR closed_at<$1 ORDER BY valid_until LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
+	if _, err = d.pool.Exec(ctx, `DELETE FROM control.public_service_visitors WHERE visitor_connection_id IN(SELECT visitor_connection_id FROM control.public_service_visitors WHERE valid_until<$1 OR closed_at<$1 ORDER BY valid_until LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
 		return count, err
 	}
-	if _, err = d.pool.Exec(ctx, `DELETE FROM control.native_peer_audit_bindings WHERE pair_id IN
-		(SELECT pair_id FROM control.native_peer_audit_bindings WHERE expires_at<$1 ORDER BY expires_at,pair_id LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
+	if _, err = d.pool.Exec(ctx, `DELETE FROM control.connector_peer_audit_bindings WHERE pair_id IN
+		(SELECT pair_id FROM control.connector_peer_audit_bindings WHERE expires_at<$1 ORDER BY expires_at,pair_id LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
 		return count, err
 	}
 	if _, err = d.ReleaseServicePorts(ctx, now); err != nil {

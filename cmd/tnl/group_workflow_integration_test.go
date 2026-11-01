@@ -405,20 +405,20 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	if members[0] == members[1] {
 		t.Fatal("replicas shared a publisher identity")
 	}
-	var directService controlv1.Service
+	var publicService controlv1.Service
 	for _, service := range applied.Services {
 		if service.Service == "publicapi" && service.ServiceId != nil {
-			directService, err = control.GetService(t.Context(), *service.ServiceId)
+			publicService, err = control.GetService(t.Context(), *service.ServiceId)
 			if err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
-	if directService.Endpoint == nil || !directService.Endpoint.Public {
+	if publicService.Endpoint == nil || !publicService.Endpoint.Public {
 		t.Fatal("public group lost service HTTP endpoint")
 	}
-	f.connectDirectListener(t, directService.Endpoint)
-	grant, err := control.CreateServiceHTTPGrant(t.Context(), directService.Id, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: directService.Id}, Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
+	f.connectDirectListener(t, publicService.Endpoint)
+	grant, err := control.CreateServiceHTTPGrant(t.Context(), publicService.Id, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: publicService.Id}, Kind: "token", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,8 +469,8 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	}
 	defer inspect.Close(context.Background())
 	var oldPair, oldRun, selectedPublisher string
-	if err := inspect.QueryRow(t.Context(), `SELECT id,service_run_id,publisher_identity_id FROM control.native_peer_pairs WHERE service_id=$1 AND publisher_prepared_until>now() AND expires_at>now()`, serviceID).Scan(&oldPair, &oldRun, &selectedPublisher); err != nil {
-		t.Fatal("selected native owner missing", err)
+	if err := inspect.QueryRow(t.Context(), `SELECT id,service_run_id,publisher_identity_id FROM control.connector_peer_pairs WHERE service_id=$1 AND publisher_prepared_until>now() AND expires_at>now()`, serviceID).Scan(&oldPair, &oldRun, &selectedPublisher); err != nil {
+		t.Fatal("selected connector owner missing", err)
 	}
 	stoppedTask := -1
 	for i, state := range taskStates {
@@ -508,7 +508,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	}
 	if response, err := client.Get("https://" + address + "/old-owner"); err == nil {
 		_ = response.Body.Close()
-		t.Fatal("terminal native owner still accepted application traffic")
+		t.Fatal("terminal connector owner still accepted application traffic")
 	}
 	successorCtx, stopSuccessor := context.WithCancel(t.Context())
 	_, successorJoined := f.command(t, successorCtx, stopSuccessor, []string{"--config", configuration, "connect", "api", "--listen", address, "--state-dir", person})
@@ -521,7 +521,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 		return response.StatusCode == 200
 	})
 	var newPair, newRun, survivingPublisher string
-	if err := inspect.QueryRow(t.Context(), `SELECT pair.id,pair.service_run_id,pair.publisher_identity_id FROM control.native_peer_pairs pair JOIN control.service_runs run ON run.id=pair.service_run_id WHERE pair.service_id=$1 AND pair.publisher_prepared_until>now() AND pair.expires_at>now() AND run.closed_at IS NULL`, serviceID).Scan(&newPair, &newRun, &survivingPublisher); err != nil || newPair == oldPair || newRun == oldRun || survivingPublisher == selectedPublisher {
+	if err := inspect.QueryRow(t.Context(), `SELECT pair.id,pair.service_run_id,pair.publisher_identity_id FROM control.connector_peer_pairs pair JOIN control.service_runs run ON run.id=pair.service_run_id WHERE pair.service_id=$1 AND pair.publisher_prepared_until>now() AND pair.expires_at>now() AND run.closed_at IS NULL`, serviceID).Scan(&newPair, &newRun, &survivingPublisher); err != nil || newPair == oldPair || newRun == oldRun || survivingPublisher == selectedPublisher {
 		t.Fatal("new invocation did not select the surviving publisher with its own owner", err)
 	}
 	if operations.Load() != 1 {
@@ -569,7 +569,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 }
 
 type cliWorkflow struct {
-	directServices          *ingress.DirectServices
+	publicServices          *ingress.PublicServices
 	url                     string
 	publicAddress           string
 	databaseURL             string
@@ -936,10 +936,10 @@ func (f *cliWorkflow) relay(t *testing.T, database *controlstate.Database, id st
 	workflowWait(t, 5*time.Second, func() bool { return controller.Lease().RelayLeaseRevision > 0 })
 	registry, private := relay.NewRegistry(), relay.NewServiceRegistry()
 	t.Cleanup(func() { _ = registry.Close(); _ = private.Close() })
-	native := &relay.NativeConnectorAcceptor{CurrentLease: controller.Lease, SigningKey: signingKey, Claim: client, Publishers: private}
+	native := &relay.ConnectorAcceptor{CurrentLease: controller.Lease, SigningKey: signingKey, Claim: client, Publishers: private}
 	acceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{Select: func(service string) (relay.PublisherConnectionController, *relay.Registry, bool) {
 		return controller, registry, service == id
-	}, Native: func(service string) (*relay.NativeConnectorAcceptor, bool) { return native, service == id }, Private: &relay.ServicePublisherAcceptor{Select: func(service string) (relay.ServicePublisherTarget, bool) {
+	}, Connector: func(service string) (*relay.ConnectorAcceptor, bool) { return native, service == id }, Private: &relay.ServicePublisherAcceptor{Select: func(service string) (relay.ServicePublisherTarget, bool) {
 		return relay.ServicePublisherTarget{Control: controller, Registry: private}, service == id
 	}}})
 	if err != nil {
@@ -995,12 +995,12 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = forwarder.Close() })
-	direct, err := ingress.NewDirectServices(ingress.DirectServicesConfig{Control: client, Forwarder: forwarder, CurrentLease: controller.Lease})
+	direct, err := ingress.NewPublicServices(ingress.PublicServicesConfig{Control: client, Forwarder: forwarder, CurrentLease: controller.Lease})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.directServices == nil {
-		f.directServices = direct
+	if f.publicServices == nil {
+		f.publicServices = direct
 	}
 	t.Cleanup(func() { _ = direct.Close() })
 	publicListener := workflowListen(t)

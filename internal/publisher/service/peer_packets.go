@@ -72,7 +72,7 @@ func closePeerCarriers(paths [2]peer.Carrier) {
 }
 
 // ServeRelayPackets registers both current claimed connections, then serves one
-// retained inner QUIC session through the existing native admission owner.
+// retained inner QUIC session through the existing connector admission owner.
 func (p *PeerSession) ServeRelayPackets(ctx context.Context) error {
 	p.bound.mu.Lock()
 	if !p.currentLocked() || p.packetStarted || ctx.Err() != nil {
@@ -102,7 +102,7 @@ func (p *PeerSession) ServeRelayPackets(ctx context.Context) error {
 			return nil, ErrPrivateStream
 		}
 		return p.bound.prepared.currentCertificate()
-	}}, &quic.Config{InitialPacketSize: tunnelv1.MaxPeerPacketBytes, DisablePathMTUDiscovery: true, MaxIncomingStreams: maxNativePeerStreams, MaxIncomingUniStreams: 1, MaxIdleTimeout: 30 * time.Second, KeepAlivePeriod: 10 * time.Second})
+	}}, &quic.Config{InitialPacketSize: tunnelv1.MaxPeerPacketBytes, DisablePathMTUDiscovery: true, MaxIncomingStreams: maxConnectorPeerStreams, MaxIncomingUniStreams: 1, MaxIdleTimeout: 30 * time.Second, KeepAlivePeriod: 10 * time.Second})
 	if err != nil {
 		return err
 	}

@@ -1,7 +1,0 @@
-{
-  "type": "hello",
-  "protocol_version": 1,
-  "role": "ingress",
-  "credential": "secret",
-  "native_pair_leg_accepted": null
-}

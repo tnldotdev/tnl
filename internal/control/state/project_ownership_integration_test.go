@@ -73,7 +73,7 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 		t.Fatal("direct managed definition changed", err)
 	}
 	if err = d.DeleteService(ctx, first.ServiceID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
-		t.Fatal("direct service deleted", err)
+		t.Fatal("public service deleted", err)
 	}
 	var configuredGrant string
 	if err = d.pool.QueryRow(ctx, `SELECT visitor_grant_id FROM control.local_project_services WHERE service_id=$1`, first.ServiceID).Scan(&configuredGrant); err != nil {
@@ -184,7 +184,7 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 		}
 	}
 	if err = d.DeleteService(t.Context(), publicID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
-		t.Fatal("direct service deletion succeeded", err)
+		t.Fatal("public service deletion succeeded", err)
 	}
 	if _, err = d.GetPublicURL(t.Context(), r.ActorID, publicID); err == nil {
 		t.Fatal("service became a public URL")
@@ -250,12 +250,12 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 }
 
 func TestIntegrationPrivateVisitorAssignmentReleaseIsExact(t *testing.T) {
-	// the selector remains for the service Task. native owners do not release
+	// the selector remains for the service Task. connector owners do not release
 	// ingress handles; exact-owner replacement must leave every sibling intact.
-	f := newNativePairFixture(t)
+	f := newConnectorPairFixture(t)
 	first := f.create(t)
 	assertNativeStateStableOwners(t, f.d, f.visitor, f.request, f.key, f.run, f.now)
-	if retry, err := f.d.PrepareNativePeerPair(f.visitor, f.request, f.now); err != nil || retry.ID != first.ID || retry.Key != first.Key {
+	if retry, err := f.d.PrepareConnectorPeerPair(f.visitor, f.request, f.now); err != nil || retry.ID != first.ID || retry.Key != first.Key {
 		t.Fatal("sibling replacement changed the original owner", err)
 	}
 }

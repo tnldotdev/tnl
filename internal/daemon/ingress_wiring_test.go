@@ -98,17 +98,17 @@ func (c *wiringControl) IngestServiceObservations(_ context.Context, _ controlst
 	return controlstate.ServiceObservationResult{Accepted: len(batch.Events)}, nil
 }
 
-// these public URL wiring tests never admit a direct service visitor.
-func (*wiringControl) AdmitDirectServiceVisitor(context.Context, string, ingressv1.DirectServiceVisitorClaim) (ingressv1.DirectServiceVisitorAdmission, error) {
-	return ingressv1.DirectServiceVisitorAdmission{}, ingress.ErrServiceAdmission
+// these public URL wiring tests never admit a public service visitor.
+func (*wiringControl) AdmitPublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {
+	return ingressv1.PublicServiceVisitorAdmission{}, ingress.ErrServiceAdmission
 }
-func (*wiringControl) DirectServiceVisitorStatus(context.Context, string, ingressv1.DirectServiceVisitorLookup) (ingressv1.DirectServiceVisitorStatus, error) {
-	return ingressv1.DirectServiceVisitorStatus{}, ingress.ErrServiceAdmission
+func (*wiringControl) PublicServiceVisitorStatus(context.Context, string, ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {
+	return ingressv1.PublicServiceVisitorStatus{}, ingress.ErrServiceAdmission
 }
-func (*wiringControl) PromoteDirectServiceVisitor(context.Context, string, ingressv1.DirectServiceVisitorLookup) error {
+func (*wiringControl) PromotePublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorLookup) error {
 	return ingress.ErrServiceAdmission
 }
-func (*wiringControl) CloseDirectServiceVisitor(context.Context, string, ingressv1.DirectServiceVisitorLookup) error {
+func (*wiringControl) ClosePublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorLookup) error {
 	return nil
 }
 

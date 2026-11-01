@@ -257,6 +257,59 @@ type ControlCompanySessionContext struct {
 	ExpiresAt            pgtype.Timestamptz
 }
 
+type ControlConnectorPeerAuditBinding struct {
+	PairID              string
+	ServiceID           string
+	ServiceRunID        string
+	RunNumber           int64
+	PublisherIdentityID string
+	IdentityID          pgtype.Text
+	DeviceID            pgtype.Text
+	SourceIp            netip.Addr
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+}
+
+type ControlConnectorPeerPair struct {
+	ID                     string
+	ServiceID              string
+	ServiceRunID           string
+	RunNumber              int64
+	PublisherIdentityID    string
+	SubjectKind            string
+	SubjectID              string
+	ParentControlSessionID pgtype.Text
+	OwnerKey               string
+	IdempotencyKey         string
+	RequestDigest          []byte
+	LastRenewalDigest      []byte
+	PublisherPreparedUntil pgtype.Timestamptz
+	KeyDigest              []byte
+	KeyCiphertext          []byte
+	DeliveryID             []byte
+	StorageKeyID           string
+	Slots                  []byte
+	DeliveryGeneration     int64
+	CreatedAt              pgtype.Timestamptz
+	LastAuthorizedAt       pgtype.Timestamptz
+	LastRequestAt          pgtype.Timestamptz
+	ReplayFenceUntil       pgtype.Timestamptz
+	ExpiresAt              pgtype.Timestamptz
+}
+
+type ControlConnectorPeerPairLegClaim struct {
+	PairID             string
+	ConnectionSlot     int16
+	RequestedAt        pgtype.Timestamptz
+	CheckedAt          pgtype.Timestamptz
+	ConfirmedUntil     pgtype.Timestamptz
+	NonceDigest        []byte
+	SourceIp           netip.Addr
+	RelayID            string
+	RelayRunID         string
+	RelayLeaseRevision int64
+}
+
 type ControlControlSession struct {
 	ID                      string
 	IdentityID              string
@@ -281,26 +334,6 @@ type ControlDeviceLogin struct {
 	ExpiresAt        pgtype.Timestamptz
 	Payload          []byte
 	StorageKeyID     string
-}
-
-type ControlDirectServiceVisitor struct {
-	WorkloadSessionID    pgtype.Text
-	VisitorConnectionID  string
-	ServiceID            string
-	ServiceRunID         string
-	RunNumber            int64
-	IngressID            string
-	IngressRunID         string
-	IngressLeaseRevision int64
-	DestinationPort      int32
-	SourceIp             netip.Addr
-	IdentityID           pgtype.Text
-	DeviceID             pgtype.Text
-	CertificateDigest    []byte
-	PromotedAt           pgtype.Timestamptz
-	ValidUntil           pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
-	ClosedAt             pgtype.Timestamptz
 }
 
 type ControlDnsAuthority struct {
@@ -622,59 +655,6 @@ type ControlMemberSlugReservation struct {
 	ReleasedAt           pgtype.Timestamptz
 }
 
-type ControlNativePeerAuditBinding struct {
-	PairID              string
-	ServiceID           string
-	ServiceRunID        string
-	RunNumber           int64
-	PublisherIdentityID string
-	IdentityID          pgtype.Text
-	DeviceID            pgtype.Text
-	SourceIp            netip.Addr
-	CreatedAt           pgtype.Timestamptz
-	ExpiresAt           pgtype.Timestamptz
-}
-
-type ControlNativePeerPair struct {
-	ID                     string
-	ServiceID              string
-	ServiceRunID           string
-	RunNumber              int64
-	PublisherIdentityID    string
-	SubjectKind            string
-	SubjectID              string
-	ParentControlSessionID pgtype.Text
-	OwnerKey               string
-	IdempotencyKey         string
-	RequestDigest          []byte
-	LastRenewalDigest      []byte
-	PublisherPreparedUntil pgtype.Timestamptz
-	KeyDigest              []byte
-	KeyCiphertext          []byte
-	DeliveryID             []byte
-	StorageKeyID           string
-	Slots                  []byte
-	DeliveryGeneration     int64
-	CreatedAt              pgtype.Timestamptz
-	LastAuthorizedAt       pgtype.Timestamptz
-	LastRequestAt          pgtype.Timestamptz
-	ReplayFenceUntil       pgtype.Timestamptz
-	ExpiresAt              pgtype.Timestamptz
-}
-
-type ControlNativePeerPairLegClaim struct {
-	PairID             string
-	ConnectionSlot     int16
-	RequestedAt        pgtype.Timestamptz
-	CheckedAt          pgtype.Timestamptz
-	ConfirmedUntil     pgtype.Timestamptz
-	NonceDigest        []byte
-	SourceIp           netip.Addr
-	RelayID            string
-	RelayRunID         string
-	RelayLeaseRevision int64
-}
-
 type ControlOidcAssertionExchange struct {
 	ID              int64
 	AssertionDigest []byte
@@ -711,6 +691,26 @@ type ControlProjectPublisherGroup struct {
 	Namespace   string
 	Public      bool
 	DeletedAt   pgtype.Timestamptz
+}
+
+type ControlPublicServiceVisitor struct {
+	WorkloadSessionID    pgtype.Text
+	VisitorConnectionID  string
+	ServiceID            string
+	ServiceRunID         string
+	RunNumber            int64
+	IngressID            string
+	IngressRunID         string
+	IngressLeaseRevision int64
+	DestinationPort      int32
+	SourceIp             netip.Addr
+	IdentityID           pgtype.Text
+	DeviceID             pgtype.Text
+	CertificateDigest    []byte
+	PromotedAt           pgtype.Timestamptz
+	ValidUntil           pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	ClosedAt             pgtype.Timestamptz
 }
 
 type ControlPublicUrl struct {

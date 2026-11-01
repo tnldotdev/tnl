@@ -18,13 +18,13 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-// the fixture supplies authority replies and native packet acceptance. the
+// the fixture supplies authority replies and connector packet acceptance. the
 // production connector still owns pair preparation, carrier races, inner QUIC,
 // openings, TLS, renewal and cleanup. publisher policy is covered by its owner
 // and the real daemon consumer tests, not reimplemented here.
-type fixtureNativePeer struct {
+type fixtureConnectorPeer struct {
 	owner   string
-	pair    controlv1.NativePeerPair
+	pair    controlv1.ConnectorPeerPair
 	key     [32]byte
 	paths   [2]chan peer.Carrier
 	nonces  [2][]byte
@@ -39,21 +39,21 @@ type fixtureTLSGate struct {
 
 func fixtureDatagramConfig() *quic.Config { return &quic.Config{EnableDatagrams: true} }
 
-func (p *fixtureNativePeer) receipt(slot int) tunnelv1.NativePairLegAccepted {
-	return tunnelv1.NativePairLegAccepted{PairID: p.pair.PairId, DeliveryID: p.pair.DeliveryId, DeliveryGeneration: p.pair.DeliveryGeneration,
+func (p *fixtureConnectorPeer) receipt(slot int) tunnelv1.ConnectorPairLegAccepted {
+	return tunnelv1.ConnectorPairLegAccepted{PairID: p.pair.PairId, DeliveryID: p.pair.DeliveryId, DeliveryGeneration: p.pair.DeliveryGeneration,
 		ConnectionSlot: slot, SourceIP: "127.0.0.1", ObservedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}
 }
 
-func (f *connectorFixture) PrepareNativePeerPair(ctx context.Context, service string, body controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error) {
-	message, err := controlv1.NativePeerPairProofMessage(service, body)
+func (f *connectorFixture) PrepareConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
+	message, err := controlv1.ConnectorPeerPairProofMessage(service, body)
 	signature, decodeErr := base64.RawURLEncoding.DecodeString(body.Signature)
 	if err != nil || decodeErr != nil || !ed25519.Verify(f.device.PublicKey, message, signature) || !visitorsubject.Equal(body.Subject, f.device.Subject) {
-		return controlv1.NativePeerPair{}, ErrServiceConnection
+		return controlv1.ConnectorPeerPair{}, ErrServiceConnection
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if ctx.Err() != nil || f.ctx.Err() != nil {
-		return controlv1.NativePeerPair{}, context.Canceled
+		return controlv1.ConnectorPeerPair{}, context.Canceled
 	}
 	for _, p := range f.peers {
 		if p.owner == body.IdempotencyKey {
@@ -62,26 +62,26 @@ func (f *connectorFixture) PrepareNativePeerPair(ctx context.Context, service st
 			return result, nil
 		}
 	}
-	id, err := opaqueid.New("npp_")
+	id, err := opaqueid.New("cpp_")
 	if err != nil {
-		return controlv1.NativePeerPair{}, err
+		return controlv1.ConnectorPeerPair{}, err
 	}
-	p := &fixtureNativePeer{owner: body.IdempotencyKey, seen: make(map[string]struct{})}
+	p := &fixtureConnectorPeer{owner: body.IdempotencyKey, seen: make(map[string]struct{})}
 	var delivery [16]byte
 	if _, err := rand.Read(delivery[:]); err != nil {
-		return controlv1.NativePeerPair{}, err
+		return controlv1.ConnectorPeerPair{}, err
 	}
 	if _, err := rand.Read(p.key[:]); err != nil {
-		return controlv1.NativePeerPair{}, err
+		return controlv1.ConnectorPeerPair{}, err
 	}
-	p.pair = controlv1.NativePeerPair{PairId: id, DeliveryId: base64.RawURLEncoding.EncodeToString(delivery[:]), Key: base64.RawURLEncoding.EncodeToString(p.key[:]), DeliveryGeneration: 1,
+	p.pair = controlv1.ConnectorPeerPair{PairId: id, DeliveryId: base64.RawURLEncoding.EncodeToString(delivery[:]), Key: base64.RawURLEncoding.EncodeToString(p.key[:]), DeliveryGeneration: 1,
 		ServiceId: service, ServiceRunId: body.ServiceRunId, RunNumber: body.RunNumber, PublisherIdentityId: body.PublisherIdentityId, Subject: body.Subject, Relays: body.ExpectedRelays, ObservedAt: time.Now(), ExpiresAt: f.expires}
 	for slot := range p.paths {
 		p.paths[slot] = make(chan peer.Carrier, 1)
 	}
 	f.peers[id] = p
 	ready := make(chan error, 1)
-	f.workers.Go(func() { f.serveNativePeer(p, ready) })
+	f.workers.Go(func() { f.serveConnectorPeer(p, ready) })
 	select {
 	case err := <-ready:
 		if err == nil {
@@ -89,11 +89,11 @@ func (f *connectorFixture) PrepareNativePeerPair(ctx context.Context, service st
 		}
 		return p.pair, err
 	case <-ctx.Done():
-		return controlv1.NativePeerPair{}, context.Cause(ctx)
+		return controlv1.ConnectorPeerPair{}, context.Cause(ctx)
 	}
 }
 
-func (f *connectorFixture) serveNativePeer(p *fixtureNativePeer, ready chan<- error) {
+func (f *connectorFixture) serveConnectorPeer(p *fixtureConnectorPeer, ready chan<- error) {
 	// the fixture accepts each carrier once. there is no reconnect or
 	// replacement of a physical carrier within an existing inner session.
 	ready <- nil

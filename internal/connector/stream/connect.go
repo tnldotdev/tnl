@@ -1,4 +1,4 @@
-// package stream owns native service preparation, local listeners and stream use.
+// package stream owns connector service preparation, local listeners and stream use.
 package stream
 
 import (
@@ -39,7 +39,7 @@ type Run struct {
 	TrustRevision           int64
 	Endpoint                *controlv1.ServiceEndpoint
 	ServiceTLS              *tls.Config `json:"-"`
-	PairReady               *controlv1.NativePeerPairReady
+	PairReady               *controlv1.ConnectorPeerPairReady
 }
 
 func (Run) String() string   { return "selected service run" }
@@ -48,7 +48,7 @@ func (Run) GoString() string { return "selected service run" }
 type Control interface {
 	ConnectorSigner(context.Context, string) (Signer, error)
 	ResolveService(context.Context, string) (Run, error)
-	PrepareNativePeerPair(context.Context, string, controlv1.NativePeerPairRequest) (controlv1.NativePeerPair, error)
+	PrepareConnectorPeerPair(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error)
 	VisitorPermission(context.Context, string) (controlv1.VisitorTokenResponse, error)
 }
 
@@ -142,7 +142,7 @@ func serveConnections(ctx context.Context, config Config, consume connectionCons
 	if signer.Subject.Validate() != nil || signer.Subject.IdentityID != config.IdentityID || len(signer.PublicKey) != ed25519.PublicKeySize || signer.Sign == nil {
 		return ErrServiceConnection
 	}
-	p, err := prepareNativeConnection(ctx, setup, config, signer)
+	p, err := prepareConnectorConnection(ctx, setup, config, signer)
 	if err != nil {
 		return err
 	}

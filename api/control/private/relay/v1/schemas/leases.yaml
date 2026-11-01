@@ -17,7 +17,7 @@ schemas:
       peer_signing_public_key:
         type: string
         pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
-        description: Optional process-run Ed25519 public key. A missing key cannot authorize native pair claims; retries must retain the exact key.
+        description: Optional process-run Ed25519 public key. A missing key cannot authorize connector pair claims; retries must retain the exact key.
       relay_service_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       relay_id:
@@ -115,7 +115,7 @@ schemas:
       peer_signing_public_key:
         type: string
         pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
-        description: Process-run key when registered. Missing-key leases cannot authorize native pair claims.
+        description: Process-run key when registered. Missing-key leases cannot authorize connector pair claims.
       relay_service_id:
         $ref: "../openapi.yaml#/components/schemas/Identifier"
       relay_id:

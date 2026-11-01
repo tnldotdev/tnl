@@ -73,7 +73,7 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 		    (SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM control.service_runs r),
 		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY publisher_connection_id) FROM control.service_connection_slots s),
 		    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM control.publisher_grants g),
-		    (SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM control.native_peer_pairs p),
+		    (SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM control.connector_peer_pairs p),
 		    (SELECT jsonb_agg(to_jsonb(e) ORDER BY cursor) FROM control.service_audit_events e))::text`).Scan(&data); err != nil {
 			t.Fatal(err)
 		}

@@ -150,6 +150,27 @@ func (e CertificateIssuanceState) Valid() bool {
 	}
 }
 
+// Defines values for ConnectorPeerPairRequestAction.
+const (
+	Create  ConnectorPeerPairRequestAction = "create"
+	Renew   ConnectorPeerPairRequestAction = "renew"
+	Replace ConnectorPeerPairRequestAction = "replace"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorPeerPairRequestAction enum.
+func (e ConnectorPeerPairRequestAction) Valid() bool {
+	switch e {
+	case Create:
+		return true
+	case Renew:
+		return true
+	case Replace:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ControlDiscoveryManagedUrlMode.
 const (
 	Generated ControlDiscoveryManagedUrlMode = "generated"
@@ -408,27 +429,6 @@ func (e MaintenanceControlName) Valid() bool {
 	case MaintenanceControlNamePublicUrlCreation:
 		return true
 	case MaintenanceControlNamePublishRunCreation:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for NativePeerPairRequestAction.
-const (
-	Create  NativePeerPairRequestAction = "create"
-	Renew   NativePeerPairRequestAction = "renew"
-	Replace NativePeerPairRequestAction = "replace"
-)
-
-// Valid indicates whether the value is a known member of the NativePeerPairRequestAction enum.
-func (e NativePeerPairRequestAction) Valid() bool {
-	switch e {
-	case Create:
-		return true
-	case Renew:
-		return true
-	case Replace:
 		return true
 	default:
 		return false
@@ -1861,6 +1861,128 @@ type ConnectionAssignment struct {
 	TlsServerName                          CanonicalHostname        `json:"tls_server_name"`
 }
 
+// ConnectorPeerPair defines model for ConnectorPeerPair.
+type ConnectorPeerPair struct {
+	DeliveryGeneration int64 `json:"delivery_generation"`
+
+	// DeliveryId Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.
+	DeliveryId string    `json:"delivery_id"`
+	ExpiresAt  time.Time `json:"expires_at"`
+
+	// Key Secret returned only to the authorized signed source.
+	Key string `json:"key"`
+
+	// ObservedAt Control's authority observation time; subtract request transit when installing local deadlines.
+	ObservedAt          time.Time `json:"observed_at"`
+	PairId              string    `json:"pair_id"`
+	PublisherIdentityId string    `json:"publisher_identity_id"`
+
+	// PublisherPreparedUntil The publisher reported its exact packet registration and inner listener installed through this bound. This startup barrier is not visitor permission or a guarantee of continued process liveness.
+	PublisherPreparedUntil *time.Time               `json:"publisher_prepared_until,omitempty"`
+	Relays                 []ConnectorPeerPairRelay `json:"relays"`
+	RunNumber              int64                    `json:"run_number"`
+	ServiceId              ServiceID                `json:"service_id"`
+	ServiceRunId           ServiceRunID             `json:"service_run_id"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject VisitorSubject `json:"subject"`
+}
+
+// ConnectorPeerPairCandidate A pair to reconcile, not delivery authority or permission to open an application stream.
+type ConnectorPeerPairCandidate struct {
+	DeliveryGeneration int64  `json:"delivery_generation"`
+	PairId             string `json:"pair_id"`
+}
+
+// ConnectorPeerPairCandidates defines model for ConnectorPeerPairCandidates.
+type ConnectorPeerPairCandidates struct {
+	Items []ConnectorPeerPairCandidate `json:"items"`
+
+	// NextAfter Continue after this pair ID; restart from the first page on the next reconciliation pass.
+	NextAfter *string `json:"next_after,omitempty"`
+}
+
+// ConnectorPeerPairDelivery Existing pair delivery for the authenticated publisher run only; never grants an application stream.
+type ConnectorPeerPairDelivery struct {
+	DeliveryGeneration int64     `json:"delivery_generation"`
+	DeliveryId         string    `json:"delivery_id"`
+	ExpiresAt          time.Time `json:"expires_at"`
+
+	// Key Secret for this delivery; do not log or persist.
+	Key string `json:"key"`
+
+	// ObservedAt Control time for this authority observation; the publisher subtracts request delay when installing its local deadline.
+	ObservedAt          time.Time                `json:"observed_at"`
+	PairId              string                   `json:"pair_id"`
+	PublisherIdentityId string                   `json:"publisher_identity_id"`
+	Relays              []ConnectorPeerPairRelay `json:"relays"`
+	RunNumber           int64                    `json:"run_number"`
+	ServiceId           ServiceID                `json:"service_id"`
+	ServiceRunId        ServiceRunID             `json:"service_run_id"`
+
+	// SourceIp Canonical source observed by both relays.
+	SourceIp string `json:"source_ip"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject VisitorSubject `json:"subject"`
+}
+
+// ConnectorPeerPairPrepared Report installation of the exact independently prepared binding; this does not renew pair or application authority.
+type ConnectorPeerPairPrepared struct {
+	// BindingExpiresAt The original control-clock expires_at from the installed delivery response, not a new local deadline.
+	BindingExpiresAt   time.Time `json:"binding_expires_at"`
+	DeliveryGeneration int64     `json:"delivery_generation"`
+	DeliveryId         string    `json:"delivery_id"`
+}
+
+// ConnectorPeerPairReady A short-lived, credential-free snapshot for signing an exact pair request. It never grants a relay claim.
+type ConnectorPeerPairReady struct {
+	PublisherIdentityId string                   `json:"publisher_identity_id"`
+	Relays              []ConnectorPeerPairRelay `json:"relays"`
+}
+
+// ConnectorPeerPairRelay defines model for ConnectorPeerPairRelay.
+type ConnectorPeerPairRelay struct {
+	AssignmentRevision    int64                   `json:"assignment_revision"`
+	PublisherConnectionId string                  `json:"publisher_connection_id"`
+	RelayAddress          string                  `json:"relay_address"`
+	RelayLease            ConnectorPeerRelayLease `json:"relay_lease"`
+	TlsServerName         string                  `json:"tls_server_name"`
+}
+
+// ConnectorPeerPairRequest Sign the canonical ConnectorPeerPairProofMessage Go v1 array, not the snake_case HTTP object. Source is selected by kind; a device uses the sole control bearer, a workload uses its credential and no control bearer. Each connector owner creates with a distinct idempotency key and retains that stable owner key across create, renew and replace. A pair ID and generation alone never prove ownership. Replacement also names the exact predecessor and issues a new pair, delivery ID, key and generation; it does not transfer a running session. An uncertain response repeats the exact signed request, including its timestamp, action and owner key.
+type ConnectorPeerPairRequest struct {
+	Action              ConnectorPeerPairRequestAction `json:"action"`
+	ExpectedRelays      []ConnectorPeerPairRelay       `json:"expected_relays"`
+	IdempotencyKey      IdempotencyKey                 `json:"idempotency_key"`
+	PreviousGeneration  *int64                         `json:"previous_generation,omitempty"`
+	PreviousPairId      *string                        `json:"previous_pair_id,omitempty"`
+	PublisherIdentityId string                         `json:"publisher_identity_id"`
+
+	// RequestedAt Retain this timestamp on an uncertain reply retry. A successful fresh renewal supersedes earlier create or replace reply proofs; those proofs cannot recover the later renewal's bound.
+	RequestedAt  time.Time    `json:"requested_at"`
+	RunNumber    int64        `json:"run_number"`
+	ServiceRunId ServiceRunID `json:"service_run_id"`
+
+	// Signature Unpadded base64url Ed25519 signature over ConnectorPeerPairProofMessage.
+	Signature string          `json:"signature"`
+	Source    json.RawMessage `json:"source"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject VisitorSubject `json:"subject"`
+}
+
+// ConnectorPeerPairRequestAction defines model for ConnectorPeerPairRequest.Action.
+type ConnectorPeerPairRequestAction string
+
+// ConnectorPeerRelayLease defines model for ConnectorPeerRelayLease.
+type ConnectorPeerRelayLease struct {
+	RelayId            string `json:"relay_id"`
+	RelayLeaseRevision int64  `json:"relay_lease_revision"`
+	RelayRunId         string `json:"relay_run_id"`
+	RelayServiceId     string `json:"relay_service_id"`
+}
+
 // ControlDiscovery defines model for ControlDiscovery.
 type ControlDiscovery struct {
 	Authentication AuthenticationFacts `json:"authentication"`
@@ -2337,128 +2459,6 @@ type MaintenanceControlName string
 
 // MembershipID defines model for MembershipID.
 type MembershipID = ResourceID
-
-// NativePeerPair defines model for NativePeerPair.
-type NativePeerPair struct {
-	DeliveryGeneration int64 `json:"delivery_generation"`
-
-	// DeliveryId Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.
-	DeliveryId string    `json:"delivery_id"`
-	ExpiresAt  time.Time `json:"expires_at"`
-
-	// Key Secret returned only to the authorized signed source.
-	Key string `json:"key"`
-
-	// ObservedAt Control's authority observation time; subtract request transit when installing local deadlines.
-	ObservedAt          time.Time `json:"observed_at"`
-	PairId              string    `json:"pair_id"`
-	PublisherIdentityId string    `json:"publisher_identity_id"`
-
-	// PublisherPreparedUntil The publisher reported its exact packet registration and inner listener installed through this bound. This startup barrier is not visitor permission or a guarantee of continued process liveness.
-	PublisherPreparedUntil *time.Time            `json:"publisher_prepared_until,omitempty"`
-	Relays                 []NativePeerPairRelay `json:"relays"`
-	RunNumber              int64                 `json:"run_number"`
-	ServiceId              ServiceID             `json:"service_id"`
-	ServiceRunId           ServiceRunID          `json:"service_run_id"`
-
-	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject VisitorSubject `json:"subject"`
-}
-
-// NativePeerPairCandidate A pair to reconcile, not delivery authority or permission to open an application stream.
-type NativePeerPairCandidate struct {
-	DeliveryGeneration int64  `json:"delivery_generation"`
-	PairId             string `json:"pair_id"`
-}
-
-// NativePeerPairCandidates defines model for NativePeerPairCandidates.
-type NativePeerPairCandidates struct {
-	Items []NativePeerPairCandidate `json:"items"`
-
-	// NextAfter Continue after this pair ID; restart from the first page on the next reconciliation pass.
-	NextAfter *string `json:"next_after,omitempty"`
-}
-
-// NativePeerPairDelivery Existing pair delivery for the authenticated publisher run only; never grants an application stream.
-type NativePeerPairDelivery struct {
-	DeliveryGeneration int64     `json:"delivery_generation"`
-	DeliveryId         string    `json:"delivery_id"`
-	ExpiresAt          time.Time `json:"expires_at"`
-
-	// Key Secret for this delivery; do not log or persist.
-	Key string `json:"key"`
-
-	// ObservedAt Control time for this authority observation; the publisher subtracts request delay when installing its local deadline.
-	ObservedAt          time.Time             `json:"observed_at"`
-	PairId              string                `json:"pair_id"`
-	PublisherIdentityId string                `json:"publisher_identity_id"`
-	Relays              []NativePeerPairRelay `json:"relays"`
-	RunNumber           int64                 `json:"run_number"`
-	ServiceId           ServiceID             `json:"service_id"`
-	ServiceRunId        ServiceRunID          `json:"service_run_id"`
-
-	// SourceIp Canonical source observed by both relays.
-	SourceIp string `json:"source_ip"`
-
-	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject VisitorSubject `json:"subject"`
-}
-
-// NativePeerPairPrepared Report installation of the exact independently prepared binding; this does not renew pair or application authority.
-type NativePeerPairPrepared struct {
-	// BindingExpiresAt The original control-clock expires_at from the installed delivery response, not a new local deadline.
-	BindingExpiresAt   time.Time `json:"binding_expires_at"`
-	DeliveryGeneration int64     `json:"delivery_generation"`
-	DeliveryId         string    `json:"delivery_id"`
-}
-
-// NativePeerPairReady A short-lived, credential-free snapshot for signing an exact pair request. It never grants a relay claim.
-type NativePeerPairReady struct {
-	PublisherIdentityId string                `json:"publisher_identity_id"`
-	Relays              []NativePeerPairRelay `json:"relays"`
-}
-
-// NativePeerPairRelay defines model for NativePeerPairRelay.
-type NativePeerPairRelay struct {
-	AssignmentRevision    int64                `json:"assignment_revision"`
-	PublisherConnectionId string               `json:"publisher_connection_id"`
-	RelayAddress          string               `json:"relay_address"`
-	RelayLease            NativePeerRelayLease `json:"relay_lease"`
-	TlsServerName         string               `json:"tls_server_name"`
-}
-
-// NativePeerPairRequest Sign the canonical NativePeerPairProofMessage Go v1 array, not the snake_case HTTP object. Source is selected by kind; a device uses the sole control bearer, a workload uses its credential and no control bearer. Each connector owner creates with a distinct idempotency key and retains that stable owner key across create, renew and replace. A pair ID and generation alone never prove ownership. Replacement also names the exact predecessor and issues a new pair, delivery ID, key and generation; it does not transfer a running session. An uncertain response repeats the exact signed request, including its timestamp, action and owner key.
-type NativePeerPairRequest struct {
-	Action              NativePeerPairRequestAction `json:"action"`
-	ExpectedRelays      []NativePeerPairRelay       `json:"expected_relays"`
-	IdempotencyKey      IdempotencyKey              `json:"idempotency_key"`
-	PreviousGeneration  *int64                      `json:"previous_generation,omitempty"`
-	PreviousPairId      *string                     `json:"previous_pair_id,omitempty"`
-	PublisherIdentityId string                      `json:"publisher_identity_id"`
-
-	// RequestedAt Retain this timestamp on an uncertain reply retry. A successful fresh renewal supersedes earlier create or replace reply proofs; those proofs cannot recover the later renewal's bound.
-	RequestedAt  time.Time    `json:"requested_at"`
-	RunNumber    int64        `json:"run_number"`
-	ServiceRunId ServiceRunID `json:"service_run_id"`
-
-	// Signature Unpadded base64url Ed25519 signature over NativePeerPairProofMessage.
-	Signature string          `json:"signature"`
-	Source    json.RawMessage `json:"source"`
-
-	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject VisitorSubject `json:"subject"`
-}
-
-// NativePeerPairRequestAction defines model for NativePeerPairRequest.Action.
-type NativePeerPairRequestAction string
-
-// NativePeerRelayLease defines model for NativePeerRelayLease.
-type NativePeerRelayLease struct {
-	RelayId            string `json:"relay_id"`
-	RelayLeaseRevision int64  `json:"relay_lease_revision"`
-	RelayRunId         string `json:"relay_run_id"`
-	RelayServiceId     string `json:"relay_service_id"`
-}
 
 // OIDCAuthenticationFacts defines model for OIDCAuthenticationFacts.
 type OIDCAuthenticationFacts struct {
@@ -3460,11 +3460,11 @@ type ServiceSelection struct {
 	ExpiresAt time.Time        `json:"expires_at"`
 
 	// PairReady A short-lived, credential-free snapshot for signing an exact pair request. It never grants a relay claim.
-	PairReady    *NativePeerPairReady `json:"pair_ready,omitempty"`
-	Protocol     ServiceProtocol      `json:"protocol"`
-	RunNumber    int64                `json:"run_number"`
-	ServiceId    ServiceID            `json:"service_id"`
-	ServiceRunId ServiceRunID         `json:"service_run_id"`
+	PairReady    *ConnectorPeerPairReady `json:"pair_ready,omitempty"`
+	Protocol     ServiceProtocol         `json:"protocol"`
+	RunNumber    int64                   `json:"run_number"`
+	ServiceId    ServiceID               `json:"service_id"`
+	ServiceRunId ServiceRunID            `json:"service_run_id"`
 
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
 	Subject       VisitorSubject `json:"subject"`
@@ -4112,13 +4112,13 @@ type CreateServiceCertificateIssuanceParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
-// ListNativePeerPairsParams defines parameters for ListNativePeerPairs.
-type ListNativePeerPairsParams struct {
+// ListConnectorPeerPairsParams defines parameters for ListConnectorPeerPairs.
+type ListConnectorPeerPairsParams struct {
 	After *string `form:"after,omitempty" json:"after,omitempty"`
 }
 
-// DeliverNativePeerPairJSONBody defines parameters for DeliverNativePeerPair.
-type DeliverNativePeerPairJSONBody struct {
+// DeliverConnectorPeerPairJSONBody defines parameters for DeliverConnectorPeerPair.
+type DeliverConnectorPeerPairJSONBody struct {
 	DeliveryGeneration int64 `json:"delivery_generation"`
 }
 
@@ -4322,6 +4322,12 @@ type ConfigureServiceJSONRequestBody = ServiceMetadata
 // IssueServiceClientCertificateJSONRequestBody defines body for IssueServiceClientCertificate for application/json ContentType.
 type IssueServiceClientCertificateJSONRequestBody = IssueServiceClientCertificateRequest
 
+// PrepareConnectorPeerPairJSONRequestBody defines body for PrepareConnectorPeerPair for application/json ContentType.
+type PrepareConnectorPeerPairJSONRequestBody = ConnectorPeerPairRequest
+
+// RenewConnectorPeerPairJSONRequestBody defines body for RenewConnectorPeerPair for application/json ContentType.
+type RenewConnectorPeerPairJSONRequestBody = ConnectorPeerPairRequest
+
 // CreateServiceGrantJSONRequestBody defines body for CreateServiceGrant for application/json ContentType.
 type CreateServiceGrantJSONRequestBody = CreateServiceGrantRequest
 
@@ -4330,12 +4336,6 @@ type CreateServiceHTTPGrantJSONRequestBody = CreateVisitorCredentialRequest
 
 // InviteServiceVisitorJSONRequestBody defines body for InviteServiceVisitor for application/json ContentType.
 type InviteServiceVisitorJSONRequestBody = CreateServiceInvitationRequest
-
-// PrepareNativePeerPairJSONRequestBody defines body for PrepareNativePeerPair for application/json ContentType.
-type PrepareNativePeerPairJSONRequestBody = NativePeerPairRequest
-
-// RenewNativePeerPairJSONRequestBody defines body for RenewNativePeerPair for application/json ContentType.
-type RenewNativePeerPairJSONRequestBody = NativePeerPairRequest
 
 // PrepareServiceRunJSONRequestBody defines body for PrepareServiceRun for application/json ContentType.
 type PrepareServiceRunJSONRequestBody = ServiceRunDeclaration
@@ -4361,11 +4361,11 @@ type MarkServiceCertificateInstalledJSONRequestBody = ServiceCertificateInstalle
 // CreateServiceCertificateIssuanceJSONRequestBody defines body for CreateServiceCertificateIssuance for application/json ContentType.
 type CreateServiceCertificateIssuanceJSONRequestBody = CreateServiceCertificateIssuanceRequest
 
-// DeliverNativePeerPairJSONRequestBody defines body for DeliverNativePeerPair for application/json ContentType.
-type DeliverNativePeerPairJSONRequestBody DeliverNativePeerPairJSONBody
+// DeliverConnectorPeerPairJSONRequestBody defines body for DeliverConnectorPeerPair for application/json ContentType.
+type DeliverConnectorPeerPairJSONRequestBody DeliverConnectorPeerPairJSONBody
 
-// ConfirmNativePeerPairPreparedJSONRequestBody defines body for ConfirmNativePeerPairPrepared for application/json ContentType.
-type ConfirmNativePeerPairPreparedJSONRequestBody = NativePeerPairPrepared
+// ConfirmConnectorPeerPairPreparedJSONRequestBody defines body for ConfirmConnectorPeerPairPrepared for application/json ContentType.
+type ConfirmConnectorPeerPairPreparedJSONRequestBody = ConnectorPeerPairPrepared
 
 // ReportServiceRunObservationsJSONRequestBody defines body for ReportServiceRunObservations for application/json ContentType.
 type ReportServiceRunObservationsJSONRequestBody = ServiceRunObservations
@@ -5316,6 +5316,30 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	IssueServiceClientCertificate(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// PrepareConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	PrepareConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PrepareConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	PrepareConnectorPeerPair(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+	RenewConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+	RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListServiceGrants performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
 	//
 	// Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -5372,30 +5396,6 @@ type ClientInterface interface {
 	// RevokeServiceInvitation performs a DELETE /v1/services/{service_id}/invitations/{invitation_id} (the `RevokeServiceInvitation` operationId) request.
 	RevokeServiceInvitation(ctx context.Context, serviceId ServiceID, invitationId ServiceInvitationID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// PrepareNativePeerPairWithBody performs a POST /v1/services/{service_id}/native-peer-pairs (the `PrepareNativePeerPair` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
-	PrepareNativePeerPairWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PrepareNativePeerPair performs a POST /v1/services/{service_id}/native-peer-pairs (the `PrepareNativePeerPair` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
-	PrepareNativePeerPair(ctx context.Context, serviceId ServiceID, body PrepareNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenewNativePeerPairWithBody performs a POST /v1/services/{service_id}/native-peer-pairs/{pair_id}/renew (the `RenewNativePeerPair` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
-	RenewNativePeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RenewNativePeerPair performs a POST /v1/services/{service_id}/native-peer-pairs/{pair_id}/renew (the `RenewNativePeerPair` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
-	RenewNativePeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// PrepareServiceRunWithBody performs a POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -5428,13 +5428,13 @@ type ClientInterface interface {
 	// AuthorizeServiceClientCertificateWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Authenticate a direct ingress visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+	// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 	AuthorizeServiceClientCertificateWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizeServiceClientCertificate performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Authenticate a direct ingress visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+	// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 	AuthorizeServiceClientCertificate(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RedeemServiceBrowserHandoffWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
@@ -5480,45 +5480,45 @@ type ClientInterface interface {
 	// GetServiceCertificateIssuance performs a GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId) request.
 	GetServiceCertificateIssuance(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListNativePeerPairs performs a GET /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs (the `ListNativePeerPairs` operationId) request.
+	// ListConnectorPeerPairs performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
 	//
 	// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. A candidate may still lack relay claims; prepare its delivery independently before serving it.
-	ListNativePeerPairs(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListNativePeerPairsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListConnectorPeerPairs(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeliverNativePeerPairWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request,
+	// DeliverConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request,
 	// with any type of body and a specified content type.
 	//
 	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
-	DeliverNativePeerPairWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeliverConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeliverNativePeerPair performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request.
+	// DeliverConnectorPeerPair performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
 	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
-	DeliverNativePeerPair(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeliverConnectorPeerPair(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ConfirmNativePeerPairPreparedWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/prepared (the `ConfirmNativePeerPairPrepared` operationId) request,
+	// ConfirmConnectorPeerPairPreparedWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request,
 	// with any type of body and a specified content type.
 	//
 	// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
-	ConfirmNativePeerPairPreparedWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ConfirmConnectorPeerPairPreparedWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ConfirmNativePeerPairPrepared performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/prepared (the `ConfirmNativePeerPairPrepared` operationId) request.
+	// ConfirmConnectorPeerPairPrepared performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
 	// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
-	ConfirmNativePeerPairPrepared(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmNativePeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReportServiceRunObservationsWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Report bounded native connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
 	ReportServiceRunObservationsWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReportServiceRunObservations performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Report bounded native connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
 	ReportServiceRunObservations(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ReportServiceRunObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StartServiceRunWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
@@ -7825,6 +7825,70 @@ func (c *Client) IssueServiceClientCertificate(ctx context.Context, serviceId Se
 	return c.Client.Do(req)
 }
 
+// PrepareConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request,
+// with any type of body and a specified content type.
+//
+// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+func (c *Client) PrepareConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPrepareConnectorPeerPairRequestWithBody(c.Server, serviceId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PrepareConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+func (c *Client) PrepareConnectorPeerPair(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPrepareConnectorPeerPairRequest(c.Server, serviceId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
+// with any type of body and a specified content type.
+//
+// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+func (c *Client) RenewConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewConnectorPeerPairRequestWithBody(c.Server, serviceId, pairId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+func (c *Client) RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewConnectorPeerPairRequest(c.Server, serviceId, pairId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListServiceGrants performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
 //
 // Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -8001,70 +8065,6 @@ func (c *Client) RevokeServiceInvitation(ctx context.Context, serviceId ServiceI
 	return c.Client.Do(req)
 }
 
-// PrepareNativePeerPairWithBody performs a POST /v1/services/{service_id}/native-peer-pairs (the `PrepareNativePeerPair` operationId) request,
-// with any type of body and a specified content type.
-//
-// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
-func (c *Client) PrepareNativePeerPairWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPrepareNativePeerPairRequestWithBody(c.Server, serviceId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// PrepareNativePeerPair performs a POST /v1/services/{service_id}/native-peer-pairs (the `PrepareNativePeerPair` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
-func (c *Client) PrepareNativePeerPair(ctx context.Context, serviceId ServiceID, body PrepareNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPrepareNativePeerPairRequest(c.Server, serviceId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RenewNativePeerPairWithBody performs a POST /v1/services/{service_id}/native-peer-pairs/{pair_id}/renew (the `RenewNativePeerPair` operationId) request,
-// with any type of body and a specified content type.
-//
-// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
-func (c *Client) RenewNativePeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenewNativePeerPairRequestWithBody(c.Server, serviceId, pairId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RenewNativePeerPair performs a POST /v1/services/{service_id}/native-peer-pairs/{pair_id}/renew (the `RenewNativePeerPair` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
-func (c *Client) RenewNativePeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenewNativePeerPairRequest(c.Server, serviceId, pairId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // PrepareServiceRunWithBody performs a POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -8147,7 +8147,7 @@ func (c *Client) HeartbeatServiceRun(ctx context.Context, serviceId ServiceID, s
 // AuthorizeServiceClientCertificateWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
 // with any type of body and a specified content type.
 //
-// Authenticate a direct ingress visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 func (c *Client) AuthorizeServiceClientCertificateWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeServiceClientCertificateRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
 	if err != nil {
@@ -8163,7 +8163,7 @@ func (c *Client) AuthorizeServiceClientCertificateWithBody(ctx context.Context, 
 // AuthorizeServiceClientCertificate performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Authenticate a direct ingress visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 func (c *Client) AuthorizeServiceClientCertificate(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeServiceClientCertificateRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
@@ -8329,11 +8329,11 @@ func (c *Client) GetServiceCertificateIssuance(ctx context.Context, serviceId Se
 	return c.Client.Do(req)
 }
 
-// ListNativePeerPairs performs a GET /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs (the `ListNativePeerPairs` operationId) request.
+// ListConnectorPeerPairs performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
 //
 // Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. A candidate may still lack relay claims; prepare its delivery independently before serving it.
-func (c *Client) ListNativePeerPairs(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListNativePeerPairsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListNativePeerPairsRequest(c.Server, serviceId, serviceRunId, params)
+func (c *Client) ListConnectorPeerPairs(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConnectorPeerPairsRequest(c.Server, serviceId, serviceRunId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -8344,12 +8344,12 @@ func (c *Client) ListNativePeerPairs(ctx context.Context, serviceId ServiceID, s
 	return c.Client.Do(req)
 }
 
-// DeliverNativePeerPairWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request,
+// DeliverConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request,
 // with any type of body and a specified content type.
 //
 // Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
-func (c *Client) DeliverNativePeerPairWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeliverNativePeerPairRequestWithBody(c.Server, serviceId, serviceRunId, pairId, contentType, body)
+func (c *Client) DeliverConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeliverConnectorPeerPairRequestWithBody(c.Server, serviceId, serviceRunId, pairId, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8360,12 +8360,12 @@ func (c *Client) DeliverNativePeerPairWithBody(ctx context.Context, serviceId Se
 	return c.Client.Do(req)
 }
 
-// DeliverNativePeerPair performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request.
+// DeliverConnectorPeerPair performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request.
 // Takes a body of the `application/json` content type.
 //
 // Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
-func (c *Client) DeliverNativePeerPair(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeliverNativePeerPairRequest(c.Server, serviceId, serviceRunId, pairId, body)
+func (c *Client) DeliverConnectorPeerPair(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeliverConnectorPeerPairRequest(c.Server, serviceId, serviceRunId, pairId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8376,12 +8376,12 @@ func (c *Client) DeliverNativePeerPair(ctx context.Context, serviceId ServiceID,
 	return c.Client.Do(req)
 }
 
-// ConfirmNativePeerPairPreparedWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/prepared (the `ConfirmNativePeerPairPrepared` operationId) request,
+// ConfirmConnectorPeerPairPreparedWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request,
 // with any type of body and a specified content type.
 //
 // Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
-func (c *Client) ConfirmNativePeerPairPreparedWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewConfirmNativePeerPairPreparedRequestWithBody(c.Server, serviceId, serviceRunId, pairId, contentType, body)
+func (c *Client) ConfirmConnectorPeerPairPreparedWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConfirmConnectorPeerPairPreparedRequestWithBody(c.Server, serviceId, serviceRunId, pairId, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8392,12 +8392,12 @@ func (c *Client) ConfirmNativePeerPairPreparedWithBody(ctx context.Context, serv
 	return c.Client.Do(req)
 }
 
-// ConfirmNativePeerPairPrepared performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/prepared (the `ConfirmNativePeerPairPrepared` operationId) request.
+// ConfirmConnectorPeerPairPrepared performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request.
 // Takes a body of the `application/json` content type.
 //
 // Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
-func (c *Client) ConfirmNativePeerPairPrepared(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmNativePeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewConfirmNativePeerPairPreparedRequest(c.Server, serviceId, serviceRunId, pairId, body)
+func (c *Client) ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConfirmConnectorPeerPairPreparedRequest(c.Server, serviceId, serviceRunId, pairId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8411,7 +8411,7 @@ func (c *Client) ConfirmNativePeerPairPrepared(ctx context.Context, serviceId Se
 // ReportServiceRunObservationsWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request,
 // with any type of body and a specified content type.
 //
-// Report bounded native connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
 func (c *Client) ReportServiceRunObservationsWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReportServiceRunObservationsRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
 	if err != nil {
@@ -8427,7 +8427,7 @@ func (c *Client) ReportServiceRunObservationsWithBody(ctx context.Context, servi
 // ReportServiceRunObservations performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Report bounded native connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
 func (c *Client) ReportServiceRunObservations(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ReportServiceRunObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReportServiceRunObservationsRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
@@ -13152,6 +13152,107 @@ func NewIssueServiceClientCertificateRequestWithBody(server string, serviceId Se
 	return req, nil
 }
 
+// NewPrepareConnectorPeerPairRequest calls the generic PrepareConnectorPeerPair builder with application/json body
+func NewPrepareConnectorPeerPairRequest(server string, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPrepareConnectorPeerPairRequestWithBody(server, serviceId, "application/json", bodyReader)
+}
+
+// NewPrepareConnectorPeerPairRequestWithBody constructs an http.Request for the PrepareConnectorPeerPair method, with any body, and a specified content type
+func NewPrepareConnectorPeerPairRequestWithBody(server string, serviceId ServiceID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/connector-peer-pairs", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRenewConnectorPeerPairRequest calls the generic RenewConnectorPeerPair builder with application/json body
+func NewRenewConnectorPeerPairRequest(server string, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenewConnectorPeerPairRequestWithBody(server, serviceId, pairId, "application/json", bodyReader)
+}
+
+// NewRenewConnectorPeerPairRequestWithBody constructs an http.Request for the RenewConnectorPeerPair method, with any body, and a specified content type
+func NewRenewConnectorPeerPairRequestWithBody(server string, serviceId ServiceID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "pair_id", pairId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/connector-peer-pairs/%s/renew", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListServiceGrantsRequest constructs an http.Request for the ListServiceGrants method
 func NewListServiceGrantsRequest(server string, serviceId ServiceID, params *ListServiceGrantsParams) (*http.Request, error) {
 	var err error
@@ -13594,107 +13695,6 @@ func NewRevokeServiceInvitationRequest(server string, serviceId ServiceID, invit
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewPrepareNativePeerPairRequest calls the generic PrepareNativePeerPair builder with application/json body
-func NewPrepareNativePeerPairRequest(server string, serviceId ServiceID, body PrepareNativePeerPairJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewPrepareNativePeerPairRequestWithBody(server, serviceId, "application/json", bodyReader)
-}
-
-// NewPrepareNativePeerPairRequestWithBody constructs an http.Request for the PrepareNativePeerPair method, with any body, and a specified content type
-func NewPrepareNativePeerPairRequestWithBody(server string, serviceId ServiceID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/native-peer-pairs", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewRenewNativePeerPairRequest calls the generic RenewNativePeerPair builder with application/json body
-func NewRenewNativePeerPairRequest(server string, serviceId ServiceID, pairId string, body RenewNativePeerPairJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRenewNativePeerPairRequestWithBody(server, serviceId, pairId, "application/json", bodyReader)
-}
-
-// NewRenewNativePeerPairRequestWithBody constructs an http.Request for the RenewNativePeerPair method, with any body, and a specified content type
-func NewRenewNativePeerPairRequestWithBody(server string, serviceId ServiceID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "pair_id", pairId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/native-peer-pairs/%s/renew", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -14239,8 +14239,8 @@ func NewGetServiceCertificateIssuanceRequest(server string, serviceId ServiceID,
 	return req, nil
 }
 
-// NewListNativePeerPairsRequest constructs an http.Request for the ListNativePeerPairs method
-func NewListNativePeerPairsRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, params *ListNativePeerPairsParams) (*http.Request, error) {
+// NewListConnectorPeerPairsRequest constructs an http.Request for the ListConnectorPeerPairs method
+func NewListConnectorPeerPairsRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14262,7 +14262,7 @@ func NewListNativePeerPairsRequest(server string, serviceId ServiceID, serviceRu
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/native-peer-pairs", pathParam0, pathParam1)
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/connector-peer-pairs", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -14307,19 +14307,19 @@ func NewListNativePeerPairsRequest(server string, serviceId ServiceID, serviceRu
 	return req, nil
 }
 
-// NewDeliverNativePeerPairRequest calls the generic DeliverNativePeerPair builder with application/json body
-func NewDeliverNativePeerPairRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverNativePeerPairJSONRequestBody) (*http.Request, error) {
+// NewDeliverConnectorPeerPairRequest calls the generic DeliverConnectorPeerPair builder with application/json body
+func NewDeliverConnectorPeerPairRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverConnectorPeerPairJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewDeliverNativePeerPairRequestWithBody(server, serviceId, serviceRunId, pairId, "application/json", bodyReader)
+	return NewDeliverConnectorPeerPairRequestWithBody(server, serviceId, serviceRunId, pairId, "application/json", bodyReader)
 }
 
-// NewDeliverNativePeerPairRequestWithBody constructs an http.Request for the DeliverNativePeerPair method, with any body, and a specified content type
-func NewDeliverNativePeerPairRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
+// NewDeliverConnectorPeerPairRequestWithBody constructs an http.Request for the DeliverConnectorPeerPair method, with any body, and a specified content type
+func NewDeliverConnectorPeerPairRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14348,7 +14348,7 @@ func NewDeliverNativePeerPairRequestWithBody(server string, serviceId ServiceID,
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/native-peer-pairs/%s/delivery", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/connector-peer-pairs/%s/delivery", pathParam0, pathParam1, pathParam2)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -14368,19 +14368,19 @@ func NewDeliverNativePeerPairRequestWithBody(server string, serviceId ServiceID,
 	return req, nil
 }
 
-// NewConfirmNativePeerPairPreparedRequest calls the generic ConfirmNativePeerPairPrepared builder with application/json body
-func NewConfirmNativePeerPairPreparedRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmNativePeerPairPreparedJSONRequestBody) (*http.Request, error) {
+// NewConfirmConnectorPeerPairPreparedRequest calls the generic ConfirmConnectorPeerPairPrepared builder with application/json body
+func NewConfirmConnectorPeerPairPreparedRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewConfirmNativePeerPairPreparedRequestWithBody(server, serviceId, serviceRunId, pairId, "application/json", bodyReader)
+	return NewConfirmConnectorPeerPairPreparedRequestWithBody(server, serviceId, serviceRunId, pairId, "application/json", bodyReader)
 }
 
-// NewConfirmNativePeerPairPreparedRequestWithBody constructs an http.Request for the ConfirmNativePeerPairPrepared method, with any body, and a specified content type
-func NewConfirmNativePeerPairPreparedRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
+// NewConfirmConnectorPeerPairPreparedRequestWithBody constructs an http.Request for the ConfirmConnectorPeerPairPrepared method, with any body, and a specified content type
+func NewConfirmConnectorPeerPairPreparedRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14409,7 +14409,7 @@ func NewConfirmNativePeerPairPreparedRequestWithBody(server string, serviceId Se
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/native-peer-pairs/%s/prepared", pathParam0, pathParam1, pathParam2)
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/connector-peer-pairs/%s/prepared", pathParam0, pathParam1, pathParam2)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -16318,6 +16318,34 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	IssueServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueServiceClientCertificateResponse, error)
 
+	// PrepareConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	PrepareConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareConnectorPeerPairResponse, error)
+
+	// PrepareConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	PrepareConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareConnectorPeerPairResponse, error)
+
+	// RenewConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RenewConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error)
+
+	// RenewConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+	RenewConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error)
+
 	// ListServiceGrantsWithResponse performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
 	//
 	// Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -16392,34 +16420,6 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	RevokeServiceInvitationWithResponse(ctx context.Context, serviceId ServiceID, invitationId ServiceInvitationID, reqEditors ...RequestEditorFn) (*RevokeServiceInvitationResponse, error)
 
-	// PrepareNativePeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/native-peer-pairs (the `PrepareNativePeerPair` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	PrepareNativePeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareNativePeerPairResponse, error)
-
-	// PrepareNativePeerPairWithResponse performs a POST /v1/services/{service_id}/native-peer-pairs (the `PrepareNativePeerPair` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
-	PrepareNativePeerPairWithResponse(ctx context.Context, serviceId ServiceID, body PrepareNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareNativePeerPairResponse, error)
-
-	// RenewNativePeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/native-peer-pairs/{pair_id}/renew (the `RenewNativePeerPair` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	RenewNativePeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewNativePeerPairResponse, error)
-
-	// RenewNativePeerPairWithResponse performs a POST /v1/services/{service_id}/native-peer-pairs/{pair_id}/renew (the `RenewNativePeerPair` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
-	RenewNativePeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RenewNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewNativePeerPairResponse, error)
-
 	// PrepareServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -16458,7 +16458,7 @@ type ClientWithResponsesInterface interface {
 	// AuthorizeServiceClientCertificateWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Authenticate a direct ingress visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+	// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	AuthorizeServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error)
@@ -16466,7 +16466,7 @@ type ClientWithResponsesInterface interface {
 	// AuthorizeServiceClientCertificateWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Authenticate a direct ingress visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+	// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 	AuthorizeServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error)
 
 	// RedeemServiceBrowserHandoffWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
@@ -16524,45 +16524,45 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	GetServiceCertificateIssuanceWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*GetServiceCertificateIssuanceResponse, error)
 
-	// ListNativePeerPairsWithResponse performs a GET /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs (the `ListNativePeerPairs` operationId) request.
+	// ListConnectorPeerPairsWithResponse performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
 	//
 	// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. A candidate may still lack relay claims; prepare its delivery independently before serving it.
 	//
 	// Returns a wrapper object for the known response body format(s).
-	ListNativePeerPairsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListNativePeerPairsParams, reqEditors ...RequestEditorFn) (*ListNativePeerPairsResponse, error)
+	ListConnectorPeerPairsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*ListConnectorPeerPairsResponse, error)
 
-	// DeliverNativePeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request,
+	// DeliverConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request,
 	// with any type of body and a specified content type.
 	//
 	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
 	//
 	// Returns a wrapper object for the known response body format(s).
-	DeliverNativePeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeliverNativePeerPairResponse, error)
+	DeliverConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeliverConnectorPeerPairResponse, error)
 
-	// DeliverNativePeerPairWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request.
+	// DeliverConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
-	DeliverNativePeerPairWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*DeliverNativePeerPairResponse, error)
+	DeliverConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*DeliverConnectorPeerPairResponse, error)
 
-	// ConfirmNativePeerPairPreparedWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/prepared (the `ConfirmNativePeerPairPrepared` operationId) request,
+	// ConfirmConnectorPeerPairPreparedWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request,
 	// with any type of body and a specified content type.
 	//
 	// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
 	//
 	// Returns a wrapper object for the known response body format(s).
-	ConfirmNativePeerPairPreparedWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmNativePeerPairPreparedResponse, error)
+	ConfirmConnectorPeerPairPreparedWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error)
 
-	// ConfirmNativePeerPairPreparedWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/prepared (the `ConfirmNativePeerPairPrepared` operationId) request.
+	// ConfirmConnectorPeerPairPreparedWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
-	ConfirmNativePeerPairPreparedWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmNativePeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmNativePeerPairPreparedResponse, error)
+	ConfirmConnectorPeerPairPreparedWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error)
 
 	// ReportServiceRunObservationsWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Report bounded native connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ReportServiceRunObservationsWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportServiceRunObservationsResponse, error)
@@ -16570,7 +16570,7 @@ type ClientWithResponsesInterface interface {
 	// ReportServiceRunObservationsWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Report bounded native connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
 	ReportServiceRunObservationsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ReportServiceRunObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportServiceRunObservationsResponse, error)
 
 	// StartServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
@@ -20969,6 +20969,102 @@ func (r IssueServiceClientCertificateResponse) ContentType() string {
 	return ""
 }
 
+type PrepareConnectorPeerPairResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorPeerPair
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PrepareConnectorPeerPairResponse) GetJSON200() *ConnectorPeerPair {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PrepareConnectorPeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PrepareConnectorPeerPairResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PrepareConnectorPeerPairResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PrepareConnectorPeerPairResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PrepareConnectorPeerPairResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RenewConnectorPeerPairResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorPeerPair
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RenewConnectorPeerPairResponse) GetJSON200() *ConnectorPeerPair {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RenewConnectorPeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenewConnectorPeerPairResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenewConnectorPeerPairResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenewConnectorPeerPairResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenewConnectorPeerPairResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListServiceGrantsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -21381,102 +21477,6 @@ func (r RevokeServiceInvitationResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokeServiceInvitationResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type PrepareNativePeerPairResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *NativePeerPair
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r PrepareNativePeerPairResponse) GetJSON200() *NativePeerPair {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r PrepareNativePeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r PrepareNativePeerPairResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r PrepareNativePeerPairResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PrepareNativePeerPairResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r PrepareNativePeerPairResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RenewNativePeerPairResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *NativePeerPair
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RenewNativePeerPairResponse) GetJSON200() *NativePeerPair {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RenewNativePeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RenewNativePeerPairResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RenewNativePeerPairResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RenewNativePeerPairResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RenewNativePeerPairResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -21942,32 +21942,32 @@ func (r GetServiceCertificateIssuanceResponse) ContentType() string {
 	return ""
 }
 
-type ListNativePeerPairsResponse struct {
+type ListConnectorPeerPairsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *NativePeerPairCandidates
+	JSON200 *ConnectorPeerPairCandidates
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListNativePeerPairsResponse) GetJSON200() *NativePeerPairCandidates {
+func (r ListConnectorPeerPairsResponse) GetJSON200() *ConnectorPeerPairCandidates {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ListNativePeerPairsResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r ListConnectorPeerPairsResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r ListNativePeerPairsResponse) GetBody() []byte {
+func (r ListConnectorPeerPairsResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ListNativePeerPairsResponse) Status() string {
+func (r ListConnectorPeerPairsResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -21975,7 +21975,7 @@ func (r ListNativePeerPairsResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ListNativePeerPairsResponse) StatusCode() int {
+func (r ListConnectorPeerPairsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -21983,39 +21983,39 @@ func (r ListNativePeerPairsResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListNativePeerPairsResponse) ContentType() string {
+func (r ListConnectorPeerPairsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type DeliverNativePeerPairResponse struct {
+type DeliverConnectorPeerPairResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *NativePeerPairDelivery
+	JSON200 *ConnectorPeerPairDelivery
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r DeliverNativePeerPairResponse) GetJSON200() *NativePeerPairDelivery {
+func (r DeliverConnectorPeerPairResponse) GetJSON200() *ConnectorPeerPairDelivery {
 	return r.JSON200
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r DeliverNativePeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r DeliverConnectorPeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r DeliverNativePeerPairResponse) GetBody() []byte {
+func (r DeliverConnectorPeerPairResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r DeliverNativePeerPairResponse) Status() string {
+func (r DeliverConnectorPeerPairResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -22023,7 +22023,7 @@ func (r DeliverNativePeerPairResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r DeliverNativePeerPairResponse) StatusCode() int {
+func (r DeliverConnectorPeerPairResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -22031,14 +22031,14 @@ func (r DeliverNativePeerPairResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r DeliverNativePeerPairResponse) ContentType() string {
+func (r DeliverConnectorPeerPairResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type ConfirmNativePeerPairPreparedResponse struct {
+type ConfirmConnectorPeerPairPreparedResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
@@ -22046,17 +22046,17 @@ type ConfirmNativePeerPairPreparedResponse struct {
 }
 
 // GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ConfirmNativePeerPairPreparedResponse) GetApplicationproblemJSONDefault() *Problem {
+func (r ConfirmConnectorPeerPairPreparedResponse) GetApplicationproblemJSONDefault() *Problem {
 	return r.ApplicationproblemJSONDefault
 }
 
 // GetBody returns the raw response body bytes
-func (r ConfirmNativePeerPairPreparedResponse) GetBody() []byte {
+func (r ConfirmConnectorPeerPairPreparedResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r ConfirmNativePeerPairPreparedResponse) Status() string {
+func (r ConfirmConnectorPeerPairPreparedResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -22064,7 +22064,7 @@ func (r ConfirmNativePeerPairPreparedResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ConfirmNativePeerPairPreparedResponse) StatusCode() int {
+func (r ConfirmConnectorPeerPairPreparedResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -22072,7 +22072,7 @@ func (r ConfirmNativePeerPairPreparedResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ConfirmNativePeerPairPreparedResponse) ContentType() string {
+func (r ConfirmConnectorPeerPairPreparedResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -24776,6 +24776,58 @@ func (c *ClientWithResponses) IssueServiceClientCertificateWithResponse(ctx cont
 	return ParseIssueServiceClientCertificateResponse(rsp)
 }
 
+// PrepareConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request,
+// with any type of body and a specified content type.
+//
+// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) PrepareConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareConnectorPeerPairResponse, error) {
+	rsp, err := c.PrepareConnectorPeerPairWithBody(ctx, serviceId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePrepareConnectorPeerPairResponse(rsp)
+}
+
+// PrepareConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+func (c *ClientWithResponses) PrepareConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareConnectorPeerPairResponse, error) {
+	rsp, err := c.PrepareConnectorPeerPair(ctx, serviceId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePrepareConnectorPeerPairResponse(rsp)
+}
+
+// RenewConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
+// with any type of body and a specified content type.
+//
+// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RenewConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error) {
+	rsp, err := c.RenewConnectorPeerPairWithBody(ctx, serviceId, pairId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewConnectorPeerPairResponse(rsp)
+}
+
+// RenewConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+func (c *ClientWithResponses) RenewConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error) {
+	rsp, err := c.RenewConnectorPeerPair(ctx, serviceId, pairId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewConnectorPeerPairResponse(rsp)
+}
+
 // ListServiceGrantsWithResponse performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
 //
 // Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -24922,58 +24974,6 @@ func (c *ClientWithResponses) RevokeServiceInvitationWithResponse(ctx context.Co
 	return ParseRevokeServiceInvitationResponse(rsp)
 }
 
-// PrepareNativePeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/native-peer-pairs (the `PrepareNativePeerPair` operationId) request,
-// with any type of body and a specified content type.
-//
-// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) PrepareNativePeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareNativePeerPairResponse, error) {
-	rsp, err := c.PrepareNativePeerPairWithBody(ctx, serviceId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePrepareNativePeerPairResponse(rsp)
-}
-
-// PrepareNativePeerPairWithResponse performs a POST /v1/services/{service_id}/native-peer-pairs (the `PrepareNativePeerPair` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
-func (c *ClientWithResponses) PrepareNativePeerPairWithResponse(ctx context.Context, serviceId ServiceID, body PrepareNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareNativePeerPairResponse, error) {
-	rsp, err := c.PrepareNativePeerPair(ctx, serviceId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePrepareNativePeerPairResponse(rsp)
-}
-
-// RenewNativePeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/native-peer-pairs/{pair_id}/renew (the `RenewNativePeerPair` operationId) request,
-// with any type of body and a specified content type.
-//
-// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) RenewNativePeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewNativePeerPairResponse, error) {
-	rsp, err := c.RenewNativePeerPairWithBody(ctx, serviceId, pairId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRenewNativePeerPairResponse(rsp)
-}
-
-// RenewNativePeerPairWithResponse performs a POST /v1/services/{service_id}/native-peer-pairs/{pair_id}/renew (the `RenewNativePeerPair` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
-func (c *ClientWithResponses) RenewNativePeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RenewNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewNativePeerPairResponse, error) {
-	rsp, err := c.RenewNativePeerPair(ctx, serviceId, pairId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRenewNativePeerPairResponse(rsp)
-}
-
 // PrepareServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs (the `PrepareServiceRun` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -25042,7 +25042,7 @@ func (c *ClientWithResponses) HeartbeatServiceRunWithResponse(ctx context.Contex
 // AuthorizeServiceClientCertificateWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
 // with any type of body and a specified content type.
 //
-// Authenticate a direct ingress visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error) {
@@ -25056,7 +25056,7 @@ func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithBodyWithRespo
 // AuthorizeServiceClientCertificateWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Authenticate a direct ingress visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error) {
 	rsp, err := c.AuthorizeServiceClientCertificate(ctx, serviceId, serviceRunId, body, reqEditors...)
 	if err != nil {
@@ -25186,75 +25186,75 @@ func (c *ClientWithResponses) GetServiceCertificateIssuanceWithResponse(ctx cont
 	return ParseGetServiceCertificateIssuanceResponse(rsp)
 }
 
-// ListNativePeerPairsWithResponse performs a GET /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs (the `ListNativePeerPairs` operationId) request.
+// ListConnectorPeerPairsWithResponse performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
 //
 // Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. A candidate may still lack relay claims; prepare its delivery independently before serving it.
 //
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ListNativePeerPairsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListNativePeerPairsParams, reqEditors ...RequestEditorFn) (*ListNativePeerPairsResponse, error) {
-	rsp, err := c.ListNativePeerPairs(ctx, serviceId, serviceRunId, params, reqEditors...)
+func (c *ClientWithResponses) ListConnectorPeerPairsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*ListConnectorPeerPairsResponse, error) {
+	rsp, err := c.ListConnectorPeerPairs(ctx, serviceId, serviceRunId, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseListNativePeerPairsResponse(rsp)
+	return ParseListConnectorPeerPairsResponse(rsp)
 }
 
-// DeliverNativePeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request,
+// DeliverConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request,
 // with any type of body and a specified content type.
 //
 // Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
 //
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) DeliverNativePeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeliverNativePeerPairResponse, error) {
-	rsp, err := c.DeliverNativePeerPairWithBody(ctx, serviceId, serviceRunId, pairId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) DeliverConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeliverConnectorPeerPairResponse, error) {
+	rsp, err := c.DeliverConnectorPeerPairWithBody(ctx, serviceId, serviceRunId, pairId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseDeliverNativePeerPairResponse(rsp)
+	return ParseDeliverConnectorPeerPairResponse(rsp)
 }
 
-// DeliverNativePeerPairWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery (the `DeliverNativePeerPair` operationId) request.
+// DeliverConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
-func (c *ClientWithResponses) DeliverNativePeerPairWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverNativePeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*DeliverNativePeerPairResponse, error) {
-	rsp, err := c.DeliverNativePeerPair(ctx, serviceId, serviceRunId, pairId, body, reqEditors...)
+func (c *ClientWithResponses) DeliverConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*DeliverConnectorPeerPairResponse, error) {
+	rsp, err := c.DeliverConnectorPeerPair(ctx, serviceId, serviceRunId, pairId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseDeliverNativePeerPairResponse(rsp)
+	return ParseDeliverConnectorPeerPairResponse(rsp)
 }
 
-// ConfirmNativePeerPairPreparedWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/prepared (the `ConfirmNativePeerPairPrepared` operationId) request,
+// ConfirmConnectorPeerPairPreparedWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request,
 // with any type of body and a specified content type.
 //
 // Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
 //
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ConfirmNativePeerPairPreparedWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmNativePeerPairPreparedResponse, error) {
-	rsp, err := c.ConfirmNativePeerPairPreparedWithBody(ctx, serviceId, serviceRunId, pairId, contentType, body, reqEditors...)
+func (c *ClientWithResponses) ConfirmConnectorPeerPairPreparedWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error) {
+	rsp, err := c.ConfirmConnectorPeerPairPreparedWithBody(ctx, serviceId, serviceRunId, pairId, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseConfirmNativePeerPairPreparedResponse(rsp)
+	return ParseConfirmConnectorPeerPairPreparedResponse(rsp)
 }
 
-// ConfirmNativePeerPairPreparedWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/prepared (the `ConfirmNativePeerPairPrepared` operationId) request.
+// ConfirmConnectorPeerPairPreparedWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
-func (c *ClientWithResponses) ConfirmNativePeerPairPreparedWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmNativePeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmNativePeerPairPreparedResponse, error) {
-	rsp, err := c.ConfirmNativePeerPairPrepared(ctx, serviceId, serviceRunId, pairId, body, reqEditors...)
+func (c *ClientWithResponses) ConfirmConnectorPeerPairPreparedWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error) {
+	rsp, err := c.ConfirmConnectorPeerPairPrepared(ctx, serviceId, serviceRunId, pairId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseConfirmNativePeerPairPreparedResponse(rsp)
+	return ParseConfirmConnectorPeerPairPreparedResponse(rsp)
 }
 
 // ReportServiceRunObservationsWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request,
 // with any type of body and a specified content type.
 //
-// Report bounded native connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ReportServiceRunObservationsWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportServiceRunObservationsResponse, error) {
@@ -25268,7 +25268,7 @@ func (c *ClientWithResponses) ReportServiceRunObservationsWithBodyWithResponse(c
 // ReportServiceRunObservationsWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Report bounded native connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
 func (c *ClientWithResponses) ReportServiceRunObservationsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ReportServiceRunObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportServiceRunObservationsResponse, error) {
 	rsp, err := c.ReportServiceRunObservations(ctx, serviceId, serviceRunId, body, reqEditors...)
 	if err != nil {
@@ -28529,6 +28529,72 @@ func ParseIssueServiceClientCertificateResponse(rsp *http.Response) (*IssueServi
 	return response, nil
 }
 
+// ParsePrepareConnectorPeerPairResponse parses an HTTP response from a PrepareConnectorPeerPairWithResponse call
+func ParsePrepareConnectorPeerPairResponse(rsp *http.Response) (*PrepareConnectorPeerPairResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PrepareConnectorPeerPairResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorPeerPair
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenewConnectorPeerPairResponse parses an HTTP response from a RenewConnectorPeerPairWithResponse call
+func ParseRenewConnectorPeerPairResponse(rsp *http.Response) (*RenewConnectorPeerPairResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenewConnectorPeerPairResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorPeerPair
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListServiceGrantsResponse parses an HTTP response from a ListServiceGrantsWithResponse call
 func ParseListServiceGrantsResponse(rsp *http.Response) (*ListServiceGrantsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -28808,72 +28874,6 @@ func ParseRevokeServiceInvitationResponse(rsp *http.Response) (*RevokeServiceInv
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParsePrepareNativePeerPairResponse parses an HTTP response from a PrepareNativePeerPairWithResponse call
-func ParsePrepareNativePeerPairResponse(rsp *http.Response) (*PrepareNativePeerPairResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PrepareNativePeerPairResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest NativePeerPair
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRenewNativePeerPairResponse parses an HTTP response from a RenewNativePeerPairWithResponse call
-func ParseRenewNativePeerPairResponse(rsp *http.Response) (*RenewNativePeerPairResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RenewNativePeerPairResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest NativePeerPair
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -29205,22 +29205,22 @@ func ParseGetServiceCertificateIssuanceResponse(rsp *http.Response) (*GetService
 	return response, nil
 }
 
-// ParseListNativePeerPairsResponse parses an HTTP response from a ListNativePeerPairsWithResponse call
-func ParseListNativePeerPairsResponse(rsp *http.Response) (*ListNativePeerPairsResponse, error) {
+// ParseListConnectorPeerPairsResponse parses an HTTP response from a ListConnectorPeerPairsWithResponse call
+func ParseListConnectorPeerPairsResponse(rsp *http.Response) (*ListConnectorPeerPairsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ListNativePeerPairsResponse{
+	response := &ListConnectorPeerPairsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest NativePeerPairCandidates
+		var dest ConnectorPeerPairCandidates
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -29238,22 +29238,22 @@ func ParseListNativePeerPairsResponse(rsp *http.Response) (*ListNativePeerPairsR
 	return response, nil
 }
 
-// ParseDeliverNativePeerPairResponse parses an HTTP response from a DeliverNativePeerPairWithResponse call
-func ParseDeliverNativePeerPairResponse(rsp *http.Response) (*DeliverNativePeerPairResponse, error) {
+// ParseDeliverConnectorPeerPairResponse parses an HTTP response from a DeliverConnectorPeerPairWithResponse call
+func ParseDeliverConnectorPeerPairResponse(rsp *http.Response) (*DeliverConnectorPeerPairResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &DeliverNativePeerPairResponse{
+	response := &DeliverConnectorPeerPairResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest NativePeerPairDelivery
+		var dest ConnectorPeerPairDelivery
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -29271,15 +29271,15 @@ func ParseDeliverNativePeerPairResponse(rsp *http.Response) (*DeliverNativePeerP
 	return response, nil
 }
 
-// ParseConfirmNativePeerPairPreparedResponse parses an HTTP response from a ConfirmNativePeerPairPreparedWithResponse call
-func ParseConfirmNativePeerPairPreparedResponse(rsp *http.Response) (*ConfirmNativePeerPairPreparedResponse, error) {
+// ParseConfirmConnectorPeerPairPreparedResponse parses an HTTP response from a ConfirmConnectorPeerPairPreparedWithResponse call
+func ParseConfirmConnectorPeerPairPreparedResponse(rsp *http.Response) (*ConfirmConnectorPeerPairPreparedResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ConfirmNativePeerPairPreparedResponse{
+	response := &ConfirmConnectorPeerPairPreparedResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -30252,6 +30252,12 @@ type ServerInterface interface {
 	// (POST /v1/services/{service_id}/client-certificates)
 	IssueServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
 
+	// (POST /v1/services/{service_id}/connector-peer-pairs)
+	PrepareConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
+
+	// (POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew)
+	RenewConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, pairId string)
+
 	// (GET /v1/services/{service_id}/grants)
 	ListServiceGrants(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params ListServiceGrantsParams)
 
@@ -30278,12 +30284,6 @@ type ServerInterface interface {
 
 	// (DELETE /v1/services/{service_id}/invitations/{invitation_id})
 	RevokeServiceInvitation(w http.ResponseWriter, r *http.Request, serviceId ServiceID, invitationId ServiceInvitationID)
-
-	// (POST /v1/services/{service_id}/native-peer-pairs)
-	PrepareNativePeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
-
-	// (POST /v1/services/{service_id}/native-peer-pairs/{pair_id}/renew)
-	RenewNativePeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, pairId string)
 
 	// (POST /v1/services/{service_id}/runs)
 	PrepareServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params PrepareServiceRunParams)
@@ -30315,14 +30315,14 @@ type ServerInterface interface {
 	// (GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id})
 	GetServiceCertificateIssuance(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID)
 
-	// (GET /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs)
-	ListNativePeerPairs(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, params ListNativePeerPairsParams)
+	// (GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs)
+	ListConnectorPeerPairs(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, params ListConnectorPeerPairsParams)
 
-	// (POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery)
-	DeliverNativePeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, pairId string)
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery)
+	DeliverConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, pairId string)
 
-	// (POST /v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/prepared)
-	ConfirmNativePeerPairPrepared(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, pairId string)
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared)
+	ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, pairId string)
 
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/service-observations)
 	ReportServiceRunObservations(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
@@ -33354,6 +33354,67 @@ func (siw *ServerInterfaceWrapper) IssueServiceClientCertificate(w http.Response
 	handler.ServeHTTP(w, r)
 }
 
+// PrepareConnectorPeerPair operation middleware
+func (siw *ServerInterfaceWrapper) PrepareConnectorPeerPair(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PrepareConnectorPeerPair(w, r, serviceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenewConnectorPeerPair operation middleware
+func (siw *ServerInterfaceWrapper) RenewConnectorPeerPair(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pair_id" -------------
+	var pairId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pair_id", r.PathValue("pair_id"), &pairId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pair_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenewConnectorPeerPair(w, r, serviceId, pairId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListServiceGrants operation middleware
 func (siw *ServerInterfaceWrapper) ListServiceGrants(w http.ResponseWriter, r *http.Request) {
 
@@ -33694,67 +33755,6 @@ func (siw *ServerInterfaceWrapper) RevokeServiceInvitation(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RevokeServiceInvitation(w, r, serviceId, invitationId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PrepareNativePeerPair operation middleware
-func (siw *ServerInterfaceWrapper) PrepareNativePeerPair(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PrepareNativePeerPair(w, r, serviceId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RenewNativePeerPair operation middleware
-func (siw *ServerInterfaceWrapper) RenewNativePeerPair(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "pair_id" -------------
-	var pairId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "pair_id", r.PathValue("pair_id"), &pairId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pair_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RenewNativePeerPair(w, r, serviceId, pairId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -34170,8 +34170,8 @@ func (siw *ServerInterfaceWrapper) GetServiceCertificateIssuance(w http.Response
 	handler.ServeHTTP(w, r)
 }
 
-// ListNativePeerPairs operation middleware
-func (siw *ServerInterfaceWrapper) ListNativePeerPairs(w http.ResponseWriter, r *http.Request) {
+// ListConnectorPeerPairs operation middleware
+func (siw *ServerInterfaceWrapper) ListConnectorPeerPairs(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
@@ -34195,7 +34195,7 @@ func (siw *ServerInterfaceWrapper) ListNativePeerPairs(w http.ResponseWriter, r 
 	}
 
 	// Parameter object where we will unmarshal all parameters from the context
-	var params ListNativePeerPairsParams
+	var params ListConnectorPeerPairsParams
 
 	// ------------- Optional query parameter "after" -------------
 
@@ -34211,7 +34211,7 @@ func (siw *ServerInterfaceWrapper) ListNativePeerPairs(w http.ResponseWriter, r 
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListNativePeerPairs(w, r, serviceId, serviceRunId, params)
+		siw.Handler.ListConnectorPeerPairs(w, r, serviceId, serviceRunId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -34221,8 +34221,8 @@ func (siw *ServerInterfaceWrapper) ListNativePeerPairs(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
-// DeliverNativePeerPair operation middleware
-func (siw *ServerInterfaceWrapper) DeliverNativePeerPair(w http.ResponseWriter, r *http.Request) {
+// DeliverConnectorPeerPair operation middleware
+func (siw *ServerInterfaceWrapper) DeliverConnectorPeerPair(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
@@ -34255,7 +34255,7 @@ func (siw *ServerInterfaceWrapper) DeliverNativePeerPair(w http.ResponseWriter, 
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeliverNativePeerPair(w, r, serviceId, serviceRunId, pairId)
+		siw.Handler.DeliverConnectorPeerPair(w, r, serviceId, serviceRunId, pairId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -34265,8 +34265,8 @@ func (siw *ServerInterfaceWrapper) DeliverNativePeerPair(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
-// ConfirmNativePeerPairPrepared operation middleware
-func (siw *ServerInterfaceWrapper) ConfirmNativePeerPairPrepared(w http.ResponseWriter, r *http.Request) {
+// ConfirmConnectorPeerPairPrepared operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
@@ -34299,7 +34299,7 @@ func (siw *ServerInterfaceWrapper) ConfirmNativePeerPairPrepared(w http.Response
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ConfirmNativePeerPairPrepared(w, r, serviceId, serviceRunId, pairId)
+		siw.Handler.ConfirmConnectorPeerPairPrepared(w, r, serviceId, serviceRunId, pairId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -35041,9 +35041,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs", wrapper.ListNativePeerPairs)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/delivery", wrapper.DeliverNativePeerPair)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/native-peer-pairs/{pair_id}/prepared", wrapper.ConfirmNativePeerPairPrepared)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs", wrapper.ListConnectorPeerPairs)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery", wrapper.DeliverConnectorPeerPair)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared", wrapper.ConfirmConnectorPeerPairPrepared)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/visitor-policy", wrapper.ReadPublisherVisitorPolicy)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/visitor-tokens", wrapper.IssueVisitorToken)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/run", wrapper.SelectWorkloadServiceRun)
@@ -35099,8 +35099,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service-invitations/accept", wrapper.AcceptServiceInvitation)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/visitor/services", wrapper.ListAvailableServices)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/select-run", wrapper.SelectServiceRun)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/native-peer-pairs", wrapper.PrepareNativePeerPair)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/native-peer-pairs/{pair_id}/renew", wrapper.RenewNativePeerPair)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/connector-peer-pairs", wrapper.PrepareConnectorPeerPair)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew", wrapper.RenewConnectorPeerPair)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs", wrapper.PrepareServiceRun)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}", wrapper.CloseServiceRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}", wrapper.HeartbeatServiceRun)

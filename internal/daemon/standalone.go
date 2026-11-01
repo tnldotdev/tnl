@@ -34,20 +34,20 @@ var standaloneRelays = [...]struct {
 }
 
 type standaloneSettings struct {
-	control                controlSettings
-	publicListen           string
-	publicListener         net.Listener
-	relayUDPListen         string
-	quicIdleTimeout        time.Duration
-	quicMaxIncomingStreams int64
-	serverHostname         string
-	relayHostname          string
-	relayTransportTLS      *tls.Config
-	ingressLeaseDuration   time.Duration
-	relayLeaseDuration     time.Duration
-	ingress                ingressSettings
-	relay                  relaySettings
-	configureDirect        func(*ingress.DirectServicesConfig)
+	control                 controlSettings
+	publicListen            string
+	publicListener          net.Listener
+	relayUDPListen          string
+	quicIdleTimeout         time.Duration
+	quicMaxIncomingStreams  int64
+	serverHostname          string
+	relayHostname           string
+	relayTransportTLS       *tls.Config
+	ingressLeaseDuration    time.Duration
+	relayLeaseDuration      time.Duration
+	ingress                 ingressSettings
+	relay                   relaySettings
+	configurePublicServices func(*ingress.PublicServicesConfig)
 }
 
 func standaloneSettingsFrom(cfg daemonconfig.Config) standaloneSettings {
@@ -136,12 +136,12 @@ func (d *daemon) startStandalone(
 	}
 	publisher, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{
 		Observer: metrics,
-		Native: func(id string) (*relay.NativeConnectorAcceptor, bool) {
+		Connector: func(id string) (*relay.ConnectorAcceptor, bool) {
 			runtime, ok := targets[id]
 			if !ok {
 				return nil, false
 			}
-			return runtime.native, true
+			return runtime.connector, true
 		},
 		Private: &relay.ServicePublisherAcceptor{Select: func(id string) (relay.ServicePublisherTarget, bool) {
 			runtime, ok := targets[id]
@@ -181,7 +181,7 @@ func (d *daemon) startStandalone(
 	}
 	if err := d.startIngressRuntime(ctx, settings.ingress, metrics, ingressRuntimeConfig{
 		client: ingressClient, ingressID: standaloneIngressID, listener: publicListener,
-		clusterSecret: d.clusterSecret, configureDirect: settings.configureDirect,
+		clusterSecret: d.clusterSecret, configurePublicServices: settings.configurePublicServices,
 		configure: func(ingressConfig *ingress.Config) {
 			// only publisher transport is handed off from raw visitor ingress.
 			ingressConfig.RelayHostname = settings.relayHostname
