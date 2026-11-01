@@ -8,14 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"strings"
-	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 var ErrSetupRequired = errors.New("no namespace publisher is set up; run tnl publisher setup --namespace")
@@ -106,69 +102,7 @@ func EnsureNamespace(ctx context.Context, state *clientstate.Store, control Owne
 	if state == nil || team == "" || domain == "" || namespace == "" {
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
-	scope := namespaceScope(team, domain)
-	lock, err := state.LockPublisherSigningIdentity(ctx, scope)
-	if err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, err
-	}
-	defer lock.Close()
-	saved, found, err := state.SelectedPublisherIdentity(ctx, "namespace", scope)
-	if err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, err
-	}
-	if found {
-		var identity authorityv1.PublisherEnrollmentResult
-		if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != saved.ID {
-			return nil, identity, ErrScope
-		}
-		if identity.ClientId != "" {
-			if !matchesNamespace(identity, team, domain, namespace) || saved.ID != identity.ClientId {
-				return nil, identity, ErrScope
-			}
-			n, _, err := LoadNative(ctx, state, control, authority, identity.ClientId)
-			if err != nil {
-				return nil, identity, err
-			}
-			if !bytes.Equal(n.private, saved.SigningKey) {
-				return nil, identity, ErrScope
-			}
-			if _, err = n.Access(ctx); err != nil {
-				return nil, identity, err
-			}
-			return n, identity, saveDefaultNamespace(ctx, state, identity)
-		}
-	}
-	pending, found, err := state.PendingPublisherEnrollmentForSelection(ctx, "namespace", scope)
-	if err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, err
-	}
-	if !found {
-		e, err := control.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: team, DomainId: &domain, Name: "tnl", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled})
-		if err != nil {
-			return nil, authorityv1.PublisherEnrollmentResult{}, err
-		}
-		if e.Kind != controlv1.PublisherEnrollmentKindNamespace || e.TeamId != team || e.DomainId == nil || *e.DomainId != domain || e.Namespace == nil || *e.Namespace != namespace || e.PublicUrlId != nil || !opaqueid.Valid(e.Id, opaqueid.PublisherEnrollmentPrefix) || !strings.HasPrefix(e.EnrollmentKey, e.Id+".") || !e.ExpiresAt.After(time.Now()) {
-			return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
-		}
-		pending, err = savePendingEnrollment(ctx, state, "namespace", scope, e.Id, e.EnrollmentKey)
-		if err != nil {
-			return nil, authorityv1.PublisherEnrollmentResult{}, err
-		}
-	}
-	n, identity, err := EnrollNative(ctx, state, control, authority, string(pending.EnrollmentSecret))
-	if err != nil {
-		return nil, identity, err
-	}
-	if !matchesNamespace(identity, team, domain, namespace) {
-		return nil, identity, ErrScope
-	}
-	if _, err := n.Access(ctx); err != nil {
-		return nil, identity, err
-	}
-	if err := saveDefaultNamespace(ctx, state, identity); err != nil {
-		return nil, identity, err
-	}
-	return n, identity, nil
+	return ensureSelectedEnrollment(ctx, state, control, authority, enrollmentSelection{kind: "namespace", team: team, id: domain, namespace: namespace})
 }
 
 // LoadFile uses only a portable signing key. an explicit server must match the

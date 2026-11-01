@@ -34,53 +34,7 @@ func EnsureServiceOwner(ctx context.Context, state *clientstate.Store, control O
 	if _, err := ServiceTrust(service); err != nil {
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
-	scope := "project-publisher:service:" + service.Id
-	lock, err := state.LockPublisherSigningIdentity(ctx, scope)
-	if err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, err
-	}
-	defer lock.Close()
-	saved, found, err := state.SelectedPublisherIdentity(ctx, "project", scope)
-	if err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, err
-	}
-	if found {
-		var identity authorityv1.PublisherEnrollmentResult
-		if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != saved.ID {
-			return nil, identity, ErrScope
-		}
-		if identity.ClientId != "" {
-			if identity.Kind != authorityv1.Service || identity.ServiceId == nil || *identity.ServiceId != service.Id || identity.TeamId != service.TeamId {
-				return nil, identity, ErrScope
-			}
-			return LoadNative(ctx, state, control, authority, identity.ClientId)
-		}
-	}
-	pending, found, err := state.PendingPublisherEnrollmentForSelection(ctx, "project", scope)
-	if err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, err
-	}
-	if !found {
-		enrollment, err := control.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: service.TeamId, ServiceId: &service.Id, Name: "tnl", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled})
-		if err != nil {
-			return nil, authorityv1.PublisherEnrollmentResult{}, err
-		}
-		if enrollment.Kind != "service" || enrollment.ServiceId == nil || *enrollment.ServiceId != service.Id || enrollment.TeamId != service.TeamId || !opaqueid.Valid(enrollment.Id, opaqueid.PublisherEnrollmentPrefix) || enrollment.EnrollmentKey == "" {
-			return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
-		}
-		pending, err = savePendingEnrollment(ctx, state, "project", scope, enrollment.Id, enrollment.EnrollmentKey)
-		if err != nil {
-			return nil, authorityv1.PublisherEnrollmentResult{}, err
-		}
-	}
-	adapter, identity, err := EnrollNative(ctx, state, control, authority, string(pending.EnrollmentSecret))
-	if err != nil {
-		return nil, identity, err
-	}
-	if identity.Kind != authorityv1.Service || identity.ServiceId == nil || *identity.ServiceId != service.Id || identity.TeamId != service.TeamId {
-		return nil, identity, ErrScope
-	}
-	return adapter, identity, nil
+	return ensureSelectedEnrollment(ctx, state, control, authority, enrollmentSelection{kind: "service", team: service.TeamId, id: service.Id})
 }
 
 func (n *Native) serviceControl(serviceID string) (serviceRunControl, error) {

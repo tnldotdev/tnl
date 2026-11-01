@@ -2,7 +2,6 @@ package identity
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -26,63 +25,9 @@ func EnsureOwner(ctx context.Context, state *clientstate.Store, control OwnerCon
 	if state == nil || control == nil || authority == nil || publicURL.Ephemeral || publicURL.LifecycleState != controlv1.Enabled || !publicURL.Purpose.Valid() || !opaqueid.Valid(publicURL.Id, opaqueid.PublicURLPrefix) || publicURL.TeamId == "" {
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
-	scope := "owner-url:" + publicURL.Id
-	lock, err := state.LockPublisherSigningIdentity(ctx, scope)
-	if err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, err
-	}
-	defer lock.Close()
-	saved, found, err := state.SelectedPublisherIdentity(ctx, "project", scope)
-	if err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, err
-	}
-	if found {
-		var identity authorityv1.PublisherEnrollmentResult
-		if json.Unmarshal(saved.PublicDocument, &identity) != nil || identity.ClientId != saved.ID {
-			return nil, identity, ErrScope
-		}
-		if identity.ClientId != "" {
-			if identity.Kind != "saved_public_url" || identity.PublicUrlId == nil || *identity.PublicUrlId != publicURL.Id || identity.TeamId != publicURL.TeamId {
-				return nil, identity, ErrScope
-			}
-			adapter, current, err := LoadNative(ctx, state, control, authority, identity.ClientId)
-			if err != nil {
-				return nil, current, err
-			}
-			if err := adapter.SelectPublicURL(publicURL); err != nil {
-				return nil, current, err
-			}
-			return adapter, current, nil
-		}
-	}
-	pending, found, err := state.PendingPublisherEnrollmentForSelection(ctx, "project", scope)
-	if err != nil {
-		return nil, authorityv1.PublisherEnrollmentResult{}, err
-	}
-	if !found {
-		enrollment, err := control.CreatePublisherEnrollment(ctx, controlv1.CreatePublisherEnrollmentRequest{TeamId: publicURL.TeamId, PublicUrlId: &publicURL.Id, Name: "tnl", Kind: controlv1.CreatePublisherEnrollmentRequestKindInstalled})
-		if err != nil {
-			return nil, authorityv1.PublisherEnrollmentResult{}, err
-		}
-		if enrollment.Kind != "saved_public_url" || enrollment.TeamId != publicURL.TeamId || enrollment.PublicUrlId == nil || *enrollment.PublicUrlId != publicURL.Id || enrollment.EnrollmentKey == "" || !opaqueid.Valid(enrollment.Id, opaqueid.PublisherEnrollmentPrefix) {
-			return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
-		}
-		pending, err = savePendingEnrollment(ctx, state, "project", scope, enrollment.Id, enrollment.EnrollmentKey)
-		if err != nil {
-			return nil, authorityv1.PublisherEnrollmentResult{}, err
-		}
-	}
-	adapter, identity, err := EnrollNative(ctx, state, control, authority, string(pending.EnrollmentSecret))
-	if err != nil {
-		return nil, identity, err
-	}
-	if identity.Kind != "saved_public_url" || identity.PublicUrlId == nil || *identity.PublicUrlId != publicURL.Id || identity.TeamId != publicURL.TeamId {
-		return nil, identity, ErrScope
-	}
-	if err := adapter.SelectPublicURL(publicURL); err != nil {
-		return nil, identity, err
-	}
-	return adapter, identity, nil
+	return ensureSelectedEnrollment(ctx, state, control, authority, enrollmentSelection{
+		kind: "saved_public_url", team: publicURL.TeamId, id: publicURL.Id, publicURL: &publicURL,
+	})
 }
 
 // NamespaceScope rejects saved URL and guest grants before an ad-hoc worker

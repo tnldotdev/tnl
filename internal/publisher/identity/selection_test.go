@@ -98,13 +98,17 @@ func TestExplicitSetupReusesNamespaceKeyWithoutNewEnrollment(t *testing.T) {
 	const team, namespace = "team", "member.example"
 	c := &ownerEnrollmentControl{enrollment: controlv1.PublisherEnrollment{Id: enrollment, EnrollmentKey: enrollment + ".secret", ExpiresAt: time.Now().Add(time.Minute), TeamId: team, DomainId: &domain, Namespace: ptr(namespace), Kind: "namespace"}}
 	a := &scopedAuthority{identity: authorityv1.PublisherEnrollmentResult{ClientId: id, KeyId: key, GrantId: grant, TeamId: team, DomainId: &domain, Namespace: ptr(namespace), Kind: "namespace"}}
+	lost := &lostEnrollmentResponse{result: a.identity}
+	if _, _, err := EnsureNamespace(t.Context(), state, c, lost, team, domain, namespace); err == nil {
+		t.Fatal("lost namespace redemption response succeeded")
+	}
 	for range 2 {
-		if _, _, err := EnsureNamespace(t.Context(), state, c, a, team, domain, namespace); err != nil {
+		if _, _, err := EnsureNamespace(t.Context(), state, c, lost, team, domain, namespace); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if c.calls != 1 || a.calls != 1 {
-		t.Fatalf("setup re-enrolled: created=%d redeemed=%d", c.calls, a.calls)
+	if c.calls != 1 || lost.calls != 2 {
+		t.Fatalf("setup re-enrolled: created=%d redeemed=%d", c.calls, lost.calls)
 	}
 	if _, err := LoadLocalNamespace(t.Context(), state, c, a, team, domain, namespace); err != nil {
 		t.Fatal(err)
