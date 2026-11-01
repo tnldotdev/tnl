@@ -239,18 +239,9 @@ func (p *connectorConnection) fillOpenings() error {
 	count := 64 - len(p.openings)
 	run, pair, permission, source := p.run, p.pair, p.permission, p.source
 	p.mu.Unlock()
-	entries := make([]preparedOpening, 0, count)
-	for range count {
-		visitor, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
-		if err != nil {
-			return err
-		}
-		entry, err := connectorOpening(p.signer, tunnelv1.ConnectorPeerVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorPeerVisitorStream, PairID: pair.PairId, DeliveryID: pair.DeliveryId, DeliveryGeneration: pair.DeliveryGeneration,
-			ServiceID: run.ServiceID, ServiceRunID: run.ServiceRunID, RunNumber: run.RunNumber, Subject: p.signer.Subject, SourceIP: source, VisitorConnectionID: visitor, MetadataRevision: uint64(run.TrustRevision)}, permission.VisitorToken)
-		if err != nil {
-			return err
-		}
-		entries = append(entries, preparedOpening{entry, permission.ExpiresAt})
+	entries, err := prepareConnectorOpenings(p.signer, run, pair, permission, source, count)
+	if err != nil {
+		return err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -259,6 +250,23 @@ func (p *connectorConnection) fillOpenings() error {
 	}
 	p.openings = append(p.openings, entries[:min(len(entries), 64-len(p.openings))]...)
 	return nil
+}
+
+func prepareConnectorOpenings(signer Signer, run Run, pair controlv1.ConnectorPeerPair, permission controlv1.VisitorTokenResponse, source string, count int) ([]preparedOpening, error) {
+	entries := make([]preparedOpening, 0, count)
+	for range count {
+		visitor, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
+		if err != nil {
+			return nil, err
+		}
+		entry, err := connectorOpening(signer, tunnelv1.ConnectorPeerVisitorEntry{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ConnectorPeerVisitorStream, PairID: pair.PairId, DeliveryID: pair.DeliveryId, DeliveryGeneration: pair.DeliveryGeneration,
+			ServiceID: run.ServiceID, ServiceRunID: run.ServiceRunID, RunNumber: run.RunNumber, Subject: signer.Subject, SourceIP: source, VisitorConnectionID: visitor, MetadataRevision: uint64(run.TrustRevision)}, permission.VisitorToken)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, preparedOpening{entry, permission.ExpiresAt})
+	}
+	return entries, nil
 }
 
 func (p *connectorConnection) watch() {
@@ -332,6 +340,21 @@ func (p *connectorConnection) refresh() {
 		if err == nil {
 			err = context.Cause(call)
 		}
+		if err != nil {
+			stop()
+			if !connectorTemporary(err) && p.ctx.Err() == nil {
+				p.cancel(err)
+				return
+			}
+			continue
+		}
+		// keep the previous ready pool behind its original authority fence while
+		// background signing prepares the replacement. arrivals never see an empty
+		// refresh gap and never perform this control or signing work themselves.
+		openings, err := prepareConnectorOpenings(p.signer, next, pair, permission, p.source, 64)
+		if err == nil {
+			err = context.Cause(call)
+		}
 		stop()
 		if err != nil {
 			if !connectorTemporary(err) && p.ctx.Err() == nil {
@@ -341,7 +364,12 @@ func (p *connectorConnection) refresh() {
 			continue
 		}
 		p.mu.Lock()
-		if !p.currentLocked() || key != p.key {
+		preparedUntil := p.preparedUntil
+		if pair.PublisherPreparedUntil != nil && !pair.PublisherPreparedUntil.After(pair.ExpiresAt) {
+			preparedUntil = bound.Add(pair.PublisherPreparedUntil.Sub(pair.ExpiresAt))
+		}
+		now := time.Now()
+		if !p.currentLocked() || key != p.key || !bound.After(now) || !preparedUntil.After(now) || !next.ValidUntil.After(now) || !permission.ExpiresAt.After(now) {
 			p.mu.Unlock()
 			p.cancel(ErrServiceConnection)
 			return
@@ -349,11 +377,9 @@ func (p *connectorConnection) refresh() {
 		next.ServiceTLS = p.config.ServiceTLS
 		// pair renewal is not publisher installation renewal. retain only a
 		// current, independently reported installation deadline on this owner.
-		if pair.PublisherPreparedUntil != nil && !pair.PublisherPreparedUntil.After(pair.ExpiresAt) {
-			p.preparedUntil = bound.Add(pair.PublisherPreparedUntil.Sub(pair.ExpiresAt))
-		}
+		p.preparedUntil = preparedUntil
 		p.run, p.pair, p.until, p.permission = next, pair, bound, permission
-		p.openings = nil
+		p.openings = openings
 		active := make([]*connectorUse, 0, len(p.active))
 		for stream := range p.active {
 			if stream.prepared != nil {
@@ -362,10 +388,6 @@ func (p *connectorConnection) refresh() {
 		}
 		p.notifyLocked()
 		p.mu.Unlock()
-		if err := p.fillOpenings(); err != nil {
-			p.cancel(err)
-			return
-		}
 		renewUntil := minConnectorCall(earliestConnectorDeadline(bound, next.ValidUntil, permission.ExpiresAt))
 		for _, stream := range active {
 			entry, err := connectorOpening(p.signer, stream.entry, permission.VisitorToken)
