@@ -11,54 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const beginDNSAuthorityRelease = `-- name: BeginDNSAuthorityRelease :one
-UPDATE control.dns_authorities
-SET state = 'releasing',
-    release_idempotency_key = COALESCE(release_idempotency_key, $1),
-    work_revision = work_revision + 1,
-    available_at = $2,
-    last_error = NULL,
-    updated_at = $2
-WHERE authority_reference = $3
-  AND state IN ('pending', 'ready', 'failed')
-RETURNING id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
-`
-
-type BeginDNSAuthorityReleaseParams struct {
-	ReleaseIdempotencyKey pgtype.Text
-	UpdatedAt             pgtype.Timestamptz
-	AuthorityReference    string
-}
-
-func (q *Queries) BeginDNSAuthorityRelease(ctx context.Context, arg BeginDNSAuthorityReleaseParams) (ControlDnsAuthority, error) {
-	row := q.db.QueryRow(ctx, beginDNSAuthorityRelease, arg.ReleaseIdempotencyKey, arg.UpdatedAt, arg.AuthorityReference)
-	var i ControlDnsAuthority
-	err := row.Scan(
-		&i.ID,
-		&i.AuthorityReference,
-		&i.TeamID,
-		&i.DomainID,
-		&i.CanonicalDomain,
-		&i.CreateIdempotencyKey,
-		&i.CreateRequestDigest,
-		&i.ReleaseIdempotencyKey,
-		&i.Provider,
-		&i.ProviderZoneID,
-		&i.State,
-		&i.Nameservers,
-		&i.WorkRevision,
-		&i.WorkOwner,
-		&i.WorkEpoch,
-		&i.WorkExpiresAt,
-		&i.Attempts,
-		&i.AvailableAt,
-		&i.LastError,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const claimDNSAuthorityWork = `-- name: ClaimDNSAuthorityWork :one
 WITH candidate AS (
     SELECT authority_reference
@@ -89,85 +41,6 @@ type ClaimDNSAuthorityWorkParams struct {
 
 func (q *Queries) ClaimDNSAuthorityWork(ctx context.Context, arg ClaimDNSAuthorityWorkParams) (ControlDnsAuthority, error) {
 	row := q.db.QueryRow(ctx, claimDNSAuthorityWork, arg.WorkOwner, arg.WorkExpiresAt, arg.ClaimedAt)
-	var i ControlDnsAuthority
-	err := row.Scan(
-		&i.ID,
-		&i.AuthorityReference,
-		&i.TeamID,
-		&i.DomainID,
-		&i.CanonicalDomain,
-		&i.CreateIdempotencyKey,
-		&i.CreateRequestDigest,
-		&i.ReleaseIdempotencyKey,
-		&i.Provider,
-		&i.ProviderZoneID,
-		&i.State,
-		&i.Nameservers,
-		&i.WorkRevision,
-		&i.WorkOwner,
-		&i.WorkEpoch,
-		&i.WorkExpiresAt,
-		&i.Attempts,
-		&i.AvailableAt,
-		&i.LastError,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const createOrGetDNSAuthority = `-- name: CreateOrGetDNSAuthority :one
-INSERT INTO control.dns_authorities (
-    authority_reference,
-    team_id,
-    domain_id,
-    canonical_domain,
-    create_idempotency_key,
-    create_request_digest,
-    provider,
-    state,
-    available_at,
-    created_at,
-    updated_at
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    'route53',
-    'pending',
-    $7,
-    $7,
-    $7
-)
-ON CONFLICT (create_idempotency_key) DO UPDATE
-SET updated_at = dns_authorities.updated_at
-WHERE dns_authorities.create_request_digest = EXCLUDED.create_request_digest
-RETURNING id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
-`
-
-type CreateOrGetDNSAuthorityParams struct {
-	AuthorityReference   string
-	TeamID               string
-	DomainID             string
-	CanonicalDomain      string
-	CreateIdempotencyKey string
-	CreateRequestDigest  []byte
-	CreatedAt            pgtype.Timestamptz
-}
-
-func (q *Queries) CreateOrGetDNSAuthority(ctx context.Context, arg CreateOrGetDNSAuthorityParams) (ControlDnsAuthority, error) {
-	row := q.db.QueryRow(ctx, createOrGetDNSAuthority,
-		arg.AuthorityReference,
-		arg.TeamID,
-		arg.DomainID,
-		arg.CanonicalDomain,
-		arg.CreateIdempotencyKey,
-		arg.CreateRequestDigest,
-		arg.CreatedAt,
-	)
 	var i ControlDnsAuthority
 	err := row.Scan(
 		&i.ID,
@@ -285,41 +158,6 @@ WHERE authority_reference = $1
 
 func (q *Queries) GetDNSAuthority(ctx context.Context, authorityReference string) (ControlDnsAuthority, error) {
 	row := q.db.QueryRow(ctx, getDNSAuthority, authorityReference)
-	var i ControlDnsAuthority
-	err := row.Scan(
-		&i.ID,
-		&i.AuthorityReference,
-		&i.TeamID,
-		&i.DomainID,
-		&i.CanonicalDomain,
-		&i.CreateIdempotencyKey,
-		&i.CreateRequestDigest,
-		&i.ReleaseIdempotencyKey,
-		&i.Provider,
-		&i.ProviderZoneID,
-		&i.State,
-		&i.Nameservers,
-		&i.WorkRevision,
-		&i.WorkOwner,
-		&i.WorkEpoch,
-		&i.WorkExpiresAt,
-		&i.Attempts,
-		&i.AvailableAt,
-		&i.LastError,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const getDNSAuthorityByReleaseIdempotency = `-- name: GetDNSAuthorityByReleaseIdempotency :one
-SELECT id, authority_reference, team_id, domain_id, canonical_domain, create_idempotency_key, create_request_digest, release_idempotency_key, provider, provider_zone_id, state, nameservers, work_revision, work_owner, work_epoch, work_expires_at, attempts, available_at, last_error, created_at, updated_at
-FROM control.dns_authorities
-WHERE release_idempotency_key = $1
-`
-
-func (q *Queries) GetDNSAuthorityByReleaseIdempotency(ctx context.Context, releaseIdempotencyKey pgtype.Text) (ControlDnsAuthority, error) {
-	row := q.db.QueryRow(ctx, getDNSAuthorityByReleaseIdempotency, releaseIdempotencyKey)
 	var i ControlDnsAuthority
 	err := row.Scan(
 		&i.ID,

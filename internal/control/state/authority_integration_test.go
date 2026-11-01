@@ -302,19 +302,23 @@ func TestIntegrationCustomDomainLifecycle(t *testing.T) {
 }
 
 func TestIntegrationDNSAuthorities(t *testing.T) {
-	database, now := newControlStateIntegrationDatabase(t, "dns_authorities")
-	request := CreateDNSAuthorityRequest{TeamID: "team_hosted_dns", DomainID: "domain_hosted_dns", CanonicalDomain: "hosted-dns.example.test",
+	database, now, owner, team := newAuthorityTeam(t)
+	request := ClaimDomainRequest{IdentityID: owner, TeamID: team.ID, Domain: "hosted-dns.example.test",
 		IdempotencyKey: "create", RequestDigest: sha256.Sum256([]byte("create"))}
-	authority, err := database.CreateDNSAuthority(t.Context(), request, now)
+	domain, err := database.ClaimTeamDomain(t.Context(), request, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := database.GetDNSAuthority(t.Context(), domain.DNSAuthorityReference)
 	if err != nil || authority.State != "pending" || authority.Reference == "" || len(authority.RequiredRecords) != 0 {
 		t.Fatalf("created authority = %#v, %v", authority, err)
 	}
-	repeated, err := database.CreateDNSAuthority(t.Context(), request, now)
-	if err != nil || !reflect.DeepEqual(repeated, authority) {
+	repeated, err := database.ClaimTeamDomain(t.Context(), request, now)
+	if err != nil || !reflect.DeepEqual(repeated, domain) {
 		t.Fatalf("authority replay = %#v, %v", repeated, err)
 	}
 	request.RequestDigest = sha256.Sum256([]byte("changed"))
-	if _, err := database.CreateDNSAuthority(t.Context(), request, now); !errors.Is(err, ErrDNSAuthorityIdempotency) {
+	if _, err := database.ClaimTeamDomain(t.Context(), request, now); !errors.Is(err, ErrAuthorityIdempotency) {
 		t.Fatalf("authority idempotency: %v", err)
 	}
 	work, found, err := database.ClaimDNSAuthorityWork(t.Context(), "dns-worker", now, time.Minute)
@@ -329,11 +333,17 @@ func TestIntegrationDNSAuthorities(t *testing.T) {
 	if _, err := database.SaveDNSAuthorityWork(t.Context(), work, now); !errors.Is(err, ErrDNSAuthorityWorkStale) {
 		t.Fatalf("stale authority work: %v", err)
 	}
-	released, err := database.ReleaseDNSAuthority(t.Context(), authority.Reference, "release", now)
+	if err := database.ReleaseTeamDomain(t.Context(), owner, team.ID, domain.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	released, err := database.GetDNSAuthority(t.Context(), authority.Reference)
 	if err != nil || released.State != "releasing" {
 		t.Fatalf("released authority = %#v, %v", released, err)
 	}
-	replay, err := database.ReleaseDNSAuthority(t.Context(), authority.Reference, "release", now)
+	if err := database.ReleaseTeamDomain(t.Context(), owner, team.ID, domain.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := database.GetDNSAuthority(t.Context(), authority.Reference)
 	if err != nil || !reflect.DeepEqual(replay, released) {
 		t.Fatalf("release replay = %#v, %v", replay, err)
 	}

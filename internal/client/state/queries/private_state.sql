@@ -77,9 +77,6 @@ ON CONFLICT (id) DO UPDATE SET jobs_ciphertext = excluded.jobs_ciphertext, updat
 -- name: GetPublisherJobFileManifest :one
 SELECT manifest_ciphertext FROM publisher_job_file_manifest WHERE id = 1;
 
--- name: DeletePublisherJobFileManifest :exec
-DELETE FROM publisher_job_file_manifest WHERE id = 1;
-
 -- name: SavePublisherJobFileManifest :exec
 INSERT INTO publisher_job_file_manifest (id, manifest_ciphertext, updated_at) VALUES (1, sqlc.arg(manifest_ciphertext), sqlc.arg(updated_at))
 ON CONFLICT (id) DO UPDATE SET manifest_ciphertext = excluded.manifest_ciphertext, updated_at = excluded.updated_at;

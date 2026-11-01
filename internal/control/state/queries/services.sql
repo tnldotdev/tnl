@@ -219,10 +219,6 @@ UPDATE control.service_runs SET state = 'closed', closed_at = sqlc.arg(now)
 WHERE id = sqlc.arg(id) AND service_id = sqlc.arg(service_id)
     AND run_number = sqlc.arg(run_number) AND closed_at IS NULL;
 
--- name: ExpireServiceRunPreparation :execrows
-UPDATE control.service_runs SET state = 'closed', closed_at = sqlc.arg(now)
-WHERE id = sqlc.arg(id) AND state = 'prepared' AND closed_at IS NULL AND preparation_expires_at <= sqlc.arg(now);
-
 -- name: InsertServiceConnectionSlot :one
 INSERT INTO control.service_connection_slots(publisher_connection_id, service_run_id,
     service_id, run_number, connection_slot, connection_assignment_revision,
@@ -347,10 +343,6 @@ ORDER BY e.service_id, e.run_number;
 SELECT * FROM control.service_routing_events
 WHERE revision > sqlc.arg(after_revision) AND revision <= sqlc.arg(through_revision)
 ORDER BY revision LIMIT sqlc.arg(page_limit);
-
--- name: RevokeConnectorSession :execrows
-UPDATE control.connector_sessions SET revoked_at = sqlc.arg(now)
-WHERE id = sqlc.arg(id) AND identity_id = sqlc.arg(identity_id) AND revoked_at IS NULL;
 
 -- name: CleanupConnectorSessions :exec
 DELETE FROM control.connector_sessions session WHERE session.id IN
