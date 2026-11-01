@@ -81,7 +81,6 @@ type Bound struct {
 }
 
 type boundState struct {
-	assignments map[string]tunnelv1.ServicePublisherConnectionRef
 	connections [2]controlv1.ConnectionAssignment
 	mu          sync.Mutex
 	active      map[net.Conn]struct{}
@@ -99,34 +98,29 @@ func (p *Prepared) Activate(setup controlv1.ServiceRunSetup) (*Bound, error) {
 		len(setup.PublisherConnections) != 2 {
 		return nil, ErrPrivateStream
 	}
-	assignments := make(map[string]tunnelv1.ServicePublisherConnectionRef, 2)
 	var connections [2]controlv1.ConnectionAssignment
-	var slots [2]bool
-	services := make(map[string]bool, 2)
 	for _, assignment := range setup.PublisherConnections {
 		if assignment.ConnectionSlot < 0 || assignment.ConnectionSlot > 1 || assignment.ConnectionAssignmentRevision < 1 ||
-			assignment.PublisherConnectionCredential == "" || !assignment.PublisherConnectionCredentialExpiresAt.After(time.Now()) ||
-			services[assignment.RelayServiceId] || slots[assignment.ConnectionSlot] || assignments[assignment.PublisherConnectionId].PublisherConnectionID != "" {
+			assignment.PublisherConnectionCredential == "" || !assignment.PublisherConnectionCredentialExpiresAt.After(time.Now()) {
 			return nil, ErrPrivateStream
 		}
-		ref := tunnelv1.ServicePublisherConnectionRef{
-			ServiceID: setup.ServiceId, ServiceRunID: setup.ServiceRunId, RunNumber: uint64(setup.RunNumber),
-			PublisherConnectionID: assignment.PublisherConnectionId, ConnectionSlot: uint8(assignment.ConnectionSlot),
-			ConnectionAssignmentRevision: uint64(assignment.ConnectionAssignmentRevision), RelayServiceID: assignment.RelayServiceId,
-		}
-		if err := ref.Validate(); err != nil {
+		other := connections[1-assignment.ConnectionSlot]
+		if p.connectionRef(assignment).Validate() != nil || connections[assignment.ConnectionSlot].PublisherConnectionId != "" ||
+			other.PublisherConnectionId == assignment.PublisherConnectionId || other.RelayServiceId == assignment.RelayServiceId {
 			return nil, ErrPrivateStream
 		}
-		assignments[ref.PublisherConnectionID] = ref
 		// connection slots are exactly 0 and 1; the credential stays local.
 		connections[assignment.ConnectionSlot] = assignment
-		slots[assignment.ConnectionSlot] = true
-		services[ref.RelayServiceID] = true
 	}
-	if len(assignments) != 2 || len(services) != 2 {
-		return nil, ErrPrivateStream
+	return &Bound{prepared: p, boundState: &boundState{connections: connections, active: make(map[net.Conn]struct{})}}, nil
+}
+
+func (p *Prepared) connectionRef(assignment controlv1.ConnectionAssignment) tunnelv1.ServicePublisherConnectionRef {
+	return tunnelv1.ServicePublisherConnectionRef{
+		ServiceID: p.Preparation.ServiceId, ServiceRunID: p.Preparation.ServiceRunId, RunNumber: uint64(p.Preparation.RunNumber),
+		PublisherConnectionID: assignment.PublisherConnectionId, ConnectionSlot: uint8(assignment.ConnectionSlot),
+		ConnectionAssignmentRevision: uint64(assignment.ConnectionAssignmentRevision), RelayServiceID: assignment.RelayServiceId,
 	}
-	return &Bound{prepared: p, boundState: &boundState{assignments: assignments, connections: connections, active: make(map[net.Conn]struct{})}}, nil
 }
 
 // Hello selects one current relay assignment. callers must use a WebPKI-
@@ -142,8 +136,8 @@ func (b *Bound) Hello(slot uint8) (muxsession.Endpoint, tunnelv1.Message, error)
 		return muxsession.Endpoint{}, tunnelv1.Message{}, ErrPrivateStream
 	}
 	assignment := b.connections[slot]
-	ref, ok := b.assignments[assignment.PublisherConnectionId]
-	if !ok || ref.ConnectionSlot != slot || assignment.PublisherConnectionCredential == "" ||
+	ref := b.prepared.connectionRef(assignment)
+	if ref.ConnectionSlot != slot || assignment.PublisherConnectionCredential == "" ||
 		!assignment.PublisherConnectionCredentialExpiresAt.After(time.Now()) || assignment.RelayAddress == "" || assignment.TlsServerName == "" {
 		return muxsession.Endpoint{}, tunnelv1.Message{}, ErrPrivateStream
 	}
@@ -169,34 +163,27 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 	if b.closed {
 		return ErrPrivateStream
 	}
-	var seen [2]bool
 	var next [2]controlv1.ConnectionAssignment
-	refs := make(map[string]tunnelv1.ServicePublisherConnectionRef, 2)
-	services := make(map[string]bool, 2)
 	for _, current := range state.PublisherConnections {
-		if current.ConnectionSlot < 0 || current.ConnectionSlot > 1 || seen[current.ConnectionSlot] {
+		if current.ConnectionSlot < 0 || current.ConnectionSlot > 1 || next[current.ConnectionSlot].PublisherConnectionId != "" {
 			return ErrPrivateStream
 		}
-		seen[current.ConnectionSlot] = true
 		original := b.connections[current.ConnectionSlot]
 		changed := current.PublisherConnectionId != original.PublisherConnectionId || current.ConnectionAssignmentRevision != original.ConnectionAssignmentRevision
 		if current.ConnectionAssignmentRevision < original.ConnectionAssignmentRevision ||
 			changed && (current.ConnectionAssignmentRevision <= original.ConnectionAssignmentRevision || current.PublisherConnectionId == original.PublisherConnectionId ||
 				current.PublisherConnectionCredential == "" || !current.PublisherConnectionCredentialExpiresAt.After(time.Now())) ||
 			!changed && (current.RelayServiceId != original.RelayServiceId || current.RelayAddress != original.RelayAddress || current.TlsServerName != original.TlsServerName) ||
-			current.RelayAddress == "" || current.TlsServerName == "" || services[current.RelayServiceId] {
+			current.RelayAddress == "" || current.TlsServerName == "" {
 			return ErrPrivateStream
 		}
-		ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: state.ServiceId, ServiceRunID: state.ServiceRunId,
-			RunNumber: uint64(state.RunNumber), PublisherConnectionID: current.PublisherConnectionId,
-			ConnectionSlot: uint8(current.ConnectionSlot), ConnectionAssignmentRevision: uint64(current.ConnectionAssignmentRevision), RelayServiceID: current.RelayServiceId}
-		if ref.Validate() != nil || refs[ref.PublisherConnectionID].PublisherConnectionID != "" {
+		other := next[1-current.ConnectionSlot]
+		if b.prepared.connectionRef(current).Validate() != nil || other.PublisherConnectionId == current.PublisherConnectionId || other.RelayServiceId == current.RelayServiceId {
 			return ErrPrivateStream
 		}
-		refs[ref.PublisherConnectionID], services[ref.RelayServiceID] = ref, true
 		next[current.ConnectionSlot] = current
 	}
-	b.connections, b.assignments = next, refs
+	b.connections = next
 	return nil
 }
 
@@ -217,7 +204,12 @@ func (b *Bound) current(ref tunnelv1.ServicePublisherConnectionRef) bool {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return !b.closed && b.assignments[ref.PublisherConnectionID] == ref
+	return b.currentLocked(ref)
+}
+
+// currentLocked compares the complete claim while the registration lock is held.
+func (b *Bound) currentLocked(ref tunnelv1.ServicePublisherConnectionRef) bool {
+	return !b.closed && ref.ConnectionSlot < 2 && b.prepared.connectionRef(b.connections[ref.ConnectionSlot]) == ref
 }
 
 // ConnectSlot uses server-authenticated WebPKI on both transport candidates.
@@ -377,7 +369,7 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 		return ErrPrivateStream
 	}
 	b.mu.Lock()
-	if b.closed || b.assignments[ref.PublisherConnectionID] != ref {
+	if !b.currentLocked(ref) {
 		b.mu.Unlock()
 		return ErrPrivateStream
 	}
