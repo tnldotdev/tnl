@@ -244,36 +244,6 @@ func (q *Queries) ListPublisherGroupMemberStatus(ctx context.Context, arg ListPu
 	return items, nil
 }
 
-const listPublisherGroupServiceGrants = `-- name: ListPublisherGroupServiceGrants :many
-SELECT publisher_identity_id, team_id, project_key, service, grant_id FROM control.publisher_group_service_grants WHERE publisher_identity_id=$1 ORDER BY service
-`
-
-func (q *Queries) ListPublisherGroupServiceGrants(ctx context.Context, publisherIdentityID string) ([]ControlPublisherGroupServiceGrant, error) {
-	rows, err := q.db.Query(ctx, listPublisherGroupServiceGrants, publisherIdentityID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ControlPublisherGroupServiceGrant
-	for rows.Next() {
-		var i ControlPublisherGroupServiceGrant
-		if err := rows.Scan(
-			&i.PublisherIdentityID,
-			&i.TeamID,
-			&i.ProjectKey,
-			&i.Service,
-			&i.GrantID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const lockAppliedProject = `-- name: LockAppliedProject :one
 SELECT team_id, project_key, source_fingerprint, project_label, revision, configuration_hash, configuration_ciphertext, storage_key_id, created_by_identity_id, updated_at FROM control.applied_projects WHERE team_id=$1 AND project_key=$2 FOR UPDATE
 `

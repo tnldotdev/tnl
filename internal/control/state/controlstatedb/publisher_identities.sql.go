@@ -11,22 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const attachPublisherRun = `-- name: AttachPublisherRun :exec
-UPDATE control.publish_runs SET publisher_identity_id=$1,publisher_grant_id=$2
-WHERE id=$3 AND publisher_identity_id IS NULL
-`
-
-type AttachPublisherRunParams struct {
-	PublisherIdentityID pgtype.Text
-	PublisherGrantID    pgtype.Text
-	PublishRunID        string
-}
-
-func (q *Queries) AttachPublisherRun(ctx context.Context, arg AttachPublisherRunParams) error {
-	_, err := q.db.Exec(ctx, attachPublisherRun, arg.PublisherIdentityID, arg.PublisherGrantID, arg.PublishRunID)
-	return err
-}
-
 const claimPublisherAssertion = `-- name: ClaimPublisherAssertion :execrows
 INSERT INTO control.publisher_assertions(publisher_identity_id, assertion_id, expires_at)
 SELECT $1, $2, $3
