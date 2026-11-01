@@ -44,7 +44,7 @@ func valueOrEmpty(value *string) string {
 	return *value
 }
 
-func effectiveTunnelLimits(effective config.TNL) *config.Limits {
+func effectiveTunnelLimits(effective clientproject.ResolvedService) *config.Limits {
 	if effective.Tunnel == nil {
 		return nil
 	}

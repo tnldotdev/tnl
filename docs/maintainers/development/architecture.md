@@ -28,6 +28,11 @@ it does not start a local owner. `daemon/config` resolves `TNLD_*` role/environm
 settings. Control state owns current authorization and placement, not the static
 configuration package. Naming and policy values do not acquire process lifetime.
 
+`config.TNL` contains only parsed project declarations. Consumers use
+[`project.ResolvedService`](../../../internal/client/project/project.go) for
+inherited service settings; private services do not acquire public URL defaults.
+Target discovery and target trust resolution remain separate operations.
+
 Go owns worktree label composition: project/primary-checkout name, optional linked
 checkout directory, and a short client-state-salted ID; branch names do not enter
 it. Config factories receive structured label pieces and the project path within

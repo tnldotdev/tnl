@@ -39,8 +39,6 @@ type TNL struct {
 	OAuth           bool                      `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
 	Inspection      *Inspection               `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Local inspection capture and retention for HTTP and supported TCP services."`
 	Tunnel          *Tunnel                   `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Defaults for explicit local public_url blocks. Applicable HTTP access and limits also apply to named-group http blocks; defaults never enable publication."`
-	Publish         *Publish                  `json:"-" yaml:"-"`
-	Readiness       *Readiness                `json:"-" yaml:"-"`
 	PublisherGroups map[string]PublisherGroup `json:"publisher_groups,omitempty" yaml:"publisher_groups,omitempty" jsonschema_description:"Named publisher groups with a durable namespace beneath a ready team domain. local is reserved for the built-in local publisher."`
 	Services        Services                  `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named application services. A local public_url block enables a public URL; named-group reachability belongs to its publisher group."`
 	Webhooks        map[string]Webhook        `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
