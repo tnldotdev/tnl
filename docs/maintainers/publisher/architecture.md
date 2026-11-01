@@ -87,6 +87,9 @@ leaves publication running. Ad-hoc readiness is routability, not a public GET.
 public URL IDs. `tnl watch` resumes an exclusive bounded local cursor; expired
 cursors fail with an authored diagnostic. `tnl ping` uses no owner proof. The
 journal survives restart without credentials, bodies, or OAuth state.
+Ordinary snapshots and app commits read current services, publications, and the
+cursor, not retained events. Only explicit watch/resume reads load event history;
+snapshot updates, event insertion, and retention still commit together.
 
 ## allocation, groups, and target ownership
 

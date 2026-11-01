@@ -238,7 +238,7 @@ func TestJournalResumeAndManagerRestartCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, err := EventsAfter(snapshot, cursor)
+	events, err := EventsAfterFrom(t.Context(), manager.database, snapshot.Project, cursor)
 	if err != nil || len(events) != 5 || snapshot.Services[0].Registered {
 		t.Fatalf("resume = %#v, %v", events, err)
 	}
@@ -249,11 +249,10 @@ func TestJournalResumeAndManagerRestartCursor(t *testing.T) {
 		}
 		previous = event.Cursor
 	}
-	snapshot.Events = snapshot.Events[len(snapshot.Events)-1:]
-	if _, err := EventsAfter(snapshot, "0"); !errors.Is(err, ErrCursorExpired) {
+	if _, err := EventsAfterFrom(t.Context(), manager.database, snapshot.Project, "0"); !errors.Is(err, ErrCursorExpired) {
 		t.Fatalf("expired cursor = %v", err)
 	}
-	if _, err := EventsAfter(snapshot, "99999"); !errors.Is(err, ErrCursorExpired) {
+	if _, err := EventsAfterFrom(t.Context(), manager.database, snapshot.Project, "99999"); !errors.Is(err, ErrCursorExpired) {
 		t.Fatalf("future cursor = %v", err)
 	}
 }
