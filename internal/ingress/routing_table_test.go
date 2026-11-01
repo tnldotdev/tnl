@@ -3,6 +3,7 @@ package ingress
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/netip"
 	"reflect"
 	"testing"
@@ -124,6 +125,74 @@ func TestRoutingTablePublisherPoolTombstonesAreRunScoped(t *testing.T) {
 	stale.EntryRevision = 2
 	if err := table.ApplyPage(3, ingressv1.IngressRoutingTablePage{ThroughRevision: 4, NextRevision: 4, Events: []ingressv1.IngressRoutingTableEvent{stale}}); !errors.Is(err, ErrRoutingTableEvent) {
 		t.Fatalf("old run projection revived: %v", err)
+	}
+}
+
+func TestRoutingTableHostnameBucketsKeepPublishedViewsImmutable(t *testing.T) {
+	now := time.Now().UTC()
+	event := func(revision, run int64, host, url string) ingressv1.IngressRoutingTableEvent {
+		entry := forwardingTestEntry(now, "relay.example:443")
+		entry.CanonicalHostname, entry.PublicUrlId = host, url
+		entry.PublishRunNumber, entry.PublishRunId = run, fmt.Sprintf("%s-%d", url, run)
+		entry.PolicyRevision, entry.IpPolicy = 1, ingressv1.AllowAll
+		return ingressv1.IngressRoutingTableEvent{RoutingTableRevision: revision, Kind: ingressv1.PublicUrlUpsert,
+			PublicUrlId: url, PublishRunNumber: run, CanonicalHostname: host, EntryRevision: revision,
+			Entry: entry, PublicUrlExpiresAt: &entry.PublicUrlExpiresAt, CreatedAt: now}
+	}
+	first := event(1, 1, "pool.example", "url-first")
+	sibling := event(2, 1, "pool.example", "url-sibling")
+	other := event(3, 1, "other.example", "url-other")
+	var table RoutingTable
+	if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{ThroughRevision: 3,
+		Entries: []ingressv1.IngressRoutingTableEvent{first, sibling, other}}); err != nil {
+		t.Fatal(err)
+	}
+	// readiness captures this outer map under the lock and reads it afterward.
+	published := table.routes
+	updated := event(4, 1, "pool.example", "url-first")
+	newRun := event(5, 2, "pool.example", "url-first")
+	newHost := event(6, 1, "new.example", "url-new")
+	if err := table.ApplyPage(3, ingressv1.IngressRoutingTablePage{ThroughRevision: 6, NextRevision: 6,
+		Events: []ingressv1.IngressRoutingTableEvent{updated, newRun, newHost}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(published) != 2 || len(published[first.CanonicalHostname]) != 2 ||
+		!reflect.DeepEqual(published[first.CanonicalHostname][routingEventKey(first)], routingEntryForEvent(first)) ||
+		!reflect.DeepEqual(published[other.CanonicalHostname][routingEventKey(other)], routingEntryForEvent(other)) {
+		t.Fatal("page mutated a previously published outer map or hostname bucket")
+	}
+	entries, reason := table.LookupAllWithReason("POOL.EXAMPLE", now)
+	if reason != LookupCurrent || len(entries) != 3 {
+		t.Fatal("hostname bucket lost a sibling URL or publish run", entries, reason)
+	}
+	// a later event must compare against earlier events in this page, not only
+	// the published bucket. rejecting it must leave every bucket unchanged.
+	current := table.routes
+	expected := maps.Clone(current)
+	for host, bucket := range expected {
+		expected[host] = maps.Clone(bucket)
+	}
+	for _, host := range []string{"pool.example", "new.example"} {
+		valid := event(7, 1, host, "url-first")
+		stale := valid
+		stale.RoutingTableRevision = 8
+		if err := table.ApplyPage(6, ingressv1.IngressRoutingTablePage{ThroughRevision: 8, NextRevision: 8,
+			Events: []ingressv1.IngressRoutingTableEvent{valid, stale}}); !errors.Is(err, ErrRoutingTableEvent) {
+			t.Fatal("accepted a repeated entry revision within one page", err)
+		}
+		if !reflect.DeepEqual(expected, table.routes) || !reflect.DeepEqual(expected, current) {
+			t.Fatal("rejected page changed a published bucket")
+		}
+		if revision, _ := table.Revision(); revision != 6 {
+			t.Fatal("rejected page advanced the cursor", revision)
+		}
+	}
+	// replacing the whole snapshot must not mutate readers of the previous page.
+	if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{ThroughRevision: 9}); err != nil {
+		t.Fatal(err)
+	}
+	if len(current) != 3 || len(current[first.CanonicalHostname]) != 3 {
+		t.Fatal("resnapshot changed a previously published view")
 	}
 }
 
