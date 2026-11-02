@@ -255,7 +255,7 @@ func (d *Database) lockAuthenticatedRun(ctx context.Context, q *controlstatedb.Q
 	if err != nil {
 		return run, err
 	}
-	live, err := d.publisherRunLive(ctx, q, url, run.ID, now)
+	live, err := d.publisherRunLive(ctx, q, url, run, now)
 	if err != nil {
 		return run, err
 	}

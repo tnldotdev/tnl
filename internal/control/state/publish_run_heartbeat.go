@@ -42,7 +42,7 @@ func (d *Database) HeartbeatPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, err
 	}
-	live, err := d.publisherRunLive(ctx, queries, route, session.ID, now)
+	live, err := d.publisherRunLive(ctx, queries, route, session, now)
 	if err != nil {
 		return PublishRunSetup{}, err
 	}

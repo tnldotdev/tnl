@@ -63,11 +63,7 @@ func (d *Database) authorizePublisherRun(ctx context.Context, q *controlstatedb.
 		if err != nil {
 			return [32]byte{}, publisherLookupError(err, ErrPublisherIdentity)
 		}
-		bound, err := q.GetPublisherRun(ctx, run.ID)
-		if err != nil {
-			return [32]byte{}, publisherLookupError(err, ErrPublisherIdentity)
-		}
-		if bound.PublisherIdentityID != p.ID || bound.PublisherGrantID != p.GrantID {
+		if run.PublisherIdentityID.String != p.ID || run.PublisherGrantID.String != p.GrantID {
 			return [32]byte{}, ErrPublisherIdentity
 		}
 	}
@@ -82,15 +78,11 @@ func (d *Database) authorizePublisherRun(ctx context.Context, q *controlstatedb.
 	return secret, nil
 }
 
-func (d *Database) publisherRunLive(ctx context.Context, q *controlstatedb.Queries, u controlstatedb.ControlPublicUrl, runID string, now time.Time) (bool, error) {
-	b, err := q.GetPublisherRun(ctx, runID)
-	if errors.Is(err, pgx.ErrNoRows) {
+func (d *Database) publisherRunLive(ctx context.Context, q *controlstatedb.Queries, u controlstatedb.ControlPublicUrl, run controlstatedb.ControlPublishRun, now time.Time) (bool, error) {
+	if !run.PublisherIdentityID.Valid {
 		return true, nil
 	}
-	if err != nil {
-		return false, err
-	}
-	p, _, err := d.livePublisher(ctx, q, b.PublisherIdentityID, b.PublisherGrantID, "", now)
+	p, _, err := d.livePublisher(ctx, q, run.PublisherIdentityID.String, run.PublisherGrantID.String, "", now)
 	if errors.Is(err, ErrPublisherIdentity) || errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
