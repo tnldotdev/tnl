@@ -60,7 +60,6 @@ const (
 	ServicePrefix                    = "svc_"
 	VisitorDevicePrefix              = "vdev_"
 	ServiceRunPrefix                 = "srun_"
-	ConnectorSessionPrefix           = "cns_"
 	ServiceInvitationPrefix          = "sivt_"
 	ServiceGrantPrefix               = "sgr_"
 )

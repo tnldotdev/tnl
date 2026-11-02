@@ -1,19 +1,14 @@
 package state
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
@@ -78,7 +73,7 @@ func TestIntegrationAppliedProjectLocalRealizationOwnership(t *testing.T) {
 		t.Fatal("direct managed definition changed", err)
 	}
 	if err = d.DeleteService(ctx, first.ServiceID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
-		t.Fatal("direct service deleted", err)
+		t.Fatal("public service deleted", err)
 	}
 	var configuredGrant string
 	if err = d.pool.QueryRow(ctx, `SELECT visitor_grant_id FROM control.local_project_services WHERE service_id=$1`, first.ServiceID).Scan(&configuredGrant); err != nil {
@@ -189,7 +184,7 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 		}
 	}
 	if err = d.DeleteService(t.Context(), publicID, r.ActorID, now); !errors.Is(err, ErrProjectManaged) {
-		t.Fatal("direct service deletion succeeded", err)
+		t.Fatal("public service deletion succeeded", err)
 	}
 	if _, err = d.GetPublicURL(t.Context(), r.ActorID, publicID); err == nil {
 		t.Fatal("service became a public URL")
@@ -255,60 +250,12 @@ func TestIntegrationAppliedProjectManagedGroupGrantsAndSafeMetadata(t *testing.T
 }
 
 func TestIntegrationPrivateVisitorAssignmentReleaseIsExact(t *testing.T) {
-	d, now := newControlStateIntegrationDatabase(t, "release_assignment")
-	r := oidcRouteRequest(t, d, now)
-	service, err := d.CreateServiceAt(t.Context(), r.TeamID, r.ActingIdentityID, "db", "db", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	public, key, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	device, err := d.EnrollVisitorDevice(t.Context(), r.ActingIdentityID, public, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leases := map[string]IngressLease{}
-	for index := range 2 {
-		lease, e := d.RegisterIngress(t.Context(), IngressRegistration{IngressID: fmt.Sprintf("release-%d", index), IngressRunID: fmt.Sprintf("run-%d", index), ProtocolVersion: 1, ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 7400+index), ConnectorTLSServerName: "private.example.test"}, now, time.Hour)
-		if e != nil {
-			t.Fatal(e)
-		}
-		leases[lease.IngressID] = lease
-	}
-	sessions, err := d.CreateVisitorIngressAssignments(t.Context(), r.ActingIdentityID, device.ID, service.ID, "startup", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	other := finalVisitorIdentity(t, d, now, "other@example.test")
-	if err = d.ReleaseVisitorIngressAssignment(t.Context(), other, sessions[0].ID, now); !errors.Is(err, ErrServiceAccess) {
-		t.Fatal("other identity released assignment", err)
-	}
-	for range 2 {
-		if err = d.ReleaseVisitorIngressAssignment(t.Context(), r.ActingIdentityID, sessions[0].ID, now); err != nil {
-			t.Fatal("release not retry-stable", err)
-		}
-	}
-	var pending int
-	if err = d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.connector_sessions WHERE assigned_ingress_id=$1 AND bound_at IS NULL AND revoked_at IS NULL`, sessions[0].IngressID).Scan(&pending); err != nil || pending != 0 {
-		t.Fatal("release did not free reservation", pending, err)
-	}
-	sibling := sessions[1]
-	hello := tunnelv1.ConnectorSessionHello{ProtocolVersion: tunnelv1.Version, Kind: "connector_session", SessionID: sibling.ID, ServiceID: service.ID, Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: r.ActingIdentityID, DeviceID: device.ID}, Credential: sibling.Credential, Nonce: make([]byte, 32), Signature: make([]byte, ed25519.SignatureSize)}
-	digest, err := hello.Claim().Digest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	hello.Signature = ed25519.Sign(key, digest)
-	if _, err = d.AuthenticateVisitorConnector(t.Context(), leases[sibling.IngressID].IngressLeaseIdentity, hello.Claim(), netip.MustParseAddr("192.0.2.10"), now); err != nil {
-		t.Fatal("release invalidated healthy sibling", err)
-	}
-	if err = d.ReleaseVisitorIngressAssignment(t.Context(), r.ActingIdentityID, sibling.ID, now); err != nil {
-		t.Fatal("bound shutdown release failed", err)
-	}
-	var revoked bool
-	if err = d.pool.QueryRow(t.Context(), `SELECT revoked_at IS NOT NULL AND bound_at IS NOT NULL FROM control.connector_sessions WHERE id=$1`, sibling.ID).Scan(&revoked); err != nil || !revoked {
-		t.Fatal("bound release not visible to active recheck", err)
+	// the selector remains for the service Task. connector owners do not release
+	// ingress handles; exact-owner replacement must leave every sibling intact.
+	f := newConnectorPairFixture(t)
+	first := f.create(t)
+	assertNativeStateStableOwners(t, f.d, f.visitor, f.request, f.key, f.run, f.now)
+	if retry, err := f.d.PrepareConnectorPeerPair(f.visitor, f.request, f.now); err != nil || retry.ID != first.ID || retry.Key != first.Key {
+		t.Fatal("sibling replacement changed the original owner", err)
 	}
 }

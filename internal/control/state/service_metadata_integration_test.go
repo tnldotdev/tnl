@@ -59,7 +59,7 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 	next.Configuration.Services["orders"] = orders
 
 	// failed reconciliation must roll back earlier run/grant changes, desired
-	// configuration, routing events and audit, as well as the corrupt saved row.
+	// configuration and audit, as well as the corrupt saved row.
 	snapshot := func(t *testing.T) string {
 		t.Helper()
 		var data string
@@ -73,8 +73,7 @@ func TestIntegrationServiceMetadataCorruptionRollsBackCallers(t *testing.T) {
 		    (SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM control.service_runs r),
 		    (SELECT jsonb_agg(to_jsonb(s) ORDER BY publisher_connection_id) FROM control.service_connection_slots s),
 		    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM control.publisher_grants g),
-		    (SELECT jsonb_agg(to_jsonb(e) ORDER BY revision) FROM control.service_routing_events e),
-		    (SELECT jsonb_agg(to_jsonb(c)) FROM control.service_routing_clock c),
+		    (SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM control.connector_peer_pairs p),
 		    (SELECT jsonb_agg(to_jsonb(e) ORDER BY cursor) FROM control.service_audit_events e))::text`).Scan(&data); err != nil {
 			t.Fatal(err)
 		}

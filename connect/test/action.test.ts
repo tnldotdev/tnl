@@ -18,7 +18,7 @@ import { promisify } from "node:util";
 import { build } from "esbuild";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { main, post } from "../src/action.js";
-import { nativeJSON } from "../src/native.js";
+import { connectorJSON } from "../src/native.js";
 import { installedBinary, selectBinary } from "../src/resolve.js";
 import { ActionError, safeActionMessage, type ActionErrorCode } from "../src/errors.js";
 
@@ -185,7 +185,7 @@ describe("native main and post", () => {
     const owned = await saved();
     await expect(stat(owned.session)).rejects.toMatchObject({ code: "ENOENT" });
   });
-  test("cancellation interrupts a pending OIDC provider and never starts native connections", async () => {
+  test("cancellation interrupts a pending OIDC provider and never starts connector connections", async () => {
     const controller = new AbortController();
     let entered: (() => void) | undefined;
     const ready = new Promise<void>((resolve) => {
@@ -241,7 +241,7 @@ describe("native main and post", () => {
     expect((await stat(owned.handle ?? "")).mode & 0o777).toBe(0o600);
     // a separate native invocation models an ordinary later workflow step.
     expect(
-      await nativeJSON(owned.binary, ["status", "--handle", owned.handle ?? ""], {
+      await connectorJSON(owned.binary, ["status", "--handle", owned.handle ?? ""], {
         cwd: project,
         timeout: 5000,
       }),
@@ -397,7 +397,7 @@ describe("native main and post", () => {
       main({ signal: new AbortController().signal, getIDToken: oidc }),
     ).rejects.toThrow();
     expect(
-      await nativeJSON(first.binary, ["status", "--handle", first.handle ?? ""], {
+      await connectorJSON(first.binary, ["status", "--handle", first.handle ?? ""], {
         cwd: project,
         timeout: 5000,
       }),
@@ -669,7 +669,7 @@ describe("safe failure boundaries", () => {
   test("spawn and JSON decoding failures keep causes behind owned codes", async () => {
     const missing = path.join(root, "fixture-private-executable");
     const spawnError = await actionFailure(
-      nativeJSON(missing, ["capabilities"], { cwd: project, timeout: 1000 }),
+      connectorJSON(missing, ["capabilities"], { cwd: project, timeout: 1000 }),
       "TNL_ACTION_EXEC_FAILED",
     );
     expect(spawnError.cause).toMatchObject({ code: "ENOENT", path: missing });
@@ -686,7 +686,7 @@ describe("safe failure boundaries", () => {
 
   test("the request byte bound rejects before spawning a child", async () => {
     await actionFailure(
-      nativeJSON(binary, ["start"], {
+      connectorJSON(binary, ["start"], {
         cwd: project,
         timeout: 1000,
         input: "x".repeat(128 * 1024 + 1),

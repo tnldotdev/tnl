@@ -1,4 +1,4 @@
-"""typed snapshots over the native connection owner's bounded CLI contract."""
+"""typed snapshots over the connector owner's bounded CLI contract."""
 
 from __future__ import annotations
 
@@ -30,10 +30,10 @@ _TIMEOUT = 65.0
 
 def _error(code: str) -> TnlError:
     messages = {
-        "invalid": "the native connection response is invalid; update the tnl wheel",
+        "invalid": "the connector connection response is invalid; update the tnl wheel",
         "input": "select a declared service name and an existing project directory",
         "not_prepared": "prepare connections first or await tnl.connect(service)",
-        "unavailable": "native connection failed; check the prepared handle and tnl sign-in",
+        "unavailable": "connector connection failed; check the prepared handle and tnl sign-in",
         "expired": "the connection snapshot or owner expired; await the handle for fresh settings",
         "closed": "the connection handle is closed; create a new handle",
     }
@@ -164,7 +164,7 @@ def _snapshot(value: object) -> Connection:
     except (TnlError, ValueError, ssl.SSLError):
         raise _error("invalid") from None
     # the Python API deliberately exposes no client certificate or key. native
-    # connection admission and renewal remain in the native owner.
+    # connection admission and renewal remain in the connector owner.
     fields = (*plain, context, name, ca)
     if protocol in {"postgres", "mysql"}:
         if any(key in obj for key in ("url", "kubeconfig", "context")):
@@ -490,7 +490,7 @@ class _Session:
         try:
             self.close()
         except TnlError:
-            # the native owner also monitors the exact Python parent process.
+            # the connector owner also monitors the exact Python parent process.
             pass
 
 

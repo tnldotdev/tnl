@@ -34,47 +34,14 @@ type TLSYamuxConnector struct {
 }
 
 func (c TLSYamuxConnector) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
-	return connectTLSYamux(ctx, endpoint, c.TLSConfig, c.Config, ALPN, nil)
+	return connectTLSYamux(ctx, endpoint, c.TLSConfig, c.Config)
 }
 
-// ConnectorALPN identifies the shared infrastructure connector listener.
-const ConnectorALPN = "tnl-connector/1"
-
-// ConnectorMuxTLS uses the shared private ALPN; identity authentication
-// happens on the first mux stream, identically to QUIC.
-type ConnectorMuxTLS struct {
-	TLSConfig *tls.Config
-	Config    TLSYamuxConfig
-}
-
-func (c ConnectorMuxTLS) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
-	return connectTLSYamux(ctx, endpoint, c.TLSConfig, c.Config, ConnectorALPN, nil)
-}
-
-func AcceptConnectorMuxTLS(ctx context.Context, network net.Conn, tlsConfig *tls.Config, config TLSYamuxConfig) (Session, error) {
-	return acceptTLSYamux(ctx, network, tlsConfig, config, ConnectorALPN, nil)
-}
-
-// ConnectorTLSYamux sends the session credential on the authenticated
-// outer TLS connection before any yamux stream can be opened.
-type ConnectorTLSYamux struct {
-	TLSConfig  *tls.Config
-	Config     TLSYamuxConfig
-	WriteHello func(io.Writer) error
-}
-
-func (c ConnectorTLSYamux) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
-	if c.WriteHello == nil {
-		return nil, errors.New("muxsession: private connector hello is required")
-	}
-	return connectTLSYamux(ctx, endpoint, c.TLSConfig, c.Config, ConnectorALPN, c.WriteHello)
-}
-
-func connectTLSYamux(ctx context.Context, endpoint Endpoint, config *tls.Config, transport TLSYamuxConfig, alpn string, writeHello func(io.Writer) error) (Session, error) {
+func connectTLSYamux(ctx context.Context, endpoint Endpoint, config *tls.Config, transport TLSYamuxConfig) (Session, error) {
 	if endpoint.Address == "" || endpoint.ServerName == "" {
 		return nil, errors.New("muxsession: TLS/yamux endpoint requires address and server name")
 	}
-	tlsConfig, err := transportTLSConfigForALPN(config, endpoint.ServerName, false, alpn)
+	tlsConfig, err := transportTLSConfig(config, endpoint.ServerName, false)
 	if err != nil {
 		return nil, err
 	}
@@ -91,15 +58,9 @@ func connectTLSYamux(ctx context.Context, endpoint Endpoint, config *tls.Config,
 		_ = network.Close()
 		return nil, fmt.Errorf("muxsession: TLS/yamux handshake: %w", err)
 	}
-	if err := requireTransportALPN(secure.ConnectionState(), alpn); err != nil {
+	if err := requireTransportALPN(secure.ConnectionState(), ALPN); err != nil {
 		_ = secure.Close()
 		return nil, err
-	}
-	if writeHello != nil {
-		if err := writeHello(secure); err != nil {
-			_ = secure.Close()
-			return nil, fmt.Errorf("muxsession: write private connector hello: %w", err)
-		}
 	}
 	return newYamuxSession(secure, true, transport.MaxIncomingStreams)
 }
@@ -113,24 +74,14 @@ func AcceptTLSYamux(
 	tlsConfig *tls.Config,
 	config TLSYamuxConfig,
 ) (Session, error) {
-	return acceptTLSYamux(ctx, network, tlsConfig, config, ALPN, nil)
+	return acceptTLSYamux(ctx, network, tlsConfig, config)
 }
 
-// AcceptConnectorTLSYamux authenticates the outer TLS connection before yamux
-// exists. the callback must validate the one-use connector credential against
-// the ingress-observed source and current lease.
-func AcceptConnectorTLSYamux(ctx context.Context, network net.Conn, tlsConfig *tls.Config, config TLSYamuxConfig, authenticate func(io.Reader) error) (Session, error) {
-	if authenticate == nil {
-		return nil, errors.New("muxsession: private session authentication is required")
-	}
-	return acceptTLSYamux(ctx, network, tlsConfig, config, ConnectorALPN, authenticate)
-}
-
-func acceptTLSYamux(ctx context.Context, network net.Conn, tlsConfig *tls.Config, config TLSYamuxConfig, alpn string, authenticate func(io.Reader) error) (Session, error) {
+func acceptTLSYamux(ctx context.Context, network net.Conn, tlsConfig *tls.Config, config TLSYamuxConfig) (Session, error) {
 	if network == nil {
 		return nil, errors.New("muxsession: accepted TLS/yamux connection is nil")
 	}
-	serverConfig, err := transportTLSConfigForALPN(tlsConfig, "", true, alpn)
+	serverConfig, err := transportTLSConfig(tlsConfig, "", true)
 	if err != nil {
 		_ = network.Close()
 		return nil, err
@@ -140,15 +91,9 @@ func acceptTLSYamux(ctx context.Context, network net.Conn, tlsConfig *tls.Config
 		_ = network.Close()
 		return nil, fmt.Errorf("muxsession: accept TLS/yamux handshake: %w", err)
 	}
-	if err := requireTransportALPN(secure.ConnectionState(), alpn); err != nil {
+	if err := requireTransportALPN(secure.ConnectionState(), ALPN); err != nil {
 		_ = secure.Close()
 		return nil, err
-	}
-	if authenticate != nil {
-		if err := authenticate(secure); err != nil {
-			_ = secure.Close()
-			return nil, fmt.Errorf("muxsession: authenticate private connector: %w", err)
-		}
 	}
 	return newYamuxSession(secure, false, config.MaxIncomingStreams)
 }

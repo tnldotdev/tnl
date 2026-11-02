@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -28,6 +30,20 @@ func TestDetachedChildProcess(t *testing.T) {
 	if *detachedHelperMode == "fail-early" {
 		t.Fatal("project configuration failed before a control socket exists")
 	}
+	if output, ok := strings.CutPrefix(*detachedHelperMode, "spawn-"); ok {
+		binary, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		child, err := startDetachedProcess(binary, []string{"-test.run=^TestDetachedChildProcess$", "-tnl-detached-child-root=" + *detachedHelperRoot, "-tnl-detached-child-mode=write-" + output})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := awaitDetached(t.Context(), child, *detachedHelperRoot, "abcdef0123456789abcdef01", 5*time.Second, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
 	ctx, cleanup, err := serveDetachedWithOptions(context.Background(), *detachedHelperRoot, "abcdef0123456789abcdef01", clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
@@ -41,6 +57,30 @@ func TestDetachedChildProcess(t *testing.T) {
 		detachedPublicationStarting(ctx)
 		detachedPublicationReady(ctx)
 	}
+	if output, ok := strings.CutPrefix(*detachedHelperMode, "write-"); ok {
+		detachedPublicationStarting(ctx)
+		detachedPublicationReady(ctx)
+		for {
+			if _, err := os.Stat(filepath.Join(*detachedHelperRoot, "write")); err == nil {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+		stream := os.Stdout
+		if output == "stderr" {
+			stream = os.Stderr
+		}
+		if _, err := io.WriteString(stream, "detached lifecycle output\n"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(*detachedHelperRoot, "wrote"), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if protocol, ok := strings.CutPrefix(*detachedHelperMode, "connection-"); ok {
 		detachedPublicationStarting(ctx)
 		profile := connector.Profile{Schema: 1, ServiceID: "svc_0123456789ABCDEFGHIJKL", Protocol: config.ProtocolName(protocol), Hostname: "approved.example.test", ServicePort: 25443, Host: "127.0.0.1", Port: 15432, Public: true, ConnectorRequired: true, Authentication: "connector"}
@@ -49,6 +89,45 @@ func TestDetachedChildProcess(t *testing.T) {
 		detachedPublicationReady(ctx)
 	}
 	<-ctx.Done()
+}
+
+func TestDetachedOutputSurvivesParentExit(t *testing.T) {
+	for _, output := range []string{"stdout", "stderr"} {
+		t.Run(output, func(t *testing.T) {
+			root, err := os.MkdirTemp("/tmp", "tnl-detached-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(root) })
+			root, err = filepath.EvalSymlinks(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := filepath.Join(root, "state")
+			const id = "abcdef0123456789abcdef01"
+			t.Cleanup(func() { _, _ = detachedRequest(state, id, "stop") })
+			binary, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			parent := exec.CommandContext(t.Context(), binary, "-test.run=^TestDetachedChildProcess$", "-tnl-detached-child-root="+state, "-tnl-detached-child-mode=spawn-"+output)
+			if data, err := parent.CombinedOutput(); err != nil {
+				t.Fatalf("detached launcher: %v %s", err, data)
+			}
+			// only the launcher owned the output reader. write after that process
+			// has exited, not merely after it returned the ready notification.
+			if err := os.WriteFile(filepath.Join(state, "write"), nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			workflowWait(t, 5*time.Second, func() bool {
+				_, err := os.Stat(filepath.Join(state, "wrote"))
+				return err == nil
+			})
+			if state, _, err := detachedStatus(state, id); err != nil || state != "ready" {
+				t.Fatal("detached child did not survive output after launcher exit", state, err)
+			}
+		})
+	}
 }
 
 func TestDetachedConnectorReturnsPreparedAddressForEveryProtocol(t *testing.T) {

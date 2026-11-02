@@ -119,68 +119,18 @@ func (f stalledServiceForwarder) OpenPrivate(ctx context.Context, relay ingressv
 	return f.alternate.OpenPrivate(ctx, relay, header)
 }
 
-func TestConnectorStalledRelayLeavesAlternateBudget(t *testing.T) {
+func TestPublicServiceVisitorStalledRelayLeavesAlternateBudget(t *testing.T) {
 	for _, proxy := range []bool{false, true} {
 		t.Run(fmt.Sprintf("proxy=%t", proxy), func(t *testing.T) {
-			p, control, forwarder, roots, _, _ := privateTestSetup(t)
+			p, _, forwarder, _ := publicServiceTestSetup(t)
 			p.config.PendingTimeout = 600 * time.Millisecond
-			p.config.Forwarder = stalledServiceForwarder{alternate: forwarder, stallProxy: proxy}
-			transport, stop := privateTestConnect(t, p, control, roots)
-			defer stop()
-			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-			defer cancel()
-			stream, err := transport.OpenStream(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer stream.Close()
-			_ = stream.SetDeadline(time.Now().Add(2 * time.Second))
-			if err := tunnelv1.WriteConnectorVisitorEntry(stream, privateEntry(control)); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := tunnelv1.ReadConnectorVisitorAccepted(stream); err != nil {
-				t.Fatalf("alternate could not accept after stalled preferred relay: %v", err)
-			}
-			if _, err := stream.Write([]byte("ping")); err != nil {
-				t.Fatal(err)
-			}
-			var reply [4]byte
-			if _, err := io.ReadFull(stream, reply[:]); err != nil || string(reply[:]) != "pong" {
-				t.Fatalf("alternate forwarding: %q %v", reply, err)
-			}
-		})
-	}
-}
-
-type directControlFixture struct{ control *privateControlFixture }
-
-func (f directControlFixture) AdmitDirectServiceVisitor(_ context.Context, _ string, claim ingressv1.DirectServiceVisitorClaim) (ingressv1.DirectServiceVisitorAdmission, error) {
-	c := f.control
-	return ingressv1.DirectServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: *c.projection.ConnectedRelays}, nil
-}
-func (directControlFixture) DirectServiceVisitorStatus(context.Context, string, ingressv1.DirectServiceVisitorLookup) (ingressv1.DirectServiceVisitorStatus, error) {
-	return ingressv1.DirectServiceVisitorStatus{State: ingressv1.DirectVisitorAllowed, ValidUntil: time.Now().Add(time.Minute)}, nil
-}
-func (directControlFixture) CloseDirectServiceVisitor(context.Context, string, ingressv1.DirectServiceVisitorLookup) error {
-	return nil
-}
-func (directControlFixture) PromoteDirectServiceVisitor(context.Context, string, ingressv1.DirectServiceVisitorLookup) error {
-	return nil
-}
-
-func TestDirectVisitorStalledRelayLeavesAlternateBudget(t *testing.T) {
-	for _, proxy := range []bool{false, true} {
-		t.Run(fmt.Sprintf("proxy=%t", proxy), func(t *testing.T) {
-			p, control, forwarder, _, _, _ := privateTestSetup(t)
-			p.config.PendingTimeout = 600 * time.Millisecond
-			p.config.DirectControl = directControlFixture{control}
 			p.config.Forwarder = stalledServiceForwarder{alternate: forwarder, stallProxy: proxy}
 			connection, visitor := net.Pipe()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				done <- p.AcceptDirect(ctx, connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"))
+				done <- p.AcceptPublic(ctx, connection, netip.MustParseAddrPort("192.0.2.4:42000"), netip.MustParseAddrPort("203.0.113.8:20000"))
 			}()
 			t.Cleanup(func() {
 				cancel()
@@ -226,7 +176,7 @@ func tcpPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
 func TestPendingDirectMySQLServerFirstHalfClose(t *testing.T) {
 	visitor, ingress := tcpPair(t)
 	upstream, mysql := tcpPair(t)
-	pending := &pendingDirectConn{Conn: ingress, ctx: t.Context(), promoted: make(chan struct{})}
+	pending := &pendingPublicServiceConn{Conn: ingress, ctx: t.Context(), promoted: make(chan struct{})}
 	pending.upload.Store(64 << 10)
 	pending.download.Store(128 << 10)
 	done := make(chan error, 1)

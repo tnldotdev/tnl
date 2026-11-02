@@ -50,13 +50,13 @@ func TestConnectionOwnerKernelDeathRecovery(t *testing.T) {
 	}
 	handle := filepath.Join(directory, "handle.json")
 	if err := OwnerStopped(handle); !errors.Is(err, ErrUnavailable) {
-		t.Fatal("live native owner was replaceable", err)
+		t.Fatal("live connector owner was replaceable", err)
 	}
 	if err := child.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
 	_ = child.Wait()
 	if err := OwnerStopped(handle); err != nil {
-		t.Fatal("kernel did not release the dead native owner's lock", err)
+		t.Fatal("kernel did not release the dead connector owner's lock", err)
 	}
 }

@@ -57,8 +57,13 @@ func TestFaultNetworkSelectionAndInputs(t *testing.T) {
 	}
 	addresses["visitor-1"] = "192.0.2.5"
 	connector, err := impairmentEndpoints("connector", addresses, []string{"ingress-a"}, nil, []string{"visitor-1"})
-	if err != nil || len(connector) != 2 || len(connector[0].Filters) != 2 || !strings.Contains(strings.Join(connector[0].Filters[1], " "), "dst 192.0.2.1 match ip protocol 17") || !strings.Contains(strings.Join(connector[1].Filters[0], " "), "dst 192.0.2.5 match ip protocol 6") {
+	if err != nil || len(connector) != 3 || len(connector[0].Filters) != 4 || !strings.Contains(strings.Join(connector[0].Filters[1], " "), "dst 192.0.2.3 match ip protocol 17") || !strings.Contains(strings.Join(connector[0].Filters[3], " "), "dst 192.0.2.4 match ip protocol 17") || !strings.Contains(strings.Join(connector[1].Filters[0], " "), "dst 192.0.2.5 match ip protocol 6") {
 		t.Fatalf("connector impairment must cover TCP/UDP in both directions: %+v, %v", connector, err)
+	}
+	for _, endpoint := range connector {
+		if endpoint.Service == "ingress-a" {
+			t.Fatal("native impairment still targets ingress")
+		}
 	}
 }
 

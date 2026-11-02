@@ -3,14 +3,17 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -280,7 +283,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			visitorCtx, stop := context.WithCancel(collector.process(t, "client"))
 			visitorReady, visitorDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				visitorDone <- connectorstream.Serve(visitorCtx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(visitorReady); return nil }})
+				visitorDone <- connectorstream.Serve(visitorCtx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(visitorReady); return nil }})
 			}()
 			t.Cleanup(func() {
 				stop()
@@ -295,6 +298,9 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			})
 			select {
 			case <-visitorReady:
+			case err := <-visitorDone:
+				visitorDone <- err
+				t.Fatalf("visitor failed: %v", err)
 			case <-time.After(10 * time.Second):
 				t.Fatal("visitor not ready")
 			}
@@ -312,9 +318,78 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 				t.Fatalf("echo %q: %v", body, err)
 			}
 			_ = connection.Close()
-			collector.assertChain(t, "connector.visitor_setup", "ingress.connector_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.visitor_tls")
-			collector.assertChain(t, "connector.visitor_setup", "ingress.connector_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.target_connect")
-			collector.assertChain(t, "connector.visitor_setup", "ingress.connector_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.visitor_authorization", "publisher.authorization")
+			collector.assertChain(t, "connector.visitor_setup", "publisher.visitor", "publisher.visitor_admission", "publisher.visitor_tls")
+			collector.assertChain(t, "connector.visitor_setup", "publisher.visitor", "publisher.visitor_admission", "publisher.target_connect")
+			collector.assertChain(t, "connector.visitor_setup", "publisher.visitor", "publisher.visitor_admission", "publisher.visitor_authorization", "publisher.authorization")
+		})
+	}
+}
+
+func TestIntegrationPublisherObservabilityPublicService(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	for _, transport := range []string{"quic", "tls-tcp"} {
+		t.Run(transport, func(t *testing.T) {
+			collector := newTopologyTraceCollector(t)
+			f := newServiceRuntimeFixtureContext(t, false, nil, true, func(role string) context.Context { return collector.process(t, role) })
+			process := startSeparatedPrivateIngress(t, f, 0, transport, nil)
+			target := startPrivateEchoTarget(t)
+			group, protocol, public := "trace", controlv1.Tcp, true
+			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{
+				TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64),
+				Configuration: controlv1.ProjectConfiguration{
+					PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: &public}},
+					Services:        map[string]controlv1.ProjectServiceConfiguration{"echo": {PublisherGroup: &group, Protocol: &protocol, Target: target.address}},
+					Webhooks:        map[string]controlv1.ProjectWebhook{},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			startWorkloadPublishers(t, f, group, transport)
+			service, err := f.identity.routes.GetService(t.Context(), *applied.Services[0].ServiceId)
+			if err != nil || service.Endpoint == nil {
+				t.Fatal("public service endpoint", err)
+			}
+			person, err := f.identity.authority.IdentityContext(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			device, err := f.identity.state.EnsureEnrolledVisitorDevice(t.Context(), person.Identity.Id, f.identity.routes.EnrollVisitorDevice)
+			if err != nil {
+				t.Fatal(err)
+			}
+			material := issueServiceClientCertificate(t, f, service.Id, device.ID)
+			ctx, cancel := context.WithCancel(collector.process(t, "ingress"))
+			defer cancel()
+			local, remote := net.Pipe()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				defer remote.Close()
+				_ = process.ingresses[0].publicServices.AcceptPublic(ctx, remote, netip.MustParseAddrPort("192.0.2.4:42000"), netip.AddrPortFrom(netip.MustParseAddr("203.0.113.8"), uint16(service.Endpoint.Port)))
+			}()
+			t.Cleanup(func() {
+				_ = local.Close()
+				cancel()
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+					t.Error("public service visitor did not join")
+				}
+			})
+			connection := tls.Client(local, &tls.Config{RootCAs: f.visitorRoots.RootCAs, ServerName: service.Endpoint.Hostname, MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{material}})
+			_ = connection.SetDeadline(time.Now().Add(5 * time.Second))
+			if _, err := io.WriteString(connection, "observed\n"); err != nil {
+				t.Fatal(err)
+			}
+			body := make([]byte, len("observed\n"))
+			if _, err := io.ReadFull(connection, body); err != nil || string(body) != "observed\n" {
+				t.Fatalf("public service echo %q: %v", body, err)
+			}
+			_ = local.Close()
+			collector.assertChain(t, "ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.visitor_tls")
+			collector.assertChain(t, "ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.target_connect")
+			collector.assertChain(t, "ingress.public_service_visitor_connection", "ingress.private_relay_attempt", "relay.open_connector_visitor_stream", "publisher.visitor", "publisher.visitor_admission", "publisher.visitor_authorization", "publisher.authorization")
 		})
 	}
 }

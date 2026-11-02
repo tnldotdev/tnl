@@ -261,7 +261,7 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 		if f.HoldHeartbeat.Load() {
 			<-r.Context().Done()
 		}
-		// stop before relay admission: the fixture proves native preparation and
+		// stop before relay admission: the fixture proves connector preparation and
 		// real verified target preflight, without inventing a ready relay.
 		serviceapi.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture heartbeat boundary")
 	default:

@@ -3,6 +3,7 @@ package publisher
 import (
 	"context"
 	"crypto/tls"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -31,7 +32,7 @@ func (l KubernetesLimits) defaults() KubernetesLimits {
 	return l
 }
 
-func (s ServiceStream) forwardKubernetes(ctx context.Context, client *tls.Conn, target ServiceHTTPTarget, initial ServiceVisitorDecision) error {
+func (s ServiceStream) forwardKubernetes(ctx context.Context, client net.Conn, state tls.ConnectionState, target ServiceHTTPTarget, initial ServiceVisitorDecision, wrap func(http.Handler) http.Handler) error {
 	limits := s.Kubernetes.defaults()
 	if limits.RequestDuration < time.Millisecond || limits.RequestDuration > 10*time.Minute || limits.StreamDuration < time.Millisecond || limits.StreamDuration > 24*time.Hour {
 		return ErrEndpoint
@@ -39,17 +40,17 @@ func (s ServiceStream) forwardKubernetes(ctx context.Context, client *tls.Conn, 
 	live, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan struct{})
-	go func() { defer close(done); s.guardVisitor(live, client, nil, initial) }()
+	go func() { defer close(done); s.guardVisitor(live, client, nil, state, initial) }()
 	defer func() { cancel(); <-done }()
 	return httpstream.Serve(live, client, &url.URL{Scheme: "https", Host: target.Address}, target.dial, func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		return wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Host != s.Authority && s.Authority != "" || r.URL.IsAbs() || r.URL.Host != "" || strings.HasPrefix(r.URL.Path, "/__tnl/") || r.Method == http.MethodConnect {
 				serviceHTTPDenied(w, http.StatusMisdirectedRequest)
 				return
 			}
 			check, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 			check, authDone := observability.PublisherOperation(check, "visitor_authorization")
-			decision, err := s.Visitor.authorize(check, client.ConnectionState())
+			decision, err := s.Visitor.authorize(check, state)
 			observability.PublisherAuthorization(check, decision.Allowed && decision.ValidUntil.After(time.Now()), decision.Allowed && decision.ValidUntil.After(time.Now()), err)
 			authDone(managedAuthorizationError(decision, err))
 			cancel()
@@ -70,8 +71,13 @@ func (s ServiceStream) forwardKubernetes(ctx context.Context, client *tls.Conn, 
 			}
 			// close the whole selected stream on expiry, including hijacked upgrades.
 			// net/http request cancellation alone does not own a hijacked connection.
-			timer := time.AfterFunc(duration, func() { _ = client.Close() })
-			defer timer.Stop()
+			timerDone := make(chan struct{})
+			timer := time.AfterFunc(duration, func() { defer close(timerDone); _ = client.Close() })
+			defer func() {
+				if !timer.Stop() {
+					<-timerDone
+				}
+			}()
 			r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
 			r.Header.Del("Tnl-Access-Token")
 			r.Header.Del(shareAccessHeaderName)
@@ -85,6 +91,6 @@ func (s ServiceStream) forwardKubernetes(ctx context.Context, client *tls.Conn, 
 			}
 			// Authorization belongs to the cluster, independently of tnl admission.
 			next.ServeHTTP(w, r)
-		})
+		}))
 	})
 }

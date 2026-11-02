@@ -14,6 +14,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -23,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
+	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -53,15 +55,16 @@ type privateSeparatedFixture struct {
 	composed                    *daemon
 	sharedTCP, sharedQUIC       string
 	defaultTiming               bool
-	configurePrivate            func(*ingress.ConnectorConfig)
+	configurePublicServices     func(*ingress.PublicServicesConfig)
 	visitorRoots                *tls.Config
 	visitorRootPEM              []byte
 	processContext              func(string) context.Context
+	publisherConnections        chan<- *publisherservice.Claimed
 }
 
-// the topology has one real control database/API, two ingress runtimes and two
-// relay runtimes. only infrastructure TLS uses the local test CA; private
-// ingress keys and trust are fetched from control's production issuer API.
+// the topology has one real control database/API and two relay runtimes. tests
+// that exercise public/direct serving add ingress; native traffic never does.
+// infrastructure TLS uses the local test CA and visitor TLS uses local ACME.
 func newServiceRuntimeFixture(t *testing.T, standalone bool, opened chan<- privateObservation) *privateSeparatedFixture {
 	return newServiceRuntimeFixtureTiming(t, standalone, opened, false)
 }
@@ -163,12 +166,11 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		}
 		t.Cleanup(func() { _ = settings.publicListener.Close() })
 		settings.relayTransportTLS = serviceRuntimeTLS(t, ca, settings.relayHostname)
-		settings.configurePrivate = func(id string, config *ingress.ConnectorConfig) {
+		settings.configurePublicServices = func(config *ingress.PublicServicesConfig) {
 			if !defaults {
 				config.RecheckInterval, config.RecheckTimeout, config.HardAuthorizationTTL = 500*time.Millisecond, 500*time.Millisecond, 3*time.Second
-				config.Control = acceleratedPrivateRecheck{config.Control}
 			}
-			config.Forwarder = observingServiceForwarder{ServiceForwarder: config.Forwarder, id: id, opened: opened}
+			config.Forwarder = observingServiceForwarder{ServiceForwarder: config.Forwarder, id: standaloneIngressID, opened: opened}
 		}
 		if err := control.startStandalone(ctx, settings, metrics, handler); err != nil {
 			cancel()
@@ -248,9 +250,11 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		relay := &daemon{serviceHTTP: serviceHTTP, clusterSecret: serviceRuntimeClusterSecret, clusterSecrets: secrets, cancel: stop, componentDone: make(chan error, 1), startedAt: time.Now()}
 		internalListener := serviceRuntimeListener(t)
 		internal := internalListener.Addr().String()
+		publisherListener := serviceRuntimeListener(t)
+		relayAddress := publisherListener.Addr().String()
 		if err := relay.startRelay(lifetime, relayProcessSettings{controlEndpoint: config.PrivateControlEndpoint(), controlAddress: config.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
-			relayServiceID: id, relayID: id, relayAddress: net.JoinHostPort(name, "443"), tlsServerName: name, transportTLS: serviceRuntimeTLS(t, ca, name), internalListener: internalListener, internalAddress: internal,
-			tcpListen: "127.0.0.1:0", udpListen: "127.0.0.1:0", quicIdleTimeout: time.Minute, quicMaxIncomingStreams: 128, runtime: relaySettingsFrom(config)}, relayMetrics); err != nil {
+			relayServiceID: id, relayID: id, relayAddress: relayAddress, tlsServerName: name, transportTLS: serviceRuntimeTLS(t, ca, name), internalListener: internalListener, internalAddress: internal,
+			tcpListener: publisherListener, udpListen: relayAddress, quicIdleTimeout: time.Minute, quicMaxIncomingStreams: 128, runtime: relaySettingsFrom(config)}, relayMetrics); err != nil {
 			stop()
 			t.Fatal(err)
 		}
@@ -262,8 +266,8 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
 			return relay.readyRelays(daemonconfig.RoleRelay, time.Now()) == nil, nil
 		})
-		f.tcpAddresses[net.JoinHostPort(name, "443")] = relay.relays[0].tcpListener.Addr().String()
-		f.quicAddresses[net.JoinHostPort(name, "443")] = relay.relays[0].udpListener.Addr().String()
+		f.tcpAddresses[relayAddress] = relay.relays[0].tcpListener.Addr().String()
+		f.quicAddresses[relayAddress] = relay.relays[0].udpListener.Addr().String()
 	}
 	return f
 }
@@ -279,7 +283,7 @@ func (f *privateSeparatedFixture) connectors() (muxsession.Connector, muxsession
 			return connector.Connect(ctx, endpoint)
 		})
 	}
-	return redirect(f.quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots}), redirect(f.tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
+	return redirect(f.quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}), redirect(f.tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
 }
 
 func privateDisabledConnector() muxsession.Connector {

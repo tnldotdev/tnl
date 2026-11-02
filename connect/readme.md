@@ -1,6 +1,6 @@
 # github action boundary
 
-`tnldotdev/tnl/connect` prepares native connections for one saved GitHub workload and
+`tnldotdev/tnl/connect` prepares connector connections for one saved GitHub workload and
 keeps them available to later steps in the same job. pin the action to a full
 commit, install the project's locked dependencies first, and select the policy:
 
@@ -65,7 +65,7 @@ native binary and still must pass machine capability checks.
 the action copies the selected executable and available legal files into a
 mode-0700 directory outside the checkout under `RUNNER_TEMP`. installed packages
 must provide `LICENSE`, `NOTICE`, and `THIRD_PARTY_LICENSES.txt`. this exact copy
-is used for all operations, including the native owner's own child process and
+is used for all operations, including the connector owner's own child process and
 post cleanup after later package installs or checkout changes.
 
 1. `tnl --no-telemetry runtime connections capabilities` must report schema 1,
@@ -110,7 +110,7 @@ if the starter dies before delivering a complete response, the action has no
 cleanup capability and cannot confirm joined cleanup. it retains the session
 directory, reports `TNL_ACTION_CLEANUP_UNCONFIRMED`, and exports no connections.
 post reports the same boundary rather than claiming it stopped an owner. any
-surviving native owner still has its fixed execution deadline and runner tracking;
+surviving connector owner still has its fixed execution deadline and runner tracking;
 its 90-second renewable lease alone does not stop an owner that can still renew.
 ordinary cancellation asks the starter to join partial cleanup, but an absent
 response cannot prove that cleanup completed.

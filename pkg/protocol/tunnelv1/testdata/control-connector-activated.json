@@ -1,0 +1,6 @@
+{
+  "type": "connector_leg_activated",
+  "protocol_version": 1,
+  "request_id": "activate_1",
+  "connector_leg_binding": { "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+}

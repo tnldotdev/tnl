@@ -72,7 +72,7 @@ func newPublisherConnectionManager(
 		publicURLID: publicURLID, publishRunNumber: publishRunNumber, fallback: make(chan struct{}),
 	}
 	ctx = observability.WithPublisherRecoveryFrom(ctx, route.life)
-	ctx = observability.WithFields(ctx, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "direct", Exposure: "public"})
+	ctx = observability.WithFields(ctx, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "public_endpoint", Exposure: "public"})
 	paths, err := tunnel.NewSlots(ctx, tunnel.SlotsConfig{
 		Connect: m.connect, SingleUse: true, BackoffMin: config.ReconnectDelay, BackoffMax: config.ReconnectDelay,
 		PreferTCPAfter: func(session tunnel.SlotSession, err error) bool {

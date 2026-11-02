@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/pem"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,8 +18,11 @@ import (
 	"testing"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/config"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
@@ -118,20 +122,32 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 			listener := workflowListen(t)
 			address := listener.Addr().String()
 			_ = listener.Close()
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
 			args := []string{"--no-config", "--no-telemetry", "connect", service.Id, "--listen", address, "--server", f.url, "--state-dir", person}
 			const detachedID = "abcdef0123456789abcdef02"
 			if detached {
 				args = append(args, "--detached-child="+detachedID)
 			}
-			ready, done := make(chan struct{}, 8), make(chan error, 1)
-			go func() {
-				done <- run(ctx, args, io.Discard, workflowLifecycleLog{t: t, ready: func() { ready <- struct{}{} }})
-			}()
-			joined := false
+			var ready chan struct{}
+			var done chan error
+			var cancel context.CancelFunc
+			joined := true
+			startConnector := func() {
+				t.Helper()
+				if !joined {
+					t.Fatal("previous connector invocation was not joined")
+				}
+				ctx, stop := context.WithCancel(t.Context())
+				cancel = stop
+				ready, done = make(chan struct{}, 8), make(chan error, 1)
+				joined = false
+				go func() {
+					done <- run(ctx, args, io.Discard, workflowLifecycleLog{t: t, ready: func() { ready <- struct{}{} }})
+				}()
+			}
 			defer func() {
-				cancel()
+				if cancel != nil {
+					cancel()
+				}
 				if !joined {
 					select {
 					case <-done:
@@ -140,6 +156,23 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 					}
 				}
 			}()
+			joinReplacedConnector := func() {
+				t.Helper()
+				select {
+				case err := <-done:
+					joined = true
+					cancel()
+					if !errors.Is(err, connectorstream.ErrServiceConnection) && !errors.Is(err, clientcontrol.ErrNotFound) {
+						t.Fatalf("replaced connector did not stop with an obsolete run: %v", err)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("replaced connector did not join")
+				}
+				if conn, err := net.DialTimeout("tcp", address, time.Second); err == nil {
+					_ = conn.Close()
+					t.Fatal("old connector listener survived publisher replacement")
+				}
+			}
 			waitReady := func() {
 				t.Helper()
 				select {
@@ -157,6 +190,7 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 					})
 				}
 			}
+			startConnector()
 			waitReady()
 			open := func() net.Conn {
 				t.Helper()
@@ -189,18 +223,9 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				previousPublisher := stopPublisher
 				targetTLS.Store(enabled)
 				stopPublisher = startPublisher(service)
-				// this fresh local connection observes the changed revision and ends
-				// the old runner. no bytes from it may reach the target.
-				trigger, err := net.Dial("tcp", address)
-				if err != nil {
-					t.Fatal(err)
-				}
-				_ = trigger.SetReadDeadline(time.Now().Add(5 * time.Second))
-				if _, err := trigger.Read(make([]byte, 1)); err == nil {
-					t.Fatal("metadata trigger forwarded bytes")
-				}
-				_ = trigger.Close()
-				waitReady()
+				// publisher replacement ends the old invocation. a fresh invocation
+				// must authorize current metadata without reusing its old peer.
+				joinReplacedConnector()
 				previousPublisher()
 				_ = old.SetReadDeadline(time.Now().Add(time.Second))
 				if _, err := old.Read(make([]byte, 1)); err == nil {
@@ -209,10 +234,12 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 					t.Fatal("old stream was not closed")
 				}
 				_ = old.Close()
+				startConnector()
+				waitReady()
 				old = open()
 			}
-			// revoke access after the runner detects a new revision, before the
-			// outer lifecycle reads inventory. a same-name record cannot replace it.
+			// revoke access while the next invocation reads current inventory.
+			// neither cached metadata nor a same-name record can authorize it.
 			entered, release := make(chan struct{}), make(chan struct{})
 			var once sync.Once
 			hook := func() { once.Do(func() { close(entered); <-release }) }
@@ -231,20 +258,18 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 			targetTLS.Store(false)
 			stopPublisher = startPublisher(service)
 			defer stopPublisher()
-			trigger, err := net.Dial("tcp", address)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer trigger.Close()
+			joinReplacedConnector()
+			previousPublisher()
+			startConnector()
 			select {
 			case <-entered:
 			case <-time.After(10 * time.Second):
-				t.Fatal("reload did not refetch visitor inventory")
+				t.Fatal("new invocation did not refetch visitor inventory")
 			}
 			if detached {
 				status, err := detachedRequest(person, detachedID, "status")
 				if err != nil || status != fmt.Sprintf("starting %d", os.Getpid()) {
-					t.Fatalf("reload did not clear readiness: %q %v", status, err)
+					t.Fatalf("pending authorization advertised readiness: %q %v", status, err)
 				}
 			}
 			database, err := controlstate.Open(t.Context(), f.databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
@@ -265,8 +290,8 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 			select {
 			case err := <-done:
 				joined = true
-				if err == nil {
-					t.Fatal("revoked refresh succeeded")
+				if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResourceNotFound {
+					t.Fatalf("revoked invocation did not fail inventory authorization: %v", err)
 				}
 			case <-time.After(10 * time.Second):
 				t.Fatal("revoked connector did not stop")

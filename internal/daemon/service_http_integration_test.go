@@ -62,7 +62,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.identity.teamID = team.Id
-	direct := startSeparatedPrivateIngress(t, f, 0, "quic", nil).ingresses[0].private
+	direct := startSeparatedPrivateIngress(t, f, 0, "quic", nil).ingresses[0].publicServices
 	startSeparatedPrivateIngress(t, f, 1, "quic", nil)
 	var requests atomic.Int64
 	var targetConnection atomic.Value
@@ -138,7 +138,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{DirectOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, DirectConnector: direct, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, MaxConnections: 64})
+	server, err := ingress.New(listener, ingress.Config{PublicServicesOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: direct, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, MaxConnections: 64})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -279,7 +279,7 @@ def test_failed_preparation_is_shared_without_implicit_authentication_retry(
     def command(binary: Path, *args: str) -> object:
         nonlocal calls
         calls += 1
-        raise tnl.TnlError("sdk.connection_unavailable", "native connection failed")
+        raise tnl.TnlError("sdk.connection_unavailable", "connector connection failed")
 
     monkeypatch.setattr(_connections, "_command", command)
     handle = tnl.connect("database", directory=tmp_path)

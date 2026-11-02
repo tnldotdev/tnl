@@ -22,8 +22,8 @@ func privateLifecycleHeader() tunnelv1.ServiceForwardingHeader {
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
 		ServiceID: privateRelayID(opaqueid.ServicePrefix), ServiceRunID: privateRelayID(opaqueid.ServiceRunPrefix), RunNumber: 3,
 		PublisherConnectionID: privateRelayID(opaqueid.PublisherConnectionPrefix), ConnectionAssignmentRevision: 2,
-		Direct:   &tunnelv1.DirectAdmission{IngressID: "ingress", IngressRunID: privateRelayID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 8443},
-		SourceIP: "192.0.2.4", VisitorConnectionID: privateRelayID(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().Add(time.Minute),
+		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress", IngressRunID: privateRelayID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 8443},
+		SourceIP:      "192.0.2.4", VisitorConnectionID: privateRelayID(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().Add(time.Minute),
 	}, ConnectionSlot: 1, RelayServiceID: "relay-a", RelayID: "relay-process", RelayRunID: privateRelayID(opaqueid.RelayRunPrefix),
 		RelayLeaseRevision: 4, LeaseExpiresAt: time.Now().Add(time.Minute)}
 }

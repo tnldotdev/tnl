@@ -194,8 +194,6 @@ func storeProblem(err error, report func(error)) (status int, kind, detail strin
 		return http.StatusConflict, "ingress_already_running", "Another process run holds the ingress lease"
 	case errors.Is(err, controlstate.ErrIngressLeaseStale):
 		return http.StatusConflict, "ingress_lease_stale", "The ingress lease is no longer current"
-	case errors.Is(err, controlstate.ErrIngressTransportCertificate):
-		return http.StatusServiceUnavailable, "unavailable", "ingress transport certificate is unavailable"
 	case errors.Is(err, controlstate.ErrPublicURLRecoveryEpisodeStale):
 		return http.StatusConflict, "recovery_episode_stale", "The public URL recovery episode is no longer current"
 	case errors.Is(err, controlstate.ErrIngressUsageReportInvalid):

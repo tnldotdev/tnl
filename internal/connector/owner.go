@@ -48,8 +48,8 @@ type preparedConnection struct {
 	sessionID       string
 }
 
-type nativeConnectionBackend struct {
-	nativeConnectionSession
+type connectorConnectionBackend struct {
+	connectorConnectionSession
 	openSession                                            SessionOpener
 	project                                                projectConfiguration
 	scope                                                  connectorruntime.Context
@@ -63,7 +63,7 @@ type nativeConnectionBackend struct {
 	lifetime                                               context.Context
 	kubeMu                                                 sync.Mutex
 	serviceGates                                           map[string]chan struct{}
-	snapshot                                               atomic.Pointer[nativePreparedSnapshot]
+	snapshot                                               atomic.Pointer[connectorPreparedSnapshot]
 	closed                                                 bool
 	cleanupContext                                         context.Context
 	operations                                             sync.WaitGroup
@@ -79,7 +79,7 @@ type nativeConnectionBackend struct {
 
 // session state is independent of configured scope and service coordination.
 // mu protects publication; sessionGate serializes exchanges without blocking readers.
-type nativeConnectionSession struct {
+type connectorConnectionSession struct {
 	human            *Session
 	teamID           string
 	workload         *workload.Client
@@ -95,7 +95,7 @@ type nativeConnectionSession struct {
 
 // the configured scope never changes with listener readiness or session renewal.
 // snapshots contain only published values; readers never join network work.
-type nativePreparedSnapshot struct {
+type connectorPreparedSnapshot struct {
 	metadata     meta.PublicMetadata
 	verification *connectorruntime.AssertionVerification
 	assertions   map[string]connectorruntime.AssertionVerification
@@ -103,8 +103,8 @@ type nativePreparedSnapshot struct {
 	errors       map[string]error
 }
 
-func (b *nativeConnectionBackend) publishLocked() {
-	s := &nativePreparedSnapshot{metadata: b.metadata, connections: map[string]connectorruntime.Connection{}, errors: map[string]error{}}
+func (b *connectorConnectionBackend) publishLocked() {
+	s := &connectorPreparedSnapshot{metadata: b.metadata, connections: map[string]connectorruntime.Connection{}, errors: map[string]error{}}
 	s.assertions = make(map[string]connectorruntime.AssertionVerification, len(b.assertions))
 	for digest, proof := range b.assertions {
 		s.assertions[digest] = proof
@@ -157,7 +157,7 @@ func minTime(a, b time.Time) time.Time {
 	return b
 }
 
-func (b *nativeConnectionBackend) begin(ctx context.Context) (context.Context, func(), error) {
+func (b *connectorConnectionBackend) begin(ctx context.Context) (context.Context, func(), error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
@@ -175,7 +175,7 @@ func (b *nativeConnectionBackend) begin(ctx context.Context) (context.Context, f
 	return ctx, func() { stop(); cancel(); b.operations.Done() }, nil
 }
 
-func (b *nativeConnectionBackend) cleanup() context.Context {
+func (b *connectorConnectionBackend) cleanup() context.Context {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.cleanupContext != nil {
@@ -184,7 +184,7 @@ func (b *nativeConnectionBackend) cleanup() context.Context {
 	return context.Background()
 }
 
-func (b *nativeConnectionBackend) Start(ctx context.Context) (meta.PublicMetadata, time.Time, error) {
+func (b *connectorConnectionBackend) Start(ctx context.Context) (meta.PublicMetadata, time.Time, error) {
 	b.prepared = map[string]*preparedConnection{}
 	b.teamID = b.scope.TeamID
 	lifetime, cancel := context.WithCancel(observability.Independent(context.WithoutCancel(ctx)))
@@ -303,7 +303,7 @@ func (b *nativeConnectionBackend) Start(ctx context.Context) (meta.PublicMetadat
 	return b.metadata, b.deadline, nil
 }
 
-func (b *nativeConnectionBackend) Connect(ctx context.Context, name string) (connectorruntime.Connection, error) {
+func (b *connectorConnectionBackend) Connect(ctx context.Context, name string) (connectorruntime.Connection, error) {
 	ctx, finish, err := b.begin(ctx)
 	if err != nil {
 		return connectorruntime.Connection{}, err
@@ -403,7 +403,7 @@ func (b *nativeConnectionBackend) Connect(ctx context.Context, name string) (con
 	return b.Prepared(name)
 }
 
-func (b *nativeConnectionBackend) refreshService(ctx context.Context, name string, approved controlv1.Service, client *workload.Client) (controlv1.Service, error) {
+func (b *connectorConnectionBackend) refreshService(ctx context.Context, name string, approved controlv1.Service, client *workload.Client) (controlv1.Service, error) {
 	service := approved
 	if client != nil {
 		inventory, err := client.ListServices(ctx)
@@ -464,16 +464,16 @@ func (b *nativeConnectionBackend) refreshService(ctx context.Context, name strin
 
 // Prepared is a local read only: no provider/control requests, key creation,
 // listener setup or repair. an unprepared sibling must be explicitly awaited.
-func (b *nativeConnectionBackend) Prepared(name string) (connectorruntime.Connection, error) {
+func (b *connectorConnectionBackend) Prepared(name string) (connectorruntime.Connection, error) {
 	p, err := b.Snapshot(name)
 	return p.Connection, err
 }
 
-func (b *nativeConnectionBackend) Snapshot(name string) (connectorruntime.Prepared, error) {
+func (b *connectorConnectionBackend) Snapshot(name string) (connectorruntime.Prepared, error) {
 	return b.SnapshotFor(name, "")
 }
 
-func (b *nativeConnectionBackend) SnapshotFor(name, assertion string) (connectorruntime.Prepared, error) {
+func (b *connectorConnectionBackend) SnapshotFor(name, assertion string) (connectorruntime.Prepared, error) {
 	s := b.snapshot.Load()
 	if s == nil {
 		b.mu.Lock()
@@ -510,7 +510,7 @@ func (b *nativeConnectionBackend) SnapshotFor(name, assertion string) (connector
 	}
 	return connectorruntime.Prepared{Schema: 1, ProjectRuntime: s.metadata, Connection: c, Verification: verification}, nil
 }
-func (b *nativeConnectionBackend) healthy() (time.Time, error) {
+func (b *connectorConnectionBackend) healthy() (time.Time, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.human != nil && b.workload == nil {
@@ -522,7 +522,7 @@ func (b *nativeConnectionBackend) healthy() (time.Time, error) {
 	}
 	return b.deadline, nil
 }
-func (b *nativeConnectionBackend) Renew(ctx context.Context) (time.Time, error) {
+func (b *connectorConnectionBackend) Renew(ctx context.Context) (time.Time, error) {
 	ctx, finish, err := b.begin(ctx)
 	if err != nil {
 		return time.Time{}, err
@@ -568,9 +568,11 @@ func (b *nativeConnectionBackend) Renew(ctx context.Context) (time.Time, error) 
 
 // process lifetime belongs to the application; session deadlines remain in
 // snapshots and data-plane admission, not in the local capability's lifetime.
-func (b *nativeConnectionBackend) Persistent() bool { return b.scope.Workload == "" || b.parentPID > 0 }
+func (b *connectorConnectionBackend) Persistent() bool {
+	return b.scope.Workload == "" || b.parentPID > 0
+}
 
-func (b *nativeConnectionBackend) OwnerAlive() bool {
+func (b *connectorConnectionBackend) OwnerAlive() bool {
 	if b.parentPID <= 0 {
 		return true
 	}
@@ -578,15 +580,15 @@ func (b *nativeConnectionBackend) OwnerAlive() bool {
 	return err == nil && p.Signal(syscall.Signal(0)) == nil
 }
 
-func (b *nativeConnectionBackend) Attach(ctx context.Context, assertion string) error {
+func (b *connectorConnectionBackend) Attach(ctx context.Context, assertion string) error {
 	return b.attach(ctx, assertion, false)
 }
 
-func (b *nativeConnectionBackend) UseAssertion(ctx context.Context, assertion string) error {
+func (b *connectorConnectionBackend) UseAssertion(ctx context.Context, assertion string) error {
 	return b.attach(ctx, assertion, true)
 }
 
-func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, reuse bool) error {
+func (b *connectorConnectionBackend) attach(ctx context.Context, assertion string, reuse bool) error {
 	ctx, finish, err := b.begin(ctx)
 	if err != nil {
 		return err
@@ -749,7 +751,7 @@ func (b *nativeConnectionBackend) attach(ctx context.Context, assertion string, 
 	return err
 }
 
-func (b *nativeConnectionBackend) reuseAssertion(assertion string) bool {
+func (b *connectorConnectionBackend) reuseAssertion(assertion string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed || b.workload == nil {
@@ -769,7 +771,7 @@ func (b *nativeConnectionBackend) reuseAssertion(assertion string) bool {
 	return true
 }
 
-func (b *nativeConnectionBackend) rememberAssertion(assertion string, expires time.Time, session authorityv1.WorkloadSession) {
+func (b *connectorConnectionBackend) rememberAssertion(assertion string, expires time.Time, session authorityv1.WorkloadSession) {
 	if assertion == "" || !expires.After(time.Now()) {
 		b.verification = nil
 		return
@@ -801,7 +803,7 @@ func (b *nativeConnectionBackend) rememberAssertion(assertion string, expires ti
 	b.assertionChecks[b.verification.Digest] = checkedUntil
 	b.verifiedSession = session.Id
 }
-func (b *nativeConnectionBackend) Verification() *connectorruntime.AssertionVerification {
+func (b *connectorConnectionBackend) Verification() *connectorruntime.AssertionVerification {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.verification == nil || !b.verification.ExpiresAt.After(time.Now()) {
@@ -811,12 +813,12 @@ func (b *nativeConnectionBackend) Verification() *connectorruntime.AssertionVeri
 	return &v
 }
 
-func (b *nativeConnectionBackend) ProjectRuntime() meta.PublicMetadata {
+func (b *connectorConnectionBackend) ProjectRuntime() meta.PublicMetadata {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.metadata
 }
-func (b *nativeConnectionBackend) Kubeconfig() string {
+func (b *connectorConnectionBackend) Kubeconfig() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, p := range b.prepared {
@@ -826,7 +828,7 @@ func (b *nativeConnectionBackend) Kubeconfig() string {
 	}
 	return ""
 }
-func (b *nativeConnectionBackend) prepareKube(ctx context.Context, name string, p *preparedConnection) error {
+func (b *connectorConnectionBackend) prepareKube(ctx context.Context, name string, p *preparedConnection) error {
 	b.kubeMu.Lock()
 	defer b.kubeMu.Unlock()
 	source, err := kubeconfig.ResolveSource(kubeconfig.Source{TokenFile: b.kubeOptions.KubeTokenFile, ConfigFile: b.kubeOptions.KubeUserConfig, ExistingUser: b.kubeOptions.KubeUser}, p.service.KubernetesAuth)
@@ -864,7 +866,7 @@ func (b *nativeConnectionBackend) prepareKube(ctx context.Context, name string, 
 	return err
 }
 
-func (b *nativeConnectionBackend) Credential(ctx context.Context, name string) (credentialv1.ExecCredential, error) {
+func (b *connectorConnectionBackend) Credential(ctx context.Context, name string) (credentialv1.ExecCredential, error) {
 	ctx, finish, err := b.begin(ctx)
 	if err != nil {
 		return credentialv1.ExecCredential{}, err

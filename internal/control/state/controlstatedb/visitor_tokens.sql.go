@@ -55,16 +55,25 @@ func (q *Queries) DeleteExpiredVisitorTokenSigningKeys(ctx context.Context, now 
 	return err
 }
 
-const ensureVisitorTokenIssuer = `-- name: EnsureVisitorTokenIssuer :one
+const ensureVisitorTokenIssuer = `-- name: EnsureVisitorTokenIssuer :exec
 INSERT INTO control.visitor_token_issuer(issuer) VALUES($1)
-ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id RETURNING issuer
+ON CONFLICT(id) DO NOTHING
 `
 
-func (q *Queries) EnsureVisitorTokenIssuer(ctx context.Context, issuer string) (string, error) {
-	row := q.db.QueryRow(ctx, ensureVisitorTokenIssuer, issuer)
-	var issuer_2 string
-	err := row.Scan(&issuer_2)
-	return issuer_2, err
+func (q *Queries) EnsureVisitorTokenIssuer(ctx context.Context, issuer string) error {
+	_, err := q.db.Exec(ctx, ensureVisitorTokenIssuer, issuer)
+	return err
+}
+
+const lockVisitorTokenIssuer = `-- name: LockVisitorTokenIssuer :one
+SELECT issuer FROM control.visitor_token_issuer WHERE id FOR UPDATE
+`
+
+func (q *Queries) LockVisitorTokenIssuer(ctx context.Context) (string, error) {
+	row := q.db.QueryRow(ctx, lockVisitorTokenIssuer)
+	var issuer string
+	err := row.Scan(&issuer)
+	return issuer, err
 }
 
 const lockVisitorTokenSigningKey = `-- name: LockVisitorTokenSigningKey :one
@@ -88,8 +97,8 @@ func (q *Queries) LockVisitorTokenSigningKey(ctx context.Context) (ControlVisito
 }
 
 const retainVisitorTokenSigningKey = `-- name: RetainVisitorTokenSigningKey :execrows
-UPDATE control.visitor_token_keys SET retain_until=GREATEST(retain_until,$1)
-WHERE id=$2 AND retired_at IS NULL AND revoked_at IS NULL
+UPDATE control.visitor_token_keys SET retain_until=$1
+WHERE id=$2 AND retired_at IS NULL AND revoked_at IS NULL AND retain_until<$1
 `
 
 type RetainVisitorTokenSigningKeyParams struct {

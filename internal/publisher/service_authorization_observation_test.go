@@ -3,6 +3,7 @@ package publisher_test
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"net"
 	"testing"
@@ -21,7 +22,7 @@ func TestManagedAuthorizationTimingDistinguishesDenialAndInfrastructure(t *testi
 			t.Cleanup(func() { _ = metrics.Shutdown(context.Background()) })
 			cause := errors.New("fixture provider cause")
 			stream := publisher.ServiceStream{Protocol: config.ProtocolTCP, Public: true, Hostname: hostname, Target: "127.0.0.1:1", TLS: &tls.Config{Certificates: []tls.Certificate{certificates.server}},
-				Visitor: publisher.ConnectorVisitor{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
+				Visitor: publisher.CertificateVisitor{Check: func(context.Context, *x509.Certificate) (publisher.ServiceVisitorDecision, error) {
 					if denied {
 						return publisher.ServiceVisitorDecision{}, nil
 					}
@@ -34,7 +35,7 @@ func TestManagedAuthorizationTimingDistinguishesDenialAndInfrastructure(t *testi
 				defer incoming.Close()
 				done <- stream.Forward(observability.WithMetrics(t.Context(), metrics), incoming)
 			}()
-			secured := tls.Client(visitor, &tls.Config{RootCAs: certificates.roots, ServerName: hostname})
+			secured := tls.Client(visitor, &tls.Config{RootCAs: certificates.roots, ServerName: hostname, Certificates: []tls.Certificate{certificates.client}})
 			if err := secured.HandshakeContext(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -60,7 +61,7 @@ func TestManagedAuthorizationTimingDistinguishesDenialAndInfrastructure(t *testi
 					for _, label := range point.Label {
 						labels[label.GetName()] = label.GetValue()
 					}
-					if labels["tnl_operation"] == "visitor_authorization" && labels["tnl_outcome"] == outcome && labels["tnl_exposure"] == "public" && labels["tnl_access_path"] == "connector" && labels["tnl_service_protocol"] == "tcp" {
+					if labels["tnl_operation"] == "visitor_authorization" && labels["tnl_outcome"] == outcome && labels["tnl_exposure"] == "public" && labels["tnl_access_path"] == "public_endpoint" && labels["tnl_service_protocol"] == "tcp" {
 						measured += point.GetHistogram().GetSampleCount()
 					}
 				}

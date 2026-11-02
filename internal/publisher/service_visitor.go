@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"net"
 	"reflect"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 )
@@ -17,8 +19,8 @@ type ServiceVisitorAuthentication interface {
 	authorize(context.Context, tls.ConnectionState) (ServiceVisitorDecision, error)
 }
 
-// ServiceHTTPFrontend authorizes HTTP requests after mandatory verified native
-// visitor TLS. it owns request-level admission before opening a target connection.
+// ServiceHTTPFrontend authorizes HTTP requests after verified visitor TLS. it
+// owns request-level admission before opening a target connection.
 type ServiceHTTPFrontend interface {
 	Forward(context.Context, *tls.Conn, ServiceHTTPTarget) error
 }
@@ -26,6 +28,10 @@ type ServiceHTTPFrontend interface {
 type ServiceHTTPTarget struct {
 	Address   string
 	Transport targettransport.Transport
+	connector ServiceConnectorAdmission
+	lifetime  context.Context
+	track     func(net.Conn)
+	enter     func() (func(), bool)
 }
 
 type PublicHTTPVisitor struct{ Frontend ServiceHTTPFrontend }
@@ -39,16 +45,25 @@ func (PublicHTTPVisitor) authorize(context.Context, tls.ConnectionState) (Servic
 	return ServiceVisitorDecision{}, ErrEndpoint
 }
 
-// ConnectorVisitor rechecks the identity already authenticated by the connector
-// session. it never asks the application to supply another credential.
-type ConnectorVisitor struct {
-	Check func(context.Context) (ServiceVisitorDecision, error)
+// ServiceConnectorAdmission is consumed only by the connector forwarding path. the
+// concrete service admission owns construction, physical-owner checks and C;
+// this interface does not turn a permission guard or a callback into admission.
+type ServiceConnectorAdmission interface {
+	CheckUse(context.Context) (time.Time, error)
+	SetupDeadline() time.Time
+	FinishSetup() error
+	Stop()
 }
 
-func (v ConnectorVisitor) valid() bool                  { return v.Check != nil }
+// ConnectorVisitor is supplied by a real, stream-owned service admission after
+// signed possession verification. HTTP request guards do not implement admission.
+type ConnectorVisitor struct{ Admission ServiceConnectorAdmission }
+
+func (v ConnectorVisitor) valid() bool                  { return !nilManagedValue(v.Admission) }
 func (ConnectorVisitor) clientAuth() tls.ClientAuthType { return tls.NoClientCert }
 func (v ConnectorVisitor) authorize(ctx context.Context, _ tls.ConnectionState) (ServiceVisitorDecision, error) {
-	return v.Check(ctx)
+	until, err := v.Admission.CheckUse(ctx)
+	return ServiceVisitorDecision{Allowed: err == nil, ValidUntil: until}, err
 }
 
 // CertificateVisitor requires key possession at the TLS boundary. control still
@@ -107,8 +122,6 @@ func nilManagedValue(value any) bool {
 var (
 	_ ServiceVisitorAuthentication = PublicHTTPVisitor{}
 	_ ServiceVisitorAuthentication = (*PublicHTTPVisitor)(nil)
-	_ ServiceVisitorAuthentication = ConnectorVisitor{}
-	_ ServiceVisitorAuthentication = (*ConnectorVisitor)(nil)
 	_ ServiceVisitorAuthentication = CertificateVisitor{}
 	_ ServiceVisitorAuthentication = (*CertificateVisitor)(nil)
 )

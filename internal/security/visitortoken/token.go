@@ -136,6 +136,7 @@ type View struct {
 	Hostname              string
 	Port                  uint16
 	VisitorPolicyRevision int64
+	MetadataRevision      int64
 	ObservedAt            time.Time
 	ValidUntil            time.Time
 	keys                  map[string]ed25519.PublicKey

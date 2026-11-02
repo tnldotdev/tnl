@@ -57,13 +57,6 @@ func (c *Client) GetProjectPublicMetadata(ctx context.Context, team, project str
 	})
 }
 
-func (c *Client) ReleaseVisitorIngressAssignment(ctx context.Context, sessionID string) error {
-	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.ReleaseVisitorIngressAssignment(ctx, sessionID, editors...)
-	})
-	return err
-}
-
 func (c *Client) CreatePublisherGroupEnrollment(ctx context.Context, project, group string, body controlv1.CreatePublisherGroupEnrollmentRequest) (controlv1.PublisherGroupEnrollment, error) {
 	return requestWithAccess[controlv1.PublisherGroupEnrollment](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CreatePublisherGroupEnrollment(ctx, project, group, body, editors...)

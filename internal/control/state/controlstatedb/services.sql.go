@@ -7,7 +7,6 @@ package controlstatedb
 
 import (
 	"context"
-	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -64,23 +63,6 @@ func (q *Queries) AcceptServiceInvitation(ctx context.Context, arg AcceptService
 		&i.RevokedAt,
 	)
 	return i, err
-}
-
-const advanceServiceRoutingClock = `-- name: AdvanceServiceRoutingClock :one
-UPDATE control.service_routing_clock SET current_revision = $1, updated_at = $2
-WHERE id = 1 AND current_revision < $1 RETURNING current_revision
-`
-
-type AdvanceServiceRoutingClockParams struct {
-	Revision int64
-	Now      pgtype.Timestamptz
-}
-
-func (q *Queries) AdvanceServiceRoutingClock(ctx context.Context, arg AdvanceServiceRoutingClockParams) (int64, error) {
-	row := q.db.QueryRow(ctx, advanceServiceRoutingClock, arg.Revision, arg.Now)
-	var current_revision int64
-	err := row.Scan(&current_revision)
-	return current_revision, err
 }
 
 const advanceServiceRunNumber = `-- name: AdvanceServiceRunNumber :one
@@ -164,20 +146,6 @@ func (q *Queries) ClaimServiceConnectionSlot(ctx context.Context, arg ClaimServi
 		&i.AssignedAt,
 	)
 	return i, err
-}
-
-const cleanupConnectorSessions = `-- name: CleanupConnectorSessions :exec
-DELETE FROM control.connector_sessions session WHERE session.id IN
-    (SELECT expired.id FROM control.connector_sessions expired
-        WHERE expired.workload_session_id IS NULL AND expired.expires_at <= $1
-        AND NOT EXISTS (SELECT 1 FROM control.connector_visitor_streams stream
-            WHERE stream.connector_session_id = expired.id)
-        ORDER BY expired.expires_at, expired.id LIMIT 100 FOR UPDATE SKIP LOCKED)
-`
-
-func (q *Queries) CleanupConnectorSessions(ctx context.Context, now pgtype.Timestamptz) error {
-	_, err := q.db.Exec(ctx, cleanupConnectorSessions, now)
-	return err
 }
 
 const closeServiceRun = `-- name: CloseServiceRun :execrows
@@ -758,49 +726,6 @@ func (q *Queries) InsertServiceInvitation(ctx context.Context, arg InsertService
 	return i, err
 }
 
-const insertServiceRoutingEvent = `-- name: InsertServiceRoutingEvent :one
-INSERT INTO control.service_routing_events(service_id, kind, service_run_id,
-    run_number, projection, expires_at, created_at)
-VALUES ($1, $2, $3,
-    $4, $5, $6, $7) RETURNING revision, service_id, kind, service_run_id, run_number, projection, expires_at, created_at
-`
-
-type InsertServiceRoutingEventParams struct {
-	ServiceID    string
-	Kind         string
-	ServiceRunID pgtype.Text
-	RunNumber    pgtype.Int8
-	Projection   []byte
-	ExpiresAt    pgtype.Timestamptz
-	Now          pgtype.Timestamptz
-}
-
-// lock ServiceRoutingClock before inserting, and advance the clock in
-// the same transaction so a snapshot cannot miss an earlier uncommitted event.
-func (q *Queries) InsertServiceRoutingEvent(ctx context.Context, arg InsertServiceRoutingEventParams) (ControlServiceRoutingEvent, error) {
-	row := q.db.QueryRow(ctx, insertServiceRoutingEvent,
-		arg.ServiceID,
-		arg.Kind,
-		arg.ServiceRunID,
-		arg.RunNumber,
-		arg.Projection,
-		arg.ExpiresAt,
-		arg.Now,
-	)
-	var i ControlServiceRoutingEvent
-	err := row.Scan(
-		&i.Revision,
-		&i.ServiceID,
-		&i.Kind,
-		&i.ServiceRunID,
-		&i.RunNumber,
-		&i.Projection,
-		&i.ExpiresAt,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const listAvailableServices = `-- name: ListAvailableServices :many
 SELECT s.id, s.team_id, s.name, s.created_at, s.protocol,s.tls_metadata,s.publisher_pool,s.trust_revision,
     s.certificate_hostname,s.service_port,s.public,r.id AS service_run_id, r.run_number
@@ -1100,94 +1025,6 @@ func (q *Queries) ListServiceInvitations(ctx context.Context, arg ListServiceInv
 	return items, nil
 }
 
-const listServiceRoutingEvents = `-- name: ListServiceRoutingEvents :many
-SELECT revision, service_id, kind, service_run_id, run_number, projection, expires_at, created_at FROM control.service_routing_events
-WHERE revision > $1 AND revision <= $2
-ORDER BY revision LIMIT $3
-`
-
-type ListServiceRoutingEventsParams struct {
-	AfterRevision   int64
-	ThroughRevision int64
-	PageLimit       int32
-}
-
-func (q *Queries) ListServiceRoutingEvents(ctx context.Context, arg ListServiceRoutingEventsParams) ([]ControlServiceRoutingEvent, error) {
-	rows, err := q.db.Query(ctx, listServiceRoutingEvents, arg.AfterRevision, arg.ThroughRevision, arg.PageLimit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ControlServiceRoutingEvent
-	for rows.Next() {
-		var i ControlServiceRoutingEvent
-		if err := rows.Scan(
-			&i.Revision,
-			&i.ServiceID,
-			&i.Kind,
-			&i.ServiceRunID,
-			&i.RunNumber,
-			&i.Projection,
-			&i.ExpiresAt,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listServiceRoutingSnapshot = `-- name: ListServiceRoutingSnapshot :many
-SELECT e.revision, e.service_id, e.kind, e.service_run_id, e.run_number, e.projection, e.expires_at, e.created_at FROM control.service_routing_events e
-JOIN (SELECT history.service_id, max(history.revision) AS latest_revision
-    FROM control.service_routing_events history WHERE history.revision <= $1
-    GROUP BY history.service_id, history.service_run_id) latest ON latest.latest_revision = e.revision
-WHERE e.kind = 'upsert' AND e.expires_at > $2
-    AND NOT EXISTS (SELECT 1 FROM control.service_routing_events deleted
-        WHERE deleted.service_id=e.service_id AND deleted.service_run_id IS NULL
-        AND deleted.kind='tombstone' AND deleted.revision > e.revision
-        AND deleted.revision <= $1)
-ORDER BY e.service_id, e.run_number
-`
-
-type ListServiceRoutingSnapshotParams struct {
-	ThroughRevision int64
-	Now             pgtype.Timestamptz
-}
-
-func (q *Queries) ListServiceRoutingSnapshot(ctx context.Context, arg ListServiceRoutingSnapshotParams) ([]ControlServiceRoutingEvent, error) {
-	rows, err := q.db.Query(ctx, listServiceRoutingSnapshot, arg.ThroughRevision, arg.Now)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ControlServiceRoutingEvent
-	for rows.Next() {
-		var i ControlServiceRoutingEvent
-		if err := rows.Scan(
-			&i.Revision,
-			&i.ServiceID,
-			&i.Kind,
-			&i.ServiceRunID,
-			&i.RunNumber,
-			&i.Projection,
-			&i.ExpiresAt,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listServicesForTeam = `-- name: ListServicesForTeam :many
 SELECT id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, trust_revision, visitor_revision, publisher_pool, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services
 WHERE team_id = $1 AND deleted_at IS NULL AND id > $2
@@ -1314,17 +1151,6 @@ func (q *Queries) LockService(ctx context.Context, id string) (ControlService, e
 		&i.DeletedAt,
 	)
 	return i, err
-}
-
-const lockServiceRoutingClock = `-- name: LockServiceRoutingClock :one
-SELECT current_revision FROM control.service_routing_clock WHERE id = 1 FOR UPDATE
-`
-
-func (q *Queries) LockServiceRoutingClock(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, lockServiceRoutingClock)
-	var current_revision int64
-	err := row.Scan(&current_revision)
-	return current_revision, err
 }
 
 const lockServiceRun = `-- name: LockServiceRun :one
@@ -1474,17 +1300,6 @@ func (q *Queries) PrepareServiceRun(ctx context.Context, arg PrepareServiceRunPa
 	return i, err
 }
 
-const readServiceRoutingClock = `-- name: ReadServiceRoutingClock :one
-SELECT current_revision FROM control.service_routing_clock WHERE id = 1
-`
-
-func (q *Queries) ReadServiceRoutingClock(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, readServiceRoutingClock)
-	var current_revision int64
-	err := row.Scan(&current_revision)
-	return current_revision, err
-}
-
 const readyServiceConnectionSlot = `-- name: ReadyServiceConnectionSlot :one
 UPDATE control.service_connection_slots slot SET state = 'ready'
 FROM control.service_runs run, control.relay_leases lease
@@ -1597,135 +1412,6 @@ func (q *Queries) ReadyServiceRun(ctx context.Context, arg ReadyServiceRunParams
 		&i.ClosedAt,
 		&i.AssignmentsOpen,
 	)
-	return i, err
-}
-
-const recheckServiceVisitor = `-- name: RecheckServiceVisitor :one
-WITH permitted AS (
-    SELECT LEAST($1::timestamptz + interval '2 minutes', run.publisher_expires_at, run.certificate_expires_at,
-      control.company_subject_deadline(service.team_id,person.id,COALESCE(session.control_session_id,''),$1),
-      ingress.lease_expires_at, publisher_grant.expires_at,
-      (SELECT MAX(relay.lease_expires_at) FROM control.service_connection_slots slot
-          JOIN control.relay_leases relay ON relay.relay_id = slot.relay_id
-            AND relay.relay_run_id = slot.relay_run_id
-            AND relay.relay_lease_revision = slot.relay_lease_revision
-            AND relay.relay_service_id = slot.relay_service_id
-            AND relay.lease_expires_at > $1 AND NOT relay.draining
-          WHERE slot.service_run_id = run.id AND slot.state = 'ready' AND slot.session_open),
-      CASE WHEN EXISTS (SELECT 1 FROM control.visitor_grants permanent
-          LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
-            AND member.identity_id = person.id AND control.active_membership(member.id,$1)
-          WHERE permanent.service_id = service.id AND permanent.revoked_at IS NULL
-            AND permanent.expires_at IS NULL
-            AND (NOT permanent.auto_owner OR member.role IN ('owner','admin'))
-            AND ((permanent.kind = 'identity' AND permanent.identity_id = person.id)
-              OR (permanent.kind = 'team' AND member.id IS NOT NULL)))
-      THEN 'infinity'::timestamptz ELSE
-        (SELECT MAX(limited.expires_at) FROM control.visitor_grants limited
-          LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
-            AND member.identity_id = person.id AND control.active_membership(member.id,$1)
-          WHERE limited.service_id = service.id AND limited.revoked_at IS NULL
-             AND limited.expires_at > $1
-             AND (NOT limited.auto_owner OR member.role IN ('owner','admin'))
-            AND ((limited.kind = 'identity' AND limited.identity_id = person.id)
-              OR (limited.kind = 'team' AND member.id IS NOT NULL))) END) AS valid_until
-    FROM control.connector_visitor_streams stream
-    JOIN control.connector_sessions session ON session.id = stream.connector_session_id
-    JOIN control.visitor_devices device ON device.id=session.device_id
-      AND device.identity_id=session.identity_id AND device.revoked_at IS NULL
-    JOIN control.service_runs run ON run.id = stream.service_run_id
-    JOIN control.services service ON service.id = stream.service_id
-    JOIN control.teams team ON team.id = service.team_id AND team.deleted_at IS NULL
-    JOIN control.identities person ON person.id = stream.identity_id AND person.disabled_at IS NULL
-    JOIN control.ingress_leases ingress ON ingress.ingress_id = session.ingress_id
-      AND ingress.ingress_run_id = session.ingress_run_id
-      AND ingress.ingress_lease_revision = session.ingress_lease_revision
-    JOIN control.publisher_grants publisher_grant ON publisher_grant.id = run.publisher_grant_id
-    JOIN control.publisher_identities publisher ON publisher.id = run.publisher_identity_id
-    WHERE stream.service_id = $2
-      AND stream.service_run_id = $3
-      AND stream.run_number = $4
-      AND stream.connector_session_id = $5
-      AND stream.identity_id = $6
-      AND stream.visitor_connection_id = $7
-      AND stream.source_ip = $8::inet
-      AND stream.closed_at IS NULL AND stream.device_id=device.id AND stream.valid_until>$1
-      AND session.identity_id = person.id
-      AND control.company_subject_session_authorized(service.team_id,person.id,COALESCE(session.control_session_id,''),$1)
-      AND session.bound_at IS NOT NULL AND session.revoked_at IS NULL
-      AND session.source_ip = stream.source_ip
-      AND session.ingress_id = $9
-      AND session.ingress_run_id = $10
-      AND session.ingress_lease_revision = $11
-      AND ingress.lease_expires_at > $1
-      AND service.enabled AND service.deleted_at IS NULL
-      AND run.service_id = service.id AND run.run_number = stream.run_number
-      AND run.state = 'ready' AND run.healthy AND run.closed_at IS NULL AND run.publisher_expires_at > $1
-      AND run.certificate_expires_at > $1
-      AND publisher_grant.publisher_identity_id = publisher.id
-      AND publisher_grant.service_id = service.id
-      AND publisher_grant.kind = 'service' AND publisher_grant.revoked_at IS NULL
-      AND (publisher_grant.expires_at IS NULL OR publisher_grant.expires_at > $1)
-      AND publisher.team_id = service.team_id AND publisher.revoked_at IS NULL
-      AND control.active_publisher(publisher.id,$1)
-      AND EXISTS (SELECT 1 FROM control.service_connection_slots slot
-          JOIN control.relay_leases relay ON relay.relay_id = slot.relay_id
-            AND relay.relay_run_id = slot.relay_run_id
-            AND relay.relay_lease_revision = slot.relay_lease_revision
-            AND relay.relay_service_id = slot.relay_service_id
-            AND relay.lease_expires_at > $1 AND NOT relay.draining
-          WHERE slot.service_run_id = run.id AND slot.state = 'ready' AND slot.session_open)
-      AND (EXISTS (SELECT 1 FROM control.visitor_grants grant_record
-          LEFT JOIN control.team_memberships member ON member.team_id = service.team_id
-            AND member.identity_id = person.id AND control.active_membership(member.id,$1)
-          WHERE grant_record.service_id = service.id
-            AND grant_record.revoked_at IS NULL
-             AND (grant_record.expires_at IS NULL OR grant_record.expires_at > $1)
-             AND (NOT grant_record.auto_owner OR member.role IN ('owner','admin'))
-            AND ((grant_record.kind = 'identity' AND grant_record.identity_id = person.id)
-              OR (grant_record.kind = 'team' AND member.id IS NOT NULL))))
-)
-SELECT EXISTS (SELECT 1 FROM permitted)::boolean AS allowed,
-    COALESCE((SELECT valid_until FROM permitted LIMIT 1), $1::timestamptz)::timestamptz AS valid_until
-`
-
-type RecheckServiceVisitorParams struct {
-	Now                  pgtype.Timestamptz
-	ServiceID            string
-	ServiceRunID         string
-	RunNumber            int64
-	ConnectorSessionID   string
-	IdentityID           pgtype.Text
-	VisitorConnectionID  string
-	ObservedSourceIp     netip.Addr
-	IngressID            pgtype.Text
-	IngressRunID         pgtype.Text
-	IngressLeaseRevision pgtype.Int8
-}
-
-type RecheckServiceVisitorRow struct {
-	Allowed    bool
-	ValidUntil pgtype.Timestamptz
-}
-
-// revalidate the admitted stream, live device, grant and exact run. identity
-// and source are bound by ingress, and an outage never extends the deadline.
-func (q *Queries) RecheckServiceVisitor(ctx context.Context, arg RecheckServiceVisitorParams) (RecheckServiceVisitorRow, error) {
-	row := q.db.QueryRow(ctx, recheckServiceVisitor,
-		arg.Now,
-		arg.ServiceID,
-		arg.ServiceRunID,
-		arg.RunNumber,
-		arg.ConnectorSessionID,
-		arg.IdentityID,
-		arg.VisitorConnectionID,
-		arg.ObservedSourceIp,
-		arg.IngressID,
-		arg.IngressRunID,
-		arg.IngressLeaseRevision,
-	)
-	var i RecheckServiceVisitorRow
-	err := row.Scan(&i.Allowed, &i.ValidUntil)
 	return i, err
 }
 

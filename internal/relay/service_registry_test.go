@@ -104,7 +104,7 @@ func TestPrivateClaimReservesOwnerBeforeControl(t *testing.T) {
 	client.disconnect = func() { close(disconnecting); <-finish }
 	outer := &PublisherAcceptor{readyDelta: func(int) {}, connectionExited: func(bool) {}}
 	done := make(chan error, 1)
-	go func() { done <- owner.claim.serve(t.Context(), nil, outer, func(error) {}) }()
+	go func() { done <- owner.claim.serve(t.Context(), nil, nil, outer, func(error) {}) }()
 	relayAwait(t, disconnecting)
 	duplicates()
 	unblockDisconnect()
@@ -200,8 +200,8 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 	ingress, relayIngress := privateRelayPair(t, tunnelv1.Message{Type: tunnelv1.Hello, ProtocolVersion: tunnelv1.Version, Role: tunnelv1.Ingress, Credential: strings.Repeat("s", 32)})
 	header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
 		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber, PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
-		Connector: &tunnelv1.ConnectorAdmission{SessionID: privateRelayID(opaqueid.ConnectorSessionPrefix), Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: privateRelayID(opaqueid.IdentityPrefix), DeviceID: "vdev_aaaaaaaaaaaaaaaaaaaaaa"}, GrantRevision: 7},
-		SourceIP:  "192.0.2.4", VisitorConnectionID: privateRelayID(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().Add(time.Minute)},
+		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: privateRelayID(opaqueid.IngressRunPrefix), IngressLeaseRevision: 7, DestinationPort: 25443},
+		SourceIP:      "192.0.2.4", VisitorConnectionID: privateRelayID(opaqueid.VisitorConnectionPrefix), ExpiresAt: time.Now().Add(time.Minute)},
 		ConnectionSlot: 0, RelayServiceID: lease.RelayServiceId, RelayID: lease.RelayId, RelayRunID: lease.RelayRunId, RelayLeaseRevision: 4, LeaseExpiresAt: lease.LeaseExpiresAt}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -217,7 +217,7 @@ func TestPrivateRelayPreservesOriginalProxyAndRejectsStaleAssignment(t *testing.
 		if err != nil {
 			return err
 		}
-		if incoming.Header.Connector.Subject != header.Connector.Subject || incoming.Header.Connector.GrantRevision != header.Connector.GrantRevision || incoming.Header.VisitorConnectionID != header.VisitorConnectionID {
+		if *incoming.Header.PublicService != *header.PublicService || incoming.Header.VisitorConnectionID != header.VisitorConnectionID {
 			return errors.New("relay rewrote authorized private identity")
 		}
 		if err := incoming.Accept(); err != nil {

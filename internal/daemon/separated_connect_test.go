@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	clientauth "github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -115,13 +116,13 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 		if err != nil {
 			t.Fatal(err)
 		}
-		var quic muxsession.Connector = muxsession.QUICConnector{TLSConfig: separatedRelayTLS(t)}
+		var quicConnector muxsession.Connector = muxsession.QUICConnector{TLSConfig: separatedRelayTLS(t), Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}
 		var tcp muxsession.Connector = muxsession.TLSYamuxConnector{TLSConfig: separatedRelayTLS(t)}
 		transport := "quic"
 		if index%2 == 0 {
 			tcp = privateDisabledConnector()
 		} else {
-			quic = privateDisabledConnector()
+			quicConnector = privateDisabledConnector()
 			transport = "tls-tcp"
 		}
 		ready, done := make(chan struct{}), make(chan error, 1)
@@ -132,7 +133,7 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 				Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool},
 				Ready:    func() error { close(ready); return nil },
 				Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
-					return bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
+					return bound.ConnectSlotWithTransports(ctx, slot, false, quicConnector, tcp)
 				},
 			})
 			done <- err
@@ -192,9 +193,12 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 		}
 	}
 	separatedResult(t, "connect-startup", startup)
-	var boundSessions, ingresses, readyPublisherConnections, relays int
-	if err := database.QueryRowContext(t.Context(), `SELECT count(*), count(DISTINCT ingress_id) FROM control.connector_sessions WHERE bound_at IS NOT NULL AND revoked_at IS NULL`).Scan(&boundSessions, &ingresses); err != nil || boundSessions != count*2 || ingresses != 2 {
-		t.Fatalf("connect paths=%d ingresses=%d: %v", boundSessions, ingresses, err)
+	var owners, claims, claimRelays, readyPublisherConnections, relays int
+	if err := database.QueryRowContext(t.Context(), `SELECT count(DISTINCT pair.id),count(*),count(DISTINCT lease.relay_service_id)
+		FROM control.connector_peer_pairs pair JOIN control.connector_peer_pair_leg_claims claim ON claim.pair_id=pair.id
+		JOIN control.relay_leases lease ON lease.relay_id=claim.relay_id AND lease.relay_run_id=claim.relay_run_id AND lease.relay_lease_revision=claim.relay_lease_revision AND lease.lease_expires_at>now()
+		WHERE pair.publisher_prepared_until>now() AND pair.expires_at>now() AND claim.confirmed_until>now()`).Scan(&owners, &claims, &claimRelays); err != nil || owners != count || claims != count*2 || claimRelays != 2 {
+		t.Fatalf("connector owners=%d claims=%d relay services=%d: %v", owners, claims, claimRelays, err)
 	}
 	if err := database.QueryRowContext(t.Context(), `SELECT count(*), count(DISTINCT relay_service_id) FROM control.service_connection_slots WHERE state='ready' AND session_open`).Scan(&readyPublisherConnections, &relays); err != nil || readyPublisherConnections != count*2 || relays != 2 {
 		t.Fatalf("publisher connections=%d relays=%d: %v", readyPublisherConnections, relays, err)
@@ -248,11 +252,14 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 		separatedWrite(t, "fault.release", true)
 		separatedWait(t, "fault.restored", 30*time.Second, nil)
 	}
-	var openRuns, sessions int
-	if err := database.QueryRowContext(t.Context(), `SELECT (SELECT count(*) FROM control.service_runs WHERE closed_at IS NULL), (SELECT count(*) FROM control.connector_sessions WHERE revoked_at IS NULL)`).Scan(&openRuns, &sessions); err != nil || openRuns != 0 || sessions != 0 {
-		t.Errorf("connect cleanup retained runs=%d sessions=%d: %v", openRuns, sessions, err)
+	var openRuns, liveOwners int
+	// native replay fences remain after process shutdown. they cannot serve
+	// through a closed publisher run and are not active ingress reservations.
+	if err := database.QueryRowContext(t.Context(), `SELECT (SELECT count(*) FROM control.service_runs WHERE closed_at IS NULL),
+		(SELECT count(*) FROM control.connector_peer_pairs pair JOIN control.service_runs run ON run.id=pair.service_run_id WHERE run.closed_at IS NULL AND pair.expires_at>now() AND pair.publisher_prepared_until>now())`).Scan(&openRuns, &liveOwners); err != nil || openRuns != 0 || liveOwners != 0 {
+		t.Errorf("connect cleanup retained runs=%d live owners=%d: %v", openRuns, liveOwners, err)
 	}
-	separatedResult(t, "connect-cleanup", map[string]int{"open_runs": openRuns, "connector_sessions": sessions})
+	separatedResult(t, "connect-cleanup", map[string]int{"open_runs": openRuns, "live_native_owners": liveOwners})
 	for _, ingress := range separatedIngresses() {
 		separatedWrite(t, ingress+".stop", true)
 	}

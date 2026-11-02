@@ -47,10 +47,7 @@ func (d *daemon) roleDiagnostics(role daemonconfig.Role, now time.Time) processD
 			continue
 		}
 		lease, routing := runtime.controller.Lease(), runtime.controller.RoutingStatus()
-		ready := !snapshot.Draining && runtime.controller.Ready(now) && (runtime.privateOnly || runtime.server != nil && runtime.server.Ready())
-		if runtime.serviceCertificate != nil {
-			ready = ready && runtime.serviceCertificate.ready(now)
-		}
+		ready := !snapshot.Draining && runtime.controller.Ready(now) && runtime.server != nil && runtime.server.Ready()
 		entry := roleDiagnostic{Role: "ingress", ConfiguredIdentity: runtime.configuredIdentity, ProcessRunID: runtime.processRunID, LastSeenAt: lease.RenewedAt, LeaseExpiresAt: lease.LeaseExpiresAt, LeaseRevision: lease.IngressLeaseRevision, Ready: ready, Draining: snapshot.Draining || lease.Draining, DrainDeadline: lease.DrainDeadline, RoutingRevision: routing.AppliedRevision, RoutingCheckedAt: &routing.LastSuccessfulCheck}
 		snapshot.Roles = append(snapshot.Roles, entry)
 	}

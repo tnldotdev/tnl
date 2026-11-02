@@ -55,7 +55,7 @@ func TestForwardingRequestCopiesShareOneResponder(t *testing.T) {
 				defer peer.Close()
 				wrote := tunnelWorker(t, func() { _ = client.Close() }, func() error {
 					if private {
-						_, err := tunnelv1.WriteServiceOpening(peer, maximumServiceHeader("relay", true))
+						_, err := tunnelv1.WriteServiceOpening(peer, maximumServiceHeader("relay"))
 						return err
 					}
 					_, err := tunnelv1.WriteForwardingOpening(peer, maximumPublicHeader("relay"), nil, nil)
@@ -169,7 +169,7 @@ func TestServiceForwardingMissingIdentityFieldsFailBeforeDispatch(t *testing.T) 
 				t.Fatal(err)
 			}
 			defer peer.Close()
-			encoded, err := json.Marshal(maximumServiceHeader("relay", true))
+			encoded, err := json.Marshal(maximumServiceHeader("relay"))
 			if err != nil {
 				t.Fatal(err)
 			}

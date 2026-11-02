@@ -1,0 +1,58 @@
+paths:
+  /internal/v1/ingresses/{ingress_id}/public-services/admit:
+    post:
+      operationId: admitPublicServiceVisitor
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/IngressID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/PublicServiceVisitorClaim" }
+      responses:
+        "200":
+          description: Bounded pre-authentication admission and ready publisher selection
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublicServiceVisitorAdmission" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/public-services/status:
+    post:
+      operationId: publicServiceVisitorStatus
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/IngressID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/PublicServiceVisitorLookup" }
+      responses:
+        "200":
+          description: Current pending or authenticated admission, without extending a pending deadline
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublicServiceVisitorStatus" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/public-services/promote:
+    post:
+      operationId: promotePublicServiceVisitor
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/IngressID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/PublicServiceVisitorLookup" }
+      responses:
+        "204":
+          { description: Ingress has reserved ordinary capacity for this authenticated visitor }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /internal/v1/ingresses/{ingress_id}/public-services/close:
+    post:
+      operationId: closePublicServiceVisitor
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/IngressID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/PublicServiceVisitorLookup" }
+      responses:
+        "204": { description: Exact visitor reservation released; duplicate closure is harmless }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

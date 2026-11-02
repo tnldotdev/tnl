@@ -22,7 +22,7 @@ func (c *nativeAuditFixture) ReportPublisherServiceObservations(_ context.Contex
 	c.token = token
 	return nil
 }
-func TestNativeAuditForwardingRetainsSelectedServiceAndRunCredential(t *testing.T) {
+func TestConnectorAuditForwardingRetainsSelectedServiceAndRunCredential(t *testing.T) {
 	c := &nativeAuditFixture{}
 	n := &Native{NativeControl: c, publicURL: controlv1.PublicURL{Id: "url_0123456789ABCDEFGHIJKL"}}
 	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: n.publicURL.Id, ServiceKind: "public_url", RunID: "pr_0123456789ABCDEFGHIJKL", RunNumber: 1, EventType: "http.decision", VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", OccurredAt: time.Now(), Outcome: "allowed"}

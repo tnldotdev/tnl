@@ -11,6 +11,8 @@ servers:
 security:
   - clusterAuth: []
 paths:
+  /internal/v1/connector-peer-pairs/{pair_id}/legs/{connection_slot}/claim:
+    $ref: "./paths/connector-peer-pairs.yaml#/paths/~1internal~1v1~1connector-peer-pairs~1{pair_id}~1legs~1{connection_slot}~1claim"
   /internal/v1/private-publisher-connections/{publisher_connection_id}/claim:
     $ref: "./paths/service-connections.yaml#/paths/~1internal~1v1~1private-publisher-connections~1{publisher_connection_id}~1claim"
   /internal/v1/private-publisher-connections/{publisher_connection_id}/ready:
@@ -46,6 +48,10 @@ components:
     Problem:
       $ref: "./schemas/common.yaml#/responses/Problem"
   schemas:
+    ConnectorPeerPairLegClaimRequest:
+      $ref: "./schemas/connector-peer-pairs.yaml#/schemas/ConnectorPeerPairLegClaimRequest"
+    ConnectorPeerPairLegClaim:
+      $ref: "./schemas/connector-peer-pairs.yaml#/schemas/ConnectorPeerPairLegClaim"
     ServiceID:
       $ref: "./schemas/service-connections.yaml#/schemas/ServiceID"
     ServiceRunID:

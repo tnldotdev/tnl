@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"flag"
@@ -18,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,7 +60,7 @@ func TestConnectionSharedOwnerSubprocess(t *testing.T) {
 	if err := json.Unmarshal(data, &input); err != nil {
 		t.Fatal(err)
 	}
-	b := &nativeConnectionBackend{scope: input.Scope, assertion: "first", parentPID: input.ParentPID, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}, Workloads: map[string]config.Workload{"worker": {Provider: "vercel", Services: []string{"api", "db"}}}}}}}
+	b := &connectorConnectionBackend{scope: input.Scope, assertion: "first", parentPID: input.ParentPID, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}, Workloads: map[string]config.Workload{"worker": {Provider: "vercel", Services: []string{"api", "db"}}}}}}}
 	if err := connectorruntime.Serve(t.Context(), input.Scope, input.Directory, "/fixture/tnl", b, os.Stdout); err != nil {
 		t.Fatal(err)
 	}
@@ -143,15 +145,13 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 	serviceNames := []string{"api", "db"}
 	protocols := []string{"http", "postgres"}
 	session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: ids, ExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second)}
-	assignments := map[string][]map[string]any{}
-	trusts := map[string]controlv1.IngressTransportTrust{}
+	natives := map[string]*connectorfixture.Connector{}
+	const serviceRun = "srun_rrrrrrrrrrrrrrrrrrrrrr"
 	for i, target := range []string{application.Listener.Addr().String(), dbListener.Addr().String()} {
-		set, trust := connectorfixture.Ingress(t, ca, caKey, caPEM, ids[i], id, target)
-		assignments[ids[i]] = set
-		for key, value := range trust {
-			trusts[key] = value
-		}
+		natives[ids[i]] = connectorfixture.NewConnector(t, ca, caKey, ids[i], serviceRun, id, serviceNames[i]+".example.test", target)
 	}
+	var publicMu sync.Mutex
+	var clientPublic ed25519.PublicKey
 	entered, release := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
@@ -161,6 +161,19 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/identity"):
 			_ = json.NewEncoder(w).Encode(authorityv1.WorkloadIdentity{Binding: session.Binding, Services: serviceNames, AssertionExpiresAt: now.Add(time.Minute)})
 		case strings.HasSuffix(r.URL.Path, "/exchange"):
+			var body authorityv1.WorkloadExchange
+			if json.NewDecoder(r.Body).Decode(&body) != nil {
+				w.WriteHeader(400)
+				return
+			}
+			public, err := base64.RawURLEncoding.DecodeString(body.PublicKey)
+			if err != nil || len(public) != ed25519.PublicKeySize {
+				w.WriteHeader(400)
+				return
+			}
+			publicMu.Lock()
+			clientPublic = public
+			publicMu.Unlock()
 			_ = json.NewEncoder(w).Encode(session)
 		case strings.HasSuffix(r.URL.Path, "/assertions"):
 			_, _ = io.Copy(io.Discard, r.Body)
@@ -187,13 +200,38 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 			if service == ids[1] {
 				i = 1
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": "srun_" + strings.Repeat("r", 22), "run_number": 1, "protocol": protocols[i], "trust_revision": 1, "expires_at": now.Add(time.Minute), "subject": session.Subject, "endpoint": controlv1.ServiceEndpoint{Hostname: serviceNames[i] + ".example.test", Port: 15443 + i}})
-		case strings.HasSuffix(r.URL.Path, "/ingress-assignments"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocols[i], "trust_revision": 1, "expires_at": now.Add(time.Minute), "subject": session.Subject, "endpoint": controlv1.ServiceEndpoint{Hostname: serviceNames[i] + ".example.test", Port: 15443 + i}, "pair_ready": natives[service].Ready})
+		case strings.Contains(r.URL.Path, "/connector-peer-pairs"):
 			parts := strings.Split(r.URL.Path, "/")
-			_ = json.NewEncoder(w).Encode(map[string]any{"subject": session.Subject, "assignments": assignments[parts[len(parts)-2]]})
-		case strings.HasSuffix(r.URL.Path, "/transport-trust"):
-			parts := strings.Split(r.URL.Path, "/")
-			_ = json.NewEncoder(w).Encode(trusts[parts[len(parts)-2]])
+			var body controlv1.ConnectorPeerPairRequest
+			var source controlv1.VisitorTokenWorkloadSource
+			fixture := natives[parts[3]]
+			if fixture == nil || json.NewDecoder(r.Body).Decode(&body) != nil || json.Unmarshal(body.Source, &source) != nil || source.Credential != session.Credential {
+				w.WriteHeader(403)
+				return
+			}
+			publicMu.Lock()
+			key := append(ed25519.PublicKey(nil), clientPublic...)
+			publicMu.Unlock()
+			pair, err := fixture.Prepare(r.Context(), body, key)
+			if err != nil {
+				w.WriteHeader(403)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(pair)
+		case r.URL.Path == "/v1/visitor-tokens":
+			var body controlv1.VisitorTokenRequest
+			var source controlv1.VisitorTokenWorkloadSource
+			if json.NewDecoder(r.Body).Decode(&body) != nil || json.Unmarshal(body.Source, &source) != nil || source.Credential != session.Credential {
+				w.WriteHeader(403)
+				return
+			}
+			i := slices.Index(ids, body.Resource.Id)
+			if i < 0 {
+				w.WriteHeader(403)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: body.Resource, Hostname: serviceNames[i] + ".example.test", Port: 15443 + i, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(204)
 		default:

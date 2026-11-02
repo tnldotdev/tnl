@@ -15,6 +15,11 @@ import (
 )
 
 func writeControlStateProblem(response http.ResponseWriter, operation string, err error) {
+	// the peer has already ended this request. match the private API boundary:
+	// do not turn its interrupted database work into a server failure response.
+	if observability.ResponseContext(response).Err() != nil {
+		return
+	}
 	switch {
 	case errors.Is(err, controlstate.ErrProjectManaged):
 		writeProblem(response, http.StatusConflict, controlv1.ProjectManaged, "resource is managed by project configuration; change the declaration and run tnl apply")

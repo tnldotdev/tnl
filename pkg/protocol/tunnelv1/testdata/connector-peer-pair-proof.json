@@ -1,0 +1,42 @@
+[
+  "create",
+  "svc_1234567890123456789012",
+  "srun_1234567890123456789012",
+  2,
+  "pub_1234567890123456789012",
+  {
+    "kind": "human_device",
+    "identity_id": "ident_1234567890123456789012",
+    "device_id": "vdev_1234567890123456789012"
+  },
+  "pair-one",
+  "2026-01-02T03:04:05.123456Z",
+  "",
+  0,
+  [
+    {
+      "publisher_connection_id": "pc_1234567890123456789012",
+      "assignment_revision": 5,
+      "relay_lease": {
+        "RelayServiceID": "relay-a",
+        "RelayID": "node-a",
+        "RelayRunID": "process-a",
+        "RelayLeaseRevision": 3
+      },
+      "relay_address": "a.example.test:443",
+      "tls_server_name": "a.example.test"
+    },
+    {
+      "publisher_connection_id": "pc_abcdefghijklmnopqrstuv",
+      "assignment_revision": 6,
+      "relay_lease": {
+        "RelayServiceID": "relay-b",
+        "RelayID": "node-b",
+        "RelayRunID": "process-b",
+        "RelayLeaseRevision": 4
+      },
+      "relay_address": "b.example.test:443",
+      "tls_server_name": "b.example.test"
+    }
+  ]
+]

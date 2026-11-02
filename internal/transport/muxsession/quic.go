@@ -16,7 +16,8 @@ const defaultQUICKeepAlivePeriod = 30 * time.Second
 
 const compatibleQUICPacketSize = 1200
 
-// QUICConfig configures the QUIC transport.
+// QUICConfig configures the QUIC transport. peer-capable role owners opt in to
+// DATAGRAMs with Config.EnableDatagrams; ordinary sessions keep the default off.
 type QUICConfig struct {
 	Config *quic.Config
 }
@@ -29,15 +30,6 @@ type QUICConnector struct {
 
 func (c QUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
 	return connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, ALPN)
-}
-
-type ConnectorQUIC struct {
-	TLSConfig *tls.Config
-	Config    QUICConfig
-}
-
-func (c ConnectorQUIC) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
-	return connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, ConnectorALPN)
 }
 
 func connectQUIC(ctx context.Context, endpoint Endpoint, roots *tls.Config, transport QUICConfig, alpn string) (Session, error) {
@@ -71,32 +63,11 @@ type QUICListener struct {
 	closeOnce  sync.Once
 	closeErr   error
 	alpn       string
-	protocols  map[string]struct{}
 }
 
 // ListenQUIC starts a QUIC listener. the returned listener never accepts 0-RTT.
 func ListenQUIC(address string, tlsConfig *tls.Config, config QUICConfig) (*QUICListener, error) {
 	return listenQUICWithALPN(address, tlsConfig, config, ALPN)
-}
-
-func ListenConnectorQUIC(address string, tlsConfig *tls.Config, config QUICConfig) (*QUICListener, error) {
-	return listenQUICWithALPN(address, tlsConfig, config, ConnectorALPN)
-}
-
-// ListenQUICProtocols shares one infrastructure socket across the two tunnel
-// ALPNs. the owner selects the role by the verified handshake's SNI and ALPN.
-func ListenQUICProtocols(address string, tlsConfig *tls.Config, config QUICConfig) (*QUICListener, error) {
-	if tlsConfig == nil {
-		return nil, errors.New("muxsession: TLS configuration is required")
-	}
-	serverConfig := tlsConfig.Clone()
-	serverConfig.MinVersion = tls.VersionTLS13
-	serverConfig.NextProtos = []string{ALPN, ConnectorALPN}
-	listener, transport, packetConn, err := listenQUIC(address, serverConfig, quicConfig(config.Config))
-	if err != nil {
-		return nil, fmt.Errorf("muxsession: listen shared QUIC: %w", err)
-	}
-	return &QUICListener{listener: listener, transport: transport, packetConn: packetConn, protocols: map[string]struct{}{ALPN: {}, ConnectorALPN: {}}}, nil
 }
 
 func listenQUICWithALPN(address string, tlsConfig *tls.Config, config QUICConfig, alpn string) (*QUICListener, error) {
@@ -172,13 +143,6 @@ func (l *QUICListener) Accept(ctx context.Context) (Session, error) {
 	if err != nil {
 		return nil, normalizeQUICError(err)
 	}
-	if l.protocols != nil {
-		if _, ok := l.protocols[connection.ConnectionState().TLS.NegotiatedProtocol]; !ok {
-			_ = connection.CloseWithError(1, "unexpected transport protocol")
-			return nil, errors.New("muxsession: unexpected shared QUIC ALPN")
-		}
-		return &quicSession{connection: connection}, nil
-	}
 	alpn := l.alpn
 	if alpn == "" {
 		alpn = ALPN
@@ -214,7 +178,6 @@ func quicConfig(config *quic.Config) *quic.Config {
 		config = config.Clone()
 	}
 	config.Allow0RTT = false
-	config.EnableDatagrams = false
 	if config.MaxIncomingStreams == 0 {
 		config.MaxIncomingStreams = defaultMaxIncomingStreams
 	}
@@ -226,6 +189,54 @@ func quicConfig(config *quic.Config) *quic.Config {
 
 type quicSession struct {
 	connection *quic.Conn
+	packetOnce sync.Once
+	packets    *quicDatagramSender
+}
+
+// AdoptQUIC owns an established v1 QUIC connection without taking ownership of
+// its shared UDP socket. the dialing/listening owner supplies transport trust.
+func AdoptQUIC(connection *quic.Conn) (Session, error) {
+	if connection == nil {
+		return nil, errors.New("muxsession: established QUIC connection is required")
+	}
+	if err := requireTransportALPN(connection.ConnectionState().TLS, ALPN); err != nil {
+		_ = connection.CloseWithError(1, "unexpected peer transport protocol")
+		return nil, err
+	}
+	return &quicSession{connection: connection}, nil
+}
+
+// DatagramSession is an opted-in QUIC session's bounded packet delivery
+// boundary. the caller must own datagram reception exclusively; stream
+// acceptance and the session lifetime remain with the role owner.
+type DatagramSession interface {
+	// SendDatagram may wait for outer capacity. cancellation releases the
+	// caller, not the borrowed session; a submitted packet may already be in flight.
+	SendDatagram(context.Context, []byte) error
+	ReceiveDatagram(context.Context) ([]byte, error)
+	SupportsDatagrams() bool
+}
+
+var (
+	_ Session         = (*quicSession)(nil)
+	_ DatagramSession = (*quicSession)(nil)
+)
+
+func (s *quicSession) SendDatagram(ctx context.Context, b []byte) error {
+	s.packetOnce.Do(func() {
+		s.packets = newQUICDatagramSender(s.connection.Context(), s.connection.SendDatagram)
+	})
+	if s.packets == nil {
+		return ErrClosed
+	}
+	return s.packets.send(ctx, b)
+}
+func (s *quicSession) ReceiveDatagram(ctx context.Context) ([]byte, error) {
+	return s.connection.ReceiveDatagram(ctx)
+}
+func (s *quicSession) SupportsDatagrams() bool {
+	supported := s.connection.ConnectionState().SupportsDatagrams
+	return supported.Local && supported.Remote
 }
 
 func (s *quicSession) LocalAddr() net.Addr  { return s.connection.LocalAddr() }
@@ -259,7 +270,14 @@ func (s *quicSession) AcceptStream(ctx context.Context) (Stream, error) {
 }
 
 func (s *quicSession) Close() error {
-	return normalizeQUICError(s.connection.CloseWithError(0, ""))
+	err := normalizeQUICError(s.connection.CloseWithError(0, ""))
+	// stop the transport before joining its possibly blocked datagram enqueue.
+	// seal lazy startup too, including concurrent sends after session closure.
+	s.packetOnce.Do(func() {})
+	if s.packets != nil {
+		<-s.packets.done
+	}
+	return err
 }
 
 func (s *quicSession) Done() <-chan struct{} { return s.connection.Context().Done() }

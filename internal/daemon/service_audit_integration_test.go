@@ -99,15 +99,6 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 		t.Run(fmt.Sprintf("standalone=%t", standalone), func(t *testing.T) {
 			opened := make(chan privateObservation, 8)
 			f := newServiceRuntimeFixture(t, standalone, opened)
-			var runtimes []*ingressRuntime
-			if standalone {
-				runtimes = f.composed.ingresses
-			} else {
-				for index := range 2 {
-					d := startSeparatedPrivateIngress(t, f, index, "quic", opened)
-					runtimes = append(runtimes, d.ingresses[0])
-				}
-			}
 			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "audit-private", "audit-private")
 			if err != nil {
 				t.Fatal(err)
@@ -154,10 +145,6 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			control := &separatedVisitorControl{Control: production}
-			if standalone {
-				control.dialAddress = f.sharedQUIC
-			}
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
@@ -165,7 +152,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			visitCtx, stopVisit := context.WithCancel(t.Context())
 			visitorReady, visitDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				visitDone <- connectorstream.Serve(visitCtx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(visitorReady); return nil }})
+				visitDone <- connectorstream.Serve(visitCtx, listener, connectorstream.Config{Control: production, ServiceID: service.Id, IdentityID: person.Identity.Id, Protocol: "tcp", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(visitorReady); return nil }})
 			}()
 			joined := false
 			t.Cleanup(func() {
@@ -184,17 +171,15 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			select {
 			case <-visitorReady:
 			case <-time.After(10 * time.Second):
-				t.Fatal("visitor did not bind two ingresses")
+				t.Fatal("visitor did not prepare two relay carriers and inner QUIC")
 			}
-			probe := connectorReadinessObservation(t, opened)
-			visitorIDs := []string{probe.header.VisitorConnectionID}
+			var visitorIDs []string
 			var connections []net.Conn
 			t.Cleanup(func() {
 				for _, c := range connections {
 					_ = c.Close()
 				}
 			})
-			ids := map[string]string{}
 			for i := range 2 {
 				c, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
 				if err != nil {
@@ -210,18 +195,21 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 				if _, err = io.ReadFull(c, reply); err != nil || string(reply) != payload {
 					t.Fatal("private payload did not reach target", err)
 				}
-				select {
-				case seen := <-opened:
-					ids[seen.ingress] = seen.header.VisitorConnectionID
-					visitorIDs = append(visitorIDs, seen.header.VisitorConnectionID)
-				case <-time.After(time.Second):
-					t.Fatal("private stream not forwarded")
-				}
 			}
-			if len(ids) != 2 {
-				t.Fatalf("did not exercise both exact ingress leases: %v", ids)
+			if len(opened) != 0 {
+				t.Fatal("native audit traffic traversed ingress")
 			}
+			// finish application half-closes before canceling their packet owner.
+			// cancellation can drop the inner QUIC close packet; it is not an
+			// acknowledgement that the publisher has joined its application work.
+			// retain each socket's original deadline and the audit's five-second bound.
 			for _, c := range connections {
+				if err := c.(interface{ CloseWrite() error }).CloseWrite(); err != nil {
+					t.Fatal("native audit application half-close", err)
+				}
+				if extra, err := io.ReadAll(c); err != nil || len(extra) != 0 {
+					t.Fatal("native audit application did not finish without replay", len(extra), err)
+				}
 				_ = c.Close()
 			}
 			stopVisit()
@@ -236,16 +224,29 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			}
 			privateWait(t, 5*time.Second, func(ctx context.Context) (bool, error) {
 				var count int
-				err := f.inspect.QueryRowContext(ctx, `SELECT count(*) FROM control.connector_visitor_streams WHERE service_id=$1 AND closed_at IS NOT NULL`, service.Id).Scan(&count)
-				return count == 3, err
-			})
-			for _, runtime := range runtimes {
-				flush, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-				err := runtime.audit.Close(flush)
-				cancel()
-				if err != nil {
-					t.Fatal("private audit flush", err)
+				err := f.inspect.QueryRowContext(ctx, `SELECT count(*) FROM control.service_audit_events WHERE service_id=$1 AND event_type='connection.close' AND visitor_connection_id IS NOT NULL`, service.Id).Scan(&count)
+				if err == nil && count != 2 {
+					err = fmt.Errorf("native audit has %d close rows, want 2", count)
 				}
+				return count == 2, err
+			})
+			ids, err := f.inspect.QueryContext(t.Context(), `SELECT DISTINCT visitor_connection_id FROM control.service_audit_events WHERE service_id=$1 AND event_type='connection.open' AND visitor_connection_id IS NOT NULL`, service.Id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for ids.Next() {
+				var id string
+				if err := ids.Scan(&id); err != nil {
+					t.Fatal(err)
+				}
+				visitorIDs = append(visitorIDs, id)
+			}
+			if err := ids.Err(); err != nil {
+				t.Fatal(err)
+			}
+			ids.Close()
+			if len(visitorIDs) != 2 {
+				t.Fatal("native readiness invented an audit-only visitor or omitted an application visitor", visitorIDs)
 			}
 			for _, visitorID := range visitorIDs {
 				var count int

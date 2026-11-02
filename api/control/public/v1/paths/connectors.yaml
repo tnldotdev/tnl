@@ -17,38 +17,6 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/ServiceClientCertificate" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/visitor-ingress-assignments/{connector_session_id}:
-    delete:
-      operationId: releaseVisitorIngressAssignment
-      security: [{ bearerAuth: [] }]
-      description: Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked and its active streams fail rechecks; sibling sessions are never affected. Retrying release of an owned assignment succeeds.
-      parameters:
-        - {
-            name: connector_session_id,
-            in: path,
-            required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionID" },
-          }
-      responses:
-        "204": { description: Exact assignment released }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/visitor-ingress-assignments/{connector_session_id}/transport-trust:
-    get:
-      operationId: getVisitorIngressTransportTrust
-      security: [{ bearerAuth: [] }]
-      description: Read public transport trust for this identity's enrolled-device assignment and its exact current ingress lease. No infrastructure private key is returned.
-      parameters:
-        - name: connector_session_id
-          in: path
-          required: true
-          schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionID" }
-      responses:
-        "200":
-          description: Exact-hostname, lease-bound ingress transport trust
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/IngressTransportTrust" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/visitor-devices:
     post:
       operationId: enrollVisitorDevice
@@ -80,7 +48,7 @@ paths:
           required: true
           schema: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
       responses:
-        "204": { description: Device and its ingress sessions revoked }
+        "204": { description: Device and its connector peer pairs revoked }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/visitor/services:
     get:
@@ -99,63 +67,10 @@ paths:
               },
           }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/services/{service_id}/ingress-assignment:
-    post:
-      operationId: createVisitorIngressAssignment
-      description: Reserve exactly one unbound ingress assignment for the current person, device, and service grant. Retain idempotency_key across ambiguous failures; a replay returns the same session and credential only while access, device, assignment, and ingress lease remain valid. Keys bind the identity, device, service, assignment count, and excluded ingress; a changed request conflicts. Results expire with the sessions and keys are retained for another 24 hours. exclude_ingress_id keeps a healthy sibling out of placement without granting access. Release unused or trust-failed reservations before starting a new request.
-      security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [device_id, idempotency_key]
-              properties:
-                device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
-                exclude_ingress_id: { type: string, maxLength: 128 }
-                idempotency_key: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
-      responses:
-        "201":
-          description: One infrastructure session setup; no run key or stream ticket
-          content:
-            application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionSetup" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/services/{service_id}/ingress-assignments:
-    post:
-      operationId: createVisitorIngressAssignments
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [device_id, idempotency_key]
-              properties:
-                device_id: { type: string, pattern: "^vdev_[A-Za-z0-9]{22}$" }
-                idempotency_key: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
-      description: Check current visitor access and atomically reserve two distinct live ingress addresses. Retain idempotency_key across ambiguous failures; replay returns the same IDs and one-use credentials while both unbound assignments, device, access, and leases remain valid. Keys bind the identity, device, service, and assignment count; changed requests conflict. Results expire with the sessions and keys are retained for another 24 hours. The ingress-observed source is bound when each session connects. This does not authorize visitor streams.
-      security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
-      responses:
-        "201":
-          description: Infrastructure session setup; no service run key or stream ticket
-          content:
-            application/json:
-              schema:
-                type: array
-                minItems: 2
-                maxItems: 2
-                items: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionSetup" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/select-run:
     post:
       operationId: selectServiceRun
-      description: For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+      description: Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
       requestBody:
@@ -171,11 +86,54 @@ paths:
       responses:
         "201":
           {
-            description: One-use connector ticket,
+            description: Access-checked run snapshot without a stream ticket or pair key,
             content:
               {
                 application/json:
                   { schema: { $ref: "../openapi.yaml#/components/schemas/ServiceSelection" } },
               },
           }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/connector-peer-pairs:
+    post:
+      operationId: prepareConnectorPeerPair
+      security: [{}, { bearerAuth: [] }]
+      description: Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+      parameters: [{ $ref: "../openapi.yaml#/components/parameters/ServiceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRequest" }
+      responses:
+        "200":
+          description: Exact pair delivered only to its signed device or workload source; never cache
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPair" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew:
+    post:
+      operationId: renewConnectorPeerPair
+      security: [{}, { bearerAuth: [] }]
+      description: Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - {
+            name: pair_id,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRequest" }
+      responses:
+        "200":
+          description: Renewed exact pair delivered only to its signed source; never cache
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPair" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }

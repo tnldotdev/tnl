@@ -1,4 +1,4 @@
-// this fixture exercises the real native owner and CLI, not a Python transport.
+// this fixture exercises the real connector owner and CLI, not a Python transport.
 package main
 
 import (

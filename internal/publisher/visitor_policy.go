@@ -25,6 +25,16 @@ type visitorPolicy struct {
 	gate      chan struct{}
 }
 
+// PrepareServiceVisitorPolicy retains the run's canonical background policy owner.
+// closing the owner joins refresh before retiring its guards.
+func PrepareServiceVisitorPolicy(ctx context.Context, client visitorPolicyClient, serviceID, runID string, number int64, token string) (*visitorlease.Lease, func(), error) {
+	p, err := prepareVisitorPolicy(ctx, client, visitorscope.Scope{Kind: visitorscope.Service, ID: serviceID}, runID, number, token, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	return p.lease, p.Close, nil
+}
+
 func prepareVisitorPolicy(ctx context.Context, client visitorPolicyClient, scope visitorscope.Scope, run string, number int64, token string, report func(error)) (*visitorPolicy, error) {
 	if client == nil || run == "" || number < 1 || token == "" {
 		return nil, errors.New("visitor policy needs the current publisher run")
