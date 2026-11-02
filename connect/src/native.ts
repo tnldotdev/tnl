@@ -64,7 +64,7 @@ async function captureCommand(
     child.on("close", (code, signal) => {
       finish();
       // preserve a raced cancellation/timeout even if the child exits cleanly.
-      // nativeJSON observes any complete response before reporting the failure.
+      // connectorJSON observes any complete response before reporting the failure.
       if (code !== 0)
         failure ??= new ActionError("TNL_ACTION_COMMAND_FAILED", { cause: { code, signal } });
       resolve({ output: Buffer.concat(output).toString("utf8"), failure });
@@ -88,7 +88,7 @@ export async function command(
   }
 }
 
-export async function nativeJSON(
+export async function connectorJSON(
   executable: string,
   args: string[],
   options: Parameters<typeof command>[2] & { onResponse?: (value: unknown) => Promise<void> },

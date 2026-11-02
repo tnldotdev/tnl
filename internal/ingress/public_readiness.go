@@ -51,7 +51,8 @@ func (c *Controller) publicRunInstalled(entry ingressv1.IngressRoutingTableEntry
 
 type publicRunObservation struct {
 	ingressv1.IngressPublicRunObservation
-	routingKey string
+	hostname   string
+	routingKey routingRunKey
 }
 
 func (c *Controller) publicRunObservations(process ingressv1.IngressLease, now time.Time) []publicRunObservation {
@@ -60,19 +61,21 @@ func (c *Controller) publicRunObservations(process ingressv1.IngressLease, now t
 	entries := c.routingTable.routes
 	c.routingTable.mu.RUnlock()
 	observations := make([]publicRunObservation, 0, len(entries))
-	for key, stored := range entries {
-		if stored.tombstone {
-			continue
-		}
-		entry := cloneRoutingTableEntry(stored.entry)
-		if until, ok := c.publicRunInstalled(entry, process, now); ok {
-			observations = append(observations, publicRunObservation{
-				IngressPublicRunObservation: ingressv1.IngressPublicRunObservation{
-					PublishRunId: entry.PublishRunId, PublishRunNumber: entry.PublishRunNumber,
-					EntryRevision: stored.entryRevision, ValidUntil: until,
-				},
-				routingKey: key,
-			})
+	for host, bucket := range entries {
+		for key, stored := range bucket {
+			if stored.tombstone {
+				continue
+			}
+			entry := cloneRoutingTableEntry(stored.entry)
+			if until, ok := c.publicRunInstalled(entry, process, now); ok {
+				observations = append(observations, publicRunObservation{
+					IngressPublicRunObservation: ingressv1.IngressPublicRunObservation{
+						PublishRunId: entry.PublishRunId, PublishRunNumber: entry.PublishRunNumber,
+						EntryRevision: stored.entryRevision, ValidUntil: until,
+					},
+					hostname: host, routingKey: key,
+				})
+			}
 		}
 	}
 	slices.SortFunc(observations, func(a, b publicRunObservation) int {
@@ -85,10 +88,10 @@ func (c *Controller) publicRunObservationPage(pending []publicRunObservation, pr
 	observations := make([]ingressv1.IngressPublicRunObservation, 0, len(pending))
 	for _, candidate := range pending {
 		c.routingTable.mu.RLock()
-		stored, exists := c.routingTable.routes[candidate.routingKey]
+		stored, exists := c.routingTable.routes[candidate.hostname][candidate.routingKey]
 		c.routingTable.mu.RUnlock()
 		if !exists || stored.tombstone || stored.entryRevision != candidate.EntryRevision ||
-			stored.entry.PublishRunId != candidate.PublishRunId || stored.publishRunNumber != candidate.PublishRunNumber {
+			stored.entry.PublishRunId != candidate.PublishRunId || stored.entry.PublishRunNumber != candidate.PublishRunNumber {
 			continue
 		}
 		until, ok := c.publicRunInstalled(cloneRoutingTableEntry(stored.entry), process, now)
@@ -121,14 +124,16 @@ func (c *Controller) publicServingJoined(process ingressv1.IngressLease, now tim
 	if !c.routingTable.initialized {
 		return false
 	}
-	for _, stored := range c.routingTable.routes {
-		entry := stored.entry
-		if stored.tombstone || entry.PublishRunReadyAt == nil || !entry.PublicUrlExpiresAt.After(now) ||
-			entry.IngressPoolId != nil && *entry.IngressPoolId != c.registration.IngressPoolId {
-			continue
-		}
-		if _, ok := c.publicRunInstalled(cloneRoutingTableEntry(entry), process, now); !ok {
-			return false
+	for _, bucket := range c.routingTable.routes {
+		for _, stored := range bucket {
+			entry := stored.entry
+			if stored.tombstone || entry.PublishRunReadyAt == nil || !entry.PublicUrlExpiresAt.After(now) ||
+				entry.IngressPoolId != nil && *entry.IngressPoolId != c.registration.IngressPoolId {
+				continue
+			}
+			if _, ok := c.publicRunInstalled(cloneRoutingTableEntry(entry), process, now); !ok {
+				return false
+			}
 		}
 	}
 	c.mu.Lock()

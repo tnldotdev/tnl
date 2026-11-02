@@ -438,6 +438,10 @@ type publishRunFixture struct {
 }
 
 func newPublishRunPrerequisites(t *testing.T) (*Database, time.Time, PublishRunRequest, map[string]RelayLease) {
+	return publishRunPrerequisitesWithRelayKeys(t, nil)
+}
+
+func publishRunPrerequisitesWithRelayKeys(t *testing.T, keyForRun func(string) []byte) (*Database, time.Time, PublishRunRequest, map[string]RelayLease) {
 	t.Helper()
 	database, now := newControlStateIntegrationDatabase(t, "publish_run")
 	seedControlPublicURL(t, database, now, "session")
@@ -445,6 +449,9 @@ func newPublishRunPrerequisites(t *testing.T) (*Database, time.Time, PublishRunR
 	for slot := range publishRunConnectionCount {
 		registration := relayLifecycleRegistration(fmt.Sprintf("placement-%d", slot))
 		registration.ConnectionCapacity = 10
+		if keyForRun != nil {
+			registration.PeerSigningPublicKey = keyForRun(registration.RelayRunID)
+		}
 		lease, err := database.RegisterRelay(t.Context(), registration, now, time.Hour)
 		if err != nil {
 			t.Fatal(err)

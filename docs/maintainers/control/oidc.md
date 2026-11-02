@@ -153,7 +153,7 @@ when control requests `max_age=0`; it does not need hosted custom claims:
 
 Each rule applies only to the configured exact issuer. `subjects` are exact
 subjects; an optional claim rule may match signed `tid`, `hd`, or a `groups`
-entry. Subjects and the claim are alternative admission conditions. No email
+entry. Subjects and the claim are alterconnector admission conditions. No email
 merging or role claims are used. A rule seeds its team source once and supplies
 eligibility inside the session transaction. First-time members are admitted as
 members; removed memberships, demotions, manual suspensions, and bindings to
@@ -164,8 +164,11 @@ bounded by its original one-hour authentication deadline and current eligibility
 Reauthentication accepts an optional current `refresh_token` in the device start
 request to bind the browser to the same identity. It copies only still-current
 other-team proofs, preserving their original deadlines. Refresh never extends
-source authentication time. A CLI replacing its session must call
+source authentication time. A direct client replacing its session must call
 `POST /v1/services/{service_id}/client-certificates` under the
 new control session before using a cached client certificate. This existing API
 rechecks current permission and rebinds the same device/CSR certificate to the
 new session; a cache hit alone does not renew session provenance.
+
+Native connectors use their authenticated publisher stream without an application
+client certificate. The CLI does not cache or export direct-client certificates.

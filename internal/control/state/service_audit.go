@@ -74,7 +74,8 @@ func RecordServiceAudit(ctx context.Context, tx pgx.Tx, event serviceaudit.Event
 			OR $4::text IN ('invitation.accept','grant.create','device.enroll','device.revoke','certificate.client.issue') AND (
 			    EXISTS(SELECT 1 FROM control.visitor_grants g WHERE g.service_id=$3 AND g.identity_id=person.id)
 			    OR EXISTS(SELECT 1 FROM control.visitor_grants g WHERE g.public_url_id=$3 AND g.identity_id=person.id)
-			    OR EXISTS(SELECT 1 FROM control.connector_sessions c WHERE c.service_id=$3 AND c.identity_id=person.id)
+			    OR EXISTS(SELECT 1 FROM control.public_service_visitors v WHERE v.service_id=$3 AND v.identity_id=person.id)
+			    OR EXISTS(SELECT 1 FROM control.connector_peer_audit_bindings b WHERE b.service_id=$3 AND b.identity_id=person.id)
 			)))`, event.ActorIdentityID, event.TeamID, event.ServiceID, event.EventType).Scan(&exists); err != nil {
 			return err
 		}
@@ -324,7 +325,7 @@ func (d *Database) IngestPublisherServiceObservations(ctx context.Context, auth 
 		return result, err
 	}
 	for _, o := range batch.Events {
-		if o.ServiceKind != "public_url" || o.ServiceID != run.PublicURLID || o.RunID != run.ID || o.RunNumber != run.PublishRunNumber || o.EventType != "http.decision" {
+		if o.ServiceKind != "public_url" || o.ServiceID != run.PublicURLID || o.RunID != run.ID || o.RunNumber != run.PublishRunNumber || o.EventType != "http.decision" || o.PairID != "" {
 			return ServiceObservationResult{}, ErrServiceAuditAccess
 		}
 		if o.OccurredAt.Before(run.CreatedAt.Time.Add(-time.Second)) || o.OccurredAt.After(until) {
@@ -369,7 +370,7 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 	}
 	events := make([]serviceaudit.Event, 0, len(batch.Events))
 	for _, o := range batch.Events {
-		if o.EventType != "connection.open" && o.EventType != "connection.close" {
+		if o.PairID != "" || o.EventType != "connection.open" && o.EventType != "connection.close" {
 			return ServiceObservationResult{}, ErrServiceAuditAccess
 		}
 		e := observationEvent(o)
@@ -380,34 +381,14 @@ func (d *Database) IngestIngressServiceObservations(ctx context.Context, lease I
 				err = tx.QueryRow(ctx, `SELECT r.team_id,r.publisher_identity_id FROM control.publish_runs r JOIN control.public_urls s ON s.id=r.public_url_id
 				WHERE r.id=$1 AND r.public_url_id=$2 AND r.publish_run_number=$3 AND r.created_at<=$4::timestamptz+interval '1 minute'`, o.RunID, o.ServiceID, o.RunNumber, o.OccurredAt).Scan(&e.TeamID, (*nullableAuditString)(&e.PublisherIdentityID))
 			}
-		} else if o.RunID == "" {
-			// a denied visitor entry has no verified run. scope it only to
-			// the saved service of the authenticated connector session;
-			// never attach a visitor-chosen run or publisher identity.
-			err = tx.QueryRow(ctx, `SELECT s.team_id,c.identity_id,c.device_id FROM control.connector_sessions c
-				JOIN control.services s ON s.id=c.service_id
-				WHERE c.id=$1 AND c.service_id=$2 AND c.ingress_id=$3 AND c.ingress_run_id=$4 AND c.ingress_lease_revision=$5
-				AND host(c.source_ip)=$6 AND c.bound_at IS NOT NULL AND c.bound_at<=$7::timestamptz+interval '1 minute'
-				AND NOT EXISTS(SELECT 1 FROM control.connector_visitor_streams WHERE visitor_connection_id=$8)`,
-				o.ConnectorSessionID, o.ServiceID, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.OccurredAt, o.VisitorConnectionID).
-				Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID))
-		} else if o.ConnectorSessionID == "" {
-			// direct admissions have no connector session. identity is recovered
+		} else {
+			// direct admission identity is recovered
 			// only from the publisher-authenticated record, never the report.
-			err = tx.QueryRow(ctx, `SELECT s.team_id,v.identity_id,v.device_id,r.publisher_identity_id FROM control.direct_service_visitors v
+			err = tx.QueryRow(ctx, `SELECT s.team_id,v.identity_id,v.device_id,r.publisher_identity_id FROM control.public_service_visitors v
 				JOIN control.services s ON s.id=v.service_id JOIN control.service_runs r ON r.id=v.service_run_id
 				WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4
 				AND v.ingress_id=$5 AND v.ingress_run_id=$6 AND v.ingress_lease_revision=$7 AND host(v.source_ip)=$8
-				AND($9<>'allowed' OR v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL)`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.Outcome).Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
-		} else {
-			// the admitted stream is the source of identity and IP. a current
-			// ingress lease cannot report another ingress's private visitor.
-			err = tx.QueryRow(ctx, `SELECT s.team_id,v.identity_id,v.device_id,r.publisher_identity_id FROM control.connector_visitor_streams v
-				JOIN control.services s ON s.id=v.service_id JOIN control.service_runs r ON r.id=v.service_run_id
-				JOIN control.connector_sessions c ON c.id=v.connector_session_id
-				WHERE v.visitor_connection_id=$1 AND v.service_id=$2 AND v.service_run_id=$3 AND v.run_number=$4
-				AND c.ingress_id=$5 AND c.ingress_run_id=$6 AND c.ingress_lease_revision=$7 AND host(v.source_ip)=$8
-				AND c.id=$9`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.ConnectorSessionID).Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
+				AND($9<>'allowed' OR v.identity_id IS NOT NULL OR v.workload_session_id IS NOT NULL OR s.protocol='http' AND v.promoted_at IS NOT NULL)`, o.VisitorConnectionID, o.ServiceID, o.RunID, o.RunNumber, lease.IngressID, lease.IngressRunID, int64(lease.IngressLeaseRevision), o.SourceIP, o.Outcome).Scan(&e.TeamID, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &e.PublisherIdentityID)
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ServiceObservationResult{}, ErrServiceAuditAccess
@@ -447,7 +428,8 @@ func auditDeviceMutation(ctx context.Context, tx pgx.Tx, identity, device, opera
 	rows, err := tx.Query(ctx, `SELECT DISTINCT s.team_id,s.id FROM control.services s WHERE
 		EXISTS(SELECT 1 FROM control.team_memberships m WHERE m.team_id=s.team_id AND m.identity_id=$1 AND m.removed_at IS NULL)
 		OR EXISTS(SELECT 1 FROM control.visitor_grants g WHERE g.service_id=s.id AND g.identity_id=$1)
-		OR EXISTS(SELECT 1 FROM control.connector_sessions c WHERE c.service_id=s.id AND c.device_id=$2)
+		OR EXISTS(SELECT 1 FROM control.public_service_visitors v WHERE v.service_id=s.id AND v.device_id=$2)
+		OR EXISTS(SELECT 1 FROM control.connector_peer_audit_bindings b WHERE b.service_id=s.id AND b.device_id=$2)
 		ORDER BY s.team_id,s.id`, identity, device)
 	if err != nil {
 		return err

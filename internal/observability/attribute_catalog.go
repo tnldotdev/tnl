@@ -49,7 +49,7 @@ func VocabularyAttributes() []AttributeDefinition {
 	for _, k := range []attributeKey{Transport, TransportPreference} {
 		add(k, PolicyBounded, "selected transport (omit when not selected), or initial preference", "quic", "tls-tcp")
 	}
-	add(AccessPath, PolicyBounded, "visitor admission path", "connector", "direct")
+	add(AccessPath, PolicyBounded, "visitor admission path", "connector", "public_endpoint")
 	add(Exposure, PolicyBounded, "service reachability", "private", "public")
 	add(TLSLeg, PolicyBounded, "TLS boundary owned by this observation", "visitor", "target")
 	add(ConnectionSlot, PolicyBounded, "assigned publisher connection slot; omitted when unknown", "0", "1")

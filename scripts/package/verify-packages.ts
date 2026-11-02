@@ -83,7 +83,7 @@ try {
       return { stdout: error.stdout, stderr: error.stderr };
     throw error;
   });
-  // this package-only check has no native owner. reaching the owned synchronous
+  // this package-only check has no connector owner. reaching the owned synchronous
   // diagnostic proves the real drizzle 0.31 commonjs loader evaluated the normal
   // config and package export; the native tier supplies a handle and migrates.
   assert(

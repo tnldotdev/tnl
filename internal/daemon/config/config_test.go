@@ -194,22 +194,9 @@ func TestConfigPrivateControlAddressRequiresSplitDialAddress(t *testing.T) {
 	}
 }
 
-func TestSplitIngressUDPListener(t *testing.T) {
-	for _, role := range []Role{RoleControl, RoleStandalone, RoleIngress, RoleRelay} {
-		config := validCertificateConfig(t, role)
-		config.IngressUDPListen = "fly-global-services:443"
-		if err := config.Validate(); (err == nil) != (role == RoleIngress) {
-			t.Fatalf("role %s: %v", role, err)
-		}
-	}
-	config := validCertificateConfig(t, RoleIngress)
-	config.IngressUDPListen = "127.0.0.1:0"
-	if err := config.Validate(); err == nil {
-		t.Fatal("accepted an invalid private QUIC bind port")
-	}
-	t.Setenv("TNLD_INGRESS_UDP_LISTEN", "fly-global-services:443")
-	if config := validCertificateConfig(t, RoleIngress); config.IngressUDPListen != "fly-global-services:443" {
-		t.Fatal("private QUIC bind was not parsed")
+func TestRetiredIngressUDPListenerRejected(t *testing.T) {
+	if _, err := Parse([]string{"--role", "ingress", "--ingress-udp-listen", "127.0.0.1:443"}); err == nil {
+		t.Fatal("retired native ingress flag was accepted")
 	}
 }
 

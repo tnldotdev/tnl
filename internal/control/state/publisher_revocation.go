@@ -58,7 +58,7 @@ func closeRevokedPrivatePublication(ctx context.Context, tx pgx.Tx, q *controlst
 	}); err != nil {
 		return err
 	}
-	return serviceRunRoutingTombstone(ctx, q, serviceID, runID, number, now)
+	return nil
 }
 
 func closeRevokedPublicPublications(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, publisherIdentityID, grantID string, now time.Time) error {

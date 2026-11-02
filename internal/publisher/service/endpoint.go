@@ -13,7 +13,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
-	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -27,7 +26,6 @@ type ManagedControl interface {
 	publisher.ServiceCertificateControl
 	publisher.ServiceHTTPControl
 	StartServiceRun(context.Context, string, string, string, int64) (controlv1.ServiceRunSetup, error)
-	AuthorizeServiceConnector(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceConnectorRequest) (controlv1.ServiceClientCertificateDecision, error)
 	AuthorizeServiceClientCertificate(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error)
 }
 
@@ -48,6 +46,7 @@ func newManagedPrepared(preparation controlv1.ServiceRunPreparation, approved co
 	}
 	prepared := &Prepared{Preparation: preparation, target: target, managedHostname: approved.Endpoint.Hostname, servicePort: uint16(approved.Endpoint.Port), managedProtocol: serviceconfig.ProtocolName(approved.Protocol), clock: time.Now, preparedCertificate: &preparedCertificate{}}
 	prepared.managedPublic = approved.Endpoint.Public
+	prepared.metadataRevision = approved.TrustRevision
 	prepared.targetResolver = cfg.TargetResolver
 	if prepared.managedProtocol == serviceconfig.ProtocolHTTP || prepared.managedProtocol == serviceconfig.ProtocolKubernetes {
 		prepared.serviceHTTPRequests, err = publisher.NewServiceHTTPRequestLimits(approved.HttpLimits)
@@ -145,14 +144,7 @@ func configureServiceRun(ctx context.Context, config RunConfig, prepared *Prepar
 		}
 	}
 	prepared.managedVisitor = func(header tunnelv1.ServiceForwardingHeader) publisher.ServiceVisitorAuthentication {
-		if header.Connector != nil && header.Direct == nil {
-			return publisher.ConnectorVisitor{Check: func(check context.Context) (publisher.ServiceVisitorDecision, error) {
-				return awaitAdmission(check, func(ctx context.Context) (controlv1.ServiceClientCertificateDecision, error) {
-					return control.AuthorizeServiceConnector(ctx, setup.ServiceId, setup.ServiceRunId, credentials.ServiceRunToken(setup.RunToken), controlv1.AuthorizeServiceConnectorRequest{RunNumber: setup.RunNumber, VisitorConnectionId: header.VisitorConnectionID, SourceIp: header.SourceIP, ConnectorSessionId: header.Connector.SessionID, Subject: visitorsubject.Wire(header.Connector.Subject), GrantRevision: int64(header.Connector.GrantRevision)})
-				})
-			}}
-		}
-		if header.Direct != nil && header.Connector == nil {
+		if header.PublicService != nil {
 			if prepared.managedProtocol == serviceconfig.ProtocolHTTP {
 				frontend := httpFrontend
 				frontend.Header = header

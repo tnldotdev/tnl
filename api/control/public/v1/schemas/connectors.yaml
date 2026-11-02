@@ -1,35 +1,128 @@
 schemas:
-  IngressTransportTrust:
+  ConnectorPeerRelayLease:
+    type: object
+    additionalProperties: false
+    required: [relay_service_id, relay_id, relay_run_id, relay_lease_revision]
+    properties:
+      relay_service_id: { type: string, minLength: 1 }
+      relay_id: { type: string, minLength: 1 }
+      relay_run_id: { type: string, minLength: 1 }
+      relay_lease_revision: { type: integer, format: int64, minimum: 1 }
+  ConnectorPeerPairRelay:
+    type: object
+    additionalProperties: false
+    required:
+      [publisher_connection_id, assignment_revision, relay_lease, relay_address, tls_server_name]
+    properties:
+      publisher_connection_id: { type: string, minLength: 1 }
+      assignment_revision: { type: integer, format: int64, minimum: 1 }
+      relay_lease: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerRelayLease" }
+      relay_address: { type: string, minLength: 1 }
+      tls_server_name: { type: string, minLength: 1 }
+  ConnectorPeerPairReady:
+    type: object
+    additionalProperties: false
+    description: A short-lived, credential-free snapshot for signing an exact pair request. It never grants a relay claim.
+    required: [publisher_identity_id, relays]
+    properties:
+      publisher_identity_id: { type: string, minLength: 1 }
+      relays:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRelay" }
+  ConnectorPeerPairRequest:
+    type: object
+    additionalProperties: false
+    description: Sign the canonical ConnectorPeerPairProofMessage Go v1 array, not the snake_case HTTP object. Source is selected by kind; a device uses the sole control bearer, a workload uses its credential and no control bearer. Each connector owner creates with a distinct idempotency key and retains that stable owner key across create, renew and replace. A pair ID and generation alone never prove ownership. Replacement also names the exact predecessor and issues a new pair, delivery ID, key and generation; it does not transfer a running session. An uncertain response repeats the exact signed request, including its timestamp, action and owner key.
+    required:
+      [
+        service_run_id,
+        run_number,
+        publisher_identity_id,
+        subject,
+        source,
+        action,
+        idempotency_key,
+        requested_at,
+        expected_relays,
+        signature,
+      ]
+    properties:
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      publisher_identity_id: { type: string, minLength: 1 }
+      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
+      source:
+        x-go-type: json.RawMessage
+        oneOf:
+          - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenDeviceSource" }
+          - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenWorkloadSource" }
+      action: { type: string, enum: [create, replace, renew] }
+      idempotency_key: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
+      requested_at:
+        type: string
+        format: date-time
+        description: Retain this timestamp on an uncertain reply retry. A successful fresh renewal supersedes earlier create or replace reply proofs; those proofs cannot recover the later renewal's bound.
+      previous_pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      previous_generation: { type: integer, format: int64, minimum: 1 }
+      expected_relays:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRelay" }
+      signature:
+        {
+          type: string,
+          description: Unpadded base64url Ed25519 signature over ConnectorPeerPairProofMessage.,
+        }
+  ConnectorPeerPair:
     type: object
     additionalProperties: false
     required:
       [
-        ingress_id,
-        ingress_run_id,
-        ingress_lease_revision,
-        tls_server_name,
-        certificate_pem,
-        issuer_pem,
-        issuer_revision,
-        public_key_sha256,
-        lease_uri,
-        not_before,
-        not_after,
-        valid_until,
+        pair_id,
+        service_id,
+        service_run_id,
+        run_number,
+        publisher_identity_id,
+        subject,
+        delivery_id,
+        delivery_generation,
+        key,
+        relays,
+        observed_at,
+        expires_at,
       ]
     properties:
-      ingress_id: { type: string, minLength: 1 }
-      ingress_run_id: { type: string, minLength: 1 }
-      ingress_lease_revision: { type: integer, format: int64, minimum: 1 }
-      tls_server_name: { type: string, minLength: 1, maxLength: 253 }
-      certificate_pem: { type: string, minLength: 1, maxLength: 65536 }
-      issuer_pem: { type: string, minLength: 1, maxLength: 131072 }
-      issuer_revision: { type: integer, format: int64, minimum: 1 }
-      public_key_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
-      lease_uri: { type: string, format: uri }
-      not_before: { type: string, format: date-time }
-      not_after: { type: string, format: date-time }
-      valid_until: { type: string, format: date-time }
+      pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      publisher_identity_id: { type: string, minLength: 1 }
+      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
+      delivery_id:
+        {
+          type: string,
+          pattern: "^[A-Za-z0-9_-]{21}[AQgw]$",
+          description: Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.,
+        }
+      delivery_generation: { type: integer, format: int64, minimum: 1 }
+      key: { type: string, description: Secret returned only to the authorized signed source. }
+      observed_at:
+        type: string
+        format: date-time
+        description: Control's authority observation time; subtract request transit when installing local deadlines.
+      publisher_prepared_until:
+        type: string
+        format: date-time
+        description: The publisher reported its exact packet registration and inner listener installed through this bound. This startup barrier is not visitor permission or a guarantee of continued process liveness.
+      relays:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRelay" }
+      expires_at: { type: string, format: date-time }
   VisitorDevice:
     type: object
     additionalProperties: false
@@ -40,9 +133,6 @@ schemas:
       public_key: { type: string, pattern: "^[0-9a-f]{64}$" }
       created_at: { type: string, format: date-time }
       revoked_at: { type: string, format: date-time }
-  ConnectorSessionID:
-    type: string
-    pattern: "^cns_[A-Za-z0-9]{22}$"
   IssueServiceClientCertificateRequest:
     type: object
     additionalProperties: false
@@ -71,32 +161,3 @@ schemas:
           description: Ingress has reserved ordinary capacity. The publisher must wait for this before sending application bytes to the target.,
         }
       valid_until: { type: string, format: date-time }
-  ConnectorSessionSetup:
-    type: object
-    additionalProperties: false
-    required:
-      [
-        connector_session_id,
-        service_id,
-        session_credential,
-        ingress_id,
-        ingress_address,
-        tls_server_name,
-        subject,
-        expires_at,
-      ]
-    properties:
-      connector_session_id: { $ref: "../openapi.yaml#/components/schemas/ConnectorSessionID" }
-      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
-      session_credential: { type: string, minLength: 32, maxLength: 512 }
-      ingress_address:
-        {
-          type: string,
-          minLength: 1,
-          description: Shared ingress infrastructure TLS endpoint,
-          not a service-specific hostname.,
-        }
-      ingress_id: { type: string, minLength: 1 }
-      tls_server_name: { type: string, minLength: 1, maxLength: 253 }
-      expires_at: { type: string, format: date-time }
-      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }

@@ -48,6 +48,7 @@ func TestRelayCertificateSourceValidatesAndReloads(t *testing.T) {
 		name   string
 		mutate func(*relayv1.RelayTransportCertificate)
 	}{
+		{"service", func(c *relayv1.RelayTransportCertificate) { c.RelayServiceId = "relay-b" }},
 		{"identity", func(c *relayv1.RelayTransportCertificate) { c.TlsServerName = "relay-b.example.test" }},
 		{"key_pair", func(c *relayv1.RelayTransportCertificate) { c.PrivateKeyPem = string(first.privateKeyPEM) }},
 		{"expiry", func(c *relayv1.RelayTransportCertificate) { c.NotAfter = c.NotAfter.Add(-1) }},
@@ -63,5 +64,34 @@ func TestRelayCertificateSourceValidatesAndReloads(t *testing.T) {
 				t.Fatalf("invalid update replaced last good certificate: %#v, %v", lastGood, err)
 			}
 		})
+	}
+}
+
+func TestSharedRelayCertificateSourceKeepsStandaloneHostname(t *testing.T) {
+	const hostname = "relay.example.test"
+	ca := newTestCertificateAuthority(t)
+	source, err := newSharedRelayCertificateSource([]string{"standalone-a", "standalone-b"}, hostname)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := source.TLSConfig()
+	for _, service := range []string{"standalone-a", "standalone-b"} {
+		material := ca.issue(t, hostname)
+		certificate := relayv1.RelayTransportCertificate{RelayServiceId: service, TlsServerName: hostname,
+			CertificatePem: string(material.certificatePEM), PrivateKeyPem: string(material.privateKeyPEM), NotAfter: material.leaf.NotAfter}
+		if err := source.Install(certificate); err != nil {
+			t.Fatal(err)
+		}
+		installed, err := config.GetCertificate(nil)
+		if err != nil || !bytes.Equal(installed.Certificate[0], material.leaf.Raw) {
+			t.Fatal("shared listener did not install its logical relay service's certificate", err)
+		}
+		certificate.RelayServiceId = "foreign"
+		if err := source.Install(certificate); err == nil {
+			t.Fatal("shared listener accepted another relay service")
+		}
+		if unchanged, err := config.GetCertificate(nil); err != nil || unchanged != installed {
+			t.Fatal("rejected service replaced the shared listener's certificate", err)
+		}
 	}
 }

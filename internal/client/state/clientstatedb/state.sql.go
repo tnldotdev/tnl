@@ -426,34 +426,6 @@ func (q *Queries) SetTelemetryEnabled(ctx context.Context, enabled int64) error 
 	return err
 }
 
-const setTunnelDevTarget = `-- name: SetTunnelDevTarget :execrows
-UPDATE local_tunnels
-SET target = nullif(?1, ''),
-    framework = ?2,
-    updated_at = ?3
-WHERE id = ?4 AND stopped_at IS NULL
-`
-
-type SetTunnelDevTargetParams struct {
-	Target    interface{}
-	Framework sql.NullString
-	Now       int64
-	ID        string
-}
-
-func (q *Queries) SetTunnelDevTarget(ctx context.Context, arg SetTunnelDevTargetParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setTunnelDevTarget,
-		arg.Target,
-		arg.Framework,
-		arg.Now,
-		arg.ID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const setTunnelDraining = `-- name: SetTunnelDraining :execrows
 UPDATE local_tunnels
 SET state = 'draining', updated_at = ?1

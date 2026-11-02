@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -199,38 +198,8 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for index := range 2 {
-		if _, err = d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: fmt.Sprintf("release-http-%d", index), IngressRunID: fmt.Sprintf("release-http-run-%d", index), ProtocolVersion: 1, ConnectionCapacity: 1, ConnectorAddress: fmt.Sprintf("127.0.0.1:%d", 8400+index), ConnectorTLSServerName: "private.example.test"}, now, time.Minute); err != nil {
-			t.Fatal(err)
-		}
-	}
-	sessions, err := owner.CreateVisitorIngressAssignments(ctx, local.ServiceId, device.Id, "startup")
-	if err != nil || len(sessions) != 2 {
-		t.Fatal("HTTP assignment setup failed", err)
-	}
-	if err = anonymous.ReleaseVisitorIngressAssignment(ctx, sessions[0].ConnectorSessionId); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
-		t.Fatal("anonymous release succeeded", err)
-	}
-	for range 2 {
-		if err = owner.ReleaseVisitorIngressAssignment(ctx, sessions[0].ConnectorSessionId); err != nil {
-			t.Fatal("HTTP release not retry-stable", err)
-		}
-	}
-	if _, err = d.GetVisitorIngressTransportTrust(ctx, session.Identity.Identity.ID, sessions[0].ConnectorSessionId, now); !errors.Is(err, controlstate.ErrServiceAccess) {
-		t.Fatal("released assignment still authorized trust", err)
-	}
-	single, err := owner.CreateVisitorIngressAssignment(ctx, local.ServiceId, device.Id, sessions[1].IngressId, "renewal")
-	if err != nil || single.IngressId != sessions[0].IngressId || single.Subject.DeviceId == nil || *single.Subject.DeviceId != device.Id || single.ServiceId != local.ServiceId {
-		t.Fatal("single assignment wire required replacing its sibling", single, err)
-	}
-	if _, err = owner.CreateVisitorIngressAssignment(ctx, local.ServiceId, device.Id, sessions[1].IngressId, "over-capacity"); !errors.Is(err, clientcontrol.ErrUnavailable) {
-		t.Fatal("single assignment overbooked pending capacity", err)
-	}
-	if err = owner.ReleaseVisitorIngressAssignment(ctx, single.ConnectorSessionId); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = anonymous.CreateVisitorIngressAssignment(ctx, local.ServiceId, device.Id, sessions[1].IngressId, "anonymous"); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
-		t.Fatal("single assignment did not require a person session", err)
+	if _, err = anonymous.SelectServiceRun(ctx, local.ServiceId, device.Id); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		t.Fatal("native signing snapshot did not require a person session", err)
 	}
 	if len(assignments.Services) != 2 || web.Configuration.Target != "app.internal:3000" || web.GrantId == "" || web.TrustRevision != 1 || web.Configuration.TargetTls != nil {
 		t.Fatalf("wire assignment: %+v", assignments)
@@ -265,8 +234,8 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	if _, err = groupAsPerson.GetProjectConfiguration(ctx, team, "example"); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("group read manager configuration", err)
 	}
-	if _, err = groupAsPerson.CreateVisitorIngressAssignment(ctx, local.ServiceId, device.Id, "", "group-as-person"); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
-		t.Fatal("group lease created a person assignment", err)
+	if _, err = groupAsPerson.SelectServiceRun(ctx, local.ServiceId, device.Id); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		t.Fatal("group lease selected a person's native run", err)
 	}
 	if err = groupAsPerson.RevokePublisherGroupMember(ctx, team, "example", group, member.PublisherIdentityId); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatal("group lease revoked a member as a person", err)

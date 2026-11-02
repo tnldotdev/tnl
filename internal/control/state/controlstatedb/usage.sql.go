@@ -877,27 +877,6 @@ func (q *Queries) LockPublishRunForUsage(ctx context.Context, arg LockPublishRun
 	return i, err
 }
 
-const markExpiredIngressUsageRunIncomplete = `-- name: MarkExpiredIngressUsageRunIncomplete :exec
-UPDATE control.ingress_usage_runs
-SET ended_at = COALESCE(ended_at, $1),
-    incomplete_from = observed_through,
-    incomplete_until = $1
-WHERE ingress_id = $2
-  AND ingress_run_id = $3
-  AND ended_at IS NULL
-`
-
-type MarkExpiredIngressUsageRunIncompleteParams struct {
-	EndedAt      pgtype.Timestamptz
-	IngressID    string
-	IngressRunID string
-}
-
-func (q *Queries) MarkExpiredIngressUsageRunIncomplete(ctx context.Context, arg MarkExpiredIngressUsageRunIncompleteParams) error {
-	_, err := q.db.Exec(ctx, markExpiredIngressUsageRunIncomplete, arg.EndedAt, arg.IngressID, arg.IngressRunID)
-	return err
-}
-
 const markExpiredIngressUsageRunsIncomplete = `-- name: MarkExpiredIngressUsageRunsIncomplete :many
 UPDATE control.ingress_usage_runs
 SET ended_at = lease_expires_at,

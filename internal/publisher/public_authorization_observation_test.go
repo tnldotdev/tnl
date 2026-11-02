@@ -78,7 +78,7 @@ func newPublicAuthorizationObserver(t *testing.T) *publicAuthorizationObserver {
 			t.Error(err)
 		}
 	})
-	o.ctx = observability.WithFields(o.ctx, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "direct", Exposure: "public"})
+	o.ctx = observability.WithFields(o.ctx, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "public_endpoint", Exposure: "public"})
 	return o
 }
 
@@ -147,7 +147,7 @@ func assertPublicAuthorizationDecision(t *testing.T, spans []*tracepb.Span, stat
 		t.Fatal("local permission/bind did not export the exact HTTP -> authorization operation -> result parent chain")
 	}
 	for _, span := range []*tracepb.Span{operation, decision} {
-		want := map[string]string{"tnl.component": "publisher", "tnl.service_protocol": "http", "tnl.access_path": "direct", "tnl.exposure": "public", "tnl.outcome": outcome, "tnl.operation": span.Name}
+		want := map[string]string{"tnl.component": "publisher", "tnl.service_protocol": "http", "tnl.access_path": "public_endpoint", "tnl.exposure": "public", "tnl.outcome": outcome, "tnl.operation": span.Name}
 		if code != "" {
 			want["error.type"] = code
 		}

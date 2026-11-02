@@ -417,7 +417,7 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 	}
 	index, _ := strconv.Atoi(strings.TrimPrefix(component, "visitor-"))
 	visitor := benchworkload.Visitor{Roots: separatedRoots(t, "route-roots.pem"), Address: "ingress:443", PayloadBytes: 32768}
-	directVisitor := benchworkload.Visitor{Roots: separatedRoots(t, "roots.pem"), Address: "publishers:8444", PayloadBytes: 32768}
+	publicServiceVisitor := benchworkload.Visitor{Roots: separatedRoots(t, "roots.pem"), Address: "publishers:8444", PayloadBytes: 32768}
 	localRate := benchworkload.Assignment(rate, 4, index-1)
 	cohortByURL := make(map[string]string)
 	for i, url := range publishers.URLs {
@@ -441,7 +441,7 @@ func runSeparatedVisitor(t *testing.T, ctx context.Context, component string, ra
 		result := separatedVisitorResult{}
 		phaseVisitor := visitor
 		if phase.Direct {
-			phaseVisitor = directVisitor
+			phaseVisitor = publicServiceVisitor
 		}
 		if phase.HeldStreams > 0 {
 			result.HeldRequested = benchworkload.Assignment(phase.HeldStreams, 4, index-1)

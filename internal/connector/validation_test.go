@@ -18,7 +18,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestNativeHTTPBrowserInstructionsRequireLocalDNSAndAllocatedPort(t *testing.T) {
+func TestConnectorHTTPBrowserInstructionsRequireLocalDNSAndAllocatedPort(t *testing.T) {
 	service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: controlv1.ServiceProtocolHTTP, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "orders.example.test", Port: 25443, Public: true}}
 	for _, listen := range []string{"127.0.0.1:25443", "127.0.0.1:15432", "[::1]:15432"} {
 		profile, err := serviceConnectionProfile(service, listen)
@@ -39,7 +39,7 @@ func TestNativeHTTPBrowserInstructionsRequireLocalDNSAndAllocatedPort(t *testing
 	}
 }
 
-func TestNativeHTTPCurlDialsOverrideWithVerifiedAuthority(t *testing.T) {
+func TestConnectorHTTPCurlDialsOverrideWithVerifiedAuthority(t *testing.T) {
 	curl, err := exec.LookPath("curl")
 	if err != nil {
 		t.Skip("curl is required to exercise the printed native command")
@@ -81,7 +81,7 @@ func TestNativeHTTPCurlDialsOverrideWithVerifiedAuthority(t *testing.T) {
 	}
 }
 
-func TestNativeProfileSeparatesLocalDialAndVerifiedIdentity(t *testing.T) {
+func TestConnectorProfileSeparatesLocalDialAndVerifiedIdentity(t *testing.T) {
 	for _, public := range []bool{false, true} {
 		for _, protocol := range []controlv1.ServiceProtocol{controlv1.ServiceProtocolHTTP, controlv1.Postgres, controlv1.Mysql, controlv1.Tcp, "kubernetes"} {
 			service := controlv1.Service{Id: "svc_0123456789ABCDEFGHIJKL", Protocol: protocol, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "orders.production.example.test", Port: 25443, Public: public}}

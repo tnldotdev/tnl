@@ -445,7 +445,7 @@ async def open(
         raise TnlError("sdk.configuration_invalid", "pass an ASGI app")
     if publisher_credential_file is not None and publisher_identity_id is not None:
         raise TnlError("sdk.configuration_invalid", "select a publisher file or publisher ID")
-    # a running native owner does not inherit later changes to the app's env.
+    # a running connector owner does not inherit later changes to the app's env.
     # send the path, never the credential contents, with this invocation.
     if publisher_credential_file is None and publisher_identity_id is None:
         publisher_credential_file = os.getenv("TNL_PUBLISHER_CREDENTIAL_FILE")

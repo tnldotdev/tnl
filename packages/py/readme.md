@@ -34,13 +34,13 @@ after Uvicorn binds it. Pass `service="api"` when the project has more than
 one app service; the working directory selects the project, not the service.
 Local publication needs no Git repository or origin. After changing project
 configuration, stop and restart all apps and named local publishers for that
-project together; the native owner retains one evaluated configuration.
+project together; the connector owner retains one evaluated configuration.
 
 See the [Python ASGI guide](https://tnl.dev/docs/publish#publish-a-python-asgi-app)
 for FastAPI, visitor policy, limits, streaming, and WebSocket examples.
 
 Use `db = await tnl.connect("database")` to prepare a declared service through
-the native connection runtime. Every protocol, including HTTP and Kubernetes,
+the connector connection runtime. Every protocol, including HTTP and Kubernetes,
 needs the wheel's matching native `tnl` binary. With `TNL_CONNECTION_HANDLE`
 already prepared, `tnl.connect("database").snapshot()` reads its current settings
 synchronously.

@@ -132,6 +132,60 @@ func TestPublicDefaultsNeverReachPrivateTCPService(t *testing.T) {
 	}
 }
 
+func TestResolvedServiceSelectsOnlyApplicableProjectDefaults(t *testing.T) {
+	name, server, team := "checkout", "https://control.example", "studio"
+	feedback := true
+	mode, privateMode := config.InspectionSummary, config.InspectionNone
+	retention := config.Duration(time.Hour)
+	project := Project{Config: config.TNL{
+		Server: &server, Team: &team, Feedback: &feedback, OAuth: true,
+		Inspection: &config.Inspection{Mode: &mode, Retention: &retention},
+		Tunnel:     &config.Tunnel{Access: &config.Access{IP: []string{"192.0.2.0/24"}}},
+		Services: config.Services{
+			"web": {Tunnel: &config.Tunnel{}},
+			"internal": {Inspection: &config.Inspection{Mode: &privateMode},
+				HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/ready"}}},
+		},
+		Webhooks: map[string]config.Webhook{"stripe": {Service: "web", Path: "/stripe", Provider: "stripe"}},
+	}}
+	for _, selected := range []string{"", "web", "internal", "web", ""} {
+		settings, err := project.EffectiveService(selected)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if settings.Server != &server || settings.Team != &team || settings.Publish == nil {
+			t.Fatal("lost shared selection or publication settings", settings)
+		}
+		if selected == "internal" {
+			if settings.Tunnel != nil || settings.Feedback != nil || settings.OAuth || settings.Webhooks != nil ||
+				settings.Inspection == nil || settings.Inspection.Mode != &privateMode || settings.Inspection.Retention != nil ||
+				settings.Readiness == nil || settings.Readiness.Path != "/ready" {
+				t.Fatal("private HTTP service inherited public defaults or lost its own settings", settings)
+			}
+			continue
+		}
+		if settings.Tunnel == nil || settings.Tunnel.Access == nil || settings.Tunnel.Access.IP[0] != "192.0.2.0/24" ||
+			settings.Feedback != &feedback || !settings.OAuth || len(settings.Webhooks) != 1 ||
+			settings.Inspection == nil || settings.Inspection.Retention != &retention || settings.Readiness != nil {
+			t.Fatal("public service or root lost project defaults", settings)
+		}
+		settings.Tunnel.Access.IP[0] = "198.51.100.0/24"
+		settings.Inspection.Retention = nil
+	}
+	if project.Config.Tunnel.Name != nil || project.Config.Tunnel.Access.IP[0] != "192.0.2.0/24" || project.Config.Inspection.Retention != &retention {
+		t.Fatal("resolving settings changed the parsed project document")
+	}
+	named := Project{Config: config.TNL{Name: &name}}
+	settings, err := named.EffectiveService("")
+	if err != nil || settings.Tunnel == nil || settings.Tunnel.Name == nil || *settings.Tunnel.Name != name || named.Config.Tunnel != nil {
+		t.Fatal("root settings lost the unnamed publication's saved name or mutated its declaration", settings, err)
+	}
+	settings, err = (Project{}).EffectiveService("")
+	if err != nil || settings.Name != nil || settings.Tunnel != nil || settings.Publish == nil || settings.Readiness != nil {
+		t.Fatal("empty root acquired service-only settings", settings, err)
+	}
+}
+
 func TestPublisherGroupIsExplicitAndDefaultsToLocal(t *testing.T) {
 	group, protocol := "cloud", "postgres"
 	target := config.Target("db.internal:5432")

@@ -92,7 +92,7 @@ type Options struct {
 	TLSServerName string
 	Helper        string
 	Profile       string
-	// CredentialArgs selects the same native owner's private credential helper.
+	// CredentialArgs selects the same connector owner's private credential helper.
 	CredentialArgs []string
 }
 

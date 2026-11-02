@@ -15,6 +15,11 @@ import (
 )
 
 func writeControlStateProblem(response http.ResponseWriter, operation string, err error) {
+	// the peer has already ended this request. match the private API boundary:
+	// do not turn its interrupted database work into a server failure response.
+	if observability.ResponseContext(response).Err() != nil {
+		return
+	}
 	switch {
 	case errors.Is(err, controlstate.ErrProjectManaged):
 		writeProblem(response, http.StatusConflict, controlv1.ProjectManaged, "resource is managed by project configuration; change the declaration and run tnl apply")
@@ -26,7 +31,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid DNS authority request")
 	case errors.Is(err, controlstate.ErrDNSAuthorityNotFound):
 		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "DNS authority not found")
-	case errors.Is(err, controlstate.ErrDNSAuthorityIdempotency), errors.Is(err, controlstate.ErrDNSAuthorityWorkStale):
+	case errors.Is(err, controlstate.ErrDNSAuthorityWorkStale):
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "DNS authority state conflict")
 	case errors.Is(err, controlstate.ErrPublicURLInvalid), errors.Is(err, controlstate.ErrShareInvalid), errors.Is(err, controlstate.ErrFeedbackInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")

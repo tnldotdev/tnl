@@ -1,7 +1,7 @@
 # python connection boundary
 
 `tnl.connect("database")` selects a project service. Await the handle to prepare
-its native connection owner and read one snapshot:
+its connector owner and read one snapshot:
 
 ```python
 import tnl
@@ -19,17 +19,17 @@ The result is an immutable, non-awaitable Python object. `db.ssl` is a Python
 trust data, not a path. Client certificates and private keys never enter Python.
 HTTP snapshots also have `url`, the service HTTPS origin, independent of the
 loopback port. Kubernetes snapshots also have `kubeconfig` and `context` from
-the native owner; use that kubeconfig's native credential plugin.
+the connector owner; use that kubeconfig's native credential plugin.
 Opaque TCP snapshots have only `host`, `port`, `protocol`, and `expires_at`;
 native code verifies and terminates their managed visitor TLS leg.
 
 Every protocol requires the wheel's matching native `tnl` binary, including HTTP
-and Kubernetes. A public managed endpoint does not remove the native owner or
+and Kubernetes. A public managed endpoint does not remove the connector owner or
 select an alternate direct-dial SDK transport.
 
 ## prepared synchronous reads
 
-An existing native owner can be supplied through the private
+An existing connector owner can be supplied through the private
 `TNL_CONNECTION_HANDLE` environment variable. Then properties and `snapshot()`
 work synchronously, including from an active asyncio event loop:
 
@@ -86,13 +86,13 @@ shared until the handle is closed; it does not repeatedly trigger sign-in.
 Call `handle.close()` or `await handle.aclose()` when finished. Closing affects
 all handles sharing that SDK-owned session. A supplied owner is left running.
 SDK-owned sessions also register cleanup after successful preparation, and the
-native owner monitors the Python parent process. Canceling an await does not
+connector owner monitors the Python parent process. Canceling an await does not
 kill a shared startup needed by other callers; it finishes in its worker thread
 and retains those same cleanup boundaries. Imports perform no discovery,
 authentication, process startup, or environment mutation.
 
 Sessions belong to the Python process that created them. After `fork()`, inherited
-handles fail closed, inherited exit hooks cannot stop the parent's native owner,
+handles fail closed, inherited exit hooks cannot stop the parent's connector owner,
 and new handles use fresh locks and IPC. Create and await handles in each serving
 worker. Inactive workload policy contexts are reclaimed when their sessions close
 or identity selection fails; the 32-policy bound applies to active selections and
@@ -201,7 +201,7 @@ their raw socket as direct TLS. These snapshots are deliberately not arbitrary
   checks are not supported workarounds.
 - An HTTP URL alone does not configure a Python HTTP client's native loopback
   dial address or private request authorization. Use a client adapter that
-  preserves the managed origin/SNI and the native owner's admission boundary;
+  preserves the managed origin/SNI and the connector owner's admission boundary;
   this SDK does not install a global resolver or an httpx transport.
 
 ## checks

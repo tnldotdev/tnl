@@ -1,4 +1,4 @@
-"""bounded async-worker IPC to a private native connection capability."""
+"""bounded async-worker IPC to a private connector connection capability."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from ._protocol import TnlError
 
 
 def _failure() -> TnlError:
-    return TnlError("sdk.connection_unavailable", "the native connection owner is unavailable")
+    return TnlError("sdk.connection_unavailable", "the connector owner is unavailable")
 
 
 class OwnerIPC:

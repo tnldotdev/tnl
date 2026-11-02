@@ -1,0 +1,7 @@
+{
+  "type": "hello",
+  "protocol_version": 1,
+  "role": "ingress",
+  "credential": "secret",
+  "connector_pair_leg_accepted": null
+}

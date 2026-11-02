@@ -105,7 +105,6 @@ func (m *Manager) Snapshot() Snapshot {
 			copy.Services[index].Observation = &observation
 		}
 	}
-	copy.Events = slices.Clone(copy.Events)
 	project := m.snapshot.Project
 	m.mu.Unlock()
 	// retain the journal's services and cursor together. publication writers share

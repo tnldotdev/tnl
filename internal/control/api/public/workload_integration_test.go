@@ -22,7 +22,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -115,6 +114,12 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	}
 	if certificate, err := job.ClientTLSCertificate(ctx, service); err != nil || certificate.PrivateKey == nil || certificate.Leaf == nil {
 		t.Fatal("native workload TLS adapter", err)
+	}
+	t.Run("connector peer pair", func(t *testing.T) {
+		exerciseWorkloadConnectorPeerPair(t, d, job, server, human.Identity.Identity.ID, team, service, session.Credential, databaseURL)
+	})
+	if t.Failed() {
+		return
 	}
 	if renewed, err := job.Renew(ctx); err != nil || !renewed.ExpiresAt.Equal(session.ExpiresAt) || !renewed.LeaseExpiresAt.Equal(session.LeaseExpiresAt) {
 		t.Fatal("early renewal extended execution", err)
@@ -226,32 +231,13 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			runID, err := opaqueid.New(opaqueid.IngressRunPrefix)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := d.RegisterIngress(ctx, controlstate.IngressRegistration{IngressID: name, IngressRunID: runID, ProtocolVersion: 1, ConnectionCapacity: 64, ConnectorAddress: name + ".example.test:9443", ConnectorTLSServerName: name + ".example.test", IngressPoolID: controlstate.PrimaryIngressPoolID}, at, time.Hour); err != nil {
-				t.Fatal(err)
-			}
-			handles, err := d.CreateWorkloadIngressAssignmentSet(ctx, s.Credential, service, "retention", 1, "", at)
-			if err != nil {
-				t.Fatal(err)
-			}
 			if name == "old-revoked" {
 				if err := d.RevokeWorkloadSession(ctx, s.ID, s.Credential, at.Add(time.Second)); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if name != "lease-expired" {
-				if err := d.ReleaseWorkloadIngressAssignment(ctx, s.Credential, handles.Assignments[0].ID, at.Add(2*time.Second)); err != nil {
-					t.Fatal(err)
-				}
-			}
 			sessionPath := "/v1/workload-sessions/" + s.ID
-			handlePath := "/v1/workload/ingress-assignments/" + handles.Assignments[0].ID
 			for range 2 {
-				requestStatus("DELETE", handlePath, s.Credential, 204)
-				requestStatus("DELETE", handlePath, session.Credential, 403)
 				requestStatus("DELETE", sessionPath, session.Credential, 403)
 				if name != "old-expired" {
 					requestStatus("DELETE", sessionPath, s.Credential, 204)
@@ -271,7 +257,6 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 				}
 			}
 			for range 2 {
-				requestStatus("DELETE", handlePath, s.Credential, 403)
 				requestStatus("DELETE", sessionPath, s.Credential, 403)
 				requestStatus("POST", sessionPath+"/renew", s.Credential, 403)
 			}

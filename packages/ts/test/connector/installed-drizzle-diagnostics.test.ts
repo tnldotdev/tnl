@@ -257,7 +257,7 @@ describe("installed Drizzle fixture diagnostics", () => {
     async ({ verificationFails, cleanupFails }) => {
       const fixture = new URL("../fixtures/connections/installed-drizzle.ts", import.meta.url).href;
       // run the actual entry point with failed file operations, without installing
-      // packages or needing a native owner. both errors contain private text.
+      // packages or needing a connector owner. both errors contain private text.
       let stdout = "";
       let stderr = "";
       let exitCode: unknown = 0;

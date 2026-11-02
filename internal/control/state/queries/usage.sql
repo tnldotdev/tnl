@@ -244,15 +244,6 @@ WHERE runs.ingress_id = sqlc.arg(ingress_id)
   )
 RETURNING *;
 
--- name: MarkExpiredIngressUsageRunIncomplete :exec
-UPDATE control.ingress_usage_runs
-SET ended_at = COALESCE(ended_at, sqlc.arg(ended_at)),
-    incomplete_from = observed_through,
-    incomplete_until = sqlc.arg(ended_at)
-WHERE ingress_id = sqlc.arg(ingress_id)
-  AND ingress_run_id = sqlc.arg(ingress_run_id)
-  AND ended_at IS NULL;
-
 -- name: MarkExpiredIngressUsageRunsIncomplete :many
 UPDATE control.ingress_usage_runs
 SET ended_at = lease_expires_at,

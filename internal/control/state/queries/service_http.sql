@@ -75,7 +75,7 @@ SELECT (v.promoted_at IS NOT NULL)::boolean AS admitted,LEAST(sqlc.arg(now)::tim
      AND relay.relay_lease_revision=slot.relay_lease_revision AND relay.relay_service_id=slot.relay_service_id
      WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
      AND relay.lease_expires_at>sqlc.arg(now) AND NOT relay.draining))::timestamptz AS valid_until
-FROM control.direct_service_visitors v
+FROM control.public_service_visitors v
 JOIN control.services service ON service.id=v.service_id AND service.public AND service.enabled
     AND service.deleted_at IS NULL AND service.protocol='http' AND service.service_port=v.destination_port
 JOIN control.service_runs run ON run.id=v.service_run_id AND run.service_id=service.id
@@ -96,8 +96,8 @@ AND EXISTS(SELECT 1 FROM control.service_connection_slots slot JOIN control.rela
     WHERE slot.service_run_id=run.id AND slot.state='ready' AND slot.session_open
     AND relay.lease_expires_at>sqlc.arg(now) AND NOT relay.draining);
 
--- name: ServiceDirectBinding :one
-SELECT destination_port,identity_id,device_id,workload_session_id FROM control.direct_service_visitors
+-- name: ServicePublicEndpointBinding :one
+SELECT destination_port,identity_id,device_id,workload_session_id FROM control.public_service_visitors
 WHERE visitor_connection_id=$1;
 
 -- name: ServiceHTTPAppliedConfiguration :one

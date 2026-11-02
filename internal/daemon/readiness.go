@@ -54,23 +54,13 @@ func (d *daemon) readyControl(role daemonconfig.Role, now time.Time) error {
 }
 
 func (d *daemon) readyIngress(now time.Time) error {
-	if len(d.ingresses) < 1 || len(d.ingresses) > 2 {
+	if len(d.ingresses) != 1 {
 		return errors.New("ingress runtime is not ready")
 	}
-	public := 0
 	for _, runtime := range d.ingresses {
-		if runtime.controller == nil || !runtime.controller.Ready(now) || !runtime.privateOnly && (runtime.server == nil || !runtime.server.Ready()) {
-			return errors.New("ingress lease, routing table, certificate, or listener is not ready")
+		if runtime.controller == nil || !runtime.controller.Ready(now) || runtime.server == nil || !runtime.server.Ready() {
+			return errors.New("ingress lease, routing table, or listener is not ready")
 		}
-		if runtime.serviceCertificate != nil && !runtime.serviceCertificate.ready(now) {
-			return errors.New("private ingress transport certificate is not ready")
-		}
-		if !runtime.privateOnly {
-			public++
-		}
-	}
-	if public != 1 {
-		return errors.New("public ingress listener is not ready")
 	}
 	return nil
 }

@@ -26,12 +26,12 @@ func TestNetworkPolicyDenialAuditedAtIngress(t *testing.T) {
 	}
 }
 
-func TestPrivateVisitorAuditCorrelatesAdmissionAndRevocationClose(t *testing.T) {
-	connector, control, forwarder, tlsConfig, _, _ := privateTestSetup(t)
+func TestPublicServiceVisitorAuditCorrelatesAdmissionAndRevocationClose(t *testing.T) {
+	connector, control, forwarder, _ := publicServiceTestSetup(t)
 	events := make(chan serviceaudit.Observation, 2)
 	connector.config.AuditSink = auditSinkFunc(func(o serviceaudit.Observation) bool { events <- o; return true })
 	connector.config.RecheckInterval = 20 * time.Millisecond
-	_, stream, stop := privateActiveStream(t, connector, control, forwarder, tlsConfig)
+	stream, stop := publicServiceActiveStream(t, connector, forwarder)
 	defer stop()
 	var opened serviceaudit.Observation
 	select {
@@ -39,7 +39,7 @@ func TestPrivateVisitorAuditCorrelatesAdmissionAndRevocationClose(t *testing.T) 
 	case <-time.After(time.Second):
 		t.Fatal("private admission did not emit")
 	}
-	if opened.Validate() != nil || opened.EventType != "connection.open" || opened.Outcome != "allowed" || opened.RunID != control.run || opened.ConnectorSessionID != control.session {
+	if opened.Validate() != nil || opened.EventType != "connection.open" || opened.Outcome != "allowed" || opened.RunID != control.run || opened.PairID != "" {
 		t.Fatalf("private admission scope: %+v", opened)
 	}
 	control.mu.Lock()

@@ -16,7 +16,7 @@ const messages = {
   TNL_ACTION_CLEANUP_FAILED:
     "tnl connection cleanup failed; the saved native handle could not confirm joined cleanup",
   TNL_ACTION_CLEANUP_UNCONFIRMED:
-    "tnl startup delivered no cleanup handle; any surviving native owner remains bounded by its fixed deadline and runner cleanup",
+    "tnl startup delivered no cleanup handle; any surviving connector owner remains bounded by its fixed deadline and runner cleanup",
   TNL_ACTION_CANCELLED: "tnl connection startup was cancelled",
   TNL_ACTION_BINARY_SELECTION_INVALID: "select either version or cli-path",
   TNL_ACTION_VERSION_INVALID:

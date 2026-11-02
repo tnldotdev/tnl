@@ -62,7 +62,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.identity.teamID = team.Id
-	direct := startSeparatedPrivateIngress(t, f, 0, "quic", nil).ingresses[0].private
+	direct := startSeparatedPrivateIngress(t, f, 0, "quic", nil).ingresses[0].publicServices
 	startSeparatedPrivateIngress(t, f, 1, "quic", nil)
 	var requests atomic.Int64
 	var targetConnection atomic.Value
@@ -138,7 +138,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := ingress.New(listener, ingress.Config{DirectOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, DirectConnector: direct, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, MaxConnections: 64})
+	server, err := ingress.New(listener, ingress.Config{PublicServicesOnly: true, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, PublicServices: direct, ServicePortRanges: []tcpport.Range{{First: service.Endpoint.Port, Last: service.Endpoint.Port}}, MaxConnections: 64})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,13 +403,8 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	material, err := f.identity.state.EnsureServiceClientCertificate(t.Context(), person.Identity.Id, service.Id, device.Id, func(ctx context.Context, csr []byte) (controlv1.ServiceClientCertificate, error) {
-		return f.identity.routes.IssueServiceClientCertificate(ctx, service.Id, device.Id, csr)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	mtls := &http.Client{Transport: newTransport(&material.Certificate), Timeout: 10 * time.Second}
+	material := issueServiceClientCertificate(t, f, service.Id, device.Id)
+	mtls := &http.Client{Transport: newTransport(&material), Timeout: 10 * time.Second}
 	awaitServiceHTTPStatus(t, mtls, base, "", "", 200)
 	closeResponse(request(mtls, "/", "", "", 200))
 	source, err := json.Marshal(controlv1.VisitorTokenGrantSource{Kind: "grant", Credential: transition.RefreshCredential})
@@ -429,8 +424,8 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	}
 	closeResponse(request(mtls, "/", "", "", 200))
 	closeResponse(request(mtls, "/", "Tnl-Access-Token", "invalid", 403))
-	serviceHTTPCurl(t, f, listener.Addr().String(), service, material.Certificate)
-	certificateDigest := sha256.Sum256(material.Certificate.Certificate[0])
+	serviceHTTPCurl(t, f, listener.Addr().String(), service, material)
+	certificateDigest := sha256.Sum256(material.Certificate[0])
 	if _, err = f.inspect.ExecContext(t.Context(), `UPDATE control.service_client_certificates SET revoked_at=now() WHERE certificate_digest=$1`, certificateDigest[:]); err != nil {
 		t.Fatal(err)
 	}
@@ -441,13 +436,8 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	material, err = f.identity.state.EnsureServiceClientCertificate(t.Context(), person.Identity.Id, service.Id, device.Id, func(ctx context.Context, csr []byte) (controlv1.ServiceClientCertificate, error) {
-		return f.identity.routes.IssueServiceClientCertificate(ctx, service.Id, device.Id, csr)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	mtls = &http.Client{Transport: newTransport(&material.Certificate), Timeout: 10 * time.Second}
+	material = issueServiceClientCertificate(t, f, service.Id, device.Id)
+	mtls = &http.Client{Transport: newTransport(&material), Timeout: 10 * time.Second}
 	awaitServiceHTTPStatus(t, mtls, base, "", "", 200)
 	closeResponse(request(mtls, "/", "", "", 200))
 	if err = f.identity.routes.RevokeVisitorDevice(t.Context(), device.Id); err != nil {

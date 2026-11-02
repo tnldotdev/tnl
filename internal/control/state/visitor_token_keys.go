@@ -51,7 +51,18 @@ func ensureVisitorIssuer(ctx context.Context, q *controlstatedb.Queries, issuer 
 	if err != nil || canonical != issuer || len(issuer) > 256 {
 		return ErrVisitorSigningKey
 	}
-	stored, err := q.EnsureVisitorTokenIssuer(ctx, issuer)
+	// locking an existing issuer must not write a new row version: every
+	// waiting repeatable-read issuer would otherwise need a fresh snapshot.
+	stored, err := q.LockVisitorTokenIssuer(ctx)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// concurrent bootstrap either becomes visible at read committed or
+		// fails serialization at repeatable read. the caller retries its whole
+		// authorization transaction; it must never sign from a stale snapshot.
+		if err := q.EnsureVisitorTokenIssuer(ctx, issuer); err != nil {
+			return fmt.Errorf("read visitor issuer: %w", err)
+		}
+		stored, err = q.LockVisitorTokenIssuer(ctx)
+	}
 	if err != nil {
 		return fmt.Errorf("read visitor issuer: %w", err)
 	}
@@ -124,12 +135,16 @@ func (d *Database) signVisitorPermission(ctx context.Context, tx pgx.Tx, issuer 
 	if err != nil {
 		return "", err
 	}
-	changed, err := q.RetainVisitorTokenSigningKey(ctx, controlstatedb.RetainVisitorTokenSigningKeyParams{ID: row.ID, ExpiresAt: timestamptz(permission.ExpiresAt)})
-	if err != nil {
-		return "", err
-	}
-	if changed != 1 {
-		return "", ErrVisitorSigningKey
+	// the current key is locked through commit. sufficient retention needs no
+	// write; an extension must still update exactly that current, unrevoked key.
+	if row.RetainUntil.Time.Before(permission.ExpiresAt) {
+		changed, err := q.RetainVisitorTokenSigningKey(ctx, controlstatedb.RetainVisitorTokenSigningKeyParams{ID: row.ID, ExpiresAt: timestamptz(permission.ExpiresAt)})
+		if err != nil {
+			return "", err
+		}
+		if changed != 1 {
+			return "", ErrVisitorSigningKey
+		}
 	}
 	return token, nil
 }

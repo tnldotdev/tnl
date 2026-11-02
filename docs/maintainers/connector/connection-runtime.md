@@ -1,4 +1,4 @@
-# native connection runtime
+# connector connection runtime
 
 `await tnl.connect("database")` prepares native client access from Node or Bun.
 the package root stays browser-safe and imports the Node implementation only on
@@ -119,7 +119,7 @@ a wall-clock change. renewal contexts end at that bound, and IPC rejects new wor
 after it even while a backend's late response is still pending. SDK-owned persistent
 processes retain their separate process lifetime.
 
-native connector HTTP and PostgreSQL streams retain live guards. those guards
+connector HTTP and PostgreSQL streams retain live guards. those guards
 recheck current access within 30 seconds
 and fail closed at the last successful decision deadline during a control outage,
 at most two minutes and never beyond an earlier credential/session/run deadline.
@@ -128,7 +128,7 @@ session cannot extend that operation's original deadline. denied or failed
 operations close without replay. pool reuse and stable listener ports do not
 replace these checks.
 
-public URL and direct service HTTP requests instead use signed permissions and
+public URL and public service HTTP requests instead use signed permissions and
 a ten-second local policy view; see
 [HTTP authorization](../transport/architecture.md#authorization-and-tls-boundaries).
 
@@ -307,8 +307,8 @@ the next action owns GitHub token acquisition and environment-file writes. its
 sequence is:
 
 ```ts
-const capabilities = await nativeJSON(binary, ["runtime", "connections", "capabilities"]);
-const context = await nativeJSON(binary, [
+const capabilities = await connectorJSON(binary, ["runtime", "connections", "capabilities"]);
+const context = await connectorJSON(binary, [
   "runtime",
   "connections",
   "context",
@@ -318,7 +318,7 @@ const context = await nativeJSON(binary, [
   policy,
 ]);
 const assertion = await getIDToken(context.audience);
-const started = await nativeJSON(
+const started = await connectorJSON(
   binary,
   [
     "runtime",
@@ -342,10 +342,10 @@ exportVariable("TNL_CONNECTION_HANDLE", started.connection_handle);
 if (started.kubeconfig) exportVariable("KUBECONFIG", started.kubeconfig);
 
 // post uses the original binary and private IPC, never a PID match.
-await nativeJSON(savedBinary, ["runtime", "connections", "stop", "--handle", savedHandle]);
+await connectorJSON(savedBinary, ["runtime", "connections", "stop", "--handle", savedHandle]);
 ```
 
-`nativeJSON` must bound stdout/stderr and time, pass stdin through a pipe, and
+`connectorJSON` must bound stdout/stderr and time, pass stdin through a pipe, and
 validate the response before narrowing its type. never log the start request or
 private IPC payloads. the action exposes public runtime JSON and the private
 handle path, without an application-environment mapping language.
@@ -395,7 +395,7 @@ a live matching session and rechecks assertion policy and service access at most
 30 seconds apart. explicit `attach` always goes through authority. cached
 metadata is not a visitor grant; admission and active guards remain authoritative.
 
-## native transport ownership and qualification
+## connector transport ownership and qualification
 
 `cmd/tnl/connections_backend.go` uses `tcpconnect.NewWorkloadControl` with the
 owner's `*workloadclient.Client`; `Config.IdentityID` is empty for that subject.
@@ -404,7 +404,7 @@ trust revision, protocol, and managed TLS endpoint. no human ID substitutes for
 a workload. closing a service adapter releases only its own assignments; the
 owner retains session renewal/revocation.
 
-the native owner generates one ephemeral signing key per workload session for
+the connector owner generates one ephemeral signing key per workload session for
 exchange and connector proofs. current authorization retains the exact workload service set,
 fixed execution deadline, and renewable lease. no human device represents a workload.
 
@@ -459,6 +459,6 @@ the listed versions and paths; they do not establish compatibility for every SQL
 driver, another runtime, or the accounts application's complete database workflow.
 
 `task go:test:integration:vercel` qualifies the installed SDK in a real emitted
-Vercel Node 24 function that starts its own packaged native owner. see
+Vercel Node 24 function that starts its own packaged connector owner. see
 [local Vercel qualification](vercel-functions.md) for artifact checks, invocation
 evidence, platform limits, and the separate deployed startup boundary.

@@ -93,7 +93,7 @@ func TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget(t *testing.T) {
 	}
 	type processKey struct{}
 	setup, cancel := context.WithCancel(context.WithValue(t.Context(), processKey{}, "process-observation"))
-	b := &nativeConnectionBackend{scope: connectorruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: names}, assertion: "first", httpClient: server.Client(), parentPID: os.Getpid(), project: projectConfiguration{Project: clientproject.Project{Config: configuration}}}
+	b := &connectorConnectionBackend{scope: connectorruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: names}, assertion: "first", httpClient: server.Client(), parentPID: os.Getpid(), project: projectConfiguration{Project: clientproject.Project{Config: configuration}}}
 	defer b.Close(t.Context())
 	if _, _, err := b.Start(setup); err != nil {
 		t.Fatal(err)

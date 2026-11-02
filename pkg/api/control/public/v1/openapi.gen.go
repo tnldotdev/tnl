@@ -150,6 +150,27 @@ func (e CertificateIssuanceState) Valid() bool {
 	}
 }
 
+// Defines values for ConnectorPeerPairRequestAction.
+const (
+	Create  ConnectorPeerPairRequestAction = "create"
+	Renew   ConnectorPeerPairRequestAction = "renew"
+	Replace ConnectorPeerPairRequestAction = "replace"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorPeerPairRequestAction enum.
+func (e ConnectorPeerPairRequestAction) Valid() bool {
+	switch e {
+	case Create:
+		return true
+	case Renew:
+		return true
+	case Replace:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ControlDiscoveryManagedUrlMode.
 const (
 	Generated ControlDiscoveryManagedUrlMode = "generated"
@@ -1731,18 +1752,6 @@ type AuthorizeServiceClientCertificateRequest struct {
 	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
 }
 
-// AuthorizeServiceConnectorRequest defines model for AuthorizeServiceConnectorRequest.
-type AuthorizeServiceConnectorRequest struct {
-	ConnectorSessionId string `json:"connector_session_id"`
-	GrantRevision      int64  `json:"grant_revision"`
-	RunNumber          int64  `json:"run_number"`
-	SourceIp           string `json:"source_ip"`
-
-	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject             VisitorSubject      `json:"subject"`
-	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
-}
-
 // AvailablePublicURL defines model for AvailablePublicURL.
 type AvailablePublicURL struct {
 	CanonicalHostname string                          `json:"canonical_hostname"`
@@ -1852,23 +1861,126 @@ type ConnectionAssignment struct {
 	TlsServerName                          CanonicalHostname        `json:"tls_server_name"`
 }
 
-// ConnectorSessionID defines model for ConnectorSessionID.
-type ConnectorSessionID = string
+// ConnectorPeerPair defines model for ConnectorPeerPair.
+type ConnectorPeerPair struct {
+	DeliveryGeneration int64 `json:"delivery_generation"`
 
-// ConnectorSessionSetup defines model for ConnectorSessionSetup.
-type ConnectorSessionSetup struct {
-	ConnectorSessionId ConnectorSessionID `json:"connector_session_id"`
-	ExpiresAt          time.Time          `json:"expires_at"`
+	// DeliveryId Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.
+	DeliveryId string    `json:"delivery_id"`
+	ExpiresAt  time.Time `json:"expires_at"`
 
-	// IngressAddress Shared ingress infrastructure TLS endpoint
-	IngressAddress    string    `json:"ingress_address"`
-	IngressId         string    `json:"ingress_id"`
-	ServiceId         ServiceID `json:"service_id"`
-	SessionCredential string    `json:"session_credential"`
+	// Key Secret returned only to the authorized signed source.
+	Key string `json:"key"`
+
+	// ObservedAt Control's authority observation time; subtract request transit when installing local deadlines.
+	ObservedAt          time.Time `json:"observed_at"`
+	PairId              string    `json:"pair_id"`
+	PublisherIdentityId string    `json:"publisher_identity_id"`
+
+	// PublisherPreparedUntil The publisher reported its exact packet registration and inner listener installed through this bound. This startup barrier is not visitor permission or a guarantee of continued process liveness.
+	PublisherPreparedUntil *time.Time               `json:"publisher_prepared_until,omitempty"`
+	Relays                 []ConnectorPeerPairRelay `json:"relays"`
+	RunNumber              int64                    `json:"run_number"`
+	ServiceId              ServiceID                `json:"service_id"`
+	ServiceRunId           ServiceRunID             `json:"service_run_id"`
 
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject       VisitorSubject `json:"subject"`
-	TlsServerName string         `json:"tls_server_name"`
+	Subject VisitorSubject `json:"subject"`
+}
+
+// ConnectorPeerPairCandidate A pair to reconcile, not delivery authority or permission to open an application stream.
+type ConnectorPeerPairCandidate struct {
+	DeliveryGeneration int64  `json:"delivery_generation"`
+	PairId             string `json:"pair_id"`
+}
+
+// ConnectorPeerPairCandidates defines model for ConnectorPeerPairCandidates.
+type ConnectorPeerPairCandidates struct {
+	Items []ConnectorPeerPairCandidate `json:"items"`
+
+	// NextAfter Continue after this pair ID; restart from the first page on the next reconciliation pass.
+	NextAfter *string `json:"next_after,omitempty"`
+}
+
+// ConnectorPeerPairDelivery Existing pair delivery for the authenticated publisher run only; never grants an application stream.
+type ConnectorPeerPairDelivery struct {
+	DeliveryGeneration int64     `json:"delivery_generation"`
+	DeliveryId         string    `json:"delivery_id"`
+	ExpiresAt          time.Time `json:"expires_at"`
+
+	// Key Secret for this delivery; do not log or persist.
+	Key string `json:"key"`
+
+	// ObservedAt Control time for this authority observation; the publisher subtracts request delay when installing its local deadline.
+	ObservedAt          time.Time                `json:"observed_at"`
+	PairId              string                   `json:"pair_id"`
+	PublisherIdentityId string                   `json:"publisher_identity_id"`
+	Relays              []ConnectorPeerPairRelay `json:"relays"`
+	RunNumber           int64                    `json:"run_number"`
+	ServiceId           ServiceID                `json:"service_id"`
+	ServiceRunId        ServiceRunID             `json:"service_run_id"`
+
+	// SourceIp Canonical source observed by both relays.
+	SourceIp string `json:"source_ip"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject VisitorSubject `json:"subject"`
+}
+
+// ConnectorPeerPairPrepared Report installation of the exact independently prepared binding; this does not renew pair or application authority.
+type ConnectorPeerPairPrepared struct {
+	// BindingExpiresAt The original control-clock expires_at from the installed delivery response, not a new local deadline.
+	BindingExpiresAt   time.Time `json:"binding_expires_at"`
+	DeliveryGeneration int64     `json:"delivery_generation"`
+	DeliveryId         string    `json:"delivery_id"`
+}
+
+// ConnectorPeerPairReady A short-lived, credential-free snapshot for signing an exact pair request. It never grants a relay claim.
+type ConnectorPeerPairReady struct {
+	PublisherIdentityId string                   `json:"publisher_identity_id"`
+	Relays              []ConnectorPeerPairRelay `json:"relays"`
+}
+
+// ConnectorPeerPairRelay defines model for ConnectorPeerPairRelay.
+type ConnectorPeerPairRelay struct {
+	AssignmentRevision    int64                   `json:"assignment_revision"`
+	PublisherConnectionId string                  `json:"publisher_connection_id"`
+	RelayAddress          string                  `json:"relay_address"`
+	RelayLease            ConnectorPeerRelayLease `json:"relay_lease"`
+	TlsServerName         string                  `json:"tls_server_name"`
+}
+
+// ConnectorPeerPairRequest Sign the canonical ConnectorPeerPairProofMessage Go v1 array, not the snake_case HTTP object. Source is selected by kind; a device uses the sole control bearer, a workload uses its credential and no control bearer. Each connector owner creates with a distinct idempotency key and retains that stable owner key across create, renew and replace. A pair ID and generation alone never prove ownership. Replacement also names the exact predecessor and issues a new pair, delivery ID, key and generation; it does not transfer a running session. An uncertain response repeats the exact signed request, including its timestamp, action and owner key.
+type ConnectorPeerPairRequest struct {
+	Action              ConnectorPeerPairRequestAction `json:"action"`
+	ExpectedRelays      []ConnectorPeerPairRelay       `json:"expected_relays"`
+	IdempotencyKey      IdempotencyKey                 `json:"idempotency_key"`
+	PreviousGeneration  *int64                         `json:"previous_generation,omitempty"`
+	PreviousPairId      *string                        `json:"previous_pair_id,omitempty"`
+	PublisherIdentityId string                         `json:"publisher_identity_id"`
+
+	// RequestedAt Retain this timestamp on an uncertain reply retry. A successful fresh renewal supersedes earlier create or replace reply proofs; those proofs cannot recover the later renewal's bound.
+	RequestedAt  time.Time    `json:"requested_at"`
+	RunNumber    int64        `json:"run_number"`
+	ServiceRunId ServiceRunID `json:"service_run_id"`
+
+	// Signature Unpadded base64url Ed25519 signature over ConnectorPeerPairProofMessage.
+	Signature string          `json:"signature"`
+	Source    json.RawMessage `json:"source"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject VisitorSubject `json:"subject"`
+}
+
+// ConnectorPeerPairRequestAction defines model for ConnectorPeerPairRequest.Action.
+type ConnectorPeerPairRequestAction string
+
+// ConnectorPeerRelayLease defines model for ConnectorPeerRelayLease.
+type ConnectorPeerRelayLease struct {
+	RelayId            string `json:"relay_id"`
+	RelayLeaseRevision int64  `json:"relay_lease_revision"`
+	RelayRunId         string `json:"relay_run_id"`
+	RelayServiceId     string `json:"relay_service_id"`
 }
 
 // ControlDiscovery defines model for ControlDiscovery.
@@ -2292,22 +2404,6 @@ type IdempotencyKey = string
 
 // IdentityID defines model for IdentityID.
 type IdentityID = ResourceID
-
-// IngressTransportTrust defines model for IngressTransportTrust.
-type IngressTransportTrust struct {
-	CertificatePem       string    `json:"certificate_pem"`
-	IngressId            string    `json:"ingress_id"`
-	IngressLeaseRevision int64     `json:"ingress_lease_revision"`
-	IngressRunId         string    `json:"ingress_run_id"`
-	IssuerPem            string    `json:"issuer_pem"`
-	IssuerRevision       int64     `json:"issuer_revision"`
-	LeaseUri             string    `json:"lease_uri"`
-	NotAfter             time.Time `json:"not_after"`
-	NotBefore            time.Time `json:"not_before"`
-	PublicKeySha256      string    `json:"public_key_sha256"`
-	TlsServerName        string    `json:"tls_server_name"`
-	ValidUntil           time.Time `json:"valid_until"`
-}
 
 // IssuanceID defines model for IssuanceID.
 type IssuanceID = ResourceID
@@ -3242,11 +3338,11 @@ type ServiceName = string
 
 // ServiceObservation defines model for ServiceObservation.
 type ServiceObservation struct {
-	ConnectorSessionId  *string                       `json:"connector_session_id,omitempty"`
 	EventId             string                        `json:"event_id"`
 	EventType           ServiceObservationEventType   `json:"event_type"`
 	OccurredAt          time.Time                     `json:"occurred_at"`
 	Outcome             ServiceObservationOutcome     `json:"outcome"`
+	PairId              *string                       `json:"pair_id,omitempty"`
 	Reason              *ServiceObservationReason     `json:"reason,omitempty"`
 	RunId               string                        `json:"run_id"`
 	RunNumber           int64                         `json:"run_number"`
@@ -3309,6 +3405,12 @@ type ServiceRunHeartbeat struct {
 // ServiceRunID defines model for ServiceRunID.
 type ServiceRunID = string
 
+// ServiceRunObservations defines model for ServiceRunObservations.
+type ServiceRunObservations struct {
+	Events    []ServiceObservation `json:"events"`
+	RunNumber int64                `json:"run_number"`
+}
+
 // ServiceRunPreparation defines model for ServiceRunPreparation.
 type ServiceRunPreparation struct {
 	CertificatePlan     *CertificatePlan `json:"certificate_plan,omitempty"`
@@ -3354,12 +3456,15 @@ type ServiceRunStateState string
 // ServiceSelection defines model for ServiceSelection.
 type ServiceSelection struct {
 	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
-	Endpoint     *ServiceEndpoint `json:"endpoint,omitempty"`
-	ExpiresAt    time.Time        `json:"expires_at"`
-	Protocol     ServiceProtocol  `json:"protocol"`
-	RunNumber    int64            `json:"run_number"`
-	ServiceId    ServiceID        `json:"service_id"`
-	ServiceRunId ServiceRunID     `json:"service_run_id"`
+	Endpoint  *ServiceEndpoint `json:"endpoint,omitempty"`
+	ExpiresAt time.Time        `json:"expires_at"`
+
+	// PairReady A short-lived, credential-free snapshot for signing an exact pair request. It never grants a relay claim.
+	PairReady    *ConnectorPeerPairReady `json:"pair_ready,omitempty"`
+	Protocol     ServiceProtocol         `json:"protocol"`
+	RunNumber    int64                   `json:"run_number"`
+	ServiceId    ServiceID               `json:"service_id"`
+	ServiceRunId ServiceRunID            `json:"service_run_id"`
 
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
 	Subject       VisitorSubject `json:"subject"`
@@ -3577,8 +3682,11 @@ type VisitorPolicySnapshot struct {
 	Ip          *VisitorPolicyIP `json:"ip,omitempty"`
 	Issuer      string           `json:"issuer"`
 	KeyRevision int64            `json:"key_revision"`
-	ObservedAt  time.Time        `json:"observed_at"`
-	Port        int              `json:"port"`
+
+	// MetadataRevision current service trust revision; zero for public URLs.
+	MetadataRevision int64     `json:"metadata_revision"`
+	ObservedAt       time.Time `json:"observed_at"`
+	Port             int       `json:"port"`
 
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
 	Resource              VisitorResourceScope     `json:"resource"`
@@ -3750,22 +3858,6 @@ type WebhookProviderSourceResponseSource1Kind string
 // WebhookProviderSourceResponse_Source defines model for WebhookProviderSourceResponse.Source.
 type WebhookProviderSourceResponse_Source struct {
 	union json.RawMessage
-}
-
-// WorkloadIngressAssignments defines model for WorkloadIngressAssignments.
-type WorkloadIngressAssignments struct {
-	Assignments []struct {
-		Credential     string    `json:"credential"`
-		ExpiresAt      time.Time `json:"expires_at"`
-		Id             string    `json:"id"`
-		IngressAddress string    `json:"ingress_address"`
-		IngressId      string    `json:"ingress_id"`
-		ServiceId      string    `json:"service_id"`
-		TlsServerName  string    `json:"tls_server_name"`
-	} `json:"assignments"`
-
-	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject VisitorSubject `json:"subject"`
 }
 
 // WorkloadProvider defines model for WorkloadProvider.
@@ -4000,19 +4092,6 @@ type CreateServiceGrantParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
-// CreateVisitorIngressAssignmentJSONBody defines parameters for CreateVisitorIngressAssignment.
-type CreateVisitorIngressAssignmentJSONBody struct {
-	DeviceId         string         `json:"device_id"`
-	ExcludeIngressId *string        `json:"exclude_ingress_id,omitempty"`
-	IdempotencyKey   IdempotencyKey `json:"idempotency_key"`
-}
-
-// CreateVisitorIngressAssignmentsJSONBody defines parameters for CreateVisitorIngressAssignments.
-type CreateVisitorIngressAssignmentsJSONBody struct {
-	DeviceId       string         `json:"device_id"`
-	IdempotencyKey IdempotencyKey `json:"idempotency_key"`
-}
-
 // ListServiceInvitationsParams defines parameters for ListServiceInvitations.
 type ListServiceInvitationsParams struct {
 	Cursor *ServiceInvitationID `form:"cursor,omitempty" json:"cursor,omitempty"`
@@ -4031,6 +4110,16 @@ type PrepareServiceRunParams struct {
 // CreateServiceCertificateIssuanceParams defines parameters for CreateServiceCertificateIssuance.
 type CreateServiceCertificateIssuanceParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// ListConnectorPeerPairsParams defines parameters for ListConnectorPeerPairs.
+type ListConnectorPeerPairsParams struct {
+	After *string `form:"after,omitempty" json:"after,omitempty"`
+}
+
+// DeliverConnectorPeerPairJSONBody defines parameters for DeliverConnectorPeerPair.
+type DeliverConnectorPeerPairJSONBody struct {
+	DeliveryGeneration int64 `json:"delivery_generation"`
 }
 
 // StartServiceRunJSONBody defines parameters for StartServiceRun.
@@ -4087,13 +4176,6 @@ type ListAvailableServicesParams struct {
 // IssueWorkloadServiceClientCertificateJSONBody defines parameters for IssueWorkloadServiceClientCertificate.
 type IssueWorkloadServiceClientCertificateJSONBody struct {
 	Csr []byte `json:"csr"`
-}
-
-// CreateWorkloadIngressAssignmentsJSONBody defines parameters for CreateWorkloadIngressAssignments.
-type CreateWorkloadIngressAssignmentsJSONBody struct {
-	Count            *int    `json:"count,omitempty"`
-	ExcludeIngressId *string `json:"exclude_ingress_id,omitempty"`
-	IdempotencyKey   string  `json:"idempotency_key"`
 }
 
 // SetMaintenanceControlJSONRequestBody defines body for SetMaintenanceControl for application/json ContentType.
@@ -4240,17 +4322,17 @@ type ConfigureServiceJSONRequestBody = ServiceMetadata
 // IssueServiceClientCertificateJSONRequestBody defines body for IssueServiceClientCertificate for application/json ContentType.
 type IssueServiceClientCertificateJSONRequestBody = IssueServiceClientCertificateRequest
 
+// PrepareConnectorPeerPairJSONRequestBody defines body for PrepareConnectorPeerPair for application/json ContentType.
+type PrepareConnectorPeerPairJSONRequestBody = ConnectorPeerPairRequest
+
+// RenewConnectorPeerPairJSONRequestBody defines body for RenewConnectorPeerPair for application/json ContentType.
+type RenewConnectorPeerPairJSONRequestBody = ConnectorPeerPairRequest
+
 // CreateServiceGrantJSONRequestBody defines body for CreateServiceGrant for application/json ContentType.
 type CreateServiceGrantJSONRequestBody = CreateServiceGrantRequest
 
 // CreateServiceHTTPGrantJSONRequestBody defines body for CreateServiceHTTPGrant for application/json ContentType.
 type CreateServiceHTTPGrantJSONRequestBody = CreateVisitorCredentialRequest
-
-// CreateVisitorIngressAssignmentJSONRequestBody defines body for CreateVisitorIngressAssignment for application/json ContentType.
-type CreateVisitorIngressAssignmentJSONRequestBody CreateVisitorIngressAssignmentJSONBody
-
-// CreateVisitorIngressAssignmentsJSONRequestBody defines body for CreateVisitorIngressAssignments for application/json ContentType.
-type CreateVisitorIngressAssignmentsJSONRequestBody CreateVisitorIngressAssignmentsJSONBody
 
 // InviteServiceVisitorJSONRequestBody defines body for InviteServiceVisitor for application/json ContentType.
 type InviteServiceVisitorJSONRequestBody = CreateServiceInvitationRequest
@@ -4263,9 +4345,6 @@ type HeartbeatServiceRunJSONRequestBody = ServiceRunHeartbeat
 
 // AuthorizeServiceClientCertificateJSONRequestBody defines body for AuthorizeServiceClientCertificate for application/json ContentType.
 type AuthorizeServiceClientCertificateJSONRequestBody = AuthorizeServiceClientCertificateRequest
-
-// AuthorizeServiceConnectorJSONRequestBody defines body for AuthorizeServiceConnector for application/json ContentType.
-type AuthorizeServiceConnectorJSONRequestBody = AuthorizeServiceConnectorRequest
 
 // RedeemServiceBrowserHandoffJSONRequestBody defines body for RedeemServiceBrowserHandoff for application/json ContentType.
 type RedeemServiceBrowserHandoffJSONRequestBody = ServiceBrowserRequest
@@ -4281,6 +4360,15 @@ type MarkServiceCertificateInstalledJSONRequestBody = ServiceCertificateInstalle
 
 // CreateServiceCertificateIssuanceJSONRequestBody defines body for CreateServiceCertificateIssuance for application/json ContentType.
 type CreateServiceCertificateIssuanceJSONRequestBody = CreateServiceCertificateIssuanceRequest
+
+// DeliverConnectorPeerPairJSONRequestBody defines body for DeliverConnectorPeerPair for application/json ContentType.
+type DeliverConnectorPeerPairJSONRequestBody DeliverConnectorPeerPairJSONBody
+
+// ConfirmConnectorPeerPairPreparedJSONRequestBody defines body for ConfirmConnectorPeerPairPrepared for application/json ContentType.
+type ConfirmConnectorPeerPairPreparedJSONRequestBody = ConnectorPeerPairPrepared
+
+// ReportServiceRunObservationsJSONRequestBody defines body for ReportServiceRunObservations for application/json ContentType.
+type ReportServiceRunObservationsJSONRequestBody = ServiceRunObservations
 
 // StartServiceRunJSONRequestBody defines body for StartServiceRun for application/json ContentType.
 type StartServiceRunJSONRequestBody StartServiceRunJSONBody
@@ -4305,9 +4393,6 @@ type IssueVisitorTokenJSONRequestBody = VisitorTokenRequest
 
 // IssueWorkloadServiceClientCertificateJSONRequestBody defines body for IssueWorkloadServiceClientCertificate for application/json ContentType.
 type IssueWorkloadServiceClientCertificateJSONRequestBody IssueWorkloadServiceClientCertificateJSONBody
-
-// CreateWorkloadIngressAssignmentsJSONRequestBody defines body for CreateWorkloadIngressAssignments for application/json ContentType.
-type CreateWorkloadIngressAssignmentsJSONRequestBody CreateWorkloadIngressAssignmentsJSONBody
 
 // AsWebhookProviderSourceResponseSource0 returns the union data inside the WebhookProviderSourceResponse_Source as a WebhookProviderSourceResponseSource0
 func (t WebhookProviderSourceResponse_Source) AsWebhookProviderSourceResponseSource0() (WebhookProviderSourceResponseSource0, error) {
@@ -5231,6 +5316,30 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	IssueServiceClientCertificate(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// PrepareConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	PrepareConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PrepareConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	PrepareConnectorPeerPair(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+	RenewConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+	RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListServiceGrants performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
 	//
 	// Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -5266,30 +5375,6 @@ type ClientInterface interface {
 
 	// RevokeServiceHTTPGrant performs a DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId) request.
 	RevokeServiceHTTPGrant(ctx context.Context, serviceId ServiceID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateVisitorIngressAssignmentWithBody performs a POST /v1/services/{service_id}/ingress-assignment (the `CreateVisitorIngressAssignment` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Reserve exactly one unbound ingress assignment for the current person, device, and service grant. Retain idempotency_key across ambiguous failures; a replay returns the same session and credential only while access, device, assignment, and ingress lease remain valid. Keys bind the identity, device, service, assignment count, and excluded ingress; a changed request conflicts. Results expire with the sessions and keys are retained for another 24 hours. exclude_ingress_id keeps a healthy sibling out of placement without granting access. Release unused or trust-failed reservations before starting a new request.
-	CreateVisitorIngressAssignmentWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateVisitorIngressAssignment performs a POST /v1/services/{service_id}/ingress-assignment (the `CreateVisitorIngressAssignment` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Reserve exactly one unbound ingress assignment for the current person, device, and service grant. Retain idempotency_key across ambiguous failures; a replay returns the same session and credential only while access, device, assignment, and ingress lease remain valid. Keys bind the identity, device, service, assignment count, and excluded ingress; a changed request conflicts. Results expire with the sessions and keys are retained for another 24 hours. exclude_ingress_id keeps a healthy sibling out of placement without granting access. Release unused or trust-failed reservations before starting a new request.
-	CreateVisitorIngressAssignment(ctx context.Context, serviceId ServiceID, body CreateVisitorIngressAssignmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateVisitorIngressAssignmentsWithBody performs a POST /v1/services/{service_id}/ingress-assignments (the `CreateVisitorIngressAssignments` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Check current visitor access and atomically reserve two distinct live ingress addresses. Retain idempotency_key across ambiguous failures; replay returns the same IDs and one-use credentials while both unbound assignments, device, access, and leases remain valid. Keys bind the identity, device, service, and assignment count; changed requests conflict. Results expire with the sessions and keys are retained for another 24 hours. The ingress-observed source is bound when each session connects. This does not authorize visitor streams.
-	CreateVisitorIngressAssignmentsWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateVisitorIngressAssignments performs a POST /v1/services/{service_id}/ingress-assignments (the `CreateVisitorIngressAssignments` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Check current visitor access and atomically reserve two distinct live ingress addresses. Retain idempotency_key across ambiguous failures; replay returns the same IDs and one-use credentials while both unbound assignments, device, access, and leases remain valid. Keys bind the identity, device, service, and assignment count; changed requests conflict. Results expire with the sessions and keys are retained for another 24 hours. The ingress-observed source is bound when each session connects. This does not authorize visitor streams.
-	CreateVisitorIngressAssignments(ctx context.Context, serviceId ServiceID, body CreateVisitorIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListServiceInvitations performs a GET /v1/services/{service_id}/invitations (the `ListServiceInvitations` operationId) request.
 	//
@@ -5343,22 +5428,14 @@ type ClientInterface interface {
 	// AuthorizeServiceClientCertificateWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+	// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 	AuthorizeServiceClientCertificateWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizeServiceClientCertificate performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+	// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 	AuthorizeServiceClientCertificate(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizeServiceConnectorWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request,
-	// with any type of body and a specified content type.
-	AuthorizeServiceConnectorWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizeServiceConnector performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request.
-	// Takes a body of the `application/json` content type.
-	AuthorizeServiceConnector(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RedeemServiceBrowserHandoffWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
 	// with any type of body and a specified content type.
@@ -5403,6 +5480,47 @@ type ClientInterface interface {
 	// GetServiceCertificateIssuance performs a GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id} (the `GetServiceCertificateIssuance` operationId) request.
 	GetServiceCertificateIssuance(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListConnectorPeerPairs performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
+	//
+	// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+	ListConnectorPeerPairs(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeliverConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+	DeliverConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeliverConnectorPeerPair performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+	DeliverConnectorPeerPair(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConfirmConnectorPeerPairPreparedWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+	ConfirmConnectorPeerPairPreparedWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConfirmConnectorPeerPairPrepared performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+	ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportServiceRunObservationsWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	ReportServiceRunObservationsWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReportServiceRunObservations performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	ReportServiceRunObservations(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ReportServiceRunObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// StartServiceRunWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -5418,13 +5536,13 @@ type ClientInterface interface {
 	// SelectServiceRunWithBody performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+	// Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
 	SelectServiceRunWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SelectServiceRun performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+	// Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
 	SelectServiceRun(ctx context.Context, serviceId ServiceID, body SelectServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTeamShares List manageable shares for one team
@@ -5474,16 +5592,6 @@ type ClientInterface interface {
 	// RevokeVisitorDevice performs a DELETE /v1/visitor-devices/{device_id} (the `RevokeVisitorDevice` operationId) request.
 	RevokeVisitorDevice(ctx context.Context, deviceId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReleaseVisitorIngressAssignment performs a DELETE /v1/visitor-ingress-assignments/{connector_session_id} (the `ReleaseVisitorIngressAssignment` operationId) request.
-	//
-	// Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked and its active streams fail rechecks; sibling sessions are never affected. Retrying release of an owned assignment succeeds.
-	ReleaseVisitorIngressAssignment(ctx context.Context, connectorSessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetVisitorIngressTransportTrust performs a GET /v1/visitor-ingress-assignments/{connector_session_id}/transport-trust (the `GetVisitorIngressTransportTrust` operationId) request.
-	//
-	// Read public transport trust for this identity's enrolled-device assignment and its exact current ingress lease. No infrastructure private key is returned.
-	GetVisitorIngressTransportTrust(ctx context.Context, connectorSessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// AcceptVisitorInvitationWithBody performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request,
 	// with any type of body and a specified content type.
 	AcceptVisitorInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -5529,12 +5637,6 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
 	GetWebhookProviderSource(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReleaseWorkloadIngressAssignment performs a DELETE /v1/workload/ingress-assignments/{session_id} (the `ReleaseWorkloadIngressAssignment` operationId) request.
-	ReleaseWorkloadIngressAssignment(ctx context.Context, sessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetWorkloadIngressTransportTrust performs a GET /v1/workload/ingress-assignments/{session_id}/transport-trust (the `GetWorkloadIngressTransportTrust` operationId) request.
-	GetWorkloadIngressTransportTrust(ctx context.Context, sessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ListWorkloadServices List only the workload session's currently authorized saved services
 	//
 	// Corresponds with GET /v1/workload/services (the `ListWorkloadServices` operationId).
@@ -5551,15 +5653,9 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	IssueWorkloadServiceClientCertificate(ctx context.Context, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateWorkloadIngressAssignmentsWithBody performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request,
-	// with any type of body and a specified content type.
-	CreateWorkloadIngressAssignmentsWithBody(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateWorkloadIngressAssignments performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request.
-	// Takes a body of the `application/json` content type.
-	CreateWorkloadIngressAssignments(ctx context.Context, serviceId string, body CreateWorkloadIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// SelectWorkloadServiceRun performs a POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId) request.
+	//
+	// Check the selected workload credential and current service permission. pair_ready appears only for two exact ready connections on distinct live relay services; it is a signing snapshot, not a grant or a pair key.
 	SelectWorkloadServiceRun(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
@@ -7729,6 +7825,70 @@ func (c *Client) IssueServiceClientCertificate(ctx context.Context, serviceId Se
 	return c.Client.Do(req)
 }
 
+// PrepareConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request,
+// with any type of body and a specified content type.
+//
+// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+func (c *Client) PrepareConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPrepareConnectorPeerPairRequestWithBody(c.Server, serviceId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PrepareConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+func (c *Client) PrepareConnectorPeerPair(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPrepareConnectorPeerPairRequest(c.Server, serviceId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
+// with any type of body and a specified content type.
+//
+// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+func (c *Client) RenewConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewConnectorPeerPairRequestWithBody(c.Server, serviceId, pairId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenewConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+func (c *Client) RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewConnectorPeerPairRequest(c.Server, serviceId, pairId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListServiceGrants performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
 //
 // Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -7835,70 +7995,6 @@ func (c *Client) CreateServiceHTTPGrant(ctx context.Context, serviceId ServiceID
 // RevokeServiceHTTPGrant performs a DELETE /v1/services/{service_id}/http-grants/{grant_id} (the `RevokeServiceHTTPGrant` operationId) request.
 func (c *Client) RevokeServiceHTTPGrant(ctx context.Context, serviceId ServiceID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeServiceHTTPGrantRequest(c.Server, serviceId, grantId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateVisitorIngressAssignmentWithBody performs a POST /v1/services/{service_id}/ingress-assignment (the `CreateVisitorIngressAssignment` operationId) request,
-// with any type of body and a specified content type.
-//
-// Reserve exactly one unbound ingress assignment for the current person, device, and service grant. Retain idempotency_key across ambiguous failures; a replay returns the same session and credential only while access, device, assignment, and ingress lease remain valid. Keys bind the identity, device, service, assignment count, and excluded ingress; a changed request conflicts. Results expire with the sessions and keys are retained for another 24 hours. exclude_ingress_id keeps a healthy sibling out of placement without granting access. Release unused or trust-failed reservations before starting a new request.
-func (c *Client) CreateVisitorIngressAssignmentWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateVisitorIngressAssignmentRequestWithBody(c.Server, serviceId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateVisitorIngressAssignment performs a POST /v1/services/{service_id}/ingress-assignment (the `CreateVisitorIngressAssignment` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Reserve exactly one unbound ingress assignment for the current person, device, and service grant. Retain idempotency_key across ambiguous failures; a replay returns the same session and credential only while access, device, assignment, and ingress lease remain valid. Keys bind the identity, device, service, assignment count, and excluded ingress; a changed request conflicts. Results expire with the sessions and keys are retained for another 24 hours. exclude_ingress_id keeps a healthy sibling out of placement without granting access. Release unused or trust-failed reservations before starting a new request.
-func (c *Client) CreateVisitorIngressAssignment(ctx context.Context, serviceId ServiceID, body CreateVisitorIngressAssignmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateVisitorIngressAssignmentRequest(c.Server, serviceId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateVisitorIngressAssignmentsWithBody performs a POST /v1/services/{service_id}/ingress-assignments (the `CreateVisitorIngressAssignments` operationId) request,
-// with any type of body and a specified content type.
-//
-// Check current visitor access and atomically reserve two distinct live ingress addresses. Retain idempotency_key across ambiguous failures; replay returns the same IDs and one-use credentials while both unbound assignments, device, access, and leases remain valid. Keys bind the identity, device, service, and assignment count; changed requests conflict. Results expire with the sessions and keys are retained for another 24 hours. The ingress-observed source is bound when each session connects. This does not authorize visitor streams.
-func (c *Client) CreateVisitorIngressAssignmentsWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateVisitorIngressAssignmentsRequestWithBody(c.Server, serviceId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateVisitorIngressAssignments performs a POST /v1/services/{service_id}/ingress-assignments (the `CreateVisitorIngressAssignments` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Check current visitor access and atomically reserve two distinct live ingress addresses. Retain idempotency_key across ambiguous failures; replay returns the same IDs and one-use credentials while both unbound assignments, device, access, and leases remain valid. Keys bind the identity, device, service, and assignment count; changed requests conflict. Results expire with the sessions and keys are retained for another 24 hours. The ingress-observed source is bound when each session connects. This does not authorize visitor streams.
-func (c *Client) CreateVisitorIngressAssignments(ctx context.Context, serviceId ServiceID, body CreateVisitorIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateVisitorIngressAssignmentsRequest(c.Server, serviceId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8051,7 +8147,7 @@ func (c *Client) HeartbeatServiceRun(ctx context.Context, serviceId ServiceID, s
 // AuthorizeServiceClientCertificateWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
 // with any type of body and a specified content type.
 //
-// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 func (c *Client) AuthorizeServiceClientCertificateWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeServiceClientCertificateRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
 	if err != nil {
@@ -8067,37 +8163,9 @@ func (c *Client) AuthorizeServiceClientCertificateWithBody(ctx context.Context, 
 // AuthorizeServiceClientCertificate performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 func (c *Client) AuthorizeServiceClientCertificate(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizeServiceClientCertificateRequest(c.Server, serviceId, serviceRunId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizeServiceConnectorWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) AuthorizeServiceConnectorWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeServiceConnectorRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizeServiceConnector performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) AuthorizeServiceConnector(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeServiceConnectorRequest(c.Server, serviceId, serviceRunId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8261,6 +8329,117 @@ func (c *Client) GetServiceCertificateIssuance(ctx context.Context, serviceId Se
 	return c.Client.Do(req)
 }
 
+// ListConnectorPeerPairs performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
+//
+// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+func (c *Client) ListConnectorPeerPairs(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConnectorPeerPairsRequest(c.Server, serviceId, serviceRunId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeliverConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request,
+// with any type of body and a specified content type.
+//
+// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+func (c *Client) DeliverConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeliverConnectorPeerPairRequestWithBody(c.Server, serviceId, serviceRunId, pairId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeliverConnectorPeerPair performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+func (c *Client) DeliverConnectorPeerPair(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeliverConnectorPeerPairRequest(c.Server, serviceId, serviceRunId, pairId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConfirmConnectorPeerPairPreparedWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request,
+// with any type of body and a specified content type.
+//
+// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+func (c *Client) ConfirmConnectorPeerPairPreparedWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConfirmConnectorPeerPairPreparedRequestWithBody(c.Server, serviceId, serviceRunId, pairId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConfirmConnectorPeerPairPrepared performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+func (c *Client) ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConfirmConnectorPeerPairPreparedRequest(c.Server, serviceId, serviceRunId, pairId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportServiceRunObservationsWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request,
+// with any type of body and a specified content type.
+//
+// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+func (c *Client) ReportServiceRunObservationsWithBody(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportServiceRunObservationsRequestWithBody(c.Server, serviceId, serviceRunId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReportServiceRunObservations performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+func (c *Client) ReportServiceRunObservations(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ReportServiceRunObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReportServiceRunObservationsRequest(c.Server, serviceId, serviceRunId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // StartServiceRunWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -8296,7 +8475,7 @@ func (c *Client) StartServiceRun(ctx context.Context, serviceId ServiceID, servi
 // SelectServiceRunWithBody performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request,
 // with any type of body and a specified content type.
 //
-// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+// Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
 func (c *Client) SelectServiceRunWithBody(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSelectServiceRunRequestWithBody(c.Server, serviceId, contentType, body)
 	if err != nil {
@@ -8312,7 +8491,7 @@ func (c *Client) SelectServiceRunWithBody(ctx context.Context, serviceId Service
 // SelectServiceRun performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+// Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
 func (c *Client) SelectServiceRun(ctx context.Context, serviceId ServiceID, body SelectServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSelectServiceRunRequest(c.Server, serviceId, body)
 	if err != nil {
@@ -8462,36 +8641,6 @@ func (c *Client) RevokeVisitorDevice(ctx context.Context, deviceId string, reqEd
 	return c.Client.Do(req)
 }
 
-// ReleaseVisitorIngressAssignment performs a DELETE /v1/visitor-ingress-assignments/{connector_session_id} (the `ReleaseVisitorIngressAssignment` operationId) request.
-//
-// Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked and its active streams fail rechecks; sibling sessions are never affected. Retrying release of an owned assignment succeeds.
-func (c *Client) ReleaseVisitorIngressAssignment(ctx context.Context, connectorSessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReleaseVisitorIngressAssignmentRequest(c.Server, connectorSessionId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetVisitorIngressTransportTrust performs a GET /v1/visitor-ingress-assignments/{connector_session_id}/transport-trust (the `GetVisitorIngressTransportTrust` operationId) request.
-//
-// Read public transport trust for this identity's enrolled-device assignment and its exact current ingress lease. No infrastructure private key is returned.
-func (c *Client) GetVisitorIngressTransportTrust(ctx context.Context, connectorSessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetVisitorIngressTransportTrustRequest(c.Server, connectorSessionId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // AcceptVisitorInvitationWithBody performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request,
 // with any type of body and a specified content type.
 func (c *Client) AcceptVisitorInvitationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -8627,32 +8776,6 @@ func (c *Client) GetWebhookProviderSource(ctx context.Context, provider WebhookP
 	return c.Client.Do(req)
 }
 
-// ReleaseWorkloadIngressAssignment performs a DELETE /v1/workload/ingress-assignments/{session_id} (the `ReleaseWorkloadIngressAssignment` operationId) request.
-func (c *Client) ReleaseWorkloadIngressAssignment(ctx context.Context, sessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReleaseWorkloadIngressAssignmentRequest(c.Server, sessionId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetWorkloadIngressTransportTrust performs a GET /v1/workload/ingress-assignments/{session_id}/transport-trust (the `GetWorkloadIngressTransportTrust` operationId) request.
-func (c *Client) GetWorkloadIngressTransportTrust(ctx context.Context, sessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetWorkloadIngressTransportTrustRequest(c.Server, sessionId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // ListWorkloadServices List only the workload session's currently authorized saved services
 //
 // Corresponds with GET /v1/workload/services (the `ListWorkloadServices` operationId).
@@ -8709,35 +8832,9 @@ func (c *Client) IssueWorkloadServiceClientCertificate(ctx context.Context, serv
 	return c.Client.Do(req)
 }
 
-// CreateWorkloadIngressAssignmentsWithBody performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) CreateWorkloadIngressAssignmentsWithBody(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateWorkloadIngressAssignmentsRequestWithBody(c.Server, serviceId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CreateWorkloadIngressAssignments performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) CreateWorkloadIngressAssignments(ctx context.Context, serviceId string, body CreateWorkloadIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateWorkloadIngressAssignmentsRequest(c.Server, serviceId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // SelectWorkloadServiceRun performs a POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId) request.
+//
+// Check the selected workload credential and current service permission. pair_ready appears only for two exact ready connections on distinct live relay services; it is a signing snapshot, not a grant or a pair key.
 func (c *Client) SelectWorkloadServiceRun(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSelectWorkloadServiceRunRequest(c.Server, serviceId)
 	if err != nil {
@@ -13055,6 +13152,107 @@ func NewIssueServiceClientCertificateRequestWithBody(server string, serviceId Se
 	return req, nil
 }
 
+// NewPrepareConnectorPeerPairRequest calls the generic PrepareConnectorPeerPair builder with application/json body
+func NewPrepareConnectorPeerPairRequest(server string, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPrepareConnectorPeerPairRequestWithBody(server, serviceId, "application/json", bodyReader)
+}
+
+// NewPrepareConnectorPeerPairRequestWithBody constructs an http.Request for the PrepareConnectorPeerPair method, with any body, and a specified content type
+func NewPrepareConnectorPeerPairRequestWithBody(server string, serviceId ServiceID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/connector-peer-pairs", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRenewConnectorPeerPairRequest calls the generic RenewConnectorPeerPair builder with application/json body
+func NewRenewConnectorPeerPairRequest(server string, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenewConnectorPeerPairRequestWithBody(server, serviceId, pairId, "application/json", bodyReader)
+}
+
+// NewRenewConnectorPeerPairRequestWithBody constructs an http.Request for the RenewConnectorPeerPair method, with any body, and a specified content type
+func NewRenewConnectorPeerPairRequestWithBody(server string, serviceId ServiceID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "pair_id", pairId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/connector-peer-pairs/%s/renew", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListServiceGrantsRequest constructs an http.Request for the ListServiceGrants method
 func NewListServiceGrantsRequest(server string, serviceId ServiceID, params *ListServiceGrantsParams) (*http.Request, error) {
 	var err error
@@ -13335,100 +13533,6 @@ func NewRevokeServiceHTTPGrantRequest(server string, serviceId ServiceID, grantI
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewCreateVisitorIngressAssignmentRequest calls the generic CreateVisitorIngressAssignment builder with application/json body
-func NewCreateVisitorIngressAssignmentRequest(server string, serviceId ServiceID, body CreateVisitorIngressAssignmentJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateVisitorIngressAssignmentRequestWithBody(server, serviceId, "application/json", bodyReader)
-}
-
-// NewCreateVisitorIngressAssignmentRequestWithBody constructs an http.Request for the CreateVisitorIngressAssignment method, with any body, and a specified content type
-func NewCreateVisitorIngressAssignmentRequestWithBody(server string, serviceId ServiceID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/ingress-assignment", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewCreateVisitorIngressAssignmentsRequest calls the generic CreateVisitorIngressAssignments builder with application/json body
-func NewCreateVisitorIngressAssignmentsRequest(server string, serviceId ServiceID, body CreateVisitorIngressAssignmentsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateVisitorIngressAssignmentsRequestWithBody(server, serviceId, "application/json", bodyReader)
-}
-
-// NewCreateVisitorIngressAssignmentsRequestWithBody constructs an http.Request for the CreateVisitorIngressAssignments method, with any body, and a specified content type
-func NewCreateVisitorIngressAssignmentsRequestWithBody(server string, serviceId ServiceID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/ingress-assignments", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -13804,60 +13908,6 @@ func NewAuthorizeServiceClientCertificateRequestWithBody(server string, serviceI
 	return req, nil
 }
 
-// NewAuthorizeServiceConnectorRequest calls the generic AuthorizeServiceConnector builder with application/json body
-func NewAuthorizeServiceConnectorRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceConnectorJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAuthorizeServiceConnectorRequestWithBody(server, serviceId, serviceRunId, "application/json", bodyReader)
-}
-
-// NewAuthorizeServiceConnectorRequestWithBody constructs an http.Request for the AuthorizeServiceConnector method, with any body, and a specified content type
-func NewAuthorizeServiceConnectorRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/authorize-connector", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewRedeemServiceBrowserHandoffRequest calls the generic RedeemServiceBrowserHandoff builder with application/json body
 func NewRedeemServiceBrowserHandoffRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body RedeemServiceBrowserHandoffJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -14185,6 +14235,250 @@ func NewGetServiceCertificateIssuanceRequest(server string, serviceId ServiceID,
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewListConnectorPeerPairsRequest constructs an http.Request for the ListConnectorPeerPairs method
+func NewListConnectorPeerPairsRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/connector-peer-pairs", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.After != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", *params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeliverConnectorPeerPairRequest calls the generic DeliverConnectorPeerPair builder with application/json body
+func NewDeliverConnectorPeerPairRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverConnectorPeerPairJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDeliverConnectorPeerPairRequestWithBody(server, serviceId, serviceRunId, pairId, "application/json", bodyReader)
+}
+
+// NewDeliverConnectorPeerPairRequestWithBody constructs an http.Request for the DeliverConnectorPeerPair method, with any body, and a specified content type
+func NewDeliverConnectorPeerPairRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "pair_id", pairId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/connector-peer-pairs/%s/delivery", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewConfirmConnectorPeerPairPreparedRequest calls the generic ConfirmConnectorPeerPairPrepared builder with application/json body
+func NewConfirmConnectorPeerPairPreparedRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewConfirmConnectorPeerPairPreparedRequestWithBody(server, serviceId, serviceRunId, pairId, "application/json", bodyReader)
+}
+
+// NewConfirmConnectorPeerPairPreparedRequestWithBody constructs an http.Request for the ConfirmConnectorPeerPairPrepared method, with any body, and a specified content type
+func NewConfirmConnectorPeerPairPreparedRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "pair_id", pairId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/connector-peer-pairs/%s/prepared", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReportServiceRunObservationsRequest calls the generic ReportServiceRunObservations builder with application/json body
+func NewReportServiceRunObservationsRequest(server string, serviceId ServiceID, serviceRunId ServiceRunID, body ReportServiceRunObservationsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReportServiceRunObservationsRequestWithBody(server, serviceId, serviceRunId, "application/json", bodyReader)
+}
+
+// NewReportServiceRunObservationsRequestWithBody constructs an http.Request for the ReportServiceRunObservations method, with any body, and a specified content type
+func NewReportServiceRunObservationsRequestWithBody(server string, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "service_run_id", serviceRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/runs/%s/service-observations", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -14656,74 +14950,6 @@ func NewRevokeVisitorDeviceRequest(server string, deviceId string) (*http.Reques
 	return req, nil
 }
 
-// NewReleaseVisitorIngressAssignmentRequest constructs an http.Request for the ReleaseVisitorIngressAssignment method
-func NewReleaseVisitorIngressAssignmentRequest(server string, connectorSessionId ConnectorSessionID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "connector_session_id", connectorSessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/visitor-ingress-assignments/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetVisitorIngressTransportTrustRequest constructs an http.Request for the GetVisitorIngressTransportTrust method
-func NewGetVisitorIngressTransportTrustRequest(server string, connectorSessionId ConnectorSessionID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "connector_session_id", connectorSessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/visitor-ingress-assignments/%s/transport-trust", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewAcceptVisitorInvitationRequest calls the generic AcceptVisitorInvitation builder with application/json body
 func NewAcceptVisitorInvitationRequest(server string, body AcceptVisitorInvitationJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -14998,74 +15224,6 @@ func NewGetWebhookProviderSourceRequest(server string, provider WebhookProvider)
 	return req, nil
 }
 
-// NewReleaseWorkloadIngressAssignmentRequest constructs an http.Request for the ReleaseWorkloadIngressAssignment method
-func NewReleaseWorkloadIngressAssignmentRequest(server string, sessionId ConnectorSessionID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/workload/ingress-assignments/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetWorkloadIngressTransportTrustRequest constructs an http.Request for the GetWorkloadIngressTransportTrust method
-func NewGetWorkloadIngressTransportTrustRequest(server string, sessionId ConnectorSessionID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/workload/ingress-assignments/%s/transport-trust", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewListWorkloadServicesRequest constructs an http.Request for the ListWorkloadServices method
 func NewListWorkloadServicesRequest(server string) (*http.Request, error) {
 	var err error
@@ -15155,53 +15313,6 @@ func NewIssueWorkloadServiceClientCertificateRequestWithBody(server string, serv
 	}
 
 	operationPath := fmt.Sprintf("/v1/workload/services/%s/client-certificate", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewCreateWorkloadIngressAssignmentsRequest calls the generic CreateWorkloadIngressAssignments builder with application/json body
-func NewCreateWorkloadIngressAssignmentsRequest(server string, serviceId string, body CreateWorkloadIngressAssignmentsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCreateWorkloadIngressAssignmentsRequestWithBody(server, serviceId, "application/json", bodyReader)
-}
-
-// NewCreateWorkloadIngressAssignmentsRequestWithBody constructs an http.Request for the CreateWorkloadIngressAssignments method, with any body, and a specified content type
-func NewCreateWorkloadIngressAssignmentsRequestWithBody(server string, serviceId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/workload/services/%s/ingress-assignments", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -16207,6 +16318,34 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	IssueServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, body IssueServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueServiceClientCertificateResponse, error)
 
+	// PrepareConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	PrepareConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareConnectorPeerPairResponse, error)
+
+	// PrepareConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+	PrepareConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareConnectorPeerPairResponse, error)
+
+	// RenewConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RenewConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error)
+
+	// RenewConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+	RenewConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error)
+
 	// ListServiceGrantsWithResponse performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
 	//
 	// Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -16254,34 +16393,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RevokeServiceHTTPGrantWithResponse(ctx context.Context, serviceId ServiceID, grantId string, reqEditors ...RequestEditorFn) (*RevokeServiceHTTPGrantResponse, error)
-
-	// CreateVisitorIngressAssignmentWithBodyWithResponse performs a POST /v1/services/{service_id}/ingress-assignment (the `CreateVisitorIngressAssignment` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Reserve exactly one unbound ingress assignment for the current person, device, and service grant. Retain idempotency_key across ambiguous failures; a replay returns the same session and credential only while access, device, assignment, and ingress lease remain valid. Keys bind the identity, device, service, assignment count, and excluded ingress; a changed request conflicts. Results expire with the sessions and keys are retained for another 24 hours. exclude_ingress_id keeps a healthy sibling out of placement without granting access. Release unused or trust-failed reservations before starting a new request.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	CreateVisitorIngressAssignmentWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorIngressAssignmentResponse, error)
-
-	// CreateVisitorIngressAssignmentWithResponse performs a POST /v1/services/{service_id}/ingress-assignment (the `CreateVisitorIngressAssignment` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Reserve exactly one unbound ingress assignment for the current person, device, and service grant. Retain idempotency_key across ambiguous failures; a replay returns the same session and credential only while access, device, assignment, and ingress lease remain valid. Keys bind the identity, device, service, assignment count, and excluded ingress; a changed request conflicts. Results expire with the sessions and keys are retained for another 24 hours. exclude_ingress_id keeps a healthy sibling out of placement without granting access. Release unused or trust-failed reservations before starting a new request.
-	CreateVisitorIngressAssignmentWithResponse(ctx context.Context, serviceId ServiceID, body CreateVisitorIngressAssignmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorIngressAssignmentResponse, error)
-
-	// CreateVisitorIngressAssignmentsWithBodyWithResponse performs a POST /v1/services/{service_id}/ingress-assignments (the `CreateVisitorIngressAssignments` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Check current visitor access and atomically reserve two distinct live ingress addresses. Retain idempotency_key across ambiguous failures; replay returns the same IDs and one-use credentials while both unbound assignments, device, access, and leases remain valid. Keys bind the identity, device, service, and assignment count; changed requests conflict. Results expire with the sessions and keys are retained for another 24 hours. The ingress-observed source is bound when each session connects. This does not authorize visitor streams.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	CreateVisitorIngressAssignmentsWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorIngressAssignmentsResponse, error)
-
-	// CreateVisitorIngressAssignmentsWithResponse performs a POST /v1/services/{service_id}/ingress-assignments (the `CreateVisitorIngressAssignments` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Check current visitor access and atomically reserve two distinct live ingress addresses. Retain idempotency_key across ambiguous failures; replay returns the same IDs and one-use credentials while both unbound assignments, device, access, and leases remain valid. Keys bind the identity, device, service, and assignment count; changed requests conflict. Results expire with the sessions and keys are retained for another 24 hours. The ingress-observed source is bound when each session connects. This does not authorize visitor streams.
-	CreateVisitorIngressAssignmentsWithResponse(ctx context.Context, serviceId ServiceID, body CreateVisitorIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorIngressAssignmentsResponse, error)
 
 	// ListServiceInvitationsWithResponse performs a GET /v1/services/{service_id}/invitations (the `ListServiceInvitations` operationId) request.
 	//
@@ -16347,7 +16458,7 @@ type ClientWithResponsesInterface interface {
 	// AuthorizeServiceClientCertificateWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+	// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	AuthorizeServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error)
@@ -16355,18 +16466,8 @@ type ClientWithResponsesInterface interface {
 	// AuthorizeServiceClientCertificateWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+	// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 	AuthorizeServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error)
-
-	// AuthorizeServiceConnectorWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	AuthorizeServiceConnectorWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceConnectorResponse, error)
-
-	// AuthorizeServiceConnectorWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	AuthorizeServiceConnectorWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceConnectorResponse, error)
 
 	// RedeemServiceBrowserHandoffWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
 	// with any type of body and a specified content type.
@@ -16423,6 +16524,55 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	GetServiceCertificateIssuanceWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID, reqEditors ...RequestEditorFn) (*GetServiceCertificateIssuanceResponse, error)
 
+	// ListConnectorPeerPairsWithResponse performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
+	//
+	// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ListConnectorPeerPairsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*ListConnectorPeerPairsResponse, error)
+
+	// DeliverConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	DeliverConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeliverConnectorPeerPairResponse, error)
+
+	// DeliverConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+	DeliverConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*DeliverConnectorPeerPairResponse, error)
+
+	// ConfirmConnectorPeerPairPreparedWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ConfirmConnectorPeerPairPreparedWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error)
+
+	// ConfirmConnectorPeerPairPreparedWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+	ConfirmConnectorPeerPairPreparedWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error)
+
+	// ReportServiceRunObservationsWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ReportServiceRunObservationsWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportServiceRunObservationsResponse, error)
+
+	// ReportServiceRunObservationsWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+	ReportServiceRunObservationsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ReportServiceRunObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportServiceRunObservationsResponse, error)
+
 	// StartServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -16440,7 +16590,7 @@ type ClientWithResponsesInterface interface {
 	// SelectServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+	// Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	SelectServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SelectServiceRunResponse, error)
@@ -16448,7 +16598,7 @@ type ClientWithResponsesInterface interface {
 	// SelectServiceRunWithResponse performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+	// Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
 	SelectServiceRunWithResponse(ctx context.Context, serviceId ServiceID, body SelectServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*SelectServiceRunResponse, error)
 
 	// ListTeamSharesWithResponse List manageable shares for one team
@@ -16510,20 +16660,6 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	RevokeVisitorDeviceWithResponse(ctx context.Context, deviceId string, reqEditors ...RequestEditorFn) (*RevokeVisitorDeviceResponse, error)
 
-	// ReleaseVisitorIngressAssignmentWithResponse performs a DELETE /v1/visitor-ingress-assignments/{connector_session_id} (the `ReleaseVisitorIngressAssignment` operationId) request.
-	//
-	// Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked and its active streams fail rechecks; sibling sessions are never affected. Retrying release of an owned assignment succeeds.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	ReleaseVisitorIngressAssignmentWithResponse(ctx context.Context, connectorSessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*ReleaseVisitorIngressAssignmentResponse, error)
-
-	// GetVisitorIngressTransportTrustWithResponse performs a GET /v1/visitor-ingress-assignments/{connector_session_id}/transport-trust (the `GetVisitorIngressTransportTrust` operationId) request.
-	//
-	// Read public transport trust for this identity's enrolled-device assignment and its exact current ingress lease. No infrastructure private key is returned.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	GetVisitorIngressTransportTrustWithResponse(ctx context.Context, connectorSessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*GetVisitorIngressTransportTrustResponse, error)
-
 	// AcceptVisitorInvitationWithBodyWithResponse performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -16581,16 +16717,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/webhook-providers/{provider}/source (the `GetWebhookProviderSource` operationId).
 	GetWebhookProviderSourceWithResponse(ctx context.Context, provider WebhookProvider, reqEditors ...RequestEditorFn) (*GetWebhookProviderSourceResponse, error)
 
-	// ReleaseWorkloadIngressAssignmentWithResponse performs a DELETE /v1/workload/ingress-assignments/{session_id} (the `ReleaseWorkloadIngressAssignment` operationId) request.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	ReleaseWorkloadIngressAssignmentWithResponse(ctx context.Context, sessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*ReleaseWorkloadIngressAssignmentResponse, error)
-
-	// GetWorkloadIngressTransportTrustWithResponse performs a GET /v1/workload/ingress-assignments/{session_id}/transport-trust (the `GetWorkloadIngressTransportTrust` operationId) request.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	GetWorkloadIngressTransportTrustWithResponse(ctx context.Context, sessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*GetWorkloadIngressTransportTrustResponse, error)
-
 	// ListWorkloadServicesWithResponse List only the workload session's currently authorized saved services
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -16613,17 +16739,9 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	IssueWorkloadServiceClientCertificateWithResponse(ctx context.Context, serviceId string, body IssueWorkloadServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueWorkloadServiceClientCertificateResponse, error)
 
-	// CreateWorkloadIngressAssignmentsWithBodyWithResponse performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	CreateWorkloadIngressAssignmentsWithBodyWithResponse(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateWorkloadIngressAssignmentsResponse, error)
-
-	// CreateWorkloadIngressAssignmentsWithResponse performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	CreateWorkloadIngressAssignmentsWithResponse(ctx context.Context, serviceId string, body CreateWorkloadIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWorkloadIngressAssignmentsResponse, error)
-
 	// SelectWorkloadServiceRunWithResponse performs a POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId) request.
+	//
+	// Check the selected workload credential and current service permission. pair_ready appears only for two exact ready connections on distinct live relay services; it is a signing snapshot, not a grant or a pair key.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	SelectWorkloadServiceRunWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*SelectWorkloadServiceRunResponse, error)
@@ -20851,6 +20969,102 @@ func (r IssueServiceClientCertificateResponse) ContentType() string {
 	return ""
 }
 
+type PrepareConnectorPeerPairResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorPeerPair
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PrepareConnectorPeerPairResponse) GetJSON200() *ConnectorPeerPair {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PrepareConnectorPeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PrepareConnectorPeerPairResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PrepareConnectorPeerPairResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PrepareConnectorPeerPairResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PrepareConnectorPeerPairResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RenewConnectorPeerPairResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorPeerPair
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RenewConnectorPeerPairResponse) GetJSON200() *ConnectorPeerPair {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RenewConnectorPeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenewConnectorPeerPairResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenewConnectorPeerPairResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenewConnectorPeerPairResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenewConnectorPeerPairResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListServiceGrantsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -21119,102 +21333,6 @@ func (r RevokeServiceHTTPGrantResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokeServiceHTTPGrantResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateVisitorIngressAssignmentResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *ConnectorSessionSetup
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateVisitorIngressAssignmentResponse) GetJSON201() *ConnectorSessionSetup {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateVisitorIngressAssignmentResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateVisitorIngressAssignmentResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateVisitorIngressAssignmentResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateVisitorIngressAssignmentResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateVisitorIngressAssignmentResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateVisitorIngressAssignmentsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *[]ConnectorSessionSetup
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateVisitorIngressAssignmentsResponse) GetJSON201() *[]ConnectorSessionSetup {
-	return r.JSON201
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateVisitorIngressAssignmentsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateVisitorIngressAssignmentsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateVisitorIngressAssignmentsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateVisitorIngressAssignmentsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateVisitorIngressAssignmentsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -21550,54 +21668,6 @@ func (r AuthorizeServiceClientCertificateResponse) ContentType() string {
 	return ""
 }
 
-type AuthorizeServiceConnectorResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceClientCertificateDecision
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AuthorizeServiceConnectorResponse) GetJSON200() *ServiceClientCertificateDecision {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AuthorizeServiceConnectorResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AuthorizeServiceConnectorResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AuthorizeServiceConnectorResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AuthorizeServiceConnectorResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AuthorizeServiceConnectorResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type RedeemServiceBrowserHandoffResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -21866,6 +21936,191 @@ func (r GetServiceCertificateIssuanceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetServiceCertificateIssuanceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListConnectorPeerPairsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorPeerPairCandidates
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListConnectorPeerPairsResponse) GetJSON200() *ConnectorPeerPairCandidates {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListConnectorPeerPairsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListConnectorPeerPairsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListConnectorPeerPairsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListConnectorPeerPairsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListConnectorPeerPairsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeliverConnectorPeerPairResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorPeerPairDelivery
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeliverConnectorPeerPairResponse) GetJSON200() *ConnectorPeerPairDelivery {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeliverConnectorPeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DeliverConnectorPeerPairResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeliverConnectorPeerPairResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeliverConnectorPeerPairResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeliverConnectorPeerPairResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ConfirmConnectorPeerPairPreparedResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConfirmConnectorPeerPairPreparedResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ConfirmConnectorPeerPairPreparedResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ConfirmConnectorPeerPairPreparedResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ConfirmConnectorPeerPairPreparedResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ConfirmConnectorPeerPairPreparedResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReportServiceRunObservationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ServiceObservationResult
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReportServiceRunObservationsResponse) GetJSON200() *ServiceObservationResult {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReportServiceRunObservationsResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReportServiceRunObservationsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReportServiceRunObservationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReportServiceRunObservationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReportServiceRunObservationsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -22297,95 +22552,6 @@ func (r RevokeVisitorDeviceResponse) ContentType() string {
 	return ""
 }
 
-type ReleaseVisitorIngressAssignmentResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ReleaseVisitorIngressAssignmentResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ReleaseVisitorIngressAssignmentResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ReleaseVisitorIngressAssignmentResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ReleaseVisitorIngressAssignmentResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ReleaseVisitorIngressAssignmentResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetVisitorIngressTransportTrustResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *IngressTransportTrust
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetVisitorIngressTransportTrustResponse) GetJSON200() *IngressTransportTrust {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetVisitorIngressTransportTrustResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetVisitorIngressTransportTrustResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetVisitorIngressTransportTrustResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetVisitorIngressTransportTrustResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetVisitorIngressTransportTrustResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type AcceptVisitorInvitationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -22682,95 +22848,6 @@ func (r GetWebhookProviderSourceResponse) ContentType() string {
 	return ""
 }
 
-type ReleaseWorkloadIngressAssignmentResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ReleaseWorkloadIngressAssignmentResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ReleaseWorkloadIngressAssignmentResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ReleaseWorkloadIngressAssignmentResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ReleaseWorkloadIngressAssignmentResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ReleaseWorkloadIngressAssignmentResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetWorkloadIngressTransportTrustResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *IngressTransportTrust
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetWorkloadIngressTransportTrustResponse) GetJSON200() *IngressTransportTrust {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetWorkloadIngressTransportTrustResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetWorkloadIngressTransportTrustResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetWorkloadIngressTransportTrustResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetWorkloadIngressTransportTrustResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetWorkloadIngressTransportTrustResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ListWorkloadServicesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -22909,54 +22986,6 @@ func (r IssueWorkloadServiceClientCertificateResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r IssueWorkloadServiceClientCertificateResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CreateWorkloadIngressAssignmentsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *WorkloadIngressAssignments
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r CreateWorkloadIngressAssignmentsResponse) GetJSON200() *WorkloadIngressAssignments {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CreateWorkloadIngressAssignmentsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CreateWorkloadIngressAssignmentsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CreateWorkloadIngressAssignmentsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CreateWorkloadIngressAssignmentsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CreateWorkloadIngressAssignmentsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -24747,6 +24776,58 @@ func (c *ClientWithResponses) IssueServiceClientCertificateWithResponse(ctx cont
 	return ParseIssueServiceClientCertificateResponse(rsp)
 }
 
+// PrepareConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request,
+// with any type of body and a specified content type.
+//
+// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) PrepareConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareConnectorPeerPairResponse, error) {
+	rsp, err := c.PrepareConnectorPeerPairWithBody(ctx, serviceId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePrepareConnectorPeerPairResponse(rsp)
+}
+
+// PrepareConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs (the `PrepareConnectorPeerPair` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
+func (c *ClientWithResponses) PrepareConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareConnectorPeerPairResponse, error) {
+	rsp, err := c.PrepareConnectorPeerPair(ctx, serviceId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePrepareConnectorPeerPairResponse(rsp)
+}
+
+// RenewConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
+// with any type of body and a specified content type.
+//
+// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RenewConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error) {
+	rsp, err := c.RenewConnectorPeerPairWithBody(ctx, serviceId, pairId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewConnectorPeerPairResponse(rsp)
+}
+
+// RenewConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+func (c *ClientWithResponses) RenewConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error) {
+	rsp, err := c.RenewConnectorPeerPair(ctx, serviceId, pairId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewConnectorPeerPairResponse(rsp)
+}
+
 // ListServiceGrantsWithResponse performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
 //
 // Current managers may read up to 100 records ordered by ID, including expired and revoked history. Follow next_cursor until absent; inventory is not proof of current visitor access.
@@ -24841,58 +24922,6 @@ func (c *ClientWithResponses) RevokeServiceHTTPGrantWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParseRevokeServiceHTTPGrantResponse(rsp)
-}
-
-// CreateVisitorIngressAssignmentWithBodyWithResponse performs a POST /v1/services/{service_id}/ingress-assignment (the `CreateVisitorIngressAssignment` operationId) request,
-// with any type of body and a specified content type.
-//
-// Reserve exactly one unbound ingress assignment for the current person, device, and service grant. Retain idempotency_key across ambiguous failures; a replay returns the same session and credential only while access, device, assignment, and ingress lease remain valid. Keys bind the identity, device, service, assignment count, and excluded ingress; a changed request conflicts. Results expire with the sessions and keys are retained for another 24 hours. exclude_ingress_id keeps a healthy sibling out of placement without granting access. Release unused or trust-failed reservations before starting a new request.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CreateVisitorIngressAssignmentWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorIngressAssignmentResponse, error) {
-	rsp, err := c.CreateVisitorIngressAssignmentWithBody(ctx, serviceId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateVisitorIngressAssignmentResponse(rsp)
-}
-
-// CreateVisitorIngressAssignmentWithResponse performs a POST /v1/services/{service_id}/ingress-assignment (the `CreateVisitorIngressAssignment` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Reserve exactly one unbound ingress assignment for the current person, device, and service grant. Retain idempotency_key across ambiguous failures; a replay returns the same session and credential only while access, device, assignment, and ingress lease remain valid. Keys bind the identity, device, service, assignment count, and excluded ingress; a changed request conflicts. Results expire with the sessions and keys are retained for another 24 hours. exclude_ingress_id keeps a healthy sibling out of placement without granting access. Release unused or trust-failed reservations before starting a new request.
-func (c *ClientWithResponses) CreateVisitorIngressAssignmentWithResponse(ctx context.Context, serviceId ServiceID, body CreateVisitorIngressAssignmentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorIngressAssignmentResponse, error) {
-	rsp, err := c.CreateVisitorIngressAssignment(ctx, serviceId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateVisitorIngressAssignmentResponse(rsp)
-}
-
-// CreateVisitorIngressAssignmentsWithBodyWithResponse performs a POST /v1/services/{service_id}/ingress-assignments (the `CreateVisitorIngressAssignments` operationId) request,
-// with any type of body and a specified content type.
-//
-// Check current visitor access and atomically reserve two distinct live ingress addresses. Retain idempotency_key across ambiguous failures; replay returns the same IDs and one-use credentials while both unbound assignments, device, access, and leases remain valid. Keys bind the identity, device, service, and assignment count; changed requests conflict. Results expire with the sessions and keys are retained for another 24 hours. The ingress-observed source is bound when each session connects. This does not authorize visitor streams.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CreateVisitorIngressAssignmentsWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVisitorIngressAssignmentsResponse, error) {
-	rsp, err := c.CreateVisitorIngressAssignmentsWithBody(ctx, serviceId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateVisitorIngressAssignmentsResponse(rsp)
-}
-
-// CreateVisitorIngressAssignmentsWithResponse performs a POST /v1/services/{service_id}/ingress-assignments (the `CreateVisitorIngressAssignments` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Check current visitor access and atomically reserve two distinct live ingress addresses. Retain idempotency_key across ambiguous failures; replay returns the same IDs and one-use credentials while both unbound assignments, device, access, and leases remain valid. Keys bind the identity, device, service, and assignment count; changed requests conflict. Results expire with the sessions and keys are retained for another 24 hours. The ingress-observed source is bound when each session connects. This does not authorize visitor streams.
-func (c *ClientWithResponses) CreateVisitorIngressAssignmentsWithResponse(ctx context.Context, serviceId ServiceID, body CreateVisitorIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVisitorIngressAssignmentsResponse, error) {
-	rsp, err := c.CreateVisitorIngressAssignments(ctx, serviceId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateVisitorIngressAssignmentsResponse(rsp)
 }
 
 // ListServiceInvitationsWithResponse performs a GET /v1/services/{service_id}/invitations (the `ListServiceInvitations` operationId) request.
@@ -25013,7 +25042,7 @@ func (c *ClientWithResponses) HeartbeatServiceRunWithResponse(ctx context.Contex
 // AuthorizeServiceClientCertificateWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request,
 // with any type of body and a specified content type.
 //
-// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error) {
@@ -25027,35 +25056,13 @@ func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithBodyWithRespo
 // AuthorizeServiceClientCertificateWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate (the `AuthorizeServiceClientCertificate` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+// Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
 func (c *ClientWithResponses) AuthorizeServiceClientCertificateWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceClientCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceClientCertificateResponse, error) {
 	rsp, err := c.AuthorizeServiceClientCertificate(ctx, serviceId, serviceRunId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseAuthorizeServiceClientCertificateResponse(rsp)
-}
-
-// AuthorizeServiceConnectorWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AuthorizeServiceConnectorWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceConnectorResponse, error) {
-	rsp, err := c.AuthorizeServiceConnectorWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeServiceConnectorResponse(rsp)
-}
-
-// AuthorizeServiceConnectorWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector (the `AuthorizeServiceConnector` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AuthorizeServiceConnectorWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body AuthorizeServiceConnectorJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceConnectorResponse, error) {
-	rsp, err := c.AuthorizeServiceConnector(ctx, serviceId, serviceRunId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeServiceConnectorResponse(rsp)
 }
 
 // RedeemServiceBrowserHandoffWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff (the `RedeemServiceBrowserHandoff` operationId) request,
@@ -25179,6 +25186,97 @@ func (c *ClientWithResponses) GetServiceCertificateIssuanceWithResponse(ctx cont
 	return ParseGetServiceCertificateIssuanceResponse(rsp)
 }
 
+// ListConnectorPeerPairsWithResponse performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
+//
+// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ListConnectorPeerPairsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*ListConnectorPeerPairsResponse, error) {
+	rsp, err := c.ListConnectorPeerPairs(ctx, serviceId, serviceRunId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListConnectorPeerPairsResponse(rsp)
+}
+
+// DeliverConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request,
+// with any type of body and a specified content type.
+//
+// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) DeliverConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeliverConnectorPeerPairResponse, error) {
+	rsp, err := c.DeliverConnectorPeerPairWithBody(ctx, serviceId, serviceRunId, pairId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeliverConnectorPeerPairResponse(rsp)
+}
+
+// DeliverConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+func (c *ClientWithResponses) DeliverConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body DeliverConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*DeliverConnectorPeerPairResponse, error) {
+	rsp, err := c.DeliverConnectorPeerPair(ctx, serviceId, serviceRunId, pairId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeliverConnectorPeerPairResponse(rsp)
+}
+
+// ConfirmConnectorPeerPairPreparedWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request,
+// with any type of body and a specified content type.
+//
+// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ConfirmConnectorPeerPairPreparedWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error) {
+	rsp, err := c.ConfirmConnectorPeerPairPreparedWithBody(ctx, serviceId, serviceRunId, pairId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConfirmConnectorPeerPairPreparedResponse(rsp)
+}
+
+// ConfirmConnectorPeerPairPreparedWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared (the `ConfirmConnectorPeerPairPrepared` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+func (c *ClientWithResponses) ConfirmConnectorPeerPairPreparedWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, pairId string, body ConfirmConnectorPeerPairPreparedJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmConnectorPeerPairPreparedResponse, error) {
+	rsp, err := c.ConfirmConnectorPeerPairPrepared(ctx, serviceId, serviceRunId, pairId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConfirmConnectorPeerPairPreparedResponse(rsp)
+}
+
+// ReportServiceRunObservationsWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request,
+// with any type of body and a specified content type.
+//
+// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ReportServiceRunObservationsWithBodyWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReportServiceRunObservationsResponse, error) {
+	rsp, err := c.ReportServiceRunObservationsWithBody(ctx, serviceId, serviceRunId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportServiceRunObservationsResponse(rsp)
+}
+
+// ReportServiceRunObservationsWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/service-observations (the `ReportServiceRunObservations` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Report bounded connector connection facts for this exact publisher run. Control derives the visitor identity and source from the prepared pair; reporting never authorizes traffic.
+func (c *ClientWithResponses) ReportServiceRunObservationsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, body ReportServiceRunObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportServiceRunObservationsResponse, error) {
+	rsp, err := c.ReportServiceRunObservations(ctx, serviceId, serviceRunId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReportServiceRunObservationsResponse(rsp)
+}
+
 // StartServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/runs/{service_run_id}/start (the `StartServiceRun` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -25208,7 +25306,7 @@ func (c *ClientWithResponses) StartServiceRunWithResponse(ctx context.Context, s
 // SelectServiceRunWithBodyWithResponse performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request,
 // with any type of body and a specified content type.
 //
-// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+// Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) SelectServiceRunWithBodyWithResponse(ctx context.Context, serviceId ServiceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SelectServiceRunResponse, error) {
@@ -25222,7 +25320,7 @@ func (c *ClientWithResponses) SelectServiceRunWithBodyWithResponse(ctx context.C
 // SelectServiceRunWithResponse performs a POST /v1/services/{service_id}/select-run (the `SelectServiceRun` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// For EACH new visitor stream, recheck the exact service grant and ready run, then issue one short-lived ticket bound to this identity's authenticated ingress session and its observed source. The caller never supplies an IP address.
+// Check current visitor access and select a ready publisher run for background preparation. pair_ready is a credential-free hint containing two exact ready connections on distinct live relay services, not a grant, stream ticket or pair key. The caller never supplies an IP address.
 func (c *ClientWithResponses) SelectServiceRunWithResponse(ctx context.Context, serviceId ServiceID, body SelectServiceRunJSONRequestBody, reqEditors ...RequestEditorFn) (*SelectServiceRunResponse, error) {
 	rsp, err := c.SelectServiceRun(ctx, serviceId, body, reqEditors...)
 	if err != nil {
@@ -25344,32 +25442,6 @@ func (c *ClientWithResponses) RevokeVisitorDeviceWithResponse(ctx context.Contex
 	return ParseRevokeVisitorDeviceResponse(rsp)
 }
 
-// ReleaseVisitorIngressAssignmentWithResponse performs a DELETE /v1/visitor-ingress-assignments/{connector_session_id} (the `ReleaseVisitorIngressAssignment` operationId) request.
-//
-// Release this person's exact device assignment. Pending reservations immediately free capacity. A bound assignment is revoked and its active streams fail rechecks; sibling sessions are never affected. Retrying release of an owned assignment succeeds.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ReleaseVisitorIngressAssignmentWithResponse(ctx context.Context, connectorSessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*ReleaseVisitorIngressAssignmentResponse, error) {
-	rsp, err := c.ReleaseVisitorIngressAssignment(ctx, connectorSessionId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReleaseVisitorIngressAssignmentResponse(rsp)
-}
-
-// GetVisitorIngressTransportTrustWithResponse performs a GET /v1/visitor-ingress-assignments/{connector_session_id}/transport-trust (the `GetVisitorIngressTransportTrust` operationId) request.
-//
-// Read public transport trust for this identity's enrolled-device assignment and its exact current ingress lease. No infrastructure private key is returned.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) GetVisitorIngressTransportTrustWithResponse(ctx context.Context, connectorSessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*GetVisitorIngressTransportTrustResponse, error) {
-	rsp, err := c.GetVisitorIngressTransportTrust(ctx, connectorSessionId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetVisitorIngressTransportTrustResponse(rsp)
-}
-
 // AcceptVisitorInvitationWithBodyWithResponse performs a POST /v1/visitor-invitations/accept (the `AcceptVisitorInvitation` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -25481,28 +25553,6 @@ func (c *ClientWithResponses) GetWebhookProviderSourceWithResponse(ctx context.C
 	return ParseGetWebhookProviderSourceResponse(rsp)
 }
 
-// ReleaseWorkloadIngressAssignmentWithResponse performs a DELETE /v1/workload/ingress-assignments/{session_id} (the `ReleaseWorkloadIngressAssignment` operationId) request.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ReleaseWorkloadIngressAssignmentWithResponse(ctx context.Context, sessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*ReleaseWorkloadIngressAssignmentResponse, error) {
-	rsp, err := c.ReleaseWorkloadIngressAssignment(ctx, sessionId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReleaseWorkloadIngressAssignmentResponse(rsp)
-}
-
-// GetWorkloadIngressTransportTrustWithResponse performs a GET /v1/workload/ingress-assignments/{session_id}/transport-trust (the `GetWorkloadIngressTransportTrust` operationId) request.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) GetWorkloadIngressTransportTrustWithResponse(ctx context.Context, sessionId ConnectorSessionID, reqEditors ...RequestEditorFn) (*GetWorkloadIngressTransportTrustResponse, error) {
-	rsp, err := c.GetWorkloadIngressTransportTrust(ctx, sessionId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetWorkloadIngressTransportTrustResponse(rsp)
-}
-
 // ListWorkloadServicesWithResponse List only the workload session's currently authorized saved services
 //
 // Returns a wrapper object for the known response body format(s).
@@ -25549,29 +25599,9 @@ func (c *ClientWithResponses) IssueWorkloadServiceClientCertificateWithResponse(
 	return ParseIssueWorkloadServiceClientCertificateResponse(rsp)
 }
 
-// CreateWorkloadIngressAssignmentsWithBodyWithResponse performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CreateWorkloadIngressAssignmentsWithBodyWithResponse(ctx context.Context, serviceId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateWorkloadIngressAssignmentsResponse, error) {
-	rsp, err := c.CreateWorkloadIngressAssignmentsWithBody(ctx, serviceId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateWorkloadIngressAssignmentsResponse(rsp)
-}
-
-// CreateWorkloadIngressAssignmentsWithResponse performs a POST /v1/workload/services/{service_id}/ingress-assignments (the `CreateWorkloadIngressAssignments` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CreateWorkloadIngressAssignmentsWithResponse(ctx context.Context, serviceId string, body CreateWorkloadIngressAssignmentsJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateWorkloadIngressAssignmentsResponse, error) {
-	rsp, err := c.CreateWorkloadIngressAssignments(ctx, serviceId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCreateWorkloadIngressAssignmentsResponse(rsp)
-}
-
 // SelectWorkloadServiceRunWithResponse performs a POST /v1/workload/services/{service_id}/run (the `SelectWorkloadServiceRun` operationId) request.
+//
+// Check the selected workload credential and current service permission. pair_ready appears only for two exact ready connections on distinct live relay services; it is a signing snapshot, not a grant or a pair key.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) SelectWorkloadServiceRunWithResponse(ctx context.Context, serviceId ServiceID, reqEditors ...RequestEditorFn) (*SelectWorkloadServiceRunResponse, error) {
@@ -28499,6 +28529,72 @@ func ParseIssueServiceClientCertificateResponse(rsp *http.Response) (*IssueServi
 	return response, nil
 }
 
+// ParsePrepareConnectorPeerPairResponse parses an HTTP response from a PrepareConnectorPeerPairWithResponse call
+func ParsePrepareConnectorPeerPairResponse(rsp *http.Response) (*PrepareConnectorPeerPairResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PrepareConnectorPeerPairResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorPeerPair
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenewConnectorPeerPairResponse parses an HTTP response from a RenewConnectorPeerPairWithResponse call
+func ParseRenewConnectorPeerPairResponse(rsp *http.Response) (*RenewConnectorPeerPairResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenewConnectorPeerPairResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorPeerPair
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListServiceGrantsResponse parses an HTTP response from a ListServiceGrantsWithResponse call
 func ParseListServiceGrantsResponse(rsp *http.Response) (*ListServiceGrantsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -28676,72 +28772,6 @@ func ParseRevokeServiceHTTPGrantResponse(rsp *http.Response) (*RevokeServiceHTTP
 	switch {
 	case rsp.StatusCode == 204:
 		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateVisitorIngressAssignmentResponse parses an HTTP response from a CreateVisitorIngressAssignmentWithResponse call
-func ParseCreateVisitorIngressAssignmentResponse(rsp *http.Response) (*CreateVisitorIngressAssignmentResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateVisitorIngressAssignmentResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ConnectorSessionSetup
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateVisitorIngressAssignmentsResponse parses an HTTP response from a CreateVisitorIngressAssignmentsWithResponse call
-func ParseCreateVisitorIngressAssignmentsResponse(rsp *http.Response) (*CreateVisitorIngressAssignmentsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateVisitorIngressAssignmentsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest []ConnectorSessionSetup
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -28985,39 +29015,6 @@ func ParseAuthorizeServiceClientCertificateResponse(rsp *http.Response) (*Author
 	return response, nil
 }
 
-// ParseAuthorizeServiceConnectorResponse parses an HTTP response from a AuthorizeServiceConnectorWithResponse call
-func ParseAuthorizeServiceConnectorResponse(rsp *http.Response) (*AuthorizeServiceConnectorResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AuthorizeServiceConnectorResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceClientCertificateDecision
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseRedeemServiceBrowserHandoffResponse parses an HTTP response from a RedeemServiceBrowserHandoffWithResponse call
 func ParseRedeemServiceBrowserHandoffResponse(rsp *http.Response) (*RedeemServiceBrowserHandoffResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -29191,6 +29188,134 @@ func ParseGetServiceCertificateIssuanceResponse(rsp *http.Response) (*GetService
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ServiceCertificateIssuance
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListConnectorPeerPairsResponse parses an HTTP response from a ListConnectorPeerPairsWithResponse call
+func ParseListConnectorPeerPairsResponse(rsp *http.Response) (*ListConnectorPeerPairsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListConnectorPeerPairsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorPeerPairCandidates
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeliverConnectorPeerPairResponse parses an HTTP response from a DeliverConnectorPeerPairWithResponse call
+func ParseDeliverConnectorPeerPairResponse(rsp *http.Response) (*DeliverConnectorPeerPairResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeliverConnectorPeerPairResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorPeerPairDelivery
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseConfirmConnectorPeerPairPreparedResponse parses an HTTP response from a ConfirmConnectorPeerPairPreparedWithResponse call
+func ParseConfirmConnectorPeerPairPreparedResponse(rsp *http.Response) (*ConfirmConnectorPeerPairPreparedResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ConfirmConnectorPeerPairPreparedResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReportServiceRunObservationsResponse parses an HTTP response from a ReportServiceRunObservationsWithResponse call
+func ParseReportServiceRunObservationsResponse(rsp *http.Response) (*ReportServiceRunObservationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReportServiceRunObservationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ServiceObservationResult
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -29501,68 +29626,6 @@ func ParseRevokeVisitorDeviceResponse(rsp *http.Response) (*RevokeVisitorDeviceR
 	return response, nil
 }
 
-// ParseReleaseVisitorIngressAssignmentResponse parses an HTTP response from a ReleaseVisitorIngressAssignmentWithResponse call
-func ParseReleaseVisitorIngressAssignmentResponse(rsp *http.Response) (*ReleaseVisitorIngressAssignmentResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ReleaseVisitorIngressAssignmentResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetVisitorIngressTransportTrustResponse parses an HTTP response from a GetVisitorIngressTransportTrustWithResponse call
-func ParseGetVisitorIngressTransportTrustResponse(rsp *http.Response) (*GetVisitorIngressTransportTrustResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetVisitorIngressTransportTrustResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest IngressTransportTrust
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseAcceptVisitorInvitationResponse parses an HTTP response from a AcceptVisitorInvitationWithResponse call
 func ParseAcceptVisitorInvitationResponse(rsp *http.Response) (*AcceptVisitorInvitationResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -29784,68 +29847,6 @@ func ParseGetWebhookProviderSourceResponse(rsp *http.Response) (*GetWebhookProvi
 	return response, nil
 }
 
-// ParseReleaseWorkloadIngressAssignmentResponse parses an HTTP response from a ReleaseWorkloadIngressAssignmentWithResponse call
-func ParseReleaseWorkloadIngressAssignmentResponse(rsp *http.Response) (*ReleaseWorkloadIngressAssignmentResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ReleaseWorkloadIngressAssignmentResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetWorkloadIngressTransportTrustResponse parses an HTTP response from a GetWorkloadIngressTransportTrustWithResponse call
-func ParseGetWorkloadIngressTransportTrustResponse(rsp *http.Response) (*GetWorkloadIngressTransportTrustResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetWorkloadIngressTransportTrustResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest IngressTransportTrust
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseListWorkloadServicesResponse parses an HTTP response from a ListWorkloadServicesWithResponse call
 func ParseListWorkloadServicesResponse(rsp *http.Response) (*ListWorkloadServicesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -29928,39 +29929,6 @@ func ParseIssueWorkloadServiceClientCertificateResponse(rsp *http.Response) (*Is
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ServiceClientCertificate
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCreateWorkloadIngressAssignmentsResponse parses an HTTP response from a CreateWorkloadIngressAssignmentsWithResponse call
-func ParseCreateWorkloadIngressAssignmentsResponse(rsp *http.Response) (*CreateWorkloadIngressAssignmentsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CreateWorkloadIngressAssignmentsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest WorkloadIngressAssignments
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -30284,6 +30252,12 @@ type ServerInterface interface {
 	// (POST /v1/services/{service_id}/client-certificates)
 	IssueServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
 
+	// (POST /v1/services/{service_id}/connector-peer-pairs)
+	PrepareConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
+
+	// (POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew)
+	RenewConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, pairId string)
+
 	// (GET /v1/services/{service_id}/grants)
 	ListServiceGrants(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params ListServiceGrantsParams)
 
@@ -30301,12 +30275,6 @@ type ServerInterface interface {
 
 	// (DELETE /v1/services/{service_id}/http-grants/{grant_id})
 	RevokeServiceHTTPGrant(w http.ResponseWriter, r *http.Request, serviceId ServiceID, grantId string)
-
-	// (POST /v1/services/{service_id}/ingress-assignment)
-	CreateVisitorIngressAssignment(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
-
-	// (POST /v1/services/{service_id}/ingress-assignments)
-	CreateVisitorIngressAssignments(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
 
 	// (GET /v1/services/{service_id}/invitations)
 	ListServiceInvitations(w http.ResponseWriter, r *http.Request, serviceId ServiceID, params ListServiceInvitationsParams)
@@ -30329,9 +30297,6 @@ type ServerInterface interface {
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate)
 	AuthorizeServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 
-	// (POST /v1/services/{service_id}/runs/{service_run_id}/authorize-connector)
-	AuthorizeServiceConnector(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
-
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/browser/handoff)
 	RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 
@@ -30349,6 +30314,18 @@ type ServerInterface interface {
 
 	// (GET /v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id})
 	GetServiceCertificateIssuance(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, issuanceId IssuanceID)
+
+	// (GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs)
+	ListConnectorPeerPairs(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, params ListConnectorPeerPairsParams)
+
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery)
+	DeliverConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, pairId string)
+
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared)
+	ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID, pairId string)
+
+	// (POST /v1/services/{service_id}/runs/{service_run_id}/service-observations)
+	ReportServiceRunObservations(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
 
 	// (POST /v1/services/{service_id}/runs/{service_run_id}/start)
 	StartServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID, serviceRunId ServiceRunID)
@@ -30377,12 +30354,6 @@ type ServerInterface interface {
 	// (DELETE /v1/visitor-devices/{device_id})
 	RevokeVisitorDevice(w http.ResponseWriter, r *http.Request, deviceId string)
 
-	// (DELETE /v1/visitor-ingress-assignments/{connector_session_id})
-	ReleaseVisitorIngressAssignment(w http.ResponseWriter, r *http.Request, connectorSessionId ConnectorSessionID)
-
-	// (GET /v1/visitor-ingress-assignments/{connector_session_id}/transport-trust)
-	GetVisitorIngressTransportTrust(w http.ResponseWriter, r *http.Request, connectorSessionId ConnectorSessionID)
-
 	// (POST /v1/visitor-invitations/accept)
 	AcceptVisitorInvitation(w http.ResponseWriter, r *http.Request)
 
@@ -30400,12 +30371,6 @@ type ServerInterface interface {
 	// GetWebhookProviderSource Read one webhook provider source policy
 	// (GET /v1/webhook-providers/{provider}/source)
 	GetWebhookProviderSource(w http.ResponseWriter, r *http.Request, provider WebhookProvider)
-
-	// (DELETE /v1/workload/ingress-assignments/{session_id})
-	ReleaseWorkloadIngressAssignment(w http.ResponseWriter, r *http.Request, sessionId ConnectorSessionID)
-
-	// (GET /v1/workload/ingress-assignments/{session_id}/transport-trust)
-	GetWorkloadIngressTransportTrust(w http.ResponseWriter, r *http.Request, sessionId ConnectorSessionID)
 	// ListWorkloadServices List only the workload session's currently authorized saved services
 	// (GET /v1/workload/services)
 	ListWorkloadServices(w http.ResponseWriter, r *http.Request)
@@ -30415,9 +30380,6 @@ type ServerInterface interface {
 
 	// (POST /v1/workload/services/{service_id}/client-certificate)
 	IssueWorkloadServiceClientCertificate(w http.ResponseWriter, r *http.Request, serviceId string)
-
-	// (POST /v1/workload/services/{service_id}/ingress-assignments)
-	CreateWorkloadIngressAssignments(w http.ResponseWriter, r *http.Request, serviceId string)
 
 	// (POST /v1/workload/services/{service_id}/run)
 	SelectWorkloadServiceRun(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
@@ -33392,6 +33354,67 @@ func (siw *ServerInterfaceWrapper) IssueServiceClientCertificate(w http.Response
 	handler.ServeHTTP(w, r)
 }
 
+// PrepareConnectorPeerPair operation middleware
+func (siw *ServerInterfaceWrapper) PrepareConnectorPeerPair(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PrepareConnectorPeerPair(w, r, serviceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenewConnectorPeerPair operation middleware
+func (siw *ServerInterfaceWrapper) RenewConnectorPeerPair(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pair_id" -------------
+	var pairId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pair_id", r.PathValue("pair_id"), &pairId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pair_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenewConnectorPeerPair(w, r, serviceId, pairId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListServiceGrants operation middleware
 func (siw *ServerInterfaceWrapper) ListServiceGrants(w http.ResponseWriter, r *http.Request) {
 
@@ -33601,58 +33624,6 @@ func (siw *ServerInterfaceWrapper) RevokeServiceHTTPGrant(w http.ResponseWriter,
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RevokeServiceHTTPGrant(w, r, serviceId, grantId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateVisitorIngressAssignment operation middleware
-func (siw *ServerInterfaceWrapper) CreateVisitorIngressAssignment(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateVisitorIngressAssignment(w, r, serviceId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateVisitorIngressAssignments operation middleware
-func (siw *ServerInterfaceWrapper) CreateVisitorIngressAssignments(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateVisitorIngressAssignments(w, r, serviceId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -33952,41 +33923,6 @@ func (siw *ServerInterfaceWrapper) AuthorizeServiceClientCertificate(w http.Resp
 	handler.ServeHTTP(w, r)
 }
 
-// AuthorizeServiceConnector operation middleware
-func (siw *ServerInterfaceWrapper) AuthorizeServiceConnector(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId ServiceID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "service_run_id" -------------
-	var serviceRunId ServiceRunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AuthorizeServiceConnector(w, r, serviceId, serviceRunId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // RedeemServiceBrowserHandoff operation middleware
 func (siw *ServerInterfaceWrapper) RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Request) {
 
@@ -34225,6 +34161,180 @@ func (siw *ServerInterfaceWrapper) GetServiceCertificateIssuance(w http.Response
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetServiceCertificateIssuance(w, r, serviceId, serviceRunId, issuanceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListConnectorPeerPairs operation middleware
+func (siw *ServerInterfaceWrapper) ListConnectorPeerPairs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_run_id" -------------
+	var serviceRunId ServiceRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListConnectorPeerPairsParams
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListConnectorPeerPairs(w, r, serviceId, serviceRunId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeliverConnectorPeerPair operation middleware
+func (siw *ServerInterfaceWrapper) DeliverConnectorPeerPair(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_run_id" -------------
+	var serviceRunId ServiceRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pair_id" -------------
+	var pairId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pair_id", r.PathValue("pair_id"), &pairId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pair_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeliverConnectorPeerPair(w, r, serviceId, serviceRunId, pairId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ConfirmConnectorPeerPairPrepared operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_run_id" -------------
+	var serviceRunId ServiceRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pair_id" -------------
+	var pairId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pair_id", r.PathValue("pair_id"), &pairId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pair_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConfirmConnectorPeerPairPrepared(w, r, serviceId, serviceRunId, pairId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReportServiceRunObservations operation middleware
+func (siw *ServerInterfaceWrapper) ReportServiceRunObservations(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "service_run_id" -------------
+	var serviceRunId ServiceRunID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_run_id", r.PathValue("service_run_id"), &serviceRunId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_run_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReportServiceRunObservations(w, r, serviceId, serviceRunId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -34572,58 +34682,6 @@ func (siw *ServerInterfaceWrapper) RevokeVisitorDevice(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
-// ReleaseVisitorIngressAssignment operation middleware
-func (siw *ServerInterfaceWrapper) ReleaseVisitorIngressAssignment(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "connector_session_id" -------------
-	var connectorSessionId ConnectorSessionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "connector_session_id", r.PathValue("connector_session_id"), &connectorSessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "connector_session_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ReleaseVisitorIngressAssignment(w, r, connectorSessionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetVisitorIngressTransportTrust operation middleware
-func (siw *ServerInterfaceWrapper) GetVisitorIngressTransportTrust(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "connector_session_id" -------------
-	var connectorSessionId ConnectorSessionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "connector_session_id", r.PathValue("connector_session_id"), &connectorSessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "connector_session_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetVisitorIngressTransportTrust(w, r, connectorSessionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // AcceptVisitorInvitation operation middleware
 func (siw *ServerInterfaceWrapper) AcceptVisitorInvitation(w http.ResponseWriter, r *http.Request) {
 
@@ -34771,58 +34829,6 @@ func (siw *ServerInterfaceWrapper) GetWebhookProviderSource(w http.ResponseWrite
 	handler.ServeHTTP(w, r)
 }
 
-// ReleaseWorkloadIngressAssignment operation middleware
-func (siw *ServerInterfaceWrapper) ReleaseWorkloadIngressAssignment(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "session_id" -------------
-	var sessionId ConnectorSessionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ReleaseWorkloadIngressAssignment(w, r, sessionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetWorkloadIngressTransportTrust operation middleware
-func (siw *ServerInterfaceWrapper) GetWorkloadIngressTransportTrust(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "session_id" -------------
-	var sessionId ConnectorSessionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetWorkloadIngressTransportTrust(w, r, sessionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // ListWorkloadServices operation middleware
 func (siw *ServerInterfaceWrapper) ListWorkloadServices(w http.ResponseWriter, r *http.Request) {
 
@@ -34880,32 +34886,6 @@ func (siw *ServerInterfaceWrapper) IssueWorkloadServiceClientCertificate(w http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.IssueWorkloadServiceClientCertificate(w, r, serviceId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CreateWorkloadIngressAssignments operation middleware
-func (siw *ServerInterfaceWrapper) CreateWorkloadIngressAssignments(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "service_id" -------------
-	var serviceId string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateWorkloadIngressAssignments(w, r, serviceId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -35061,14 +35041,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs", wrapper.ListConnectorPeerPairs)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery", wrapper.DeliverConnectorPeerPair)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared", wrapper.ConfirmConnectorPeerPairPrepared)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/visitor-policy", wrapper.ReadPublisherVisitorPolicy)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/visitor-tokens", wrapper.IssueVisitorToken)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/run", wrapper.SelectWorkloadServiceRun)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/workload/ingress-assignments/{session_id}", wrapper.ReleaseWorkloadIngressAssignment)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/workload/ingress-assignments/{session_id}/transport-trust", wrapper.GetWorkloadIngressTransportTrust)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/workload/services", wrapper.ListWorkloadServices)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/authorization", wrapper.CheckWorkloadService)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/ingress-assignments", wrapper.CreateWorkloadIngressAssignments)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/workload/services/{service_id}/client-certificate", wrapper.IssueWorkloadServiceClientCertificate)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/browser/service-login", wrapper.BeginServiceBrowserLogin)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/http-grants", wrapper.ListServiceHTTPGrants)
@@ -35080,14 +35060,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/services/{service}", wrapper.GetProjectService)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/start", wrapper.StartServiceRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/client-certificates", wrapper.IssueServiceClientCertificate)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/authorize-connector", wrapper.AuthorizeServiceConnector)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate", wrapper.AuthorizeServiceClientCertificate)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-issuances", wrapper.CreateServiceCertificateIssuance)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-issuances/{issuance_id}", wrapper.GetServiceCertificateIssuance)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/certificate-installed", wrapper.MarkServiceCertificateInstalled)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename", wrapper.RenamePublisherNamespace)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/rename", wrapper.RenamePublisherGroup)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/visitor-ingress-assignments/{connector_session_id}", wrapper.ReleaseVisitorIngressAssignment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/public-metadata", wrapper.GetProjectPublicMetadata)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/local-services/{service}", wrapper.GetLocalProjectService)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/local-services/{service}", wrapper.RealizeLocalProjectService)
@@ -35103,7 +35081,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/ack", wrapper.AcknowledgePublisherGroupConfiguration)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/teams/{team_id}/service-audit", wrapper.ListServiceAudit)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publish-runs/{run_id}/service-observations", wrapper.ReportPublishRunServiceObservations)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/visitor-ingress-assignments/{connector_session_id}/transport-trust", wrapper.GetVisitorIngressTransportTrust)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/service-observations", wrapper.ReportServiceRunObservations)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/publisher/service", wrapper.GetPublisherService)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/visitor-devices", wrapper.EnrollVisitorDevice)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/visitor-devices/{device_id}", wrapper.RevokeVisitorDevice)
@@ -35120,9 +35098,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/invitations/{invitation_id}", wrapper.RevokeServiceInvitation)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/service-invitations/accept", wrapper.AcceptServiceInvitation)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/visitor/services", wrapper.ListAvailableServices)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/ingress-assignment", wrapper.CreateVisitorIngressAssignment)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/ingress-assignments", wrapper.CreateVisitorIngressAssignments)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/select-run", wrapper.SelectServiceRun)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/connector-peer-pairs", wrapper.PrepareConnectorPeerPair)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew", wrapper.RenewConnectorPeerPair)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs", wrapper.PrepareServiceRun)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}", wrapper.CloseServiceRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}", wrapper.HeartbeatServiceRun)
