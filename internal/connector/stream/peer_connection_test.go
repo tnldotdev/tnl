@@ -197,12 +197,6 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 			defer p.Close()
 			defer resume()
 			p.mu.Lock()
-			if boundary == "run" {
-				// the last confirmed run bound still fences a blocked renewal.
-				deadline = time.Now().Add(2200 * time.Millisecond)
-				p.run.ValidUntil = deadline
-				p.notifyLocked()
-			}
 			oldRun, oldPair, oldPermission, oldInstallation := p.run.ValidUntil, p.until, p.permission.ExpiresAt, p.preparedUntil
 			p.mu.Unlock()
 			armed.Store(true)
@@ -210,6 +204,15 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 			case <-entered:
 			case <-time.After(3 * time.Second):
 				t.Fatal("refresh did not reach background signing")
+			}
+			if boundary == "run" {
+				// expire the last confirmed run while signing is paused.
+				p.mu.Lock()
+				deadline = time.Now().Add(200 * time.Millisecond)
+				p.run.ValidUntil = deadline
+				oldRun = deadline
+				p.notifyLocked()
+				p.mu.Unlock()
 			}
 			<-time.After(time.Until(deadline))
 			resume()
