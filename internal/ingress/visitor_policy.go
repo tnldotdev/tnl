@@ -273,11 +273,13 @@ func (c *Controller) publicPolicyLoop(ctx context.Context) error {
 		}
 		c.routingTable.mu.RLock()
 		current := make(map[string]ingressv1.IngressRoutingTableEntry)
-		for _, stored := range c.routingTable.routes {
-			entry := stored.entry
-			if !stored.tombstone && entry.PublicUrlExpiresAt.After(c.now()) &&
-				(entry.IngressPoolId == nil || *entry.IngressPoolId == c.registration.IngressPoolId) {
-				current[entry.PublishRunId] = entry
+		for _, bucket := range c.routingTable.routes {
+			for _, stored := range bucket {
+				entry := stored.entry
+				if !stored.tombstone && entry.PublicUrlExpiresAt.After(c.now()) &&
+					(entry.IngressPoolId == nil || *entry.IngressPoolId == c.registration.IngressPoolId) {
+					current[entry.PublishRunId] = entry
+				}
 			}
 		}
 		c.routingTable.mu.RUnlock()
