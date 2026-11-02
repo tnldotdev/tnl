@@ -134,9 +134,6 @@ func (d *connectorDelivery) renew(ctx context.Context, a *ConnectorAcceptor, out
 	defer stop()
 	next, err := a.claim(call, outer, proof)
 	if err != nil {
-		if d.ctx.Err() == nil && isRetryableControlError(err) {
-			return tunnelv1.ConnectorPairLegAccepted{}, errors.Join(err, &tunnel.ProtocolError{Code: tunnelv1.Unavailable})
-		}
 		return tunnelv1.ConnectorPairLegAccepted{}, err
 	}
 	if next.ref != d.claim.ref || next.key != d.claim.key || next.receipt.DeliveryID != d.claim.receipt.DeliveryID || next.receipt.SourceIP != d.claim.receipt.SourceIP {

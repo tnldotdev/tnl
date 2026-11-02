@@ -115,7 +115,7 @@ func (a *ConnectorAcceptor) claim(ctx context.Context, outer muxsession.Session,
 	started := time.Now()
 	claim, err := a.Claim.ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease, source, proof, ed25519.Sign(a.SigningKey, message))
 	if err != nil {
-		return connectorClaim{}, errors.Join(err, denied)
+		return connectorClaim{}, connectorClaimError(err)
 	}
 	key, keyErr := base64.RawURLEncoding.Strict().DecodeString(claim.Key)
 	defer clear(key)
@@ -136,6 +136,13 @@ func (a *ConnectorAcceptor) claim(ctx context.Context, outer muxsession.Session,
 		return connectorClaim{}, denied
 	}
 	return r, nil
+}
+
+func connectorClaimError(err error) error {
+	if isRetryableControlError(err) {
+		return errors.Join(err, &tunnel.ProtocolError{Code: tunnelv1.Unavailable})
+	}
+	return errors.Join(err, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated})
 }
 
 func (a *ConnectorAcceptor) serve(ctx context.Context, outer muxsession.Session, session *tunnel.Session, proof tunnelv1.ConnectorPairLegProof, claim connectorClaim) error {
