@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@actions/core": "3.0.1",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@vercel/ncc": "0.45.0"
