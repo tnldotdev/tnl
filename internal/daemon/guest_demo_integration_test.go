@@ -351,6 +351,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 		AllowedIPPrefixes: prefixes,
 		Ephemeral:         true, State: store,
 		Demo: true, Feedback: true, Service: "demo",
+		Logf:          t.Logf,
 		QUICConnector: quic, TCPConnector: tcp,
 	}, func() string { return integrationPublisherDiagnostics(inspect, pebble.logPath) })
 	ready := waitForPublisherReady(t, handle)

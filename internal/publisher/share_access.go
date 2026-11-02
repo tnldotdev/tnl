@@ -14,6 +14,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -30,6 +31,7 @@ type shareAccess struct {
 	version uint64
 	token   credentials.PublishRunToken
 	browser *browserAccess
+	logf    func(string, ...any)
 }
 
 func (a *shareAccess) redeem(ctx context.Context, path string) (controlv1.ShareRedemption, error) {
@@ -70,10 +72,30 @@ func (a *shareAccess) redeem(ctx context.Context, path string) (controlv1.ShareR
 			err = a.browser.prepareToken(ctx, source, result.Permission, result.ExpiresAt)
 		}
 		if err != nil {
+			if a.logf != nil {
+				a.logf("publisher: share permission preparation failed: %s", sharePreparationFailure(err))
+			}
 			return controlv1.ShareRedemption{}, err
 		}
 	}
 	return result, nil
+}
+
+func sharePreparationFailure(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "policy refresh timed out"
+	case errors.Is(err, visitortoken.ErrPolicy):
+		return "visitor policy unavailable"
+	case errors.Is(err, visitortoken.ErrKey):
+		return "verification key unavailable"
+	case errors.Is(err, visitortoken.ErrToken):
+		return "visitor token invalid"
+	case errors.Is(err, visitortoken.ErrBinding):
+		return "visitor token binding invalid"
+	default:
+		return "visitor permission unavailable"
+	}
 }
 
 func stripTnlCookies(request *http.Request) *http.Request {
