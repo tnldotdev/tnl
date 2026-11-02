@@ -244,7 +244,7 @@ func projectWebhookMetadata(ctx context.Context, state *clientstate.Database, pr
 func ConfiguredService(
 	service string,
 	worktree clientproject.Worktree,
-	effective config.TNL,
+	effective clientproject.ResolvedService,
 	current team.Context,
 ) (meta.Service, error) {
 	publicURL, name, selectedDomain := "", "", ""
@@ -275,7 +275,7 @@ func ConfiguredService(
 
 func (r *MetadataResolver) Context(
 	ctx context.Context,
-	effective config.TNL,
+	effective clientproject.ResolvedService,
 ) (*auth.Client, team.Context, error) {
 	server, err := r.server(ctx, effective.Server)
 	if err != nil {
