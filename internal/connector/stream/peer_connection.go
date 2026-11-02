@@ -317,19 +317,15 @@ func (p *connectorConnection) refresh() {
 		run, previous, until := p.run, p.pair, p.until
 		p.mu.Unlock()
 		call, stop := context.WithDeadline(p.ctx, minConnectorCall(until))
-		next, err := p.config.Control.ResolveService(call, run.ServiceID)
-		if err == nil {
-			err = validateConnectorRun(p.config, next)
-		}
-		if err == nil && (next.ServiceRunID != run.ServiceRunID || next.RunNumber != run.RunNumber || next.PairReady != nil && next.PairReady.PublisherIdentityId != run.PairReady.PublisherIdentityId) {
-			err = ErrServiceConnection
-		}
+		// selection is for new connectors. renewing this pair checks the exact
+		// serving run and current visitor permission without moving live streams
+		// when placement prefers another run or the retained run is full.
+		next := run
 		var pair controlv1.ConnectorPeerPair
 		var key [32]byte
 		var bound time.Time
-		if err == nil {
-			pair, key, bound, _, err = prepareConnectorPair(call, p.config.Control, p.signer, next, p.owner, &previous)
-		}
+		pair, key, bound, _, err := prepareConnectorPair(call, p.config.Control, p.signer, next, p.owner, &previous)
+		next.ValidUntil = bound
 		var permission controlv1.VisitorTokenResponse
 		if err == nil {
 			permission, err = p.config.Control.VisitorPermission(call, run.ServiceID)

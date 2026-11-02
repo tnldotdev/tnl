@@ -92,6 +92,47 @@ func TestConnectorRefreshPreparesReplacementOpeningsBeforePublishing(t *testing.
 	exchange("after-refresh")
 }
 
+func TestConnectorRefreshDoesNotReselectRetainedRun(t *testing.T) {
+	f := newConnectorFixture(t, "quic")
+	var selections atomic.Int32
+	control, err := NewControlWithConfig(ControlConfig{
+		Signer: f.ConnectorSigner,
+		Resolve: func(ctx context.Context, service string) (Run, error) {
+			if selections.Add(1) != 1 {
+				return Run{}, ErrServiceConnection // placement would select a different or full run.
+			}
+			return f.ResolveService(ctx, service)
+		},
+		Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission, Close: func() error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := f.config
+	config.Control = control
+	setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
+	p, err := prepareConnectorConnection(t.Context(), setup, config, f.device)
+	stop()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	p.mu.Lock()
+	changed, runID := p.changed, p.run.ServiceRunID
+	p.mu.Unlock()
+	select {
+	case <-changed:
+	case <-time.After(4 * time.Second):
+		t.Fatal("retained run was not renewed")
+	}
+	p.mu.Lock()
+	kept := p.run.ServiceRunID == runID && p.run.ValidUntil.Equal(p.until) && p.ctx.Err() == nil
+	p.mu.Unlock()
+	if !kept || selections.Load() != 1 {
+		t.Fatal("refresh re-ran placement or ended the retained run", kept, selections.Load())
+	}
+}
+
 func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 	for _, boundary := range []string{"run", "pair", "permission", "installation"} {
 		t.Run(boundary, func(t *testing.T) {
@@ -111,19 +152,13 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 			}
 			control, err := NewControlWithConfig(ControlConfig{
 				Signer: f.ConnectorSigner,
-				Resolve: func(ctx context.Context, service string) (Run, error) {
-					run, err := f.ResolveService(ctx, service)
-					if armed.Load() {
-						deadline = time.Now().Add(200 * time.Millisecond)
-						if boundary == "run" {
-							run.ValidUntil = deadline
-						}
-					}
-					return run, err
-				},
+				Resolve: f.ResolveService,
 				Pair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
 					pair, err := f.PrepareConnectorPeerPair(ctx, service, request)
 					if armed.Load() {
+						if boundary == "pair" || boundary == "installation" {
+							deadline = time.Now().Add(200 * time.Millisecond)
+						}
 						if boundary == "pair" {
 							pair.ExpiresAt = deadline
 							pair.PublisherPreparedUntil = new(deadline)
@@ -137,6 +172,9 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 				Permission: func(ctx context.Context, service string) (controlv1.VisitorTokenResponse, error) {
 					permission, err := f.VisitorPermission(ctx, service)
 					if armed.Load() {
+						if boundary == "permission" {
+							deadline = time.Now().Add(200 * time.Millisecond)
+						}
 						if boundary == "permission" {
 							permission.ExpiresAt = deadline
 						}
@@ -159,6 +197,12 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 			defer p.Close()
 			defer resume()
 			p.mu.Lock()
+			if boundary == "run" {
+				// the last confirmed run bound still fences a blocked renewal.
+				deadline = time.Now().Add(2200 * time.Millisecond)
+				p.run.ValidUntil = deadline
+				p.notifyLocked()
+			}
 			oldRun, oldPair, oldPermission, oldInstallation := p.run.ValidUntil, p.until, p.permission.ExpiresAt, p.preparedUntil
 			p.mu.Unlock()
 			armed.Store(true)
