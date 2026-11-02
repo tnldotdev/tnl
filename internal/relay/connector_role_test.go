@@ -6,6 +6,8 @@ import (
 	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
@@ -15,6 +17,25 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func TestConnectorClaimErrorKeepsRetryableWireCode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want tunnelv1.ErrorCode
+	}{
+		{"control unavailable", &ControlProblemError{Status: http.StatusServiceUnavailable}, tunnelv1.Unavailable},
+		{"control denied", errors.New("denied"), tunnelv1.Unauthenticated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := connectorClaimError(tc.err)
+			var protocol *tunnel.ProtocolError
+			if !errors.Is(result, tc.err) || !errors.As(result, &protocol) || protocol.Code != tc.want {
+				t.Fatal("claim error lost its cause or wire classification", result)
+			}
+		})
+	}
+}
 
 func TestRelayTransportRejectsConnectorPublisherRoleConfusion(t *testing.T) {
 	proof := tunnelv1.ConnectorPairLegProof{PairID: "cpp_1234567890123456789012", DeliveryGeneration: 1, ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 1, PublisherIdentityID: "pub_1234567890123456789012", ConnectionSlot: 0, PublisherConnectionID: "pc_1234567890123456789012", AssignmentRevision: 1, RelayServiceID: "relay-a", RelayID: "process-a", RelayRunID: "relay_run", RelayLeaseRevision: 1, Nonce: make([]byte, 32), Signature: make([]byte, 64)}

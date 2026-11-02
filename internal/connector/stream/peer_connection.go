@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -63,6 +64,10 @@ type connectorConnection struct {
 }
 
 func connectorTemporary(err error) bool {
+	var protocol *tunnel.ProtocolError
+	if errors.As(err, &protocol) {
+		return protocol.Code == tunnelv1.Unavailable
+	}
 	if _, definition, ok := failure.Describe(err); ok {
 		return definition.Retry == failure.RetryLater
 	}
