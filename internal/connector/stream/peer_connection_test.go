@@ -10,8 +10,52 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func TestConnectorRefreshBlockedWriterDoesNotSpendSiblingBudget(t *testing.T) {
+	f := newConnectorFixture(t, "quic")
+	setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
+	p, err := prepareConnectorConnection(t.Context(), setup, f.config, f.device)
+	stop()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	blocked, blockedPeer := net.Pipe()
+	defer blockedPeer.Close()
+	healthy, healthyPeer := net.Pipe()
+	defer healthyPeer.Close()
+	makeUse := func(conn net.Conn, entry tunnelv1.ConnectorPeerVisitorEntry) *connectorUse {
+		prepared := &PreparedConnector{ctx: p.ctx, conn: conn, callbackDone: make(chan struct{}), writer: tunnel.NewConnectorRequestWriter(conn)}
+		prepared.stop = context.AfterFunc(p.ctx, func() { defer close(prepared.callbackDone); _ = conn.Close() })
+		return &connectorUse{entry: entry, prepared: prepared}
+	}
+	p.mu.Lock()
+	blockedUse, healthyUse := makeUse(blocked, p.openings[0].entry), makeUse(healthy, p.openings[1].entry)
+	permission := p.permission
+	p.mu.Unlock()
+	defer blockedUse.prepared.Close()
+	defer healthyUse.prepared.Close()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.renewActive([]*connectorUse{blockedUse, healthyUse}, permission, time.Now().Add(5*time.Second))
+	}()
+	_ = healthyPeer.SetReadDeadline(time.Now().Add(time.Second))
+	frame, err := tunnelv1.ReadConnectorRequestFrame(healthyPeer)
+	if err != nil || frame.Kind != tunnelv1.ConnectorRequestPermission {
+		t.Fatal("blocked writer spent sibling renewal budget", err)
+	}
+	_ = blockedPeer.Close()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("renewal workers did not join")
+	}
+}
 
 func TestConnectorRefreshPreparesReplacementOpeningsBeforePublishing(t *testing.T) {
 	f := newConnectorFixture(t, "quic")
