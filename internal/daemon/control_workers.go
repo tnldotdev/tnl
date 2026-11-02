@@ -54,6 +54,9 @@ func (d *daemon) startControlWorkers(
 	d.start("expire saved publish runs", func() error {
 		return maintenance.RunExpiredPublishRunCleanup(lifetime, database, metrics)
 	})
+	d.start("clean up connector peer pairs", func() error {
+		return maintenance.RunConnectorPeerPairCleanup(lifetime, database, metrics)
+	})
 	d.start("clean up ephemeral public URLs", func() error {
 		return maintenance.RunEphemeralPublicURLCleanup(lifetime, database, metrics)
 	})
