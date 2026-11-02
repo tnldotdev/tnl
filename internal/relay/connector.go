@@ -27,6 +27,7 @@ type ConnectorAcceptor struct {
 	Publishers   *ServiceRegistry
 	mu           sync.Mutex
 	sessions     int
+	runs         map[string]int
 	legs         map[connectorLegID]int
 }
 
@@ -37,6 +38,7 @@ type connectorLegID struct {
 }
 
 const maxConnectorSessions = 64
+const maxConnectorSessionsPerRun = 8
 
 func (a *ConnectorAcceptor) reserve(proof tunnelv1.ConnectorPairLegProof) (func(), error) {
 	if a == nil || a.CurrentLease == nil || a.Claim == nil || a.Publishers == nil || len(a.SigningKey) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(a.SigningKey.Seed()), a.SigningKey) {
@@ -45,18 +47,26 @@ func (a *ConnectorAcceptor) reserve(proof tunnelv1.ConnectorPairLegProof) (func(
 	id := connectorLegID{proof.PairID, proof.DeliveryGeneration, proof.ConnectionSlot}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.sessions >= maxConnectorSessions || a.legs[id] >= 2 {
+	if a.sessions >= maxConnectorSessions || a.runs[proof.ServiceRunID] >= maxConnectorSessionsPerRun || a.legs[id] >= 2 {
 		return nil, &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
 	}
 	if a.legs == nil {
 		a.legs = make(map[connectorLegID]int)
 	}
+	if a.runs == nil {
+		a.runs = make(map[string]int)
+	}
 	a.sessions++
+	a.runs[proof.ServiceRunID]++
 	a.legs[id]++
 	return sync.OnceFunc(func() {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		a.sessions--
+		a.runs[proof.ServiceRunID]--
+		if a.runs[proof.ServiceRunID] == 0 {
+			delete(a.runs, proof.ServiceRunID)
+		}
 		a.legs[id]--
 		if a.legs[id] == 0 {
 			delete(a.legs, id)
