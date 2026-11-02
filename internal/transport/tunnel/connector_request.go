@@ -79,8 +79,8 @@ func (s *ConnectorRequestWriter) Renew(permission tunnelv1.ConnectorVisitorPermi
 }
 
 // RenewUntil bounds the entire renewal write and restores the outer deadline
-// under the same gates as application writes and TLS half-close. the deadline
-// belongs to this refresh, not a new budget for each active stream.
+// under the same gates as application writes and TLS half-close. the caller
+// supplies one fixed deadline for this stream's renewal attempt.
 func (s *ConnectorRequestWriter) RenewUntil(permission tunnelv1.ConnectorVisitorPermission, until time.Time) error {
 	if until.IsZero() || !until.After(time.Now()) {
 		return os.ErrDeadlineExceeded

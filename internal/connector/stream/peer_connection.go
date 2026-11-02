@@ -393,17 +393,27 @@ func (p *connectorConnection) refresh() {
 		}
 		p.notifyLocked()
 		p.mu.Unlock()
-		renewUntil := minConnectorCall(earliestConnectorDeadline(bound, next.ValidUntil, permission.ExpiresAt))
-		for _, stream := range active {
+		p.renewActive(active, permission, earliestConnectorDeadline(bound, next.ValidUntil, permission.ExpiresAt))
+	}
+}
+
+func (p *connectorConnection) renewActive(active []*connectorUse, permission controlv1.VisitorTokenResponse, bound time.Time) {
+	// each active stream has its own write gate. a blocked application write
+	// must not spend the renewal budget of an unrelated stream.
+	var renewals sync.WaitGroup
+	for _, stream := range active {
+		renewals.Go(func() {
+			until := minConnectorCall(bound)
 			entry, err := connectorOpening(p.signer, stream.entry, permission.VisitorToken)
 			if err == nil {
-				err = stream.prepared.writer.RenewUntil(entry.Permission, renewUntil)
+				err = stream.prepared.writer.RenewUntil(entry.Permission, until)
 			}
 			if err != nil {
 				_ = stream.prepared.Close()
 			}
-		}
+		})
 	}
+	renewals.Wait()
 }
 
 func minConnectorCall(until time.Time) time.Time {
