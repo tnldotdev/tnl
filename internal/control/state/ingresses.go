@@ -7,14 +7,10 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"net"
-	"net/netip"
-	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 var (
@@ -24,13 +20,12 @@ var (
 
 // IngressRegistration describes one ingress process run.
 type IngressRegistration struct {
-	IngressID                                string
-	IngressRunID                             string
-	ProtocolVersion                          uint64
-	ConnectionCapacity                       uint64
-	IngressPoolID                            string
-	ServicePorts                             []int32
-	ConnectorAddress, ConnectorTLSServerName string
+	IngressID          string
+	IngressRunID       string
+	ProtocolVersion    uint64
+	ConnectionCapacity uint64
+	IngressPoolID      string
+	ServicePorts       []int32
 }
 
 // IngressLeaseIdentity identifies one exact ingress process lease.
@@ -105,7 +100,6 @@ func (d *Database) RegisterIngress(
 		IngressID: registration.IngressID, IngressRunID: registration.IngressRunID,
 		ProtocolVersion: protocolVersion, ConnectionCapacity: connectionCapacity,
 		IngressPoolID: registration.IngressPoolID, ServicePorts: append([]int32{}, registration.ServicePorts...),
-		ConnectorAddress: registration.ConnectorAddress, ConnectorTlsServerName: registration.ConnectorTLSServerName,
 		RegisteredAt: timestamptz(now), RenewedAt: timestamptz(now),
 		LeaseExpiresAt: timestamptz(now.Add(leaseDuration)),
 	})
@@ -327,18 +321,6 @@ func validateIngressRegistration(registration IngressRegistration, leaseDuration
 	for index, port := range registration.ServicePorts {
 		if port < 1024 || port > 65535 || index > 0 && port <= registration.ServicePorts[index-1] {
 			return errors.New("ingress service ports must be sorted, distinct network ports")
-		}
-	}
-	if registration.ConnectorAddress != "" || registration.ConnectorTLSServerName != "" {
-		host, port, err := net.SplitHostPort(registration.ConnectorAddress)
-		number, portErr := strconv.Atoi(port)
-		name, nameErr := naming.CanonicalizeHostname(registration.ConnectorTLSServerName)
-		_, hostErr := naming.CanonicalizeHostname(host)
-		if ip, err := netip.ParseAddr(host); err == nil && ip.Zone() == "" {
-			hostErr = nil
-		}
-		if err != nil || portErr != nil || number < 1 || number > 65535 || hostErr != nil || nameErr != nil || name != registration.ConnectorTLSServerName {
-			return errors.New("controlstate: private connector address and TLS server name are invalid")
 		}
 	}
 	if !validStateText(registration.IngressID) || !validStateText(registration.IngressRunID) {

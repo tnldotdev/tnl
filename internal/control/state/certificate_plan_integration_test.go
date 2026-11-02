@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
@@ -30,15 +31,21 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 			contextDomain := ""
 			if kind == "custom" {
 				contextDomain = domain
-				authority, err := database.CreateDNSAuthority(t.Context(), CreateDNSAuthorityRequest{
-					TeamID: "team_external", DomainID: "domain_external", CanonicalDomain: domain,
-					IdempotencyKey: "authority", RequestDigest: sha256.Sum256([]byte("authority")),
-				}, now)
+				var err error
+				reference, err = opaqueid.New(opaqueid.DNSAuthorityPrefix)
 				if err != nil {
 					t.Fatal(err)
 				}
+				// external authority fixtures intentionally have no built-in domain.
+				digest := sha256.Sum256([]byte("authority"))
+				if err := controlstatedb.New(database.pool).CreateCustomDNSAuthority(t.Context(), controlstatedb.CreateCustomDNSAuthorityParams{
+					AuthorityReference: reference, TeamID: "team_external", DomainID: "domain_external", CanonicalDomain: domain,
+					CreateIdempotencyKey: "authority", CreateRequestDigest: digest[:], CreatedAt: timestamptz(now),
+				}); err != nil {
+					t.Fatal(err)
+				}
 				work, found, err := database.ClaimDNSAuthorityWork(t.Context(), "dns-test", now, time.Minute)
-				if err != nil || !found || work.Reference != authority.Reference {
+				if err != nil || !found || work.Reference != reference {
 					t.Fatalf("claim DNS authority = %v, found %v", err, found)
 				}
 				work.State, work.ProviderZoneID = "ready", "ZCLAIMED"
@@ -48,7 +55,6 @@ func TestIntegrationHostedDNSChallengeContext(t *testing.T) {
 				if err != nil || work.State != "ready" {
 					t.Fatalf("ready DNS authority = %q, %v", work.State, err)
 				}
-				reference = authority.Reference
 			}
 			plan := CertificatePlan{CacheKey: "member." + domain, Scope: "member." + domain,
 				Identifiers: []string{"member." + domain, "*.member." + domain}, ChallengeMethod: "dns-01"}

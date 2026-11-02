@@ -25,22 +25,6 @@ func (c *Client) RevokeVisitorDevice(ctx context.Context, id string) error {
 	return err
 }
 
-func (c *Client) CreateVisitorIngressAssignments(ctx context.Context, serviceID, deviceID, key string) ([]controlv1.ConnectorSessionSetup, error) {
-	return requestWithAccess[[]controlv1.ConnectorSessionSetup](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateVisitorIngressAssignments(ctx, serviceID, controlv1.CreateVisitorIngressAssignmentsJSONRequestBody{DeviceId: deviceID, IdempotencyKey: key}, editors...)
-	})
-}
-
-func (c *Client) CreateVisitorIngressAssignment(ctx context.Context, serviceID, deviceID, excludeIngressID, key string) (controlv1.ConnectorSessionSetup, error) {
-	body := controlv1.CreateVisitorIngressAssignmentJSONRequestBody{DeviceId: deviceID, IdempotencyKey: key}
-	if excludeIngressID != "" {
-		body.ExcludeIngressId = &excludeIngressID
-	}
-	return requestWithAccess[controlv1.ConnectorSessionSetup](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.CreateVisitorIngressAssignment(ctx, serviceID, body, editors...)
-	})
-}
-
 func (c *Client) SelectServiceRun(ctx context.Context, serviceID, deviceID string) (controlv1.ServiceSelection, error) {
 	return requestWithAccess[controlv1.ServiceSelection](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.SelectServiceRun(ctx, serviceID, controlv1.SelectServiceRunJSONRequestBody{DeviceId: deviceID}, editors...)

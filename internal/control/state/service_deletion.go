@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
@@ -48,35 +47,8 @@ func (d *Database) DeleteService(ctx context.Context, serviceID, actorID string,
 	if _, err = q.DeleteService(ctx, controlstatedb.DeleteServiceParams{ID: serviceID, TeamID: teamID, Now: timestamptz(now)}); err != nil {
 		return err
 	}
-	if err = serviceRoutingTombstone(ctx, q, serviceID, now); err != nil {
-		return err
-	}
 	if err = auditPrivateMutation(ctx, tx, serviceID, actorID, "service.delete", serviceID, now); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-func serviceRoutingTombstone(ctx context.Context, q *controlstatedb.Queries, serviceID string, now time.Time) error {
-	return serviceRunRoutingTombstone(ctx, q, serviceID, "", 0, now)
-}
-
-func serviceRunRoutingTombstone(ctx context.Context, q *controlstatedb.Queries, serviceID, runID string, number int64, now time.Time) error {
-	clock, err := q.LockServiceRoutingClock(ctx)
-	if err != nil {
-		return err
-	}
-	event, err := q.InsertServiceRoutingEvent(ctx, controlstatedb.InsertServiceRoutingEventParams{
-		ServiceID: serviceID, Kind: "tombstone", Projection: []byte("[]"),
-		ServiceRunID: nullableText(runID), RunNumber: pgtype.Int8{Int64: number, Valid: runID != ""},
-		ExpiresAt: timestamptz(now.Add(24 * time.Hour)), Now: timestamptz(now),
-	})
-	if err != nil {
-		return err
-	}
-	if event.Revision <= clock {
-		return errors.New("controlstate: private routing clock is ahead of events")
-	}
-	_, err = q.AdvanceServiceRoutingClock(ctx, controlstatedb.AdvanceServiceRoutingClockParams{Revision: event.Revision, Now: timestamptz(now)})
-	return err
 }

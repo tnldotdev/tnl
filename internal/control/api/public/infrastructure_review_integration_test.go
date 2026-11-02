@@ -2,16 +2,12 @@ package public
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
@@ -54,10 +50,6 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 	if _, err = controlauthority.Register(handler, controlauthority.Config{ControlURL: server.URL}, d); err != nil {
 		t.Fatal(err)
 	}
-	owner, err := clientcontrol.New(server.URL, server.Client(), session.AccessToken)
-	if err != nil {
-		t.Fatal(err)
-	}
 	api, err := controlv1.NewClientWithResponses(server.URL, controlv1.WithHTTPClient(server.Client()))
 	if err != nil {
 		t.Fatal(err)
@@ -82,18 +74,6 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 	if anonymous, err := api.CreatePublicURLWithResponse(ctx, &controlv1.CreatePublicURLParams{IdempotencyKey: "anonymous"}, body); err != nil || anonymous.StatusCode() != 401 {
 		t.Fatalf("anonymous pool configuration accepted: %+v %v", anonymous, err)
 	}
-	private, err := owner.CreateService(ctx, m.TeamID, "database", "database")
-	if err != nil {
-		t.Fatal(err)
-	}
-	public, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	device, err := owner.EnrollVisitorDevice(ctx, public)
-	if err != nil {
-		t.Fatal(err)
-	}
 	secret := strings.Repeat("x", 32)
 	secrets, err := serviceapi.NewBearerSecrets(secret, "")
 	if err != nil {
@@ -115,47 +95,25 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 	}
 	for _, id := range []string{"ingress-a", "ingress-b"} {
 		run, _ := opaqueid.New(opaqueid.IngressRunPrefix)
-		address := "127.0.0.1:9441"
-		if id == "ingress-b" {
-			address = "127.0.0.1:9442"
+		body := ingressv1.IngressRegistration{IngressId: id, IngressRunId: run, IngressPoolId: "ingress-a", ServicePorts: []int{}, ProtocolVersion: 1, ConnectionCapacity: 8}
+		if unauthorized, err := nodeAPI.RegisterIngressWithResponse(ctx, body); err != nil || unauthorized.StatusCode() != http.StatusUnauthorized {
+			t.Fatal("unauthenticated ingress registration", err)
 		}
-		name := "private-ingress.example.test"
-		registration, err := nodeAPI.RegisterIngressWithResponse(ctx, ingressv1.IngressRegistration{IngressId: id, IngressRunId: run, IngressPoolId: "ingress-a", ServicePorts: []int{}, ProtocolVersion: 1, ConnectionCapacity: 8, ConnectorAddress: &address, ConnectorTlsServerName: &name}, nodeAuth)
+		registration, err := nodeAPI.RegisterIngressWithResponse(ctx, body, nodeAuth)
 		if err != nil || registration.JSON200 == nil {
 			t.Fatalf("register private endpoint: %+v %v", registration, err)
 		}
-		request := ingressv1.GetIngressTransportCertificateJSONRequestBody{IngressRunId: run, IngressLeaseRevision: registration.JSON200.IngressLeaseRevision}
-		if unauthorized, err := nodeAPI.GetIngressTransportCertificateWithResponse(ctx, id, request); err != nil || unauthorized.StatusCode() != 401 {
-			t.Fatalf("transport private key endpoint is not authenticated: %+v %v", unauthorized, err)
+		request, _ := http.NewRequestWithContext(ctx, http.MethodPost, privateServer.URL+"/internal/v1/ingresses/"+id+"/transport-certificate", strings.NewReader(`{}`))
+		if err := nodeAuth(ctx, request); err != nil {
+			t.Fatal(err)
 		}
-		material, err := nodeAPI.GetIngressTransportCertificateWithResponse(ctx, id, request, nodeAuth)
-		if err != nil || material.JSON200 == nil || material.JSON200.PrivateKeyPem == "" || material.JSON200.Trust.TlsServerName != name || material.HTTPResponse.Header.Get("Cache-Control") != "no-store" {
-			status := 0
-			if material != nil {
-				status = material.StatusCode()
-			}
-			t.Fatalf("current node certificate retrieval status=%d: %v", status, err)
-		}
-		request.IngressLeaseRevision++
-		if stale, err := nodeAPI.GetIngressTransportCertificateWithResponse(ctx, id, request, nodeAuth); err != nil || stale.StatusCode() != 409 {
-			t.Fatalf("stale node fetched a transport key: %+v %v", stale, err)
-		}
-	}
-	assignments, err := owner.CreateVisitorIngressAssignments(ctx, private.Id, device.Id, "infrastructure-startup")
-	if err != nil || len(assignments) != 2 {
-		t.Fatalf("dual endpoint API: %+v %v", assignments, err)
-	}
-	for _, assignment := range assignments {
-		trust, err := owner.GetVisitorIngressTransportTrust(ctx, assignment.ConnectorSessionId)
+		response, err := privateServer.Client().Do(request)
 		if err != nil {
 			t.Fatal(err)
 		}
-		encoded, err := json.Marshal(trust)
-		if err != nil || strings.Contains(string(encoded), "PRIVATE KEY") || strings.Contains(string(encoded), "private_key") {
-			t.Fatal("visitor endpoint leaked infrastructure private material", err)
-		}
-		if _, err = clientcontrol.IngressTransportTLSConfig(trust); err != nil {
-			t.Fatal("returned trust cannot verify the exact process", err)
+		response.Body.Close()
+		if response.StatusCode != http.StatusNotFound {
+			t.Fatal("retired ingress certificate API remains served", response.StatusCode)
 		}
 	}
 }

@@ -1,5 +1,5 @@
 name: tnl connect
-description: Prepare native connections for one saved tnl workload across job steps
+description: Prepare connector connections for one saved tnl workload across job steps
 author: tnldotdev
 inputs:
   workload:

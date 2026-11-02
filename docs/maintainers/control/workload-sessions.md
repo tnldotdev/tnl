@@ -148,15 +148,15 @@ expand an existing session. apply and exchange serialize on the same team lock.
 
 the control API accepts the workload credential only at:
 
-| method   | endpoint                                                        |
-| -------- | --------------------------------------------------------------- |
-| `GET`    | `/v1/workload/services`                                         |
-| `POST`   | `/v1/workload/services/{service_id}/authorization`              |
-| `POST`   | `/v1/workload/services/{service_id}/ingress-assignments`        |
-| `POST`   | `/v1/workload/services/{service_id}/client-certificate`         |
-| `POST`   | `/v1/workload/services/{service_id}/run`                        |
-| `GET`    | `/v1/workload/ingress-assignments/{session_id}/transport-trust` |
-| `DELETE` | `/v1/workload/ingress-assignments/{session_id}`                 |
+| method | endpoint                                                         |
+| ------ | ---------------------------------------------------------------- |
+| `GET`  | `/v1/workload/services`                                          |
+| `POST` | `/v1/workload/services/{service_id}/authorization`               |
+| `POST` | `/v1/workload/services/{service_id}/client-certificate`          |
+| `POST` | `/v1/workload/services/{service_id}/run`                         |
+| `POST` | `/v1/services/{service_id}/connector-peer-pairs`                 |
+| `POST` | `/v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew` |
+| `POST` | `/v1/visitor-tokens`                                             |
 
 inventory contains each authorized configuration service key, its exact saved
 service ID, protocol, and visitor endpoint. EKS services also expose the approved
@@ -165,23 +165,23 @@ native client authentication. human visitor inventory exposes the same hint.
 neither inventory exposes RDS selectors, publisher target addresses, CA bundles,
 or application credentials. the job cannot read management configuration.
 
-HTTP uses the same key-bound native owner and session as the other protocols.
+HTTP uses the same key-bound connector owner and session as the other protocols.
 the SDK no longer mints a separate HTTP-only credential. public native access
 can use the session's service-scoped client certificate; SDK access uses the
-authenticated local connector for both public and services. see
+authenticated local connector for both public and connector-only services. see
 [platform access integration](../connector/platform-access.md) for verified owner selection
 and authenticated rotating-assertion attachment.
 
 certificate issuance requires a CSR signed by the already-bound workload key.
-non-HTTP service certificates and private connector handles expire at the fixed
+non-HTTP service certificates expire at the fixed
 session deadline, at most six hours. they prove key possession; every admission
 and active authorization still checks the current renewable 90-second lease,
 service rights, revocation, and infrastructure deadlines. renewing a lease does
 not replace the certificate or disconnect admitted streams. an expired lease
 cannot admit a new stream even while its certificate remains valid. active
-streams recheck within 30 seconds and close by their last successful decision's
-deadline if control is unavailable. cleanup may release only an exact owned
-connector handle after session expiry or revocation.
+connector streams use background permission renewal and the publisher's local
+policy guard. direct certificate visitors retain bounded control rechecks.
+neither path may outlive its last confirmed authority during an outage.
 
 direct HTTP certificates carry a signed resource permission capped by the current
 workload lease. the publisher verifies that permission and key possession locally,
@@ -191,12 +191,13 @@ prepare a new certificate for later requests. see
 [HTTP authorization](../transport/architecture.md#authorization-and-tls-boundaries).
 
 `New` in `internal/connector/workload` owns the ephemeral key. `Exchange`, `Renew`,
-`Revoke`, `ListServices`, `CheckService`, `CreateIngressAssignments`, and
+`Revoke`, `ListServices`, `CheckService`, `PrepareConnectorPeerPair`, and
 `ServiceClientCertificate` return generated contract types. `SelectServiceRun`
 returns the selected publisher run and approved protocol, trust revision, and
-managed endpoint. `CreateIngressAssignment` replaces one failed connection slot,
-excluding its healthy sibling's ingress. an idempotency key recovers only its
-original still-unclaimed handles; it cannot renew their deadlines.
+managed endpoint. native creation binds one independently signed owner to two
+exact relay-process assignments. retries recover only the original signed
+creation, never a new owner or an extended deadline. carriers are immutable;
+the surviving carrier can carry the same inner QUIC session after its sibling fails.
 
 `Session`, `Subject`, `PublicKey`, and `Sign` let the native job runtime retain
 execution state and prove connector key possession. `ClientTLSCertificate`
@@ -228,7 +229,7 @@ authority. fingerprints must match the applied source.
 the Node SDK reads this same schema from its fixed `.tnl/generated/workloads.json`
 artifact path for all workload protocols. it acquires a platform assertion
 for each await or HTTP request, verifies identity through control, and selects a
-bounded native owner by that verified identity and policy. explicit `TNL_WORKLOAD` or the server-only
+bounded connector owner by that verified identity and policy. explicit `TNL_WORKLOAD` or the server-only
 `configureWorkload` source selects the saved policy. see
 [sdk calls](../connector/platform-access.md#sdk-calls) for the
 callback and token-file API, provider selection, cache, and error boundaries.
@@ -266,12 +267,12 @@ connector. public native clients connect directly with the workload's
 a denied workload never falls back to browser approval or another credential.
 
 `tcpconnect.NewControl` remains the human adapter. both adapters implement
-`ConnectorSigner`, `ConnectorAssignment`, and
+`ConnectorSigner`, `PrepareConnectorPeerPair`, `VisitorPermission`, and
 `ResolveService`. `tcpconnect.Signer` carries `Subject`, `PublicKey`, and
 `Sign`, with no raw signing key. `NewControlWithConfig(ControlConfig)` exposes
-the `Signer`, `Assignment`, `Resolve`, `Release`, and `Close` hooks for native
-connection owners. `Serve` closes its adapter and releases only its own handles;
-it does not revoke a shared workload session.
+the signer, pair preparation, permission, resolution, and close hooks for native
+connection owners. `Serve` joins only its own carriers and streams; it does not
+revoke a shared workload session. no ingress reservation or release API remains.
 
 ## subject and data-plane boundary
 
@@ -282,21 +283,18 @@ it does not revoke a shared workload session.
 {"kind":"workload_session","workload_session_id":"wls_…"}
 ```
 
-`VisitorConnectorClaim.Digest` defines the subject-aware connector key proof.
-the baseline stores a workload session foreign key separately from nullable
-human identity/device foreign keys and enforces the exclusive variants.
+protocol version 1 binds the tagged subject in native creation, relay claims,
+publisher delivery, and signed application openings. the baseline stores the
+workload session separately from human identity/device and enforces the exclusive
+variants. both relay claims bind the accepted socket source and current process;
+the publisher installs their exact agreement before inner QUIC readiness.
 
-the state APIs available to transport adapters are `AuthenticateVisitorConnector`,
-`SelectVisitorServiceRun`, `AuthorizeServiceStream`,
-`RecheckVisitorServiceStream`, and `AuthorizeVisitorServiceConnector`.
-`VisitorSubjectAccess` and `AuthenticateVisitorSubjectKey` share current permission
-and key checks across both variants. protocol version 1 carries the tagged
-subject through private hello, acceptance, ingress HTTP projections, relay
-forwarding, and the publisher's control request. removed human-only fields are
-rejected. ingress binds the observed source and one-use assignment; the
-publisher rechecks that subject, source, admitted grant revision, exact service
-and run before opening the target. human visitors use the same transport path
-with their actual enrolled device subject.
+the publisher admits each stream using that installed pair and a current signed
+permission, without an arrival-time control request. its guard checks the subject,
+source, service/run, metadata, and policy before target resolution, dialing,
+greetings, and later use. human visitors use the same path with their actual
+enrolled device. connector owner/run replacement ends old admissions rather than
+transferring them. see [service boundaries](services.md).
 
 workload audit rows identify the session; its durable execution references identify
 the run, attempt, and check-run. authenticated trace-only attributes carry the
@@ -308,7 +306,7 @@ are excluded.
 control and standalone run workload cleanup immediately at startup, drain
 available batches, then wait one minute after an empty or failed sweep. each
 iteration has a five-second deadline and removes at most 1,000 rows from each
-of nine relations. phases commit separately, in dependency order; retries keep
+of six relations. phases commit separately, in dependency order; retries keep
 committed progress. concurrent workers skip locked rows. cleanup counts and
 failures use the existing cleanup metrics with kind `workloads` and worker log.
 
@@ -318,15 +316,11 @@ workload history follows service audit's 30-day retention:
 - GitHub JTI/assertion digests remain for 30 days after assertion expiry;
 - certificates remain for 30 days after certificate expiry and until no direct
   visitor references them;
-- connector handles remain until both their fixed expiry and any revocation
-  are over 30 days old, and until no private stream references them;
-- ingress retry results remain until their session's absolute expiry, lease
-  expiry, and any revocation are over 30 days old;
 - sessions and their exact service snapshot remain until their absolute expiry,
   lease expiry, any revocation, and original assertion expiry are over 30 days
   old, and until all other session references have been removed.
 
-private streams and direct visitors keep their existing 24-hour history after
+direct visitors keep their existing 24-hour history after
 their decision expires or they close. cleanup never deletes a live decision or
 cascades through a subject, stream, certificate, or admission reference. rows
 blocked by references are excluded before each batch limit, so they cannot
@@ -341,11 +335,9 @@ removed, old credentials and assertions still fail closed. new sessions always
 require a currently valid provider assertion and saved policy; GitHub execution
 ownership is historical for the retention window, not a permanent job registry.
 
-revoke and exact-handle release remain repeatable after expiry or revocation
-while their stored ownership proof remains. once cleanup removes a handle,
-release returns the existing service-access denial. once cleanup removes the
-session, revoke and release return the existing workload denial (HTTP 403).
-neither endpoint reports successful authenticated deletion from a missing row:
+revoke remains repeatable after expiry or revocation while its stored ownership
+proof remains. once cleanup removes the session, revoke returns the existing
+workload denial (HTTP 403). it does not report authenticated deletion from a missing row:
 an opaque ID and an unverifiable old bearer cannot establish ownership. these
 operations never recreate state or refresh retention on a repeated stop.
 
@@ -363,9 +355,9 @@ verification before dialing.
 ## verify
 
 the fresh PostgreSQL baseline and control's matching identity are
-`tnl-control-fresh-v1-permissions-serving-readiness`.
-its connector constraint allows workload auth material through six hours;
-current authorization remains bounded by the renewable lease. it requires the
+`tnl-control-fresh-v1-relay-connector-peers`.
+workload certificates can last through six hours; current authorization remains
+bounded by the renewable lease. it requires the
 same fresh-database, coordinated-baseline rollout as the assembled services work.
 
 ```console
@@ -380,8 +372,8 @@ native adapter. state tests cover concurrent exchange/apply, replay recovery,
 key/scope takeover rejection, narrowing, fixed expiry, public/private visitor
 admission, and bounded history cleanup with retained replay and live-reference
 fences. HTTP tests cover repeated expired/revoked deletion and denial after
-ownership proof is collected. the runtime target uses two ingress and two relay
-processes over
+ownership proof is collected. the runtime fixture uses two ingress for direct
+public coverage and two relay processes; native service owners bypass ingress over
 QUIC and TLS/TCP, publisher-owned service TLS, public mTLS, private/public HTTP
 streams, and a native PostgreSQL client. it crosses two real 90-second lease
 cycles with the same key and connections, then checks fixed expiry, lease loss,

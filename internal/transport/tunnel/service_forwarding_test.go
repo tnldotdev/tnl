@@ -45,12 +45,15 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 	relay := await(t, accepted)
 	defer publisher.Close()
 	defer relay.Close()
+	if borrowed, err := publisher.BorrowServicePublisherTransport(); err != nil || borrowed != client {
+		t.Fatal("claimed publisher did not borrow its exact transport", err)
+	}
 	header := tunnelv1.ServiceForwardingHeader{ServiceStreamHeader: tunnelv1.ServiceStreamHeader{
 		ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.ServiceForwardingStream,
 		ServiceID: ref.ServiceID, ServiceRunID: ref.ServiceRunID, RunNumber: ref.RunNumber,
 		PublisherConnectionID: ref.PublisherConnectionID, ConnectionAssignmentRevision: ref.ConnectionAssignmentRevision,
-		Connector: &tunnelv1.ConnectorAdmission{SessionID: id(opaqueid.ConnectorSessionPrefix), Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: id(opaqueid.IdentityPrefix), DeviceID: id(opaqueid.VisitorDevicePrefix)}, GrantRevision: 1},
-		SourceIP:  "192.0.2.1", VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix),
+		PublicService: &tunnelv1.PublicServiceAdmission{IngressID: "ingress-a", IngressRunID: id(opaqueid.IngressRunPrefix), IngressLeaseRevision: 1, DestinationPort: 25443},
+		SourceIP:      "192.0.2.1", VisitorConnectionID: id(opaqueid.VisitorConnectionPrefix),
 		ExpiresAt: time.Now().Add(time.Minute),
 	}, ConnectionSlot: ref.ConnectionSlot, RelayServiceID: ref.RelayServiceID,
 		RelayID: "relay-one-process", RelayRunID: id(opaqueid.RelayRunPrefix), RelayLeaseRevision: 2,
@@ -118,5 +121,17 @@ func TestClaimedPrivateTunnelRejectsAnotherRunOrSlotBeforeVisitorBytes(t *testin
 	result := <-answered
 	if result.err != nil || result.response.Kind != tunnelv1.ReturnAccepted {
 		t.Fatalf("matching private stream not acknowledged: %+v %v", result.response, result.err)
+	}
+}
+
+func TestServicePublisherTransportRequiresClaimedPublisherRole(t *testing.T) {
+	client, _ := newMemoryPair(t)
+	for _, session := range []*Session{nil, {}, {transport: client}, {transport: client, role: tunnelv1.Publisher},
+		{transport: client, role: tunnelv1.Connector, serviceConnection: &tunnelv1.ServicePublisherConnectionRef{}}} {
+		borrowed, err := session.BorrowServicePublisherTransport()
+		var rejected *ProtocolError
+		if borrowed != nil || !errors.As(err, &rejected) || rejected.Code != tunnelv1.Unauthenticated {
+			t.Fatal("unclaimed or wrong-role session lent its transport", err)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package relay
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/netip"
@@ -269,6 +270,10 @@ func relayLease(lease controlstate.RelayLease) relayv1.RelayLease {
 		ReportedConnections: int64(lease.ReportedConnections), ReportedStreams: int64(lease.ReportedStreams),
 		Draining: lease.Draining, DrainDeadline: lease.DrainDeadline, RegisteredAt: lease.RegisteredAt,
 		RenewedAt: lease.RenewedAt, LeaseExpiresAt: lease.LeaseExpiresAt,
+	}
+	if len(lease.PeerSigningPublicKey) != 0 {
+		value := base64.RawURLEncoding.EncodeToString(lease.PeerSigningPublicKey)
+		result.PeerSigningPublicKey = &value
 	}
 	if lease.ObservedAddress != nil {
 		value := lease.ObservedAddress.String()

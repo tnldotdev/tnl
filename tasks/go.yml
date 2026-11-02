@@ -112,7 +112,7 @@ tasks:
     dir: "{{.ROOT_DIR}}"
     desc: Check native Kubernetes credentials, kubeconfig ownership, and HTTP stream boundaries
     cmds:
-      - go test -race ./internal/connector/kubeconfig ./internal/publisher/target/kubernetes ./internal/publisher ./internal/transport/targettransport ./internal/connector/... ./internal/publisher/service ./internal/observability ./cmd/tnl -run='Test(ClientGoExec|Credential|EKS|SelectedUser|Prepare|Preflight|SessionPlan|OwnedNamespace|Cleanup|Classification|Kubernetes|NativeProfile|ConnectMode|PublisherLifecycle)' -count=1
+      - go test -race ./internal/connector/kubeconfig ./internal/publisher/target/kubernetes ./internal/publisher ./internal/transport/targettransport ./internal/connector/... ./internal/publisher/service ./internal/observability ./cmd/tnl -run='Test(ClientGoExec|Credential|EKS|SelectedUser|Prepare|Preflight|SessionPlan|OwnedNamespace|Cleanup|Classification|Kubernetes|ConnectorProfile|ConnectMode|PublisherLifecycle)' -count=1
 
   test:connections:
     dir: "{{.ROOT_DIR}}"
@@ -120,7 +120,7 @@ tasks:
     deps: [":js:build"]
     cmds:
       - go test -race ./internal/connector/runtime ./internal/connector/workload ./internal/control/oidc -count=1 -timeout=3m
-      - go test -race ./cmd/tnl ./internal/connector ./tests/integration/connector -run='^Test(Connection|IntegrationConnectionNativeOwner)' -count=1 -timeout=3m -args -tnl-test-tier=integration
+      - go test -race ./cmd/tnl ./internal/connector ./tests/integration/connector -run='^Test(Connection|IntegrationConnectionConnectorOwner)' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   test:connections:budget:
     dir: "{{.ROOT_DIR}}"

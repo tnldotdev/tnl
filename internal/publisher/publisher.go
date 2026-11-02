@@ -88,7 +88,7 @@ func Run(ctx context.Context, config Config) (result error) {
 	}
 	publicURLID := publicURL.Id
 	ctx = observability.NarrowIdentity(ctx, observability.Identity{TeamID: publicURL.TeamId, PublisherIdentityID: config.PublisherIdentityID, PublicURLID: publicURL.Id})
-	ctx = observability.WithFields(ctx, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "direct", Exposure: "public"})
+	ctx = observability.WithFields(ctx, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "public_endpoint", Exposure: "public"})
 	if config.Ephemeral && createdPublicURL {
 		defer func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

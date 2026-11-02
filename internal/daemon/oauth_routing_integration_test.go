@@ -91,7 +91,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		waitForReadyPublisherConnections(t, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
 		apps = append(apps, app{name: name, hostname: hostname, callbacks: observed, tunnel: tunnel})
 	}
-	waitForIngressRoutingCurrent(t, fixture.inspect, 2)
+	waitForIngressRoutingCurrent(t, fixture.inspect, 1)
 	if err := state.MarkIntegrationURLReady(t.Context(), server, oauthHost, "test-publisher"); err != nil {
 		t.Fatal(err)
 	}

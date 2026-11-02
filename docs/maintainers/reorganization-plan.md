@@ -11,7 +11,7 @@ and transitions that those owners must preserve.
 - publisher owns serving, target forwarding, app registration, local process/API,
   signing identity, groups, integration URLs, and installation. its serving runtime
   does not depend on app or installed-process composition.
-- connector owns visitor selection, connection operations, native owner lifetime,
+- connector owns visitor selection, connection operations, connector owner lifetime,
   workload access, and kubeconfig. it does not depend on publisher serving or
   control persistence.
 - control owns public, authority, and internal APIs, PostgreSQL, certificate and

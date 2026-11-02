@@ -16,12 +16,15 @@ tnl clients ------------------> control
                                    v
 visitor ---> ingress ----------------> relay <=== publisher ---> target
                                       A or B
+
+connector <==== fixed relay A/B carriers ====> publisher ---> target
+                 retained inner QUIC
 ```
 
 Control owns durable server state and current authorization. Ingress receives
 short-lived routing projections; a relay owns its current lease and connected
 publishers. Visitor TLS ends at the publisher. A connector is the visitor-side
-native operation for services; it is separate from publishing even when
+operation for services; it is separate from publishing even when
 one local `tnl` process composes both capabilities.
 
 ## find the owner
@@ -29,7 +32,7 @@ one local `tnl` process composes both capabilities.
 | Boundary                    | Implementation and responsibility                                                                                                                                                           | Maintainer reference                                    |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | Publisher                   | `internal/publisher`: publication, visitor TLS, admission, target forwarding; children own app, local process/API, invocations, groups, identity, integrations, targets, and browser assets | [publisher architecture](publisher/architecture.md)     |
-| Connector                   | `internal/connector`: service selection, native owner, preparation, loopback/stdio, cleanup; children own stream mechanics, IPC, workload sessions, and kubeconfig                          | [connector architecture](connector/architecture.md)     |
+| Connector                   | `internal/connector`: service selection, connector owner, preparation, loopback/stdio, cleanup; children own stream mechanics, IPC, workload sessions, and kubeconfig                       | [connector architecture](connector/architecture.md)     |
 | Control                     | `internal/control`: public/authority/private APIs, PostgreSQL transactions, placement, authorization, certificates, DNS, OIDC, delivery, retention                                          | [control architecture](control/architecture.md)         |
 | Transport, ingress, relay   | `internal/transport` supplies mechanics; `internal/ingress` owns visitor admission and retry commitment; `internal/relay` owns connected publisher claims and streams                       | [transport architecture](transport/architecture.md)     |
 | Composition and development | `internal/daemon`, `internal/client`, static config and shared leaves; test/build/generator/Task ownership                                                                                  | [development architecture](development/architecture.md) |
@@ -40,7 +43,7 @@ one local `tnl` process composes both capabilities.
 the role of everything it calls: `tnl publish` composes publisher operations,
 `tnl connect` composes connector operations, and `tnl apply` sends control an
 evaluated configuration. The daemon composes control, ingress, and relay.
-Standalone runs those same boundaries and two logical relay services in one
+Standalone runs one ingress and two logical relay services in one
 process against PostgreSQL.
 
 ## dependency direction
@@ -116,6 +119,10 @@ bundling and external consumers.
   one ready connection can sustain service while the other is replaced.
 - Ingress creates PROXY v2 metadata once; relay preserves it. No application
   bytes are replayed after the first visitor byte sent to a relay.
+- Connector owners bypass ingress. Two immutable relay carriers carry one
+  inner QUIC session; failover retains that session and its target sockets.
+  Readiness requires exact process/source claims, publisher installation, and
+  inner QUIC. A replacement owner or run terminates the old admissions.
 - A copied relay lease deadline is a routing observation. The connected relay
   checks its current lease, process identity, and exact connection claim before
   accepting a stream.

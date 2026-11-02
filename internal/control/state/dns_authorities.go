@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"math"
@@ -16,19 +15,10 @@ import (
 )
 
 var (
-	ErrDNSAuthorityWorkStale   = errors.New("controlstate: DNS authority work lease is stale")
-	ErrDNSAuthorityIdempotency = errors.New("controlstate: DNS authority idempotency conflict")
-	ErrDNSAuthorityInvalid     = errors.New("controlstate: DNS authority request is invalid")
-	ErrDNSAuthorityNotFound    = errors.New("controlstate: DNS authority not found")
+	ErrDNSAuthorityWorkStale = errors.New("controlstate: DNS authority work lease is stale")
+	ErrDNSAuthorityInvalid   = errors.New("controlstate: DNS authority request is invalid")
+	ErrDNSAuthorityNotFound  = errors.New("controlstate: DNS authority not found")
 )
-
-type CreateDNSAuthorityRequest struct {
-	TeamID          string
-	DomainID        string
-	CanonicalDomain string
-	IdempotencyKey  string
-	RequestDigest   [32]byte
-}
 
 type DNSAuthority struct {
 	Reference       string
@@ -57,43 +47,6 @@ type DNSAuthorityWork struct {
 	WorkExpiresAt  time.Time
 }
 
-func (d *Database) CreateDNSAuthority(
-	ctx context.Context,
-	request CreateDNSAuthorityRequest,
-	now time.Time,
-) (DNSAuthority, error) {
-	canonical, err := naming.CanonicalizeHostname(request.CanonicalDomain)
-	if err != nil || canonical != request.CanonicalDomain || !validStateText(request.TeamID) ||
-		!validStateText(request.DomainID) || !validIdempotencyKey(request.IdempotencyKey) || now.IsZero() {
-		return DNSAuthority{}, ErrDNSAuthorityInvalid
-	}
-	if err := d.requireOpen(); err != nil {
-		return DNSAuthority{}, err
-	}
-	reference, err := opaqueid.New(opaqueid.DNSAuthorityPrefix)
-	if err != nil {
-		return DNSAuthority{}, err
-	}
-	row, err := controlstatedb.New(d.pool).CreateOrGetDNSAuthority(ctx, controlstatedb.CreateOrGetDNSAuthorityParams{
-		AuthorityReference: reference, TeamID: request.TeamID, DomainID: request.DomainID,
-		CanonicalDomain: request.CanonicalDomain, CreateIdempotencyKey: request.IdempotencyKey,
-		CreateRequestDigest: request.RequestDigest[:], CreatedAt: timestamptz(now),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return DNSAuthority{}, ErrDNSAuthorityIdempotency
-	}
-	if err != nil {
-		if isUniqueViolation(err) {
-			return DNSAuthority{}, ErrDNSAuthorityIdempotency
-		}
-		return DNSAuthority{}, fmt.Errorf("controlstate: create DNS authority: %w", err)
-	}
-	if subtle.ConstantTimeCompare(row.CreateRequestDigest, request.RequestDigest[:]) != 1 {
-		return DNSAuthority{}, ErrDNSAuthorityIdempotency
-	}
-	return dnsAuthority(row)
-}
-
 func (d *Database) GetDNSAuthority(ctx context.Context, reference string) (DNSAuthority, error) {
 	if !opaqueid.Valid(reference, opaqueid.DNSAuthorityPrefix) {
 		return DNSAuthority{}, ErrDNSAuthorityInvalid
@@ -109,58 +62,6 @@ func (d *Database) GetDNSAuthority(ctx context.Context, reference string) (DNSAu
 		return DNSAuthority{}, fmt.Errorf("controlstate: get DNS authority: %w", err)
 	}
 	return dnsAuthority(row)
-}
-
-func (d *Database) ReleaseDNSAuthority(
-	ctx context.Context,
-	reference, idempotencyKey string,
-	now time.Time,
-) (result DNSAuthority, retErr error) {
-	if !opaqueid.Valid(reference, opaqueid.DNSAuthorityPrefix) || !validIdempotencyKey(idempotencyKey) || now.IsZero() {
-		return DNSAuthority{}, ErrDNSAuthorityInvalid
-	}
-	if err := d.requireOpen(); err != nil {
-		return DNSAuthority{}, err
-	}
-	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
-	if err != nil {
-		return DNSAuthority{}, fmt.Errorf("controlstate: release DNS authority: begin transaction: %w", err)
-	}
-	defer rollback(ctx, tx, "release DNS authority", &retErr)()
-	queries := controlstatedb.New(tx)
-	existing, err := queries.GetDNSAuthorityByReleaseIdempotency(ctx, text(idempotencyKey))
-	if err == nil && existing.AuthorityReference != reference {
-		return DNSAuthority{}, ErrDNSAuthorityIdempotency
-	}
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return DNSAuthority{}, fmt.Errorf("controlstate: release DNS authority: read idempotency: %w", err)
-	}
-	row, err := queries.LockDNSAuthority(ctx, reference)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return DNSAuthority{}, ErrDNSAuthorityNotFound
-	}
-	if err != nil {
-		return DNSAuthority{}, fmt.Errorf("controlstate: release DNS authority: lock: %w", err)
-	}
-	if state := DNSAuthorityState(row.State); state != DNSAuthorityReleasing && state != DNSAuthorityReleased {
-		row, err = queries.BeginDNSAuthorityRelease(ctx, controlstatedb.BeginDNSAuthorityReleaseParams{
-			ReleaseIdempotencyKey: text(idempotencyKey), UpdatedAt: timestamptz(now), AuthorityReference: reference,
-		})
-		if errors.Is(err, pgx.ErrNoRows) || isUniqueViolation(err) {
-			return DNSAuthority{}, ErrDNSAuthorityIdempotency
-		}
-		if err != nil {
-			return DNSAuthority{}, fmt.Errorf("controlstate: release DNS authority: update: %w", err)
-		}
-	}
-	result, err = dnsAuthority(row)
-	if err != nil {
-		return DNSAuthority{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return DNSAuthority{}, fmt.Errorf("controlstate: release DNS authority: commit: %w", err)
-	}
-	return result, nil
 }
 
 func (d *Database) ClaimDNSAuthorityWork(

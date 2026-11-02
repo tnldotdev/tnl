@@ -1,6 +1,9 @@
--- name: EnsureVisitorTokenIssuer :one
+-- name: LockVisitorTokenIssuer :one
+SELECT issuer FROM control.visitor_token_issuer WHERE id FOR UPDATE;
+
+-- name: EnsureVisitorTokenIssuer :exec
 INSERT INTO control.visitor_token_issuer(issuer) VALUES(sqlc.arg(issuer))
-ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id RETURNING issuer;
+ON CONFLICT(id) DO NOTHING;
 
 -- name: LockVisitorTokenSigningKey :one
 SELECT * FROM control.visitor_token_keys WHERE retired_at IS NULL AND revoked_at IS NULL FOR UPDATE;
@@ -10,8 +13,8 @@ INSERT INTO control.visitor_token_keys(id,public_key,seed_ciphertext,storage_key
 VALUES(sqlc.arg(id),sqlc.arg(public_key),sqlc.arg(seed_ciphertext),sqlc.arg(storage_key_id),sqlc.arg(now),sqlc.arg(now)) RETURNING *;
 
 -- name: RetainVisitorTokenSigningKey :execrows
-UPDATE control.visitor_token_keys SET retain_until=GREATEST(retain_until,sqlc.arg(expires_at))
-WHERE id=sqlc.arg(id) AND retired_at IS NULL AND revoked_at IS NULL;
+UPDATE control.visitor_token_keys SET retain_until=sqlc.arg(expires_at)
+WHERE id=sqlc.arg(id) AND retired_at IS NULL AND revoked_at IS NULL AND retain_until<sqlc.arg(expires_at);
 
 -- name: RetireVisitorTokenSigningKeys :exec
 UPDATE control.visitor_token_keys SET retired_at=COALESCE(retired_at,sqlc.arg(now))

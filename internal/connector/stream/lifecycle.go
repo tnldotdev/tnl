@@ -1,9 +1,6 @@
 package stream
 
-import (
-	"context"
-	"errors"
-)
+import "errors"
 
 // MetadataReloadError ends a runner whose approved record is stale. callers
 // must clear readiness, fetch and approve current metadata, then start a new
@@ -28,10 +25,4 @@ func IsMetadataReload(err error) bool {
 
 func metadataReload(service string, approved, selected int64) error {
 	return &MetadataReloadError{ServiceID: service, ApprovedRevision: approved, SelectedRevision: selected}
-}
-
-// assignmentReleaser is optional for controls that own server reservations.
-// closing a path releases only its own assignment, after stopping its streams.
-type assignmentReleaser interface {
-	ReleaseConnectorAssignment(context.Context, string) error
 }

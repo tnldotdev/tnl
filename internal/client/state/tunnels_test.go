@@ -127,6 +127,26 @@ func TestTunnelSnapshotTracksLifecycleConsistently(t *testing.T) {
 	}
 }
 
+func TestTunnelRequiresPublicationAndTarget(t *testing.T) {
+	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	for _, options := range []BeginTunnelOptions{
+		{Command: "dev", Server: "https://server.example", Target: "3000", Project: t.TempDir()},
+		{Command: TunnelCommandPublish, Server: "https://server.example", Project: t.TempDir()},
+	} {
+		if _, err := database.BeginTunnel(t.Context(), options); err == nil {
+			t.Fatal("accepted a tunnel without a publication and target")
+		}
+	}
+	snapshot, err := database.Snapshot(t.Context())
+	if err != nil || len(snapshot.Tunnels) != 0 {
+		t.Fatalf("invalid publication left a tunnel: %#v, %v", snapshot, err)
+	}
+}
+
 func TestPrivateDatabaseLabelsCannotAcquirePublicTunnelPorts(t *testing.T) {
 	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
@@ -242,16 +262,12 @@ func TestTunnelSnapshotIsSharedAcrossProcesses(t *testing.T) {
 	}
 	defer owner.Close()
 	tunnel, err := owner.BeginTunnel(t.Context(), BeginTunnelOptions{
-		Command: TunnelCommandDev, Server: "https://server.example", Project: t.TempDir(),
+		Command: TunnelCommandPublish, Server: "https://server.example", Project: t.TempDir(), Target: "5173",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tunnel.Finish(context.Background(), nil)
-	if err := tunnel.SetDevTarget(t.Context(), "vite", "5173"); err != nil {
-		t.Fatal(err)
-	}
-
 	reader, err := Open(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
@@ -262,7 +278,7 @@ func TestTunnelSnapshotIsSharedAcrossProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(snapshot.Tunnels) != 1 || snapshot.Tunnels[0].ID != tunnel.ID() ||
-		snapshot.Tunnels[0].Framework != "vite" || snapshot.Tunnels[0].Target != "http://127.0.0.1:5173" {
+		snapshot.Tunnels[0].Command != TunnelCommandPublish || snapshot.Tunnels[0].Target != "http://127.0.0.1:5173" {
 		t.Fatalf("shared snapshot = %#v", snapshot)
 	}
 }
@@ -274,7 +290,7 @@ func TestLiveTunnelHeartbeatRenewsPersistedLease(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer database.Close()
-		tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{Command: TunnelCommandDev, Server: "https://server.example", Project: t.TempDir()})
+		tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{Command: TunnelCommandPublish, Server: "https://server.example", Project: t.TempDir(), Target: "3000"})
 		if err != nil {
 			t.Fatal(err)
 		}

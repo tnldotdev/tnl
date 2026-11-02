@@ -71,9 +71,6 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 			if _, err = q.CloseServiceRun(ctx, controlstatedb.CloseServiceRunParams{ID: c.id, ServiceID: c.service, RunNumber: run.RunNumber, Now: timestamptz(now)}); err != nil {
 				return false, err
 			}
-			if err = serviceRunRoutingTombstone(ctx, q, c.service, c.id, run.RunNumber, now); err != nil {
-				return false, err
-			}
 			return true, tx.Commit(ctx)
 		}()
 		if err != nil {
@@ -83,32 +80,17 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 			count++
 		}
 	}
-	if _, err = d.pool.Exec(ctx, `DELETE FROM control.connector_visitor_streams WHERE visitor_connection_id IN(SELECT visitor_connection_id FROM control.connector_visitor_streams
-	    WHERE valid_until<$1 OR closed_at<$1 ORDER BY valid_until LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
-		return count, err
-	}
-	if err = controlstatedb.New(d.pool).CleanupConnectorSessions(ctx, timestamptz(now)); err != nil {
-		return count, err
-	}
-	if err = controlstatedb.New(d.pool).CleanupConnectorIngressAssignmentRequests(ctx, timestamptz(now)); err != nil {
-		return count, err
-	}
 	if _, err = d.pool.Exec(ctx, `DELETE FROM control.service_client_certificates WHERE certificate_digest IN(SELECT certificate_digest FROM control.service_client_certificates WHERE expires_at<$1 ORDER BY expires_at LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
 		return count, err
 	}
-	if _, err = d.pool.Exec(ctx, `DELETE FROM control.direct_service_visitors WHERE visitor_connection_id IN(SELECT visitor_connection_id FROM control.direct_service_visitors WHERE valid_until<$1 OR closed_at<$1 ORDER BY valid_until LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
+	if _, err = d.pool.Exec(ctx, `DELETE FROM control.public_service_visitors WHERE visitor_connection_id IN(SELECT visitor_connection_id FROM control.public_service_visitors WHERE valid_until<$1 OR closed_at<$1 ORDER BY valid_until LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
+		return count, err
+	}
+	if _, err = d.pool.Exec(ctx, `DELETE FROM control.connector_peer_audit_bindings WHERE pair_id IN
+		(SELECT pair_id FROM control.connector_peer_audit_bindings WHERE expires_at<$1 ORDER BY expires_at,pair_id LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
 		return count, err
 	}
 	if _, err = d.ReleaseServicePorts(ctx, now); err != nil {
-		return count, err
-	}
-	// preserve each run's latest projection/tombstone while bounding repeated
-	// heartbeat history. all retained visitor projections have short deadlines.
-	if _, err = d.pool.Exec(ctx, `DELETE FROM control.service_routing_events event WHERE event.revision IN(
-	    SELECT old.revision FROM control.service_routing_events old WHERE old.created_at<$1
-	    AND EXISTS(SELECT 1 FROM control.service_routing_events newer WHERE newer.service_id=old.service_id
-	        AND newer.service_run_id IS NOT DISTINCT FROM old.service_run_id AND newer.revision>old.revision)
-	    ORDER BY old.revision LIMIT 1000)`, now.Add(-24*time.Hour)); err != nil {
 		return count, err
 	}
 	return count, nil

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -51,7 +50,16 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 		done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target,
 			Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: heartbeat,
 			Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
-				return bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
+				claimed, err := bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
+				if err == nil && f.publisherConnections != nil {
+					select {
+					case f.publisherConnections <- claimed:
+					case <-ctx.Done():
+						_ = claimed.Close()
+						return nil, context.Cause(ctx)
+					}
+				}
+				return claimed, err
 			}})
 	}()
 	t.Cleanup(func() {
@@ -81,10 +89,6 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 		for _, endpoint := range []bool{false, true} {
 			t.Run(fmt.Sprintf("standalone=%t/tnl-tls=%t", standalone, endpoint), func(t *testing.T) {
 				f := newServiceRuntimeFixture(t, standalone, nil)
-				if !standalone {
-					startSeparatedPrivateIngress(t, f, 0, "quic", nil)
-					startSeparatedPrivateIngress(t, f, 1, "quic", nil)
-				}
 				ca := newTestCertificateAuthority(t)
 				const hostname = "target.private.integration.test"
 				var posts atomic.Int64
@@ -149,36 +153,10 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				control := &separatedVisitorControl{Control: production}
-				if standalone {
-					control.dialAddress = f.sharedQUIC
-				}
-				listener, err := net.Listen("tcp", "127.0.0.1:0")
-				if err != nil {
-					t.Fatal(err)
-				}
-				ctx, cancel := context.WithCancel(t.Context())
-				ready, done := make(chan struct{}), make(chan error, 1)
-				go func() {
-					done <- connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: person.Identity.Id,
-						Protocol: "http", TrustRevision: service.TrustRevision, Endpoint: service.Endpoint, ServiceTLS: f.visitorRoots, Ready: func() error { close(ready); return nil }})
-				}()
-				t.Cleanup(func() {
-					cancel()
-					select {
-					case err := <-done:
-						if err != nil {
-							t.Errorf("private HTTP connector shutdown: %v", err)
-						}
-					case <-time.After(5 * time.Second):
-						t.Error("private HTTP connector did not join")
-					}
-				})
-				select {
-				case <-ready:
-				case <-time.After(10 * time.Second):
-					t.Fatal("private HTTP connector did not become ready")
-				}
+				control := production
+				quic, tcp := f.connectors()
+				listener, stopConnector := startRuntimeConnector(t, f, service, connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: quic, RelayTCP: tcp}, revokedConnectorOwnerStop)
+				defer stopConnector()
 				verification := f.visitorRoots.Clone()
 				verification.ServerName = service.Endpoint.Hostname
 				transport := &http.Transport{Proxy: nil, TLSClientConfig: verification}

@@ -280,48 +280,6 @@ func (q *Queries) InsertBrowserLoginAttempt(ctx context.Context, arg InsertBrows
 	return err
 }
 
-const listReadyPreviewBrowserHostnames = `-- name: ListReadyPreviewBrowserHostnames :many
-SELECT DISTINCT url.id AS public_url_id, url.canonical_hostname
-FROM control.preview_public_urls AS included
-JOIN control.public_urls AS url ON url.id = included.public_url_id
-JOIN control.publish_runs AS run ON run.public_url_id = url.id
-WHERE included.preview_id = $1
-  AND url.lifecycle_state = 'enabled'
-  AND run.state = 'ready' AND run.publisher_expires_at > $2
-  AND run.share_capable = true
-ORDER BY url.id LIMIT 32
-`
-
-type ListReadyPreviewBrowserHostnamesParams struct {
-	PreviewID string
-	Now       pgtype.Timestamptz
-}
-
-type ListReadyPreviewBrowserHostnamesRow struct {
-	PublicURLID       string
-	CanonicalHostname string
-}
-
-func (q *Queries) ListReadyPreviewBrowserHostnames(ctx context.Context, arg ListReadyPreviewBrowserHostnamesParams) ([]ListReadyPreviewBrowserHostnamesRow, error) {
-	rows, err := q.db.Query(ctx, listReadyPreviewBrowserHostnames, arg.PreviewID, arg.Now)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListReadyPreviewBrowserHostnamesRow
-	for rows.Next() {
-		var i ListReadyPreviewBrowserHostnamesRow
-		if err := rows.Scan(&i.PublicURLID, &i.CanonicalHostname); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const lockBrowserAccessSession = `-- name: LockBrowserAccessSession :one
 SELECT token_digest, preview_id, public_url_id, identity_id, display_name,
        access_ciphertext, refresh_ciphertext, storage_key_id, access_expires_at, expires_at, revoked_at, parent_control_session_id

@@ -56,7 +56,7 @@ not silently use another identity. Enrollment keys belong to setup, not the
 SDK. The native publisher keeps its signing key private; project metadata and
 status contain no credentials.
 
-## native connections
+## connector connections
 
 Use `tnl.connect` from Node or Bun to reach a configured service:
 
@@ -79,18 +79,18 @@ and returns a plain, read-only settings snapshot. PostgreSQL settings contain
 `ssl: { servername, rejectUnauthorized: true, ca? }`. MySQL settings use the managed
 hostname, `ssl.verifyIdentity: true`, and a `stream` factory that dials loopback;
 each returned MySQL `ssl` object remains mutable for ordinary driver setup.
-The native connector owns
+The connector owns
 admission and client certificates, including for public services. The application
 supplies its database account settings. `tnl.services` keeps the managed hostname
 and public port.
 
 Every protocol requires the matching native `tnl` binary, including HTTP and
 Kubernetes. Package its platform dependency with deployed server code; a managed
-HTTPS URL alone does not replace the native owner or authorize a connection.
+HTTPS URL alone does not replace the connector owner or authorize a connection.
 
 Property reads and `{ ...database }` work synchronously after a human connection's
 awaited preparation in this process, or when `TNL_CONNECTION_HANDLE` selects a
-prepared native owner. A handle captures an explicitly supplied file when created;
+prepared connector owner. A handle captures an explicitly supplied file when created;
 later changes to that environment variable do not rebind it.
 This supports an ordinary Drizzle Kit config without top-level await:
 
@@ -137,7 +137,7 @@ a fresh owner after expiry; the SDK never stops or replaces them.
 HTTP settings contain `{ url, fetch }`. The URL retains the service HTTPS origin;
 the SDK's origin-restricted `fetch` dispatcher dials the native loopback listener
 with verified TLS and the managed SNI and Host. Workload protocols use this same
-native owner, as described below.
+connector owner, as described below.
 TCP returns `{ host, port }`; Kubernetes returns
 `{ server, kubeconfig, context }`. Browser connection reads and awaits fail with
 `sdk.connection_server_only`.
@@ -160,7 +160,7 @@ export async function GET() {
 ```
 
 Each await acquires the current provider assertion. Control verifies its identity
-before the SDK selects a shared native owner. Rotating assertions attach through
+before the SDK selects a shared connector owner. Rotating assertions attach through
 authenticated native IPC; different services share that owner and prepare lazily.
 HTTP returns a readonly `{url, fetch}` snapshot. Each fetch resolves the current
 verified owner, preserves application `Authorization`, streams bodies, and returns
@@ -191,7 +191,7 @@ settles. A token returned after that deadline cannot start or select an owner.
 `{name, tokenFile}` selects an explicit bounded file that is reread each time.
 Issuer trust and permissions come from control's saved workload policy.
 
-HTTP uses the same native owner as the other protocols. The SDK owns its Undici
+HTTP uses the same connector owner as the other protocols. The SDK owns its Undici
 transport on Node and Bun; it never falls back to dialing the managed address
 directly. Canceling a request while preparing its connection releases the upload
 body. Browser metadata remains address-only; absent optional services return

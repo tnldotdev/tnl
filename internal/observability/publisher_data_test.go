@@ -63,7 +63,7 @@ func TestPublisherHTTPObservesLiveStreamingAndSafeFinalResult(t *testing.T) {
 	m.tracerProvider = sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	ctx := WithMetrics(t.Context(), m)
 	ctx = ReplaceIdentity(ctx, Identity{TeamID: "team", DeploymentID: "deployment", PublicURLID: "url"})
-	ctx = WithFields(ctx, Fields{Component: "publisher", ServiceProtocol: ProtocolHTTP, AccessPath: "direct", Exposure: "public"})
+	ctx = WithFields(ctx, Fields{Component: "publisher", ServiceProtocol: ProtocolHTTP, AccessPath: "public_endpoint", Exposure: "public"})
 	request := httptest.NewRequest("CUSTOM-SECRET", "/secret-path?password=secret", strings.NewReader("secret request payload")).WithContext(ctx)
 	request.Header.Set("Traceparent", "customer-owned")
 	response := httptest.NewRecorder()

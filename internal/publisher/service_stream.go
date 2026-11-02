@@ -27,7 +27,7 @@ type ServiceVisitorDecision struct {
 	ValidUntil time.Time
 }
 
-// ServiceStream terminates native client TLS at the publisher. the already
+// ServiceStream terminates visitor TLS at the publisher. the already
 // selected service owns its certificate name; SNI cannot select another target.
 // target trust is independent of the public WebPKI identity presented to clients.
 type ServiceStream struct {
@@ -44,14 +44,20 @@ type ServiceStream struct {
 }
 
 func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result error) {
+	var afterConnectorEOF func()
+	if reader, ok := visitor.(interface{ ContinueAfterTLSCloseNotify() }); ok {
+		afterConnectorEOF = reader.ContinueAfterTLSCloseNotify
+	}
 	var valid bool
 	s.Visitor, valid = normalizeManagedVisitor(s.Visitor)
 	protocol, _ := observability.ParseProtocol(string(s.Protocol))
-	fields := observability.Fields{Component: "publisher", ServiceProtocol: protocol, AccessPath: "direct", Exposure: "private"}
+	fields := observability.Fields{Component: "publisher", ServiceProtocol: protocol, AccessPath: "public_endpoint", Exposure: "private"}
 	if s.Public {
 		fields.Exposure = "public"
 	}
-	if _, ok := s.Visitor.(ConnectorVisitor); ok {
+	var connector ServiceConnectorAdmission
+	if v, ok := s.Visitor.(ConnectorVisitor); ok {
+		connector = v.Admission
 		fields.AccessPath = "connector"
 	}
 	if _, ok := s.Visitor.(PublicHTTPVisitor); ok {
@@ -70,7 +76,27 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	if _, ok := s.Visitor.(PublicHTTPVisitor); ok && s.Protocol != config.ProtocolHTTP {
 		return ErrEndpoint
 	}
-	setup, cancelSetup := context.WithTimeout(ctx, 10*time.Second)
+	if connector != nil {
+		if err := connectorCheck(ctx, connector); err != nil {
+			return err
+		}
+		visitor = &connectorServiceConn{conn: visitor, ctx: ctx, admission: connector}
+	}
+	// connector HTTP handlers and upgraded copies are part of the stream lifetime,
+	// not merely net/http's connection close notification.
+	var handlerMu sync.Mutex
+	var handlers sync.WaitGroup
+	acceptHandlers := true
+	life, cancelLife := context.WithCancel(ctx)
+	if connector != nil {
+		ctx = life
+	}
+	defer cancelLife()
+	setupUntil := time.Now().Add(10 * time.Second)
+	if connector != nil && connector.SetupDeadline().Before(setupUntil) {
+		setupUntil = connector.SetupDeadline()
+	}
+	setup, cancelSetup := context.WithDeadline(ctx, setupUntil)
 	defer cancelSetup()
 	promoted := false
 	defer func() {
@@ -83,33 +109,111 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		return err
 	}
 	// keep the raw target socket separately from TLS wrappers. cancellation may
-	// race with dialing or block in a native read that does not accept a context.
+	// race with dialing or block in a connector read that does not accept a context.
 	var socketsMu sync.Mutex
 	var targetSocket net.Conn
-	stop := context.AfterFunc(setup, func() {
+	closeSockets := func() {
 		socketsMu.Lock()
-		defer socketsMu.Unlock()
+		target := targetSocket
+		socketsMu.Unlock()
 		_ = visitor.Close()
-		if targetSocket != nil {
-			_ = targetSocket.Close()
+		if target != nil {
+			_ = target.Close()
 		}
-	})
-	defer stop()
+	}
+	callbackDone := make(chan struct{})
+	stop := context.AfterFunc(setup, func() { defer close(callbackDone); closeSockets() })
+	setupCallbackStopped := false
+	stopSetupCallback := func() bool {
+		if !setupCallbackStopped {
+			setupCallbackStopped = stop()
+		}
+		return setupCallbackStopped
+	}
+	defer func() {
+		if !stopSetupCallback() {
+			<-callbackDone
+		}
+	}()
 	trackTarget := func(conn net.Conn) {
 		socketsMu.Lock()
-		defer socketsMu.Unlock()
 		targetSocket = conn
-		if setup.Err() != nil {
+		canceled := setup.Err() != nil || connector != nil && life.Err() != nil
+		socketsMu.Unlock()
+		if canceled {
 			_ = conn.Close()
 		}
 	}
+	if connector != nil {
+		defer func() {
+			connector.Stop()
+			handlerMu.Lock()
+			acceptHandlers = false
+			handlerMu.Unlock()
+			cancelLife()
+			closeSockets()
+			handlers.Wait()
+		}()
+	}
+	enterConnectorWork := func() (func(), bool) {
+		if connector == nil {
+			return func() {}, true
+		}
+		handlerMu.Lock()
+		defer handlerMu.Unlock()
+		if !acceptHandlers {
+			return nil, false
+		}
+		handlers.Add(1)
+		return handlers.Done, true
+	}
+	wrapHandler := func(next http.Handler) http.Handler {
+		if connector == nil {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			finish, ok := enterConnectorWork()
+			if !ok {
+				return
+			}
+			defer finish()
+			if connectorCheck(r.Context(), connector) == nil {
+				next.ServeHTTP(w, r)
+			}
+		})
+	}
+	dial := func(call context.Context) (net.Conn, error) {
+		if connector != nil {
+			if err := connectorCheck(call, connector); err != nil {
+				return nil, err
+			}
+		}
+		conn, err := observability.DialTarget(call, "tcp", s.Target)
+		if err != nil {
+			return nil, err
+		}
+		trackTarget(conn)
+		if connector != nil {
+			if err := connectorCheck(call, connector); err != nil {
+				_ = conn.Close()
+				return nil, err
+			}
+			conn = &connectorServiceConn{conn: conn, ctx: ctx, admission: connector}
+		}
+		return conn, nil
+	}
 	promote := func() error {
-		stopped := stop()
+		stopped := stopSetupCallback()
 		if setup.Err() != nil {
 			return context.Cause(setup)
 		}
 		if !stopped {
 			return context.Canceled
+		}
+		if connector != nil {
+			if err := connector.FinishSetup(); err != nil {
+				return err
+			}
 		}
 		promoted = true
 		return nil
@@ -131,7 +235,7 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 			return err
 		}
 	case config.ProtocolMySQL:
-		backend, err = observability.DialTarget(setup, "tcp", s.Target)
+		backend, err = dial(setup)
 		if err != nil {
 			return err
 		}
@@ -157,6 +261,10 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		return nil, nil
 	}
 	secured := tls.Server(visitor, frontTLS)
+	var client net.Conn = secured
+	if connector != nil {
+		client = &connectorServiceConn{conn: secured, ctx: ctx, admission: connector, afterEOF: afterConnectorEOF}
+	}
 	tlsCtx, tlsDone := observability.PublisherOperation(setup, "visitor_tls")
 	err = secured.HandshakeContext(tlsCtx)
 	observability.PublisherTLS(tlsCtx, "visitor", secured.ConnectionState(), err)
@@ -188,14 +296,14 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		return managedAuthorizationError(decision, nil)
 	}
 	if s.Protocol == config.ProtocolKubernetes {
-		if !stop() && setup.Err() != nil {
-			return context.Cause(setup)
+		if err := promote(); err != nil {
+			return err
 		}
 		if err := visitor.SetDeadline(time.Time{}); err != nil {
 			return err
 		}
 		admissionDone(nil)
-		return s.forwardKubernetes(ctx, secured, ServiceHTTPTarget{Address: s.Target, Transport: transport}, decision)
+		return s.forwardKubernetes(ctx, client, secured.ConnectionState(), ServiceHTTPTarget{Address: s.Target, Transport: transport, connector: connector, lifetime: ctx, track: trackTarget, enter: enterConnectorWork}, decision, wrapHandler)
 	}
 	if s.Protocol == config.ProtocolHTTP {
 		admissionDone(nil)
@@ -208,15 +316,15 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 		live, cancel := context.WithCancel(ctx)
 		defer cancel()
 		done := make(chan struct{})
-		go func() { defer close(done); s.guardVisitor(live, secured, nil, decision) }()
+		go func() { defer close(done); s.guardVisitor(live, client, nil, secured.ConnectionState(), decision) }()
 		defer func() { cancel(); <-done }()
 		scheme := "http"
 		if s.TargetTLS != nil {
 			scheme = "https"
 		}
-		target := ServiceHTTPTarget{Address: s.Target, Transport: transport}
-		return httpstream.Serve(live, secured, &url.URL{Scheme: scheme, Host: s.Target}, target.dial, func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target := ServiceHTTPTarget{Address: s.Target, Transport: transport, connector: connector, lifetime: ctx, track: trackTarget, enter: enterConnectorWork}
+		return httpstream.Serve(live, client, &url.URL{Scheme: scheme, Host: s.Target}, target.dial, func(next http.Handler) http.Handler {
+			return wrapHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// connector admission is the credential, but every HTTP request still
 				// rechecks current policy before any target bytes on the shared socket.
 				check, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -235,11 +343,11 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 				}
 				defer release()
 				next.ServeHTTP(w, r)
-			})
+			}))
 		})
 	}
 	if backend == nil {
-		backend, err = observability.DialTarget(setup, "tcp", s.Target)
+		backend, err = dial(setup)
 		if err != nil {
 			return err
 		}
@@ -250,7 +358,7 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	}
 	if s.Protocol == config.ProtocolMySQL {
 		authCtx, authDone := observability.PublisherOperation(setup, "native_auth")
-		backend, err = connectMySQLTarget(authCtx, secured, backend, greeting, s.TargetTLS)
+		backend, err = connectMySQLTarget(authCtx, client, backend, greeting, s.TargetTLS)
 		authDone(err)
 	} else {
 		backend, err = transport.Secure(setup, backend)
@@ -258,9 +366,12 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	if err != nil {
 		return err
 	}
+	if connector != nil {
+		backend = &connectorServiceConn{conn: backend, ctx: ctx, admission: connector}
+	}
 	if s.Protocol == config.ProtocolPostgres {
 		_, authDone := observability.PublisherOperation(setup, "native_auth")
-		err = forwardPostgresAuthentication(secured, backend)
+		err = forwardPostgresAuthentication(client, backend)
 		authDone(err)
 		if err != nil {
 			return err
@@ -281,17 +392,17 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	guardDone := make(chan struct{})
 	go func() {
 		defer close(guardDone)
-		s.guardVisitor(live, secured, backend, decision)
+		s.guardVisitor(live, client, backend, secured.ConnectionState(), decision)
 	}()
 	defer func() { cancel(); <-guardDone }()
 	observed, streamDone := observability.PublisherStream(live, backend)
-	_, err = streamcopy.Copy(secured, observed)
+	_, err = streamcopy.Copy(client, observed)
 	err = errors.Join(err, context.Cause(ctx))
 	streamDone(err)
 	return err
 }
 
-func (s ServiceStream) guardVisitor(ctx context.Context, client *tls.Conn, target net.Conn, decision ServiceVisitorDecision) {
+func (s ServiceStream) guardVisitor(ctx context.Context, client net.Conn, target net.Conn, state tls.ConnectionState, decision ServiceVisitorDecision) {
 	defer client.Close()
 	if target != nil {
 		defer target.Close()
@@ -314,7 +425,7 @@ func (s ServiceStream) guardVisitor(ctx context.Context, client *tls.Conn, targe
 		}
 		check, cancel := context.WithTimeout(ctx, min(5*time.Second, time.Until(decision.ValidUntil)))
 		check, authDone := observability.PublisherOperation(check, "visitor_authorization")
-		next, err := s.Visitor.authorize(check, client.ConnectionState())
+		next, err := s.Visitor.authorize(check, state)
 		observability.PublisherAuthorization(check, next.Allowed && next.ValidUntil.After(time.Now()), next.Allowed && next.ValidUntil.After(time.Now()), err)
 		authDone(managedAuthorizationError(next, err))
 		cancel()

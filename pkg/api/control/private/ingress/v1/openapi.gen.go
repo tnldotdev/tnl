@@ -22,30 +22,6 @@ import (
 	externalRef0 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// Defines values for DirectServiceVisitorStatusState.
-const (
-	DirectVisitorAllowed       DirectServiceVisitorStatusState = "allowed"
-	DirectVisitorAuthenticated DirectServiceVisitorStatusState = "authenticated"
-	DirectVisitorDenied        DirectServiceVisitorStatusState = "denied"
-	DirectVisitorPending       DirectServiceVisitorStatusState = "pending"
-)
-
-// Valid indicates whether the value is a known member of the DirectServiceVisitorStatusState enum.
-func (e DirectServiceVisitorStatusState) Valid() bool {
-	switch e {
-	case DirectVisitorAllowed:
-		return true
-	case DirectVisitorAuthenticated:
-		return true
-	case DirectVisitorDenied:
-		return true
-	case DirectVisitorPending:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for HashedIPPrefixFamily.
 const (
 	Ipv4 HashedIPPrefixFamily = "ipv4"
@@ -193,90 +169,29 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// Defines values for ServiceProjectionKind.
+// Defines values for PublicServiceVisitorStatusState.
 const (
-	Tombstone ServiceProjectionKind = "tombstone"
-	Upsert    ServiceProjectionKind = "upsert"
+	PublicServiceVisitorAllowed       PublicServiceVisitorStatusState = "allowed"
+	PublicServiceVisitorAuthenticated PublicServiceVisitorStatusState = "authenticated"
+	PublicServiceVisitorDenied        PublicServiceVisitorStatusState = "denied"
+	PublicServiceVisitorPending       PublicServiceVisitorStatusState = "pending"
 )
 
-// Valid indicates whether the value is a known member of the ServiceProjectionKind enum.
-func (e ServiceProjectionKind) Valid() bool {
+// Valid indicates whether the value is a known member of the PublicServiceVisitorStatusState enum.
+func (e PublicServiceVisitorStatusState) Valid() bool {
 	switch e {
-	case Tombstone:
+	case PublicServiceVisitorAllowed:
 		return true
-	case Upsert:
+	case PublicServiceVisitorAuthenticated:
+		return true
+	case PublicServiceVisitorDenied:
+		return true
+	case PublicServiceVisitorPending:
 		return true
 	default:
 		return false
 	}
 }
-
-// ConnectorSessionClaim defines model for ConnectorSessionClaim.
-type ConnectorSessionClaim struct {
-	ConnectorSessionId   ConnectorSessionID `json:"connector_session_id"`
-	IngressLeaseRevision int64              `json:"ingress_lease_revision"`
-	IngressRunId         Identifier         `json:"ingress_run_id"`
-	Nonce                string             `json:"nonce"`
-
-	// ObservedSourceIp Trusted original source observed by ingress on this mux socket. The connector never supplies this value.
-	ObservedSourceIp  string    `json:"observed_source_ip"`
-	ServiceId         ServiceID `json:"service_id"`
-	SessionCredential string    `json:"session_credential"`
-	Signature         string    `json:"signature"`
-
-	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject externalRef0.VisitorSubject `json:"subject"`
-}
-
-// ConnectorSessionID defines model for ConnectorSessionID.
-type ConnectorSessionID = string
-
-// ConnectorSessionResult defines model for ConnectorSessionResult.
-type ConnectorSessionResult struct {
-	ConnectorSessionId ConnectorSessionID `json:"connector_session_id"`
-	ExpiresAt          time.Time          `json:"expires_at"`
-	ObservedSourceIp   string             `json:"observed_source_ip"`
-	ServiceId          ServiceID          `json:"service_id"`
-
-	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject externalRef0.VisitorSubject `json:"subject"`
-}
-
-// DirectServiceVisitorAdmission defines model for DirectServiceVisitorAdmission.
-type DirectServiceVisitorAdmission struct {
-	ConnectedRelays     []ServiceRelay      `json:"connected_relays"`
-	ExpiresAt           time.Time           `json:"expires_at"`
-	RunNumber           int64               `json:"run_number"`
-	ServiceId           ServiceID           `json:"service_id"`
-	ServiceRunId        ServiceRunID        `json:"service_run_id"`
-	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
-}
-
-// DirectServiceVisitorClaim defines model for DirectServiceVisitorClaim.
-type DirectServiceVisitorClaim struct {
-	DestinationPort      int                 `json:"destination_port"`
-	IngressLeaseRevision int64               `json:"ingress_lease_revision"`
-	IngressPoolId        string              `json:"ingress_pool_id"`
-	IngressRunId         Identifier          `json:"ingress_run_id"`
-	ObservedSourceIp     string              `json:"observed_source_ip"`
-	VisitorConnectionId  VisitorConnectionID `json:"visitor_connection_id"`
-}
-
-// DirectServiceVisitorLookup defines model for DirectServiceVisitorLookup.
-type DirectServiceVisitorLookup struct {
-	IngressLeaseRevision int64               `json:"ingress_lease_revision"`
-	IngressRunId         Identifier          `json:"ingress_run_id"`
-	VisitorConnectionId  VisitorConnectionID `json:"visitor_connection_id"`
-}
-
-// DirectServiceVisitorStatus defines model for DirectServiceVisitorStatus.
-type DirectServiceVisitorStatus struct {
-	State      DirectServiceVisitorStatusState `json:"state"`
-	ValidUntil time.Time                       `json:"valid_until"`
-}
-
-// DirectServiceVisitorStatusState defines model for DirectServiceVisitorStatus.State.
-type DirectServiceVisitorStatusState string
 
 // HashedIPPrefix defines model for HashedIPPrefix.
 type HashedIPPrefix struct {
@@ -335,17 +250,11 @@ type IngressPublicRunObservation struct {
 
 // IngressRegistration defines model for IngressRegistration.
 type IngressRegistration struct {
-	ConnectionCapacity int64 `json:"connection_capacity"`
-
-	// ConnectorAddress Direct reachable endpoint for this ingress process; required for private visitor placement.
-	ConnectorAddress *string `json:"connector_address,omitempty"`
-
-	// ConnectorTlsServerName Infrastructure TLS identity presented on the direct connector endpoint.
-	ConnectorTlsServerName *string    `json:"connector_tls_server_name,omitempty"`
-	IngressId              Identifier `json:"ingress_id"`
-	IngressPoolId          Identifier `json:"ingress_pool_id"`
-	IngressRunId           Identifier `json:"ingress_run_id"`
-	ProtocolVersion        int64      `json:"protocol_version"`
+	ConnectionCapacity int64      `json:"connection_capacity"`
+	IngressId          Identifier `json:"ingress_id"`
+	IngressPoolId      Identifier `json:"ingress_pool_id"`
+	IngressRunId       Identifier `json:"ingress_run_id"`
+	ProtocolVersion    int64      `json:"protocol_version"`
 
 	// ServicePorts Sorted managed ports bound before registration or exposed by the trusted destination-metadata proxy.
 	ServicePorts []int `json:"service_ports"`
@@ -462,12 +371,6 @@ type IngressTrafficLimits struct {
 	UploadBytes        int64  `json:"upload_bytes"`
 }
 
-// IngressTransportCertificate defines model for IngressTransportCertificate.
-type IngressTransportCertificate struct {
-	PrivateKeyPem string                             `json:"private_key_pem"`
-	Trust         externalRef0.IngressTransportTrust `json:"trust"`
-}
-
 // IngressUsageReport defines model for IngressUsageReport.
 type IngressUsageReport struct {
 	BucketEnd                 time.Time  `json:"bucket_end"`
@@ -526,6 +429,42 @@ type Problem struct {
 // ProblemCode defines model for ProblemCode.
 type ProblemCode string
 
+// PublicServiceVisitorAdmission defines model for PublicServiceVisitorAdmission.
+type PublicServiceVisitorAdmission struct {
+	ConnectedRelays     []ServiceRelay      `json:"connected_relays"`
+	ExpiresAt           time.Time           `json:"expires_at"`
+	RunNumber           int64               `json:"run_number"`
+	ServiceId           ServiceID           `json:"service_id"`
+	ServiceRunId        ServiceRunID        `json:"service_run_id"`
+	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
+}
+
+// PublicServiceVisitorClaim defines model for PublicServiceVisitorClaim.
+type PublicServiceVisitorClaim struct {
+	DestinationPort      int                 `json:"destination_port"`
+	IngressLeaseRevision int64               `json:"ingress_lease_revision"`
+	IngressPoolId        string              `json:"ingress_pool_id"`
+	IngressRunId         Identifier          `json:"ingress_run_id"`
+	ObservedSourceIp     string              `json:"observed_source_ip"`
+	VisitorConnectionId  VisitorConnectionID `json:"visitor_connection_id"`
+}
+
+// PublicServiceVisitorLookup defines model for PublicServiceVisitorLookup.
+type PublicServiceVisitorLookup struct {
+	IngressLeaseRevision int64               `json:"ingress_lease_revision"`
+	IngressRunId         Identifier          `json:"ingress_run_id"`
+	VisitorConnectionId  VisitorConnectionID `json:"visitor_connection_id"`
+}
+
+// PublicServiceVisitorStatus defines model for PublicServiceVisitorStatus.
+type PublicServiceVisitorStatus struct {
+	State      PublicServiceVisitorStatusState `json:"state"`
+	ValidUntil time.Time                       `json:"valid_until"`
+}
+
+// PublicServiceVisitorStatusState defines model for PublicServiceVisitorStatus.State.
+type PublicServiceVisitorStatusState string
+
 // PublicURLRecoveryObservation defines model for PublicURLRecoveryObservation.
 type PublicURLRecoveryObservation struct {
 	ObservedAt        time.Time  `json:"observed_at"`
@@ -549,20 +488,6 @@ type PublicURLRecoveryObservationRequest struct {
 // ServiceID defines model for ServiceID.
 type ServiceID = string
 
-// ServiceProjection defines model for ServiceProjection.
-type ServiceProjection struct {
-	ConnectedRelays *[]ServiceRelay       `json:"connected_relays,omitempty"`
-	ExpiresAt       time.Time             `json:"expires_at"`
-	Kind            ServiceProjectionKind `json:"kind"`
-	Revision        int64                 `json:"revision"`
-	RunNumber       *int64                `json:"run_number,omitempty"`
-	ServiceId       ServiceID             `json:"service_id"`
-	ServiceRunId    *ServiceRunID         `json:"service_run_id,omitempty"`
-}
-
-// ServiceProjectionKind defines model for ServiceProjection.Kind.
-type ServiceProjectionKind string
-
 // ServiceRelay defines model for ServiceRelay.
 type ServiceRelay struct {
 	ConnectionAssignmentRevision int64      `json:"connection_assignment_revision"`
@@ -579,72 +504,6 @@ type ServiceRelay struct {
 
 // ServiceRunID defines model for ServiceRunID.
 type ServiceRunID = string
-
-// ServiceSnapshot defines model for ServiceSnapshot.
-type ServiceSnapshot struct {
-	Entries  []ServiceProjection `json:"entries"`
-	Revision int64               `json:"revision"`
-}
-
-// ServiceStreamClaim defines model for ServiceStreamClaim.
-type ServiceStreamClaim struct {
-	ConnectorSessionId   ConnectorSessionID `json:"connector_session_id"`
-	IngressLeaseRevision int64              `json:"ingress_lease_revision"`
-	IngressRunId         Identifier         `json:"ingress_run_id"`
-
-	// ObservedSourceIp Copied by ingress from the authenticated mux socket
-	ObservedSourceIp    string              `json:"observed_source_ip"`
-	RunNumber           int64               `json:"run_number"`
-	ServiceId           ServiceID           `json:"service_id"`
-	ServiceRunId        ServiceRunID        `json:"service_run_id"`
-	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
-}
-
-// ServiceStreamResult defines model for ServiceStreamResult.
-type ServiceStreamResult struct {
-	ConnectorSessionId ConnectorSessionID `json:"connector_session_id"`
-	ExpiresAt          time.Time          `json:"expires_at"`
-	GrantRevision      int64              `json:"grant_revision"`
-	ObservedSourceIp   string             `json:"observed_source_ip"`
-	RunNumber          int64              `json:"run_number"`
-	ServiceId          ServiceID          `json:"service_id"`
-	ServiceRunId       ServiceRunID       `json:"service_run_id"`
-
-	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject externalRef0.VisitorSubject `json:"subject"`
-
-	// ValidUntil Hard deadline bounded by the current grant, connector session, publisher run, ingress and live relay leases, and at most two minutes from this decision.
-	ValidUntil          time.Time           `json:"valid_until"`
-	VisitorConnectionId VisitorConnectionID `json:"visitor_connection_id"`
-}
-
-// ServiceVisitorRecheck defines model for ServiceVisitorRecheck.
-type ServiceVisitorRecheck struct {
-	ConnectorSessionId   ConnectorSessionID `json:"connector_session_id"`
-	IngressLeaseRevision int64              `json:"ingress_lease_revision"`
-	IngressRunId         Identifier         `json:"ingress_run_id"`
-
-	// ObservedSourceIp Copied from the original ingress-observed mux source; never supplied by a visitor.
-	ObservedSourceIp string       `json:"observed_source_ip"`
-	RunNumber        int64        `json:"run_number"`
-	ServiceId        ServiceID    `json:"service_id"`
-	ServiceRunId     ServiceRunID `json:"service_run_id"`
-
-	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject             externalRef0.VisitorSubject `json:"subject"`
-	VisitorConnectionId VisitorConnectionID         `json:"visitor_connection_id"`
-}
-
-// ServiceVisitorRecheckResult defines model for ServiceVisitorRecheckResult.
-type ServiceVisitorRecheckResult struct {
-	Allowed bool `json:"allowed"`
-
-	// RecheckAt Ingress must check again no later than this time
-	RecheckAt time.Time `json:"recheck_at"`
-
-	// ValidUntil Current hard deadline, including grant and run expiration; never later than two minutes from this decision.
-	ValidUntil time.Time `json:"valid_until"`
-}
 
 // VisitorConnectionID defines model for VisitorConnectionID.
 type VisitorConnectionID = string
@@ -695,52 +554,23 @@ type ReportIngressServiceObservationsParams struct {
 	IngressLeaseRevision IngressLeaseRevision `form:"ingress_lease_revision" json:"ingress_lease_revision"`
 }
 
-// GetServiceEventsParams defines parameters for GetServiceEvents.
-type GetServiceEventsParams struct {
-	IngressRunId         IngressRunID         `form:"ingress_run_id" json:"ingress_run_id"`
-	IngressLeaseRevision IngressLeaseRevision `form:"ingress_lease_revision" json:"ingress_lease_revision"`
-	After                int64                `form:"after" json:"after"`
-}
-
-// GetServiceSnapshotParams defines parameters for GetServiceSnapshot.
-type GetServiceSnapshotParams struct {
-	IngressRunId         IngressRunID         `form:"ingress_run_id" json:"ingress_run_id"`
-	IngressLeaseRevision IngressLeaseRevision `form:"ingress_lease_revision" json:"ingress_lease_revision"`
-}
-
-// CloseServiceStreamJSONBody defines parameters for CloseServiceStream.
-type CloseServiceStreamJSONBody struct {
-	ConnectorSessionId   ConnectorSessionID `json:"connector_session_id"`
-	IngressLeaseRevision int64              `json:"ingress_lease_revision"`
-	IngressRunId         Identifier         `json:"ingress_run_id"`
-}
-
-// GetIngressTransportCertificateJSONBody defines parameters for GetIngressTransportCertificate.
-type GetIngressTransportCertificateJSONBody struct {
-	IngressLeaseRevision int64      `json:"ingress_lease_revision"`
-	IngressRunId         Identifier `json:"ingress_run_id"`
-}
-
 // RegisterIngressJSONRequestBody defines body for RegisterIngress for application/json ContentType.
 type RegisterIngressJSONRequestBody = IngressRegistration
 
-// ClaimConnectorSessionJSONRequestBody defines body for ClaimConnectorSession for application/json ContentType.
-type ClaimConnectorSessionJSONRequestBody = ConnectorSessionClaim
-
-// AdmitDirectServiceVisitorJSONRequestBody defines body for AdmitDirectServiceVisitor for application/json ContentType.
-type AdmitDirectServiceVisitorJSONRequestBody = DirectServiceVisitorClaim
-
-// CloseDirectServiceVisitorJSONRequestBody defines body for CloseDirectServiceVisitor for application/json ContentType.
-type CloseDirectServiceVisitorJSONRequestBody = DirectServiceVisitorLookup
-
-// PromoteDirectServiceVisitorJSONRequestBody defines body for PromoteDirectServiceVisitor for application/json ContentType.
-type PromoteDirectServiceVisitorJSONRequestBody = DirectServiceVisitorLookup
-
-// DirectServiceVisitorStatusJSONRequestBody defines body for DirectServiceVisitorStatus for application/json ContentType.
-type DirectServiceVisitorStatusJSONRequestBody = DirectServiceVisitorLookup
-
 // DrainIngressJSONRequestBody defines body for DrainIngress for application/json ContentType.
 type DrainIngressJSONRequestBody = IngressDrainRequest
+
+// AdmitPublicServiceVisitorJSONRequestBody defines body for AdmitPublicServiceVisitor for application/json ContentType.
+type AdmitPublicServiceVisitorJSONRequestBody = PublicServiceVisitorClaim
+
+// ClosePublicServiceVisitorJSONRequestBody defines body for ClosePublicServiceVisitor for application/json ContentType.
+type ClosePublicServiceVisitorJSONRequestBody = PublicServiceVisitorLookup
+
+// PromotePublicServiceVisitorJSONRequestBody defines body for PromotePublicServiceVisitor for application/json ContentType.
+type PromotePublicServiceVisitorJSONRequestBody = PublicServiceVisitorLookup
+
+// PublicServiceVisitorStatusJSONRequestBody defines body for PublicServiceVisitorStatus for application/json ContentType.
+type PublicServiceVisitorStatusJSONRequestBody = PublicServiceVisitorLookup
 
 // ObservePublicURLRecoveryJSONRequestBody defines body for ObservePublicURLRecovery for application/json ContentType.
 type ObservePublicURLRecoveryJSONRequestBody = PublicURLRecoveryObservationRequest
@@ -750,18 +580,6 @@ type RenewIngressJSONRequestBody = IngressRenewal
 
 // ReportIngressServiceObservationsJSONRequestBody defines body for ReportIngressServiceObservations for application/json ContentType.
 type ReportIngressServiceObservationsJSONRequestBody ReportIngressServiceObservationsJSONBody
-
-// AuthorizeServiceStreamJSONRequestBody defines body for AuthorizeServiceStream for application/json ContentType.
-type AuthorizeServiceStreamJSONRequestBody = ServiceStreamClaim
-
-// RecheckServiceVisitorJSONRequestBody defines body for RecheckServiceVisitor for application/json ContentType.
-type RecheckServiceVisitorJSONRequestBody = ServiceVisitorRecheck
-
-// CloseServiceStreamJSONRequestBody defines body for CloseServiceStream for application/json ContentType.
-type CloseServiceStreamJSONRequestBody CloseServiceStreamJSONBody
-
-// GetIngressTransportCertificateJSONRequestBody defines body for GetIngressTransportCertificate for application/json ContentType.
-type GetIngressTransportCertificateJSONRequestBody GetIngressTransportCertificateJSONBody
 
 // ReportIngressUsageJSONRequestBody defines body for ReportIngressUsage for application/json ContentType.
 type ReportIngressUsageJSONRequestBody = IngressUsageReportBatch
@@ -857,50 +675,6 @@ type ClientInterface interface {
 	// Corresponds with POST /internal/v1/ingresses/register (the `RegisterIngress` operationId).
 	RegisterIngress(ctx context.Context, body RegisterIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ClaimConnectorSessionWithBody performs a POST /internal/v1/ingresses/{ingress_id}/connector-sessions/claim (the `ClaimConnectorSession` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Authenticate an enrolled device on its assigned ingress lease and bind ingress-observed socket source metadata. Each stream is authorized separately for its exact service.
-	ClaimConnectorSessionWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ClaimConnectorSession performs a POST /internal/v1/ingresses/{ingress_id}/connector-sessions/claim (the `ClaimConnectorSession` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Authenticate an enrolled device on its assigned ingress lease and bind ingress-observed socket source metadata. Each stream is authorized separately for its exact service.
-	ClaimConnectorSession(ctx context.Context, ingressId IngressID, body ClaimConnectorSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AdmitDirectServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/admit (the `AdmitDirectServiceVisitor` operationId) request,
-	// with any type of body and a specified content type.
-	AdmitDirectServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AdmitDirectServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/admit (the `AdmitDirectServiceVisitor` operationId) request.
-	// Takes a body of the `application/json` content type.
-	AdmitDirectServiceVisitor(ctx context.Context, ingressId IngressID, body AdmitDirectServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CloseDirectServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/close (the `CloseDirectServiceVisitor` operationId) request,
-	// with any type of body and a specified content type.
-	CloseDirectServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CloseDirectServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/close (the `CloseDirectServiceVisitor` operationId) request.
-	// Takes a body of the `application/json` content type.
-	CloseDirectServiceVisitor(ctx context.Context, ingressId IngressID, body CloseDirectServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PromoteDirectServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/promote (the `PromoteDirectServiceVisitor` operationId) request,
-	// with any type of body and a specified content type.
-	PromoteDirectServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PromoteDirectServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/promote (the `PromoteDirectServiceVisitor` operationId) request.
-	// Takes a body of the `application/json` content type.
-	PromoteDirectServiceVisitor(ctx context.Context, ingressId IngressID, body PromoteDirectServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DirectServiceVisitorStatusWithBody performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/status (the `DirectServiceVisitorStatus` operationId) request,
-	// with any type of body and a specified content type.
-	DirectServiceVisitorStatusWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DirectServiceVisitorStatus performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/status (the `DirectServiceVisitorStatus` operationId) request.
-	// Takes a body of the `application/json` content type.
-	DirectServiceVisitorStatus(ctx context.Context, ingressId IngressID, body DirectServiceVisitorStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// DrainIngressWithBody Stop a matching ingress process from accepting new visitors
 	//
 	// Takes any type of body and a specified content type.
@@ -914,6 +688,38 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/drain (the `DrainIngress` operationId).
 	DrainIngress(ctx context.Context, ingressId IngressID, body DrainIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdmitPublicServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/public-services/admit (the `AdmitPublicServiceVisitor` operationId) request,
+	// with any type of body and a specified content type.
+	AdmitPublicServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AdmitPublicServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/public-services/admit (the `AdmitPublicServiceVisitor` operationId) request.
+	// Takes a body of the `application/json` content type.
+	AdmitPublicServiceVisitor(ctx context.Context, ingressId IngressID, body AdmitPublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClosePublicServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/public-services/close (the `ClosePublicServiceVisitor` operationId) request,
+	// with any type of body and a specified content type.
+	ClosePublicServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClosePublicServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/public-services/close (the `ClosePublicServiceVisitor` operationId) request.
+	// Takes a body of the `application/json` content type.
+	ClosePublicServiceVisitor(ctx context.Context, ingressId IngressID, body ClosePublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PromotePublicServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/public-services/promote (the `PromotePublicServiceVisitor` operationId) request,
+	// with any type of body and a specified content type.
+	PromotePublicServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PromotePublicServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/public-services/promote (the `PromotePublicServiceVisitor` operationId) request.
+	// Takes a body of the `application/json` content type.
+	PromotePublicServiceVisitor(ctx context.Context, ingressId IngressID, body PromotePublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PublicServiceVisitorStatusWithBody performs a POST /internal/v1/ingresses/{ingress_id}/public-services/status (the `PublicServiceVisitorStatus` operationId) request,
+	// with any type of body and a specified content type.
+	PublicServiceVisitorStatusWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PublicServiceVisitorStatus performs a POST /internal/v1/ingresses/{ingress_id}/public-services/status (the `PublicServiceVisitorStatus` operationId) request.
+	// Takes a body of the `application/json` content type.
+	PublicServiceVisitorStatus(ctx context.Context, ingressId IngressID, body PublicServiceVisitorStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ObservePublicURLRecoveryWithBody Record the first publisher byte after public URL recovery
 	//
@@ -960,58 +766,6 @@ type ClientInterface interface {
 	// ReportIngressServiceObservations performs a POST /internal/v1/ingresses/{ingress_id}/service-observations (the `ReportIngressServiceObservations` operationId) request.
 	// Takes a body of the `application/json` content type.
 	ReportIngressServiceObservations(ctx context.Context, ingressId IngressID, params *ReportIngressServiceObservationsParams, body ReportIngressServiceObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizeServiceStreamWithBody performs a POST /internal/v1/ingresses/{ingress_id}/services/claim (the `AuthorizeServiceStream` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Authorize each new stream against the live enrolled device and exact service grant. The connector pins the selected run key before application bytes. Ingress alone supplies the original source.
-	AuthorizeServiceStreamWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizeServiceStream performs a POST /internal/v1/ingresses/{ingress_id}/services/claim (the `AuthorizeServiceStream` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Authorize each new stream against the live enrolled device and exact service grant. The connector pins the selected run key before application bytes. Ingress alone supplies the original source.
-	AuthorizeServiceStream(ctx context.Context, ingressId IngressID, body AuthorizeServiceStreamJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetServiceEvents performs a GET /internal/v1/ingresses/{ingress_id}/services/events (the `GetServiceEvents` operationId) request.
-	GetServiceEvents(ctx context.Context, ingressId IngressID, params *GetServiceEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RecheckServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/services/recheck (the `RecheckServiceVisitor` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Check an admitted visitor connection against its current service, run, enrolled device, connector session, identity, ingress-observed source, grant and ingress lease. An explicit denial closes the stream; an unavailable response never extends its hard deadline.
-	RecheckServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RecheckServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/services/recheck (the `RecheckServiceVisitor` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Check an admitted visitor connection against its current service, run, enrolled device, connector session, identity, ingress-observed source, grant and ingress lease. An explicit denial closes the stream; an unavailable response never extends its hard deadline.
-	RecheckServiceVisitor(ctx context.Context, ingressId IngressID, body RecheckServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetServiceSnapshot performs a GET /internal/v1/ingresses/{ingress_id}/services/snapshot (the `GetServiceSnapshot` operationId) request.
-	//
-	// Service/run IDs and connected relay assignments for a current ingress lease. Publisher stream keys are returned by authenticated control selection.
-	GetServiceSnapshot(ctx context.Context, ingressId IngressID, params *GetServiceSnapshotParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CloseServiceStreamWithBody performs a DELETE /internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id} (the `CloseServiceStream` operationId) request,
-	// with any type of body and a specified content type.
-	CloseServiceStreamWithBody(ctx context.Context, ingressId IngressID, visitorConnectionId VisitorConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CloseServiceStream performs a DELETE /internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id} (the `CloseServiceStream` operationId) request.
-	// Takes a body of the `application/json` content type.
-	CloseServiceStream(ctx context.Context, ingressId IngressID, visitorConnectionId VisitorConnectionID, body CloseServiceStreamJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetIngressTransportCertificateWithBody performs a POST /internal/v1/ingresses/{ingress_id}/transport-certificate (the `GetIngressTransportCertificate` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Retrieve the control-managed infrastructure certificate and key for this exact current process lease. The hostname is selected from its registered connector identity; the request cannot choose another hostname.
-	GetIngressTransportCertificateWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetIngressTransportCertificate performs a POST /internal/v1/ingresses/{ingress_id}/transport-certificate (the `GetIngressTransportCertificate` operationId) request.
-	// Takes a body of the `application/json` content type.
-	//
-	// Retrieve the control-managed infrastructure certificate and key for this exact current process lease. The hostname is selected from its registered connector identity; the request cannot choose another hostname.
-	GetIngressTransportCertificate(ctx context.Context, ingressId IngressID, body GetIngressTransportCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReportIngressUsageWithBody Store cumulative public URL usage from one ingress process run
 	//
@@ -1074,150 +828,6 @@ func (c *Client) RegisterIngress(ctx context.Context, body RegisterIngressJSONRe
 	return c.Client.Do(req)
 }
 
-// ClaimConnectorSessionWithBody performs a POST /internal/v1/ingresses/{ingress_id}/connector-sessions/claim (the `ClaimConnectorSession` operationId) request,
-// with any type of body and a specified content type.
-//
-// Authenticate an enrolled device on its assigned ingress lease and bind ingress-observed socket source metadata. Each stream is authorized separately for its exact service.
-func (c *Client) ClaimConnectorSessionWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewClaimConnectorSessionRequestWithBody(c.Server, ingressId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ClaimConnectorSession performs a POST /internal/v1/ingresses/{ingress_id}/connector-sessions/claim (the `ClaimConnectorSession` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Authenticate an enrolled device on its assigned ingress lease and bind ingress-observed socket source metadata. Each stream is authorized separately for its exact service.
-func (c *Client) ClaimConnectorSession(ctx context.Context, ingressId IngressID, body ClaimConnectorSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewClaimConnectorSessionRequest(c.Server, ingressId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AdmitDirectServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/admit (the `AdmitDirectServiceVisitor` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) AdmitDirectServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAdmitDirectServiceVisitorRequestWithBody(c.Server, ingressId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AdmitDirectServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/admit (the `AdmitDirectServiceVisitor` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) AdmitDirectServiceVisitor(ctx context.Context, ingressId IngressID, body AdmitDirectServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAdmitDirectServiceVisitorRequest(c.Server, ingressId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CloseDirectServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/close (the `CloseDirectServiceVisitor` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) CloseDirectServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCloseDirectServiceVisitorRequestWithBody(c.Server, ingressId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CloseDirectServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/close (the `CloseDirectServiceVisitor` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) CloseDirectServiceVisitor(ctx context.Context, ingressId IngressID, body CloseDirectServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCloseDirectServiceVisitorRequest(c.Server, ingressId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// PromoteDirectServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/promote (the `PromoteDirectServiceVisitor` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) PromoteDirectServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPromoteDirectServiceVisitorRequestWithBody(c.Server, ingressId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// PromoteDirectServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/promote (the `PromoteDirectServiceVisitor` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) PromoteDirectServiceVisitor(ctx context.Context, ingressId IngressID, body PromoteDirectServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPromoteDirectServiceVisitorRequest(c.Server, ingressId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// DirectServiceVisitorStatusWithBody performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/status (the `DirectServiceVisitorStatus` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) DirectServiceVisitorStatusWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDirectServiceVisitorStatusRequestWithBody(c.Server, ingressId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// DirectServiceVisitorStatus performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/status (the `DirectServiceVisitorStatus` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) DirectServiceVisitorStatus(ctx context.Context, ingressId IngressID, body DirectServiceVisitorStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDirectServiceVisitorStatusRequest(c.Server, ingressId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // DrainIngressWithBody Stop a matching ingress process from accepting new visitors
 //
 // Takes any type of body and a specified content type.
@@ -1242,6 +852,118 @@ func (c *Client) DrainIngressWithBody(ctx context.Context, ingressId IngressID, 
 // Corresponds with POST /internal/v1/ingresses/{ingress_id}/drain (the `DrainIngress` operationId).
 func (c *Client) DrainIngress(ctx context.Context, ingressId IngressID, body DrainIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDrainIngressRequest(c.Server, ingressId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdmitPublicServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/public-services/admit (the `AdmitPublicServiceVisitor` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) AdmitPublicServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdmitPublicServiceVisitorRequestWithBody(c.Server, ingressId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AdmitPublicServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/public-services/admit (the `AdmitPublicServiceVisitor` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) AdmitPublicServiceVisitor(ctx context.Context, ingressId IngressID, body AdmitPublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAdmitPublicServiceVisitorRequest(c.Server, ingressId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClosePublicServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/public-services/close (the `ClosePublicServiceVisitor` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) ClosePublicServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClosePublicServiceVisitorRequestWithBody(c.Server, ingressId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClosePublicServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/public-services/close (the `ClosePublicServiceVisitor` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) ClosePublicServiceVisitor(ctx context.Context, ingressId IngressID, body ClosePublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClosePublicServiceVisitorRequest(c.Server, ingressId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PromotePublicServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/public-services/promote (the `PromotePublicServiceVisitor` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) PromotePublicServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPromotePublicServiceVisitorRequestWithBody(c.Server, ingressId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PromotePublicServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/public-services/promote (the `PromotePublicServiceVisitor` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) PromotePublicServiceVisitor(ctx context.Context, ingressId IngressID, body PromotePublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPromotePublicServiceVisitorRequest(c.Server, ingressId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PublicServiceVisitorStatusWithBody performs a POST /internal/v1/ingresses/{ingress_id}/public-services/status (the `PublicServiceVisitorStatus` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) PublicServiceVisitorStatusWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPublicServiceVisitorStatusRequestWithBody(c.Server, ingressId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PublicServiceVisitorStatus performs a POST /internal/v1/ingresses/{ingress_id}/public-services/status (the `PublicServiceVisitorStatus` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) PublicServiceVisitorStatus(ctx context.Context, ingressId IngressID, body PublicServiceVisitorStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPublicServiceVisitorStatusRequest(c.Server, ingressId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1378,158 +1100,6 @@ func (c *Client) ReportIngressServiceObservations(ctx context.Context, ingressId
 	return c.Client.Do(req)
 }
 
-// AuthorizeServiceStreamWithBody performs a POST /internal/v1/ingresses/{ingress_id}/services/claim (the `AuthorizeServiceStream` operationId) request,
-// with any type of body and a specified content type.
-//
-// Authorize each new stream against the live enrolled device and exact service grant. The connector pins the selected run key before application bytes. Ingress alone supplies the original source.
-func (c *Client) AuthorizeServiceStreamWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeServiceStreamRequestWithBody(c.Server, ingressId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizeServiceStream performs a POST /internal/v1/ingresses/{ingress_id}/services/claim (the `AuthorizeServiceStream` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Authorize each new stream against the live enrolled device and exact service grant. The connector pins the selected run key before application bytes. Ingress alone supplies the original source.
-func (c *Client) AuthorizeServiceStream(ctx context.Context, ingressId IngressID, body AuthorizeServiceStreamJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizeServiceStreamRequest(c.Server, ingressId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetServiceEvents performs a GET /internal/v1/ingresses/{ingress_id}/services/events (the `GetServiceEvents` operationId) request.
-func (c *Client) GetServiceEvents(ctx context.Context, ingressId IngressID, params *GetServiceEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetServiceEventsRequest(c.Server, ingressId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RecheckServiceVisitorWithBody performs a POST /internal/v1/ingresses/{ingress_id}/services/recheck (the `RecheckServiceVisitor` operationId) request,
-// with any type of body and a specified content type.
-//
-// Check an admitted visitor connection against its current service, run, enrolled device, connector session, identity, ingress-observed source, grant and ingress lease. An explicit denial closes the stream; an unavailable response never extends its hard deadline.
-func (c *Client) RecheckServiceVisitorWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRecheckServiceVisitorRequestWithBody(c.Server, ingressId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// RecheckServiceVisitor performs a POST /internal/v1/ingresses/{ingress_id}/services/recheck (the `RecheckServiceVisitor` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Check an admitted visitor connection against its current service, run, enrolled device, connector session, identity, ingress-observed source, grant and ingress lease. An explicit denial closes the stream; an unavailable response never extends its hard deadline.
-func (c *Client) RecheckServiceVisitor(ctx context.Context, ingressId IngressID, body RecheckServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRecheckServiceVisitorRequest(c.Server, ingressId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetServiceSnapshot performs a GET /internal/v1/ingresses/{ingress_id}/services/snapshot (the `GetServiceSnapshot` operationId) request.
-//
-// Service/run IDs and connected relay assignments for a current ingress lease. Publisher stream keys are returned by authenticated control selection.
-func (c *Client) GetServiceSnapshot(ctx context.Context, ingressId IngressID, params *GetServiceSnapshotParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetServiceSnapshotRequest(c.Server, ingressId, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CloseServiceStreamWithBody performs a DELETE /internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id} (the `CloseServiceStream` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) CloseServiceStreamWithBody(ctx context.Context, ingressId IngressID, visitorConnectionId VisitorConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCloseServiceStreamRequestWithBody(c.Server, ingressId, visitorConnectionId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// CloseServiceStream performs a DELETE /internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id} (the `CloseServiceStream` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) CloseServiceStream(ctx context.Context, ingressId IngressID, visitorConnectionId VisitorConnectionID, body CloseServiceStreamJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCloseServiceStreamRequest(c.Server, ingressId, visitorConnectionId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetIngressTransportCertificateWithBody performs a POST /internal/v1/ingresses/{ingress_id}/transport-certificate (the `GetIngressTransportCertificate` operationId) request,
-// with any type of body and a specified content type.
-//
-// Retrieve the control-managed infrastructure certificate and key for this exact current process lease. The hostname is selected from its registered connector identity; the request cannot choose another hostname.
-func (c *Client) GetIngressTransportCertificateWithBody(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetIngressTransportCertificateRequestWithBody(c.Server, ingressId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetIngressTransportCertificate performs a POST /internal/v1/ingresses/{ingress_id}/transport-certificate (the `GetIngressTransportCertificate` operationId) request.
-// Takes a body of the `application/json` content type.
-//
-// Retrieve the control-managed infrastructure certificate and key for this exact current process lease. The hostname is selected from its registered connector identity; the request cannot choose another hostname.
-func (c *Client) GetIngressTransportCertificate(ctx context.Context, ingressId IngressID, body GetIngressTransportCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetIngressTransportCertificateRequest(c.Server, ingressId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // ReportIngressUsageWithBody Store cumulative public URL usage from one ingress process run
 //
 // Takes any type of body and a specified content type.
@@ -1636,241 +1206,6 @@ func NewRegisterIngressRequestWithBody(server string, contentType string, body i
 	return req, nil
 }
 
-// NewClaimConnectorSessionRequest calls the generic ClaimConnectorSession builder with application/json body
-func NewClaimConnectorSessionRequest(server string, ingressId IngressID, body ClaimConnectorSessionJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewClaimConnectorSessionRequestWithBody(server, ingressId, "application/json", bodyReader)
-}
-
-// NewClaimConnectorSessionRequestWithBody constructs an http.Request for the ClaimConnectorSession method, with any body, and a specified content type
-func NewClaimConnectorSessionRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/connector-sessions/claim", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewAdmitDirectServiceVisitorRequest calls the generic AdmitDirectServiceVisitor builder with application/json body
-func NewAdmitDirectServiceVisitorRequest(server string, ingressId IngressID, body AdmitDirectServiceVisitorJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAdmitDirectServiceVisitorRequestWithBody(server, ingressId, "application/json", bodyReader)
-}
-
-// NewAdmitDirectServiceVisitorRequestWithBody constructs an http.Request for the AdmitDirectServiceVisitor method, with any body, and a specified content type
-func NewAdmitDirectServiceVisitorRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/direct-services/admit", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewCloseDirectServiceVisitorRequest calls the generic CloseDirectServiceVisitor builder with application/json body
-func NewCloseDirectServiceVisitorRequest(server string, ingressId IngressID, body CloseDirectServiceVisitorJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCloseDirectServiceVisitorRequestWithBody(server, ingressId, "application/json", bodyReader)
-}
-
-// NewCloseDirectServiceVisitorRequestWithBody constructs an http.Request for the CloseDirectServiceVisitor method, with any body, and a specified content type
-func NewCloseDirectServiceVisitorRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/direct-services/close", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewPromoteDirectServiceVisitorRequest calls the generic PromoteDirectServiceVisitor builder with application/json body
-func NewPromoteDirectServiceVisitorRequest(server string, ingressId IngressID, body PromoteDirectServiceVisitorJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewPromoteDirectServiceVisitorRequestWithBody(server, ingressId, "application/json", bodyReader)
-}
-
-// NewPromoteDirectServiceVisitorRequestWithBody constructs an http.Request for the PromoteDirectServiceVisitor method, with any body, and a specified content type
-func NewPromoteDirectServiceVisitorRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/direct-services/promote", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewDirectServiceVisitorStatusRequest calls the generic DirectServiceVisitorStatus builder with application/json body
-func NewDirectServiceVisitorStatusRequest(server string, ingressId IngressID, body DirectServiceVisitorStatusJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewDirectServiceVisitorStatusRequestWithBody(server, ingressId, "application/json", bodyReader)
-}
-
-// NewDirectServiceVisitorStatusRequestWithBody constructs an http.Request for the DirectServiceVisitorStatus method, with any body, and a specified content type
-func NewDirectServiceVisitorStatusRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/direct-services/status", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewDrainIngressRequest calls the generic DrainIngress builder with application/json body
 func NewDrainIngressRequest(server string, ingressId IngressID, body DrainIngressJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -1899,6 +1234,194 @@ func NewDrainIngressRequestWithBody(server string, ingressId IngressID, contentT
 	}
 
 	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/drain", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAdmitPublicServiceVisitorRequest calls the generic AdmitPublicServiceVisitor builder with application/json body
+func NewAdmitPublicServiceVisitorRequest(server string, ingressId IngressID, body AdmitPublicServiceVisitorJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAdmitPublicServiceVisitorRequestWithBody(server, ingressId, "application/json", bodyReader)
+}
+
+// NewAdmitPublicServiceVisitorRequestWithBody constructs an http.Request for the AdmitPublicServiceVisitor method, with any body, and a specified content type
+func NewAdmitPublicServiceVisitorRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/public-services/admit", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewClosePublicServiceVisitorRequest calls the generic ClosePublicServiceVisitor builder with application/json body
+func NewClosePublicServiceVisitorRequest(server string, ingressId IngressID, body ClosePublicServiceVisitorJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClosePublicServiceVisitorRequestWithBody(server, ingressId, "application/json", bodyReader)
+}
+
+// NewClosePublicServiceVisitorRequestWithBody constructs an http.Request for the ClosePublicServiceVisitor method, with any body, and a specified content type
+func NewClosePublicServiceVisitorRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/public-services/close", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPromotePublicServiceVisitorRequest calls the generic PromotePublicServiceVisitor builder with application/json body
+func NewPromotePublicServiceVisitorRequest(server string, ingressId IngressID, body PromotePublicServiceVisitorJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPromotePublicServiceVisitorRequestWithBody(server, ingressId, "application/json", bodyReader)
+}
+
+// NewPromotePublicServiceVisitorRequestWithBody constructs an http.Request for the PromotePublicServiceVisitor method, with any body, and a specified content type
+func NewPromotePublicServiceVisitorRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/public-services/promote", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPublicServiceVisitorStatusRequest calls the generic PublicServiceVisitorStatus builder with application/json body
+func NewPublicServiceVisitorStatusRequest(server string, ingressId IngressID, body PublicServiceVisitorStatusJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPublicServiceVisitorStatusRequestWithBody(server, ingressId, "application/json", bodyReader)
+}
+
+// NewPublicServiceVisitorStatusRequestWithBody constructs an http.Request for the PublicServiceVisitorStatus method, with any body, and a specified content type
+func NewPublicServiceVisitorStatusRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/public-services/status", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -2259,339 +1782,6 @@ func NewReportIngressServiceObservationsRequestWithBody(server string, ingressId
 	return req, nil
 }
 
-// NewAuthorizeServiceStreamRequest calls the generic AuthorizeServiceStream builder with application/json body
-func NewAuthorizeServiceStreamRequest(server string, ingressId IngressID, body AuthorizeServiceStreamJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAuthorizeServiceStreamRequestWithBody(server, ingressId, "application/json", bodyReader)
-}
-
-// NewAuthorizeServiceStreamRequestWithBody constructs an http.Request for the AuthorizeServiceStream method, with any body, and a specified content type
-func NewAuthorizeServiceStreamRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/services/claim", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetServiceEventsRequest constructs an http.Request for the GetServiceEvents method
-func NewGetServiceEventsRequest(server string, ingressId IngressID, params *GetServiceEventsParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/services/events", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ingress_run_id", params.IngressRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ingress_lease_revision", params.IngressLeaseRevision, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "after", params.After, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewRecheckServiceVisitorRequest calls the generic RecheckServiceVisitor builder with application/json body
-func NewRecheckServiceVisitorRequest(server string, ingressId IngressID, body RecheckServiceVisitorJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRecheckServiceVisitorRequestWithBody(server, ingressId, "application/json", bodyReader)
-}
-
-// NewRecheckServiceVisitorRequestWithBody constructs an http.Request for the RecheckServiceVisitor method, with any body, and a specified content type
-func NewRecheckServiceVisitorRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/services/recheck", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetServiceSnapshotRequest constructs an http.Request for the GetServiceSnapshot method
-func NewGetServiceSnapshotRequest(server string, ingressId IngressID, params *GetServiceSnapshotParams) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/services/snapshot", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ingress_run_id", params.IngressRunId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ingress_lease_revision", params.IngressLeaseRevision, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
-			}
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewCloseServiceStreamRequest calls the generic CloseServiceStream builder with application/json body
-func NewCloseServiceStreamRequest(server string, ingressId IngressID, visitorConnectionId VisitorConnectionID, body CloseServiceStreamJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewCloseServiceStreamRequestWithBody(server, ingressId, visitorConnectionId, "application/json", bodyReader)
-}
-
-// NewCloseServiceStreamRequestWithBody constructs an http.Request for the CloseServiceStream method, with any body, and a specified content type
-func NewCloseServiceStreamRequestWithBody(server string, ingressId IngressID, visitorConnectionId VisitorConnectionID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "visitor_connection_id", visitorConnectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/services/streams/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetIngressTransportCertificateRequest calls the generic GetIngressTransportCertificate builder with application/json body
-func NewGetIngressTransportCertificateRequest(server string, ingressId IngressID, body GetIngressTransportCertificateJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewGetIngressTransportCertificateRequestWithBody(server, ingressId, "application/json", bodyReader)
-}
-
-// NewGetIngressTransportCertificateRequestWithBody constructs an http.Request for the GetIngressTransportCertificate method, with any body, and a specified content type
-func NewGetIngressTransportCertificateRequestWithBody(server string, ingressId IngressID, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "ingress_id", ingressId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/internal/v1/ingresses/%s/transport-certificate", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewReportIngressUsageRequest calls the generic ReportIngressUsage builder with application/json body
 func NewReportIngressUsageRequest(server string, ingressId IngressID, body ReportIngressUsageJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -2744,60 +1934,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /internal/v1/ingresses/register (the `RegisterIngress` operationId).
 	RegisterIngressWithResponse(ctx context.Context, body RegisterIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterIngressResponse, error)
 
-	// ClaimConnectorSessionWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/connector-sessions/claim (the `ClaimConnectorSession` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Authenticate an enrolled device on its assigned ingress lease and bind ingress-observed socket source metadata. Each stream is authorized separately for its exact service.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	ClaimConnectorSessionWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimConnectorSessionResponse, error)
-
-	// ClaimConnectorSessionWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/connector-sessions/claim (the `ClaimConnectorSession` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Authenticate an enrolled device on its assigned ingress lease and bind ingress-observed socket source metadata. Each stream is authorized separately for its exact service.
-	ClaimConnectorSessionWithResponse(ctx context.Context, ingressId IngressID, body ClaimConnectorSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimConnectorSessionResponse, error)
-
-	// AdmitDirectServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/admit (the `AdmitDirectServiceVisitor` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	AdmitDirectServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdmitDirectServiceVisitorResponse, error)
-
-	// AdmitDirectServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/admit (the `AdmitDirectServiceVisitor` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	AdmitDirectServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body AdmitDirectServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*AdmitDirectServiceVisitorResponse, error)
-
-	// CloseDirectServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/close (the `CloseDirectServiceVisitor` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	CloseDirectServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CloseDirectServiceVisitorResponse, error)
-
-	// CloseDirectServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/close (the `CloseDirectServiceVisitor` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	CloseDirectServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body CloseDirectServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*CloseDirectServiceVisitorResponse, error)
-
-	// PromoteDirectServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/promote (the `PromoteDirectServiceVisitor` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	PromoteDirectServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PromoteDirectServiceVisitorResponse, error)
-
-	// PromoteDirectServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/promote (the `PromoteDirectServiceVisitor` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	PromoteDirectServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body PromoteDirectServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*PromoteDirectServiceVisitorResponse, error)
-
-	// DirectServiceVisitorStatusWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/status (the `DirectServiceVisitorStatus` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	DirectServiceVisitorStatusWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DirectServiceVisitorStatusResponse, error)
-
-	// DirectServiceVisitorStatusWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/status (the `DirectServiceVisitorStatus` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	DirectServiceVisitorStatusWithResponse(ctx context.Context, ingressId IngressID, body DirectServiceVisitorStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*DirectServiceVisitorStatusResponse, error)
-
 	// DrainIngressWithBodyWithResponse Stop a matching ingress process from accepting new visitors
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -2811,6 +1947,46 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /internal/v1/ingresses/{ingress_id}/drain (the `DrainIngress` operationId).
 	DrainIngressWithResponse(ctx context.Context, ingressId IngressID, body DrainIngressJSONRequestBody, reqEditors ...RequestEditorFn) (*DrainIngressResponse, error)
+
+	// AdmitPublicServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/admit (the `AdmitPublicServiceVisitor` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	AdmitPublicServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdmitPublicServiceVisitorResponse, error)
+
+	// AdmitPublicServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/admit (the `AdmitPublicServiceVisitor` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	AdmitPublicServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body AdmitPublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*AdmitPublicServiceVisitorResponse, error)
+
+	// ClosePublicServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/close (the `ClosePublicServiceVisitor` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ClosePublicServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClosePublicServiceVisitorResponse, error)
+
+	// ClosePublicServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/close (the `ClosePublicServiceVisitor` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	ClosePublicServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body ClosePublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*ClosePublicServiceVisitorResponse, error)
+
+	// PromotePublicServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/promote (the `PromotePublicServiceVisitor` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	PromotePublicServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PromotePublicServiceVisitorResponse, error)
+
+	// PromotePublicServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/promote (the `PromotePublicServiceVisitor` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	PromotePublicServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body PromotePublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*PromotePublicServiceVisitorResponse, error)
+
+	// PublicServiceVisitorStatusWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/status (the `PublicServiceVisitorStatus` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	PublicServiceVisitorStatusWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PublicServiceVisitorStatusResponse, error)
+
+	// PublicServiceVisitorStatusWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/status (the `PublicServiceVisitorStatus` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	PublicServiceVisitorStatusWithResponse(ctx context.Context, ingressId IngressID, body PublicServiceVisitorStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*PublicServiceVisitorStatusResponse, error)
 
 	// ObservePublicURLRecoveryWithBodyWithResponse Record the first publisher byte after public URL recovery
 	//
@@ -2863,70 +2039,6 @@ type ClientWithResponsesInterface interface {
 	// ReportIngressServiceObservationsWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/service-observations (the `ReportIngressServiceObservations` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	ReportIngressServiceObservationsWithResponse(ctx context.Context, ingressId IngressID, params *ReportIngressServiceObservationsParams, body ReportIngressServiceObservationsJSONRequestBody, reqEditors ...RequestEditorFn) (*ReportIngressServiceObservationsResponse, error)
-
-	// AuthorizeServiceStreamWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/services/claim (the `AuthorizeServiceStream` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Authorize each new stream against the live enrolled device and exact service grant. The connector pins the selected run key before application bytes. Ingress alone supplies the original source.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	AuthorizeServiceStreamWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceStreamResponse, error)
-
-	// AuthorizeServiceStreamWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/services/claim (the `AuthorizeServiceStream` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Authorize each new stream against the live enrolled device and exact service grant. The connector pins the selected run key before application bytes. Ingress alone supplies the original source.
-	AuthorizeServiceStreamWithResponse(ctx context.Context, ingressId IngressID, body AuthorizeServiceStreamJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceStreamResponse, error)
-
-	// GetServiceEventsWithResponse performs a GET /internal/v1/ingresses/{ingress_id}/services/events (the `GetServiceEvents` operationId) request.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	GetServiceEventsWithResponse(ctx context.Context, ingressId IngressID, params *GetServiceEventsParams, reqEditors ...RequestEditorFn) (*GetServiceEventsResponse, error)
-
-	// RecheckServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/services/recheck (the `RecheckServiceVisitor` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Check an admitted visitor connection against its current service, run, enrolled device, connector session, identity, ingress-observed source, grant and ingress lease. An explicit denial closes the stream; an unavailable response never extends its hard deadline.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	RecheckServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RecheckServiceVisitorResponse, error)
-
-	// RecheckServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/services/recheck (the `RecheckServiceVisitor` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Check an admitted visitor connection against its current service, run, enrolled device, connector session, identity, ingress-observed source, grant and ingress lease. An explicit denial closes the stream; an unavailable response never extends its hard deadline.
-	RecheckServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body RecheckServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*RecheckServiceVisitorResponse, error)
-
-	// GetServiceSnapshotWithResponse performs a GET /internal/v1/ingresses/{ingress_id}/services/snapshot (the `GetServiceSnapshot` operationId) request.
-	//
-	// Service/run IDs and connected relay assignments for a current ingress lease. Publisher stream keys are returned by authenticated control selection.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	GetServiceSnapshotWithResponse(ctx context.Context, ingressId IngressID, params *GetServiceSnapshotParams, reqEditors ...RequestEditorFn) (*GetServiceSnapshotResponse, error)
-
-	// CloseServiceStreamWithBodyWithResponse performs a DELETE /internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id} (the `CloseServiceStream` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	CloseServiceStreamWithBodyWithResponse(ctx context.Context, ingressId IngressID, visitorConnectionId VisitorConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CloseServiceStreamResponse, error)
-
-	// CloseServiceStreamWithResponse performs a DELETE /internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id} (the `CloseServiceStream` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	CloseServiceStreamWithResponse(ctx context.Context, ingressId IngressID, visitorConnectionId VisitorConnectionID, body CloseServiceStreamJSONRequestBody, reqEditors ...RequestEditorFn) (*CloseServiceStreamResponse, error)
-
-	// GetIngressTransportCertificateWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/transport-certificate (the `GetIngressTransportCertificate` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Retrieve the control-managed infrastructure certificate and key for this exact current process lease. The hostname is selected from its registered connector identity; the request cannot choose another hostname.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	GetIngressTransportCertificateWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetIngressTransportCertificateResponse, error)
-
-	// GetIngressTransportCertificateWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/transport-certificate (the `GetIngressTransportCertificate` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Retrieve the control-managed infrastructure certificate and key for this exact current process lease. The hostname is selected from its registered connector identity; the request cannot choose another hostname.
-	GetIngressTransportCertificateWithResponse(ctx context.Context, ingressId IngressID, body GetIngressTransportCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*GetIngressTransportCertificateResponse, error)
 
 	// ReportIngressUsageWithBodyWithResponse Store cumulative public URL usage from one ingress process run
 	//
@@ -3005,232 +2117,6 @@ func (r RegisterIngressResponse) ContentType() string {
 	return ""
 }
 
-type ClaimConnectorSessionResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ConnectorSessionResult
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ClaimConnectorSessionResponse) GetJSON200() *ConnectorSessionResult {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r ClaimConnectorSessionResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ClaimConnectorSessionResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ClaimConnectorSessionResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ClaimConnectorSessionResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ClaimConnectorSessionResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type AdmitDirectServiceVisitorResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *DirectServiceVisitorAdmission
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AdmitDirectServiceVisitorResponse) GetJSON200() *DirectServiceVisitorAdmission {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AdmitDirectServiceVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AdmitDirectServiceVisitorResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AdmitDirectServiceVisitorResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AdmitDirectServiceVisitorResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AdmitDirectServiceVisitorResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CloseDirectServiceVisitorResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CloseDirectServiceVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CloseDirectServiceVisitorResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CloseDirectServiceVisitorResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CloseDirectServiceVisitorResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CloseDirectServiceVisitorResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type PromoteDirectServiceVisitorResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r PromoteDirectServiceVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r PromoteDirectServiceVisitorResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r PromoteDirectServiceVisitorResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PromoteDirectServiceVisitorResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r PromoteDirectServiceVisitorResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type DirectServiceVisitorStatusResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *DirectServiceVisitorStatus
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r DirectServiceVisitorStatusResponse) GetJSON200() *DirectServiceVisitorStatus {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r DirectServiceVisitorStatusResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r DirectServiceVisitorStatusResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r DirectServiceVisitorStatusResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DirectServiceVisitorStatusResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r DirectServiceVisitorStatusResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type DrainIngressResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3273,6 +2159,184 @@ func (r DrainIngressResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r DrainIngressResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AdmitPublicServiceVisitorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicServiceVisitorAdmission
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AdmitPublicServiceVisitorResponse) GetJSON200() *PublicServiceVisitorAdmission {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AdmitPublicServiceVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AdmitPublicServiceVisitorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AdmitPublicServiceVisitorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AdmitPublicServiceVisitorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AdmitPublicServiceVisitorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ClosePublicServiceVisitorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ClosePublicServiceVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ClosePublicServiceVisitorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClosePublicServiceVisitorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClosePublicServiceVisitorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClosePublicServiceVisitorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PromotePublicServiceVisitorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PromotePublicServiceVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PromotePublicServiceVisitorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PromotePublicServiceVisitorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PromotePublicServiceVisitorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PromotePublicServiceVisitorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PublicServiceVisitorStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicServiceVisitorStatus
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PublicServiceVisitorStatusResponse) GetJSON200() *PublicServiceVisitorStatus {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PublicServiceVisitorStatusResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PublicServiceVisitorStatusResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PublicServiceVisitorStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PublicServiceVisitorStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PublicServiceVisitorStatusResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -3526,287 +2590,6 @@ func (r ReportIngressServiceObservationsResponse) ContentType() string {
 	return ""
 }
 
-type AuthorizeServiceStreamResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceStreamResult
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AuthorizeServiceStreamResponse) GetJSON200() *ServiceStreamResult {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r AuthorizeServiceStreamResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r AuthorizeServiceStreamResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AuthorizeServiceStreamResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AuthorizeServiceStreamResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AuthorizeServiceStreamResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetServiceEventsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceSnapshot
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetServiceEventsResponse) GetJSON200() *ServiceSnapshot {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetServiceEventsResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetServiceEventsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetServiceEventsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetServiceEventsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetServiceEventsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type RecheckServiceVisitorResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceVisitorRecheckResult
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RecheckServiceVisitorResponse) GetJSON200() *ServiceVisitorRecheckResult {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r RecheckServiceVisitorResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r RecheckServiceVisitorResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r RecheckServiceVisitorResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RecheckServiceVisitorResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r RecheckServiceVisitorResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetServiceSnapshotResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ServiceSnapshot
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetServiceSnapshotResponse) GetJSON200() *ServiceSnapshot {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetServiceSnapshotResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetServiceSnapshotResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetServiceSnapshotResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetServiceSnapshotResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetServiceSnapshotResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type CloseServiceStreamResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r CloseServiceStreamResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r CloseServiceStreamResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r CloseServiceStreamResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r CloseServiceStreamResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r CloseServiceStreamResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetIngressTransportCertificateResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *IngressTransportCertificate
-	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
-	ApplicationproblemJSONDefault *Problem
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetIngressTransportCertificateResponse) GetJSON200() *IngressTransportCertificate {
-	return r.JSON200
-}
-
-// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
-func (r GetIngressTransportCertificateResponse) GetApplicationproblemJSONDefault() *Problem {
-	return r.ApplicationproblemJSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r GetIngressTransportCertificateResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetIngressTransportCertificateResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetIngressTransportCertificateResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetIngressTransportCertificateResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type ReportIngressUsageResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3922,120 +2705,6 @@ func (c *ClientWithResponses) RegisterIngressWithResponse(ctx context.Context, b
 	return ParseRegisterIngressResponse(rsp)
 }
 
-// ClaimConnectorSessionWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/connector-sessions/claim (the `ClaimConnectorSession` operationId) request,
-// with any type of body and a specified content type.
-//
-// Authenticate an enrolled device on its assigned ingress lease and bind ingress-observed socket source metadata. Each stream is authorized separately for its exact service.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ClaimConnectorSessionWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimConnectorSessionResponse, error) {
-	rsp, err := c.ClaimConnectorSessionWithBody(ctx, ingressId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseClaimConnectorSessionResponse(rsp)
-}
-
-// ClaimConnectorSessionWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/connector-sessions/claim (the `ClaimConnectorSession` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Authenticate an enrolled device on its assigned ingress lease and bind ingress-observed socket source metadata. Each stream is authorized separately for its exact service.
-func (c *ClientWithResponses) ClaimConnectorSessionWithResponse(ctx context.Context, ingressId IngressID, body ClaimConnectorSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimConnectorSessionResponse, error) {
-	rsp, err := c.ClaimConnectorSession(ctx, ingressId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseClaimConnectorSessionResponse(rsp)
-}
-
-// AdmitDirectServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/admit (the `AdmitDirectServiceVisitor` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AdmitDirectServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdmitDirectServiceVisitorResponse, error) {
-	rsp, err := c.AdmitDirectServiceVisitorWithBody(ctx, ingressId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAdmitDirectServiceVisitorResponse(rsp)
-}
-
-// AdmitDirectServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/admit (the `AdmitDirectServiceVisitor` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AdmitDirectServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body AdmitDirectServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*AdmitDirectServiceVisitorResponse, error) {
-	rsp, err := c.AdmitDirectServiceVisitor(ctx, ingressId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAdmitDirectServiceVisitorResponse(rsp)
-}
-
-// CloseDirectServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/close (the `CloseDirectServiceVisitor` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CloseDirectServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CloseDirectServiceVisitorResponse, error) {
-	rsp, err := c.CloseDirectServiceVisitorWithBody(ctx, ingressId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCloseDirectServiceVisitorResponse(rsp)
-}
-
-// CloseDirectServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/close (the `CloseDirectServiceVisitor` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CloseDirectServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body CloseDirectServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*CloseDirectServiceVisitorResponse, error) {
-	rsp, err := c.CloseDirectServiceVisitor(ctx, ingressId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCloseDirectServiceVisitorResponse(rsp)
-}
-
-// PromoteDirectServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/promote (the `PromoteDirectServiceVisitor` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) PromoteDirectServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PromoteDirectServiceVisitorResponse, error) {
-	rsp, err := c.PromoteDirectServiceVisitorWithBody(ctx, ingressId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePromoteDirectServiceVisitorResponse(rsp)
-}
-
-// PromoteDirectServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/promote (the `PromoteDirectServiceVisitor` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) PromoteDirectServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body PromoteDirectServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*PromoteDirectServiceVisitorResponse, error) {
-	rsp, err := c.PromoteDirectServiceVisitor(ctx, ingressId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePromoteDirectServiceVisitorResponse(rsp)
-}
-
-// DirectServiceVisitorStatusWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/status (the `DirectServiceVisitorStatus` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) DirectServiceVisitorStatusWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DirectServiceVisitorStatusResponse, error) {
-	rsp, err := c.DirectServiceVisitorStatusWithBody(ctx, ingressId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDirectServiceVisitorStatusResponse(rsp)
-}
-
-// DirectServiceVisitorStatusWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/direct-services/status (the `DirectServiceVisitorStatus` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) DirectServiceVisitorStatusWithResponse(ctx context.Context, ingressId IngressID, body DirectServiceVisitorStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*DirectServiceVisitorStatusResponse, error) {
-	rsp, err := c.DirectServiceVisitorStatus(ctx, ingressId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDirectServiceVisitorStatusResponse(rsp)
-}
-
 // DrainIngressWithBodyWithResponse Stop a matching ingress process from accepting new visitors
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -4060,6 +2729,94 @@ func (c *ClientWithResponses) DrainIngressWithResponse(ctx context.Context, ingr
 		return nil, err
 	}
 	return ParseDrainIngressResponse(rsp)
+}
+
+// AdmitPublicServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/admit (the `AdmitPublicServiceVisitor` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AdmitPublicServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AdmitPublicServiceVisitorResponse, error) {
+	rsp, err := c.AdmitPublicServiceVisitorWithBody(ctx, ingressId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdmitPublicServiceVisitorResponse(rsp)
+}
+
+// AdmitPublicServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/admit (the `AdmitPublicServiceVisitor` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AdmitPublicServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body AdmitPublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*AdmitPublicServiceVisitorResponse, error) {
+	rsp, err := c.AdmitPublicServiceVisitor(ctx, ingressId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAdmitPublicServiceVisitorResponse(rsp)
+}
+
+// ClosePublicServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/close (the `ClosePublicServiceVisitor` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ClosePublicServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClosePublicServiceVisitorResponse, error) {
+	rsp, err := c.ClosePublicServiceVisitorWithBody(ctx, ingressId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClosePublicServiceVisitorResponse(rsp)
+}
+
+// ClosePublicServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/close (the `ClosePublicServiceVisitor` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ClosePublicServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body ClosePublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*ClosePublicServiceVisitorResponse, error) {
+	rsp, err := c.ClosePublicServiceVisitor(ctx, ingressId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClosePublicServiceVisitorResponse(rsp)
+}
+
+// PromotePublicServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/promote (the `PromotePublicServiceVisitor` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) PromotePublicServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PromotePublicServiceVisitorResponse, error) {
+	rsp, err := c.PromotePublicServiceVisitorWithBody(ctx, ingressId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePromotePublicServiceVisitorResponse(rsp)
+}
+
+// PromotePublicServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/promote (the `PromotePublicServiceVisitor` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) PromotePublicServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body PromotePublicServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*PromotePublicServiceVisitorResponse, error) {
+	rsp, err := c.PromotePublicServiceVisitor(ctx, ingressId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePromotePublicServiceVisitorResponse(rsp)
+}
+
+// PublicServiceVisitorStatusWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/status (the `PublicServiceVisitorStatus` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) PublicServiceVisitorStatusWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PublicServiceVisitorStatusResponse, error) {
+	rsp, err := c.PublicServiceVisitorStatusWithBody(ctx, ingressId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePublicServiceVisitorStatusResponse(rsp)
+}
+
+// PublicServiceVisitorStatusWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/public-services/status (the `PublicServiceVisitorStatus` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) PublicServiceVisitorStatusWithResponse(ctx context.Context, ingressId IngressID, body PublicServiceVisitorStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*PublicServiceVisitorStatusResponse, error) {
+	rsp, err := c.PublicServiceVisitorStatus(ctx, ingressId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePublicServiceVisitorStatusResponse(rsp)
 }
 
 // ObservePublicURLRecoveryWithBodyWithResponse Record the first publisher byte after public URL recovery
@@ -4162,130 +2919,6 @@ func (c *ClientWithResponses) ReportIngressServiceObservationsWithResponse(ctx c
 	return ParseReportIngressServiceObservationsResponse(rsp)
 }
 
-// AuthorizeServiceStreamWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/services/claim (the `AuthorizeServiceStream` operationId) request,
-// with any type of body and a specified content type.
-//
-// Authorize each new stream against the live enrolled device and exact service grant. The connector pins the selected run key before application bytes. Ingress alone supplies the original source.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) AuthorizeServiceStreamWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizeServiceStreamResponse, error) {
-	rsp, err := c.AuthorizeServiceStreamWithBody(ctx, ingressId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeServiceStreamResponse(rsp)
-}
-
-// AuthorizeServiceStreamWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/services/claim (the `AuthorizeServiceStream` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Authorize each new stream against the live enrolled device and exact service grant. The connector pins the selected run key before application bytes. Ingress alone supplies the original source.
-func (c *ClientWithResponses) AuthorizeServiceStreamWithResponse(ctx context.Context, ingressId IngressID, body AuthorizeServiceStreamJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizeServiceStreamResponse, error) {
-	rsp, err := c.AuthorizeServiceStream(ctx, ingressId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizeServiceStreamResponse(rsp)
-}
-
-// GetServiceEventsWithResponse performs a GET /internal/v1/ingresses/{ingress_id}/services/events (the `GetServiceEvents` operationId) request.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) GetServiceEventsWithResponse(ctx context.Context, ingressId IngressID, params *GetServiceEventsParams, reqEditors ...RequestEditorFn) (*GetServiceEventsResponse, error) {
-	rsp, err := c.GetServiceEvents(ctx, ingressId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetServiceEventsResponse(rsp)
-}
-
-// RecheckServiceVisitorWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/services/recheck (the `RecheckServiceVisitor` operationId) request,
-// with any type of body and a specified content type.
-//
-// Check an admitted visitor connection against its current service, run, enrolled device, connector session, identity, ingress-observed source, grant and ingress lease. An explicit denial closes the stream; an unavailable response never extends its hard deadline.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) RecheckServiceVisitorWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RecheckServiceVisitorResponse, error) {
-	rsp, err := c.RecheckServiceVisitorWithBody(ctx, ingressId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRecheckServiceVisitorResponse(rsp)
-}
-
-// RecheckServiceVisitorWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/services/recheck (the `RecheckServiceVisitor` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Check an admitted visitor connection against its current service, run, enrolled device, connector session, identity, ingress-observed source, grant and ingress lease. An explicit denial closes the stream; an unavailable response never extends its hard deadline.
-func (c *ClientWithResponses) RecheckServiceVisitorWithResponse(ctx context.Context, ingressId IngressID, body RecheckServiceVisitorJSONRequestBody, reqEditors ...RequestEditorFn) (*RecheckServiceVisitorResponse, error) {
-	rsp, err := c.RecheckServiceVisitor(ctx, ingressId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRecheckServiceVisitorResponse(rsp)
-}
-
-// GetServiceSnapshotWithResponse performs a GET /internal/v1/ingresses/{ingress_id}/services/snapshot (the `GetServiceSnapshot` operationId) request.
-//
-// Service/run IDs and connected relay assignments for a current ingress lease. Publisher stream keys are returned by authenticated control selection.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) GetServiceSnapshotWithResponse(ctx context.Context, ingressId IngressID, params *GetServiceSnapshotParams, reqEditors ...RequestEditorFn) (*GetServiceSnapshotResponse, error) {
-	rsp, err := c.GetServiceSnapshot(ctx, ingressId, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetServiceSnapshotResponse(rsp)
-}
-
-// CloseServiceStreamWithBodyWithResponse performs a DELETE /internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id} (the `CloseServiceStream` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CloseServiceStreamWithBodyWithResponse(ctx context.Context, ingressId IngressID, visitorConnectionId VisitorConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CloseServiceStreamResponse, error) {
-	rsp, err := c.CloseServiceStreamWithBody(ctx, ingressId, visitorConnectionId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCloseServiceStreamResponse(rsp)
-}
-
-// CloseServiceStreamWithResponse performs a DELETE /internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id} (the `CloseServiceStream` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) CloseServiceStreamWithResponse(ctx context.Context, ingressId IngressID, visitorConnectionId VisitorConnectionID, body CloseServiceStreamJSONRequestBody, reqEditors ...RequestEditorFn) (*CloseServiceStreamResponse, error) {
-	rsp, err := c.CloseServiceStream(ctx, ingressId, visitorConnectionId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseCloseServiceStreamResponse(rsp)
-}
-
-// GetIngressTransportCertificateWithBodyWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/transport-certificate (the `GetIngressTransportCertificate` operationId) request,
-// with any type of body and a specified content type.
-//
-// Retrieve the control-managed infrastructure certificate and key for this exact current process lease. The hostname is selected from its registered connector identity; the request cannot choose another hostname.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) GetIngressTransportCertificateWithBodyWithResponse(ctx context.Context, ingressId IngressID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GetIngressTransportCertificateResponse, error) {
-	rsp, err := c.GetIngressTransportCertificateWithBody(ctx, ingressId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetIngressTransportCertificateResponse(rsp)
-}
-
-// GetIngressTransportCertificateWithResponse performs a POST /internal/v1/ingresses/{ingress_id}/transport-certificate (the `GetIngressTransportCertificate` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Retrieve the control-managed infrastructure certificate and key for this exact current process lease. The hostname is selected from its registered connector identity; the request cannot choose another hostname.
-func (c *ClientWithResponses) GetIngressTransportCertificateWithResponse(ctx context.Context, ingressId IngressID, body GetIngressTransportCertificateJSONRequestBody, reqEditors ...RequestEditorFn) (*GetIngressTransportCertificateResponse, error) {
-	rsp, err := c.GetIngressTransportCertificate(ctx, ingressId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetIngressTransportCertificateResponse(rsp)
-}
-
 // ReportIngressUsageWithBodyWithResponse Store cumulative public URL usage from one ingress process run
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -4371,163 +3004,6 @@ func ParseRegisterIngressResponse(rsp *http.Response) (*RegisterIngressResponse,
 	return response, nil
 }
 
-// ParseClaimConnectorSessionResponse parses an HTTP response from a ClaimConnectorSessionWithResponse call
-func ParseClaimConnectorSessionResponse(rsp *http.Response) (*ClaimConnectorSessionResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ClaimConnectorSessionResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ConnectorSessionResult
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseAdmitDirectServiceVisitorResponse parses an HTTP response from a AdmitDirectServiceVisitorWithResponse call
-func ParseAdmitDirectServiceVisitorResponse(rsp *http.Response) (*AdmitDirectServiceVisitorResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AdmitDirectServiceVisitorResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest DirectServiceVisitorAdmission
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCloseDirectServiceVisitorResponse parses an HTTP response from a CloseDirectServiceVisitorWithResponse call
-func ParseCloseDirectServiceVisitorResponse(rsp *http.Response) (*CloseDirectServiceVisitorResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CloseDirectServiceVisitorResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParsePromoteDirectServiceVisitorResponse parses an HTTP response from a PromoteDirectServiceVisitorWithResponse call
-func ParsePromoteDirectServiceVisitorResponse(rsp *http.Response) (*PromoteDirectServiceVisitorResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PromoteDirectServiceVisitorResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseDirectServiceVisitorStatusResponse parses an HTTP response from a DirectServiceVisitorStatusWithResponse call
-func ParseDirectServiceVisitorStatusResponse(rsp *http.Response) (*DirectServiceVisitorStatusResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DirectServiceVisitorStatusResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest DirectServiceVisitorStatus
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseDrainIngressResponse parses an HTTP response from a DrainIngressWithResponse call
 func ParseDrainIngressResponse(rsp *http.Response) (*DrainIngressResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -4544,6 +3020,130 @@ func ParseDrainIngressResponse(rsp *http.Response) (*DrainIngressResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest IngressLease
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAdmitPublicServiceVisitorResponse parses an HTTP response from a AdmitPublicServiceVisitorWithResponse call
+func ParseAdmitPublicServiceVisitorResponse(rsp *http.Response) (*AdmitPublicServiceVisitorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AdmitPublicServiceVisitorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublicServiceVisitorAdmission
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseClosePublicServiceVisitorResponse parses an HTTP response from a ClosePublicServiceVisitorWithResponse call
+func ParseClosePublicServiceVisitorResponse(rsp *http.Response) (*ClosePublicServiceVisitorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClosePublicServiceVisitorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePromotePublicServiceVisitorResponse parses an HTTP response from a PromotePublicServiceVisitorWithResponse call
+func ParsePromotePublicServiceVisitorResponse(rsp *http.Response) (*PromotePublicServiceVisitorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PromotePublicServiceVisitorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePublicServiceVisitorStatusResponse parses an HTTP response from a PublicServiceVisitorStatusWithResponse call
+func ParsePublicServiceVisitorStatusResponse(rsp *http.Response) (*PublicServiceVisitorStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PublicServiceVisitorStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublicServiceVisitorStatus
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -4733,200 +3333,6 @@ func ParseReportIngressServiceObservationsResponse(rsp *http.Response) (*ReportI
 	return response, nil
 }
 
-// ParseAuthorizeServiceStreamResponse parses an HTTP response from a AuthorizeServiceStreamWithResponse call
-func ParseAuthorizeServiceStreamResponse(rsp *http.Response) (*AuthorizeServiceStreamResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AuthorizeServiceStreamResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceStreamResult
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetServiceEventsResponse parses an HTTP response from a GetServiceEventsWithResponse call
-func ParseGetServiceEventsResponse(rsp *http.Response) (*GetServiceEventsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetServiceEventsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceSnapshot
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRecheckServiceVisitorResponse parses an HTTP response from a RecheckServiceVisitorWithResponse call
-func ParseRecheckServiceVisitorResponse(rsp *http.Response) (*RecheckServiceVisitorResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RecheckServiceVisitorResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceVisitorRecheckResult
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetServiceSnapshotResponse parses an HTTP response from a GetServiceSnapshotWithResponse call
-func ParseGetServiceSnapshotResponse(rsp *http.Response) (*GetServiceSnapshotResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetServiceSnapshotResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ServiceSnapshot
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseCloseServiceStreamResponse parses an HTTP response from a CloseServiceStreamWithResponse call
-func ParseCloseServiceStreamResponse(rsp *http.Response) (*CloseServiceStreamResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &CloseServiceStreamResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetIngressTransportCertificateResponse parses an HTTP response from a GetIngressTransportCertificateWithResponse call
-func ParseGetIngressTransportCertificateResponse(rsp *http.Response) (*GetIngressTransportCertificateResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetIngressTransportCertificateResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest IngressTransportCertificate
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseReportIngressUsageResponse parses an HTTP response from a ReportIngressUsageWithResponse call
 func ParseReportIngressUsageResponse(rsp *http.Response) (*ReportIngressUsageResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -4994,24 +3400,21 @@ type ServerInterface interface {
 	// RegisterIngress Register one ingress process run
 	// (POST /internal/v1/ingresses/register)
 	RegisterIngress(w http.ResponseWriter, r *http.Request)
-
-	// (POST /internal/v1/ingresses/{ingress_id}/connector-sessions/claim)
-	ClaimConnectorSession(w http.ResponseWriter, r *http.Request, ingressId IngressID)
-
-	// (POST /internal/v1/ingresses/{ingress_id}/direct-services/admit)
-	AdmitDirectServiceVisitor(w http.ResponseWriter, r *http.Request, ingressId IngressID)
-
-	// (POST /internal/v1/ingresses/{ingress_id}/direct-services/close)
-	CloseDirectServiceVisitor(w http.ResponseWriter, r *http.Request, ingressId IngressID)
-
-	// (POST /internal/v1/ingresses/{ingress_id}/direct-services/promote)
-	PromoteDirectServiceVisitor(w http.ResponseWriter, r *http.Request, ingressId IngressID)
-
-	// (POST /internal/v1/ingresses/{ingress_id}/direct-services/status)
-	DirectServiceVisitorStatus(w http.ResponseWriter, r *http.Request, ingressId IngressID)
 	// DrainIngress Stop a matching ingress process from accepting new visitors
 	// (POST /internal/v1/ingresses/{ingress_id}/drain)
 	DrainIngress(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+
+	// (POST /internal/v1/ingresses/{ingress_id}/public-services/admit)
+	AdmitPublicServiceVisitor(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+
+	// (POST /internal/v1/ingresses/{ingress_id}/public-services/close)
+	ClosePublicServiceVisitor(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+
+	// (POST /internal/v1/ingresses/{ingress_id}/public-services/promote)
+	PromotePublicServiceVisitor(w http.ResponseWriter, r *http.Request, ingressId IngressID)
+
+	// (POST /internal/v1/ingresses/{ingress_id}/public-services/status)
+	PublicServiceVisitorStatus(w http.ResponseWriter, r *http.Request, ingressId IngressID)
 	// ObservePublicURLRecovery Record the first publisher byte after public URL recovery
 	// (POST /internal/v1/ingresses/{ingress_id}/public-url-recovery/{recovery_episode_id}/observed)
 	ObservePublicURLRecovery(w http.ResponseWriter, r *http.Request, ingressId IngressID, recoveryEpisodeId int64)
@@ -5027,24 +3430,6 @@ type ServerInterface interface {
 
 	// (POST /internal/v1/ingresses/{ingress_id}/service-observations)
 	ReportIngressServiceObservations(w http.ResponseWriter, r *http.Request, ingressId IngressID, params ReportIngressServiceObservationsParams)
-
-	// (POST /internal/v1/ingresses/{ingress_id}/services/claim)
-	AuthorizeServiceStream(w http.ResponseWriter, r *http.Request, ingressId IngressID)
-
-	// (GET /internal/v1/ingresses/{ingress_id}/services/events)
-	GetServiceEvents(w http.ResponseWriter, r *http.Request, ingressId IngressID, params GetServiceEventsParams)
-
-	// (POST /internal/v1/ingresses/{ingress_id}/services/recheck)
-	RecheckServiceVisitor(w http.ResponseWriter, r *http.Request, ingressId IngressID)
-
-	// (GET /internal/v1/ingresses/{ingress_id}/services/snapshot)
-	GetServiceSnapshot(w http.ResponseWriter, r *http.Request, ingressId IngressID, params GetServiceSnapshotParams)
-
-	// (DELETE /internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id})
-	CloseServiceStream(w http.ResponseWriter, r *http.Request, ingressId IngressID, visitorConnectionId VisitorConnectionID)
-
-	// (POST /internal/v1/ingresses/{ingress_id}/transport-certificate)
-	GetIngressTransportCertificate(w http.ResponseWriter, r *http.Request, ingressId IngressID)
 	// ReportIngressUsage Store cumulative public URL usage from one ingress process run
 	// (POST /internal/v1/ingresses/{ingress_id}/usage-reports)
 	ReportIngressUsage(w http.ResponseWriter, r *http.Request, ingressId IngressID)
@@ -5076,136 +3461,6 @@ func (siw *ServerInterfaceWrapper) RegisterIngress(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
-// ClaimConnectorSession operation middleware
-func (siw *ServerInterfaceWrapper) ClaimConnectorSession(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ClaimConnectorSession(w, r, ingressId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// AdmitDirectServiceVisitor operation middleware
-func (siw *ServerInterfaceWrapper) AdmitDirectServiceVisitor(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AdmitDirectServiceVisitor(w, r, ingressId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CloseDirectServiceVisitor operation middleware
-func (siw *ServerInterfaceWrapper) CloseDirectServiceVisitor(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CloseDirectServiceVisitor(w, r, ingressId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PromoteDirectServiceVisitor operation middleware
-func (siw *ServerInterfaceWrapper) PromoteDirectServiceVisitor(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PromoteDirectServiceVisitor(w, r, ingressId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// DirectServiceVisitorStatus operation middleware
-func (siw *ServerInterfaceWrapper) DirectServiceVisitorStatus(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DirectServiceVisitorStatus(w, r, ingressId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // DrainIngress operation middleware
 func (siw *ServerInterfaceWrapper) DrainIngress(w http.ResponseWriter, r *http.Request) {
 
@@ -5223,6 +3478,110 @@ func (siw *ServerInterfaceWrapper) DrainIngress(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DrainIngress(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AdmitPublicServiceVisitor operation middleware
+func (siw *ServerInterfaceWrapper) AdmitPublicServiceVisitor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AdmitPublicServiceVisitor(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ClosePublicServiceVisitor operation middleware
+func (siw *ServerInterfaceWrapper) ClosePublicServiceVisitor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ClosePublicServiceVisitor(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PromotePublicServiceVisitor operation middleware
+func (siw *ServerInterfaceWrapper) PromotePublicServiceVisitor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PromotePublicServiceVisitor(w, r, ingressId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PublicServiceVisitorStatus operation middleware
+func (siw *ServerInterfaceWrapper) PublicServiceVisitorStatus(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "ingress_id" -------------
+	var ingressId IngressID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PublicServiceVisitorStatus(w, r, ingressId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5497,242 +3856,6 @@ func (siw *ServerInterfaceWrapper) ReportIngressServiceObservations(w http.Respo
 	handler.ServeHTTP(w, r)
 }
 
-// AuthorizeServiceStream operation middleware
-func (siw *ServerInterfaceWrapper) AuthorizeServiceStream(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.AuthorizeServiceStream(w, r, ingressId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetServiceEvents operation middleware
-func (siw *ServerInterfaceWrapper) GetServiceEvents(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetServiceEventsParams
-
-	// ------------- Required query parameter "ingress_run_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "ingress_run_id", r.URL.Query(), &params.IngressRunId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ingress_run_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_run_id", Err: err})
-		}
-		return
-	}
-
-	// ------------- Required query parameter "ingress_lease_revision" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "ingress_lease_revision", r.URL.Query(), &params.IngressLeaseRevision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ingress_lease_revision"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_lease_revision", Err: err})
-		}
-		return
-	}
-
-	// ------------- Required query parameter "after" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "after", r.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "after"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "after", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetServiceEvents(w, r, ingressId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// RecheckServiceVisitor operation middleware
-func (siw *ServerInterfaceWrapper) RecheckServiceVisitor(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RecheckServiceVisitor(w, r, ingressId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetServiceSnapshot operation middleware
-func (siw *ServerInterfaceWrapper) GetServiceSnapshot(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params GetServiceSnapshotParams
-
-	// ------------- Required query parameter "ingress_run_id" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "ingress_run_id", r.URL.Query(), &params.IngressRunId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ingress_run_id"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_run_id", Err: err})
-		}
-		return
-	}
-
-	// ------------- Required query parameter "ingress_lease_revision" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "ingress_lease_revision", r.URL.Query(), &params.IngressLeaseRevision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ingress_lease_revision"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_lease_revision", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetServiceSnapshot(w, r, ingressId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// CloseServiceStream operation middleware
-func (siw *ServerInterfaceWrapper) CloseServiceStream(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "visitor_connection_id" -------------
-	var visitorConnectionId VisitorConnectionID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "visitor_connection_id", r.PathValue("visitor_connection_id"), &visitorConnectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "visitor_connection_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CloseServiceStream(w, r, ingressId, visitorConnectionId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// GetIngressTransportCertificate operation middleware
-func (siw *ServerInterfaceWrapper) GetIngressTransportCertificate(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "ingress_id" -------------
-	var ingressId IngressID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "ingress_id", r.PathValue("ingress_id"), &ingressId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ingress_id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetIngressTransportCertificate(w, r, ingressId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // ReportIngressUsage operation middleware
 func (siw *ServerInterfaceWrapper) ReportIngressUsage(w http.ResponseWriter, r *http.Request) {
 
@@ -5906,18 +4029,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	}
 
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/visitor-policy", wrapper.ReadIngressVisitorPolicy)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/direct-services/admit", wrapper.AdmitDirectServiceVisitor)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/direct-services/status", wrapper.DirectServiceVisitorStatus)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/direct-services/promote", wrapper.PromoteDirectServiceVisitor)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/direct-services/close", wrapper.CloseDirectServiceVisitor)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/admit", wrapper.AdmitPublicServiceVisitor)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/status", wrapper.PublicServiceVisitorStatus)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/promote", wrapper.PromotePublicServiceVisitor)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/public-services/close", wrapper.ClosePublicServiceVisitor)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/service-observations", wrapper.ReportIngressServiceObservations)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/transport-certificate", wrapper.GetIngressTransportCertificate)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/services/streams/{visitor_connection_id}", wrapper.CloseServiceStream)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/connector-sessions/claim", wrapper.ClaimConnectorSession)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/services/snapshot", wrapper.GetServiceSnapshot)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/services/events", wrapper.GetServiceEvents)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/services/claim", wrapper.AuthorizeServiceStream)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/services/recheck", wrapper.RecheckServiceVisitor)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/register", wrapper.RegisterIngress)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/renew", wrapper.RenewIngress)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/internal/v1/ingresses/{ingress_id}/drain", wrapper.DrainIngress)

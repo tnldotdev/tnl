@@ -35,9 +35,6 @@ WHERE g.team_id=sqlc.arg(team_id) AND g.project_key=sqlc.arg(project_key)
     AND g.deleted_at IS NULL AND i.revoked_at IS NULL
 ORDER BY g.name,m.publisher_identity_id;
 
--- name: ListPublisherGroupServiceGrants :many
-SELECT * FROM control.publisher_group_service_grants WHERE publisher_identity_id=sqlc.arg(publisher_identity_id) ORDER BY service;
-
 -- name: GetLocalProjectService :one
 SELECT local.source_fingerprint, sqlc.embed(s)
 FROM control.local_project_services local

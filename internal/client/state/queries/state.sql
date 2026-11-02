@@ -139,13 +139,6 @@ INSERT INTO local_tunnels (
     sqlc.narg(integration_namespace)
 );
 
--- name: SetTunnelDevTarget :execrows
-UPDATE local_tunnels
-SET target = nullif(sqlc.arg(target), ''),
-    framework = sqlc.arg(framework),
-    updated_at = sqlc.arg(now)
-WHERE id = sqlc.arg(id) AND stopped_at IS NULL;
-
 -- name: SetTunnelPublicURL :execrows
 UPDATE local_tunnels
 SET public_url_id = sqlc.arg(public_url_id),

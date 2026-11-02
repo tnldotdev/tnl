@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strconv"
 	"sync"
 	"time"
 
@@ -20,12 +19,15 @@ var (
 	ErrRoutingTableEvent          = errors.New("ingress: routing-table event is invalid")
 )
 
+type routingRunKey struct {
+	publicURLID string
+	number      int64
+}
+
 type routingTableEntry struct {
-	publicURLID      string
-	publishRunNumber int64
-	entryRevision    int64
-	tombstone        bool
-	entry            ingressv1.IngressRoutingTableEntry
+	entryRevision int64
+	tombstone     bool
+	entry         ingressv1.IngressRoutingTableEntry
 }
 
 // RoutingTable replaces its data as one operation and rejects lookups until it
@@ -34,7 +36,7 @@ type RoutingTable struct {
 	mu          sync.RWMutex
 	initialized bool
 	revision    int64
-	routes      map[string]routingTableEntry
+	routes      map[string]map[routingRunKey]routingTableEntry
 }
 
 func (t *RoutingTable) ApplySnapshot(snapshot ingressv1.IngressRoutingTableSnapshot) error {
@@ -42,7 +44,7 @@ func (t *RoutingTable) ApplySnapshot(snapshot ingressv1.IngressRoutingTableSnaps
 		snapshot.RetainedAfterRevision > snapshot.ThroughRevision {
 		return fmt.Errorf("%w: snapshot bounds", ErrRoutingTableRevision)
 	}
-	routes := make(map[string]routingTableEntry, len(snapshot.Entries))
+	routes := make(map[string]map[routingRunKey]routingTableEntry)
 	for _, event := range snapshot.Entries {
 		if event.Kind != ingressv1.PublicUrlUpsert ||
 			event.RoutingTableRevision > snapshot.ThroughRevision {
@@ -51,7 +53,11 @@ func (t *RoutingTable) ApplySnapshot(snapshot ingressv1.IngressRoutingTableSnaps
 		if err := validateRoutingTableEvent(event); err != nil {
 			return err
 		}
-		target := routes
+		target := routes[event.CanonicalHostname]
+		if target == nil {
+			target = make(map[routingRunKey]routingTableEntry)
+			routes[event.CanonicalHostname] = target
+		}
 		key := routingEventKey(event)
 		if _, exists := target[key]; exists {
 			return fmt.Errorf("%w: snapshot contains duplicate hostname %q", ErrRoutingTableEvent, event.CanonicalHostname)
@@ -92,8 +98,9 @@ func (t *RoutingTable) ApplyPage(after int64, page ingressv1.IngressRoutingTable
 	if page.Events[len(page.Events)-1].RoutingTableRevision != page.NextRevision {
 		return fmt.Errorf("%w: next revision does not match page", ErrRoutingTableRevision)
 	}
-	// stored entries are immutable; only incoming entries need deep copies.
-	routes := maps.Clone(t.routes)
+	// stored buckets and entries are immutable. prepare only touched buckets,
+	// then replace the outer map after the entire page has passed validation.
+	updates := make(map[string]map[routingRunKey]routingTableEntry)
 	previousRevision := after
 	for _, event := range page.Events {
 		if event.RoutingTableRevision <= previousRevision || event.RoutingTableRevision > page.ThroughRevision {
@@ -102,11 +109,17 @@ func (t *RoutingTable) ApplyPage(after int64, page ingressv1.IngressRoutingTable
 		if err := validateRoutingTableEvent(event); err != nil {
 			return err
 		}
-		target := routes
+		target := updates[event.CanonicalHostname]
+		if target == nil {
+			target = maps.Clone(t.routes[event.CanonicalHostname])
+			if target == nil {
+				target = make(map[routingRunKey]routingTableEntry)
+			}
+			updates[event.CanonicalHostname] = target
+		}
 		key := routingEventKey(event)
-		if current, exists := target[key]; exists && current.publicURLID == event.PublicUrlId {
-			if event.PublishRunNumber < current.publishRunNumber ||
-				event.PublishRunNumber == current.publishRunNumber && event.EntryRevision <= current.entryRevision {
+		if current, exists := target[key]; exists {
+			if event.EntryRevision <= current.entryRevision {
 				return fmt.Errorf("%w: stale entry revision for hostname %q", ErrRoutingTableEvent, event.CanonicalHostname)
 			}
 			if current.entry.PublishRunClosed != nil && *current.entry.PublishRunClosed &&
@@ -118,6 +131,8 @@ func (t *RoutingTable) ApplyPage(after int64, page ingressv1.IngressRoutingTable
 		target[key] = updated
 		previousRevision = event.RoutingTableRevision
 	}
+	routes := maps.Clone(t.routes)
+	maps.Copy(routes, updates)
 	t.routes = routes
 	t.revision = page.NextRevision
 	return nil
@@ -144,12 +159,14 @@ func (t *RoutingTable) TerminalTrafficRuns(candidates []TrafficRun) map[TrafficR
 		requested[candidate] = struct{}{}
 	}
 	runs := make(map[TrafficRun]struct{})
-	for _, stored := range t.routes {
-		if stored.tombstone && stored.entry.PublishRunClosed != nil && *stored.entry.PublishRunClosed {
-			entry := stored.entry
-			run := TrafficRun{PublicURLID: entry.PublicUrlId, PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber)}
-			if _, wanted := requested[run]; wanted {
-				runs[run] = struct{}{}
+	for _, bucket := range t.routes {
+		for _, stored := range bucket {
+			if stored.tombstone && stored.entry.PublishRunClosed != nil && *stored.entry.PublishRunClosed {
+				entry := stored.entry
+				run := TrafficRun{PublicURLID: entry.PublicUrlId, PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber)}
+				if _, wanted := requested[run]; wanted {
+					runs[run] = struct{}{}
+				}
 			}
 		}
 	}
@@ -280,9 +297,9 @@ func validateRoutingTableEvent(event ingressv1.IngressRoutingTableEvent) error {
 
 func routingEntryForEvent(event ingressv1.IngressRoutingTableEvent) routingTableEntry {
 	return routingTableEntry{
-		publicURLID: event.PublicUrlId, publishRunNumber: event.PublishRunNumber, entryRevision: event.EntryRevision,
-		tombstone: event.Kind == ingressv1.PublicUrlTombstone,
-		entry:     cloneRoutingTableEntry(event.Entry),
+		entryRevision: event.EntryRevision,
+		tombstone:     event.Kind == ingressv1.PublicUrlTombstone,
+		entry:         cloneRoutingTableEntry(event.Entry),
 	}
 }
 
@@ -341,8 +358,8 @@ func cloneRoutingTableEntry(source ingressv1.IngressRoutingTableEntry) ingressv1
 	return result
 }
 
-func routingEventKey(event ingressv1.IngressRoutingTableEvent) string {
-	return event.CanonicalHostname + "/" + event.PublicUrlId + "/" + strconv.FormatInt(event.PublishRunNumber, 10)
+func routingEventKey(event ingressv1.IngressRoutingTableEvent) routingRunKey {
+	return routingRunKey{publicURLID: event.PublicUrlId, number: event.PublishRunNumber}
 }
 
 // each run has an independent projection and tombstone. a new run number must
@@ -359,10 +376,7 @@ func (t *RoutingTable) LookupAllWithReason(host string, now time.Time) ([]ingres
 	}
 	result := []ingressv1.IngressRoutingTableEntry{}
 	reason := LookupMissing
-	for _, stored := range t.routes {
-		if stored.entry.CanonicalHostname != canonical {
-			continue
-		}
+	for _, stored := range t.routes[canonical] {
 		entry, current := currentEntry(stored, true, true, now)
 		if current != LookupCurrent {
 			reason = current

@@ -92,7 +92,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 			}
 		}
 		visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
-		if _, err := d.AdmitDirectServiceVisitor(t.Context(), lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, port, netip.MustParseAddr("192.0.2.10"), now); err != nil {
+		if _, err := d.AdmitPublicServiceVisitor(t.Context(), lease.IngressLeaseIdentity, PrimaryIngressPoolID, visitor, port, netip.MustParseAddr("192.0.2.10"), now); err != nil {
 			t.Fatal(err)
 		}
 		return visitor, port
@@ -142,15 +142,15 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		guard.Close()
 	}
 	check(a, GrantTokenSource{Credential: grant.RefreshCredential}, true)
-	status, err := d.DirectServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
-	if err != nil || status.State != DirectVisitorAuthenticated {
+	status, err := d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
+	if err != nil || status.State != PublicServiceVisitorAuthenticated {
 		t.Fatal("transport bypassed promotion", status, err)
 	}
-	if err = d.PromoteDirectServiceVisitor(t.Context(), lease.IngressLeaseIdentity, visitor, now); err != nil {
+	if err = d.PromotePublicServiceVisitor(t.Context(), lease.IngressLeaseIdentity, visitor, now); err != nil {
 		t.Fatal(err)
 	}
-	status, err = d.DirectServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
-	if err != nil || status.State != DirectVisitorAllowed {
+	status, err = d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
+	if err != nil || status.State != PublicServiceVisitorAllowed {
 		t.Fatal(status, err)
 	}
 	wrongAuth := a
@@ -277,8 +277,8 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	}
 	check(a, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, false)
 	check(a, GrantTokenSource{Credential: grant.RefreshCredential}, false)
-	status, err = d.DirectServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
-	if err != nil || status.State != DirectVisitorAllowed {
+	status, err = d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
+	if err != nil || status.State != PublicServiceVisitorAllowed {
 		t.Fatal("HTTP authority changed its independent transport lease", status, err)
 	}
 }

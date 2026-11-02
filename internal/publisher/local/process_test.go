@@ -83,14 +83,15 @@ func startProcess(t *testing.T, project clientproject.Project, state *clientstat
 	}
 }
 
-func assertProcessStopped(t *testing.T, state *clientstate.Database, project clientproject.Project) {
+func assertProcessStopped(t *testing.T, state *clientstate.Database, project clientproject.Project, cursor string) {
 	t.Helper()
 	snapshot, err := app.ReadSnapshotFrom(t.Context(), state, project.Root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Events) == 0 || snapshot.Events[len(snapshot.Events)-1].Type != "runtime.stopped" {
-		t.Fatalf("shutdown did not finish the manager journal: %+v", snapshot.Events)
+	events, err := app.EventsAfterFrom(t.Context(), state, project.Root, cursor)
+	if err != nil || len(events) == 0 || events[len(events)-1].Type != "runtime.stopped" {
+		t.Fatalf("shutdown did not finish the manager journal: %+v, %v", events, err)
 	}
 	for _, service := range snapshot.Services {
 		if service.RegistrationID != "" || service.Registered || service.Routable || service.Ready {
@@ -101,6 +102,10 @@ func assertProcessStopped(t *testing.T, state *clientstate.Database, project cli
 
 func TestAppWorkflowProcessShutdownReleasesOwnershipAndPendingRegistration(t *testing.T) {
 	project, state, snapshot, path := processFixture(t)
+	initial, err := app.ReadSnapshotFrom(t.Context(), state, project.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	endpoint, stop := startProcess(t, project, state, snapshot, path)
 	_, digest, err := project.Snapshot()
 	if err != nil {
@@ -139,7 +144,7 @@ func TestAppWorkflowProcessShutdownReleasesOwnershipAndPendingRegistration(t *te
 	if Available(t.Context(), endpoint) {
 		t.Fatal("shutdown retained its HTTP listener")
 	}
-	assertProcessStopped(t, state, project)
+	assertProcessStopped(t, state, project, initial.Cursor)
 	replacement, stopReplacement := startProcess(t, project, state, snapshot, path)
 	if replacement.OwnerId == endpoint.OwnerId || replacement.Capability == endpoint.Capability {
 		t.Fatal("replacement owner reused the old capability identity")
@@ -151,6 +156,10 @@ func TestAppWorkflowProcessShutdownReleasesOwnershipAndPendingRegistration(t *te
 
 func TestAppWorkflowProcessStartupFailureReleasesLockAndStopsManager(t *testing.T) {
 	project, state, snapshot, path := processFixture(t)
+	initial, err := app.ReadSnapshotFrom(t.Context(), state, project.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// a preexisting directory forces descriptor installation to fail after the
 	// listener and manager have been constructed.
 	if err := os.Mkdir(path, 0o700); err != nil {
@@ -161,7 +170,7 @@ func TestAppWorkflowProcessStartupFailureReleasesLockAndStopsManager(t *testing.
 	if err := Serve(ctx, Options{Directory: project.Root, StateDir: state.Root(), Snapshot: bytes.NewReader(snapshot)}); err == nil {
 		t.Fatal("startup accepted an unusable descriptor path")
 	}
-	assertProcessStopped(t, state, project)
+	assertProcessStopped(t, state, project, initial.Cursor)
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}

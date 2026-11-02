@@ -25,11 +25,11 @@ WHERE leases.relay_service_id = $3
   AND leases.relay_lease_revision = $6
   AND leases.lease_expires_at > $2
   AND NOT leases.draining
-RETURNING leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at
+RETURNING leases.peer_signing_public_key, leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at
 ), relay_lease AS (
-SELECT drained_lease.id, drained_lease.relay_id, drained_lease.relay_service_id, drained_lease.relay_run_id, drained_lease.relay_lease_revision, drained_lease.protocol_version, drained_lease.internal_relay_address, drained_lease.observed_address, drained_lease.internal_networks, drained_lease.connection_capacity, drained_lease.stream_capacity, drained_lease.reported_connections, drained_lease.reported_streams, drained_lease.draining, drained_lease.drain_deadline, drained_lease.registered_at, drained_lease.renewed_at, drained_lease.lease_expires_at FROM drained_lease
+SELECT drained_lease.peer_signing_public_key, drained_lease.id, drained_lease.relay_id, drained_lease.relay_service_id, drained_lease.relay_run_id, drained_lease.relay_lease_revision, drained_lease.protocol_version, drained_lease.internal_relay_address, drained_lease.observed_address, drained_lease.internal_networks, drained_lease.connection_capacity, drained_lease.stream_capacity, drained_lease.reported_connections, drained_lease.reported_streams, drained_lease.draining, drained_lease.drain_deadline, drained_lease.registered_at, drained_lease.renewed_at, drained_lease.lease_expires_at FROM drained_lease
 UNION ALL
-SELECT leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at
+SELECT leases.peer_signing_public_key, leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at
 FROM control.relay_leases AS leases
 WHERE leases.relay_service_id = $3
   AND leases.relay_id = $4
@@ -39,7 +39,7 @@ WHERE leases.relay_service_id = $3
   AND leases.draining
   AND NOT EXISTS (SELECT FROM drained_lease)
 )
-SELECT relay_lease.id, relay_lease.relay_id, relay_lease.relay_service_id, relay_lease.relay_run_id, relay_lease.relay_lease_revision, relay_lease.protocol_version, relay_lease.internal_relay_address, relay_lease.observed_address, relay_lease.internal_networks, relay_lease.connection_capacity, relay_lease.stream_capacity, relay_lease.reported_connections, relay_lease.reported_streams, relay_lease.draining, relay_lease.drain_deadline, relay_lease.registered_at, relay_lease.renewed_at, relay_lease.lease_expires_at, services.relay_address, services.tls_server_name
+SELECT relay_lease.peer_signing_public_key, relay_lease.id, relay_lease.relay_id, relay_lease.relay_service_id, relay_lease.relay_run_id, relay_lease.relay_lease_revision, relay_lease.protocol_version, relay_lease.internal_relay_address, relay_lease.observed_address, relay_lease.internal_networks, relay_lease.connection_capacity, relay_lease.stream_capacity, relay_lease.reported_connections, relay_lease.reported_streams, relay_lease.draining, relay_lease.drain_deadline, relay_lease.registered_at, relay_lease.renewed_at, relay_lease.lease_expires_at, services.relay_address, services.tls_server_name
 FROM relay_lease
 JOIN control.relay_services AS services USING (relay_service_id)
 `
@@ -54,6 +54,7 @@ type BeginRelayDrainParams struct {
 }
 
 type BeginRelayDrainRow struct {
+	PeerSigningPublicKey []byte
 	ID                   int64
 	RelayID              string
 	RelayServiceID       string
@@ -87,6 +88,7 @@ func (q *Queries) BeginRelayDrain(ctx context.Context, arg BeginRelayDrainParams
 	)
 	var i BeginRelayDrainRow
 	err := row.Scan(
+		&i.PeerSigningPublicKey,
 		&i.ID,
 		&i.RelayID,
 		&i.RelayServiceID,
@@ -109,6 +111,71 @@ func (q *Queries) BeginRelayDrain(ctx context.Context, arg BeginRelayDrainParams
 		&i.TlsServerName,
 	)
 	return i, err
+}
+
+const bindRelayRunSigningKey = `-- name: BindRelayRunSigningKey :execrows
+INSERT INTO control.relay_run_signing_keys (relay_id, relay_run_id, peer_signing_public_key)
+VALUES ($1, $2, $3)
+ON CONFLICT (relay_id, relay_run_id) DO UPDATE SET
+    peer_signing_public_key = EXCLUDED.peer_signing_public_key
+WHERE control.relay_run_signing_keys.peer_signing_public_key = EXCLUDED.peer_signing_public_key
+`
+
+type BindRelayRunSigningKeyParams struct {
+	RelayID              string
+	RelayRunID           string
+	PeerSigningPublicKey []byte
+}
+
+// run only after RegisterRelay succeeds, inside the same transaction. on a
+// mismatched historical key the caller rolls back the lease replacement too.
+func (q *Queries) BindRelayRunSigningKey(ctx context.Context, arg BindRelayRunSigningKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, bindRelayRunSigningKey, arg.RelayID, arg.RelayRunID, arg.PeerSigningPublicKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const cleanupSupersededRelayRunSigningKeys = `-- name: CleanupSupersededRelayRunSigningKeys :execrows
+WITH candidates AS MATERIALIZED (
+    SELECT candidate.relay_id, candidate.relay_run_id FROM control.relay_run_signing_keys AS candidate
+    WHERE candidate.superseded_at < $1
+    ORDER BY candidate.superseded_at, candidate.relay_id, candidate.relay_run_id LIMIT $2
+), locked_leases AS MATERIALIZED (
+    SELECT leases.relay_id, leases.relay_run_id
+    FROM control.relay_leases AS leases
+    JOIN (SELECT DISTINCT relay_id FROM candidates) AS candidates USING (relay_id)
+    ORDER BY leases.relay_id FOR UPDATE OF leases SKIP LOCKED
+), victims AS MATERIALIZED (
+    SELECT keys.relay_id, keys.relay_run_id
+    FROM control.relay_run_signing_keys AS keys
+    JOIN candidates USING (relay_id, relay_run_id)
+    JOIN locked_leases AS leases USING (relay_id)
+    WHERE keys.superseded_at < $1
+      AND keys.relay_run_id <> leases.relay_run_id
+    ORDER BY keys.superseded_at, keys.relay_id, keys.relay_run_id
+    FOR UPDATE OF keys SKIP LOCKED
+)
+DELETE FROM control.relay_run_signing_keys AS keys
+USING victims
+WHERE keys.relay_id = victims.relay_id AND keys.relay_run_id = victims.relay_run_id
+`
+
+type CleanupSupersededRelayRunSigningKeysParams struct {
+	Cutoff    pgtype.Timestamptz
+	BatchSize int32
+}
+
+// lock the lease before key rows, as registration does. skip a relay being
+// registered: deleting its old binding before its key check would allow a
+// different key on a returning run. never delete the current run's key.
+func (q *Queries) CleanupSupersededRelayRunSigningKeys(ctx context.Context, arg CleanupSupersededRelayRunSigningKeysParams) (int64, error) {
+	result, err := q.db.Exec(ctx, cleanupSupersededRelayRunSigningKeys, arg.Cutoff, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const countOpenPublishRunAssignmentsByRelayService = `-- name: CountOpenPublishRunAssignmentsByRelayService :many
@@ -182,7 +249,7 @@ WITH service_guard AS MATERIALIZED (
     JOIN service_guard USING (relay_service_id)
     FOR SHARE OF services
 )
-SELECT leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at, services.relay_address, services.tls_server_name
+SELECT leases.peer_signing_public_key, leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at, services.relay_address, services.tls_server_name
 FROM control.relay_leases AS leases
 JOIN service AS services USING (relay_service_id)
 WHERE leases.relay_id = $1
@@ -190,6 +257,7 @@ FOR NO KEY UPDATE OF leases
 `
 
 type GetRelayLeaseForClaimRow struct {
+	PeerSigningPublicKey []byte
 	ID                   int64
 	RelayID              string
 	RelayServiceID       string
@@ -220,6 +288,7 @@ func (q *Queries) GetRelayLeaseForClaim(ctx context.Context, relayID string) (Ge
 	row := q.db.QueryRow(ctx, getRelayLeaseForClaim, relayID)
 	var i GetRelayLeaseForClaimRow
 	err := row.Scan(
+		&i.PeerSigningPublicKey,
 		&i.ID,
 		&i.RelayID,
 		&i.RelayServiceID,
@@ -256,7 +325,7 @@ WITH service_guard AS MATERIALIZED (
     JOIN service_guard USING (relay_service_id)
     FOR SHARE OF services
 )
-SELECT leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at, services.relay_address, services.tls_server_name
+SELECT leases.peer_signing_public_key, leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at, services.relay_address, services.tls_server_name
 FROM control.relay_leases AS leases
 JOIN service AS services USING (relay_service_id)
 WHERE leases.relay_id = $1
@@ -264,6 +333,7 @@ FOR KEY SHARE OF leases
 `
 
 type GetRelayLeaseForReadyRow struct {
+	PeerSigningPublicKey []byte
 	ID                   int64
 	RelayID              string
 	RelayServiceID       string
@@ -294,6 +364,7 @@ func (q *Queries) GetRelayLeaseForReady(ctx context.Context, relayID string) (Ge
 	row := q.db.QueryRow(ctx, getRelayLeaseForReady, relayID)
 	var i GetRelayLeaseForReadyRow
 	err := row.Scan(
+		&i.PeerSigningPublicKey,
 		&i.ID,
 		&i.RelayID,
 		&i.RelayServiceID,
@@ -395,7 +466,7 @@ func (q *Queries) ListRelayServiceAssignmentTotals(ctx context.Context) ([]ListR
 }
 
 const lockEligibleRelayLeases = `-- name: LockEligibleRelayLeases :many
-SELECT leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at, services.relay_address, services.tls_server_name
+SELECT leases.peer_signing_public_key, leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at, services.relay_address, services.tls_server_name
 FROM control.relay_leases AS leases
 JOIN control.relay_services AS services USING (relay_service_id)
 WHERE leases.lease_expires_at > $1
@@ -416,6 +487,7 @@ type LockEligibleRelayLeasesParams struct {
 }
 
 type LockEligibleRelayLeasesRow struct {
+	PeerSigningPublicKey []byte
 	ID                   int64
 	RelayID              string
 	RelayServiceID       string
@@ -448,6 +520,7 @@ func (q *Queries) LockEligibleRelayLeases(ctx context.Context, arg LockEligibleR
 	for rows.Next() {
 		var i LockEligibleRelayLeasesRow
 		if err := rows.Scan(
+			&i.PeerSigningPublicKey,
 			&i.ID,
 			&i.RelayID,
 			&i.RelayServiceID,
@@ -537,6 +610,28 @@ func (q *Queries) LockRelayServicesForPlacement(ctx context.Context) ([]string, 
 	return items, nil
 }
 
+const markSupersededRelayRunSigningKeys = `-- name: MarkSupersededRelayRunSigningKeys :exec
+UPDATE control.relay_run_signing_keys
+SET superseded_at = CASE WHEN relay_run_id = $1::text
+    THEN NULL ELSE $2::timestamptz END
+WHERE relay_id = $3
+  AND ((relay_run_id = $1 AND superseded_at IS NOT NULL)
+    OR (relay_run_id <> $1 AND superseded_at IS NULL))
+`
+
+type MarkSupersededRelayRunSigningKeysParams struct {
+	RelayRunID   string
+	SupersededAt pgtype.Timestamptz
+	RelayID      string
+}
+
+// registration holds the lease row lock until this update commits. a matching
+// old run clears its supersession only after it has passed lease and key checks.
+func (q *Queries) MarkSupersededRelayRunSigningKeys(ctx context.Context, arg MarkSupersededRelayRunSigningKeysParams) error {
+	_, err := q.db.Exec(ctx, markSupersededRelayRunSigningKeys, arg.RelayRunID, arg.SupersededAt, arg.RelayID)
+	return err
+}
+
 const registerRelay = `-- name: RegisterRelay :one
 WITH service_guard AS MATERIALIZED (
     SELECT pg_advisory_xact_lock(hashtextextended('tnl:relay-service:' || $1::text, 0))
@@ -567,6 +662,7 @@ INSERT INTO control.relay_leases (
     relay_service_id,
     relay_run_id,
     relay_lease_revision,
+    peer_signing_public_key,
     protocol_version,
     internal_relay_address,
     internal_networks,
@@ -581,14 +677,15 @@ SELECT
     relay_service.relay_service_id,
     $6,
     1,
-    $7,
+    $7::bytea,
     $8,
     $9,
     $10,
     $11,
-    $4,
     $12,
-    $13
+    $4,
+    $13,
+    $14
 FROM relay_service
 ON CONFLICT (relay_id) DO UPDATE SET
     relay_service_id = EXCLUDED.relay_service_id,
@@ -600,6 +697,7 @@ ON CONFLICT (relay_id) DO UPDATE SET
         ELSE control.relay_leases.relay_lease_revision + 1
     END,
     protocol_version = EXCLUDED.protocol_version,
+    peer_signing_public_key = EXCLUDED.peer_signing_public_key,
     internal_relay_address = EXCLUDED.internal_relay_address,
     internal_networks = EXCLUDED.internal_networks,
     connection_capacity = EXCLUDED.connection_capacity,
@@ -648,14 +746,19 @@ ON CONFLICT (relay_id) DO UPDATE SET
             THEN control.relay_leases.lease_expires_at
         ELSE EXCLUDED.lease_expires_at
     END
-WHERE (control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
-    OR control.relay_leases.lease_expires_at <= EXCLUDED.registered_at)
+WHERE ((control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
+    AND control.relay_leases.peer_signing_public_key IS NOT DISTINCT FROM EXCLUDED.peer_signing_public_key)
+    OR (control.relay_leases.relay_run_id <> EXCLUDED.relay_run_id
+        AND (control.relay_leases.peer_signing_public_key IS NULL
+            OR EXCLUDED.peer_signing_public_key IS NULL
+            OR control.relay_leases.peer_signing_public_key <> EXCLUDED.peer_signing_public_key)
+        AND control.relay_leases.lease_expires_at <= EXCLUDED.registered_at))
   AND NOT (control.relay_leases.relay_run_id = EXCLUDED.relay_run_id
       AND control.relay_leases.draining
       AND control.relay_leases.lease_expires_at <= EXCLUDED.registered_at)
-RETURNING id, relay_id, relay_service_id, relay_run_id, relay_lease_revision, protocol_version, internal_relay_address, observed_address, internal_networks, connection_capacity, stream_capacity, reported_connections, reported_streams, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
+RETURNING peer_signing_public_key, id, relay_id, relay_service_id, relay_run_id, relay_lease_revision, protocol_version, internal_relay_address, observed_address, internal_networks, connection_capacity, stream_capacity, reported_connections, reported_streams, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
 )
-SELECT relay_lease.id, relay_lease.relay_id, relay_lease.relay_service_id, relay_lease.relay_run_id, relay_lease.relay_lease_revision, relay_lease.protocol_version, relay_lease.internal_relay_address, relay_lease.observed_address, relay_lease.internal_networks, relay_lease.connection_capacity, relay_lease.stream_capacity, relay_lease.reported_connections, relay_lease.reported_streams, relay_lease.draining, relay_lease.drain_deadline, relay_lease.registered_at, relay_lease.renewed_at, relay_lease.lease_expires_at, relay_service.relay_address, relay_service.tls_server_name
+SELECT relay_lease.peer_signing_public_key, relay_lease.id, relay_lease.relay_id, relay_lease.relay_service_id, relay_lease.relay_run_id, relay_lease.relay_lease_revision, relay_lease.protocol_version, relay_lease.internal_relay_address, relay_lease.observed_address, relay_lease.internal_networks, relay_lease.connection_capacity, relay_lease.stream_capacity, relay_lease.reported_connections, relay_lease.reported_streams, relay_lease.draining, relay_lease.drain_deadline, relay_lease.registered_at, relay_lease.renewed_at, relay_lease.lease_expires_at, relay_service.relay_address, relay_service.tls_server_name
 FROM relay_lease
 JOIN relay_service USING (relay_service_id)
 `
@@ -667,6 +770,7 @@ type RegisterRelayParams struct {
 	RegisteredAt         pgtype.Timestamptz
 	RelayID              string
 	RelayRunID           string
+	PeerSigningPublicKey []byte
 	ProtocolVersion      int64
 	InternalRelayAddress string
 	InternalNetworks     []netip.Prefix
@@ -677,6 +781,7 @@ type RegisterRelayParams struct {
 }
 
 type RegisterRelayRow struct {
+	PeerSigningPublicKey []byte
 	ID                   int64
 	RelayID              string
 	RelayServiceID       string
@@ -712,6 +817,7 @@ func (q *Queries) RegisterRelay(ctx context.Context, arg RegisterRelayParams) (R
 		arg.RegisteredAt,
 		arg.RelayID,
 		arg.RelayRunID,
+		arg.PeerSigningPublicKey,
 		arg.ProtocolVersion,
 		arg.InternalRelayAddress,
 		arg.InternalNetworks,
@@ -722,6 +828,7 @@ func (q *Queries) RegisterRelay(ctx context.Context, arg RegisterRelayParams) (R
 	)
 	var i RegisterRelayRow
 	err := row.Scan(
+		&i.PeerSigningPublicKey,
 		&i.ID,
 		&i.RelayID,
 		&i.RelayServiceID,
@@ -759,11 +866,11 @@ WHERE leases.relay_service_id = $5
   AND leases.relay_lease_revision = $8
   AND leases.lease_expires_at > $3
   AND NOT leases.draining
-RETURNING leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at
+RETURNING leases.peer_signing_public_key, leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at
 ), relay_lease AS (
-SELECT renewed_lease.id, renewed_lease.relay_id, renewed_lease.relay_service_id, renewed_lease.relay_run_id, renewed_lease.relay_lease_revision, renewed_lease.protocol_version, renewed_lease.internal_relay_address, renewed_lease.observed_address, renewed_lease.internal_networks, renewed_lease.connection_capacity, renewed_lease.stream_capacity, renewed_lease.reported_connections, renewed_lease.reported_streams, renewed_lease.draining, renewed_lease.drain_deadline, renewed_lease.registered_at, renewed_lease.renewed_at, renewed_lease.lease_expires_at FROM renewed_lease
+SELECT renewed_lease.peer_signing_public_key, renewed_lease.id, renewed_lease.relay_id, renewed_lease.relay_service_id, renewed_lease.relay_run_id, renewed_lease.relay_lease_revision, renewed_lease.protocol_version, renewed_lease.internal_relay_address, renewed_lease.observed_address, renewed_lease.internal_networks, renewed_lease.connection_capacity, renewed_lease.stream_capacity, renewed_lease.reported_connections, renewed_lease.reported_streams, renewed_lease.draining, renewed_lease.drain_deadline, renewed_lease.registered_at, renewed_lease.renewed_at, renewed_lease.lease_expires_at FROM renewed_lease
 UNION ALL
-SELECT leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at
+SELECT leases.peer_signing_public_key, leases.id, leases.relay_id, leases.relay_service_id, leases.relay_run_id, leases.relay_lease_revision, leases.protocol_version, leases.internal_relay_address, leases.observed_address, leases.internal_networks, leases.connection_capacity, leases.stream_capacity, leases.reported_connections, leases.reported_streams, leases.draining, leases.drain_deadline, leases.registered_at, leases.renewed_at, leases.lease_expires_at
 FROM control.relay_leases AS leases
 WHERE leases.relay_service_id = $5
   AND leases.relay_id = $6
@@ -773,7 +880,7 @@ WHERE leases.relay_service_id = $5
   AND leases.draining
   AND NOT EXISTS (SELECT FROM renewed_lease)
 )
-SELECT relay_lease.id, relay_lease.relay_id, relay_lease.relay_service_id, relay_lease.relay_run_id, relay_lease.relay_lease_revision, relay_lease.protocol_version, relay_lease.internal_relay_address, relay_lease.observed_address, relay_lease.internal_networks, relay_lease.connection_capacity, relay_lease.stream_capacity, relay_lease.reported_connections, relay_lease.reported_streams, relay_lease.draining, relay_lease.drain_deadline, relay_lease.registered_at, relay_lease.renewed_at, relay_lease.lease_expires_at, services.relay_address, services.tls_server_name
+SELECT relay_lease.peer_signing_public_key, relay_lease.id, relay_lease.relay_id, relay_lease.relay_service_id, relay_lease.relay_run_id, relay_lease.relay_lease_revision, relay_lease.protocol_version, relay_lease.internal_relay_address, relay_lease.observed_address, relay_lease.internal_networks, relay_lease.connection_capacity, relay_lease.stream_capacity, relay_lease.reported_connections, relay_lease.reported_streams, relay_lease.draining, relay_lease.drain_deadline, relay_lease.registered_at, relay_lease.renewed_at, relay_lease.lease_expires_at, services.relay_address, services.tls_server_name
 FROM relay_lease
 JOIN control.relay_services AS services USING (relay_service_id)
 `
@@ -790,6 +897,7 @@ type RenewRelayParams struct {
 }
 
 type RenewRelayRow struct {
+	PeerSigningPublicKey []byte
 	ID                   int64
 	RelayID              string
 	RelayServiceID       string
@@ -825,6 +933,7 @@ func (q *Queries) RenewRelay(ctx context.Context, arg RenewRelayParams) (RenewRe
 	)
 	var i RenewRelayRow
 	err := row.Scan(
+		&i.PeerSigningPublicKey,
 		&i.ID,
 		&i.RelayID,
 		&i.RelayServiceID,

@@ -202,17 +202,17 @@ func localOperation(path string) operationName {
 	case "/v1/check":
 		return "native.app.check"
 	case "/v1/connections/attach":
-		return "native.connections.attach"
+		return "connector.connections.attach"
 	case "/v1/connections/status":
-		return "native.connections.status"
+		return "connector.connections.status"
 	case "/v1/connections/connect", "/v1/connections/prepare":
-		return "native.connections.prepare"
+		return "connector.connections.prepare"
 	case "/v1/connections/prepared":
-		return "native.connections.read"
+		return "connector.connections.read"
 	case "/v1/connections/stop":
-		return "native.connections.stop"
+		return "connector.connections.stop"
 	case "/v1/connections/kube-credential":
-		return "native.connections.credential"
+		return "connector.connections.credential"
 	}
 	return ""
 }

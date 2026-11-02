@@ -44,7 +44,7 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 	membership := authorityv1.Membership{Id: "membership_1", TeamId: "team_1", Role: authorityv1.TeamRoleMember, ManagedLabel: "ecstatic-penguin", MemberSlug: "chase"}
 	domains := []authorityv1.Domain{{Id: "domain_1", Kind: authorityv1.Managed, CanonicalDomain: "tnl.dev", State: authorityv1.DomainStateReady}}
 	current := team.NewContext(selected, membership, domains, "")
-	service, err := ConfiguredService("api", worktree, config.TNL{}, current)
+	service, err := ConfiguredService("api", worktree, clientproject.ResolvedService{}, current)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 	claimed := "studio.example.test"
 	domains = append(domains, authorityv1.Domain{Id: "domain_2", Kind: authorityv1.Custom, CanonicalDomain: claimed, State: authorityv1.DomainStateReady})
 	current = team.NewContext(selected, membership, domains, "")
-	service, err = ConfiguredService("api", worktree, config.TNL{Tunnel: &config.Tunnel{Domain: &claimed}}, current)
+	service, err = ConfiguredService("api", worktree, clientproject.ResolvedService{Tunnel: &config.Tunnel{Domain: &claimed}}, current)
 	if err != nil {
 		t.Fatal(err)
 	}

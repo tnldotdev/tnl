@@ -20,7 +20,7 @@ func (c *Client) ReportPublisherServiceObservations(ctx context.Context, runID s
 		return errors.Join(serviceaudit.ErrRejected, err)
 	}
 	for _, e := range batch.Events {
-		if e.RunID != runID || e.RunNumber != int64(number) || e.EventType != "http.decision" || e.ServiceKind != "public_url" || e.ConnectorSessionID != "" {
+		if e.RunID != runID || e.RunNumber != int64(number) || e.EventType != "http.decision" || e.ServiceKind != "public_url" || e.PairID != "" {
 			return errors.Join(serviceaudit.ErrRejected, serviceaudit.ErrInvalid)
 		}
 	}
@@ -33,27 +33,57 @@ func (c *Client) ReportPublisherServiceObservations(ctx context.Context, runID s
 		return response, err
 	})
 	if err != nil {
-		if cause := context.Cause(ctx); cause != nil {
-			return cause
+		return serviceAuditReportError(ctx, status, err)
+	}
+	return serviceaudit.ValidateAcknowledgement(result.Accepted, result.Duplicates, len(events))
+}
+
+func (c *Client) ReportServiceRunObservations(ctx context.Context, serviceID, runID string, number int64, token credentials.ServiceRunToken, batch serviceaudit.Batch) error {
+	if number < 1 || token == "" {
+		return errors.Join(serviceaudit.ErrRejected, serviceaudit.ErrInvalid)
+	}
+	events, err := serviceaudit.APIObservations(batch)
+	if err != nil {
+		return errors.Join(serviceaudit.ErrRejected, err)
+	}
+	for _, e := range batch.Events {
+		if e.ServiceID != serviceID || e.RunID != runID || e.RunNumber != number || e.ServiceKind != "service" || e.PairID == "" || e.EventType != "connection.open" && e.EventType != "connection.close" {
+			return errors.Join(serviceaudit.ErrRejected, serviceaudit.ErrInvalid)
 		}
-		// permanent status classification must survive a missing or malformed
-		// problem body too. no response bytes enter the returned error.
-		switch status {
+	}
+	status := 0
+	result, err := request[controlv1.ServiceObservationResult](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		response, err := c.api.ReportServiceRunObservations(ctx, serviceID, runID, controlv1.ServiceRunObservations{RunNumber: number, Events: events}, editors...)
+		if response != nil {
+			status = response.StatusCode
+		}
+		return response, err
+	})
+	if err != nil {
+		return serviceAuditReportError(ctx, status, err)
+	}
+	return serviceaudit.ValidateAcknowledgement(result.Accepted, result.Duplicates, len(events))
+}
+
+func serviceAuditReportError(ctx context.Context, status int, err error) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	// permanent status classification survives a missing or malformed problem
+	// body. transport errors and response bytes never enter returned text.
+	switch status {
+	case 400, 401, 403, 404, 409, 410, 413:
+		return serviceaudit.ErrRejected
+	}
+	if errors.Is(err, ErrUnauthenticated) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrStatusConflict) {
+		return serviceaudit.ErrRejected
+	}
+	var problem *ProblemError
+	if errors.As(err, &problem) {
+		switch problem.Status {
 		case 400, 401, 403, 404, 409, 410, 413:
 			return serviceaudit.ErrRejected
 		}
-		if errors.Is(err, ErrUnauthenticated) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrStatusConflict) {
-			return serviceaudit.ErrRejected
-		}
-		var problem *ProblemError
-		if errors.As(err, &problem) {
-			switch problem.Status {
-			case 400, 401, 403, 404, 409, 410, 413:
-				return serviceaudit.ErrRejected
-			}
-		}
-		// transport errors can contain a credential-bearing URL or peer data.
-		return errors.New("publisher service audit report failed")
 	}
-	return serviceaudit.ValidateAcknowledgement(result.Accepted, result.Duplicates, len(events))
+	return errors.New("publisher service audit report failed")
 }

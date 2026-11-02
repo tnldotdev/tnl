@@ -34,29 +34,48 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 	if client == nil || target == nil || target.Host == "" || connect == nil || target.Scheme != "http" && target.Scheme != "https" {
 		return ErrClosed
 	}
-	stop := context.AfterFunc(ctx, func() { _ = client.Close() })
-	defer stop()
+	callbackDone := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { defer close(callbackDone); _ = client.Close() })
+	defer func() {
+		if !stop() {
+			<-callbackDone
+		}
+	}()
 	var mu sync.Mutex
 	dialed := false
+	closed := false
 	var upstream net.Conn
 	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
 		mu.Lock()
-		defer mu.Unlock()
-		if dialed {
+		if dialed || closed {
+			mu.Unlock()
 			return nil, ErrClosed
 		}
 		dialed = true
-		var err error
-		upstream, err = connect(ctx)
-		return upstream, err
+		mu.Unlock()
+		conn, err := connect(ctx)
+		mu.Lock()
+		if closed {
+			mu.Unlock()
+			if conn != nil {
+				_ = conn.Close()
+			}
+			return nil, ErrClosed
+		}
+		upstream = conn
+		mu.Unlock()
+		return conn, err
 	}
 	transport := &http.Transport{Proxy: nil, MaxConnsPerHost: 1, MaxResponseHeaderBytes: 64 << 10, ExpectContinueTimeout: time.Second, DialContext: dial, DialTLSContext: dial}
 	defer transport.CloseIdleConnections()
 	defer func() {
 		mu.Lock()
-		defer mu.Unlock()
-		if upstream != nil {
-			_ = upstream.Close()
+		closed = true
+		conn := upstream
+		upstream = nil
+		mu.Unlock()
+		if conn != nil {
+			_ = conn.Close()
 		}
 	}()
 	proxy := &httputil.ReverseProxy{Transport: transport, FlushInterval: -1,

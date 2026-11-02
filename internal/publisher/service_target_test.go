@@ -29,9 +29,9 @@ func TestManagedVisitorTLSWithPlaintextHTTPTarget(t *testing.T) {
 	defer target.Close()
 	server := publisher.ServiceStream{Protocol: config.ProtocolHTTP, Hostname: host, Target: strings.TrimPrefix(target.URL, "http://"),
 		TLS: &tls.Config{Certificates: []tls.Certificate{certificates.server}},
-		Visitor: publisher.ConnectorVisitor{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
+		Visitor: publisher.ConnectorVisitor{Admission: publisher.NativeAdmissionFixture{Check: func(context.Context) (publisher.ServiceVisitorDecision, error) {
 			return publisher.ServiceVisitorDecision{Allowed: true, ValidUntil: time.Now().Add(time.Minute)}, nil
-		}}}
+		}}}}
 	address := managedPublisherListener(t, server)
 	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: certificates.roots, ServerName: host}}
 	defer transport.CloseIdleConnections()

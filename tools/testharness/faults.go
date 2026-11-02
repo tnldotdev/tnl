@@ -191,7 +191,7 @@ func (h *runtimeHarness) impair(ctx context.Context, started time.Time) error {
 		sources = h.activePublish
 	}
 	if path == "connector" {
-		sources, destinations = visitors, h.ingresses
+		sources = visitors
 	}
 	endpoints, err := impairmentEndpoints(path, addresses, h.ingresses, h.activePublish, visitors)
 	if err != nil {
@@ -321,7 +321,7 @@ func impairmentEndpoints(path string, addresses map[string]string, ingresses, pu
 	if path == "publisher" {
 		sources, port, protocols = publishers, "443", []string{"6", "17"}
 	} else if path == "connector" {
-		sources, destinations, port, protocols = visitors, ingresses, "443", []string{"6", "17"}
+		sources, port, protocols = visitors, "443", []string{"6", "17"}
 	} else if path != "forwarding" {
 		return nil, errors.New("invalid network path")
 	}

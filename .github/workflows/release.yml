@@ -70,7 +70,8 @@ jobs:
   archives:
     name: Publish release archives
     needs: validate
-    runs-on: ubuntu-latest
+    # pinned python 3.13.9 has no setup-python build for ubuntu 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       attestations: write
@@ -286,7 +287,8 @@ jobs:
   python:
     name: Publish Python ASGI wheels
     needs: [validate, archives]
-    runs-on: ubuntu-latest
+    # pinned python 3.13.9 has no setup-python build for ubuntu 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: pypi
     permissions:

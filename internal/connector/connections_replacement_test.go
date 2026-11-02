@@ -22,7 +22,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// real TLS and HTTP proof bytes exercise the native session boundary. provider
+// real TLS and HTTP proof bytes exercise the connector session boundary. provider
 // verification itself is covered by the signed-issuer/PG integration target.
 func TestConnectionReplacementRetainsLostExchangeKeyAndNarrowedScope(t *testing.T) {
 	runConnectionReplacement(t, false)
@@ -161,7 +161,7 @@ func runConnectionReplacement(t *testing.T, pending bool) {
 	if _, err := client.Exchange(t.Context(), team, "project", strings.Repeat("a", 64), "worker", "first", []string{"db", "removed"}); err != nil {
 		t.Fatal(err)
 	}
-	b := &nativeConnectionBackend{scope: connectorruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: []string{"db", "removed"}}, httpClient: server.Client(), nativeConnectionSession: nativeConnectionSession{workload: client, deadline: oldSession.ExpiresAt}, prepared: map[string]*preparedConnection{}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"db": {Protocol: new("postgres")}}}}}}
+	b := &connectorConnectionBackend{scope: connectorruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: []string{"db", "removed"}}, httpClient: server.Client(), connectorConnectionSession: connectorConnectionSession{workload: client, deadline: oldSession.ExpiresAt}, prepared: map[string]*preparedConnection{}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"db": {Protocol: new("postgres")}}}}}}
 	// a replacement session invalidates old snapshots without rebuilding their
 	// listeners. only a later Connect for the requested service may do that work.
 	b.prepared["db"] = &preparedConnection{ready: true, sessionID: oldID, service: controlv1.Service{Id: service, Protocol: controlv1.Postgres, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 15443}}}

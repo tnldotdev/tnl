@@ -1,4 +1,80 @@
 paths:
+  /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared:
+    post:
+      operationId: confirmConnectorPeerPairPrepared
+      description: Record the publisher's installed packet registration and inner listener under the exact run token. Recheck the delivery authority and both matching relay claims; never extend the reported binding deadline.
+      security: [{ serviceRunAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: service_run_id
+          in: path
+          required: true
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+        - name: pair_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairPrepared" }
+      responses:
+        "204": { description: Exact installed binding recorded without renewing authority }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs:
+    get:
+      operationId: listConnectorPeerPairs
+      description: Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+      security: [{ serviceRunAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: service_run_id
+          in: path
+          required: true
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+        - name: after
+          in: query
+          schema: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      responses:
+        "200":
+          description: At most 64 candidate references, ordered by pair ID
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairCandidates" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery:
+    post:
+      operationId: deliverConnectorPeerPair
+      description: Return an existing pair key only to its current publisher run after both current relay legs have claimed the same observed source. This prepares a local binding, not an application stream.
+      security: [{ serviceRunAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: service_run_id
+          in: path
+          required: true
+          schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+        - name: pair_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [delivery_generation]
+              properties:
+                delivery_generation: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "200":
+          description: Existing delivery bound to the exact active publisher run and two ready relay legs
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairDelivery" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/runs/{service_run_id}/start:
     post:
       operationId: startServiceRun
@@ -29,35 +105,10 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunSetup" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
-  /v1/services/{service_id}/runs/{service_run_id}/authorize-connector:
-    post:
-      operationId: authorizeServiceConnector
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
-        - {
-            name: service_run_id,
-            in: path,
-            required: true,
-            schema: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" },
-          }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "../openapi.yaml#/components/schemas/AuthorizeServiceConnectorRequest" }
-      responses:
-        "200":
-          description: Live permission for the exact authenticated connector admission
-          content:
-            application/json:
-              schema:
-                { $ref: "../openapi.yaml#/components/schemas/ServiceClientCertificateDecision" }
-        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/services/{service_id}/runs/{service_run_id}/authorize-client-certificate:
     post:
       operationId: authorizeServiceClientCertificate
-      description: Authenticate a direct ingress visitor after TLS key possession. Connector admissions use their authenticated session instead. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
+      description: Authenticate a public endpoint visitor after TLS key possession. Permission alone does not authorize target bytes until ingress acknowledges ordinary capacity.
       security: [{ bearerAuth: [] }]
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }

@@ -120,6 +120,9 @@ func (o Operations) Start(ctx context.Context, flags StartOptions, input *os.Fil
 			return err
 		}
 	}
+	if flags.Starting != nil {
+		flags.Starting(ctx)
+	}
 	session, err := o.OpenSession(ctx, flags.SessionOptions, "tnl connect", diagnostics)
 	if err != nil {
 		return err

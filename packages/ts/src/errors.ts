@@ -81,7 +81,7 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
   "sdk.connection_unavailable": {
     class: "unavailable",
     retry: "later",
-    message: "the native connection owner is unavailable; prepare connections again",
+    message: "the connector owner is unavailable; prepare connections again",
   },
   "sdk.connection_unprepared": {
     class: "unavailable",
@@ -92,7 +92,7 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
   "sdk.connection_server_only": {
     class: "unavailable",
     retry: "after_change",
-    message: "native connections require Node.js or Bun; call tnl.connect from server code",
+    message: "connector connections require Node.js or Bun; call tnl.connect from server code",
   },
   "sdk.workload_required": {
     class: "invalid",

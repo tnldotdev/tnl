@@ -22,7 +22,7 @@ async function main(): Promise<void> {
     binary && path.isAbsolute(binary),
     "pass the real native fixture binary as an absolute path",
   );
-  assert(process.env.TNL_CONNECTION_HANDLE, "prepare a native connection handle first");
+  assert(process.env.TNL_CONNECTION_HANDLE, "prepare a connector connection handle first");
   const run = promisify(execFile);
   const packageRoot = path.resolve(import.meta.dirname, "../../..");
   const root = path.resolve(packageRoot, "../..");

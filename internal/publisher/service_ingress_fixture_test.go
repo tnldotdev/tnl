@@ -2,7 +2,6 @@ package publisher_test
 
 import (
 	"context"
-	"crypto/tls"
 	"io"
 	"net"
 	"net/netip"
@@ -21,25 +20,24 @@ import (
 )
 
 type nativeIngressControl struct {
-	ingress.PrivateControl
 	port         int
 	service, run string
 	relays       []ingressv1.ServiceRelay
 }
 
-func (c nativeIngressControl) AdmitDirectServiceVisitor(_ context.Context, _ string, claim ingressv1.DirectServiceVisitorClaim) (ingressv1.DirectServiceVisitorAdmission, error) {
+func (c nativeIngressControl) AdmitPublicServiceVisitor(_ context.Context, _ string, claim ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {
 	if claim.DestinationPort != c.port || claim.ObservedSourceIp != "127.0.0.1" {
-		return ingressv1.DirectServiceVisitorAdmission{}, ingress.ErrServiceAdmission
+		return ingressv1.PublicServiceVisitorAdmission{}, ingress.ErrServiceAdmission
 	}
-	return ingressv1.DirectServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: c.relays}, nil
+	return ingressv1.PublicServiceVisitorAdmission{ServiceId: c.service, ServiceRunId: c.run, RunNumber: 1, VisitorConnectionId: claim.VisitorConnectionId, ExpiresAt: time.Now().Add(time.Minute), ConnectedRelays: c.relays}, nil
 }
-func (c nativeIngressControl) DirectServiceVisitorStatus(context.Context, string, ingressv1.DirectServiceVisitorLookup) (ingressv1.DirectServiceVisitorStatus, error) {
-	return ingressv1.DirectServiceVisitorStatus{State: ingressv1.DirectVisitorAllowed, ValidUntil: time.Now().Add(time.Minute)}, nil
+func (c nativeIngressControl) PublicServiceVisitorStatus(context.Context, string, ingressv1.PublicServiceVisitorLookup) (ingressv1.PublicServiceVisitorStatus, error) {
+	return ingressv1.PublicServiceVisitorStatus{State: ingressv1.PublicServiceVisitorAllowed, ValidUntil: time.Now().Add(time.Minute)}, nil
 }
-func (c nativeIngressControl) CloseDirectServiceVisitor(context.Context, string, ingressv1.DirectServiceVisitorLookup) error {
+func (c nativeIngressControl) ClosePublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorLookup) error {
 	return nil
 }
-func (c nativeIngressControl) PromoteDirectServiceVisitor(context.Context, string, ingressv1.DirectServiceVisitorLookup) error {
+func (c nativeIngressControl) PromotePublicServiceVisitor(context.Context, string, ingressv1.PublicServiceVisitorLookup) error {
 	return nil
 }
 
@@ -52,7 +50,7 @@ type nativeIngressForwarder struct {
 }
 
 func (f nativeIngressForwarder) OpenPrivate(ctx context.Context, _ ingressv1.ServiceRelay, header tunnelv1.ServiceForwardingHeader) (net.Conn, error) {
-	if header.Direct == nil || header.Direct.DestinationPort != f.port || header.Validate() != nil {
+	if header.PublicService == nil || header.PublicService.DestinationPort != f.port || header.Validate() != nil {
 		return nil, ingress.ErrServiceAdmission
 	}
 	a, b := net.Pipe()
@@ -116,13 +114,13 @@ func managedIngressListener(t *testing.T, managed publisher.ServiceStream, visit
 	if len(visitors) != 0 {
 		forwarder.visitor = visitors[0]
 	}
-	connector, err := ingress.NewConnector(ingress.ConnectorConfig{Hostname: "ingress.example.test", TLSConfig: &tls.Config{Certificates: managed.TLS.Certificates}, Control: control, DirectControl: control, Forwarder: forwarder, Routing: new(ingress.ServiceRoutingTable), CurrentLease: func() ingressv1.IngressLease { return lease }})
+	connector, err := ingress.NewPublicServices(ingress.PublicServicesConfig{Control: control, Forwarder: forwarder, CurrentLease: func() ingressv1.IngressLease { return lease }})
 	if err != nil {
 		_ = front.Close()
 		_ = backend.Close()
 		t.Fatal(err)
 	}
-	server, err := ingress.New(backend, ingress.Config{DirectOnly: true, DirectConnector: connector, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 8})
+	server, err := ingress.New(backend, ingress.Config{PublicServicesOnly: true, PublicServices: connector, RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, ServicePortRanges: []tcpport.Range{{First: port, Last: port}}, MaxConnections: 8})
 	if err != nil {
 		t.Fatal(err)
 	}

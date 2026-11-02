@@ -34,13 +34,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 var vercelArtifacts = flag.String("tnl-vercel-artifacts", "", "directory for local Vercel function artifacts and nonsecret evidence")
 var vercelLinuxNodeImage = flag.String("tnl-vercel-linux-node-image", "", "optional local digest-pinned Node 24.20.0 Linux x64 image; requires Docker host networking")
 
-// the artifact owns its native visitor process. only local infrastructure TLS
+// the artifact owns its connector visitor process. only local infrastructure TLS
 // and issuer key discovery are redirected; authority and data paths are real.
 func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
@@ -48,8 +47,7 @@ func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 		t.Skip("requires the explicit artifact directory and pinned Node 24 setup from task go:test:integration:vercel")
 	}
 	issuer := githubtest.NewProvider(t, "https://oidc.vercel.com/acme")
-	opened := make(chan privateObservation, 256)
-	f := newServiceRuntimeFixtureTiming(t, false, opened, false, func(_ *daemonconfig.Config, tr *http.Transport, _ *testCertificateAuthority) {
+	f := newServiceRuntimeFixtureTiming(t, false, nil, false, func(_ *daemonconfig.Config, tr *http.Transport, _ *testCertificateAuthority) {
 		base := tr.Clone()
 		t.Cleanup(base.CloseIdleConnections)
 		tr.RegisterProtocol("https", splitACMERoundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -59,9 +57,6 @@ func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 			return base.RoundTrip(r)
 		}))
 	})
-	for slot := range 2 {
-		startSeparatedPrivateIngress(t, f, slot, "tls-tcp", opened)
-	}
 	var targets atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		targets.Add(1)
@@ -250,15 +245,25 @@ func TestIntegrationWorkloadVercelFunction(t *testing.T) {
 		t.Log(strings.TrimSpace(string(result)))
 	}
 	seen := map[string]bool{}
-	for len(opened) > 0 {
-		o := <-opened
-		if o.header.Connector == nil || o.header.Connector.Subject.Kind != tunnelv1.VisitorWorkloadSession {
-			t.Fatal("artifact bytes bypassed workload connector admission")
-		}
-		seen[services[o.header.ServiceID]] = true
+	rows, err := f.inspect.QueryContext(t.Context(), `SELECT DISTINCT pair.service_id FROM control.connector_peer_pairs pair
+		WHERE pair.subject_kind='workload_session' AND pair.publisher_prepared_until IS NOT NULL
+		AND (SELECT count(*)=2 AND bool_and(host(source_ip)='127.0.0.1') FROM control.connector_peer_pair_leg_claims claim WHERE claim.pair_id=pair.id)`)
+	if err != nil {
+		t.Fatal(err)
 	}
+	for rows.Next() {
+		var service string
+		if err := rows.Scan(&service); err != nil {
+			t.Fatal(err)
+		}
+		seen[services[service]] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	rows.Close()
 	if !seen["api"] || !seen["database"] {
-		t.Fatal("missing real ingress/relay/publisher evidence", seen)
+		t.Fatal("missing installed workload pair and exact relay socket claims", seen)
 	}
 	var humans int
 	if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.visitor_devices`).Scan(&humans); err != nil || humans != 0 {

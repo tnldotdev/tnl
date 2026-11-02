@@ -2664,10 +2664,6 @@
           "type": "string",
           "description": "Public visitor TCP listen address."
         },
-        "ingress_udp_listen": {
-          "type": "string",
-          "description": "Private connector QUIC listen address for split ingress; defaults to the ingress TCP bind address."
-        },
         "relay_tcp_listen": {
           "type": "string",
           "description": "Public TLS/TCP publisher-connection listen address."

@@ -122,7 +122,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	`).Scan(&relayServices, &relayLeases, &ingressLeases); err != nil {
 		t.Fatal(err)
 	}
-	if relayServices != 2 || relayLeases != 2 || ingressLeases != 2 {
+	if relayServices != 2 || relayLeases != 2 || ingressLeases != 1 {
 		t.Fatalf("standalone topology = %d relay services, %d relay leases, %d ingress leases", relayServices, relayLeases, ingressLeases)
 	}
 

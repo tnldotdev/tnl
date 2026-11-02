@@ -13,10 +13,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 )
 
-type VisitorIPGrantInput struct {
-	Prefix    string     `json:"prefix"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-}
 type VisitorIPGrant struct {
 	ID        string     `json:"id"`
 	Prefix    string     `json:"prefix"`
@@ -179,105 +175,6 @@ func (d *Database) ReplaceVisitorAccess(ctx context.Context, urlID, actorID stri
 		return PublicURL{}, err
 	}
 	return result, nil
-}
-
-func (d *Database) MutateVisitorIPs(ctx context.Context, urlID, actorID, operation, removeID string, input []VisitorIPGrantInput, now time.Time) (result []VisitorIPGrant, retErr error) {
-	if len(input) > 256 || operation != "set" && operation != "add" && operation != "remove" && operation != "list" {
-		return nil, ErrPublicURLInvalid
-	}
-	for _, item := range input {
-		prefix, err := netip.ParsePrefix(item.Prefix)
-		if err != nil || prefix != prefix.Masked() || prefix.Addr().Is4In6() || prefix.Addr().Zone() != "" || item.ExpiresAt != nil && !item.ExpiresAt.After(now) {
-			return nil, ErrPublicURLInvalid
-		}
-	}
-	tx, err := d.pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer rollback(ctx, tx, "mutate visitor IP set", &retErr)()
-	q := controlstatedb.New(tx)
-	url, err := lockVisitorURL(ctx, q, urlID)
-	if err != nil {
-		return nil, err
-	}
-	if err = visitorManager(ctx, q, url, actorID); err != nil {
-		return nil, err
-	}
-	if operation != "list" {
-		if err = rejectProjectManagedDefinition(ctx, tx, urlID); err != nil {
-			return nil, err
-		}
-	}
-	initialized, err := q.HasVisitorIPSet(ctx, urlID)
-	if err != nil {
-		return nil, err
-	}
-	if operation == "list" && !initialized && url.IpPolicy == "allow_all" {
-		return []VisitorIPGrant{}, tx.Commit(ctx)
-	}
-	// the first add/list imports the existing explicit IP policy into the live set.
-	if !initialized && operation != "set" {
-		prefixes, err := d.openIPPolicy(urlID, url.AllowedIpPolicyStorageKeyID.String, url.AllowedIpPolicyCiphertext)
-		if err != nil {
-			return nil, err
-		}
-		for _, prefix := range prefixes {
-			input = append(input, VisitorIPGrantInput{Prefix: prefix.String()})
-		}
-	}
-	if operation == "set" {
-		if err = q.RevokeVisitorIPGrants(ctx, controlstatedb.RevokeVisitorIPGrantsParams{PublicURLID: urlID, RevokedAt: timestamptz(now)}); err != nil {
-			return nil, err
-		}
-	}
-	if operation == "remove" {
-		count, err := q.RemoveVisitorIPGrant(ctx, controlstatedb.RemoveVisitorIPGrantParams{PublicURLID: urlID, ID: removeID, RevokedAt: timestamptz(now)})
-		if err != nil {
-			return nil, err
-		}
-		if count == 0 {
-			return nil, ErrShareNotFound
-		}
-	}
-	for _, item := range input {
-		id, err := opaqueid.New(opaqueid.SharePrefix)
-		if err != nil {
-			return nil, err
-		}
-		cipher, err := d.storageKey.Seal(ipGrantContext(urlID, id), []byte(item.Prefix))
-		if err != nil {
-			return nil, err
-		}
-		if err = q.CreateVisitorIPGrant(ctx, controlstatedb.CreateVisitorIPGrantParams{ID: id, PublicURLID: urlID, PrefixCiphertext: cipher, StorageKeyID: d.storageKey.CurrentID(), CreatedAt: timestamptz(now), ExpiresAt: nullableTime(item.ExpiresAt)}); err != nil {
-			return nil, err
-		}
-	}
-	if operation != "list" || !initialized {
-		if err = q.MarkVisitorIPSet(ctx, urlID); err != nil {
-			return nil, err
-		}
-		if err = d.refreshVisitorIPPolicy(ctx, q, urlID, now, operation != "list"); err != nil {
-			return nil, err
-		}
-	}
-	result, err = d.readVisitorIPs(ctx, q, urlID, now)
-	if err != nil {
-		return nil, err
-	}
-	if len(result) > 256 {
-		return nil, ErrPublicURLInvalid
-	}
-	if operation != "list" {
-		updated, err := q.LockPublicURLForRun(ctx, urlID)
-		if err != nil {
-			return nil, err
-		}
-		if err = auditPublicMutation(ctx, tx, urlID, actorID, "service.update", "ip/"+strconv.FormatInt(updated.MutationRevision, 10), now); err != nil {
-			return nil, err
-		}
-	}
-	return result, tx.Commit(ctx)
 }
 
 // ExpireVisitorIPs is replica-safe and bounded. call it from the control worker
