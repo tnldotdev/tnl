@@ -38,8 +38,8 @@ one local `tnl` process composes both capabilities.
 | Composition and development | `internal/daemon`, `internal/client`, static config and shared leaves; test/build/generator/Task ownership                                                                                  | [development architecture](development/architecture.md) |
 | Releases and artifacts      | SDK/native packages, archives, wheels, installer, action, and deployment handoff                                                                                                            | [release architecture](releases/architecture.md)        |
 
-`cmd/tnl` owns command input and presentation, `cmd/tnld` starts the daemon, and
-`cmd/tnlbench` drives shared benchmark workloads. An executable does not determine
+`cmd/tnl` owns command input and presentation, and `cmd/tnld` starts the daemon.
+An executable does not determine
 the role of everything it calls: `tnl publish` composes publisher operations,
 `tnl connect` composes connector operations, and `tnl apply` sends control an
 evaluated configuration. The daemon composes control, ingress, and relay.

@@ -34,10 +34,10 @@ type InspectionRecord struct {
 	MySQLErrorCode      int64                `json:"mysql_error_code,omitempty"`
 }
 
-// InspectionRecordFromSummary maps observation fields without choosing a storage
-// policy. callers retain their protocol-specific result handling.
+// InspectionRecordFromSummary maps observations to the saved inspection shape.
+// http outcomes are derived from status when read, not stored as a result.
 func InspectionRecordFromSummary(summary inspection.Summary) InspectionRecord {
-	return InspectionRecord{
+	record := InspectionRecord{
 		Protocol: summary.Protocol, ReceivedAt: summary.ReceivedAt,
 		Method: summary.Method, Path: summary.Path, Status: summary.Status,
 		DurationMS: summary.Duration.Milliseconds(), Origin: summary.Origin,
@@ -45,6 +45,10 @@ func InspectionRecordFromSummary(summary inspection.Summary) InspectionRecord {
 		SQLState: summary.SQLState, Rows: summary.Rows,
 		ResultSets: int64(summary.ResultSets), MySQLErrorCode: int64(summary.MySQLErrorCode),
 	}
+	if summary.Protocol == inspection.HTTP {
+		record.Result = ""
+	}
+	return record
 }
 
 // InspectionRecorder drops observations instead of blocking visitor traffic.

@@ -332,9 +332,8 @@ Frames follow this general form:
 
 # codebase and contracts
 
-`cmd/tnl` is the client CLI, `cmd/tnld` is the server process, and
-`cmd/tnlbench` is the benchmark driver. Product releases contain `tnl` and
-`tnld`. Follow [contributor architecture](docs/maintainers/architecture.md)
+`cmd/tnl` is the client CLI and `cmd/tnld` is the server process. Product
+releases contain `tnl` and `tnld`. Follow [contributor architecture](docs/maintainers/architecture.md)
 for runtime invariants, trust boundaries, and package/API ownership. Put
 operational procedures and current capability limits in
 [self-hosting](https://tnl.dev/docs/self-hosting).
@@ -355,7 +354,7 @@ implementation.
 
 | Tree                                                                | Responsibility                                                                                                                                                      |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cmd/{tnl,tnld,tnlbench}`                                           | Flags, process composition, and presentation; reusable operations live below commands                                                                               |
+| `cmd/{tnl,tnld}`                                                    | Flags, process composition, and presentation; reusable operations live below commands                                                                               |
 | `internal/publisher`                                                | Publication runtime; children own app state, local process/API, invocation operations, identity, groups, targets, and browser assets                                |
 | `internal/connector`                                                | Visitor-side selection, connector owner and connection operations; `stream`, `runtime`, `workload`, and `kubeconfig` own their narrower lifetimes                   |
 | `internal/control`                                                  | Serving APIs, PostgreSQL state, authorization, certificates, DNS, OIDC, delivery, and maintenance                                                                   |
@@ -435,8 +434,8 @@ When adding or changing errors, follow [failure boundaries](docs/maintainers/dev
 - Routine tests cover deterministic invariants without external infrastructure.
 - Integration tests use the smallest real setup needed to verify a boundary.
 - Runtime tests use one separated local topology and default to small smoke workloads.
-- Large load and fault sweeps and deployed benchmarks are explicit opt-in runs.
-- Local and deployed benchmarks share publisher, visitor, and measurement implementations.
+- Large load and fault sweeps are explicit opt-in runs.
+- Local load tests share publisher, visitor, and measurement implementations.
 - Add coverage at the lowest sufficient layer; migrate unique assertions before retiring overlapping tests.
 - Colocate Go unit and white-box integration tests with their implementation, including daemon composition proofs. Put built-CLI black-box suites in `tests/integration/<boundary>` and shared subprocess/Compose assets in `tests/integration/fixtures`. Keep package-local `testdata` with its owner and shared helpers in test-only `internal/testutil` children. SDK suites and fixtures live under `packages/ts/test`; Python remains under `packages/py`.
 
@@ -444,7 +443,6 @@ When adding or changing errors, follow [failure boundaries](docs/maintainers/dev
 
 - The local stack order is `task local:up`, `task local:trust`, then `task local:login`. `local:trust` modifies the macOS login keychain; `local:down` preserves state, while `local:reset` removes trust, containers, volumes, and `.local`.
 - When AWS SSO expires, prefer `mise exec -- aws sso login --profile <profile> --no-browser --use-device-code`. If terminal output is buffered while the command polls, run it in the background with a private temporary log outside the repo and promptly give the user the prefilled `.../#/device?user_code=...` URL printed by AWS CLI. After approval, verify with `mise exec -- aws sts get-caller-identity --profile <profile>`; do not store the code in the repo or bypass authentication.
-- Never execute a deployed benchmark without explicit approval for its server and workload. Planning is read-only, but execution requires an explicit control URL, `BENCH_SUITE`, and `BENCH_APPROVED=1` and creates public URLs on the selected server. Explicit continuing approval covers retries of the same plan during one debugging session; ask again if the server, suite, or workload overrides change.
 - For release/version/tag work, load and follow `.agents/skills/tnl-release/SKILL.md`; do not duplicate or improvise its approval gates.
 - Keep GitHub Actions SHA-pinned with explicit permissions, timeouts, and `persist-credentials: false`; retain `actionlint` and `zizmor` checks.
 - CI publishes release artifacts and images but does not deploy production. Production Compose images must remain digest-pinned.

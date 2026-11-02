@@ -173,24 +173,6 @@ tasks:
     cmds:
       - task: workloads:go:test:load:connect
 
-  go:bench:plan:
-    dir: "{{.ROOT_DIR}}"
-    desc: Describe a local workload against an explicit tnl server without creating resources
-    cmds:
-      - task: workloads:go:bench:plan
-
-  go:bench:run:
-    dir: "{{.ROOT_DIR}}"
-    desc: Run an explicitly approved benchmark against the selected tnl server
-    cmds:
-      - task: workloads:go:bench:run
-
-  go:bench:report:
-    dir: "{{.ROOT_DIR}}"
-    desc: Display results from a deployed benchmark
-    cmds:
-      - task: workloads:go:bench:report
-
   package:
     dir: "{{.ROOT_DIR}}"
     desc: Build a local release snapshot

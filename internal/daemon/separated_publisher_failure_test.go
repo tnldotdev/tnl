@@ -42,7 +42,7 @@ func captureSeparatedPublisherFailure(database *sql.DB, index int) error {
 	LEFT JOIN LATERAL (SELECT * FROM control.acme_orders WHERE public_url_id = r.id ORDER BY created_at DESC LIMIT 1) o ON true
 	LEFT JOIN LATERAL (SELECT count(*) AS ready FROM control.publish_run_connection_slots
 		WHERE publish_run_id = s.id AND state = 'ready') connections ON true
-	WHERE r.canonical_hostname LIKE $1 LIMIT 1`, fmt.Sprintf("tnlbench-r%06d.%%", index)).Scan(&state)
+	WHERE r.canonical_hostname LIKE $1 LIMIT 1`, fmt.Sprintf("tnl-load-r%06d.%%", index)).Scan(&state)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}

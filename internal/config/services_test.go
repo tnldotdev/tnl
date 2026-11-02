@@ -210,8 +210,17 @@ func TestNativeResolutionHelpersSelectProtocolAndInspection(t *testing.T) {
 		t.Fatalf("HTTP=%+v TCP=%+v", http, tcp)
 	}
 	policy, err := ResolveInspection(nil, "tcp")
-	if err != nil || policy.Mode != "summary" || policy.Retention != 24*time.Hour || policy.MaxBytes != 64<<20 {
+	if err != nil || policy.Mode != "none" || policy.Retention != 24*time.Hour || policy.MaxBytes != 64<<20 {
 		t.Fatalf("inspection=%+v: %v", policy, err)
+	}
+	mode := InspectionSummary
+	policy, err = ResolveInspection(&Inspection{Mode: &mode}, "postgres")
+	if err != nil || policy.Mode != "none" {
+		t.Fatalf("TCP inspection=%+v: %v", policy, err)
+	}
+	policy, err = ResolveInspection(nil, "http")
+	if err != nil || policy.Mode != "summary" {
+		t.Fatalf("HTTP inspection=%+v: %v", policy, err)
 	}
 	policy, err = ResolveInspection(nil, "ssh")
 	if err == nil {

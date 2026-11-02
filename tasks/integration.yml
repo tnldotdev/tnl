@@ -45,14 +45,6 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./internal/daemon -run='^TestIntegrationWorkloadHTTP' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
-  provider-http:
-    dir: "{{.ROOT_DIR}}"
-    desc: Check shared native workload SDK/IPC and real workload HTTP certificate boundaries locally
-    cmds:
-      - task: :js:test:connections
-      - task: :go:test:connections
-      - task: :go:test:integration:workload-http
-
   http-services:
     dir: "{{.ROOT_DIR}}"
     desc: Check applied HTTP settings, visitor admission, and service HTTP streams with disposable PostgreSQL
@@ -81,27 +73,10 @@ tasks:
 
   connections:
     dir: "{{.ROOT_DIR}}"
-    desc: Migrate disposable PostgreSQL with real Drizzle Kit and prepared connector options
+    desc: Check the built connector owner and SDK through prepared HTTP and Kubernetes connections
     deps: [":js:build"]
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionDrizzleKit$' -count=1 -timeout=6m -args -tnl-test-tier=integration
-
-  vercel:
-    dir: "{{.ROOT_DIR}}"
-    desc: Qualify workload-owned Vercel Node 24 artifacts against real local server roles and disposable PostgreSQL
-    deps: [":js:build"]
-    preconditions:
-      - sh: |
-          node -e 'process.exit(process.versions.node === "24.20.0" ? 0 : 1)'
-        msg: "Put pinned Node 24.20.0 on PATH (locally use mise exec node@24.20.0 -- task go:test:integration:vercel)"
-    vars:
-      ARTIFACTS: '{{default (printf "%s/.local/vercel-function-check" .ROOT_DIR) .ARTIFACTS}}'
-      LINUX_NODE_IMAGE: '{{default "" .LINUX_NODE_IMAGE}}'
-    cmds:
-      - pnpm --dir tools/vercel-function-check install --frozen-lockfile
-      - pnpm --dir tools/vercel-function-check typecheck
-      - pnpm exec oxlint --deny-warnings --report-unused-disable-directives tools/vercel-function-check/*.ts
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadVercelFunction$' -count=1 -timeout=10m -args -tnl-test-tier=integration -tnl-vercel-artifacts='{{.ARTIFACTS}}' -tnl-vercel-linux-node-image='{{.LINUX_NODE_IMAGE}}'
+      - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwner(HTTP|Kubernetes)$' -count=1 -timeout=6m -args -tnl-test-tier=integration
 
   kubernetes:
     dir: "{{.ROOT_DIR}}"
@@ -232,11 +207,11 @@ tasks:
 
   tcp-clients:
     dir: "{{.ROOT_DIR}}"
-    desc: Verify database client TLS, cancellation boundaries, and selected lifetimes with disposable providers
+    desc: Check PostgreSQL and MySQL SDK queries over verified TLS and selected connection lifetimes
     deps: [":js:build"]
     cmds:
-      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher -run='{{.RUN | default "^TestIntegration(ManagedDatabaseProviders|InstalledDatabaseDrivers|ManagedPostgres)"}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
-      - go -C tools/testharness run . mysql-tls -- go test -race -v ./internal/publisher -run='^TestIntegration(ManagedDatabaseProviders|InstalledDatabaseDrivers)/mysql' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher -run='{{.RUN | default "^TestIntegration(ManagedDatabaseProviders|DatabaseSDKSmoke|ManagedPostgres)"}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . mysql-tls -- go test -race -v ./internal/publisher -run='^TestIntegration(ManagedDatabaseProviders|DatabaseSDKSmoke)/mysql' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   tcp-lifecycle:
     dir: "{{.ROOT_DIR}}"

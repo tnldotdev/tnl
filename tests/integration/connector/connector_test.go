@@ -12,15 +12,16 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,7 +30,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -37,8 +37,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/connectorfixture"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
-	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
-	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -51,21 +49,12 @@ import (
 // carriers. no saved human state or external service participates.
 func TestIntegrationConnectionConnectorOwnerHTTP(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	runConnectionNativeOwner(t, "", "http", true)
+	runConnectionNativeOwner(t, "http", true)
 }
 
 func TestIntegrationConnectionConnectorOwnerKubernetes(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	runConnectionNativeOwner(t, "", "kubernetes", true)
-}
-
-func TestIntegrationConnectionDrizzleKit(t *testing.T) {
-	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	for _, public := range []bool{true, false} {
-		t.Run(map[bool]string{true: "public", false: "private"}[public], func(t *testing.T) {
-			runConnectionNativeOwner(t, testutil.NewDisposablePostgresDatabaseURL(t, "connection_drizzle"), "postgres", public)
-		})
-	}
+	runConnectionNativeOwner(t, "kubernetes", true)
 }
 
 type connectorConnectionFixture struct {
@@ -76,12 +65,9 @@ type connectorConnectionFixture struct {
 	Stop     func()
 }
 
-func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public bool, qualify ...func(connectorConnectionFixture)) {
+func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualify ...func(connectorConnectionFixture)) {
 	t.Helper()
 	serviceName := "api"
-	if databaseURL != "" {
-		serviceName = "database"
-	}
 	if protocol == "kubernetes" {
 		serviceName = "cluster"
 	}
@@ -156,51 +142,6 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 	_, portString, _ := net.SplitHostPort(application.Listener.Addr().String())
 	port, _ := strconv.Atoi(portString)
 	providerAddress := application.Listener.Addr().String()
-	if databaseURL != "" {
-		listener, err := net.Listen("tcp4", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer listener.Close()
-		port = listener.Addr().(*net.TCPAddr).Port
-		providerAddress = listener.Addr().String()
-		backend, err := url.Parse(databaseURL)
-		if err != nil {
-			t.Fatal(err)
-		}
-		go func() {
-			for {
-				connection, err := listener.Accept()
-				if err != nil {
-					return
-				}
-				go func() {
-					defer connection.Close()
-					_ = connection.SetDeadline(time.Now().Add(20 * time.Second))
-					var sslRequest [8]byte
-					if _, err := io.ReadFull(connection, sslRequest[:]); err != nil {
-						return
-					}
-					if sslRequest != targettransport.PostgresSSLRequest {
-						return
-					}
-					if _, err := connection.Write([]byte{'S'}); err != nil {
-						return
-					}
-					secured := tls.Server(connection, application.TLS)
-					if err := secured.HandshakeContext(t.Context()); err != nil {
-						return
-					}
-					provider, err := net.DialTimeout("tcp", backend.Host, 3*time.Second)
-					if err != nil {
-						return
-					}
-					defer provider.Close()
-					_, _ = streamcopy.Copy(secured, provider)
-				}()
-			}
-		}()
-	}
 	team, _ := opaqueid.New(opaqueid.TeamPrefix)
 	service, _ := opaqueid.New(opaqueid.ServicePrefix)
 	sessionID, _ := opaqueid.New("wls_")
@@ -346,9 +287,6 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 		t.Fatal(err)
 	}
 	target := "http://unused.invalid:3000"
-	if protocol == "postgres" {
-		target = "unused.invalid:5432"
-	}
 	targetDefinition := map[string]any{"type": "address", "address": target}
 	if protocol == "kubernetes" {
 		targetDefinition = map[string]any{"type": "eks", "cluster": "fixture", "region": "us-east-1"}
@@ -369,6 +307,33 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("native build: %v %s", err, output)
 	}
+	// the SDK resolves its native package by platform and matching version.
+	// supply this test's built binary without installing an unrelated ORM.
+	manifest, err := os.ReadFile("../../../packages/ts/package.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sdk struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(manifest, &sdk); err != nil {
+		t.Fatal(err)
+	}
+	arch := runtime.GOARCH
+	if arch == "amd64" {
+		arch = "x64"
+	}
+	packageName := fmt.Sprintf("tnl-%s-%s", runtime.GOOS, arch)
+	packageDir := filepath.Join(root, "node_modules", "@tnldotdev", packageName)
+	if err := os.MkdirAll(filepath.Join(packageDir, "bin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageDir, "package.json"), []byte(fmt.Sprintf(`{"name":"@tnldotdev/%s","version":%q}`, packageName, sdk.Version)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(binary, filepath.Join(packageDir, "bin", "tnl")); err != nil {
+		t.Fatal(err)
+	}
 	caPath := filepath.Join(root, "root.pem")
 	if err := os.WriteFile(caPath, caPEM, 0o600); err != nil {
 		t.Fatal(err)
@@ -379,7 +344,7 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 			env = append(env, value)
 		}
 	}
-	env = append(env, "SSL_CERT_FILE="+caPath, "NODE_EXTRA_CA_CERTS="+caPath)
+	env = append(env, "SSL_CERT_FILE="+caPath, "NODE_EXTRA_CA_CERTS="+caPath, "NODE_PATH="+filepath.Join(root, "node_modules"))
 	var traceMu sync.Mutex
 	var spans []*tracepb.Span
 	collector := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -559,37 +524,12 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 			t.Fatal("kubeconfig lost separate dial host and TLS identity", string(data))
 		}
 	}
-	if databaseURL != "" {
-		backend, err := url.Parse(databaseURL)
-		if err != nil {
-			t.Fatal(err)
-		}
-		password, _ := backend.User.Password()
-		if err := os.MkdirAll(filepath.Join(root, "migrations/meta"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, "migrations/meta/_journal.json"), []byte(`{"version":"7","dialect":"postgresql","entries":[{"idx":0,"version":"7","when":1700000000000,"tag":"0000_sdk","breakpoints":true}]}`), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, "migrations/0000_sdk.sql"), []byte("CREATE TABLE sdk_migration (id integer PRIMARY KEY);"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		fixture, err := filepath.Abs("../../../packages/ts/test/fixtures/connections/installed-drizzle.ts")
-		if err != nil {
-			t.Fatal(err)
-		}
-		node := exec.CommandContext(t.Context(), "node", fixture, binary)
-		node.Dir, node.Env = root, append(slices.Clone(env), "TNL_CONNECTION_HANDLE="+state.ConnectionHandle, "DB_USER="+backend.User.Username(), "DB_PASSWORD="+password, "DB_NAME="+strings.TrimPrefix(backend.Path, "/"))
-		if output, err := node.CombinedOutput(); err != nil {
-			t.Fatalf("installed Drizzle Kit: %s", drizzleFixtureFailure(output))
-		}
-	}
 	if protocol == "http" || protocol == "kubernetes" {
-		fixture, err := filepath.Abs("../../../packages/ts/test/fixtures/connections/installed-drizzle.ts")
+		fixture, err := filepath.Abs("../../../packages/ts/test/fixtures/connections/native-runtime.ts")
 		if err != nil {
 			t.Fatal(err)
 		}
-		node := exec.CommandContext(t.Context(), "node", fixture, binary, protocol)
+		node := exec.CommandContext(t.Context(), "node", fixture, protocol)
 		node.Dir, node.Env = root, append(slices.Clone(env), "TNL_CONNECTION_HANDLE="+state.ConnectionHandle)
 		if output, err := node.CombinedOutput(); err != nil {
 			t.Fatalf("native SDK runtime: %v %s", err, output)
@@ -597,17 +537,6 @@ func runConnectionNativeOwner(t *testing.T, databaseURL, protocol string, public
 	}
 	if protocol == "http" && visits.Load() != 4 || protocol == "kubernetes" && visits.Load() != 1 {
 		t.Fatal("SDK requests were not delivered exactly once")
-	}
-	if databaseURL != "" {
-		database, err := pgx.Connect(t.Context(), databaseURL)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer database.Close(context.Background())
-		var table string
-		if err := database.QueryRow(t.Context(), "SELECT to_regclass('public.sdk_migration')::text").Scan(&table); err != nil || table != "sdk_migration" {
-			t.Fatalf("Drizzle Kit did not apply migration: %v", err)
-		}
 	}
 	for _, check := range qualify {
 		check(connectorConnectionFixture{Handle: state.ConnectionHandle, Env: slices.Clone(env), WrongTLS: &wrongTLS, Canceled: &canceled, Stop: func() {
