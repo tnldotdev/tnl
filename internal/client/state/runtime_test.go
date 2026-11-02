@@ -52,18 +52,19 @@ func TestRuntimeJournalUnifiesAppNamedAndDirectPublications(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(next.Publications) != 2 || len(next.Services) != 1 || len(next.Events) != 8 {
+	history, err := snapshotEvents(t.Context(), database, next)
+	if err != nil || len(next.Publications) != 2 || len(next.Services) != 1 || len(history) != 8 {
 		t.Fatalf("unified snapshot: %#v", next)
 	}
-	if next.Events[len(next.Events)-1].Cursor != next.Cursor {
+	if history[len(history)-1].Cursor != next.Cursor {
 		t.Fatal("snapshot/event cursor mismatch")
 	}
 	events, err := database.RuntimeEventsAfter(t.Context(), project, app.Cursor)
 	if err != nil || len(events) != 7 {
 		t.Fatalf("exclusive resume: %d, %v", len(events), err)
 	}
-	for index := 1; index < len(next.Events); index++ {
-		if next.Events[index].Cursor <= next.Events[index-1].Cursor {
+	for index := 1; index < len(history); index++ {
+		if history[index].Cursor <= history[index-1].Cursor {
 			t.Fatal("cursor did not increase")
 		}
 	}
@@ -89,7 +90,8 @@ func TestRuntimeUpdateRollsBackSnapshotCursorAndEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Cursor != initial.Cursor || len(got.Services) != 0 || len(got.Events) != 0 {
+	history, err := database.RuntimeEventsAfter(t.Context(), project, initial.Cursor)
+	if err != nil || got.Cursor != initial.Cursor || len(got.Services) != 0 || len(history) != 0 {
 		t.Fatalf("partial transaction: %#v", got)
 	}
 }
@@ -124,7 +126,12 @@ func TestRuntimeConcurrentConnectionsAndRestart(t *testing.T) {
 				readerDone <- err
 				return
 			}
-			if len(snapshot.Events) > 0 && snapshot.Events[len(snapshot.Events)-1].Cursor != snapshot.Cursor {
+			history, err := snapshotEvents(t.Context(), first, snapshot)
+			if err != nil {
+				readerDone <- err
+				return
+			}
+			if len(history) > 0 && history[len(history)-1].Cursor != snapshot.Cursor {
 				readerDone <- errors.New("reader observed a cursor without its event")
 				return
 			}
@@ -140,7 +147,12 @@ func TestRuntimeConcurrentConnectionsAndRestart(t *testing.T) {
 					errorsFound <- err
 					return
 				}
-				if len(snapshot.Events) == 0 || snapshot.Events[len(snapshot.Events)-1].Cursor != snapshot.Cursor {
+				history, err := snapshotEvents(t.Context(), database, snapshot)
+				if err != nil {
+					errorsFound <- err
+					return
+				}
+				if len(history) == 0 || history[len(history)-1].Cursor != snapshot.Cursor {
 					errorsFound <- errors.New("inconsistent transaction")
 					return
 				}
@@ -160,11 +172,12 @@ func TestRuntimeConcurrentConnectionsAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Events) != writers*perWriter {
-		t.Fatalf("lost events: %d", len(snapshot.Events))
+	history, err := first.RuntimeEventsAfter(t.Context(), project, initial.Cursor)
+	if err != nil || len(history) != writers*perWriter {
+		t.Fatalf("lost events: %d, %v", len(history), err)
 	}
-	for index := 1; index < len(snapshot.Events); index++ {
-		if snapshot.Events[index].Cursor <= snapshot.Events[index-1].Cursor {
+	for index := 1; index < len(history); index++ {
+		if history[index].Cursor <= history[index-1].Cursor {
 			t.Fatal("duplicate/reversed cursor")
 		}
 	}
@@ -257,12 +270,12 @@ func TestRuntimeRetentionCountBytesAndAuthoredStaleCursor(t *testing.T) {
 			if row.EventCount != retained || row.EventBytes != used {
 				t.Fatalf("retention accounting drift: count %d/%d, bytes %d/%d", row.EventCount, retained, row.EventBytes, used)
 			}
-			firstSequence, err := cursorSequence(latest.Events[0].Cursor, row.CursorEpoch)
+			firstSequence, err := database.queries.OldestRuntimeEvent(t.Context(), project)
 			if err != nil {
 				t.Fatal(err)
 			}
 			events, err := database.RuntimeEventsAfter(t.Context(), project, runtimeCursor(row.CursorEpoch, firstSequence-1))
-			if err != nil || len(events) != len(latest.Events) {
+			if err != nil || int64(len(events)) != retained || events[len(events)-1].Cursor != latest.Cursor {
 				t.Fatalf("retention boundary resume: %d, %v", len(events), err)
 			}
 			if _, err := database.RuntimeEventsAfter(t.Context(), project, runtimeCursor(row.CursorEpoch, row.LastSequence+1)); !errors.Is(err, ErrRuntimeCursorExpired) {
@@ -376,13 +389,14 @@ func TestRuntimeConcurrentAppSnapshotWritersCollideWithoutLostState(t *testing.T
 		t.Fatal(err)
 	}
 	want := fmt.Sprintf(`{"service":"writer-%d"}`, winner)
-	if snapshot.Cursor != committed.Cursor || len(snapshot.Services) != 1 || string(snapshot.Services[0]) != want || len(snapshot.Events) != 1 || snapshot.Events[0].Cursor != snapshot.Cursor {
+	history, err := reopened.RuntimeEventsAfter(t.Context(), project, initial.Cursor)
+	if err != nil || snapshot.Cursor != committed.Cursor || len(snapshot.Services) != 1 || string(snapshot.Services[0]) != want || len(history) != 1 || history[0].Cursor != snapshot.Cursor {
 		t.Fatalf("losing writer changed the committed state: %#v", snapshot)
 	}
 	var event struct {
 		Snapshot RuntimeSnapshot `json:"snapshot"`
 	}
-	if err := json.Unmarshal(snapshot.Events[0].Payload, &event); err != nil {
+	if err := json.Unmarshal(history[0].Payload, &event); err != nil {
 		t.Fatal(err)
 	}
 	if event.Snapshot.Cursor != snapshot.Cursor || len(event.Snapshot.Services) != 1 || string(event.Snapshot.Services[0]) != want {
@@ -425,14 +439,11 @@ func TestRuntimeCursorsCannotResumeAnotherProjectInSameDatabase(t *testing.T) {
 				if !authored || reason != failure.AppCursorExpired {
 					t.Fatalf("cross-project resume lost the authored cursor failure: %v", err)
 				}
-				if _, err := RuntimeEventsAfter(snapshot, foreign); !errors.Is(err, ErrRuntimeCursorExpired) {
-					t.Fatalf("snapshot resume accepted another project's cursor: %v", err)
-				}
 				if _, err := database.CommitRuntimeUpdate(t.Context(), snapshot.Project, RuntimeUpdate{ExpectedCursor: foreign, Services: []json.RawMessage{}, Type: "cross.project", Payload: json.RawMessage(`{}`)}); !errors.Is(err, ErrRuntimeConflict) {
 					t.Fatalf("app update accepted another project's cursor: %v", err)
 				}
 				unchanged, err := database.ReadRuntimeSnapshot(t.Context(), snapshot.Project)
-				if err != nil || unchanged.Cursor != snapshot.Cursor || len(unchanged.Events) != len(snapshot.Events) {
+				if err != nil || !reflect.DeepEqual(unchanged, snapshot) {
 					t.Fatalf("rejected cross-project operations changed state: %#v, %v", unchanged, err)
 				}
 			}
@@ -500,10 +511,14 @@ func TestRuntimePublicationEventsMatchCompleteSnapshotObservation(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
+			history, err := snapshotEvents(t.Context(), database, terminal)
+			if err != nil || len(history) == 0 {
+				t.Fatal("missing terminal event", err)
+			}
 			var event struct {
 				Publication TunnelInfo `json:"publication"`
 			}
-			if err := json.Unmarshal(terminal.Events[len(terminal.Events)-1].Payload, &event); err != nil {
+			if err := json.Unmarshal(history[len(history)-1].Payload, &event); err != nil {
 				t.Fatal(err)
 			}
 			want := ready.Publications[0]
@@ -538,10 +553,11 @@ func assertCompletePublicationEvent(t *testing.T, database *Database, project st
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Publications) != 1 || len(snapshot.Events) == 0 {
+	history, err := snapshotEvents(t.Context(), database, snapshot)
+	if err != nil || len(snapshot.Publications) != 1 || len(history) == 0 {
 		t.Fatalf("missing publication observation: %#v", snapshot)
 	}
-	latest := snapshot.Events[len(snapshot.Events)-1]
+	latest := history[len(history)-1]
 	var event struct {
 		Publication TunnelInfo `json:"publication"`
 	}
@@ -555,4 +571,26 @@ func assertCompletePublicationEvent(t *testing.T, database *Database, project st
 		t.Fatal("publication event omitted its process or mutation time")
 	}
 	return snapshot
+}
+
+// resume through the public history reader, then restrict the assertion to the
+// already committed cursor even when another test writer has advanced it.
+func snapshotEvents(ctx context.Context, database *Database, snapshot RuntimeSnapshot) ([]RuntimeEvent, error) {
+	oldest, err := database.queries.OldestRuntimeEvent(ctx, snapshot.Project)
+	if errors.Is(err, sql.ErrNoRows) {
+		return []RuntimeEvent{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	events, err := database.RuntimeEventsAfter(ctx, snapshot.Project, runtimeCursor(snapshot.Cursor[3:35], oldest-1))
+	if err != nil {
+		return nil, err
+	}
+	for index, event := range events {
+		if event.Cursor > snapshot.Cursor {
+			return events[:index], nil
+		}
+	}
+	return events, nil
 }

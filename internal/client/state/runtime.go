@@ -32,7 +32,6 @@ type RuntimeSnapshot struct {
 	ObservedAt    time.Time         `json:"observed_at"`
 	Services      []json.RawMessage `json:"services"`
 	Publications  []TunnelInfo      `json:"publications,omitempty"`
-	Events        []RuntimeEvent    `json:"-"`
 }
 
 type RuntimeEvent struct {
@@ -80,7 +79,7 @@ func expiredRuntimeCursor() error {
 	return failure.Wrap("resume local events", failure.AppCursorExpired, ErrRuntimeCursorExpired)
 }
 
-// ReadRuntimeSnapshot reads services, publications, cursor, and retained events
+// ReadRuntimeSnapshot reads services, publications, and the current cursor
 // in one transaction. an empty project is initialized under SQLite's writer lock.
 func (d *Database) ReadRuntimeSnapshot(ctx context.Context, project string) (RuntimeSnapshot, error) {
 	project, err := runtimeProject(project)
@@ -196,7 +195,7 @@ func (d *Database) CommitRuntimeUpdate(ctx context.Context, project string, upda
 	}
 	payload := update.Payload
 	if update.Snapshot {
-		view, err := d.runtimeView(ctx, queries, project, false)
+		view, err := d.readRuntimeSnapshot(ctx, queries, project)
 		if err != nil {
 			return RuntimeSnapshot{}, err
 		}
@@ -229,10 +228,6 @@ func jsonObject(value []byte) bool {
 }
 
 func (d *Database) readRuntimeSnapshot(ctx context.Context, queries *clientstatedb.Queries, project string) (RuntimeSnapshot, error) {
-	return d.runtimeView(ctx, queries, project, true)
-}
-
-func (d *Database) runtimeView(ctx context.Context, queries *clientstatedb.Queries, project string, includeEvents bool) (RuntimeSnapshot, error) {
 	row, err := queries.GetRuntimeProject(ctx, project)
 	if err != nil {
 		return RuntimeSnapshot{}, err
@@ -248,17 +243,6 @@ func (d *Database) runtimeView(ctx context.Context, queries *clientstatedb.Queri
 	observedAt := d.now().UTC()
 	for _, publication := range publications {
 		result.Publications = append(result.Publications, tunnelInfo(publication, observedAt))
-	}
-	if !includeEvents {
-		return result, nil
-	}
-	events, err := queries.ListRuntimeEvents(ctx, clientstatedb.ListRuntimeEventsParams{ProjectRoot: project, After: 0})
-	if err != nil {
-		return RuntimeSnapshot{}, err
-	}
-	result.Events = make([]RuntimeEvent, 0, len(events))
-	for _, event := range events {
-		result.Events = append(result.Events, RuntimeEvent{Cursor: runtimeCursor(row.CursorEpoch, event.Sequence), Type: event.EventType, At: unixNanoTime(event.OccurredAt), Payload: json.RawMessage(event.PayloadJson)})
 	}
 	return result, nil
 }
@@ -301,41 +285,4 @@ func (d *Database) RuntimeEventsAfter(ctx context.Context, project, cursor strin
 		result = append(result, RuntimeEvent{Cursor: runtimeCursor(row.CursorEpoch, event.Sequence), Type: event.EventType, At: unixNanoTime(event.OccurredAt), Payload: json.RawMessage(event.PayloadJson)})
 	}
 	return result, tx.Commit()
-}
-
-// RuntimeEventsAfter resumes from the exact snapshot's retained interval.
-func RuntimeEventsAfter(snapshot RuntimeSnapshot, cursor string) ([]RuntimeEvent, error) {
-	if len(snapshot.Cursor) != 52 {
-		return nil, expiredRuntimeCursor()
-	}
-	epoch := snapshot.Cursor[3:35]
-	latest, err := cursorSequence(snapshot.Cursor, epoch)
-	if err != nil {
-		return nil, err
-	}
-	after, err := cursorSequence(cursor, epoch)
-	if err != nil || after > latest {
-		return nil, expiredRuntimeCursor()
-	}
-	if len(snapshot.Events) == 0 {
-		if after != latest {
-			return nil, expiredRuntimeCursor()
-		}
-		return []RuntimeEvent{}, nil
-	}
-	first, err := cursorSequence(snapshot.Events[0].Cursor, epoch)
-	if err != nil || after < first-1 {
-		return nil, expiredRuntimeCursor()
-	}
-	result := []RuntimeEvent{}
-	for _, event := range snapshot.Events {
-		sequence, err := cursorSequence(event.Cursor, epoch)
-		if err != nil {
-			return nil, err
-		}
-		if sequence > after {
-			result = append(result, event)
-		}
-	}
-	return result, nil
 }
