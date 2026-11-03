@@ -49,10 +49,11 @@ func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
 				event.Entry.AllowedIpHashes[0].Digest = "changed"
 				event.Entry.PublisherConnections[0].RelayId = "changed"
 				*event.Entry.RecoveryEpisodeId = 99
-				entry, ok := lookup(event.CanonicalHostname, now)
-				if !ok {
-					t.Fatal("route missing after page")
+				entries, reason := lookup(event.CanonicalHostname, now)
+				if reason != LookupCurrent || len(entries) != 1 {
+					t.Fatal("route missing after page", entries, reason)
 				}
+				entry := entries[0]
 				entry.AllowedIpHashes[0].Digest = "changed"
 				entry.PublisherConnections[0].RelayId = "changed"
 				*entry.RecoveryEpisodeId = 100
@@ -78,8 +79,8 @@ func TestRoutingTablePageOwnershipAndAtomicity(t *testing.T) {
 			}
 			for _, name := range []string{"first", "second"} {
 				want := makeEvent(1, name).Entry
-				got, ok := lookup(want.CanonicalHostname, now)
-				if !ok || !reflect.DeepEqual(got, want) {
+				got, reason := lookup(want.CanonicalHostname, now)
+				if reason != LookupCurrent || !reflect.DeepEqual(got, []ingressv1.IngressRoutingTableEntry{want}) {
 					t.Fatalf("route %s changed: got %#v, want %#v", name, got, want)
 				}
 			}
@@ -106,7 +107,7 @@ func TestRoutingTablePublisherPoolTombstonesAreRunScoped(t *testing.T) {
 	if err := table.ApplySnapshot(ingressv1.IngressRoutingTableSnapshot{ThroughRevision: 2, Entries: []ingressv1.IngressRoutingTableEvent{first, second}}); err != nil {
 		t.Fatal(err)
 	}
-	entries, reason := table.LookupAllWithReason(first.CanonicalHostname, now)
+	entries, reason := table.Lookup(first.CanonicalHostname, now)
 	if reason != LookupCurrent || len(entries) != 2 {
 		t.Fatalf("pool snapshot: %+v %s", entries, reason)
 	}
@@ -117,7 +118,7 @@ func TestRoutingTablePublisherPoolTombstonesAreRunScoped(t *testing.T) {
 	if err := table.ApplyPage(2, ingressv1.IngressRoutingTablePage{ThroughRevision: 3, NextRevision: 3, Events: []ingressv1.IngressRoutingTableEvent{tombstone}}); err != nil {
 		t.Fatal(err)
 	}
-	entries, reason = table.LookupAllWithReason(first.CanonicalHostname, now)
+	entries, reason = table.Lookup(first.CanonicalHostname, now)
 	if reason != LookupCurrent || len(entries) != 1 || entries[0].PublishRunNumber != 2 {
 		t.Fatalf("sibling lost after tombstone: %+v %s", entries, reason)
 	}
@@ -161,7 +162,7 @@ func TestRoutingTableHostnameBucketsKeepPublishedViewsImmutable(t *testing.T) {
 		!reflect.DeepEqual(published[other.CanonicalHostname][routingEventKey(other)], routingEntryForEvent(other)) {
 		t.Fatal("page mutated a previously published outer map or hostname bucket")
 	}
-	entries, reason := table.LookupAllWithReason("POOL.EXAMPLE", now)
+	entries, reason := table.Lookup("POOL.EXAMPLE", now)
 	if reason != LookupCurrent || len(entries) != 3 {
 		t.Fatal("hostname bucket lost a sibling URL or publish run", entries, reason)
 	}
@@ -225,9 +226,13 @@ func TestRoutingTableAcceptsLargePublicURLIPPolicy(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	got, ok := table.Lookup(entry.CanonicalHostname, now)
-	if !ok || len(got.AllowedIpHashes) != 256 {
-		t.Fatalf("large routing table entry = %t, %d hashes", ok, len(got.AllowedIpHashes))
+	candidates, reason := table.Lookup(entry.CanonicalHostname, now)
+	if reason != LookupCurrent || len(candidates) != 1 {
+		t.Fatal("large routing table entry missing", candidates, reason)
+	}
+	got := candidates[0]
+	if len(got.AllowedIpHashes) != 256 {
+		t.Fatalf("large routing table entry = %d hashes", len(got.AllowedIpHashes))
 	}
 	entries := make([]ippolicy.Entry, len(got.AllowedIpHashes))
 	for index, value := range got.AllowedIpHashes {
@@ -308,12 +313,12 @@ func TestRoutingTableExplainsUnavailablePublicURL(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, reason := table.lookup(entry.CanonicalHostname, now)
+			_, reason := table.Lookup(entry.CanonicalHostname, now)
 			if reason != test.reason {
 				t.Fatalf("challenge lookup reason = %q, want %q", reason, test.reason)
 			}
 			if test.name == "ready" {
-				_, reason = table.lookup("missing.example", now)
+				_, reason = table.Lookup("missing.example", now)
 				if reason != "missing" {
 					t.Fatalf("missing challenge reason = %q", reason)
 				}

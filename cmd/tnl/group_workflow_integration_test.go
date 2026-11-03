@@ -1007,8 +1007,8 @@ func (f *cliWorkflow) ingress(t *testing.T, database *controlstate.Database, id 
 	if f.publicAddress == "" {
 		f.publicAddress = publicListener.Addr().String()
 	}
-	publicServer, err := ingress.New(publicListener, ingress.Config{MaxConnections: 128, LookupPool: func(host string) ([]ingress.PublicURL, ingress.LookupReason) {
-		entries, reason := controller.LookupAllWithReason(host, time.Now())
+	publicServer, err := ingress.New(publicListener, ingress.Config{MaxConnections: 128, Lookup: func(host string) ([]ingress.PublicURL, ingress.LookupReason) {
+		entries, reason := controller.Lookup(host, time.Now())
 		if reason != ingress.LookupCurrent {
 			return nil, reason
 		}

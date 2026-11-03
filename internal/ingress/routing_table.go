@@ -173,33 +173,7 @@ func (t *RoutingTable) TerminalTrafficRuns(candidates []TrafficRun) map[TrafficR
 	return runs
 }
 
-func (t *RoutingTable) Lookup(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, bool) {
-	entry, reason := t.lookup(canonicalHostname, now)
-	return entry, reason == LookupCurrent
-}
-
-func (t *RoutingTable) lookup(
-	canonicalHostname string,
-	now time.Time,
-) (ingressv1.IngressRoutingTableEntry, LookupReason) {
-	canonical, err := naming.CanonicalizeHostname(canonicalHostname)
-	if err != nil {
-		return ingressv1.IngressRoutingTableEntry{}, LookupInvalidHostname
-	}
-	entries, reason := t.LookupAllWithReason(canonical, now)
-	if len(entries) == 0 {
-		return ingressv1.IngressRoutingTableEntry{}, reason
-	}
-	return entries[0], LookupCurrent
-}
-
-func currentEntry(stored routingTableEntry, initialized, exists bool, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
-	if !initialized {
-		return ingressv1.IngressRoutingTableEntry{}, LookupUninitialized
-	}
-	if !exists {
-		return ingressv1.IngressRoutingTableEntry{}, LookupMissing
-	}
+func currentEntry(stored routingTableEntry, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
 	if stored.tombstone {
 		return ingressv1.IngressRoutingTableEntry{}, LookupTombstone
 	}
@@ -364,7 +338,7 @@ func routingEventKey(event ingressv1.IngressRoutingTableEvent) routingRunKey {
 
 // each run has an independent projection and tombstone. a new run number must
 // never erase a healthy sibling, including while its certificate is renewing.
-func (t *RoutingTable) LookupAllWithReason(host string, now time.Time) ([]ingressv1.IngressRoutingTableEntry, LookupReason) {
+func (t *RoutingTable) Lookup(host string, now time.Time) ([]ingressv1.IngressRoutingTableEntry, LookupReason) {
 	canonical, err := naming.CanonicalizeHostname(host)
 	if err != nil {
 		return nil, LookupInvalidHostname
@@ -377,7 +351,7 @@ func (t *RoutingTable) LookupAllWithReason(host string, now time.Time) ([]ingres
 	result := []ingressv1.IngressRoutingTableEntry{}
 	reason := LookupMissing
 	for _, stored := range t.routes[canonical] {
-		entry, current := currentEntry(stored, true, true, now)
+		entry, current := currentEntry(stored, now)
 		if current != LookupCurrent {
 			reason = current
 			continue
