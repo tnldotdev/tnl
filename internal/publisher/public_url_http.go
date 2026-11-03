@@ -32,6 +32,11 @@ type shareConnectionKey struct{}
 
 // NewPublicURLServer creates a public URL server served by publisher connections.
 func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) {
+	target, err := normalizeHTTPMode(config.Target, config.Handler, config.ResolveTarget, config.Mounts, config.TargetOptions, config.TargetTLSName, config.Purpose)
+	if err != nil {
+		return nil, err
+	}
+	config.Target = target
 	if config.StreamCapacity == 0 {
 		config.StreamCapacity = trafficlimits.Default().Connections
 	}

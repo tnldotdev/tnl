@@ -15,9 +15,14 @@ func (protocol PublicURLServiceProtocol) Valid() bool {
 
 // ValidCreateTarget checks how a public URL receives its local target.
 func (protocol PublicURLServiceProtocol) ValidCreateTarget(purpose PublicURLPurpose, target string, ephemeral bool) bool {
-	if !protocol.Valid() || !purpose.ValidForCreation() ||
-		target == "" && (ephemeral || purpose != PublicURLPurposeApp && purpose != PublicURLPurposeAlias) {
+	if !protocol.Valid() || !purpose.ValidForCreation() {
 		return false
 	}
-	return target == "" || authorization.ValidateTarget(target) == nil
+	if purpose == PublicURLPurposeOAuth || purpose == PublicURLPurposeWebhooks {
+		return target == "" && !ephemeral
+	}
+	if target == "" {
+		return !ephemeral && (purpose == PublicURLPurposeApp || purpose == PublicURLPurposeAlias)
+	}
+	return authorization.ValidateTarget(target) == nil
 }

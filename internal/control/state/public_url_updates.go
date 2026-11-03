@@ -50,8 +50,8 @@ func (d *Database) UpdateAuthorizedPublicURL(
 	if PublicURLLifecycleState(route.LifecycleState) != PublicURLLifecycleEnabled {
 		return PublicURL{}, ErrPublicURLNotEnabled
 	}
-	if request.Target == "" && (route.Target != "" || !PublicURLServiceProtocol(route.ServiceProtocol).ValidCreateTarget(PublicURLPurpose(route.Purpose), "", route.Ephemeral)) ||
-		request.Target != "" && route.ServiceProtocol != string(PublicURLServiceHTTP) {
+	if !PublicURLServiceProtocol(route.ServiceProtocol).ValidCreateTarget(PublicURLPurpose(route.Purpose), request.Target, route.Ephemeral) ||
+		request.Target == "" && route.Target != "" {
 		return PublicURL{}, ErrPublicURLInvalid
 	}
 	if !matchesPositiveInt64(route.MutationRevision, request.ExpectedMutationRevision) {

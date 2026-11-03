@@ -2057,7 +2057,7 @@ type CreatePublicURLRequest struct {
 	Purpose           PublicURLPurpose          `json:"purpose"`
 	ServiceProtocol   *PublicURLServiceProtocol `json:"service_protocol,omitempty"`
 
-	// Target Leave empty for a saved app or alias public URL whose publisher supplies its HTTP target locally. Ephemeral, demo, OAuth, and webhook URLs require a target.
+	// Target Must be empty for OAuth and webhook URLs, which are non-ephemeral and served by publisher handlers. May be empty for a saved app or alias public URL whose publisher supplies its HTTP target locally. Demo and ephemeral app or alias URLs require a target.
 	Target string `json:"target"`
 	TeamId TeamID `json:"team_id"`
 }
@@ -2699,7 +2699,7 @@ type PublicURL struct {
 	Purpose              PublicURLPurpose         `json:"purpose"`
 	ServiceProtocol      PublicURLServiceProtocol `json:"service_protocol"`
 
-	// Target Empty for saved app or alias public URLs whose publisher supplies its HTTP target locally.
+	// Target Empty for handler-backed OAuth and webhook URLs, and for saved app or alias public URLs whose publisher supplies its HTTP target locally.
 	Target    string    `json:"target"`
 	TeamId    TeamID    `json:"team_id"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -3612,7 +3612,7 @@ type TrafficSelection struct {
 type UpdatePublicURLRequest struct {
 	AllowedIpPrefixes []string `json:"allowed_ip_prefixes"`
 
-	// Target empty only when keeping a saved app or alias public URL targetless.
+	// Target Must remain empty for OAuth and webhook URLs. May be empty when keeping a saved app or alias public URL targetless.
 	Target string `json:"target"`
 }
 

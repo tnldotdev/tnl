@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-relay-connector-peers')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-handler-backed-integrations')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-relay-connector-peers');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-handler-backed-integrations');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -542,7 +542,8 @@ CREATE TABLE control.public_urls (
     UNIQUE (id, team_id),
     UNIQUE (id, ingress_pool_id),
     CHECK ((public_url_scope = 'member') = (membership_id IS NOT NULL)),
-    CHECK (target <> '' OR (purpose IN ('app', 'alias') AND NOT ephemeral)),
+    CHECK (CASE WHEN purpose IN ('oauth', 'webhooks') THEN target = '' AND NOT ephemeral
+                ELSE target <> '' OR (purpose IN ('app', 'alias') AND NOT ephemeral) END),
     CONSTRAINT public_urls_private_digest_check CHECK (
         (lifecycle_state = 'deleted' AND request_digest_ciphertext IS NULL AND request_digest_storage_key_id IS NULL)
         OR (lifecycle_state <> 'deleted' AND request_digest_ciphertext IS NOT NULL AND request_digest_storage_key_id IS NOT NULL)
