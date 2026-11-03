@@ -435,3 +435,6 @@ through the prepared connector owner and disposable TLS PostgreSQL/MySQL targets
 the publisher negotiates independent frontend and target TLS. the provider
 integration test also checks certificate rejection and real `psql`/`mysql`
 commands; these are smoke checks, not a promise about exact driver versions.
+`task js:pack` also loads a packed SDK through Drizzle Kit's normal TypeScript
+config loader and checks that an unprepared synchronous connection reports its
+own error. it does not run migrations or qualify a driver version.
