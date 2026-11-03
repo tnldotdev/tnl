@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -40,6 +42,7 @@ type lifecycleControl struct {
 	bad                                 error
 	approved                            *controlv1.Service
 	declaration                         controlv1.ServiceRunDeclaration
+	reports                             chan controlv1.ServiceRunHeartbeat
 }
 
 func (f *lifecycleControl) ReportServiceRunObservations(_ context.Context, service, run string, number int64, token credentials.ServiceRunToken, _ serviceaudit.Batch) error {
@@ -118,10 +121,13 @@ func (f *lifecycleControl) StartServiceRun(_ context.Context, id, run, token str
 	return setup, nil
 }
 
-func (f *lifecycleControl) HeartbeatServiceRun(_ context.Context, id, run string, token credentials.ServiceRunToken) (controlv1.ServiceRunState, error) {
+func (f *lifecycleControl) HeartbeatServiceRun(_ context.Context, id, run string, token credentials.ServiceRunToken, health controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.heartbeats++
+	if f.reports != nil {
+		f.reports <- health
+	}
 	if id != f.prep.ServiceId || run != f.prep.ServiceRunId || token.String() != f.setup.RunToken {
 		f.bad = errors.New("heartbeat used another run")
 	}
@@ -134,13 +140,13 @@ func (f *lifecycleControl) HeartbeatServiceRun(_ context.Context, id, run string
 	if f.revoke && f.heartbeats >= 2 {
 		state = "closed"
 	}
+	if !health.Healthy && state == "ready" {
+		state = "starting"
+	}
 	return controlv1.ServiceRunState{ServiceId: id, ServiceRunId: run, RunNumber: f.prep.RunNumber,
+		Healthy: &health.Healthy, StreamCapacity: &health.StreamCapacity, ActiveStreams: &health.ActiveStreams,
 		PublisherConnections: connections,
 		PublisherExpiresAt:   time.Now().Add(time.Minute), State: state}, nil
-}
-
-func (f *lifecycleControl) HeartbeatServiceRunHealth(ctx context.Context, id, run string, token credentials.ServiceRunToken, _ controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
-	return f.HeartbeatServiceRun(ctx, id, run, token)
 }
 
 func (f *lifecycleControl) CloseServiceRun(_ context.Context, id, run string, token credentials.ServiceRunToken) error {
@@ -157,6 +163,13 @@ type heldSlot struct{ stopped chan struct{} }
 
 func (s *heldSlot) Serve(ctx context.Context) error { <-ctx.Done(); return nil }
 func (s *heldSlot) Close() error                    { close(s.stopped); return nil }
+
+type transportedSlot struct {
+	*heldSlot
+	transport tunnel.Transport
+}
+
+func (s *transportedSlot) Transport() tunnel.Transport { return s.transport }
 
 func lifecycleFixture(t *testing.T) (RunConfig, *lifecycleControl) {
 	t.Helper()
@@ -190,7 +203,7 @@ func TestPrivateLifecycleKeepsTwoSlotsClosesAndRetriesExactStart(t *testing.T) {
 	config, f := lifecycleFixture(t)
 	var slots [2]*heldSlot
 	connected := make(chan struct{}, 2)
-	config.Connect = func(_ context.Context, _ *Bound, slot uint8) (SlotSession, error) {
+	config.Connect = func(_ context.Context, _ *Bound, slot uint8, _ ConnectOptions) (SlotSession, error) {
 		session := &heldSlot{stopped: make(chan struct{})}
 		slots[slot] = session
 		connected <- struct{}{}
@@ -268,6 +281,70 @@ func TestPrivateLifecycleRejectsUnapprovedProtocolOrTrustBeforePreparingRun(t *t
 	}
 }
 
+func TestPrivateLifecycleReportsTargetHealthCapacityAndActiveStreams(t *testing.T) {
+	config, f := lifecycleFixture(t)
+	f.reports = make(chan controlv1.ServiceRunHeartbeat, 32)
+	config.StreamCapacity = 3
+	var healthy atomic.Bool
+	healthy.Store(true)
+	config.Healthy = func(context.Context) bool { return healthy.Load() }
+	releases := make(chan func(), 1)
+	config.Connect = func(_ context.Context, bound *Bound, slot uint8, _ ConnectOptions) (SlotSession, error) {
+		if slot == 0 {
+			bound.mu.Lock()
+			ref := bound.prepared.connectionRef(bound.connections[slot])
+			bound.mu.Unlock()
+			release, ok := bound.reserveStream(ref)
+			if !ok {
+				return nil, ErrPrivateStream
+			}
+			releases <- release
+		}
+		return &heldSlot{stopped: make(chan struct{})}, nil
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	done := make(chan struct{})
+	var result error
+	go func() {
+		defer close(done)
+		result = Publish(ctx, config)
+	}()
+	defer func() {
+		cancel()
+		<-done
+		if result != nil {
+			t.Error(result)
+		}
+	}()
+	wait := func(want controlv1.ServiceRunHeartbeat) {
+		t.Helper()
+		for {
+			select {
+			case got := <-f.reports:
+				if got == want {
+					return
+				}
+			case <-done:
+				t.Fatal("publisher stopped before reporting health and capacity", result)
+			case <-ctx.Done():
+				t.Fatal("publisher did not report health and capacity", want)
+			}
+		}
+	}
+	wait(controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 3, ActiveStreams: 0})
+	wait(controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 3, ActiveStreams: 1})
+	healthy.Store(false)
+	wait(controlv1.ServiceRunHeartbeat{Healthy: false, StreamCapacity: 3, ActiveStreams: 1})
+	healthy.Store(true)
+	select {
+	case release := <-releases:
+		release()
+	case <-ctx.Done():
+		t.Fatal("publisher did not reserve a stream")
+	}
+	wait(controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 3, ActiveStreams: 0})
+}
+
 func TestPrivateLifecycleReplacesOnlyChangedSlotAndKeepsEndpointPlan(t *testing.T) {
 	config, f := lifecycleFixture(t)
 	// replace an established slot, not a first connection still being scheduled.
@@ -277,23 +354,41 @@ func TestPrivateLifecycleReplacesOnlyChangedSlotAndKeepsEndpointPlan(t *testing.
 		f.mu.Unlock()
 		return nil
 	}
-	connected := make(chan uint8, 4)
-	config.Connect = func(_ context.Context, bound *Bound, slot uint8) (SlotSession, error) {
+	type connection struct {
+		slot    uint8
+		options ConnectOptions
+	}
+	connected := make(chan connection, 4)
+	config.Connect = func(_ context.Context, bound *Bound, slot uint8, options ConnectOptions) (SlotSession, error) {
 		if bound.prepared.Preparation.RunNumber != f.firstStart || bound.prepared.managedHostname != f.prep.Hostname {
 			t.Error("slot replacement changed run or managed endpoint")
 		}
-		connected <- slot
-		return &heldSlot{stopped: make(chan struct{})}, nil
+		connected <- connection{slot, options}
+		transport := tunnel.TransportQUIC
+		if options.PreferTCP {
+			transport = tunnel.TransportTLSTCP
+		}
+		return &transportedSlot{heldSlot: &heldSlot{stopped: make(chan struct{})}, transport: transport}, nil
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- Publish(ctx, config) }()
 	counts := [2]int{}
+	var first ConnectOptions
 	for range 3 {
 		select {
-		case slot := <-connected:
-			counts[slot]++
+		case current := <-connected:
+			counts[current.slot]++
+			if current.options.PreferTCP != (counts[current.slot] == 2) {
+				t.Fatal("replacement did not receive its slot's transport preference", current.options.PreferTCP)
+			}
+			if first.QUIC == nil {
+				first = current.options
+			}
+			if current.options.QUIC != first.QUIC || current.options.TCP != first.TCP {
+				t.Fatal("slot retry recomposed the run's verified connectors")
+			}
 		case err := <-done:
 			t.Fatalf("run stopped on slot replacement: %v", err)
 		case <-ctx.Done():
@@ -359,7 +454,7 @@ func (f *lifecycleControl) AuthorizeServiceClientCertificate(context.Context, st
 func TestPrivateLifecycleStopsWhenControlRevokesRun(t *testing.T) {
 	config, f := lifecycleFixture(t)
 	f.revoke = true
-	config.Connect = func(_ context.Context, _ *Bound, _ uint8) (SlotSession, error) {
+	config.Connect = func(_ context.Context, _ *Bound, _ uint8, _ ConnectOptions) (SlotSession, error) {
 		return &heldSlot{stopped: make(chan struct{})}, nil
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)

@@ -134,6 +134,10 @@ func connectorInnerPair(t *testing.T, ctx context.Context, verification *tls.Con
 	return client, server
 }
 
+func serveConnectorInner(ctx context.Context, p *PeerSession, session muxsession.Session) error {
+	return p.serve(ctx, func() error { return p.serveSession(session) })
+}
+
 func TestConnectorServicePeerConsumerForwardsAndRejectsReplayLocally(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -156,11 +160,18 @@ func TestConnectorServicePeerConsumerForwardsAndRejectsReplayLocally(t *testing.
 	}()
 	b, p, verification, opening, control := connectorPeerFixture(t, target.Addr().String(), 2*time.Second)
 	audits := make(chan serviceaudit.Observation, 8)
-	b.audit = connectorAuditSink(func(o serviceaudit.Observation) bool { audits <- o; return true })
+	rejected := make(chan struct{})
+	b.audit = connectorAuditSink(func(o serviceaudit.Observation) bool {
+		audits <- o
+		if o.EventType == "connection.open" && o.Outcome == "denied" {
+			close(rejected)
+		}
+		return true
+	})
 	first, replayed := opening("F"), opening("F")
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
-	go func() { served <- p.Serve(ctx, server) }()
+	go func() { served <- serveConnectorInner(ctx, p, server) }()
 	open := func(entry tunnelv1.ConnectorPeerVisitorEntry) *tls.Conn {
 		raw, err := client.OpenStream(ctx)
 		if err != nil {
@@ -199,7 +210,7 @@ func TestConnectorServicePeerConsumerForwardsAndRejectsReplayLocally(t *testing.
 		b.mu.Unlock()
 		t.Fatal("no retained connector admission after the target replied")
 	}
-	inner, setupUntil := p.session, original.setupUntil
+	setupUntil := original.setupUntil
 	b.mu.Unlock()
 	renewal := *control
 	renewal.delivery.ObservedAt = time.Now()
@@ -226,15 +237,27 @@ func TestConnectorServicePeerConsumerForwardsAndRejectsReplayLocally(t *testing.
 	if _, err := io.ReadFull(local, got[:]); err != nil || string(got[:]) != "retain" {
 		t.Fatal("renewal changed the live target transcript", string(got[:]), err)
 	}
+	select {
+	case <-server.Done():
+		t.Fatal("renewal closed the original retained inner session")
+	default:
+	}
 	replay := open(replayed)
 	if err := replay.HandshakeContext(ctx); err == nil {
 		t.Fatal("same visitor entered twice on the retained pair")
 	}
 	_ = replay.Close()
+	// remote TLS rejection can arrive before the worker releases its pending
+	// charge. the audit follows joined cleanup, not just the stream close.
+	select {
+	case <-rejected:
+	case <-ctx.Done():
+		t.Fatal("replayed visitor cleanup did not join", ctx.Err())
+	}
 	b.mu.Lock()
 	active, pending := b.reservedStreams, b.connectorPending
 	_, retained := p.streams[original]
-	unchanged := p.session == inner && original.setupUntil.Equal(setupUntil) && len(p.seen) == 1
+	unchanged := original.setupUntil.Equal(setupUntil) && len(p.seen) == 1 && p.identity == old.peerIdentity
 	b.mu.Unlock()
 	if active != 1 || pending != 0 || !retained || !unchanged || accepted.Load() != 1 {
 		t.Fatal("renewal changed connector stream, target, replay, setup or capacity ownership", active, pending, retained, unchanged, accepted.Load())
@@ -290,18 +313,29 @@ func TestConnectorPeerRenewalCannotTransferOrReviveOwnership(t *testing.T) {
 		{"subject", func(_ *PeerSession, b *PeerBinding) { b.subject.DeviceID = "vdev_" + strings.Repeat("Z", 22) }},
 		{"source", func(_ *PeerSession, b *PeerBinding) { b.source = netip.MustParseAddr("192.0.2.2") }},
 		{"assignment", func(_ *PeerSession, b *PeerBinding) { b.relays[0].AssignmentRevision++ }},
+		{"connection", func(_ *PeerSession, b *PeerBinding) {
+			b.relays[0].PublisherConnectionId = "pc_" + strings.Repeat("Z", 22)
+		}},
+		{"relay service", func(_ *PeerSession, b *PeerBinding) { b.relays[0].RelayLease.RelayServiceId = "other-service" }},
+		{"relay process", func(_ *PeerSession, b *PeerBinding) { b.relays[0].RelayLease.RelayId = "other-process" }},
+		{"relay run", func(_ *PeerSession, b *PeerBinding) {
+			b.relays[0].RelayLease.RelayRunId = "rr_" + strings.Repeat("Z", 22)
+		}},
+		{"relay lease", func(_ *PeerSession, b *PeerBinding) { b.relays[0].RelayLease.RelayLeaseRevision++ }},
+		{"relay address", func(_ *PeerSession, b *PeerBinding) { b.relays[0].RelayAddress = "other.example.test:443" }},
+		{"relay tls name", func(_ *PeerSession, b *PeerBinding) { b.relays[0].TlsServerName = "other.example.test" }},
 		{"expired delivery", func(_ *PeerSession, b *PeerBinding) { b.until = time.Now().Add(-time.Second) }},
-		{"expired owner", func(p *PeerSession, _ *PeerBinding) { p.binding.until = time.Now().Add(-time.Second) }},
-		{"retired owner", func(p *PeerSession, _ *PeerBinding) { p.closed = true }},
-		{"unregistered owner", func(p *PeerSession, _ *PeerBinding) { delete(p.bound.connectorPeers, p.binding.pairID) }},
+		{"expired owner", func(p *PeerSession, _ *PeerBinding) { p.lease.until = time.Now().Add(-time.Second) }},
+		{"retired owner", func(p *PeerSession, _ *PeerBinding) { p.replayUntil = time.Now().Add(time.Minute) }},
+		{"unregistered owner", func(p *PeerSession, _ *PeerBinding) { delete(p.bound.connectorPeers, p.identity.pairID) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			b, p, _, _, _ := connectorPeerFixture(t, "127.0.0.1:1")
 			b.mu.Lock()
-			next := p.binding
+			next := p.bindingLocked()
 			next.until = time.Now().Add(2 * time.Minute)
 			test.change(p, &next)
-			before := p.binding
+			before := p.bindingLocked()
 			b.mu.Unlock()
 			if err := p.Renew(next); !errors.Is(err, ErrPrivateStream) {
 				t.Fatal("renewal transferred or revived peer authority", err)
@@ -315,8 +349,14 @@ func TestConnectorPeerRenewalCannotTransferOrReviveOwnership(t *testing.T) {
 
 type heldConnectorInner struct {
 	muxsession.Session
-	entered, release chan struct{}
-	once             sync.Once
+	accepting, entered, release chan struct{}
+	once                        sync.Once
+}
+
+func (s *heldConnectorInner) AcceptStream(ctx context.Context) (muxsession.Stream, error) {
+	close(s.accepting)
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func (s *heldConnectorInner) Close() error {
@@ -326,11 +366,17 @@ func (s *heldConnectorInner) Close() error {
 
 func TestConnectorHeartbeatReplacementJoinsOldInnerSession(t *testing.T) {
 	b, p, _, _, _ := connectorPeerFixture(t, "127.0.0.1:1")
-	inner := &heldConnectorInner{entered: make(chan struct{}), release: make(chan struct{})}
+	inner := &heldConnectorInner{accepting: make(chan struct{}), entered: make(chan struct{}), release: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(inner.release) })
 	defer release()
+	served := make(chan error, 1)
+	go func() { served <- serveConnectorInner(t.Context(), p, inner) }()
+	select {
+	case <-inner.accepting:
+	case <-time.After(time.Second):
+		t.Fatal("peer did not start accepting inner streams")
+	}
 	b.mu.Lock()
-	p.session = inner
 	connections := append([]controlv1.ConnectionAssignment(nil), b.connections[:]...)
 	b.mu.Unlock()
 	connections[0].PublisherConnectionId = "pc_" + strings.Repeat("Z", 22)
@@ -365,12 +411,15 @@ func TestConnectorHeartbeatReplacementJoinsOldInnerSession(t *testing.T) {
 			t.Fatal(err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("assignment replacement did not join its peer watcher")
+		t.Fatal("assignment replacement did not join its peer serving operation")
 	}
 	select {
-	case <-p.watchDone:
+	case <-p.done:
 	default:
-		t.Fatal("assignment replacement returned with an old watcher")
+		t.Fatal("assignment replacement returned with an old serving operation")
+	}
+	if err := <-served; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -390,7 +439,7 @@ func TestConnectorServiceDeniedOpeningCannotResolveOrReadMySQLTarget(t *testing.
 	entry.Permission.Token = "not-a-signed-token"
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
-	go func() { served <- p.Serve(ctx, server) }()
+	go func() { served <- serveConnectorInner(ctx, p, server) }()
 	raw, err := client.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -449,7 +498,7 @@ func TestConnectorServiceRevokedGuardFencesDialWhileStopCallbackWaits(t *testing
 	b.prepared.targetResolver = resolver
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
-	go func() { served <- p.Serve(ctx, server) }()
+	go func() { served <- serveConnectorInner(ctx, p, server) }()
 	raw, err := client.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -531,7 +580,7 @@ func TestConnectorServicePeerHTTPConsumerJoinsHandlerAndTarget(t *testing.T) {
 	}
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
-	go func() { served <- p.Serve(ctx, server) }()
+	go func() { served <- serveConnectorInner(ctx, p, server) }()
 	raw, err := client.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -622,7 +671,7 @@ func TestConnectorServiceOwnerLossFencesBeforeCloseAndRetainsCUntilJoin(t *testi
 	defer releaseClose()
 	served := make(chan error, 1)
 	go func() {
-		served <- p.Serve(ctx, &heldConnectorSessionClose{Session: server, entered: entered, release: release})
+		served <- serveConnectorInner(ctx, p, &heldConnectorSessionClose{Session: server, entered: entered, release: release})
 	}()
 	entry := opening("I")
 	raw, err := client.OpenStream(ctx)
@@ -820,7 +869,7 @@ func TestConnectorPreparationCannotPublishAfterSetupCancellation(t *testing.T) {
 	b, p, verification, opening, _ := connectorPeerFixture(t, "127.0.0.1:1")
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
-	go func() { served <- p.Serve(ctx, server) }()
+	go func() { served <- serveConnectorInner(ctx, p, server) }()
 	defer func() { p.Close(); <-served }()
 	gate := &heldConnectorPreparation{Session: client, clearing: make(chan struct{}), release: make(chan struct{}), closing: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(gate.release) })

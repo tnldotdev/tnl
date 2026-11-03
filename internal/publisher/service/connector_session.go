@@ -26,24 +26,20 @@ const maxConnectorPeerStreams = 64
 // neither a carrier change nor a sibling connector changes this owner. a new
 // pair/run needs a new owner; it cannot transfer the old owner's admissions.
 type PeerSession struct {
-	bound         *Bound
-	binding       PeerBinding
-	ctx           context.Context
-	cancel        context.CancelFunc
-	closed        bool
-	seen          map[string]struct{}
-	streams       map[*connectorAdmission]struct{}
-	session       muxsession.Session
-	started       bool
-	serve         sync.WaitGroup
-	workers       sync.WaitGroup
-	watchDone     chan struct{}
-	changed       chan struct{}
-	replayUntil   time.Time
-	packetStarted bool
-	packetReady   chan struct{}
-	packets       sync.WaitGroup
-	prepared      bool
+	bound          *Bound
+	identity       peerIdentity
+	lease          peerLease
+	ctx            context.Context
+	cancel         context.CancelFunc
+	seen           map[string]struct{}
+	streams        map[*connectorAdmission]struct{}
+	serveOnce      sync.Once
+	workers        sync.WaitGroup
+	done           chan struct{}
+	changed        chan struct{}
+	replayUntil    time.Time
+	ready          chan struct{}
+	installedUntil time.Time
 }
 
 func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession, error) {
@@ -56,8 +52,12 @@ func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession
 		return nil, ErrPrivateStream
 	}
 	for id, old := range b.connectorPeers {
-		if old.closed && !old.replayUntil.After(time.Now()) {
-			delete(b.connectorPeers, id)
+		if !old.replayUntil.IsZero() && !old.replayUntil.After(time.Now()) {
+			select {
+			case <-old.done:
+				delete(b.connectorPeers, id)
+			default:
+			}
 		}
 	}
 	if b.connectorPeers[binding.pairID] != nil || len(b.connectorPeers) >= maxConnectorPeerOwners {
@@ -67,9 +67,8 @@ func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession
 		b.connectorPeers = make(map[string]*PeerSession)
 	}
 	life, cancel := context.WithCancel(ctx)
-	p := &PeerSession{bound: b, binding: binding, ctx: life, cancel: cancel, seen: make(map[string]struct{}), streams: make(map[*connectorAdmission]struct{}), watchDone: make(chan struct{}), changed: make(chan struct{}), packetReady: make(chan struct{})}
+	p := &PeerSession{bound: b, identity: binding.peerIdentity, lease: binding.peerLease, ctx: life, cancel: cancel, seen: make(map[string]struct{}), streams: make(map[*connectorAdmission]struct{}), done: make(chan struct{}), changed: make(chan struct{}), ready: make(chan struct{})}
 	b.connectorPeers[binding.pairID] = p
-	go p.watch()
 	return p, nil
 }
 
@@ -83,31 +82,28 @@ func (p *PeerSession) Renew(binding PeerBinding) error {
 	b := p.bound
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	old := p.binding
 	valid := p.currentLocked() && b.peerCurrentLocked(binding) && b.peerRelaysCurrentLocked(binding) &&
-		binding.pairID == old.pairID && binding.serviceID == old.serviceID && binding.runID == old.runID &&
-		binding.publisherID == old.publisherID && binding.number == old.number && binding.generation == old.generation &&
-		binding.delivery == old.delivery && binding.key == old.key && binding.source == old.source && binding.subject == old.subject && binding.relays == old.relays
+		binding.peerIdentity == p.identity
 	if !valid {
 		return ErrPrivateStream
 	}
-	p.binding = binding
+	p.lease = binding.peerLease
 	close(p.changed)
 	p.changed = make(chan struct{})
 	return nil
 }
 
 func (p *PeerSession) currentLocked() bool {
-	return !p.closed && p.ctx.Err() == nil && p.bound.connectorPeers[p.binding.pairID] == p && p.bound.peerCurrentLocked(p.binding) && p.bound.peerRelaysCurrentLocked(p.binding)
+	binding := p.bindingLocked()
+	return p.replayUntil.IsZero() && p.ctx.Err() == nil && p.bound.connectorPeers[p.identity.pairID] == p && p.bound.peerCurrentLocked(binding) && p.bound.peerRelaysCurrentLocked(binding)
 }
 
 func (p *PeerSession) watch() {
-	defer close(p.watchDone)
 	defer p.stop()
 	for {
 		p.bound.mu.Lock()
 		current := p.currentLocked()
-		until, changed := p.binding.until, p.changed
+		until, changed := p.lease.until, p.changed
 		p.bound.mu.Unlock()
 		if !current {
 			return
@@ -127,76 +123,78 @@ func (p *PeerSession) watch() {
 func (p *PeerSession) bindingSnapshot() PeerBinding {
 	p.bound.mu.Lock()
 	defer p.bound.mu.Unlock()
-	return p.binding
+	return p.bindingLocked()
+}
+
+func (p *PeerSession) bindingLocked() PeerBinding {
+	return PeerBinding{peerIdentity: p.identity, peerLease: p.lease}
 }
 
 func (p *PeerSession) stop() {
 	b := p.bound
 	b.mu.Lock()
-	p.closed = true
 	if p.replayUntil.IsZero() {
 		p.replayUntil = time.Now().Add(5 * time.Minute)
 	}
-	stream := p.session
-	admissions := make([]*connectorAdmission, 0, len(p.streams))
-	for a := range p.streams {
-		a.retiring = true
-		admissions = append(admissions, a)
-	}
 	b.mu.Unlock()
 	p.cancel()
-	if stream != nil {
-		_ = stream.Close()
-	}
-	for _, a := range admissions {
-		a.cancel()
-		_ = a.closeStream()
-	}
 }
 
 func (p *PeerSession) Close() {
 	p.stop()
-	<-p.watchDone
-	p.packets.Wait()
-	p.serve.Wait()
-	p.workers.Wait()
+	// closing a reservation before Serve consumes its single serving attempt.
+	p.serveOnce.Do(func() { close(p.done) })
+	<-p.done
 }
 
-// Serve installs the actual retained inner-QUIC consumer. only control-delivered
-// bindings reach BindPeer; each application still proves its own signed visit.
-// this operation owns and joins the supplied inner session, not its carriers.
-func (p *PeerSession) Serve(ctx context.Context, session muxsession.Session) error {
-	if p == nil || session == nil {
+// Serve owns setup, the renewable deadline watch, the retained inner session,
+// and joined teardown. application streams still prove their own signed visits.
+func (p *PeerSession) Serve(ctx context.Context) error {
+	return p.serve(ctx, func() error { return p.serveRelayPackets(ctx) })
+}
+
+// setup and serving share one deadline watch and completion barrier. a setup
+// failure has the same joined retirement as a terminal inner session.
+func (p *PeerSession) serve(ctx context.Context, run func() error) error {
+	if p == nil || ctx == nil {
 		return ErrPrivateStream
 	}
-	b := p.bound
-	b.mu.Lock()
-	if p.started || ctx.Err() != nil || !p.currentLocked() {
-		b.mu.Unlock()
-		_ = session.Close()
+	started := false
+	p.serveOnce.Do(func() { started = true })
+	if !started {
 		return ErrPrivateStream
 	}
-	p.session, p.started = session, true
-	p.serve.Add(1)
-	b.mu.Unlock()
-	defer p.serve.Done()
-	defer p.stop()
-	callerDone := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() { defer close(callerDone); p.stop() })
+	stop := context.AfterFunc(ctx, p.cancel)
+	watchDone := make(chan struct{})
+	go func() { defer close(watchDone); p.watch() }()
 	defer func() {
-		if !stop() {
-			<-callerDone
-		}
+		p.stop()
+		stop()
+		<-watchDone
+		p.workers.Wait()
+		close(p.done)
 	}()
+	p.bound.mu.Lock()
+	current := ctx.Err() == nil && p.currentLocked()
+	p.bound.mu.Unlock()
+	if !current {
+		return ErrPrivateStream
+	}
+	return run()
+}
+
+func (p *PeerSession) serveSession(session muxsession.Session) error {
+	defer session.Close()
+	defer p.stop()
 	for {
 		stream, err := session.AcceptStream(p.ctx)
 		if err != nil {
-			if p.ctx.Err() != nil || ctx.Err() != nil || errors.Is(err, muxsession.ErrClosed) {
+			if p.ctx.Err() != nil || errors.Is(err, muxsession.ErrClosed) {
 				return nil
 			}
 			return err
 		}
-		a, err := p.reserve(ctx, stream)
+		a, err := p.reserve(p.ctx, stream)
 		if err != nil {
 			_ = stream.Close()
 			continue
@@ -270,8 +268,8 @@ func (a *connectorAdmission) CheckUse(ctx context.Context) (time.Time, error) {
 		return time.Time{}, ErrPrivateStream
 	}
 	until, err := a.guard.Current()
-	if a.peer.binding.until.Before(until) {
-		until = a.peer.binding.until
+	if a.peer.lease.until.Before(until) {
+		until = a.peer.lease.until
 	}
 	if !a.ready && a.setupUntil.Before(until) {
 		until = a.setupUntil

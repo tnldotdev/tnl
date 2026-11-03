@@ -50,7 +50,7 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandler(Config{}, database, database, nil)
+	handler, err := NewHandler(Config{}, DatabaseStores(database), database, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

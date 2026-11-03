@@ -3780,9 +3780,12 @@ type VisitorTokenResponse struct {
 	Port      int       `json:"port"`
 
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
-	Resource              VisitorResourceScope `json:"resource"`
-	VisitorPolicyRevision int64                `json:"visitor_policy_revision"`
-	VisitorToken          string               `json:"visitor_token"`
+	Resource VisitorResourceScope `json:"resource"`
+
+	// ServiceTrustRevision Current service metadata revision, present only for service permissions.
+	ServiceTrustRevision  *int64 `json:"service_trust_revision,omitempty"`
+	VisitorPolicyRevision int64  `json:"visitor_policy_revision"`
+	VisitorToken          string `json:"visitor_token"`
 }
 
 // VisitorTokenShareSessionSource defines model for VisitorTokenShareSessionSource.

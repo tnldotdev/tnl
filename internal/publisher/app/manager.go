@@ -119,8 +119,8 @@ func (m *Manager) Snapshot() Snapshot {
 		reg := m.registrations[service.Name]
 		current := m.serviceLocked(service.Name)
 		if service.Registered && (m.closed || reg == nil || current == nil || current.RegistrationID != service.RegistrationID || !current.Registered || time.Now().After(reg.expires) || m.Alive != nil && !m.Alive(reg.pid)) {
-			service.Registered, service.Routable, service.Ready = false, false, false
-			service.Observation, service.Failure = nil, "runtime.registration_stale"
+			service.invalidateRegistration()
+			service.Failure = "runtime.registration_stale"
 		}
 	}
 	return copy
@@ -182,7 +182,7 @@ func (m *Manager) Configure(services []Service) error {
 			next[index] = *previous
 			next[index].Directory, next[index].Readiness, next[index].ServiceProtocol = configured.Directory, configured.Readiness, configured.ServiceProtocol
 			if previous.Readiness != configured.Readiness {
-				next[index].Ready, next[index].Observation = false, nil
+				next[index].invalidateReadiness()
 			}
 		} else {
 			changed = true
@@ -240,11 +240,7 @@ func (m *Manager) Reserve(name, owner string, pid int, publicURL string) (string
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
 	}
-	service.RegistrationID = "reg_" + hex.EncodeToString(bytes)
-	service.Target, service.Framework, service.RunNumber = "", "", 0
-	service.TunnelID, service.ProvisioningStage = "", ""
-	service.Registered, service.Routable, service.Ready, service.Observation = false, false, false, nil
-	service.PublicURL, service.Failure = publicURL, ""
+	service.reserve(reservedRegistration{id: "reg_" + hex.EncodeToString(bytes), publicURL: publicURL})
 	m.registrations[name] = &registration{owner: owner, pid: pid, expires: time.Now().Add(LeaseDuration)}
 	m.idleSince = time.Time{}
 	m.emitLocked("service.prepared", service)
@@ -327,8 +323,7 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 		return nil
 	}
 	if reg.cancel != nil {
-		service.Registered, service.Routable, service.Ready = false, false, false
-		service.Observation = nil
+		service.invalidateRegistration()
 		m.emitLocked("service.replacing", service)
 		reg.cancel()
 		done := reg.done
@@ -336,10 +331,10 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 		<-done
 		m.mu.Lock()
 	}
-	service.Registered, service.Routable, service.Ready = true, false, false
-	service.Target, service.Framework, service.Failure = target, framework, ""
-	service.RunNumber, service.Observation = 0, nil
-	service.ProvisioningStage = ""
+	if err := service.bindListener(boundListener{target: target, framework: framework}); err != nil {
+		m.mu.Unlock()
+		return err
+	}
 	reg.expires = time.Now().Add(LeaseDuration)
 	ctx, cancel := context.WithCancel(observability.LinkContext(m.ctx, scheduling))
 	reg.cancel, reg.done = cancel, make(chan struct{})
@@ -349,7 +344,7 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 		cancel()
 		close(done)
 		reg.cancel = nil
-		service.Registered = false
+		service.invalidateRegistration()
 		m.mu.Unlock()
 		return err
 	}
@@ -372,8 +367,7 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 		if current == nil || current.RegistrationID != id || reg.done != done {
 			return
 		}
-		current.Routable, current.Ready = false, false
-		current.Observation, current.ProvisioningStage = nil, ""
+		current.endPublication()
 		reg.cancel = nil
 		if err != nil && ctx.Err() == nil {
 			current.Failure = "runtime.publication_failed"
@@ -404,23 +398,15 @@ func (m *Manager) publishedLocked(id string, run uint64, routable bool) error {
 		if service.RegistrationID != id || !service.Registered || reg == nil || time.Now().After(reg.expires) {
 			continue
 		}
-		if run == 0 || run < service.RunNumber || m.Alive != nil && !m.Alive(reg.pid) {
+		if m.Alive != nil && !m.Alive(reg.pid) {
 			return ErrRegistrationStale
 		}
-		if run != service.RunNumber || !routable {
-			service.Ready, service.Observation = false, nil
-			if run != service.RunNumber {
-				service.ProvisioningStage = ""
-			}
-		}
-		becameReady := routable && (!service.Routable || run != service.RunNumber)
-		service.RunNumber, service.Routable = run, routable
-		if routable {
-			service.Failure = ""
-			service.ProvisioningStage = ""
+		becameRoutable, err := service.publish(publicationUpdate{runNumber: run, routable: routable})
+		if err != nil {
+			return err
 		}
 		m.emitLocked("service.publication", service)
-		if becameReady && m.writeErr == nil {
+		if becameRoutable && m.writeErr == nil {
 			observability.ClientLifecycle(m.ctx, observability.EventPublicationReady)
 		}
 		return m.writeErr
@@ -520,23 +506,16 @@ func (m *Manager) Observe(observation Observation) bool {
 	}
 	for index := range m.snapshot.Services {
 		service := &m.snapshot.Services[index]
-		if service.RegistrationID != observation.RegistrationID || service.RunNumber != observation.RunNumber || !service.Registered || !service.Routable || observation.RunNumber == 0 {
+		if service.RegistrationID != observation.RegistrationID {
 			continue
-		}
-		if observation.Readiness != service.Readiness {
-			return false
-		}
-		if observation.Target != "" && service.Target != observation.Target {
-			return false
 		}
 		reg := m.registrations[service.Name]
 		if reg == nil || time.Now().After(reg.expires) || m.Alive != nil && !m.Alive(reg.pid) {
 			return false
 		}
-		if service.Observation != nil && observation.CheckedAt.Before(service.Observation.CheckedAt) {
+		if !service.acceptObservation(observation) {
 			return false
 		}
-		service.Ready, service.Observation = observation.Ready, &observation
 		m.emitLocked("service.readiness", service)
 		return true
 	}
@@ -617,9 +596,8 @@ func (m *Manager) unregister(id, owner string) error {
 		m.mu.Unlock()
 		return ErrRegistrationStale
 	}
-	service.Registered, service.Routable, service.Ready = false, false, false
-	service.ProvisioningStage = ""
-	service.Observation = nil
+	service.invalidateRegistration()
+	service.endPublication()
 	m.emitLocked("service.unregistered", service)
 	if reg.cancel != nil {
 		reg.cancel()
@@ -632,8 +610,7 @@ func (m *Manager) unregister(id, owner string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.registrations, service.Name)
-	service.RegistrationID, service.Target, service.TunnelID = "", "", ""
-	service.RunNumber, service.Framework = 0, ""
+	service.releaseRegistration()
 	if len(m.registrations) == 0 {
 		m.idleSince = time.Now()
 	}
@@ -647,12 +624,12 @@ func (m *Manager) TargetChanged(name, id, target string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	service := m.serviceLocked(name)
-	if m.closed || service == nil || service.RegistrationID != id || service.Target != target || !service.Registered || !service.Routable {
+	if m.closed || service == nil || service.RegistrationID != id || service.Target != target {
 		return
 	}
-	service.Ready = false
-	service.Observation = &Observation{Target: target, RegistrationID: id, RunNumber: service.RunNumber, Readiness: service.Readiness, CheckedAt: time.Now().UTC(), Reason: "runtime.target_changed"}
-	m.emitLocked("service.readiness", service)
+	if service.invalidateTarget(time.Now().UTC()) {
+		m.emitLocked("service.readiness", service)
+	}
 }
 
 // sweep uses both SDK renewal and process liveness; a TCP listener alone never

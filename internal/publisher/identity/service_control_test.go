@@ -17,12 +17,14 @@ type serviceBoundaryControl struct {
 	serviceRunControl
 	ServiceCertificateControl
 	serviceHTTPControl
-	token credentials.ServiceRunToken
-	calls int
+	token  credentials.ServiceRunToken
+	health controlv1.ServiceRunHeartbeat
+	calls  int
 }
 
-func (c *serviceBoundaryControl) HeartbeatServiceRunHealth(_ context.Context, _, _ string, token credentials.ServiceRunToken, _ controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
+func (c *serviceBoundaryControl) HeartbeatServiceRun(_ context.Context, _, _ string, token credentials.ServiceRunToken, health controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
 	c.token, c.calls = token, c.calls+1
+	c.health = health
 	return controlv1.ServiceRunState{}, nil
 }
 
@@ -40,8 +42,12 @@ func TestServiceControlBindsRunTokenAndExactScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := n.identity.serviceID
-	if _, err := n.HeartbeatServiceRunHealth(t.Context(), service, "run", token, controlv1.ServiceRunHeartbeat{}); err != nil || c.token != token || c.calls != 1 {
-		t.Fatal("service heartbeat changed its run token", err)
+	health := controlv1.ServiceRunHeartbeat{Healthy: false, StreamCapacity: 7, ActiveStreams: 3}
+	if _, err := n.HeartbeatServiceRun(t.Context(), service, "run", token, health); err != nil || c.token != token || c.health != health || c.calls != 1 {
+		t.Fatal("service heartbeat changed its run token or report", err)
+	}
+	if _, err := n.HeartbeatServiceRun(t.Context(), "another-service", "run", token, health); !errors.Is(err, ErrScope) || c.calls != 1 {
+		t.Fatal("service heartbeat escaped its grant", err)
 	}
 	if _, err := n.CheckServiceBrowserSession(t.Context(), service, "run", token, controlv1.ServiceBrowserRequest{}); err != nil || c.token != token || c.calls != 2 {
 		t.Fatal("service browser preparation changed its run token", err)

@@ -135,7 +135,7 @@ func TestIntegrationConnectorCarrierSwitchRetainsApplicationAndTarget(t *testing
 // neither transport failure nor an arbitrary protocol error is an expected stop.
 func revokedConnectorOwnerStop(err error) bool {
 	var rejected *tunnel.ProtocolError
-	return errors.Is(err, clientcontrol.ErrNotFound) || errors.Is(err, connectorstream.ErrServiceConnection) ||
+	return defaultConnectorRevocationDenied(err) || errors.Is(err, connectorstream.ErrServiceConnection) ||
 		errors.As(err, &rejected) && rejected != nil && rejected.Code == tunnelv1.Unauthenticated
 }
 
