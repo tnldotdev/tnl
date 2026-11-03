@@ -130,11 +130,9 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 			err := publisherservice.Publish(publishCtx, publisherservice.RunConfig{
 				Control: authenticated.Control, State: profile, Access: native.Access, Identity: identity,
 				ServiceID: service.Id, Target: "127.0.0.1:8080", StreamCapacity: 256,
-				Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool},
-				Ready:    func() error { close(ready); return nil },
-				Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
-					return bound.ConnectSlotWithTransports(ctx, slot, false, quicConnector, tcp)
-				},
+				Metadata:  controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool},
+				Ready:     func() error { close(ready); return nil },
+				RelayQUIC: quicConnector, RelayTCP: tcp,
 			})
 			done <- err
 			if err != nil {

@@ -65,6 +65,7 @@ type runtimeListeners struct {
 	ingress        net.Listener
 	relayInternal  net.Listener
 	relayTCP       net.Listener
+	relayUDP       net.PacketConn
 }
 
 type runtimeOptions struct {
@@ -174,6 +175,7 @@ func serveRuntime(ctx context.Context, cfg daemonconfig.Config, options runtimeO
 		settings := relayProcessSettingsFrom(cfg)
 		settings.internalListener = options.listeners.relayInternal
 		settings.tcpListener = options.listeners.relayTCP
+		settings.udpPacket = options.listeners.relayUDP
 		settings.transportTLS, err = relayTLSConfig(cfg, nil)
 		if err != nil {
 			return err
@@ -191,6 +193,7 @@ func serveRuntime(ctx context.Context, cfg daemonconfig.Config, options runtimeO
 		settings := standaloneSettingsFrom(cfg)
 		settings.control.listener = options.listeners.control
 		settings.publicListener = options.listeners.ingress
+		settings.relayUDPPacket = options.listeners.relayUDP
 		settings.relayTransportTLS, err = relayTLSConfig(cfg, nil)
 		if err != nil {
 			return err

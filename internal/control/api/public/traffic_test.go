@@ -53,7 +53,7 @@ func TestCreatePublishRunCarriesTrafficSeparatelyFromPublisherAuthority(t *testi
 	r.Header.Set("Publisher-Run-Proof", "proof")
 	w := httptest.NewRecorder()
 	defaults, ceiling := trafficlimits.Default(), trafficlimits.Ceiling()
-	(&handler{store: store, config: Config{TrafficDefaults: defaults, TrafficCeiling: ceiling, DNSAutomation: true}}).CreatePublishRun(w, r, "url", controlv1.CreatePublishRunParams{})
+	(&handler{store: store, dependencies: Stores{PublisherRuns: store}, config: Config{TrafficDefaults: defaults, TrafficCeiling: ceiling, DNSAutomation: true}}).CreatePublishRun(w, r, "url", controlv1.CreatePublishRunParams{})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create run: %d %s", w.Code, w.Body.String())
 	}

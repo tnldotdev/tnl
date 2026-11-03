@@ -33,9 +33,7 @@ func (h *handler) RenamePublisherNamespace(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	store, ok := h.store.(interface {
-		RenamePublisherNamespace(context.Context, controlstate.RenamePublisherNamespaceRequest) (controlstate.AppliedProjectConfiguration, error)
-	})
+	store, ok := h.dependencies.PublisherGroups, h.dependencies.PublisherGroups != nil
 	if !ok {
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher DNS namespace rename is unavailable")
 		return
@@ -59,9 +57,7 @@ func (h *handler) RenamePublisherGroup(w http.ResponseWriter, r *http.Request, p
 	if !ok {
 		return
 	}
-	store, ok := h.store.(interface {
-		RenamePublisherGroup(context.Context, string, string, string, string, string, int64, time.Time) (controlstate.AppliedProjectConfiguration, error)
-	})
+	store, ok := h.dependencies.PublisherGroups, h.dependencies.PublisherGroups != nil
 	if !ok {
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher group rename is unavailable")
 		return
@@ -91,7 +87,7 @@ func (h *handler) RevokePublisherGroupMember(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *handler) publisherGroupStore(w http.ResponseWriter) (PublisherGroupStore, bool) {
-	store, ok := h.store.(PublisherGroupStore)
+	store, ok := h.dependencies.PublisherGroups, h.dependencies.PublisherGroups != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "publisher groups are unavailable")
 	}

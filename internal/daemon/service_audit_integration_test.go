@@ -117,9 +117,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			ready, pubDone := make(chan struct{}), make(chan error, 1)
 			go func() {
 				pubDone <- publisherservice.Publish(pubCtx, publisherservice.RunConfig{Control: f.identity.routes, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target.address,
-					Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
-						return bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
-					}})
+					Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
 			}()
 			t.Cleanup(func() {
 				stopPub()

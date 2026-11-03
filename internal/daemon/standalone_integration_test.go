@@ -24,12 +24,13 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 	publicAddress := unusedTCPAddress(t)
 	publicControlAddress := unusedTCPAddress(t)
 	metricsAddress := unusedTCPAddress(t)
+	relayUDP := integrationPacketListener(t)
 	cfg := daemonconfig.Config{
 		ServicePortRanges: integrationServicePorts(t),
 		Role:              daemonconfig.RoleStandalone, DatabaseURL: databaseURL, MetricsListen: metricsAddress,
 		ControlListen: unusedTCPAddress(t), PrivateControlListen: "127.0.0.1:1", IngressListen: publicAddress,
 		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
-		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: unusedUDPAddress(t), InternalRelayListen: "127.0.0.1:1",
+		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: relayUDP.LocalAddr().String(), InternalRelayListen: "127.0.0.1:1",
 		ServerDomain: "tnl.test", ManagedDomain: "tunnels.test",
 		ControlTLSCertificateFile: controlCertificate.certificateFile,
 		ControlTLSPrivateKeyFile:  controlCertificate.privateKeyFile,
@@ -57,7 +58,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	startIntegrationControlProxy(t, nil, publicControlAddress, cfg.ControlListen, controlTLS)
-	process := startIntegrationProcess(t, cfg, acmeServer.Client(), serviceClient)
+	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: runtimeListeners{relayUDP: relayUDP}})
 	waitForProcessReady(t, process)
 	metricsResponse, err := http.Get("http://" + metricsAddress + "/metrics")
 	if err != nil {
@@ -169,11 +170,11 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 	ingressConfig.ClusterSecret = testClusterSecret
 	ingressConfig.IngressID = "ingress-split"
 	ingressConfig.IngressListen = unusedTCPAddress(t)
-	relayAConfig := splitTestRelayConfig(
+	relayAConfig, relayAListeners := splitTestRelayConfig(
 		t, controlHostname, "relay-a", "relay-a-1",
 		relayACertificate.certificateFile, relayACertificate.privateKeyFile,
 	)
-	relayBConfig := splitTestRelayConfig(
+	relayBConfig, relayBListeners := splitTestRelayConfig(
 		t, controlHostname, "relay-b", "relay-b-1",
 		relayBCertificate.certificateFile, relayBCertificate.privateKeyFile,
 	)
@@ -183,8 +184,8 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 		}
 	}
 	ingressProcess := startIntegrationProcess(t, ingressConfig, acmeServer.Client(), serviceClient)
-	relayAProcess := startIntegrationProcess(t, relayAConfig, acmeServer.Client(), serviceClient)
-	relayBProcess := startIntegrationProcess(t, relayBConfig, acmeServer.Client(), serviceClient)
+	relayAProcess := startIntegrationProcessWithOptions(t, relayAConfig, integrationProcessOptions{acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: relayAListeners})
+	relayBProcess := startIntegrationProcessWithOptions(t, relayBConfig, integrationProcessOptions{acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: relayBListeners})
 	for _, process := range []*integrationProcess{ingressProcess, relayAProcess, relayBProcess} {
 		waitForProcessReady(t, process)
 	}
@@ -202,11 +203,11 @@ func TestIntegrationSplitLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitUntilIntegrationTime(t, relayAExpiresAt.Add(100*time.Millisecond))
-	relayAReplacementConfig := splitTestRelayConfig(
+	relayAReplacementConfig, replacementListeners := splitTestRelayConfig(
 		t, controlHostname, "relay-a", "relay-a-1",
 		relayACertificate.certificateFile, relayACertificate.privateKeyFile,
 	)
-	relayAReplacement := startIntegrationProcess(t, relayAReplacementConfig, acmeServer.Client(), serviceClient)
+	relayAReplacement := startIntegrationProcessWithOptions(t, relayAReplacementConfig, integrationProcessOptions{acmeHTTPClient: acmeServer.Client(), serviceHTTPClient: serviceClient, listeners: replacementListeners})
 	waitForProcessReady(t, relayAReplacement)
 	var replacementRunID string
 	var replacementRevision int64

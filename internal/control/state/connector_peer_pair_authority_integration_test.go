@@ -67,7 +67,7 @@ func newConnectorPairCompanyFixture(t *testing.T) connectorPairCompanyFixture {
 			t.Fatal(err)
 		}
 	}
-	if _, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now); err != nil {
+	if _, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal(err)
 	}
 	identity := OIDCIdentity{Issuer: "https://company.example", Subject: "connector-pair-visitor", DisplayName: "connector pair visitor", AssertionDigest: sha256.Sum256([]byte("personal")), AssertionExpiry: now.Add(time.Hour)}
