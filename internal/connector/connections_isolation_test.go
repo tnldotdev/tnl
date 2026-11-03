@@ -45,12 +45,12 @@ func connectionBackendFixture(t *testing.T, handle func(http.ResponseWriter, *ht
 	if _, err := client.Exchange(t.Context(), team, "project", strings.Repeat("a", 64), "worker", "assertion", []string{"api", "db"}); err != nil {
 		t.Fatal(err)
 	}
-	b := &connectorConnectionBackend{scope: connectorruntime.Context{Services: []string{"api", "db"}}, connectorConnectionSession: connectorConnectionSession{workload: client, deadline: session.ExpiresAt}, prepared: map[string]*preparedConnection{}, services: map[string]controlv1.Service{}, metadata: meta.PublicMetadata{Services: map[string]meta.Service{}}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}}}}}
+	b := &connectorConnectionBackend{scope: connectorruntime.Context{Services: []string{"api", "db"}}, connectorConnectionSession: connectorConnectionSession{workload: client, deadline: session.ExpiresAt}, listeners: map[string]*ownedServiceListener{}, services: map[string]controlv1.Service{}, metadata: meta.PublicMetadata{Services: map[string]meta.Service{}}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}}}}}
 	for i, name := range []string{"api", "db"} {
 		protocol := []controlv1.ServiceProtocol{"http", "postgres"}[i]
 		b.services[name] = controlv1.Service{Id: ids[i], Protocol: protocol, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: name + ".example.test", Port: 15443 + i}}
 	}
-	b.prepared["api"] = &preparedConnection{service: b.services["api"], ready: true, sessionID: id, connection: connectorruntime.Connection{Schema: 1, Protocol: "http", Host: "127.0.0.1", Port: 15443}}
+	b.listeners["api"] = &ownedServiceListener{attempt: &servicePreparation{service: b.services["api"], state: &servingService{sessionID: id, connection: connectorruntime.Connection{Schema: 1, Protocol: "http", Host: "127.0.0.1", Port: 15443}}}}
 	return b
 }
 

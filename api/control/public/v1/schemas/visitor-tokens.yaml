@@ -77,4 +77,11 @@ schemas:
       port: { type: integer, minimum: 1, maximum: 65535 }
       visitor_token: { type: string, maxLength: 2048 }
       visitor_policy_revision: { type: integer, format: int64, minimum: 1 }
+      service_trust_revision:
+        {
+          type: integer,
+          format: int64,
+          minimum: 1,
+          description: "Current service metadata revision, present only for service permissions.",
+        }
       expires_at: { type: string, format: date-time }

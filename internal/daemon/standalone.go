@@ -38,6 +38,7 @@ type standaloneSettings struct {
 	publicListen            string
 	publicListener          net.Listener
 	relayUDPListen          string
+	relayUDPPacket          net.PacketConn
 	quicIdleTimeout         time.Duration
 	quicMaxIncomingStreams  int64
 	serverHostname          string
@@ -200,7 +201,7 @@ func (d *daemon) startStandalone(
 		selected.GetConfigForClient = nil
 		return selected, nil
 	}}
-	udpListener, err := muxsession.ListenQUIC(settings.relayUDPListen, sharedTLS, muxsession.QUICConfig{Config: &quic.Config{
+	udpListener, err := listenRelayQUIC(settings.relayUDPListen, settings.relayUDPPacket, sharedTLS, muxsession.QUICConfig{Config: &quic.Config{
 		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
 		EnableDatagrams: true,
 	}})

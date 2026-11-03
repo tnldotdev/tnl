@@ -53,7 +53,7 @@ func TestIntegrationPrivateInventoryLargeTrust(t *testing.T) {
 		}
 		exact = s.ID
 	}
-	h, err := NewHandler(Config{}, f.d, f.d, nil)
+	h, err := NewHandler(Config{}, DatabaseStores(f.d), f.d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,7 +17,7 @@ func TestPublisherRunRejectsSessionAndOutOfScopeBeforeLookup(t *testing.T) {
 			r.Header.Set("Authorization", "Bearer "+token)
 		}
 		w := httptest.NewRecorder()
-		(&handler{store: s}).CreatePublishRun(w, r, "sensitive", controlv1.CreatePublishRunParams{})
+		(&handler{store: s, dependencies: Stores{PublisherRuns: s}}).CreatePublishRun(w, r, "sensitive", controlv1.CreatePublishRunParams{})
 		if w.Code != 401 || s.authorizationReads != 0 || s.sessions != 0 {
 			t.Fatalf("unregistered publisher reached lookup: %d", w.Code)
 		}
@@ -26,7 +26,7 @@ func TestPublisherRunRejectsSessionAndOutOfScopeBeforeLookup(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/v1/public-urls/sensitive/publish-runs", nil)
 	r.Header.Set("Authorization", "Bearer publisher-access")
 	w := httptest.NewRecorder()
-	(&handler{store: s}).CreatePublishRun(w, r, "sensitive", controlv1.CreatePublishRunParams{})
+	(&handler{store: s, dependencies: Stores{PublisherRuns: s}}).CreatePublishRun(w, r, "sensitive", controlv1.CreatePublishRunParams{})
 	if w.Code != 404 || s.authorizationReads != 0 || s.sessions != 0 {
 		t.Fatal("out-of-scope publisher probed URL state")
 	}

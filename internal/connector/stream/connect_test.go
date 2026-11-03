@@ -79,7 +79,7 @@ func (f *connectorFixture) ConnectorSigner(context.Context, string) (Signer, err
 func (f *connectorFixture) VisitorPermission(context.Context, string) (controlv1.VisitorTokenResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: f.run.ServiceID}, Hostname: f.run.Endpoint.Hostname, Port: f.run.Endpoint.Port, VisitorToken: "signed-fixture-visitor-permission", ExpiresAt: f.expires}, nil
+	return controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: f.run.ServiceID}, Hostname: f.run.Endpoint.Hostname, Port: f.run.Endpoint.Port, ServiceTrustRevision: &f.run.TrustRevision, VisitorToken: "signed-fixture-visitor-permission", ExpiresAt: f.expires}, nil
 }
 func (f *connectorFixture) ResolveService(context.Context, string) (Run, error) {
 	if f.denied.Load() {

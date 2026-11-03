@@ -14,7 +14,7 @@ for the current validation sequence and prerequisites.
 | `internal/client/{auth,authority,control,server}`                                                                      | Human session selection/refresh, generated API adapters, and selected server/state opening                                              |
 | `internal/client/state`, `state/sqlite`, `internal/client/filelock`                                                    | SQLite/domain state, storage mechanics, and local ownership locks                                                                       |
 | `internal/client/project`, `project/meta`, `project/sourcestate`, `project/githubmetadata`, `project/workloadmanifest` | Selected project evaluation, public metadata/declarations, source evidence, bounded GitHub metadata, and portable workload declarations |
-| `internal/client/{service,webhooksource}`                                                                              | Installed job scheduling/registry and cached sender-source matching                                                                     |
+| `internal/client/{supervisor,detached,webhooksource}`                                                                  | Installed jobs, socket-bound detached processes, and cached sender-source matching                                                      |
 | `internal/config`                                                                                                      | Static versioned project configuration, validation, schema and configuration key mapping                                                |
 | `internal/clioutput`                                                                                                   | Deterministic ASCII CLI renderer, not `tnld` logs                                                                                       |
 | `internal/{policy,security,naming,failure,observability}`                                                              | Focused validated values, proof/credential mechanics, names/IDs/ports, safe failures, and process-owned telemetry                       |
@@ -27,6 +27,11 @@ defines the snake_case document and schema even when control validates apply.
 it does not start a local owner. `daemon/config` resolves `TNLD_*` role/environment
 settings. Control state owns current authorization and placement, not the static
 configuration package. Naming and policy values do not acquire process lifetime.
+
+`internal/client/detached` owns socket-bound child startup, readiness, stop,
+and joined failure cleanup for publishing and connecting. commands supply arguments
+and render observations; installed boot/login jobs remain in `client/supervisor`.
+neither process owner belongs to the other one's persistence or lifetime.
 
 `config.TNL` contains only parsed project declarations. Consumers use
 [`project.ResolvedService`](../../../internal/client/project/project.go) for

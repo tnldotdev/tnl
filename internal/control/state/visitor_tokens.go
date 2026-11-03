@@ -63,8 +63,9 @@ func (GrantTokenSource) String() string      { return "grant visitor token sourc
 func (GrantTokenSource) GoString() string    { return "grant visitor token source" }
 
 type IssuedVisitorToken struct {
-	Token      visitortoken.Token
-	Permission visitortoken.Permission
+	Token                visitortoken.Token
+	Permission           visitortoken.Permission
+	ServiceTrustRevision int64
 }
 
 type visitorResource struct {
@@ -177,11 +178,19 @@ func (d *Database) issueVisitorToken(ctx context.Context, tx pgx.Tx, issuer stri
 	if err != nil {
 		return result, err
 	}
+	if scope.Kind == visitorscope.Service {
+		// service admission holds the same lock as metadata updates. read the
+		// current revision without selecting another publisher run.
+		if err := tx.QueryRow(ctx, `SELECT trust_revision FROM control.services WHERE id=$1`, scope.ID).Scan(&result.ServiceTrustRevision); err != nil {
+			return result, err
+		}
+	}
 	token, err := d.signVisitorPermission(ctx, tx, issuer, permission, now)
 	if err != nil {
 		return result, err
 	}
-	return IssuedVisitorToken{Token: token, Permission: permission}, nil
+	result.Token, result.Permission = token, permission
+	return result, nil
 }
 
 func (d *Database) visitorPermissionForSource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result visitortoken.Permission, retErr error) {

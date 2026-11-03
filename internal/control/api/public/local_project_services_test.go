@@ -14,6 +14,7 @@ import (
 
 type localProjectVisitorStore struct {
 	PublicURLStore
+	LocalProjectStore
 	request controlstate.GetLocalProjectServiceRequest
 	err     error
 	calls   int
@@ -45,7 +46,7 @@ func TestGetLocalProjectServiceUsesVisitorAuthorizationAndSafeResponse(t *testin
 			store := &localProjectVisitorStore{err: test.err}
 			principal := testPublicURLReadPrincipal()
 			principal.teamIDs = nil // a direct visitor grant does not require team management.
-			h := &handler{store: store, authorizer: &recordingAuthorizer{principal: principal}}
+			h := &handler{store: store, dependencies: Stores{LocalProjects: store}, authorizer: &recordingAuthorizer{principal: principal}}
 			r := httptest.NewRequest(http.MethodGet, "/v1/projects/shop/local-services/orders", nil)
 			if test.auth {
 				r.Header.Set("Authorization", "Bearer visitor-token")

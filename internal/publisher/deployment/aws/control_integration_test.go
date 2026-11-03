@@ -41,7 +41,7 @@ func TestIntegrationAWSBootstrapAppliedGroup(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
-	handler, err := controlpublic.NewHandler(controlpublic.Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple}, d, d, nil)
+	handler, err := controlpublic.NewHandler(controlpublic.Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple}, controlpublic.DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

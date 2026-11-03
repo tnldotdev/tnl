@@ -33,7 +33,7 @@ func (h *handler) ListServiceAudit(w http.ResponseWriter, r *http.Request, team 
 	if !ok {
 		return
 	}
-	store, ok := h.store.(serviceAuditStore)
+	store, ok := h.dependencies.ServiceAudit, h.dependencies.ServiceAudit != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "service audit is unavailable")
 		return
@@ -77,7 +77,7 @@ func (h *handler) ReportPublishRunServiceObservations(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	store, ok := h.store.(serviceAuditStore)
+	store, ok := h.dependencies.ServiceAudit, h.dependencies.ServiceAudit != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "service audit is unavailable")
 		return
@@ -114,9 +114,7 @@ func (h *handler) ReportServiceRunObservations(w http.ResponseWriter, r *http.Re
 		writeBearerProblem(w)
 		return
 	}
-	store, ok := h.store.(interface {
-		IngestServiceRunObservations(context.Context, string, string, string, int64, serviceaudit.Batch, time.Time) (controlstate.ServiceObservationResult, error)
-	})
+	store, ok := h.dependencies.ServiceAudit, h.dependencies.ServiceAudit != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "service audit is unavailable")
 		return

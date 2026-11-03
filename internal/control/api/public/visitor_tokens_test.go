@@ -12,6 +12,7 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
 func TestVisitorTokenSourceRejectsMixedUnknownAndIncompleteVariants(t *testing.T) {
@@ -44,8 +45,20 @@ func TestVisitorTokenSourceRejectsMixedUnknownAndIncompleteVariants(t *testing.T
 	}
 }
 
+func TestVisitorTokenResponseServiceTrustRevision(t *testing.T) {
+	issued := controlstate.IssuedVisitorToken{ServiceTrustRevision: 3, Permission: visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_test"}}}
+	if response := visitorTokenResponse(issued); response.ServiceTrustRevision == nil || *response.ServiceTrustRevision != 3 {
+		t.Fatal("service permission omitted its current metadata revision")
+	}
+	issued.Permission.Scope.Kind = visitorscope.PublicURL
+	if response := visitorTokenResponse(issued); response.ServiceTrustRevision != nil {
+		t.Fatal("public URL permission included a service metadata revision")
+	}
+}
+
 type serviceBrowserTokenStore struct {
 	PublicURLStore
+	ServiceHTTPStore
 	refreshed, issued bool
 	err               error
 }
@@ -75,7 +88,7 @@ func TestVisitorTokenRefreshesServiceBrowserBeforeIssuingPermission(t *testing.T
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &serviceBrowserTokenStore{err: test.err}
-			h := &handler{store: store}
+			h := &handler{store: store, dependencies: Stores{VisitorTokens: store, ServiceHTTP: store}}
 			request := httptest.NewRequest(http.MethodPost, "/v1/visitor-tokens", strings.NewReader(`{"resource":{"kind":"service","id":"svc_`+strings.Repeat("A", 22)+`"},"source":{"kind":"browser_session","secret":"`+strings.Repeat("B", 43)+`"}}`))
 			response := httptest.NewRecorder()
 			h.IssueVisitorToken(response, request)
