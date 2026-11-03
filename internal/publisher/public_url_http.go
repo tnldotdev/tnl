@@ -80,12 +80,17 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				}
 			}
 		}}
-		if config.ResolveTarget != nil {
-			handler, err = publisherproxy.NewWithMountsHooksOptionsAdmittedDynamic(config.Target, hostname, config.Limits.Concurrency, config.Mounts, hooks, config.TargetOptions,
-				func(request *http.Request) (string, string, error) { return config.ResolveTarget(request.Context()) }, config.OnTargetFailure)
-		} else {
-			handler, err = publisherproxy.NewWithMountsHooksOptionsAdmitted(config.Target, hostname, config.Limits.Concurrency, config.Mounts, hooks, config.TargetOptions, config.OnTargetFailure)
+		proxyConfig := publisherproxy.Config{
+			Target: config.Target, Hostname: hostname, Mounts: config.Mounts,
+			Hooks: hooks, TargetOptions: config.TargetOptions,
+			MaxConnsPerHost: config.Limits.Concurrency, OnTargetFailure: config.OnTargetFailure,
 		}
+		if config.ResolveTarget != nil {
+			proxyConfig.ResolveTarget = func(request *http.Request) (string, string, error) {
+				return config.ResolveTarget(request.Context())
+			}
+		}
+		handler, err = publisherproxy.New(proxyConfig)
 		if err != nil {
 			return nil, err
 		}
