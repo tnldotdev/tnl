@@ -108,8 +108,8 @@ func (d *Database) RenewConnectorPeerPair(ctx context.Context, issuer string, r 
 }
 
 func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPeerPairRequest, issuer string, now time.Time) (result ConnectorPeerPair, retErr error) {
-	started := time.Now()
-	checkedNow := func() time.Time { return now.Add(time.Since(started)) }
+	clock := newAuthorizationClock(now)
+	started, checkedNow := clock.started, clock.current
 	message, err := r.proof().Message()
 	requestAt := r.RequestedAt.UTC().Truncate(time.Microsecond)
 	if err != nil || len(r.Signature) != ed25519.SignatureSize || d.storageKey == nil || now.IsZero() ||
@@ -129,32 +129,17 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	defer rollback(ctx, tx, "prepare connector peer pair", &retErr)()
 	// the source reader owns current service visitor permission, including the
 	// session/credential deadline. it takes the team/service admission locks.
-	permission, err := d.visitorPermissionForSource(ctx, tx, scope, r.Source, now)
+	authority, err := d.visitorAuthorityForSource(ctx, tx, scope, r.Source, clock)
 	if err != nil {
 		return result, err
 	}
+	permission := authority.Permission
 	subject, err := visitortoken.ConnectorSubject(permission.Subject)
 	if err != nil || subject != r.Subject {
 		return result, ErrServiceAccess
 	}
-	key, until, err := AuthenticateVisitorSubjectKey(ctx, tx, subject, r.ServiceID, now)
-	if err != nil {
-		return result, err
-	}
-	keyDigest, err := visitortoken.KeyDigest(key)
-	if err != nil || len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, message, r.Signature) {
-		return result, ErrServiceAccess
-	}
-	switch signed := permission.Subject.(type) {
-	case visitortoken.Device:
-		if signed.KeySHA256 != keyDigest {
-			return result, ErrServiceAccess
-		}
-	case visitortoken.Workload:
-		if signed.KeySHA256 != keyDigest {
-			return result, ErrServiceAccess
-		}
-	default:
+	key := authority.PublicKey
+	if len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, message, r.Signature) {
 		return result, ErrServiceAccess
 	}
 	q := controlstatedb.New(tx)
@@ -178,7 +163,7 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	if err != nil {
 		return result, err
 	}
-	deadline := minTime(publisherUntil, minTime(now.Add(5*time.Minute), minTime(permission.ExpiresAt, until)))
+	deadline := minTime(publisherUntil, minTime(permission.ExpiresAt, authority.ConnectorUntil))
 	// retain the entry-time serving cap. elapsed time only narrows the time left
 	// to authorize; a slow database must not mint a later deadline.
 	recheckUntil := minTime(deadline, requestAt.Add(5*time.Minute))
