@@ -33,6 +33,7 @@ import (
 )
 
 type connectorConnectionBackend struct {
+	sdk *SDKOptions
 	connectorConnectionSession
 	openSession                                            SessionOpener
 	project                                                projectConfiguration

@@ -63,6 +63,9 @@ type Request struct {
 	Service          string `json:"service,omitempty"`
 	Assertion        string `json:"assertion,omitempty"`
 	AcquireAssertion bool   `json:"acquire_assertion,omitempty"`
+	Workload         string `json:"workload,omitempty"`
+	Manifest         string `json:"manifest,omitempty"`
+	RequestedAt      string `json:"requested_at,omitempty"`
 }
 
 func (Request) String() string   { return "private connection request" }
@@ -113,6 +116,14 @@ type Prepared struct {
 	ProjectRuntime meta.PublicMetadata    `json:"project_runtime"`
 	Connection     Connection             `json:"connection"`
 	Verification   *AssertionVerification `json:"verification,omitempty"`
+}
+
+// SDKPrepared is the private native selection adapter; public start/read outputs
+// retain their separate schema-1 shapes.
+type SDKPrepared struct {
+	Schema   int      `json:"schema"`
+	Owner    Status   `json:"owner"`
+	Prepared Prepared `json:"prepared"`
 }
 
 // AssertionVerification comes only from authority-confirmed exact assertion

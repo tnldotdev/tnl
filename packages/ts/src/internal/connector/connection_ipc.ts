@@ -8,7 +8,11 @@ import { operation, traceHeaders } from "../tracing.js";
 
 export interface OwnerIPC {
   readonly expiresAt: number;
-  prepare(service: string, assertion?: string): Promise<unknown>;
+  prepare(
+    service: string,
+    assertion?: string,
+    selection?: { workload?: string; manifest?: string; requested_at?: string },
+  ): Promise<unknown>;
   close(): void;
 }
 
@@ -133,7 +137,11 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
     expiry.unref();
     return Object.freeze({
       expiresAt: expires,
-      prepare(service: string, assertion?: string): Promise<unknown> {
+      prepare(
+        service: string,
+        assertion?: string,
+        selection?: { workload?: string; manifest?: string; requested_at?: string },
+      ): Promise<unknown> {
         return operation("sdk.native.request", async () => {
           if (closed || pending >= 64 || Date.now() >= expires)
             throw new TnlError("sdk.connection_unavailable");
@@ -144,9 +152,15 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
                 ...scope,
                 service,
                 ...(assertion === undefined ? {} : { assertion }),
+                ...selection,
               });
               const req = request(
-                new URL("/v1/connections/prepare", endpoint),
+                new URL(
+                  selection === undefined
+                    ? "/v1/connections/prepare"
+                    : "/v1/connections/sdk-prepare",
+                  endpoint,
+                ),
                 {
                   method: "POST",
                   agent,
@@ -170,7 +184,7 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
                   response.on("error", () => reject(new TnlError("sdk.connection_unavailable")));
                   response.on("end", () => {
                     if (
-                      response.statusCode !== 200 ||
+                      (response.statusCode !== 200 && selection === undefined) ||
                       response.headers["content-type"]?.split(";")[0] !== "application/json"
                     ) {
                       reject(new TnlError("sdk.connection_unavailable"));

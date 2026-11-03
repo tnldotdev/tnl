@@ -67,6 +67,13 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 			}
 		}
 	}
+	return launchOwner(ctx, options, request, func(status connectorruntime.Status) error { return json.NewEncoder(output).Encode(status) })
+}
+
+// launchOwner transfers one ready, typed capability to its consumer. until that
+// handoff succeeds, this operation retains the child and joins bounded cleanup.
+func launchOwner(ctx context.Context, options OwnerStartOptions, request connectorruntime.StartRequest, readyOwner func(connectorruntime.Status) error) error {
+	scope := request.Context
 	parent := options.RunnerTemp
 	if parent == "" {
 		parent = os.TempDir()
@@ -107,6 +114,9 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 	}
 	if options.ParentPID > 0 {
 		args = append(args, "--parent-pid", strconv.Itoa(options.ParentPID))
+	}
+	if options.SDKRegistry != "" {
+		args = append(args, "--sdk-registry", options.SDKRegistry)
 	}
 	for _, flag := range [][2]string{{"--kube-token-file", options.KubeTokenFile}, {"--kube-user-config", options.KubeUserConfig}, {"--kube-user", options.KubeUser}, {"--namespace", options.Namespace}} {
 		if flag[1] != "" {
@@ -157,7 +167,7 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 	select {
 	case result := <-ready:
 		if result.err == nil && result.status.Schema == 1 && result.status.State == "ready" && result.status.PID == child.Process.Pid {
-			if err := json.NewEncoder(output).Encode(result.status); err != nil {
+			if err := readyOwner(result.status); err != nil {
 				cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 				defer cancel()
 				stopErr := connectorruntime.Call(cleanup, result.status.ConnectionHandle, "stop", connectorruntime.Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest}, nil)

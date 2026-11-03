@@ -1,7 +1,9 @@
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
+import { mkdtemp, realpath } from "node:fs/promises";
 import { connect as connectTCP } from "node:net";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Pool, buildConnector, fetch as transportFetch, type Dispatcher } from "undici/index.js";
 import { TnlCleanupError, TnlError } from "../../errors.js";
@@ -12,13 +14,7 @@ import { cancellable } from "./cancellation.js";
 import type { ConnectionSnapshot } from "./snapshot.js";
 import * as z from "zod";
 import { parseValue } from "../validation.js";
-import {
-  stoppedOwnerSchema,
-  workloadIdentitySchema,
-  startupHandleSchema,
-  startedOwnerSchema,
-  preparedConnectionSchema,
-} from "./contract.js";
+import { sdkPreparationSchema, preparedConnectionSchema } from "./contract.js";
 import { usesWorkload, selectWorkload, acquireAssertion } from "./workload/provider.js";
 export { configureWorkload } from "./workload/provider.js";
 import { resolveNativeBinary } from "../native/launcher.js";
@@ -28,53 +24,20 @@ import { isServiceName } from "../values.js";
 
 type Settings = TnlConnectionRegistry[keyof TnlConnectionRegistry];
 type Prepared = ReturnType<typeof parsePrepared>;
-interface OwnedConnection {
-  readonly file: string;
+interface NativeScope {
+  readonly registry: string;
   readonly binary: string;
-  readonly onExit: () => void;
-  ready: boolean;
-  expiresAt?: number;
-  failure?: { readonly error: unknown };
-  stopping?: Promise<void>;
-  ipc?: Promise<OwnerIPC>;
+  readonly requests: Map<string, Promise<unknown>>;
+  entry?: { readonly file: string; readonly ipc: Promise<OwnerIPC> };
+  selected?: { readonly file: string; readonly expiresAt: number };
 }
 const maximumBytes = 128 * 1024;
-const owners = new Map<string, OwnedConnection>();
-const pending = new Map<string, Promise<Prepared>>();
-const starting = new Map<string, Promise<OwnedConnection>>();
-const selectedOwners = new Map<string, OwnedConnection>();
+const scopes = new Map<string, Promise<NativeScope>>();
+const selectedScopes = new Map<string, NativeScope>();
 const fetches = new Map<string, TnlFetch>();
 const command = ["--no-telemetry", "runtime", "connections"];
-const contexts = new Map<string, Promise<unknown>>();
-const approvals = new Map<string, { key: string; expires: number }>();
-const identities = new Map<
-  string,
-  Promise<{ context: unknown; binding: string; expires?: number }>
->();
-const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
-async function prepareIPC(
-  owner: OwnedConnection,
-  name: string,
-  assertion?: string,
-): Promise<Prepared> {
-  try {
-    const loading = (owner.ipc ??= ownerIPC(owner.file));
-    let ipc: OwnerIPC;
-    try {
-      ipc = await loading;
-    } catch (cause) {
-      if (owner.ipc === loading) delete owner.ipc;
-      throw cause;
-    }
-    return parsePrepared(await ipc.prepare(name, assertion), name, owner.file);
-  } catch (cause) {
-    if (cause instanceof TnlError) throw cause;
-    throw machineError(cause);
-  }
-}
-
-function machineError(cause: unknown): TnlError {
+function machineError(cause: unknown, operation?: string): TnlError {
   // native stderr and JSON parser errors can contain private input; retain only
   // an owned classification, never subprocess output or a credential-bearing cause.
   if (typeof cause === "object" && cause !== null && "stderr" in cause) {
@@ -88,6 +51,13 @@ function machineError(cause: unknown): TnlError {
         problem.reason === "TNL_CLIENT_AUTH_RECOVERY_REQUIRED"
       )
         return new TnlError("sdk.authentication_required");
+      if (problem.reason === "TNL_SERVER_RESPONSE_INVALID")
+        return new TnlError("sdk.response_invalid");
+      if (problem.reason === "TNL_CLIENT_CONNECTION_CLEANUP_FAILED" && operation === "sdk-prepare")
+        return new TnlCleanupError(
+          new TnlError("sdk.response_invalid"),
+          new TnlError("sdk.connection_unavailable"),
+        );
     } catch {
       // malformed diagnostics have the same safe connection failure.
     }
@@ -116,7 +86,7 @@ async function machineUntraced(
         binary,
         [...command, ...args],
         {
-          timeout: args[0] === "start" ? 45_000 : args[0] === "stop" ? 25_000 : 10_000,
+          timeout: args[0] === "sdk-prepare" ? 45_000 : 25_000,
           maxBuffer: maximumBytes,
           encoding: "utf8",
           env: launchEnvironment(),
@@ -136,7 +106,7 @@ async function machineUntraced(
     return value;
   } catch (cause) {
     if (signal?.aborted) throw signal.reason;
-    throw machineError(cause);
+    throw machineError(cause, args[0]);
   }
 }
 
@@ -183,38 +153,35 @@ function readArgs(file: string, name: string): string[] {
   return ["read", "--handle", file, "--service", name];
 }
 
-async function stopOwner(key: string, owner: OwnedConnection): Promise<void> {
-  const stopping =
-    owner.stopping ??
-    (owner.stopping = (async () => {
-      parseValue(
-        stoppedOwnerSchema,
-        await machine(owner.binary, ["stop", "--handle", owner.file]),
-        "sdk.response_invalid",
-      );
-      if (owners.get(key) === owner) owners.delete(key);
-      if (owner.ipc !== undefined)
-        void owner.ipc.then(
-          (ipc) => ipc.close(),
-          () => {},
-        );
-      process.removeListener("beforeExit", owner.onExit);
-    })());
-  try {
-    await stopping;
-  } finally {
-    if (owner.stopping === stopping) delete owner.stopping;
+function nativeScope(key: string): Promise<NativeScope> {
+  let loading = scopes.get(key);
+  if (loading === undefined) {
+    if (scopes.size >= 32) throw new TnlError("sdk.connection_unavailable");
+    loading = (async () => {
+      const scope: NativeScope = {
+        registry: await mkdtemp(path.join(await realpath(tmpdir()), "tnl-sdk-")),
+        binary: resolveNativeBinary(),
+        requests: new Map(),
+      };
+      const cleanup = independent("sdk.app.cleanup", async () => {
+        await machine(scope.binary, [
+          "sdk-stop",
+          "--registry",
+          scope.registry,
+          "--parent-pid",
+          String(process.pid),
+        ]);
+        if (scope.entry !== undefined) (await scope.entry.ipc).close();
+      });
+      process.once("beforeExit", () => {
+        void cleanup().catch(() => {});
+      });
+      selectedScopes.set(key, scope);
+      return scope;
+    })();
+    scopes.set(key, loading);
   }
-}
-
-async function rollbackOwner(key: string, owner: OwnedConnection, error: unknown): Promise<void> {
-  owner.failure = { error };
-  try {
-    // cleanup has its own lifetime: a canceled read must not abandon an owner.
-    await stopOwner(key, owner);
-  } catch (cleanupError) {
-    throw new TnlCleanupError(error, cleanupError);
-  }
+  return loading;
 }
 
 function prepare(name: string, externalFile?: string): Promise<Prepared> {
@@ -222,21 +189,22 @@ function prepare(name: string, externalFile?: string): Promise<Prepared> {
 }
 
 async function prepareUntraced(name: string, externalFile: string | undefined): Promise<Prepared> {
+  const requestedAt = new Date().toISOString();
   const base = cacheKey();
   if (externalFile !== undefined) {
     readArgs(externalFile, name);
     return parsePrepared(await prepareExternal(externalFile, name), name, externalFile);
   }
-  const binary = resolveNativeBinary();
-  let key = base;
+  const scope = await nativeScope(base);
   let assertion: string | undefined;
-  let context: unknown;
-  let approvalKey: string | undefined;
-  let policyKey: string | undefined;
-  let bindingKey: ((binding: string) => string) | undefined;
+  let manifest: unknown;
+  let selectionOptions: { workload?: string; manifest?: string; requested_at: string } = {
+    requested_at: requestedAt,
+  };
   let startArgs = ["--directory", process.cwd()];
   if (usesWorkload()) {
     const selection = await selectWorkload();
+    manifest = selection.manifest;
     if (!selection.selected.services.includes(name)) throw new TnlError("sdk.workload_denied");
     assertion = await acquireAssertion(
       selection.name,
@@ -252,209 +220,107 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
       "--workload-manifest",
       path.join(selection.directory, ".tnl/generated/workloads.json"),
     ];
-    policyKey = JSON.stringify([base, selection.name, selection.manifest]);
-    bindingKey = (binding) => JSON.stringify([base, selection.name, selection.manifest, binding]);
-    approvalKey = JSON.stringify([policyKey, digest(assertion)]);
-    const approved = approvals.get(approvalKey);
-    if (approved !== undefined && approved.expires > Date.now()) {
-      key = approved.key;
-      context = await contexts.get(policyKey);
-    } else {
-      let identifying = identities.get(approvalKey);
-      if (identifying === undefined) {
-        if (identities.size >= 128) throw new TnlError("sdk.workload_unavailable");
-        identifying = (async () => {
-          let selectedContext = contexts.get(policyKey);
-          if (selectedContext === undefined) {
-            if (contexts.size >= 32) throw new TnlError("sdk.workload_unavailable");
-            selectedContext = machine(binary, ["context", ...startArgs]);
-            contexts.set(policyKey, selectedContext);
-          }
-          let nativeContext: unknown;
-          try {
-            nativeContext = await selectedContext;
-          } catch (error) {
-            contexts.delete(policyKey);
-            throw error;
-          }
-          const identity = parseValue(
-            workloadIdentitySchema,
-            await machine(binary, ["identity", ...startArgs], undefined, {
-              schema: 1,
-              context: nativeContext,
-              assertion,
-            }),
-            "sdk.workload_response_invalid",
-          );
-          const expires = identity.assertion_expires_at;
-          return {
-            context: nativeContext,
-            binding: identity.binding,
-            ...(expires === undefined ? {} : { expires }),
-          };
-        })();
-        identities.set(approvalKey, identifying);
-      }
-      let identified: Awaited<typeof identifying>;
-      try {
-        identified = await identifying;
-      } finally {
-        if (identities.get(approvalKey) === identifying) identities.delete(approvalKey);
-      }
-      context = identified.context;
-      key = bindingKey(identified.binding);
-      if (identified.expires !== undefined) {
-        if (approvals.size >= 256) {
-          const oldest = approvals.keys().next().value;
-          if (oldest !== undefined) approvals.delete(oldest);
-        }
-        approvals.set(approvalKey, { key, expires: identified.expires - 1000 });
-      }
-    }
+    selectionOptions = {
+      requested_at: requestedAt,
+      workload: selection.name,
+      manifest: path.join(selection.directory, ".tnl/generated/workloads.json"),
+    };
   }
-  const approve = (prepared: Prepared): Prepared => {
-    if (
-      approvalKey !== undefined &&
-      prepared.verification !== undefined &&
-      assertion !== undefined
-    ) {
-      const v = prepared.verification;
-      if (v.digest !== digest(assertion) || bindingKey?.(v.binding) !== key)
-        throw new TnlError("sdk.workload_response_invalid");
-      for (const [id, entry] of approvals) if (entry.expires <= Date.now()) approvals.delete(id);
-      if (approvals.size >= 256 && !approvals.has(approvalKey)) {
-        const oldest = approvals.keys().next().value;
-        if (oldest !== undefined) approvals.delete(oldest);
-      }
-      approvals.set(approvalKey, { key, expires: v.expires - 1000 });
-    }
-    return prepared;
-  };
-  const pendingKey = JSON.stringify([key, name]);
-  let operation = assertion === undefined ? pending.get(pendingKey) : undefined;
-  if (operation !== undefined) return operation;
-  operation = (async () => {
-    let owner = owners.get(key);
-    if (owner?.failure !== undefined) {
-      // a failed stop retains ownership and blocks replacement until joined.
-      await rollbackOwner(key, owner, owner.failure.error);
-      owner = undefined;
-    }
-    if (owner?.expiresAt !== undefined && owner.expiresAt <= Date.now()) {
-      // only a validated owner deadline permits replacement. native stop joins
-      // even when deadline cleanup already removed the live handle file.
-      owner.ready = false;
-      await stopOwner(key, owner);
-      owner = undefined;
-    }
-    // a failed read does not prove an established owner stopped; other clients
-    // may still be using its listener, so retries keep the same capability.
-    if (owner !== undefined) {
-      try {
-        const prepared = await prepareIPC(owner, name, assertion);
-        selectedOwners.set(base, owner);
-        return approve(prepared);
-      } catch (error) {
-        // only a kernel-held lifetime lock can distinguish owner death from a
-        // failed/denied read. a live owner's listener is never duplicated.
-        try {
-          parseValue(
-            stoppedOwnerSchema,
-            await machine(binary, ["recover", "--handle", owner.file]),
-            "sdk.response_invalid",
-          );
-        } catch {
-          throw error;
-        }
-        if (owners.get(key) === owner) owners.delete(key);
-        if (owner.ipc !== undefined)
-          void owner.ipc.then(
-            (ipc) => ipc.close(),
-            () => {},
-          );
-        process.removeListener("beforeExit", owner.onExit);
-      }
-    }
-    // another waiter may have completed recovery while this waiter proved the
-    // old owner dead. adopt that replacement before considering another start.
-    const replacement = owners.get(key);
-    if (replacement !== undefined && replacement !== owner) {
-      if (!replacement.ready || replacement.failure !== undefined)
-        throw new TnlError("sdk.connection_unavailable");
-      const prepared = await prepareIPC(replacement, name, assertion);
-      selectedOwners.set(base, replacement);
-      return approve(prepared);
-    }
-    let startup = starting.get(key);
-    if (startup === undefined) {
-      if (owners.size + starting.size >= 32) throw new TnlError("sdk.workload_unavailable");
-      startup = (async () => {
-        const value = await machine(
-          binary,
-          ["start", ...startArgs, "--parent-pid", String(process.pid)],
-          undefined,
-          assertion === undefined ? undefined : { schema: 1, context, assertion },
-        );
-        const file = parseValue(
-          startupHandleSchema,
-          value,
-          "sdk.response_invalid",
-        ).connection_handle;
-        readArgs(file, name);
-        const exitCleanup = independent("sdk.app.cleanup", () => stopOwner(key, startedOwner));
-        const startedOwner: OwnedConnection = {
-          binary,
-          file,
-          ready: false,
-          onExit: () => {
-            void exitCleanup().catch(() => {});
-          },
-        };
-        owners.set(key, startedOwner);
-        process.once("beforeExit", startedOwner.onExit);
-        try {
-          const startup = parseValue(startedOwnerSchema, value, "sdk.response_invalid");
-          startedOwner.expiresAt = startup.expires_at;
-          startedOwner.ready = true;
-          return startedOwner;
-        } catch (error) {
-          await rollbackOwner(key, startedOwner, error);
-          throw error;
-        }
-      })();
-      starting.set(key, startup);
-    }
-    let started: OwnedConnection;
-    try {
-      started = await startup;
-    } finally {
-      if (starting.get(key) === startup) starting.delete(key);
-    }
-    try {
-      const prepared = await prepareIPC(started, name, assertion);
-      selectedOwners.set(base, started);
-      return approve(prepared);
-    } catch (error) {
-      if (error instanceof TnlError && error.code === "sdk.response_invalid")
-        await rollbackOwner(key, started, error);
-      throw error;
-    }
-  })();
-  if (assertion === undefined) pending.set(pendingKey, operation);
+  const args = [
+    "sdk-prepare",
+    ...startArgs,
+    "--registry",
+    scope.registry,
+    "--parent-pid",
+    String(process.pid),
+    "--requested-at",
+    requestedAt,
+    "--selected-service",
+    name,
+  ];
+  const input = { schema: 1, ...(assertion === undefined ? {} : { assertion }) };
+  const key = createHash("sha256")
+    .update(JSON.stringify([startArgs, name, manifest, assertion]))
+    .digest("hex");
+  let request = scope.requests.get(key);
+  if (request === undefined) {
+    if (scope.requests.size >= 64) throw new TnlError("sdk.connection_unavailable");
+    request = requestSelection(scope, args, input, name, assertion, selectionOptions);
+    scope.requests.set(key, request);
+  }
+  let raw: unknown;
   try {
-    return await operation;
+    raw = await request;
   } finally {
-    if (assertion === undefined) pending.delete(pendingKey);
+    if (scope.requests.get(key) === request) scope.requests.delete(key);
   }
+  const value = parseValue(sdkPreparationSchema, raw, "sdk.response_invalid");
+  if ("reason" in value) {
+    throw machineError({ stderr: JSON.stringify(value) }, "sdk-prepare");
+  }
+  const owner = value.owner;
+  const file = owner.connection_handle;
+  readArgs(file, name);
+  if (owner.executable !== scope.binary) throw new TnlError("sdk.response_invalid");
+  const prepared = parsePrepared(value.prepared, name, file);
+  scope.selected = { file, expiresAt: owner.expires_at };
+  if (scope.entry === undefined) {
+    const ipc = ownerIPC(file);
+    void ipc.catch(() => {});
+    scope.entry = { file, ipc };
+  }
+  return prepared;
+}
+
+async function requestSelection(
+  scope: NativeScope,
+  args: string[],
+  input: unknown,
+  name: string,
+  assertion: string | undefined,
+  selectionOptions: { workload?: string; manifest?: string; requested_at: string },
+): Promise<unknown> {
+  const entry = scope.entry;
+  let raw: unknown;
+  if (entry === undefined) raw = await machine(scope.binary, args, undefined, input);
+  else {
+    try {
+      raw = await (await entry.ipc).prepare(name, assertion, selectionOptions);
+    } catch (cause) {
+      // native recovery checks the kernel lock before doing any selection or
+      // network work. a timeout or service denial cannot authorize replacement.
+      try {
+        raw = await machine(
+          scope.binary,
+          [...args, "--recover-handle", entry.file],
+          undefined,
+          input,
+        );
+      } catch (recovery) {
+        if (recovery instanceof TnlError && recovery.code === "sdk.authentication_required")
+          throw recovery;
+        throw cause instanceof TnlError ? cause : machineError(cause);
+      }
+      if (scope.entry === entry) {
+        delete scope.entry;
+        void entry.ipc.then(
+          (ipc) => ipc.close(),
+          () => {},
+        );
+      }
+    }
+  }
+  return raw;
 }
 
 function readPrepared(name: string): Prepared {
   const owner =
-    process.env.TNL_CONNECTION_HANDLE === undefined ? selectedOwners.get(cacheKey()) : undefined;
+    process.env.TNL_CONNECTION_HANDLE === undefined
+      ? selectedScopes.get(cacheKey())?.selected
+      : undefined;
   if (owner?.expiresAt !== undefined && owner.expiresAt <= Date.now())
     throw new TnlError("sdk.connection_unprepared");
-  const file =
-    process.env.TNL_CONNECTION_HANDLE ?? (owner?.ready === true ? owner.file : undefined);
+  const file = process.env.TNL_CONNECTION_HANDLE ?? owner?.file;
   if (file === undefined) throw new TnlError("sdk.connection_unprepared");
   // a separate native process can use owner IPC while this event loop is blocked.
   // never execute an executable selected by descriptor contents or PATH.
@@ -462,11 +328,11 @@ function readPrepared(name: string): Prepared {
 }
 
 function parsePrepared(value: unknown, name: string, file: string) {
-  const {
-    project_runtime: project,
-    connection: snapshot,
-    verification,
-  } = parseValue(preparedConnectionSchema, value, "sdk.response_invalid");
+  const { project_runtime: project, connection: snapshot } = parseValue(
+    preparedConnectionSchema,
+    value,
+    "sdk.response_invalid",
+  );
   const metadata = project.services[name];
   if (
     metadata === undefined ||
@@ -480,7 +346,6 @@ function parsePrepared(value: unknown, name: string, file: string) {
     project,
     snapshot,
     file,
-    ...(verification === undefined ? {} : { verification }),
   });
 }
 
