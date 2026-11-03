@@ -67,10 +67,19 @@ def isolated_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
         def __init__(self, file: str) -> None:
             self.file = file
 
-        def prepare(self, name: str, assertion: str | None = None) -> object:
+        def prepare(
+            self,
+            name: str,
+            assertion: str | None = None,
+            *,
+            sdk: bool = False,
+            workload: str | None = None,
+            manifest: str | None = None,
+            requested_at: str | None = None,
+        ) -> object:
             return _connections._command(
                 _connections.native_binary().resolve(strict=True),
-                "prepare",
+                "sdk-request" if sdk else "prepare",
                 "--handle",
                 self.file,
                 "--service",
@@ -103,15 +112,20 @@ def test_sync_sibling_read_never_dispatches_prepare(
     monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
     calls: list[str] = []
 
-    def command(binary: Path, *args: str) -> object:
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        if args[0] == "sdk-prepare":
+            calls.extend(["start", "prepare"])
+            return {
+                "schema": 1,
+                "owner": ready(binary, tmp_path / "handle", datetime.now(UTC) + timedelta(hours=1)),
+                "prepared": prepared(),
+            }
         calls.append(args[0])
-        if args[0] == "start":
-            return ready(binary, tmp_path / "handle", datetime.now(UTC) + timedelta(hours=1))
         if args[0] == "stop":
             return {"schema": 1, "state": "stopped"}
         if args[0] == "read" and args[-1] == "sibling":
             raise tnl.TnlError("sdk.connection_not_prepared", "service not prepared")
-        assert args[0] == "prepare"
+        assert args[0] == "sdk-request"
         return prepared()
 
     monkeypatch.setattr(_connections, "_command", command)
@@ -209,35 +223,37 @@ def test_concurrent_threads_and_awaiters_share_one_lazy_native_owner(
     starting, release = threading.Event(), threading.Event()
     mounted = str(tmp_path / "private-handle.json")
 
-    def command(binary: Path, *args: str) -> object:
-        calls.append(args[0])
-        if args[0] == "start":
-            assert args[1:] == (
-                "--directory",
-                str(tmp_path),
-                "--parent-pid",
-                str(os.getpid()),
-            )
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        if args[0] == "sdk-prepare":
+            assert args[args.index("--directory") + 1] == str(tmp_path)
+            assert args[args.index("--parent-pid") + 1] == str(os.getpid())
+            assert "--retain-start-failure" in args
+            calls.append("start")
             starting.set()
             assert release.wait(5)
             return {
                 "schema": 1,
-                "state": "ready",
-                "pid": 123,
-                "expires_at": snapshot()["expires_at"],
-                "connection_handle": mounted,
-                "executable": str(binary),
-                "project_runtime": {},
+                "owner": ready(binary, Path(mounted), datetime.now(UTC) + timedelta(minutes=5)),
+                "prepared": prepared(),
             }
+        calls.append(args[0])
         if args[0] == "stop":
             return {"schema": 1, "state": "stopped"}
-        assert args[0] in {"read", "prepare"} and args[1:] == (
+        assert args[0] in {"read", "sdk-request"} and args[1:] == (
             "--handle",
             mounted,
             "--service",
             "database",
         )
-        return prepared()
+        return (
+            prepared()
+            if args[0] == "read"
+            else {
+                "schema": 1,
+                "owner": ready(binary, Path(mounted), datetime.now(UTC) + timedelta(minutes=5)),
+                "prepared": prepared(),
+            }
+        )
 
     monkeypatch.setattr(_connections, "_command", command)
     first = tnl.connect("database", directory=tmp_path)
@@ -256,10 +272,12 @@ def test_concurrent_threads_and_awaiters_share_one_lazy_native_owner(
             await canceled
         with ThreadPoolExecutor() as pool:
             sync = pool.submit(lambda: first.port)
-            await asyncio.sleep(0)  # the event loop remains usable during startup.
+            with pytest.raises(tnl.TnlError) as unprepared:
+                sync.result(timeout=1)
+            assert unprepared.value.code == "sdk.connection_not_prepared"
             release.set()
             result = await task
-            assert result.port == sync.result(timeout=5) == 34567
+            assert result.port == first.port == 34567
         results = await asyncio.gather(*(one() for _ in range(8)))
         assert len(results) == 8
         await second.aclose()
@@ -274,15 +292,20 @@ def test_concurrent_threads_and_awaiters_share_one_lazy_native_owner(
 def test_failed_preparation_is_shared_without_implicit_authentication_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
-    calls = 0
-
-    def command(binary: Path, *args: str) -> object:
-        nonlocal calls
-        calls += 1
-        raise tnl.TnlError("sdk.connection_unavailable", "connector connection failed")
-
-    monkeypatch.setattr(_connections, "_command", command)
+    binary, counter = tmp_path / "native", tmp_path / "attempts"
+    binary.write_text(
+        f"#!{sys.executable}\nimport json, pathlib, sys\n"
+        f"counter = pathlib.Path({str(counter)!r})\n"
+        "if sys.argv[4] in ('sdk-stop', 'sdk-close-failure'):\n"
+        " print(json.dumps({'schema': 1, 'state': 'stopped'}))\n"
+        "else:\n counter.write_text(counter.read_text() + 'x' if counter.exists() else 'x')\n"
+        " sys.stderr.write(json.dumps({'reason': 'TNL_CLIENT_AUTHENTICATION_REQUIRED', "
+        "'sdk_retained_start_failure': True, "
+        f"'sdk_failure_handle': {'a' * 64 + '.' + '1' * 16!r}, "
+        "'message': 'private-credential'}))\n sys.exit(1)\n"
+    )
+    binary.chmod(0o700)
+    monkeypatch.setattr(_connections, "native_binary", lambda: binary)
     handle = tnl.connect("database", directory=tmp_path)
 
     async def one() -> tnl.Connection:
@@ -291,9 +314,15 @@ def test_failed_preparation_is_shared_without_implicit_authentication_retry(
     async def scenario() -> None:
         failures = await asyncio.gather(*(one() for _ in range(8)), return_exceptions=True)
         assert all(isinstance(error, tnl.TnlError) for error in failures)
+        assert all(error is failures[0] for error in failures)
+        with pytest.raises(tnl.TnlError) as repeated:
+            await handle
+        assert repeated.value is failures[0]
+        assert "private-credential" not in str(repeated.value)
+        assert "private-credential" not in json.dumps(vars(repeated.value))
 
     asyncio.run(scenario())
-    assert calls == 1
+    assert counter.read_text() == "x"
     handle.close()
 
 
@@ -303,18 +332,17 @@ def test_failed_initial_service_snapshot_retains_the_shared_native_owner(
     monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
     calls: list[str] = []
 
-    def command(binary: Path, *args: str) -> object:
-        calls.append(args[0])
-        if args[0] == "start":
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        if args[0] == "sdk-prepare":
+            calls.extend(["start", "prepare"])
             return {
                 "schema": 1,
-                "state": "ready",
-                "pid": 123,
-                "expires_at": snapshot()["expires_at"],
-                "connection_handle": str(tmp_path / "handle"),
-                "executable": str(binary),
-                "project_runtime": {},
+                "owner": ready(
+                    binary, tmp_path / "handle", datetime.now(UTC) + timedelta(minutes=5)
+                ),
+                "prepared": prepared(expires_at="2020-01-01T00:00:00Z"),
             }
+        calls.append(args[0])
         if args[0] == "stop":
             return {"schema": 1, "state": "stopped"}
         return prepared(expires_at="2020-01-01T00:00:00Z")
@@ -342,6 +370,14 @@ def ready(binary: Path, handle: Path, deadline: datetime) -> dict[str, object]:
     }
 
 
+def sdk_ready(binary: Path, handle: Path, deadline: datetime) -> dict[str, object]:
+    return {
+        "schema": 1,
+        "owner": ready(binary, handle, deadline),
+        "prepared": prepared(expires_at=deadline.isoformat()),
+    }
+
+
 def test_known_owned_expiry_requires_await_and_coalesces_joined_replacement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -349,20 +385,27 @@ def test_known_owned_expiry_requires_await_and_coalesces_joined_replacement(
     calls: list[str] = []
     deadline = datetime.now(UTC) + timedelta(minutes=5)
     stopping, release = threading.Event(), threading.Event()
+    expired = False
+    run = 1
 
-    def command(binary: Path, *args: str) -> object:
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        nonlocal expired, run
+        # these counters describe the native fixture's selected lifecycle.
+        if args[0] == "sdk-prepare":
+            calls.extend(["start", "prepare"])
+            return sdk_ready(binary, tmp_path / "handle-1", deadline)
+        if args[0] == "sdk-request":
+            if expired:
+                calls.append("stop")
+                stopping.set()
+                assert release.wait(5)
+                run += 1
+                expired = False
+                calls.append("start")
+            calls.append("prepare")
+            return sdk_ready(binary, tmp_path / f"handle-{run}", deadline)
         calls.append(args[0])
-        if args[0] == "start":
-            assert args[1:] == (
-                "--directory",
-                str(tmp_path),
-                "--parent-pid",
-                str(os.getpid()),
-            )
-            return ready(binary, tmp_path / "handle", deadline)
         if args[0] == "stop":
-            stopping.set()
-            assert release.wait(5)
             return {"schema": 1, "state": "stopped"}
         return prepared(expires_at=deadline.isoformat())
 
@@ -373,13 +416,12 @@ def test_known_owned_expiry_requires_await_and_coalesces_joined_replacement(
         return await tnl.connect("database", directory=tmp_path)
 
     async def scenario() -> None:
+        nonlocal expired
         first = await handle
         original_deadline = first.expires_at
-        owner = handle._session.state
-        assert isinstance(owner, _connections._OwnedOwner) and owner.expires_at == deadline
-        handle._session.state = _connections._OwnedOwner(
-            owner.handle, datetime.now(UTC) - timedelta(seconds=1)
-        )
+        assert handle._session.expires_at == deadline
+        handle._session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        expired = True
         before = list(calls)
         with pytest.raises(tnl.TnlError) as caught:
             handle.snapshot()
@@ -412,11 +454,23 @@ def test_expiry_cleanup_must_acknowledge_join_before_replacement(
     calls: list[str] = []
     joined = False
     deadline = datetime.now(UTC) + timedelta(minutes=5)
+    expired = False
 
-    def command(binary: Path, *args: str) -> object:
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        nonlocal expired
+        if args[0] == "sdk-prepare":
+            calls.extend(["start", "prepare"])
+            return sdk_ready(binary, tmp_path / "handle-1", deadline)
+        if args[0] == "sdk-request":
+            if expired:
+                calls.append("stop")
+                if not joined:
+                    return {"schema": 1, "reason": "TNL_SERVER_RESPONSE_INVALID"}
+                calls.append("start")
+                expired = False
+            calls.append("prepare")
+            return sdk_ready(binary, tmp_path / "handle-2", deadline)
         calls.append(args[0])
-        if args[0] == "start":
-            return ready(binary, tmp_path / "handle", deadline)
         if args[0] == "stop":
             return {"schema": 1, "state": "stopped" if joined else "stopping"}
         return prepared()
@@ -425,20 +479,17 @@ def test_expiry_cleanup_must_acknowledge_join_before_replacement(
     handle = tnl.connect("database", directory=tmp_path)
 
     async def scenario() -> None:
-        nonlocal joined
+        nonlocal joined, expired
         await handle
-        owner = handle._session.state
-        assert isinstance(owner, _connections._OwnedOwner)
-        handle._session.state = _connections._OwnedOwner(
-            owner.handle, datetime.now(UTC) - timedelta(seconds=1)
-        )
+        handle._session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        expired = True
         with pytest.raises(tnl.TnlError) as caught:
             await handle
         assert caught.value.code == "sdk.connection_invalid"
         assert calls == ["start", "prepare", "stop"]
-        with pytest.raises(tnl.TnlError) as expired:
+        with pytest.raises(tnl.TnlError) as expired_snapshot:
             handle.snapshot()
-        assert expired.value.code == "sdk.connection_expired"
+        assert expired_snapshot.value.code == "sdk.connection_expired"
         joined = True
         await handle
         assert calls == ["start", "prepare", "stop", "stop", "start", "prepare"]
@@ -453,15 +504,26 @@ def test_expiry_restart_observes_current_authentication_denial_without_retrying_
     monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
     calls: list[str] = []
     allowed = True
-    denied = tnl.TnlError("sdk.connection_unavailable", "current native authentication was denied")
+    expired = False
 
-    def command(binary: Path, *args: str) -> object:
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        if args[0] == "sdk-prepare":
+            calls.extend(["start", "prepare"])
+            return sdk_ready(binary, tmp_path / "handle", datetime.now(UTC) + timedelta(minutes=5))
+        if args[0] == "sdk-request":
+            if expired:
+                calls.extend(["stop", "start"])
+                assert not allowed
+                return {
+                    "schema": 1,
+                    "reason": "TNL_CLIENT_AUTHENTICATION_REQUIRED",
+                    "sdk_retained_start_failure": True,
+                    "sdk_failure_handle": "a" * 64 + "." + "1" * 16,
+                }
+            calls.append("prepare")
+            return sdk_ready(binary, tmp_path / "handle", datetime.now(UTC) + timedelta(minutes=5))
         calls.append(args[0])
-        if args[0] == "start":
-            if not allowed:
-                raise denied
-            return ready(binary, tmp_path / "handle", datetime.now(UTC) + timedelta(minutes=5))
-        if args[0] == "stop":
+        if args[0] in {"stop", "sdk-close-failure"}:
             return {"schema": 1, "state": "stopped"}
         return prepared()
 
@@ -472,15 +534,14 @@ def test_expiry_restart_observes_current_authentication_denial_without_retrying_
         return await handle
 
     async def scenario() -> None:
-        nonlocal allowed
+        nonlocal allowed, expired
         await handle
-        owner = handle._session.state
-        assert isinstance(owner, _connections._OwnedOwner)
-        handle._session.state = _connections._OwnedOwner(
-            owner.handle, datetime.now(UTC) - timedelta(seconds=1)
-        )
+        handle._session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         allowed = False
+        expired = True
         failures = await asyncio.gather(*(one() for _ in range(8)), return_exceptions=True)
+        denied = failures[0]
+        assert isinstance(denied, tnl.TnlError) and denied.code == "sdk.connection_unavailable"
         assert all(error is denied for error in failures)
         assert calls == ["start", "prepare", "stop", "start"]
         with pytest.raises(tnl.TnlError) as caught:
@@ -525,10 +586,21 @@ def test_snapshot_expiry_and_transient_reads_do_not_replace_a_live_owned_session
     calls: list[str] = []
     fail: str | None = None
 
-    def command(binary: Path, *args: str) -> object:
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        if args[0] == "sdk-prepare" and "--recover-handle" not in args:
+            calls.extend(["start", "prepare"])
+            return sdk_ready(binary, tmp_path / "handle", datetime.now(UTC) + timedelta(minutes=5))
+        if "--recover-handle" in args:
+            calls.append("recover")
+            raise tnl.TnlError("sdk.connection_unavailable", "kernel lifetime lock is held")
+        if args[0] == "sdk-request":
+            calls.append("prepare")
+            if fail == "unavailable":
+                raise tnl.TnlError("sdk.connection_unavailable", "native read timed out")
+            if fail == "expired":
+                raise tnl.TnlError("sdk.connection_expired", "snapshot expired")
+            return sdk_ready(binary, tmp_path / "handle", datetime.now(UTC) + timedelta(minutes=5))
         calls.append(args[0])
-        if args[0] == "start":
-            return ready(binary, tmp_path / "handle", datetime.now(UTC) + timedelta(minutes=5))
         if args[0] == "stop":
             return {"schema": 1, "state": "stopped"}
         if fail == "unavailable":

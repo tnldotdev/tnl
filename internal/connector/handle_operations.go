@@ -13,14 +13,14 @@ import (
 )
 
 func ReadPrepared(ctx context.Context, path, service string) (connectorruntime.Prepared, error) {
-	return connectionSnapshot(ctx, path, service, "prepared")
+	return connectionSnapshot(ctx, path, service, "prepared", "")
 }
 
 func Prepare(ctx context.Context, path, service string) (connectorruntime.Prepared, error) {
-	return connectionSnapshot(ctx, path, service, "prepare")
+	return connectionSnapshot(ctx, path, service, "prepare", "")
 }
 
-func connectionSnapshot(ctx context.Context, path, service, operation string) (connectorruntime.Prepared, error) {
+func connectionSnapshot(ctx context.Context, path, service, operation, assertion string) (connectorruntime.Prepared, error) {
 	if !naming.ValidServiceName(service) {
 		return connectorruntime.Prepared{}, connectorruntime.ErrInvalid
 	}
@@ -35,7 +35,7 @@ func connectionSnapshot(ctx context.Context, path, service, operation string) (c
 		return connectorruntime.Prepared{}, err
 	}
 	var prepared connectorruntime.Prepared
-	if err := connectorruntime.Call(bounded, path, operation, connectorruntime.Request{Schema: 1, Directory: handle.Directory, ConfigDigest: handle.ConfigDigest, Service: service}, &prepared); err != nil {
+	if err := connectorruntime.Call(bounded, path, operation, connectorruntime.Request{Schema: 1, Directory: handle.Directory, ConfigDigest: handle.ConfigDigest, Service: service, Assertion: assertion}, &prepared); err != nil {
 		return connectorruntime.Prepared{}, err
 	}
 	if err := prepared.Validate(); err != nil {

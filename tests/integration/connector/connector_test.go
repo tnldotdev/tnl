@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/big"
 	"net"
 	"net/http"
@@ -57,6 +58,20 @@ func TestIntegrationConnectionConnectorOwnerKubernetes(t *testing.T) {
 	runConnectionNativeOwner(t, "kubernetes", true)
 }
 
+func TestIntegrationConnectionConnectorOwnerSDKSelectionBudget(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	var baseline, selected map[string]int
+	t.Run("baseline-sdk-sequence", func(t *testing.T) {
+		baseline = runConnectionNativeOwnerStartup(t, "http", true, "baseline-sdk")
+	})
+	t.Run("native-sdk-selection", func(t *testing.T) {
+		selected = runConnectionNativeOwnerStartup(t, "http", true, "native-sdk")
+	})
+	if !maps.Equal(baseline, selected) {
+		t.Fatalf("native SDK selection changed the baseline SDK RPC budget: baseline=%v selected=%v", baseline, selected)
+	}
+}
+
 type connectorConnectionFixture struct {
 	Handle   string
 	Env      []string
@@ -66,6 +81,11 @@ type connectorConnectionFixture struct {
 }
 
 func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualify ...func(connectorConnectionFixture)) {
+	t.Helper()
+	runConnectionNativeOwnerStartup(t, protocol, public, "caller-prepared", qualify...)
+}
+
+func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool, startup string, qualify ...func(connectorConnectionFixture)) map[string]int {
 	t.Helper()
 	serviceName := "api"
 	if protocol == "kubernetes" {
@@ -162,11 +182,14 @@ func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualif
 	var clientPublic ed25519.PublicKey
 	var exchangeAttempts atomic.Int32
 	var authorityMu sync.Mutex
+	controlCalls := map[string]int{}
 	issuer := githubtest.New(t)
 	var verifier *oidc.GitHubWorkloadVerifier
 	authority := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authorityMu.Lock()
 		defer authorityMu.Unlock()
+		path := strings.ReplaceAll(strings.ReplaceAll(r.URL.Path, sessionID, "{session}"), service, "{service}")
+		controlCalls[r.Method+" "+path]++
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/v1/workload-sessions/identity":
@@ -417,6 +440,111 @@ func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualif
 		}
 		startArgs = append(startArgs, "--kube-token-file", path, "--namespace", "runtime-test")
 	}
+	if startup != "caller-prepared" {
+		// reproduce d0825a78's SDK sequence against the same real native owner,
+		// authority, signed assertion, relay carriers, and TLS preflight. this is
+		// a baseline operation sequence, not a separately built historical SDK.
+		privateRequest := connectorruntime.Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest, Service: serviceName, Assertion: assertion}
+		operation := "prepare"
+		registry := ""
+		defer func() {
+			if registry != "" {
+				call(nil, "sdk-stop", "--registry", registry, "--parent-pid", strconv.Itoa(os.Getpid()))
+			} else if state.ConnectionHandle != "" {
+				call(nil, "stop", "--handle", state.ConnectionHandle)
+			}
+		}()
+		if startup == "baseline-sdk" {
+			call(request, "identity", "--directory", root, "--workload", "test")
+			startArgs = append(startArgs, "--parent-pid", strconv.Itoa(os.Getpid()))
+			if err := json.Unmarshal(call(request, startArgs...), &state); err != nil {
+				t.Fatal(err)
+			}
+			var prepared connectorruntime.Prepared
+			if err := connectorruntime.Call(t.Context(), state.ConnectionHandle, operation, privateRequest, &prepared); err != nil {
+				t.Fatal(err)
+			}
+			if err := connectorruntime.ValidatePrepared(prepared, serviceName); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			var err error
+			registry, err = connectorruntime.NewDirectory(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input, _ := json.Marshal(map[string]any{"schema": 1, "assertion": assertion})
+			var prepared connectorruntime.SDKPrepared
+			if err := json.Unmarshal(call(input, "sdk-prepare", "--directory", root, "--workload", "test", "--registry", registry, "--parent-pid", strconv.Itoa(os.Getpid()), "--selected-service", serviceName), &prepared); err != nil {
+				t.Fatal(err)
+			}
+			state = prepared.Owner
+			if err := connectorruntime.ValidatePrepared(prepared.Prepared, serviceName); err != nil {
+				t.Fatal(err)
+			}
+			operation, privateRequest.Workload = "sdk-prepare", "test"
+		}
+		authorityMu.Lock()
+		cold := maps.Clone(controlCalls)
+		authorityMu.Unlock()
+		client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		defer client.CloseIdleConnections()
+		for range 10 {
+			var prepared connectorruntime.Prepared
+			if operation == "sdk-prepare" {
+				// use the same authenticated private HTTP operation as the SDK;
+				// the caller-prepared Go Call adapter intentionally has no SDK verb.
+				handle, err := connectorruntime.ReadHandle(state.ConnectionHandle)
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, _ := json.Marshal(privateRequest)
+				request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, handle.URL+"/v1/connections/sdk-prepare", bytes.NewReader(data))
+				if err != nil {
+					t.Fatal(err)
+				}
+				request.Header.Set("Authorization", "Bearer "+handle.Key)
+				request.Header.Set("Content-Type", "application/json")
+				response, err := client.Do(request)
+				if err != nil {
+					t.Fatal("warm SDK IPC", err)
+				}
+				var selected connectorruntime.SDKPrepared
+				err = connectorruntime.ReadJSON(response.Body, &selected)
+				response.Body.Close()
+				if response.StatusCode != http.StatusOK || err != nil {
+					t.Fatal("warm SDK IPC returned an invalid snapshot", response.StatusCode, err)
+				}
+				if selected.Owner.ConnectionHandle != state.ConnectionHandle {
+					t.Fatal("warm SDK selection replaced its owner")
+				}
+				prepared = selected.Prepared
+			} else if err := connectorruntime.Call(t.Context(), state.ConnectionHandle, operation, privateRequest, &prepared); err != nil {
+				t.Fatal(err)
+			}
+			if err := connectorruntime.ValidatePrepared(prepared, serviceName); err != nil {
+				t.Fatal(err)
+			}
+		}
+		authorityMu.Lock()
+		warm := maps.Clone(controlCalls)
+		authorityMu.Unlock()
+		if !maps.Equal(cold, warm) {
+			t.Fatalf("warm SDK preparation made control RPCs: cold=%v after=%v", cold, warm)
+		}
+		if cold["POST /v1/workload-sessions/identity"] != 2 || cold["POST /v1/workload-sessions/exchange"] != 2 {
+			t.Fatal("SDK budget omitted selector identification or lost-exchange retry", cold)
+		}
+		total := 0
+		for _, n := range cold {
+			total += n
+		}
+		if total != 12 {
+			t.Fatalf("SDK cold RPC budget=%d, want 12 including one lost-exchange retry: %v", total, cold)
+		}
+		t.Logf("%s control RPCs: cold=%d warm(10 requests)=0; includes two identity calls and one injected lost-exchange retry; by endpoint=%v", startup, total, cold)
+		return cold
+	}
 	if err := json.Unmarshal(call(request, startArgs...), &state); err != nil {
 		t.Fatal(err)
 	}
@@ -579,4 +707,5 @@ func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualif
 	}
 	// cleanup is already joined; avoid a second stop with an expired handle.
 	state.ConnectionHandle = ""
+	return nil
 }

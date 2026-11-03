@@ -100,9 +100,10 @@ tasks:
       - go test -race ./cmd/tnl ./internal/connector ./tests/integration/connector -run='^Test(Connection|IntegrationConnectionConnectorOwner)' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   test:connections:budget:
-    desc: Measure verified cold/warm native control work and prepared-only sibling reads with local TLS fixtures
+    desc: Measure backend and production SDK cold/warm control work with local TLS fixtures
     cmds:
       - go test -race -v ./internal/connector -run='^TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget$' -count=1 -timeout=1m
+      - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwnerSDKSelectionBudget$' -count=1 -timeout=1m -args -tnl-test-tier=integration
 
   test:owner-lifecycle:
     desc: Check connection owner isolation, replacement, bounded cleanup and issued login cancellation

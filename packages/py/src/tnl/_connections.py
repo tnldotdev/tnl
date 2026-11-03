@@ -10,10 +10,13 @@ import os
 import selectors
 import ssl
 import subprocess
+import tempfile
 import threading
 import time
+import weakref
 from collections.abc import Generator, Mapping
-from dataclasses import dataclass, field
+from concurrent.futures import Future
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar, Literal, cast
@@ -38,6 +41,34 @@ def _error(code: str) -> TnlError:
         "closed": "the connection handle is closed; create a new handle",
     }
     return TnlError("sdk.connection_" + code, messages[code])
+
+
+class _RetainedStartFailure(TnlError):
+    def __init__(self, reason: str, handle: str) -> None:
+        value = _native_error(reason)
+        super().__init__(value.code, str(value))
+        self.reason = {
+            "sdk.connection_invalid": "TNL_SERVER_RESPONSE_INVALID",
+            "sdk.connection_expired": "TNL_CLIENT_CONNECTION_EXPIRED",
+        }.get(value.code, "TNL_CLIENT_CONNECTION_UNAVAILABLE")
+        self.handle = handle
+
+
+def _native_error(reason: object, retained: bool = False, handle: object = None) -> TnlError:
+    if retained and isinstance(reason, str):
+        if (
+            not isinstance(handle, str)
+            or len(handle) != 81
+            or handle[64] != "."
+            or any(char not in "0123456789abcdef" for char in handle[:64] + handle[65:])
+        ):
+            return _error("invalid")
+        return _RetainedStartFailure(reason, handle)
+    if reason in ("TNL_SERVER_RESPONSE_INVALID", "TNL_CLIENT_CONNECTION_REQUEST_INVALID"):
+        return _error("invalid")
+    if reason == "TNL_CLIENT_CONNECTION_EXPIRED":
+        return _error("expired")
+    return _error("unavailable")
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -243,15 +274,19 @@ def _command(binary: Path, *arguments: str, input_value: object = None) -> objec
             [str(binary), "--no-telemetry", "runtime", "connections", *arguments],
             stdin=subprocess.PIPE if input_value is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             bufsize=0,
         ) as child:
             try:
                 assert child.stdout is not None
+                assert child.stderr is not None
                 data = bytearray()
+                diagnostic = bytearray()
                 with selectors.DefaultSelector() as selector:
                     os.set_blocking(child.stdout.fileno(), False)
                     selector.register(child.stdout, selectors.EVENT_READ)
+                    os.set_blocking(child.stderr.fileno(), False)
+                    selector.register(child.stderr, selectors.EVENT_READ)
                     pending = memoryview(encoded)
                     if child.stdin is not None:
                         os.set_blocking(child.stdin.fileno(), False)
@@ -275,15 +310,27 @@ def _command(binary: Path, *arguments: str, input_value: object = None) -> objec
                                 else:
                                     chunk = os.read(key.fd, 8192)
                                     if not chunk:
-                                        selector.unregister(child.stdout)
-                                    data.extend(chunk)
-                                    if len(data) > _MAX_BYTES:
+                                        selector.unregister(key.fileobj)
+                                    target = data if key.fileobj is child.stdout else diagnostic
+                                    target.extend(chunk)
+                                    if len(target) > _MAX_BYTES:
                                         raise _error("invalid")
                             except BlockingIOError:
                                 continue
                 child.wait(timeout=max(0.001, deadline - time.monotonic()))
                 if child.returncode:
-                    raise _error("unavailable")
+                    reason = None
+                    retained = False
+                    failure_handle = None
+                    try:
+                        problem: object = json.loads(diagnostic)
+                        if isinstance(problem, dict):
+                            reason = problem.get("reason")
+                            retained = problem.get("sdk_retained_start_failure") is True
+                            failure_handle = problem.get("sdk_failure_handle")
+                    except (ValueError, UnicodeDecodeError):
+                        pass
+                    raise _native_error(reason, retained, failure_handle)
                 result: object = json.loads(data)
                 return result
             finally:
@@ -296,368 +343,456 @@ def _command(binary: Path, *arguments: str, input_value: object = None) -> objec
         raise _error("invalid") from None
 
 
-@dataclass(frozen=True, slots=True)
-class _AbsentOwner:
-    pass
-
-
-@dataclass(frozen=True, slots=True)
-class _MountedOwner:
-    handle: str
-
-
-@dataclass(frozen=True, slots=True)
-class _OwnedOwner:
-    handle: str
-    expires_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class _FailedOwner:
-    error: TnlError
-
-
-@dataclass(frozen=True, slots=True)
-class _ClosedOwner:
-    pass
-
-
-type _OwnerPhase = _AbsentOwner | _MountedOwner | _OwnedOwner | _FailedOwner | _ClosedOwner
-
-
 class _Session:
-    def __init__(self, directory: str, service: str, mounted: str | None) -> None:
-        self.directory = directory
+    """hold one native-selected capability; never select or replace its owner."""
+
+    def __init__(self, scope: _Scope, handle: str | None = None) -> None:
+        self.scope = scope
+        self.directory = scope.directory
         self.creator_pid = os.getpid()
-        self.service = service
-        self.mounted = mounted
-        self.state: _OwnerPhase = _MountedOwner(mounted) if mounted is not None else _AbsentOwner()
-        self.binary: Path | None = None
+        self.handle = handle
+        self.expires_at: datetime | None = None
+        self.closed = False
+        self.joined = False
         self.lock = threading.RLock()
+        self.cleanup_lock = threading.Lock()
+        self.changed = threading.Condition(self.lock)
+        self.pending = 0
+        self.attached: _Session | None = None
+        self.failed: set[_Session] = set()
         self.ipc: OwnerIPC | None = None
-        self.context: object = None
-        self.policies: set[tuple[str, str, str]] = set()
+        self.failure_handle: str | None = None
 
-    def read(
-        self,
-        prepare: bool = False,
-        *,
-        service: str | None = None,
-        selection: Selection | None = None,
-    ) -> Connection:
-        if self.creator_pid != os.getpid():
-            raise _error("closed")
-        with self.lock:
-            name = service or self.service
-            started = False
-            if isinstance(self.state, _ClosedOwner):
+    def prepare(self, service: str, selection: Selection | None) -> tuple[Connection, _Session]:
+        # the SDK joins its worker threads; native still decides which capability
+        # a request selects and whether that owner can be reused or replaced.
+        with self.scope.lock, self.changed:
+            if self.closed:
                 raise _error("closed")
-            if isinstance(self.state, _FailedOwner):
-                raise self.state.error
-            if isinstance(self.state, _OwnedOwner) and self.state.expires_at <= datetime.now(UTC):
-                if not prepare:
-                    raise _error("expired")
-                # join the old owner before reusing its port. a new start uses
-                # current native identity and authorization, not old credentials.
-                self._stop_owner()
-            if isinstance(self.state, _AbsentOwner) and not prepare:
-                raise _error("not_prepared")
-            if self.binary is None:
-                self.binary = native_binary().resolve(strict=True)
-            if isinstance(self.state, _AbsentOwner):
-                try:
-                    arguments = [
-                        "start",
-                        "--directory",
-                        self.directory,
-                        "--parent-pid",
-                        str(os.getpid()),
-                    ]
-                    private_input: object = None
-                    if selection is not None:
-                        arguments.extend(
-                            [
-                                "--workload",
-                                selection.name,
-                                "--workload-manifest",
-                                selection.manifest,
-                            ]
-                        )
-                        context = (
-                            self.context
-                            if self.context is not None
-                            else _command(
-                                self.binary,
-                                "context",
-                                "--directory",
-                                self.directory,
-                                "--workload",
-                                selection.name,
-                                "--workload-manifest",
-                                selection.manifest,
-                            )
-                        )
-                        private_input = {
-                            "schema": 1,
-                            "context": context,
-                            "assertion": selection.assertion,
-                        }
-                    status = _object(
-                        _command(
-                            self.binary,
-                            *arguments,
-                            **({"input_value": private_input} if private_input is not None else {}),
-                        ),
-                        {
-                            "schema",
-                            "state",
-                            "pid",
-                            "expires_at",
-                            "project_runtime",
-                            "connection_handle",
-                            "executable",
-                            "kubeconfig",
-                            "reason",
-                        },
-                    )
-                    handle = _text(status.get("connection_handle"))
-                    if (
-                        type(status.get("schema")) is not int
-                        or status["schema"] != 1
-                        or status.get("state") != "ready"
-                        or type(status.get("pid")) is not int
-                        or cast(int, status["pid"]) <= 0
-                        or not Path(handle).is_absolute()
-                        or status.get("executable") != str(self.binary)
-                        or not isinstance(status.get("project_runtime"), dict)
-                    ):
-                        raise _error("invalid")
-                    self.state = _OwnedOwner(handle, _expiry(status.get("expires_at")))
-                    started = True
-                    atexit.register(self._cleanup)
-                except TnlError as error:
-                    self.state = _FailedOwner(error)
-                    raise
-            try:
-                owner = self.state
-                if not isinstance(owner, (_MountedOwner, _OwnedOwner)):
-                    raise _error("not_prepared")
-                if prepare:
-                    if self.ipc is None:
-                        self.ipc = OwnerIPC(owner.handle)
-                    raw = self.ipc.prepare(
-                        name, selection.assertion if selection is not None else None
-                    )
-                else:
-                    raw = _command(self.binary, "read", "--handle", owner.handle, "--service", name)
-                return _prepared(raw, name)
-            except TnlError as error:
-                if prepare and isinstance(self.state, _OwnedOwner) and not started:
-                    try:
-                        recovered = _object(
-                            _command(self.binary, "recover", "--handle", owner.handle),
-                            {"schema", "state"},
-                        )
-                        if recovered.get("schema") != 1 or recovered.get("state") != "stopped":
-                            raise _error("invalid")
-                    except TnlError:
-                        raise error from None
-                    self.state = _AbsentOwner()
-                    if self.ipc is not None:
-                        self.ipc.close()
-                        self.ipc = None
-                    atexit.unregister(self._cleanup)
-                    return self.read(True, service=name, selection=selection)
-                raise
+            self.pending += 1
+            self.scope.pending += 1
+        try:
+            result = self.scope.prepare(service, selection, self)
+            with self.changed:
+                if self.handle is None:
+                    self.attached = result[1]
+            return result
+        finally:
+            with self.scope.lock, self.changed:
+                self.pending -= 1
+                self.scope.pending -= 1
+                self.changed.notify_all()
 
-    def _stop_owner(self) -> None:
-        if self.creator_pid != os.getpid():
+    def read(self, *, service: str) -> Connection:
+        if self.creator_pid != os.getpid() or self.closed:
             raise _error("closed")
-        owner = self.state
-        assert self.binary is not None and isinstance(owner, _OwnedOwner)
-        stopped = _object(
-            _command(self.binary, "stop", "--handle", owner.handle), {"schema", "state"}
+        selected = self
+        if selected.handle is None:
+            raise _error("not_prepared")
+        if selected.closed:
+            raise _error("closed")
+        if selected.expires_at is not None and selected.expires_at <= datetime.now(UTC):
+            raise _error("expired")
+        return _prepared(
+            _command(
+                self.scope.binary(), "read", "--handle", selected.handle, "--service", service
+            ),
+            service,
         )
+
+    def close(self) -> None:
+        # forked children must not acquire inherited locks or stop a parent owner.
+        if self.creator_pid != os.getpid():
+            return
+        if not self.cleanup_lock.acquire(timeout=_TIMEOUT):
+            raise _error("unavailable")
+        try:
+            self._close()
+        finally:
+            self.cleanup_lock.release()
+
+    def _close(self) -> None:
+        deadline = time.monotonic() + _TIMEOUT
+        with self.scope.lock, self.changed:
+            if self.joined:
+                return
+            self.closed = True
+            stop_scope = (
+                self.scope.mounted is None
+                and self.handle is None
+                and self.failure_handle is None
+                and self.attached is None
+                and not self.failed
+                and not self.scope.failure_handles
+                and not self.scope.handles
+                and self.scope.pending == self.pending
+            )
+        if stop_scope:
+            self.scope.stop()
+        with self.changed:
+            while self.pending:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise _error("unavailable")
+                self.changed.wait(remaining)
+            selected = self.attached or self
+            failed = tuple(self.failed)
+        for session in failed:
+            session.close()
+        if selected is not self:
+            selected.close()
+        elif not stop_scope:
+            if self.failure_handle is not None:
+                assert self.scope.registry is not None
+                stopped = _command(
+                    self.scope.binary(),
+                    "sdk-close-failure",
+                    "--registry",
+                    self.scope.registry,
+                    "--parent-pid",
+                    str(os.getpid()),
+                    "--failure-handle",
+                    self.failure_handle,
+                )
+                self.scope.check_stopped(stopped)
+                with self.scope.lock:
+                    self.scope.failures = {
+                        key: failure
+                        for key, failure in self.scope.failures.items()
+                        if failure.session is not self
+                    }
+            elif self.scope.mounted is None and self.handle is not None:
+                stopped = _object(
+                    _command(self.scope.binary(), "stop", "--handle", self.handle),
+                    {"schema", "state"},
+                )
+                if (
+                    type(stopped.get("schema")) is not int
+                    or stopped["schema"] != 1
+                    or stopped.get("state") != "stopped"
+                ):
+                    raise _error("invalid")
+        with self.changed:
+            if self.ipc is not None:
+                self.ipc.close()
+                self.ipc = None
+            self.joined = True
+        self.scope.prune()
+
+
+class _FailureObservation:
+    def __init__(self, scope: _Scope, error: _RetainedStartFailure) -> None:
+        self.reason, self.handle = error.reason, error.handle
+        self.reference = weakref.ref(error)
+        self.session = _Session(scope)
+        self.session.failure_handle = error.handle
+
+    def error(self) -> _RetainedStartFailure:
+        error = self.reference()
+        if error is None:
+            error = _RetainedStartFailure(self.reason, self.handle)
+            self.reference = weakref.ref(error)
+        return error
+
+
+class _Scope:
+    def __init__(self, directory: str, mounted: str | None) -> None:
+        self.directory, self.mounted = directory, mounted
+        self.creator_pid = os.getpid()
+        self.registry: str | None = None
+        self._binary: Path | None = None
+        self.entry: tuple[str, OwnerIPC] | None = None
+        self.pending = 0
+        self.requests: dict[tuple[str, str], Future[object]] = {}
+        self.failures: dict[str, _FailureObservation] = {}
+        self.failure_handles: dict[str, _FailureObservation] = {}
+        self.lock = threading.Lock()
+        self.handles: dict[str, _Session] = {}
+        self.selected = _Session(self, mounted)
+        if mounted is not None:
+            self.handles[mounted] = self.selected
+
+    def binary(self) -> Path:
+        with self.lock:
+            if self._binary is None:
+                self._binary = native_binary().resolve(strict=True)
+            return self._binary
+
+    def prepare(
+        self, service: str, selection: Selection | None, requester: _Session | None = None
+    ) -> tuple[Connection, _Session]:
+        requested_at = datetime.now(UTC).isoformat()
+        binary = self.binary()
+        if self.mounted is not None:
+            assert self.selected is not None
+            with self.selected.lock:
+                if self.selected.closed:
+                    raise _error("closed")
+                if self.selected.ipc is None:
+                    self.selected.ipc = OwnerIPC(self.mounted)
+            return _prepared(self.selected.ipc.prepare(service), service), self.selected
+        with self.lock:
+            if self.registry is None:
+                self.registry = str(Path(tempfile.mkdtemp(prefix="tnl-sdk-")).resolve())
+                atexit.register(self._cleanup)
+            registry = self.registry
+        if requester is not None and requester.closed:
+            raise _error("closed")
+        arguments = [
+            "sdk-prepare",
+            "--directory",
+            self.directory,
+            "--registry",
+            registry,
+            "--parent-pid",
+            str(os.getpid()),
+            "--selected-service",
+            service,
+            "--requested-at",
+            requested_at,
+            "--retain-start-failure",
+        ]
+        if selection is not None:
+            arguments.extend(
+                ["--workload", selection.name, "--workload-manifest", selection.manifest]
+            )
+        private_input = {
+            "schema": 1,
+            **({"assertion": selection.assertion} if selection is not None else {}),
+        }
+        selector = (
+            "human"
+            if selection is None
+            else hashlib.sha256(
+                json.dumps([selection.name, selection.policy, selection.assertion]).encode()
+            ).hexdigest()
+        )
+        key = (selector, service)
+        with self.lock:
+            retained = self.failures.get(selector)
+            if retained is not None:
+                if requester is not None:
+                    with requester.changed:
+                        requester.failed.add(retained.session)
+                raise retained.error()
+            future = self.requests.get(key)
+            leading = future is None
+            if future is None:
+                if len(self.requests) >= 64:
+                    raise _error("unavailable")
+                future = Future()
+                self.requests[key] = future
+        if leading:
+            try:
+                raw = self._request(
+                    binary, arguments, private_input, service, selection, requested_at
+                )
+            except BaseException as error:
+                with self.lock:
+                    if isinstance(error, _RetainedStartFailure):
+                        observation = self.failure_handles.get(error.handle)
+                        if observation is None:
+                            observation = _FailureObservation(self, error)
+                            self.failure_handles[error.handle] = observation
+                        if len(self.failures) >= 32:
+                            self.failures.pop(next(iter(self.failures)))
+                        self.failures[selector] = observation
+                        error = observation.error()
+                    self.requests.pop(key, None)
+                future.set_exception(error)
+            else:
+                with self.lock:
+                    self.requests.pop(key, None)
+                future.set_result(raw)
+        try:
+            raw = future.result(timeout=_TIMEOUT)
+        except TimeoutError:
+            raise _error("unavailable") from None
+        except _RetainedStartFailure as error:
+            with self.lock:
+                if requester is not None:
+                    with requester.changed:
+                        requester.failed.add(self.failure_handles[error.handle].session)
+            raise
+        value = _object(raw, {"schema", "owner", "prepared"})
+        owner = _object(
+            value.get("owner"),
+            {
+                "schema",
+                "state",
+                "pid",
+                "expires_at",
+                "project_runtime",
+                "connection_handle",
+                "executable",
+                "kubeconfig",
+            },
+        )
+        file = _text(owner.get("connection_handle"))
+        if (
+            type(value.get("schema")) is not int
+            or value["schema"] != 1
+            or type(owner.get("schema")) is not int
+            or owner["schema"] != 1
+            or owner.get("state") != "ready"
+            or not Path(file).is_absolute()
+            or owner.get("executable") != str(binary)
+        ):
+            raise _error("invalid")
+        expiry = _expiry(owner.get("expires_at"))
+        connection = _prepared(value.get("prepared"), service)
+        with self.lock:
+            session = self.selected if selection is None else self.handles.get(file)
+            if session is None:
+                session = _Session(self, file)
+            session.handle = file
+            session.expires_at = expiry
+            self.handles = {
+                old: held
+                for old, held in self.handles.items()
+                if held is not session or old == file
+            }
+            self.handles[file] = session
+            if self.entry is None:
+                self.entry = (file, OwnerIPC(file))
+        if session.closed:
+            raise _error("closed")
+        return connection, session
+
+    def _request(
+        self,
+        binary: Path,
+        arguments: list[str],
+        private_input: object,
+        service: str,
+        selection: Selection | None,
+        requested_at: str,
+    ) -> object:
+        entry = self.entry
+        if entry is None:
+            raw = _command(binary, *arguments, input_value=private_input)
+        else:
+            try:
+                raw = entry[1].prepare(
+                    service,
+                    selection.assertion if selection else None,
+                    sdk=True,
+                    workload=selection.name if selection else None,
+                    manifest=selection.manifest if selection else None,
+                    requested_at=requested_at,
+                )
+            except TnlError as original:
+                try:
+                    raw = _command(
+                        binary, *arguments, "--recover-handle", entry[0], input_value=private_input
+                    )
+                except TnlError:
+                    raise original from None
+                with self.lock:
+                    if self.entry is entry:
+                        self.entry = None
+                        entry[1].close()
+        if isinstance(raw, dict) and "reason" in raw:
+            _object(raw, {"schema", "reason", "sdk_retained_start_failure", "sdk_failure_handle"})
+            if (
+                type(raw.get("schema")) is not int
+                or raw["schema"] != 1
+                or not isinstance(raw.get("reason"), str)
+            ):
+                raise _error("invalid")
+            raise _native_error(
+                raw["reason"],
+                raw.get("sdk_retained_start_failure") is True,
+                raw.get("sdk_failure_handle"),
+            )
+        return raw
+
+    @staticmethod
+    def check_stopped(raw: object) -> None:
+        stopped = _object(raw, {"schema", "state"})
         if (
             type(stopped.get("schema")) is not int
             or stopped["schema"] != 1
             or stopped.get("state") != "stopped"
         ):
             raise _error("invalid")
-        self.state = _AbsentOwner()
-        if self.ipc is not None:
-            self.ipc.close()
-            self.ipc = None
-        atexit.unregister(self._cleanup)
 
-    def close(self) -> None:
-        # check before acquiring a lock possibly held by a vanished parent thread.
-        if self.creator_pid != os.getpid():
-            return
+    def prune(self) -> None:
+        # keep one scope per application boundary; joined capabilities and exit
+        # hooks must not accumulate across repeated close/reopen cycles.
         with self.lock:
-            if isinstance(self.state, _ClosedOwner):
-                return
-            if isinstance(self.state, _OwnedOwner):
-                self._stop_owner()
-            if self.ipc is not None:
-                self.ipc.close()
-                self.ipc = None
-            with _sessions_lock:
-                self.state = _ClosedOwner()
-                key = (self.directory, self.service, self.mounted)
-                if _sessions.get(key) is self:
-                    del _sessions[key]
-                for token, (scope, _) in list(_identities.items()):
-                    if token[0] == self.directory and scope == self.service:
-                        del _identities[token]
-                _prune_policies()
-            atexit.unregister(self._cleanup)
+            self.handles = {
+                file: session for file, session in self.handles.items() if not session.joined
+            }
+            if self.entry is not None and self.entry[0] not in self.handles:
+                self.entry[1].close()
+                self.entry = None
+            if not self.pending:
+                self.failure_handles = {
+                    handle: failure
+                    for handle, failure in self.failure_handles.items()
+                    if not failure.session.joined
+                }
+            if not self.pending and not self.handles and not self.failure_handles:
+                self.failures.clear()
+                atexit.unregister(self._cleanup)
+                self.registry = None
+
+    def stop(self) -> None:
+        if self.registry is not None:
+            stopped = _object(
+                _command(
+                    self.binary(),
+                    "sdk-stop",
+                    "--registry",
+                    self.registry,
+                    "--parent-pid",
+                    str(os.getpid()),
+                ),
+                {"schema", "state"},
+            )
+            if (
+                type(stopped.get("schema")) is not int
+                or stopped["schema"] != 1
+                or stopped.get("state") != "stopped"
+            ):
+                raise _error("invalid")
+            if self.entry is not None:
+                self.entry[1].close()
+                self.entry = None
+            with self.lock:
+                self.failures.clear()
+                self.failure_handles.clear()
 
     def _cleanup(self) -> None:
+        if self.creator_pid != os.getpid():
+            return
         try:
-            self.close()
+            self.stop()
         except TnlError:
-            # the connector owner also monitors the exact Python parent process.
+            # native also monitors the Python parent process.
             pass
 
 
-_sessions: dict[tuple[str, str, str | None], _Session] = {}
+_sessions: dict[tuple[str, str | None, str | None, str | None], _Scope] = {}
 _sessions_lock = threading.Lock()
-_contexts: dict[tuple[str, str, str], object] = {}
-_identities: dict[tuple[str, str, str, str], tuple[str, datetime]] = {}
-
-
-@dataclass
-class _PolicyLock:
-    lock: threading.Lock = field(default_factory=threading.Lock)
-    users: int = 0
-
-
-_policy_locks: dict[tuple[str, str, str], _PolicyLock] = {}
 
 
 def _after_fork() -> None:
     global _sessions_lock
     # close only this process's duplicate socket descriptors, without IPC or any
     # inherited locks. existing handle/atexit references are fenced by creator PID.
-    for session in _sessions.values():
-        if session.ipc is not None:
-            session.ipc.discard_inherited()
+    for scope in _sessions.values():
+        if scope.entry is not None:
+            scope.entry[1].discard_inherited()
+        for session in scope.handles.values():
+            if session.ipc is not None:
+                session.ipc.discard_inherited()
     _sessions.clear()
-    _contexts.clear()
-    _identities.clear()
-    _policy_locks.clear()
     _sessions_lock = threading.Lock()
 
 
 os.register_at_fork(after_in_child=_after_fork)
-
-
-def _prune_policies() -> None:
-    # callers hold _sessions_lock. users includes threads waiting on a policy,
-    # so removing an inactive policy cannot create two concurrent identity locks.
-    active = {policy for session in _sessions.values() for policy in session.policies}
-    for policy, entry in list(_policy_locks.items()):
-        if not entry.users and policy not in active:
-            del _policy_locks[policy]
-            _contexts.pop(policy, None)
-            for token in list(_identities):
-                if token[:3] == policy:
-                    del _identities[token]
-
-
-def _workload_session(directory: str, selection: Selection) -> _Session:
-    policy = (directory, selection.name, selection.policy)
-    identity_key = (*policy, hashlib.sha256(selection.assertion.encode()).hexdigest())
-    with _sessions_lock:
-        approved = _identities.get(identity_key) if selection.assertion else None
-        if approved is not None and approved[1] > datetime.now(UTC):
-            cached = _sessions.get((directory, approved[0], None))
-            if cached is not None and not isinstance(cached.state, _ClosedOwner):
-                return cached
-        if policy not in _policy_locks:
-            if len(_policy_locks) >= 32:
-                raise _error("unavailable")
-            _policy_locks[policy] = _PolicyLock()
-        entry = _policy_locks[policy]
-        entry.users += 1
-    try:
-        with entry.lock:
-            return _identify_workload_session(directory, selection, policy, identity_key)
-    finally:
-        with _sessions_lock:
-            entry.users -= 1
-            _prune_policies()
-
-
-def _identify_workload_session(
-    directory: str,
-    selection: Selection,
-    policy: tuple[str, str, str],
-    identity_key: tuple[str, str, str, str],
-) -> _Session:
-    with _sessions_lock:
-        approved = _identities.get(identity_key) if selection.assertion else None
-        if approved is not None and approved[1] > datetime.now(UTC):
-            cached = _sessions.get((directory, approved[0], None))
-            if cached is not None and not isinstance(cached.state, _ClosedOwner):
-                return cached
-    binary = native_binary().resolve(strict=True)
-    arguments = [
-        "--directory",
-        directory,
-        "--workload",
-        selection.name,
-        "--workload-manifest",
-        selection.manifest,
-    ]
-    with _sessions_lock:
-        context = _contexts.get(policy)
-    if context is None:
-        context = _command(binary, "context", *arguments)
-        with _sessions_lock:
-            _contexts[policy] = context
-    identity = _object(
-        _command(
-            binary,
-            "identity",
-            *arguments,
-            input_value={"schema": 1, "context": context, "assertion": selection.assertion},
-        ),
-        {"schema", "binding", "assertion_expires_at"},
-    )
-    binding = _text(identity.get("binding"))
-    if (
-        type(identity.get("schema")) is not int
-        or identity["schema"] != 1
-        or len(binding) != 64
-        or any(c not in "0123456789abcdef" for c in binding)
-    ):
-        raise _error("invalid")
-    expiry = (
-        _expiry(identity["assertion_expires_at"])
-        if selection.assertion and "assertion_expires_at" in identity
-        else None
-    )
-    scope = json.dumps([binding, context], sort_keys=True)
-    key = (directory, scope, None)
-    with _sessions_lock:
-        session = _sessions.get(key)
-        if session is None:
-            if len(_sessions) >= 32:
-                raise _error("unavailable")
-            session = _Session(*key)
-            session.context = context
-            _sessions[key] = session
-        session.policies.add(policy)
-        if expiry is not None:
-            for token, (_, until) in list(_identities.items()):
-                if until <= datetime.now(UTC):
-                    del _identities[token]
-            if len(_identities) >= 256:
-                del _identities[next(iter(_identities))]
-            _identities[identity_key] = (scope, expiry)
-        return session
 
 
 class ConnectionHandle[C: Connection]:
@@ -668,7 +803,8 @@ class ConnectionHandle[C: Connection]:
     ) -> None:
         self._session = session
         self._protocol = protocol
-        self._service = service or session.service
+        assert service is not None
+        self._service = service
         self._verified_workload = False
 
     def __repr__(self) -> str:
@@ -676,7 +812,7 @@ class ConnectionHandle[C: Connection]:
 
     def snapshot(self) -> C:
         """read a prepared owner's current snapshot, without startup or sign-in."""
-        if uses_workload() and not self._verified_workload:
+        if uses_workload() and (not self._verified_workload or self._session.handle is None):
             raise _error("not_prepared")
         return self._check(self._session.read(service=self._service))
 
@@ -686,22 +822,19 @@ class ConnectionHandle[C: Connection]:
         return cast(C, connection)
 
     async def _prepare(self) -> C:
-        if self._session.creator_pid != os.getpid() or isinstance(
-            self._session.state, _ClosedOwner
-        ):
+        if self._session.creator_pid != os.getpid() or self._session.closed:
             raise _error("closed")
         selection = None
         if uses_workload():
             selection = await select_workload(self._session.directory, self._service)
-            self._session = await asyncio.to_thread(
-                _workload_session, self._session.directory, selection
-            )
-            self._verified_workload = True
-        return self._check(
-            await asyncio.to_thread(
-                self._session.read, True, service=self._service, selection=selection
-            )
+        connection, session = await asyncio.to_thread(
+            self._session.prepare, self._service, selection
         )
+        if self._session.closed:
+            raise _error("closed")
+        self._session = session
+        self._verified_workload = selection is not None
+        return self._check(connection)
 
     def __await__(self) -> Generator[object, None, C]:
         return self._prepare().__await__()
@@ -806,12 +939,18 @@ def connect(
             raise _error("input")
     except (TnlError, OSError, ValueError, TypeError):
         raise _error("input") from None
-    key = (str(root), "", mounted)
+    key = (str(root), os.environ.get("TNL_STATE_DIR"), os.environ.get("TNL_SERVER"), mounted)
     with _sessions_lock:
-        session = _sessions.get(key)
-        if session is None:
-            session = _Session(*key)
-            _sessions[key] = session
+        scope = _sessions.get(key)
+        if scope is None:
+            scope = _Scope(str(root), mounted)
+            _sessions[key] = scope
+        if uses_workload():
+            session = _Session(scope)
+        else:
+            if scope.selected.closed:
+                scope.selected = _Session(scope, mounted)
+            session = scope.selected
     return ConnectionHandle(session, service=name)
 
 
