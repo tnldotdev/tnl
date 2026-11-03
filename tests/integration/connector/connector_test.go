@@ -144,6 +144,7 @@ func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualif
 	providerAddress := application.Listener.Addr().String()
 	team, _ := opaqueid.New(opaqueid.TeamPrefix)
 	service, _ := opaqueid.New(opaqueid.ServicePrefix)
+	trustRevision := int64(1)
 	sessionID, _ := opaqueid.New("wls_")
 	serviceRun, _ := opaqueid.New(opaqueid.ServiceRunPrefix)
 	allocated, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -243,7 +244,7 @@ func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualif
 		case r.URL.Path == "/v1/workload/services":
 			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}}}})
 		case strings.HasSuffix(r.URL.Path, "/run"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocol, "trust_revision": 1, "expires_at": time.Now().Add(time.Minute), "subject": current.Subject, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}, "pair_ready": native.Ready})
+			_ = json.NewEncoder(w).Encode(map[string]any{"service_id": service, "service_run_id": serviceRun, "run_number": 1, "protocol": protocol, "trust_revision": trustRevision, "expires_at": time.Now().Add(time.Minute), "subject": current.Subject, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}, "pair_ready": native.Ready})
 		case strings.Contains(r.URL.Path, "/connector-peer-pairs"):
 			var requested controlv1.ConnectorPeerPairRequest
 			var source controlv1.VisitorTokenWorkloadSource
@@ -264,7 +265,7 @@ func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualif
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: requested.Resource, Hostname: managedHostname, Port: port, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: requested.Resource, Hostname: managedHostname, Port: port, ServiceTrustRevision: &trustRevision, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
 		case strings.HasSuffix(r.URL.Path, "/client-certificate"):
 			certificateRequests.Add(1)
 			w.WriteHeader(403)

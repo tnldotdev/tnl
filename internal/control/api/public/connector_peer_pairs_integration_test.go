@@ -482,7 +482,8 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 		t.Fatal("device client renewal lost delivery", err)
 	} else if delivered.VisitorPermission.VisitorToken == "" || delivered.VisitorPermission.Resource.Kind != controlv1.VisitorResourceScopeKindService || delivered.VisitorPermission.Resource.Id != service.ID ||
 		delivered.VisitorPermission.Hostname != selected.Endpoint.Hostname || delivered.VisitorPermission.Port != selected.Endpoint.Port || delivered.VisitorPermission.ExpiresAt.After(delivered.Pair.ExpiresAt) ||
-		!delivered.RunValidUntil.After(delivered.Pair.ObservedAt) || delivered.TrustRevision != selected.TrustRevision || delivered.Protocol != selected.Protocol {
+		!delivered.RunValidUntil.After(delivered.Pair.ObservedAt) || delivered.TrustRevision != selected.TrustRevision || delivered.Protocol != selected.Protocol ||
+		delivered.VisitorPermission.ServiceTrustRevision == nil || *delivered.VisitorPermission.ServiceTrustRevision != delivered.TrustRevision {
 		t.Fatal("device client renewal lost coherent run validity or visitor permission")
 	}
 	bad.Action, bad.IdempotencyKey = "replace", request.IdempotencyKey

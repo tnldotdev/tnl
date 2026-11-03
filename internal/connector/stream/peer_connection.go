@@ -140,8 +140,14 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		return nil, result
 	}
 	p.permission, result = config.Control.VisitorPermission(setup, config.ServiceID)
-	if result != nil || !validConnectorPermission(p.run, p.permission) || setup.Err() != nil {
+	if result != nil || setup.Err() != nil {
 		return nil, errors.Join(ErrServiceConnection, result, context.Cause(setup))
+	}
+	if result = validateConnectorPermissionMetadata(config, p.permission); result != nil {
+		return nil, result
+	}
+	if !validConnectorPermission(p.run, p.permission) {
+		return nil, ErrServiceConnection
 	}
 	if result = p.fillOpenings(); result != nil {
 		return nil, result
@@ -214,6 +220,16 @@ func validateConnectorRun(config Config, run Run) error {
 
 func validConnectorPermission(run Run, permission controlv1.VisitorTokenResponse) bool {
 	return permission.Resource.Kind == controlv1.VisitorResourceScopeKindService && permission.Resource.Id == run.ServiceID && run.Endpoint != nil && permission.Hostname == run.Endpoint.Hostname && permission.Port == run.Endpoint.Port && permission.VisitorToken != "" && permission.ExpiresAt.After(time.Now())
+}
+
+func validateConnectorPermissionMetadata(config Config, permission controlv1.VisitorTokenResponse) error {
+	if permission.Resource.Kind != controlv1.VisitorResourceScopeKindService || permission.Resource.Id != config.ServiceID || permission.ServiceTrustRevision == nil || *permission.ServiceTrustRevision < 1 {
+		return ErrServiceConnection
+	}
+	if *permission.ServiceTrustRevision != config.TrustRevision {
+		return metadataReload(config.ServiceID, config.TrustRevision, *permission.ServiceTrustRevision)
+	}
+	return nil
 }
 
 func (p *connectorConnection) currentLocked() bool {
@@ -331,6 +347,9 @@ func (p *connectorConnection) refresh() {
 			next.ValidUntil = bound.Add(renewal.RunValidUntil.Sub(pair.ExpiresAt))
 			next.Protocol, next.TrustRevision, next.Endpoint = string(renewal.Protocol), renewal.TrustRevision, &renewal.Endpoint
 			permission.ExpiresAt = bound.Add(permission.ExpiresAt.Sub(pair.ExpiresAt))
+			err = validateConnectorPermissionMetadata(p.config, permission)
+		}
+		if err == nil {
 			err = validateConnectorRun(p.config, next)
 		}
 		if err == nil {

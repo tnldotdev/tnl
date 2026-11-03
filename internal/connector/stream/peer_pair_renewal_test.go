@@ -181,7 +181,7 @@ func TestConnectorPairRenewalRejectsChangedBindingAndExpiredAuthority(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, boundary := range []string{"service", "run", "run number", "publisher", "subject", "pair", "delivery", "generation", "key", "relay", "run expiry", "permission scope", "permission expiry", "permission extension", "installation extension"} {
+	for _, boundary := range []string{"service", "run", "run number", "publisher", "subject", "pair", "delivery", "generation", "key", "relay", "run expiry", "permission scope", "permission revision missing", "permission revision zero", "permission revision mismatch", "permission expiry", "permission extension", "installation extension"} {
 		t.Run(boundary, func(t *testing.T) {
 			control := renewalControl{renew: func(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
 				reply, err := f.RenewConnectorPeerPair(ctx, service, body)
@@ -211,6 +211,12 @@ func TestConnectorPairRenewalRejectsChangedBindingAndExpiredAuthority(t *testing
 					reply.RunValidUntil = reply.Pair.ObservedAt
 				case "permission scope":
 					reply.VisitorPermission.Resource.Id = "different"
+				case "permission revision missing":
+					reply.VisitorPermission.ServiceTrustRevision = nil
+				case "permission revision zero":
+					reply.VisitorPermission.ServiceTrustRevision = new(int64(0))
+				case "permission revision mismatch":
+					reply.VisitorPermission.ServiceTrustRevision = new(reply.TrustRevision + 1)
 				case "permission expiry":
 					reply.VisitorPermission.ExpiresAt = reply.Pair.ObservedAt
 				case "permission extension":

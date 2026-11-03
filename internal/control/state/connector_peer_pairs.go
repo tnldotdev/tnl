@@ -401,7 +401,7 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 		if err != nil {
 			return ConnectorPeerPair{}, err
 		}
-		result.VisitorPermission = IssuedVisitorToken{Token: token, Permission: permission}
+		result.VisitorPermission = IssuedVisitorToken{Token: token, Permission: permission, ServiceTrustRevision: result.Metadata.TrustRevision}
 		recheckUntil = minTime(recheckUntil, permission.ExpiresAt)
 	}
 	// execute deferred constraints while expiry can still roll back every write,

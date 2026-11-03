@@ -143,7 +143,8 @@ func assertNativeHTTPCommittedResponseRecovery(t *testing.T, conn *pgx.Conn, sou
 			if action == "renew" {
 				var renewal controlv1.ConnectorPeerPairRenewal
 				if err := json.Unmarshal(replies[index], &renewal); err != nil || renewal.VisitorPermission.VisitorToken == "" ||
-					renewal.VisitorPermission.Resource.Id != service || renewal.VisitorPermission.ExpiresAt.After(renewal.Pair.ExpiresAt) || !renewal.RunValidUntil.After(renewal.Pair.ObservedAt) {
+					renewal.VisitorPermission.Resource.Id != service || renewal.VisitorPermission.ExpiresAt.After(renewal.Pair.ExpiresAt) || !renewal.RunValidUntil.After(renewal.Pair.ObservedAt) ||
+					renewal.VisitorPermission.ServiceTrustRevision == nil || *renewal.VisitorPermission.ServiceTrustRevision != renewal.TrustRevision || renewal.TrustRevision < 1 {
 					t.Fatal("lost committed renewal did not contain coherent permission authority", err)
 				}
 				delivered = renewal.Pair

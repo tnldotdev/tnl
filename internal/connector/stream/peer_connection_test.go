@@ -136,8 +136,113 @@ func TestConnectorRefreshPreparesReplacementOpeningsBeforePublishing(t *testing.
 	exchange("after-refresh")
 }
 
+func TestConnectorRefreshDoesNotReselectRetainedRun(t *testing.T) {
+	f := newConnectorFixture(t, "quic")
+	var selections atomic.Int32
+	control, err := NewControlWithConfig(ControlConfig{
+		Signer: f.ConnectorSigner,
+		Resolve: func(ctx context.Context, service string) (Run, error) {
+			if selections.Add(1) != 1 {
+				return Run{}, ErrServiceConnection // placement would select a different or full run.
+			}
+			return f.ResolveService(ctx, service)
+		},
+		Pair: f.PrepareConnectorPeerPair, RenewPair: f.RenewConnectorPeerPair, Permission: f.VisitorPermission, Close: func() error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := f.config
+	config.Control = control
+	setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
+	p, err := prepareConnectorConnection(t.Context(), setup, config, f.device)
+	stop()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	p.mu.Lock()
+	changed, runID := p.changed, p.run.ServiceRunID
+	p.mu.Unlock()
+	select {
+	case <-changed:
+	case <-time.After(4 * time.Second):
+		t.Fatal("retained run was not renewed")
+	}
+	p.mu.Lock()
+	kept := p.run.ServiceRunID == runID && p.run.ValidUntil.Equal(p.until) && p.ctx.Err() == nil
+	p.mu.Unlock()
+	if !kept || selections.Load() != 1 {
+		t.Fatal("refresh re-ran placement or ended the retained run", kept, selections.Load())
+	}
+}
+
+func TestConnectorPermissionMetadataRequiresCurrentServiceRevision(t *testing.T) {
+	f := newConnectorFixture(t, "quic")
+	permission, err := f.VisitorPermission(t.Context(), f.run.ServiceID)
+	if err != nil || validateConnectorPermissionMetadata(f.config, permission) != nil {
+		t.Fatal("current service permission was rejected", err)
+	}
+	permission.ServiceTrustRevision = nil
+	if err := validateConnectorPermissionMetadata(f.config, permission); !errors.Is(err, ErrServiceConnection) {
+		t.Fatal("missing service revision was accepted", err)
+	}
+	revision := f.config.TrustRevision + 1
+	permission.ServiceTrustRevision = &revision
+	var reload *MetadataReloadError
+	if err := validateConnectorPermissionMetadata(f.config, permission); !errors.As(err, &reload) || reload.SelectedRevision != revision {
+		t.Fatal("stale service revision did not request metadata reload", err)
+	}
+	permission.Resource.Id = "svc_other"
+	if err := validateConnectorPermissionMetadata(f.config, permission); !errors.Is(err, ErrServiceConnection) {
+		t.Fatal("another service supplied a metadata revision", err)
+	}
+}
+
+func TestConnectorRefreshReloadsChangedServiceRevision(t *testing.T) {
+	f := newConnectorFixture(t, "quic")
+	control, err := NewControlWithConfig(ControlConfig{
+		Signer: f.ConnectorSigner, Resolve: f.ResolveService, Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission,
+		RenewPair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+			renewal, err := f.RenewConnectorPeerPair(ctx, service, request)
+			renewal.TrustRevision++
+			renewal.VisitorPermission.ServiceTrustRevision = new(renewal.TrustRevision)
+			return renewal, err
+		}, Close: func() error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := f.config
+	config.Control = control
+	setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
+	p, err := prepareConnectorConnection(t.Context(), setup, config, f.device)
+	stop()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	p.mu.Lock()
+	oldRun, oldPair, oldPermission, oldInstallation := p.run.ValidUntil, p.until, p.permission.VisitorToken, p.preparedUntil
+	p.mu.Unlock()
+	select {
+	case <-p.ctx.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("coherent renewal accepted changed service trust without metadata reload")
+	}
+	var reload *MetadataReloadError
+	if !errors.As(context.Cause(p.ctx), &reload) || reload.SelectedRevision != config.TrustRevision+1 {
+		t.Fatal("changed service revision lost its metadata reload boundary", context.Cause(p.ctx))
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.run.ValidUntil.Equal(oldRun) || !p.until.Equal(oldPair) || p.permission.VisitorToken != oldPermission || !p.preparedUntil.Equal(oldInstallation) {
+		t.Fatal("changed service revision replaced the last confirmed authority")
+	}
+}
+
 func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
-	for _, boundary := range []string{"run", "pair", "permission", "installation"} {
+	for _, boundary := range []string{"run", "renewed run", "pair", "permission", "installation"} {
 		t.Run(boundary, func(t *testing.T) {
 			f := newConnectorFixture(t, "quic")
 			var armed, blocked atomic.Bool
@@ -160,7 +265,7 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 					renewal, err := f.RenewConnectorPeerPair(ctx, service, request)
 					if armed.Load() {
 						deadline = time.Now().Add(200 * time.Millisecond)
-						if boundary == "run" {
+						if boundary == "renewed run" {
 							renewal.RunValidUntil = deadline
 						}
 						if boundary == "pair" {
@@ -200,6 +305,15 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 			case <-entered:
 			case <-time.After(3 * time.Second):
 				t.Fatal("refresh did not reach background signing")
+			}
+			if boundary == "run" {
+				// expire the last confirmed run while signing is paused.
+				p.mu.Lock()
+				deadline = time.Now().Add(200 * time.Millisecond)
+				p.run.ValidUntil = deadline
+				oldRun = deadline
+				p.notifyLocked()
+				p.mu.Unlock()
 			}
 			<-time.After(time.Until(deadline))
 			resume()

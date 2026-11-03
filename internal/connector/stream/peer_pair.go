@@ -101,7 +101,8 @@ func renewConnectorPair(ctx context.Context, control Control, signer Signer, run
 	}
 	permission := renewal.VisitorPermission
 	permission.ExpiresAt = started.Add(permission.ExpiresAt.Sub(renewal.Pair.ObservedAt))
-	if !renewal.RunValidUntil.After(renewal.Pair.ObservedAt) || !validConnectorPermission(run, permission) ||
+	if permission.ServiceTrustRevision == nil || *permission.ServiceTrustRevision < 1 || *permission.ServiceTrustRevision != renewal.TrustRevision ||
+		!renewal.RunValidUntil.After(renewal.Pair.ObservedAt) || !validConnectorPermission(run, permission) ||
 		!renewal.VisitorPermission.ExpiresAt.After(renewal.Pair.ObservedAt) || renewal.VisitorPermission.ExpiresAt.After(renewal.Pair.ExpiresAt) ||
 		renewal.Pair.PublisherPreparedUntil != nil && renewal.Pair.PublisherPreparedUntil.After(renewal.Pair.ExpiresAt) {
 		return controlv1.ConnectorPeerPairRenewal{}, time.Time{}, ErrServiceConnection

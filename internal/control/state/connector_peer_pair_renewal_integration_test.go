@@ -19,6 +19,10 @@ import (
 func TestIntegrationConnectorPeerPairRenewalSignsSameAuthorityTransaction(t *testing.T) {
 	f := newConnectorPairFixture(t)
 	pair := f.create(t)
+	if _, err := f.d.ConfigureService(f.visitor, pair.ServiceID, pair.Subject.IdentityID,
+		ServiceMetadata{Protocol: "tcp", PublisherPool: true, TrustRevision: 1}, f.now.Add(500*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.d.PrepareVisitorSigningKeys(f.visitor, testVisitorIssuer, f.now); err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +61,9 @@ func TestIntegrationConnectorPeerPairRenewalSignsSameAuthorityTransaction(t *tes
 	}
 	issued := renewed.VisitorPermission
 	permission := issued.Permission
+	if issued.ServiceTrustRevision != renewed.Metadata.TrustRevision || issued.ServiceTrustRevision <= 1 {
+		t.Fatal("renewal permission did not capture the current locked service trust revision")
+	}
 	if permission.Scope != (visitorscope.Scope{Kind: visitorscope.Service, ID: pair.ServiceID}) ||
 		permission.Hostname != renewed.Metadata.Endpoint.Hostname || int(permission.Port) != renewed.Metadata.Endpoint.Port ||
 		permission.ExpiresAt.After(renewed.ExpiresAt) || !permission.ExpiresAt.After(renewed.ObservedAt) ||
