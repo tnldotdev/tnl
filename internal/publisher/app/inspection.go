@@ -5,7 +5,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 )
 
-// SummaryObservation records body-free summaries without changing their result.
+// SummaryObservation records body-free summaries using the saved inspection shape.
 func SummaryObservation(recorder *clientstate.InspectionRecorder) inspection.Observer {
 	if recorder == nil {
 		return nil

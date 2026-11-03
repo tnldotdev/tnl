@@ -13,7 +13,7 @@ const (
 	MaxMaxBytes      = 1 << 30
 )
 
-// Result is the outcome shared by HTTP and supported TCP inspections.
+// Result is an inspection outcome. http outcomes are derived from status.
 type Result string
 
 const (

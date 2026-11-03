@@ -2,8 +2,7 @@
 
 These are local Docker measurements, not production limits. The tests used real
 publishers and visitors, but shared a Docker host and one PostgreSQL instance.
-The [capacity plan](capacity-plan.md) describes the longer, repeated, degraded
-tests needed before setting a deployed operating limit.
+Longer, repeated, degraded tests are needed before setting a deployed operating limit.
 
 | Workload                | What the local runs showed                                                                                                                                                         |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

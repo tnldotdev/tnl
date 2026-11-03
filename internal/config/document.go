@@ -37,7 +37,7 @@ type TNL struct {
 	Team            *string                   `json:"team,omitempty" yaml:"team,omitempty" jsonschema_description:"Unique lowercase team name or team ID used by this project."`
 	Feedback        *bool                     `json:"feedback,omitempty" yaml:"feedback,omitempty" jsonschema_description:"Show the feedback toolbar on development pages."`
 	OAuth           bool                      `json:"oauth,omitempty" yaml:"oauth,omitempty" jsonschema_description:"Publish one shared OAuth callback URL while project tunnels run."`
-	Inspection      *Inspection               `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Local inspection capture and retention for HTTP and supported TCP services."`
+	Inspection      *Inspection               `json:"inspection,omitempty" yaml:"inspection,omitempty" jsonschema_description:"Local inspection capture and retention for HTTP services."`
 	Tunnel          *Tunnel                   `json:"public_url,omitempty" yaml:"public_url,omitempty" jsonschema_description:"Defaults for explicit local public_url blocks. Applicable HTTP access and limits also apply to named-group http blocks; defaults never enable publication."`
 	PublisherGroups map[string]PublisherGroup `json:"publisher_groups,omitempty" yaml:"publisher_groups,omitempty" jsonschema_description:"Named publisher groups with a durable namespace beneath a ready team domain. local is reserved for the built-in local publisher."`
 	Services        Services                  `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named application services. A local public_url block enables a public URL; named-group reachability belongs to its publisher group."`

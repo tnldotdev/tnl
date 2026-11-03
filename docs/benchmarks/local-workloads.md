@@ -85,8 +85,8 @@ Record applied admission limits from `admission-limits.json`, and compare
 direct and tunneled results from the same run. The result directory keeps
 visitor summaries, resource measurements, raw metrics, and component-exit
 evidence. A local Docker profile is not a production capacity limit. See the
-[local capacity results](local-capacity.md) for measured comparisons and the
-[capacity plan](capacity-plan.md) for how to qualify a limit.
+[local capacity results](local-capacity.md) for measured comparisons. Setting a
+deployed limit needs longer, repeated runs.
 
 ## connector load
 

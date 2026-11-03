@@ -20,7 +20,9 @@ import (
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // hold the same lock across actual HTTP decisions and the outage transition.
@@ -256,11 +258,27 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	joinOutage(func(err error) bool { return errors.Is(err, connectorstream.ErrServiceConnection) })
 	// revocation publishes shared run policy, so test it after the isolated
 	// outage deadline rather than changing the unavailable owner's policy early.
+	_ = other.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := io.WriteString(other, "still-connected\n"); err != nil {
+		t.Fatal("sibling closed before revocation:", err)
+	}
+	if _, err := io.ReadFull(other, make([]byte, len("still-connected\n"))); err != nil {
+		t.Fatal("sibling closed before revocation:", err)
+	}
 	if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.identity.routes.SelectServiceRun(t.Context(), service.Id, device.Subject.DeviceID); !defaultConnectorRevocationDenied(err) {
+		t.Fatalf("control did not deny the revoked sibling: %v", err)
+	}
 	assertClosed(other, time.Now().Add(30*time.Second))
-	joinRevoked(defaultConnectorRevocationDenied)
+	// the relay may close both legs before the owner receives a typed denial.
+	// control above must independently deny this exact device in either case.
+	joinRevoked(func(err error) bool {
+		var denial *tunnel.ProtocolError
+		return defaultConnectorRevocationDenied(err) || errors.Is(err, connectorstream.ErrServiceConnection) ||
+			errors.As(err, &denial) && denial.Code == tunnelv1.Unauthenticated
+	})
 }
 
 // only the deliberately revoked sibling may end with these typed denials:

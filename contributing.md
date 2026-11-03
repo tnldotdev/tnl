@@ -98,11 +98,10 @@ The CLI Task builds one executable before the child lifecycle deadlines start;
 the detached, SSH, and named workflows reuse it instead of compiling during startup.
 All matrix jobs contribute to the required `Go integration` result. CLI shards
 cover the named-app workflows; the management job adds their unique service
-share lookup checks. Native SDK checks run in the provider HTTP job, alongside
-its transport checks, rather than repeating in the binary job.
+share lookup checks. The client matrix runs the built connector-owner HTTP and
+Kubernetes checks once; the JavaScript and PostgreSQL jobs cover their own SDK
+and workload HTTP boundaries.
 
-The Node 24 function-artifact fixture runs
-only through its explicit `go:test:integration:vercel` target and artifact input.
 Run `mise exec -- task generate-check` against the intended committed generated
 tree before delivery. It regenerates files, compares the shared generated-path
 inventory with `HEAD`, and rejects untracked output. Intentional uncommitted
@@ -114,43 +113,42 @@ explicit files with `--check` instead of a repository-wide formatter.
 
 ### choose a test tier
 
-| When you need to check                       | Command after `mise exec --`                                 | What you need                                                                                                        |
-| -------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| Routine behavior                             | `task test`                                                  | Installed dependencies; builds the JavaScript and Python packages                                                    |
-| Go races                                     | `task go:test:race`                                          | No database                                                                                                          |
-| Database and service boundaries              | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                                                                           |
-| Durable control-state boundaries             | `task go:test:integration:state-boundaries`                  | Docker; secret rotation, combined retention workers, pageable admission history, and bounded native inventory        |
-| Provider workload authority and selectors    | `task go:test:integration:workload`                          | Docker; disposable PostgreSQL and signed local GitHub, Vercel, Fly, and generic OIDC fixtures                        |
-| Workload visitor transports                  | `task go:test:integration:workload-runtime`                  | Docker and Pebble; two ingress/two relay topology, native PostgreSQL, HTTP/mTLS, and two real 90-second lease cycles |
-| Connector connection owner and prepared IPC  | `task go:test:connections`                                   | Local TLS fixtures and native subprocesses, without a human sign-in                                                  |
-| Ad-hoc registration and publication          | `task go:test:invocations`                                   | Local control/TLS fixtures, real SQLite workers, and visitor request limits, without a human sign-in                 |
-| Configured local app workflows               | `task go:test:app-workflows`                                 | Local owner, SQLite, enrollment, TLS mount and readiness fixtures                                                    |
-| Built CLI local identity and selection       | `task go:test:integration:app-workflows`                     | Linux and Docker; disposable PostgreSQL, real CLI owners, app registration, and Git transitions                      |
-| Drizzle Kit and connector connection options | `task go:test:integration:connections`                       | Docker; Task owns disposable PostgreSQL and a real Drizzle Kit migration                                             |
-| Local Vercel Node function artifacts         | `task go:test:integration:vercel`                            | Docker and Pebble; Node 24.20.0 on PATH, installed tarballs, workload-owned native startup and real PostgreSQL       |
-| Shared native workload HTTP boundary         | `task go:test:integration:provider-http`                     | Docker and Pebble; SDK/native IPC fixtures plus real workload HTTP certificates and separated runtime processes      |
-| services and groups                          | `task go:test:integration:services`                          | Docker; saved services, applied groups, grants, and audit in PostgreSQL                                              |
-| Control-state lock ordering                  | `task go:test:integration:state-locks`                       | Docker; deterministic lock gates and wait-graph checks in disposable PostgreSQL                                      |
-| Private claim recovery and capacity          | `task go:test:integration:service-claims`                    | Docker; committed HTTP response loss through relay, mixed public/private claims, and certificate deadlines           |
-| HTTP services                                | `task go:test:integration:http-services`                     | Docker and Pebble; applied HTTP settings, visitor admission, OIDC, grants, and streams                               |
-| Fixed-list cross-team publishers             | `task go:test:integration:publisher-groups`                  | Linux and Docker; one real CLI process, independent group identities, managed TLS and disposable PostgreSQL          |
-| Signed-human service access and CLI lookup   | `task go:test:integration:service-access`                    | Docker; configured signed issuer, current management/source checks, and exact-service invitations in PostgreSQL      |
-| Publisher egress evidence                    | `task go:test:integration:publisher-egress`                  | Docker; signed runtime leases and trusted proxy metadata, without public IP lookups                                  |
-| Private runtime topology                     | `task go:test:integration:service-topology`                  | Docker and Pebble; separated and standalone private visitor lifecycle                                                |
-| Real database clients                        | `task go:test:integration:tcp-clients`                       | Docker CLI, uv and Python; disposable TLS providers, installed Node drivers and an isolated psycopg consumer         |
-| CLI and OpenSSH stdio                        | `task go:test:integration:cli`                               | Isolated Linux, Docker, sshd/ssh/ssh-keygen, writable `/etc/hosts` or passwordless sudo for that fixture only        |
-| Existing OpenSSH target                      | `task go:test:integration:sshd`                              | System `sshd`, `ssh`, and `ssh-keygen`; no root tnl process                                                          |
-| Binary behavior                              | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available                                             |
-| Compose target discovery                     | `task go:test:integration:compose`                           | Docker; disposable HTTP and TCP targets with container replacement                                                   |
-| Ubuntu and Compose publisher installation    | `task go:test:integration:publisher-install`                 | Docker; privileged disposable Ubuntu/systemd, private trust, and disposable PostgreSQL; never installs on the host   |
-| Authoritative DNS                            | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers                                                          |
-| Public Route 53 and ACME staging             | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in                                              |
-| Fuzz targets                                 | `task go:test:fuzz`                                          | Go toolchain                                                                                                         |
-| npm exports and tarballs                     | `pnpm run pack`                                              | Built package dependencies                                                                                           |
-| Python ASGI and socket contract              | `task py:check`                                              | Go, pinned Python, uv, and pnpm; locked dependencies, real connector owner, and wheel source/type-marker checks      |
-| Local release snapshot                       | `task package`                                               | Builds and checks packages; does not publish                                                                         |
-| Actual npm release tarballs                  | `task release:npm-package`                                   | `task release:snapshot` first; installs the generated tarballs with npm and pnpm                                     |
-| Deployed release check                       | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain                                                          |
+| When you need to check                      | Command after `mise exec --`                                 | What you need                                                                                                        |
+| ------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| Routine behavior                            | `task test`                                                  | Installed dependencies; builds the JavaScript and Python packages                                                    |
+| Go races                                    | `task go:test:race`                                          | No database                                                                                                          |
+| Database and service boundaries             | `task go:test:integration`                                   | Docker and Pebble; Task manages PostgreSQL                                                                           |
+| Durable control-state boundaries            | `task go:test:integration:state-boundaries`                  | Docker; secret rotation, combined retention workers, pageable admission history, and bounded native inventory        |
+| Provider workload authority and selectors   | `task go:test:integration:workload`                          | Docker; disposable PostgreSQL and signed local GitHub, Vercel, Fly, and generic OIDC fixtures                        |
+| Workload visitor transports                 | `task go:test:integration:workload-runtime`                  | Docker and Pebble; two ingress/two relay topology, native PostgreSQL, HTTP/mTLS, and two real 90-second lease cycles |
+| Connector connection owner and prepared IPC | `task go:test:connections`                                   | Local TLS fixtures and native subprocesses, without a human sign-in                                                  |
+| Ad-hoc registration and publication         | `task go:test:invocations`                                   | Local control/TLS fixtures, real SQLite workers, and visitor request limits, without a human sign-in                 |
+| Configured local app workflows              | `task go:test:app-workflows`                                 | Local owner, SQLite, enrollment, TLS mount and readiness fixtures                                                    |
+| Built CLI local identity and selection      | `task go:test:integration:app-workflows`                     | Linux and Docker; disposable PostgreSQL, real CLI owners, app registration, and Git transitions                      |
+| Built connector owner and SDK               | `task go:test:integration:connections`                       | Local TLS fixtures, native subprocesses and Node; no database                                                        |
+| Workload HTTP boundary                      | `task go:test:integration:workload-http`                     | Docker and Pebble; real workload HTTP certificates and separated runtime processes                                   |
+| services and groups                         | `task go:test:integration:services`                          | Docker; saved services, applied groups, grants, and audit in PostgreSQL                                              |
+| Control-state lock ordering                 | `task go:test:integration:state-locks`                       | Docker; deterministic lock gates and wait-graph checks in disposable PostgreSQL                                      |
+| Private claim recovery and capacity         | `task go:test:integration:service-claims`                    | Docker; committed HTTP response loss through relay, mixed public/private claims, and certificate deadlines           |
+| HTTP services                               | `task go:test:integration:http-services`                     | Docker and Pebble; applied HTTP settings, visitor admission, OIDC, grants, and streams                               |
+| Fixed-list cross-team publishers            | `task go:test:integration:publisher-groups`                  | Linux and Docker; one real CLI process, independent group identities, managed TLS and disposable PostgreSQL          |
+| Signed-human service access and CLI lookup  | `task go:test:integration:service-access`                    | Docker; configured signed issuer, current management/source checks, and exact-service invitations in PostgreSQL      |
+| Publisher egress evidence                   | `task go:test:integration:publisher-egress`                  | Docker; signed runtime leases and trusted proxy metadata, without public IP lookups                                  |
+| Private runtime topology                    | `task go:test:integration:service-topology`                  | Docker and Pebble; separated and standalone private visitor lifecycle                                                |
+| Real database clients                       | `task go:test:integration:tcp-clients`                       | Docker and Node; disposable TLS PostgreSQL/MySQL providers and SDK smoke queries                                     |
+| CLI and OpenSSH stdio                       | `task go:test:integration:cli`                               | Isolated Linux, Docker, sshd/ssh/ssh-keygen, writable `/etc/hosts` or passwordless sudo for that fixture only        |
+| Existing OpenSSH target                     | `task go:test:integration:sshd`                              | System `sshd`, `ssh`, and `ssh-keygen`; no root tnl process                                                          |
+| Binary behavior                             | `task go:test:integration:binary`                            | Integration prerequisites and Linux with local DNS/HTTPS ports available                                             |
+| Compose target discovery                    | `task go:test:integration:compose`                           | Docker; disposable HTTP and TCP targets with container replacement                                                   |
+| Ubuntu and Compose publisher installation   | `task go:test:integration:publisher-install`                 | Docker; privileged disposable Ubuntu/systemd, private trust, and disposable PostgreSQL; never installs on the host   |
+| Authoritative DNS                           | `task go:test:integration:dns`                               | Docker Compose; runs DNS on port 53 inside Linux containers                                                          |
+| Public Route 53 and ACME staging            | `task go:test:integration:route53 ZONE_ID=<staging-zone-id>` | Disposable PostgreSQL and staging AWS OIDC under `test.tnl.wtf`; opt-in                                              |
+| Fuzz targets                                | `task go:test:fuzz`                                          | Go toolchain                                                                                                         |
+| npm exports and tarballs                    | `pnpm run pack`                                              | Built package dependencies                                                                                           |
+| Python ASGI and socket contract             | `task py:check`                                              | Go, pinned Python, uv, and pnpm; locked dependencies, real connector owner, and wheel source/type-marker checks      |
+| Local release snapshot                      | `task package`                                               | Builds and checks packages; does not publish                                                                         |
+| Actual npm release tarballs                 | `task release:npm-package`                                   | `task release:snapshot` first; installs the generated tarballs with npm and pnpm                                     |
+| Deployed release check                      | `task release:check:plan` / `task release:check:run`         | Saved login, released `tnl`, test team, ready custom domain                                                          |
 
 For native client trace propagation and bounded flush, run
 `task go:test:client-tracing` and `task js:test:client-tracing` through `mise exec --`.
@@ -307,23 +305,6 @@ dependencies resolve from local tarballs; third-party runtime dependencies need
 registry access. packing checks all manifest export targets, executable modes,
 binary hashes, and legal files. only the host native executable runs locally.
 the Checks workflow reuses its Python job's snapshot for this release-package check.
-the Vercel fixture builds its own packages and does not qualify this release path.
-
-For the opt-in emitted Vercel Node function check, see
-[local Vercel qualification](docs/maintainers/connector/vercel-functions.md). its Tasks use
-Node `24.20.0` from `PATH`, including on CI; they do not invoke mise internally.
-the root mise environment defaults to Node 22, so select Node 24 explicitly:
-
-```console
-mise exec node@24.20.0 -- task go:test:integration:vercel
-```
-
-the artifact check starts its own packaged connector owner with signed local Vercel
-request context and a generated manifest. it checks shared HTTP/PostgreSQL,
-incremental preparation, concurrent cold/warm budgets, assertion failures, and
-real revocation against local server roles. optional Linux x64 container execution
-uses `LINUX_NODE_IMAGE`; deployed provider sandbox lifetime remains a separate
-qualification boundary described in the maintainer guide.
 
 The feedback toolbar source and Vitest tests live in `internal/publisher/toolbar`.
 Its committed `toolbar.js` is generated by `task generate` for Go embedding.
@@ -488,8 +469,8 @@ digests; deploying and qualifying them requires separate operator approval.
   output rules used in this repo.
 - [Observability](docs/maintainers/development/metrics.md) lists the shared vocabulary, OTel
   process ownership, optional export settings, and instrument boundaries.
-- [Benchmarks](docs/benchmarks/readme.md) covers local results and deployed
-  workloads. Deployed runs require explicit approval.
+- [Local load tests](docs/benchmarks/readme.md) covers local results and
+  workloads.
 - [Releasing](docs/maintainers/releases/releasing.md) covers maintainer release rules.
 
 Prefer the smallest change that solves the problem. Reuse the package that owns

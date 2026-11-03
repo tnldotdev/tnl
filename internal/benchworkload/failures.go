@@ -16,11 +16,11 @@ func (e *measurementResponseError) Error() string {
 	return fmt.Sprintf("%s: status %d", e.operation, e.status)
 }
 func (*measurementResponseError) FailureReason() failure.Reason {
-	return failure.BenchmarkMeasurementFailed
+	return failure.LoadMeasurementFailed
 }
 
 func safeMeasurementFailure(err error) string {
-	message := failure.SafeMessage(err, failure.BenchmarkMeasurementFailed)
+	message := failure.SafeMessage(err, failure.LoadMeasurementFailed)
 	var response *measurementResponseError
 	if errors.As(err, &response) && response.status >= 100 && response.status <= 599 {
 		message = response.Error() + "; " + message

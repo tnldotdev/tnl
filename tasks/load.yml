@@ -93,26 +93,3 @@ tasks:
           RACE: '{{default "0" .RACE}}'
           VISITOR_MEMORY: '{{default "512m" .VISITOR_MEMORY}}'
           RESULTS: '{{default (printf "bench-results/connect-%s" (now | date "20060102-150405")) .RESULTS}}'
-
-  go:bench:plan:
-    dir: "{{.ROOT_DIR}}"
-    desc: Describe a local workload against an explicit tnl server without creating resources
-    cmds:
-      - go run ./cmd/tnlbench plan
-
-  go:bench:run:
-    dir: "{{.ROOT_DIR}}"
-    desc: Run an explicitly approved benchmark against the selected tnl server
-    cmds:
-      - |
-        set -eu
-        build_dir="$(mktemp -d "${TMPDIR:-/tmp}/tnlbench.XXXXXXXX")"
-        trap 'rm -rf "$build_dir"' EXIT
-        go build -o "$build_dir/tnlbench" ./cmd/tnlbench
-        "$build_dir/tnlbench" run
-
-  go:bench:report:
-    dir: "{{.ROOT_DIR}}"
-    desc: Display results from a deployed benchmark
-    cmds:
-      - go run ./cmd/tnlbench report

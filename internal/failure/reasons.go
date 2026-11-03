@@ -189,8 +189,7 @@ const (
 	ServerAPIInternal                     Reason = "server.api_internal"
 	ServerIdentityProviderUnavailable     Reason = "server.identity_provider_unavailable"
 	ServerAuthorityUnavailable            Reason = "server.authority_unavailable"
-	BenchmarkInputInvalid                 Reason = "benchmark.input_invalid"
-	BenchmarkMeasurementFailed            Reason = "benchmark.measurement_failed"
+	LoadMeasurementFailed                 Reason = "load.measurement_failed"
 	Unexpected                            Reason = "internal.unexpected"
 )
 
@@ -853,10 +852,6 @@ var definitions = map[Reason]Definition{
 		Class: Unavailable, Message: "the authority API is unavailable",
 		Action: "check authority health, authentication, and connectivity", Retry: RetryLater,
 	},
-	BenchmarkInputInvalid: {
-		Class: Invalid, Message: "benchmark inputs are incomplete or invalid",
-		Action: "check tnlbench --help, the workload plan, and explicit approval inputs", Retry: RetryAfterChange,
-	},
 	ServerDatabaseDiagnosticsUnavailable: {
 		Class: Unavailable, Message: "the database diagnostic snapshot could not be collected",
 		Action: "check PostgreSQL, the pooler, and diagnostic connection access", Retry: RetryLater,
@@ -865,8 +860,8 @@ var definitions = map[Reason]Definition{
 		Class: Conflict, Message: "a database diagnostic snapshot is already in progress",
 		Action: "wait for the current snapshot before collecting another", Retry: RetryLater,
 	},
-	BenchmarkMeasurementFailed: {
-		Class: Unavailable, Message: "the benchmark could not complete its measurement",
+	LoadMeasurementFailed: {
+		Class: Unavailable, Message: "the load test could not complete its measurement",
 		Action: "check the local generator, publisher connections, and server health", Retry: RetryAfterChange,
 	},
 	Unexpected: {

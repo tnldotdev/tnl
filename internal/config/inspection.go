@@ -51,6 +51,10 @@ func ResolveInspection(value *Inspection, protocol string) (inspection.Policy, e
 			result.MaxBytes = value.MaxBytes.Value()
 		}
 	}
+	// non-http services do not have an attached inspection observer.
+	if protocol != "http" {
+		result.Mode = inspection.None
+	}
 	return result, nil
 }
 

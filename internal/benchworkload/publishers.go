@@ -303,7 +303,7 @@ func (g *Publishers) Start(ctx context.Context, indexes []int) ([]PublishedPubli
 		cfg := g.base
 		prefix := g.config.HostnamePrefix
 		if prefix == "" {
-			prefix = "tnlbench"
+			prefix = "tnl-load"
 		}
 		cfg.Hostname = fmt.Sprintf("%s-r%06d.%s", prefix, index, g.namespace)
 		if g.config.Report != nil {

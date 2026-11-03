@@ -425,40 +425,13 @@ the first target covers private IPC lifecycle and real native-process connector
 HTTPS, lost exchange response recovery, prepared reads, and revocation. it also
 checks loopback Kubernetes server identity, native exec credentials, and
 session-file cleanup.
-the integration target creates and removes digest-pinned disposable PostgreSQL
-and runs actual Drizzle Kit migrations for public and private managed endpoints.
-the fixture packs matching native and launcher tarballs, installs them with pnpm,
-and runs `pnpm exec drizzle-kit migrate` using an ordinary synchronous config
-that spreads `tnl.connect("database")`. it verifies the created table through the
-installed SDK and directly in PostgreSQL. the same installed-package path checks
-HTTP managed origins and local Kubernetes settings. the SDK owner tests SQL option
-shapes, malformed/expired snapshots, opaque TCP, and browser rejection.
+the integration target checks the built connector owner, SDK HTTP requests,
+Kubernetes settings, and owner cleanup through local TLS fixtures. the SDK owner
+tests SQL option shapes, malformed/expired snapshots, opaque TCP, and browser
+rejection.
 
-`task go:test:integration:tcp-clients` also installs the packed SDK and matching
-native binary in an isolated pnpm consumer, using Node 22.23.2. the disposable
-TLS PostgreSQL and MySQL providers own real password authentication and SQL
-queries. production ingress port selection and `publisher.ServiceStream` perform
-native PostgreSQL/MySQL negotiation and independent frontend/target TLS. a real
-connection owner serves prepared IPC to the installed binary; policy and placement
-are fixture decisions, without a control service or deployed authority exchange.
-
-the pinned installed-driver cases cover:
-
-| client      | version | evidence                                                                                                                                                   |
-| ----------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| pg          | 8.23.1  | ESM/CommonJS SDK, auth/query, Drizzle ORM, pool reuse and idle replacement, bad CA/name/password, opt-in PLUS rejection                                    |
-| Postgres.js | 3.4.9   | ESM/CommonJS SDK, SCRAM auth/query with `max: 5, prepare: false`, Drizzle ORM, pool reuse and idle replacement, bad CA/name/password                       |
-| mysql2      | 3.24.6  | ESM/CommonJS SDK, fresh `caching_sha2_password` full auth/query, Drizzle ORM, pool reuse and idle replacement, bad CA/name/password, frozen-ssl regression |
-| mysql       | 2.18.1  | unsupported: modern auth rejection and wrong-name certificate acceptance with an isolated legacy-auth account                                              |
-| Drizzle ORM | 0.45.4  | real queries through its pg, postgres-js, and mysql2 adapters                                                                                              |
-| Drizzle Kit | 0.31.11 | separate connections target; synchronous ordinary config and verified migration, without a preload                                                         |
-
-the TCP target retains real `psql` and `mysql` command checks from the digest-pinned
-provider images through certificate and connector admission. these results qualify
-the listed versions and paths; they do not establish compatibility for every SQL
-driver, another runtime, or the accounts application's complete database workflow.
-
-`task go:test:integration:vercel` qualifies the installed SDK in a real emitted
-Vercel Node 24 function that starts its own packaged connector owner. see
-[local Vercel qualification](vercel-functions.md) for artifact checks, invocation
-evidence, platform limits, and the separate deployed startup boundary.
+`task go:test:integration:tcp-clients` checks one `pg` and one `mysql2` SDK query
+through the prepared connector owner and disposable TLS PostgreSQL/MySQL targets.
+the publisher negotiates independent frontend and target TLS. the provider
+integration test also checks certificate rejection and real `psql`/`mysql`
+commands; these are smoke checks, not a promise about exact driver versions.

@@ -254,7 +254,6 @@ tasks:
         vars:
           TIME: "{{.TIME}}"
       - go test ./internal/policy/target -run='^$' -fuzz='^FuzzNormalizeTarget$' -fuzztime='{{.TIME}}'
-      - go test ./internal/publisher/inspection -run='^$' -fuzz='^FuzzSummaryFrames$' -fuzztime='{{.TIME}}'
       - go test ./internal/naming -run='^$' -fuzz='^FuzzCanonicalize$' -fuzztime='{{.TIME}}'
       - go test ./internal/naming -run='^$' -fuzz='^FuzzDomainPolicy$' -fuzztime='{{.TIME}}'
       - go test ./internal/clioutput -run='^$' -fuzz='^FuzzRender$' -fuzztime='{{.TIME}}'

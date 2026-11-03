@@ -50,5 +50,4 @@ See [releasing](releasing.md) and [deployed release checks](release-checks.md). 
 version or tag work, follow the root-discovered
 [release skill](../../../.agents/skills/tnl-release/SKILL.md); for mutating checks,
 follow [the release-check skill](../../../.agents/skills/tnl-release-check/SKILL.md).
-Those skills retain their signing and approval gates. Large deployed benchmarks
-require their separate explicit server/workload approval.
+Those skills retain their signing and approval gates.

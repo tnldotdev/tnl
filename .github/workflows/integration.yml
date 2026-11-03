@@ -65,62 +65,8 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: task "go:test:integration:$TEST_SUITE" SHARD="$SHARD"
 
-  workload-function:
-    name: Native workload (${{ matrix.suite }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [provider-http, vercel]
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            tools/testharness/go.sum
-
-      - name: Set up pnpm and Node 24
-        uses: ./.github/actions/setup-pnpm # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
-        with:
-          node-version: 24.20.0
-          cache: true
-
-      - name: Set up Bun for installed SDK checks
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.4.2
-
-      - name: Install Task
-        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
-        with:
-          version: 3.53.1
-          repo-token: ""
-          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
-
-      - name: Install dependencies
-        run: |
-          pnpm install --frozen-lockfile
-          go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
-
-      - name: Qualify native workload boundary
-        env:
-          TEST_SUITE: ${{ matrix.suite }}
-        run: task "go:test:integration:$TEST_SUITE"
-
   clients:
     name: Clients (${{ matrix.suite }}, ${{ matrix.shard }})
-    # the tcp-clients fixture uses pinned python 3.13.9.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -136,6 +82,8 @@ jobs:
           - suite: management
             shard: 1/1
           - suite: tcp-clients
+            shard: 1/1
+          - suite: connections
             shard: 1/1
     steps:
       - name: Check out repository
@@ -169,16 +117,6 @@ jobs:
       - name: Install driver fixture dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Set up Python driver fixture
-        if: matrix.suite == 'tcp-clients'
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.13.9"
-
-      - name: Install pinned uv
-        if: matrix.suite == 'tcp-clients'
-        run: python3 -m pip install uv==0.9.18
-
       - name: Install OpenSSH fixture
         if: matrix.suite == 'cli:shard' || matrix.suite == 'management'
         run: |
@@ -199,7 +137,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [owner-lifecycle, connections, binary]
+        suite: [owner-lifecycle, binary]
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -332,7 +270,7 @@ jobs:
   integration:
     name: Go integration
     if: always()
-    needs: [postgres-result, workload-function, clients, binary-result, compose, dns]
+    needs: [postgres-result, clients, binary-result, compose, dns]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -340,14 +278,12 @@ jobs:
       - name: Verify integration jobs passed
         env:
           POSTGRES_RESULT: ${{ needs.postgres-result.result }}
-          WORKLOAD_FUNCTION_RESULT: ${{ needs.workload-function.result }}
           CLIENTS_RESULT: ${{ needs.clients.result }}
           BINARY_RESULT: ${{ needs.binary-result.result }}
           COMPOSE_RESULT: ${{ needs.compose.result }}
           DNS_RESULT: ${{ needs.dns.result }}
         run: |
           test "$POSTGRES_RESULT" = success
-          test "$WORKLOAD_FUNCTION_RESULT" = success
           test "$CLIENTS_RESULT" = success
           test "$BINARY_RESULT" = success
           test "$COMPOSE_RESULT" = success
