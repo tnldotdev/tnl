@@ -131,6 +131,7 @@ type connectorDeadlineConn struct {
 	net.Conn
 	deadlines chan time.Time
 	writes    chan struct{}
+	restore   func() error
 }
 
 func (c *connectorDeadlineConn) Write(p []byte) (int, error) {
@@ -140,6 +141,11 @@ func (c *connectorDeadlineConn) Write(p []byte) (int, error) {
 
 func (c *connectorDeadlineConn) SetWriteDeadline(at time.Time) error {
 	c.deadlines <- at
+	if at.IsZero() && c.restore != nil {
+		if err := c.restore(); err != nil {
+			return err
+		}
+	}
 	return c.Conn.SetWriteDeadline(at)
 }
 
@@ -154,7 +160,7 @@ func TestConnectorRequestRenewalDeadlineDoesNotInterruptApplicationWrite(t *test
 	<-tracked.writes // the application's framed write owns the writer gate.
 	until := time.Now().Add(time.Second)
 	renewed := make(chan error, 1)
-	go func() { renewed <- writer.RenewUntil(connectorRequestPermissionFixture(), until) }()
+	go func() { renewed <- writer.Renew(connectorRequestPermissionFixture(), until) }()
 	select {
 	case <-tracked.deadlines:
 		t.Fatal("renewal changed an entered application write's deadline")
@@ -193,7 +199,7 @@ func TestConnectorRequestRenewalCannotResetExpiredBudget(t *testing.T) {
 	<-tracked.writes
 	renewed := make(chan error, 1)
 	until := time.Now().Add(20 * time.Millisecond)
-	go func() { renewed <- writer.RenewUntil(connectorRequestPermissionFixture(), until) }()
+	go func() { renewed <- writer.Renew(connectorRequestPermissionFixture(), until) }()
 	select {
 	case err := <-renewed:
 		if !errors.Is(err, os.ErrDeadlineExceeded) || len(tracked.deadlines) != 0 {
@@ -232,7 +238,7 @@ func TestConnectorOpeningCarriesBoundedInitialDataWithoutReturnAcceptance(t *tes
 			done <- errors.Join(err, io.ErrShortWrite)
 			return
 		}
-		if err := writer.Renew(connectorRequestPermissionFixture()); err != nil {
+		if err := writer.Renew(connectorRequestPermissionFixture(), time.Now().Add(time.Second)); err != nil {
 			done <- err
 			return
 		}
@@ -266,7 +272,7 @@ func TestConnectorOpeningFailureCannotReplayOnDataRenewalOrClose(t *testing.T) {
 	if _, err := writer.Write([]byte("following bytes")); !errors.Is(err, failed) {
 		t.Fatal("failed opening resumed request data", err)
 	}
-	if err := writer.Renew(connectorRequestPermissionFixture()); !errors.Is(err, failed) {
+	if err := writer.Renew(connectorRequestPermissionFixture(), time.Now().Add(time.Second)); !errors.Is(err, failed) {
 		t.Fatal("failed opening resumed permission renewal", err)
 	}
 	if err := writer.CloseWrite(); !errors.Is(err, failed) || attempts != 1 {
@@ -294,7 +300,7 @@ func TestConnectorRequestRenewalNeverEntersVisitorTLSBytes(t *testing.T) {
 			done <- err
 			return
 		}
-		if err := writer.Renew(permission); err != nil {
+		if err := writer.Renew(permission, time.Now().Add(time.Second)); err != nil {
 			done <- err
 			return
 		}
@@ -342,7 +348,7 @@ func TestConnectorHalfCloseKeepsPermissionAndResponseDirections(t *testing.T) {
 			finished <- err
 			return
 		}
-		finished <- writer.Renew(permission)
+		finished <- writer.Renew(permission, time.Now().Add(time.Second))
 	}()
 	request, err := io.ReadAll(reader)
 	if err != nil || string(request) != "request" {
@@ -379,12 +385,14 @@ func TestConnectorHalfCloseRejectsRevokedRenewal(t *testing.T) {
 			finished <- err
 			return
 		}
-		finished <- writer.Renew(connectorRequestPermissionFixture())
+		finished <- writer.Renew(connectorRequestPermissionFixture(), time.Now().Add(time.Second))
 	}()
 	if _, err := reader.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
 		t.Fatal("half-close did not end application input", err)
 	}
-	if err := <-finished; err != nil {
+	// rejection may close the pipe before renewal restores its write deadline.
+	// the receiver's denial below still proves it consumed the complete frame.
+	if err := <-finished; err != nil && !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatal(err)
 	}
 	select {
@@ -405,11 +413,14 @@ func TestConnectorRequestRejectedRenewalStopsBeforeFollowingData(t *testing.T) {
 	denied := errors.New("permission revoked")
 	reader := NewConnectorRequestReader(server, nil, func(tunnelv1.ConnectorVisitorPermission) error { return denied })
 	done := make(chan error, 1)
-	go func() { done <- NewConnectorRequestWriter(client).Renew(connectorRequestPermissionFixture()) }()
+	go func() {
+		done <- NewConnectorRequestWriter(client).Renew(connectorRequestPermissionFixture(), time.Now().Add(time.Second))
+	}()
 	if n, err := reader.Read(make([]byte, 32)); n != 0 || !errors.Is(err, denied) {
 		t.Fatal("rejected renewal became application data", n, err)
 	}
-	if err := <-done; err != nil {
+	// the confirmed rejection can close the pipe during deadline restoration.
+	if err := <-done; err != nil && !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatal(err)
 	}
 	if n, err := reader.Read(make([]byte, 32)); n != 0 || !errors.Is(err, denied) {
@@ -433,7 +444,9 @@ func TestConnectorResponseOnlyRequestConsumesRenewalDespiteApplicationDeadline(t
 	// a handler can be writing only a response while net/http's background
 	// application read is interrupted. neither condition can stop the frame owner.
 	done := make(chan error, 1)
-	go func() { done <- NewConnectorRequestWriter(client).Renew(connectorRequestPermissionFixture()) }()
+	go func() {
+		done <- NewConnectorRequestWriter(client).Renew(connectorRequestPermissionFixture(), time.Now().Add(time.Second))
+	}()
 	select {
 	case <-renewed:
 	case <-time.After(time.Second):

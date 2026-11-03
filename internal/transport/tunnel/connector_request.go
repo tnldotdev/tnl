@@ -74,49 +74,35 @@ func (s *ConnectorRequestWriter) Write(p []byte) (int, error) {
 	return written, nil
 }
 
-func (s *ConnectorRequestWriter) Renew(permission tunnelv1.ConnectorVisitorPermission) error {
-	return s.renew(permission, time.Time{})
-}
-
-// RenewUntil bounds the entire renewal write and restores the outer deadline
+// Renew bounds the entire renewal write and restores the outer deadline
 // under the same gates as application writes and TLS half-close. the caller
-// supplies one fixed deadline for this stream's renewal attempt.
-func (s *ConnectorRequestWriter) RenewUntil(permission tunnelv1.ConnectorVisitorPermission, until time.Time) error {
+// supplies one nonzero future deadline for this stream's renewal attempt.
+func (s *ConnectorRequestWriter) Renew(permission tunnelv1.ConnectorVisitorPermission, until time.Time) (result error) {
 	if until.IsZero() || !until.After(time.Now()) {
 		return os.ErrDeadlineExceeded
 	}
-	return s.renew(permission, until)
-}
-
-func (s *ConnectorRequestWriter) renew(permission tunnelv1.ConnectorVisitorPermission, until time.Time) (result error) {
 	// both gates share the refresh deadline. a stalled application write or TLS
 	// half-close cannot make permission refresh wait beyond its original budget.
 	for _, gate := range []chan struct{}{s.renewMu, s.mu} {
-		if until.IsZero() {
-			gate <- struct{}{}
-		} else {
-			if !until.After(time.Now()) {
-				return os.ErrDeadlineExceeded
-			}
-			timer := time.NewTimer(time.Until(until))
-			select {
-			case gate <- struct{}{}:
-				timer.Stop()
-			case <-timer.C:
-				return os.ErrDeadlineExceeded
-			}
-		}
-		defer func() { <-gate }()
-	}
-	if !until.IsZero() {
 		if !until.After(time.Now()) {
 			return os.ErrDeadlineExceeded
 		}
-		if err := s.Conn.SetWriteDeadline(until); err != nil {
-			return err
+		timer := time.NewTimer(time.Until(until))
+		select {
+		case gate <- struct{}{}:
+			timer.Stop()
+		case <-timer.C:
+			return os.ErrDeadlineExceeded
 		}
-		defer func() { result = errors.Join(result, s.Conn.SetWriteDeadline(time.Time{})) }()
+		defer func() { <-gate }()
 	}
+	if !until.After(time.Now()) {
+		return os.ErrDeadlineExceeded
+	}
+	if err := s.Conn.SetWriteDeadline(until); err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, s.Conn.SetWriteDeadline(time.Time{})) }()
 	if err := s.startLocked(nil); err != nil {
 		return err
 	}
