@@ -17,6 +17,121 @@ import { withProcessEnvironment } from "../helpers/environment.js";
 
 afterEach(() => vi.useRealTimers());
 
+test("independent SDK copies share preparation and framework callbacks through close and reprepare", async () => {
+  const first = await import("../../dist/internal/publisher/app.js");
+  vi.resetModules();
+  const second = await import("../../dist/internal/publisher/app.js");
+  expect(second.prepareService).not.toBe(first.prepareService);
+  expect(second.reportFrameworkTarget).not.toBe(first.reportFrameworkTarget);
+  const bootstrap = await startTestBootstrap();
+  await withProcessEnvironment(bootstrap.environment, async () => {
+    const beforeExitListeners = process.listenerCount("beforeExit");
+    const prepared = first.prepareService({}, "next");
+    expect(second.prepareService({}, "next")).toBe(prepared);
+    const handle = await prepared;
+    onTestFinished(() => handle.close());
+    await second.reportFrameworkTarget(handle, "http://127.0.0.1:3200");
+    await first.reportFrameworkTarget(handle, "http://127.0.0.1:3201");
+    expect(bootstrap.requests.map(({ path }) => path)).toEqual([
+      "/v1/prepare",
+      "/v1/register",
+      "/v1/register",
+    ]);
+    expect(bootstrap.requests.at(-1)?.body).toMatchObject({ target: "http://127.0.0.1:3201" });
+    await handle.close();
+    expect(process.listenerCount("beforeExit")).toBe(beforeExitListeners);
+    await expect(
+      second.reportFrameworkTarget(handle, "http://127.0.0.1:3202"),
+    ).rejects.toMatchObject({ code: "sdk.registration_stale" });
+    const replacement = second.prepareService({}, "next");
+    expect(replacement).not.toBe(prepared);
+    const replaced = await replacement;
+    onTestFinished(() => replaced.close());
+    expect(replaced).not.toBe(handle);
+    await handle.close();
+    expect(first.prepareService({}, "next")).toBe(replacement);
+    await first.reportFrameworkTarget(replaced, "http://127.0.0.1:3202");
+    await replaced.close();
+    expect(process.listenerCount("beforeExit")).toBe(beforeExitListeners);
+    expect(bootstrap.requests.map(({ path }) => path)).toEqual([
+      "/v1/prepare",
+      "/v1/register",
+      "/v1/register",
+      "/v1/unregister",
+      "/v1/prepare",
+      "/v1/register",
+      "/v1/unregister",
+    ]);
+  });
+});
+
+test("independent SDK copies evict a failed preparation before retrying", async () => {
+  const first = await import("../../dist/internal/publisher/app.js");
+  vi.resetModules();
+  const second = await import("../../dist/internal/publisher/app.js");
+  expect(second.prepareService).not.toBe(first.prepareService);
+  const options: { status: number; responseBody?: string } = {
+    status: 503,
+    responseBody: JSON.stringify({ code: "runtime.unavailable", message: "unavailable" }),
+  };
+  const bootstrap = await startTestBootstrap(options);
+  await withProcessEnvironment(bootstrap.environment, async () => {
+    const beforeExitListeners = process.listenerCount("beforeExit");
+    const failed = first.prepareService({}, "next");
+    expect(second.prepareService({}, "next")).toBe(failed);
+    await expect(failed).rejects.toMatchObject({ code: "sdk.dev_unavailable" });
+    expect(process.listenerCount("beforeExit")).toBe(beforeExitListeners);
+    options.status = 200;
+    delete options.responseBody;
+    const retried = second.prepareService({}, "next");
+    expect(retried).not.toBe(failed);
+    expect(first.prepareService({}, "next")).toBe(retried);
+    const handle = await retried;
+    onTestFinished(() => handle.close());
+    await first.reportFrameworkTarget(handle, "http://127.0.0.1:3200");
+    await handle.close();
+    expect(process.listenerCount("beforeExit")).toBe(beforeExitListeners);
+    expect(bootstrap.requests.map(({ path }) => path)).toEqual([
+      "/v1/prepare",
+      "/v1/prepare",
+      "/v1/register",
+      "/v1/unregister",
+    ]);
+  });
+});
+
+test.each(["close", "failure"] as const)(
+  "%s cleanup cannot evict a replacement preparation",
+  async (cleanup) => {
+    const app = await import("../../dist/internal/publisher/app.js");
+    const bootstrap = await startTestBootstrap(cleanup === "failure" ? { status: 503 } : {});
+    const replacementHandle = await app.createPreparedService({}, "next", {
+      start: async () => testEndpoint,
+      request: async (_endpoint, operation) => (operation === "prepare" ? assignment() : undefined),
+    });
+    onTestFinished(() => replacementHandle.close());
+    const replacement = Promise.resolve(replacementHandle);
+    await withProcessEnvironment(bootstrap.environment, async () => {
+      const prepared = app.prepareService({}, "next");
+      const handle = cleanup === "close" ? await prepared : undefined;
+      if (handle !== undefined) onTestFinished(() => handle.close());
+      const registry = globalThis.__tnlAppRegistry;
+      const key = [...(registry?.preparations ?? [])].find(([, value]) => value === prepared)?.[0];
+      if (registry === undefined || key === undefined)
+        throw new Error("preparation was not cached");
+      // replace the entry while the older lifetime still owns its cleanup callback.
+      registry.preparations.set(key, replacement);
+      onTestFinished(() => {
+        if (registry.preparations.get(key) === replacement) registry.preparations.delete(key);
+      });
+      if (handle === undefined)
+        await expect(prepared).rejects.toMatchObject({ code: "sdk.response_invalid" });
+      else await handle.close();
+      expect(app.prepareService({}, "next")).toBe(replacement);
+    });
+  },
+);
+
 test("close cancels a queued listener wait and removes its listeners before unregistering", async () => {
   const request = vi.fn(async (_endpoint: RuntimeEndpoint, operation: string) =>
     operation === "prepare" ? assignment() : undefined,
