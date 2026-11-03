@@ -70,7 +70,7 @@ func TestIntegrationConnectorPeerPairStableReplacementLifecycle(t *testing.T) {
 	if err != nil || next.ID == pair.ID || next.Key == pair.Key || next.DeliveryID == pair.DeliveryID || next.DeliveryGeneration <= pair.DeliveryGeneration || !next.PublisherPreparedUntil.IsZero() {
 		t.Fatal("stable-owner replacement failed to rotate its session", err)
 	}
-	if _, err := f.d.HeartbeatServiceRun(t.Context(), pair.ServiceID, pair.ServiceRunID, f.run.Token, f.now.Add(2*time.Second)); err != nil {
+	if _, err := f.d.HeartbeatServiceRun(t.Context(), pair.ServiceID, pair.ServiceRunID, f.run.Token, f.now.Add(2*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal(err)
 	}
 	before := connectorPairSavedAuthority(t, f.d, next.ID)
@@ -167,7 +167,7 @@ func TestIntegrationConnectorPeerPairSupersededProofCannotBorrowRenewal(t *testi
 					t.Fatal(err)
 				}
 			}
-			if _, err := f.d.HeartbeatServiceRun(t.Context(), pair.ServiceID, pair.ServiceRunID, f.run.Token, f.now.Add(10*time.Second)); err != nil {
+			if _, err := f.d.HeartbeatServiceRun(t.Context(), pair.ServiceID, pair.ServiceRunID, f.run.Token, f.now.Add(10*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 				t.Fatal(err)
 			}
 			renew := original

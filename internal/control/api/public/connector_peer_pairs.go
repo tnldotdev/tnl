@@ -121,7 +121,7 @@ func (h *handler) connectorPair(w http.ResponseWriter, r *http.Request, serviceI
 	if !ok {
 		return
 	}
-	store, ok := h.store.(connectorPeerPairStore)
+	store, ok := h.dependencies.ConnectorPeerPairs, h.dependencies.ConnectorPeerPairs != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "connector peer pairs are unavailable")
 		return
@@ -169,9 +169,7 @@ func (h *handler) ListConnectorPeerPairs(w http.ResponseWriter, r *http.Request,
 		writeBearerProblem(w)
 		return
 	}
-	store, ok := h.store.(interface {
-		ListConnectorPeerPairs(context.Context, string, string, string, string, time.Time) (controlstate.ConnectorPeerPairCandidates, error)
-	})
+	store, ok := h.dependencies.ConnectorPeerPairs, h.dependencies.ConnectorPeerPairs != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "connector peer pair discovery is unavailable")
 		return
@@ -208,9 +206,7 @@ func (h *handler) ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *htt
 		writeBearerProblem(w)
 		return
 	}
-	store, ok := h.store.(interface {
-		ConfirmConnectorPeerPairPrepared(context.Context, string, string, string, string, controlstate.ConnectorPeerPairPrepared, time.Time) error
-	})
+	store, ok := h.dependencies.ConnectorPeerPairs, h.dependencies.ConnectorPeerPairs != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "connector peer preparation reports are unavailable")
 		return
@@ -236,9 +232,7 @@ func (h *handler) DeliverConnectorPeerPair(w http.ResponseWriter, r *http.Reques
 		writeBearerProblem(w)
 		return
 	}
-	store, ok := h.store.(interface {
-		DeliverConnectorPeerPair(context.Context, string, string, string, int64, string, time.Time) (controlstate.ConnectorPeerPairDelivery, error)
-	})
+	store, ok := h.dependencies.ConnectorPeerPairs, h.dependencies.ConnectorPeerPairs != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "connector peer pair delivery is unavailable")
 		return

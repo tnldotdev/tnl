@@ -13,6 +13,7 @@ import (
 
 func TestServiceRunUsesSeparatePersonPublisherAndRunCredentials(t *testing.T) {
 	seen := map[string]int{}
+	health := controlv1.ServiceRunHeartbeat{Healthy: false, StreamCapacity: 7, ActiveStreams: 3}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.Method + " " + r.URL.Path
 		seen[key]++
@@ -57,6 +58,10 @@ func TestServiceRunUsesSeparatePersonPublisherAndRunCredentials(t *testing.T) {
 			if r.Header.Get("Authorization") != "Bearer run-token" {
 				t.Error("heartbeat used a person or publisher credential")
 			}
+			var body controlv1.ServiceRunHeartbeat
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body != health {
+				t.Errorf("heartbeat changed its health or stream counts: %+v %v", body, err)
+			}
 			_ = json.NewEncoder(w).Encode(controlv1.ServiceRunState{ServiceId: "svc_service", ServiceRunId: "srun_one", RunNumber: 1, PublisherExpiresAt: time.Now().Add(time.Minute)})
 		case "DELETE /v1/services/svc_service/runs/srun_one":
 			if r.Header.Get("Authorization") != "Bearer run-token" {
@@ -89,7 +94,7 @@ func TestServiceRunUsesSeparatePersonPublisherAndRunCredentials(t *testing.T) {
 	if _, err := client.StartServiceRun(ctx, "svc_service", "srun_one", "publisher-token", 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.HeartbeatServiceRun(ctx, "svc_service", "srun_one", credentials.ServiceRunToken("run-token")); err != nil {
+	if _, err := client.HeartbeatServiceRun(ctx, "svc_service", "srun_one", credentials.ServiceRunToken("run-token"), health); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.CloseServiceRun(ctx, "svc_service", "srun_one", credentials.ServiceRunToken("run-token")); err != nil {

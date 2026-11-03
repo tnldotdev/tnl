@@ -353,7 +353,7 @@ func assertAppliedPrivateRetired(t *testing.T, d *Database, r ApplyProjectConfig
 		}
 	}
 	for _, run := range resource.runs {
-		if _, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, r.Now); !errors.Is(err, ErrServiceAccess) {
+		if _, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, r.Now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); !errors.Is(err, ErrServiceAccess) {
 			t.Fatal("old run survived retirement", err)
 		}
 		if err := d.pool.QueryRow(ctx, `SELECT state='closed' AND closed_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM control.service_connection_slots WHERE service_run_id=$1 AND session_open) FROM control.service_runs WHERE id=$1`, run.RunID).Scan(&retired); err != nil || !retired {

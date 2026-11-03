@@ -92,7 +92,7 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := NewHandler(Config{ControlURL: "https://control.example.test"}, d, d, nil)
+	h, err := NewHandler(Config{ControlURL: "https://control.example.test"}, DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

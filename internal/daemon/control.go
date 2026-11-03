@@ -17,13 +17,14 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/observability"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func controlAPIConfigFrom(cfg daemonconfig.Config, httpClient *http.Client) controlpublic.Config {
 	return controlpublic.Config{
 		TrafficDefaults:                   cfg.TrafficDefaults(),
 		TrafficCeiling:                    cfg.TrafficCeiling(),
-		Role:                              cfg.Role,
+		Role:                              controlv1.AdminServerStatusRole(cfg.Role),
 		ManagedDomain:                     cfg.ManagedDomain,
 		ManagedURLMode:                    cfg.ManagedURLMode,
 		ManagedDomainMaxMemberChildLabels: cfg.ManagedDomainMaxMemberChildLabels,
@@ -78,7 +79,7 @@ func newPublicAPIHandler(
 		controlConfig.RelayReadiness = func() error { return d.readyRelays(cfg.Role, time.Now()) }
 	}
 	mux, err := controlpublic.NewHandler(
-		controlConfig, database, database, database.Readiness,
+		controlConfig, controlpublic.DatabaseStores(database), database, database.Readiness,
 	)
 	if err != nil {
 		return nil, err

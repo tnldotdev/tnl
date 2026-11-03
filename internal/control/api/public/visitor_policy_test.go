@@ -27,7 +27,7 @@ func (s *publisherPolicyStoreFixture) ReadPublisherVisitorPolicy(_ context.Conte
 
 func TestPublisherVisitorPolicyGeneratedMaximumRequest(t *testing.T) {
 	store := &publisherPolicyStoreFixture{}
-	server := httptest.NewServer(testHandler(t, Config{}, store, nil, nil))
+	server := httptest.NewServer(testHandler(t, Config{}, store, nil, nil, Stores{VisitorPolicy: store}))
 	defer server.Close()
 	client, err := controlv1.NewClientWithResponses(server.URL)
 	if err != nil {
@@ -77,7 +77,7 @@ func TestPublisherVisitorPolicyRejectsInvalidBodiesBeforeBackend(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &publisherPolicyStoreFixture{}
-			h := testHandler(t, Config{}, store, nil, nil)
+			h := testHandler(t, Config{}, store, nil, nil, Stores{VisitorPolicy: store})
 			r := httptest.NewRequest("POST", "/v1/visitor-policy", bytes.NewBufferString(tc.body))
 			r.Header.Set("Authorization", "Bearer fixture-run-secret")
 			w := httptest.NewRecorder()

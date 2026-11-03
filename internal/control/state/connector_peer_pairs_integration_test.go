@@ -203,7 +203,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if state, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now); err != nil || state.State != "ready" {
+	if state, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil || state.State != "ready" {
 		t.Fatal("service run is not ready", err)
 	}
 	public, private, err := ed25519.GenerateKey(rand.Reader)
@@ -615,7 +615,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 			t.Fatal(err)
 		}
 	}
-	if state, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now); err != nil || state.State != "ready" {
+	if state, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil || state.State != "ready" {
 		t.Fatal("applied service run is not ready", err)
 	}
 	shortRelayDeadline := now.Add(10 * time.Second)
@@ -693,7 +693,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if _, err := d.PrepareConnectorPeerPair(ctx, bad, now); !errors.Is(err, ErrWorkloadDenied) {
 		t.Fatal("wrong workload credential recovered pair", err)
 	}
-	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(30*time.Second)); err != nil {
+	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(30*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, now.Add(31*time.Second)); err != nil {
@@ -718,7 +718,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if !firstRenewal.PublisherPreparedUntil.Equal(report.BindingExpiresAt) {
 		t.Fatal("pair renewal advanced the publisher's old installation report")
 	}
-	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(60*time.Second)); err != nil {
+	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(60*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, now.Add(62*time.Second)); err != nil {
@@ -754,7 +754,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if afterRetry := connectorPairSavedAuthority(t, d, pair.ID); !bytes.Equal(beforeRetry, afterRetry) {
 		t.Fatal("rejected workload or pair rollback changed stored authority")
 	}
-	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(90*time.Second)); err != nil {
+	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(90*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, now.Add(93*time.Second)); err != nil {

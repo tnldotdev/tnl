@@ -142,6 +142,13 @@ tasks:
     cmds:
       - go test -race -v ./cmd/tnl ./internal/publisher/local ./internal/publisher/invocation -run='^Test(Invocation|RuntimeStatus|HTTPRuntime|AppServiceSelection|Named|StatusSnapshot|WaitDoesNotTreatOldSnapshotAsFreshOwnerCheck)' -count=1 -timeout=2m
       - go test -race ./internal/publisher/app ./internal/publisher/target ./internal/publisher/localapi ./internal/publisher/localapi/protocol -count=1 -timeout=2m
+      - task: :go:test:detached
+
+  test:detached:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check detached socket ownership, readiness, startup cleanup and CLI presentation
+    cmds:
+      - go test {{.CLI_ARGS}} -race ./internal/client/detached ./cmd/tnl -run='^TestDetached' -count=1 -timeout=3m
 
   test:app-workflows:
     dir: "{{.ROOT_DIR}}"

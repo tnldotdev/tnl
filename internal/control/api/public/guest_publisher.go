@@ -22,7 +22,7 @@ func (h *handler) EnrollGuestPublisher(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, 404, controlv1.NotFound, "resource not found")
 		return
 	}
-	store, ok := h.store.(GuestPublisherStore)
+	store, ok := h.dependencies.GuestPublishers, h.dependencies.GuestPublishers != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "guest publisher enrollment is unavailable")
 		return

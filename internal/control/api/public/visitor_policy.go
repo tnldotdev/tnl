@@ -34,7 +34,7 @@ func (h *handler) ReadPublisherVisitorPolicy(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid visitor policy resource")
 		return
 	}
-	store, ok := h.store.(publisherVisitorPolicyStore)
+	store, ok := h.dependencies.VisitorPolicy, h.dependencies.VisitorPolicy != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "visitor policy is unavailable")
 		return
