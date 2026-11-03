@@ -165,7 +165,8 @@ func (f ServiceHTTP) share(w http.ResponseWriter, r *http.Request) {
 	}
 	// control rechecks the grant's parent on every renewal. the first short
 	// permission is not the grant deadline.
-	if err := f.browser.prepareSessionToken(r.Context(), source, permission); err != nil {
+	permission, err = f.browser.prepareSessionToken(r.Context(), source, permission)
+	if err != nil {
 		serviceHTTPDenied(w, 503)
 		return
 	}

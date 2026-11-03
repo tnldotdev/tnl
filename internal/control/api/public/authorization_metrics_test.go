@@ -16,6 +16,7 @@ import (
 
 type connectorDecisionStore struct {
 	PublicURLStore
+	ServiceClientCertificateStore
 	allowed  bool
 	admitted bool
 	err      error
@@ -40,7 +41,7 @@ func TestConnectorDecisionMetricsDistinguishHTTP200DenialAndStateFailure(t *test
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			metrics := observability.New("control")
-			h := &handler{store: connectorDecisionStore{allowed: test.allowed, admitted: test.admitted, err: test.err}}
+			h := &handler{dependencies: Stores{ServiceClientCertificates: connectorDecisionStore{allowed: test.allowed, admitted: test.admitted, err: test.err}}}
 			mux := http.NewServeMux()
 			mux.HandleFunc("POST /service/{service}/run/{run}", func(w http.ResponseWriter, r *http.Request) {
 				h.AuthorizeServiceClientCertificate(w, r, r.PathValue("service"), r.PathValue("run"))

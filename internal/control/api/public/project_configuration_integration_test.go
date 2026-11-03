@@ -46,7 +46,7 @@ func TestIntegrationAppliedProjectHTTPContracts(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
-	h, err := NewHandler(Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple}, d, d, nil)
+	h, err := NewHandler(Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple}, DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

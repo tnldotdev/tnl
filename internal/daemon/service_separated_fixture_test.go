@@ -251,10 +251,11 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		internalListener := serviceRuntimeListener(t)
 		internal := internalListener.Addr().String()
 		publisherListener := serviceRuntimeListener(t)
+		publisherPacket := integrationPacketListener(t)
 		relayAddress := publisherListener.Addr().String()
 		if err := relay.startRelay(lifetime, relayProcessSettings{controlEndpoint: config.PrivateControlEndpoint(), controlAddress: config.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
 			relayServiceID: id, relayID: id, relayAddress: relayAddress, tlsServerName: name, transportTLS: serviceRuntimeTLS(t, ca, name), internalListener: internalListener, internalAddress: internal,
-			tcpListener: publisherListener, udpListen: relayAddress, quicIdleTimeout: time.Minute, quicMaxIncomingStreams: 128, runtime: relaySettingsFrom(config)}, relayMetrics); err != nil {
+			tcpListener: publisherListener, udpPacket: publisherPacket, udpListen: publisherPacket.LocalAddr().String(), quicIdleTimeout: time.Minute, quicMaxIncomingStreams: 128, runtime: relaySettingsFrom(config)}, relayMetrics); err != nil {
 			stop()
 			t.Fatal(err)
 		}

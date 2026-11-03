@@ -407,7 +407,24 @@ func (s ServiceStream) guardVisitor(ctx context.Context, client net.Conn, target
 	if target != nil {
 		defer target.Close()
 	}
+	authorize := func(check context.Context) (ServiceVisitorDecision, error) {
+		check, authDone := observability.PublisherOperation(check, "visitor_authorization")
+		next, err := s.Visitor.authorize(check, state)
+		observability.PublisherAuthorization(check, next.Allowed && next.ValidUntil.After(time.Now()), next.Allowed && next.ValidUntil.After(time.Now()), err)
+		authDone(managedAuthorizationError(next, err))
+		return next, err
+	}
+	_, connector := s.Visitor.(ConnectorVisitor)
 	for {
+		if connector {
+			// admission owns renewable connector authority. a cached deadline may
+			// have elapsed while that same admission received a current renewal.
+			next, err := authorize(ctx)
+			if err != nil || !next.Allowed {
+				return
+			}
+			decision = next
+		}
 		remaining := time.Until(decision.ValidUntil)
 		if remaining <= 0 {
 			return
@@ -420,14 +437,14 @@ func (s ServiceStream) guardVisitor(ctx context.Context, client net.Conn, target
 			return
 		case <-timer.C:
 		}
+		if connector {
+			continue
+		}
 		if !decision.ValidUntil.After(time.Now()) {
 			return
 		}
 		check, cancel := context.WithTimeout(ctx, min(5*time.Second, time.Until(decision.ValidUntil)))
-		check, authDone := observability.PublisherOperation(check, "visitor_authorization")
-		next, err := s.Visitor.authorize(check, state)
-		observability.PublisherAuthorization(check, next.Allowed && next.ValidUntil.After(time.Now()), next.Allowed && next.ValidUntil.After(time.Now()), err)
-		authDone(managedAuthorizationError(next, err))
+		next, err := authorize(check)
 		cancel()
 		if err == nil {
 			if !next.Allowed || !next.ValidUntil.After(time.Now()) {

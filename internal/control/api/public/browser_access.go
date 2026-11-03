@@ -83,7 +83,7 @@ func (h *handler) BeginServiceBrowserLogin(response http.ResponseWriter, request
 		writeProblem(response, 400, controlv1.InvalidRequest, "invalid managed browser sign-in")
 		return
 	}
-	store, ok := h.store.(serviceHTTPStore)
+	store, ok := h.dependencies.ServiceHTTP, h.dependencies.ServiceHTTP != nil
 	if !ok {
 		writeProblem(response, 503, controlv1.Unavailable, "browser sign-in is unavailable")
 		return
@@ -112,9 +112,7 @@ func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.
 	now := time.Now()
 	var intent *controlstate.CompanyLoginIntent
 	var err error
-	if store, ok := h.store.(interface {
-		PrepareCompanyBrowser(context.Context, string, string, string, string, time.Time) (*controlstate.CompanyLoginIntent, error)
-	}); ok {
+	if store := h.dependencies.CompanyBrowser; store != nil {
 		intent, err = store.PrepareCompanyBrowser(request.Context(), team, h.config.OIDCIssuer, h.config.OIDCClientID, h.config.ControlURL+browserCallbackPath, now)
 		if err != nil {
 			writeControlStateProblem(response, "select company browser sign-in", err)
@@ -126,7 +124,7 @@ func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.
 	}
 	var state string
 	if subject.Kind == visitorscope.Service {
-		state, err = h.store.(serviceHTTPStore).BeginServiceBrowserLogin(request.Context(), subject, path, nonce, verifier, binding, intent, now)
+		state, err = h.dependencies.ServiceHTTP.BeginServiceBrowserLogin(request.Context(), subject, path, nonce, verifier, binding, intent, now)
 	} else {
 		state, err = h.browserAccess.BeginBrowserLogin(request.Context(), preview, subject.ID, path, nonce, verifier, binding, intent, now)
 	}
@@ -190,9 +188,7 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 		writeProblem(response, http.StatusUnauthorized, controlv1.Unauthenticated, "invalid browser sign-in")
 		return
 	}
-	sessionStore, ok := h.store.(interface {
-		CreateOIDCControlSession(context.Context, string, controlstate.OIDCIdentity, time.Duration, time.Duration, time.Time) (controlstate.ControlSession, error)
-	})
+	sessionStore, ok := h.dependencies.BrowserSessions, h.dependencies.BrowserSessions != nil
 	if !ok {
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, "browser sign-in is unavailable")
 		return
@@ -296,9 +292,7 @@ func (h *handler) redeemedBrowserHandoffPermission(ctx context.Context, urlID, c
 func (h *handler) refreshBrowserSignIn(ctx context.Context, scope visitorscope.Scope, token string) (controlstate.BrowserAccessSession, error) {
 	now := time.Now()
 	if scope.Kind == visitorscope.Service {
-		store, ok := h.store.(interface {
-			RefreshServiceBrowserSession(context.Context, string, string, time.Time, func(context.Context, string) (controlstate.BrowserTokenRotation, error)) (controlstate.BrowserAccessSession, error)
-		})
+		store, ok := h.dependencies.ServiceHTTP, h.dependencies.ServiceHTTP != nil
 		if !ok {
 			return controlstate.BrowserAccessSession{}, clientauthority.ErrUnavailable
 		}

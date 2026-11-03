@@ -1,6 +1,7 @@
 package public
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -15,9 +16,53 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
+type serviceHeartbeatStore struct {
+	PublicURLStore
+	ServiceRunStore
+	service, run, token string
+	health              controlstate.ServiceRunHealth
+	calls               int
+}
+
+func (s *serviceHeartbeatStore) HeartbeatServiceRun(_ context.Context, service, run, token string, now time.Time, health controlstate.ServiceRunHealth) (controlstate.ServiceRunState, error) {
+	s.service, s.run, s.token, s.health = service, run, token, health
+	s.calls++
+	return controlstate.ServiceRunState{ServiceID: service, RunID: run, RunNumber: 1, State: "starting", ExpiresAt: now.Add(45 * time.Second),
+		Healthy: health.Healthy, StreamCapacity: health.StreamCapacity, ReportedStreams: health.ActiveStreams}, nil
+}
+
+func TestServiceHeartbeatPreservesExplicitHealthAndStreamCounts(t *testing.T) {
+	for _, health := range []controlv1.ServiceRunHeartbeat{
+		{Healthy: false, StreamCapacity: 7, ActiveStreams: 3},
+		{Healthy: true, StreamCapacity: 7, ActiveStreams: 7},
+	} {
+		store := &serviceHeartbeatStore{}
+		h := &handler{store: store, dependencies: Stores{ServiceRuns: store}}
+		body, err := json.Marshal(health)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest(http.MethodPost, "/v1/services/service/runs/run", bytes.NewReader(body))
+		r.Header.Set("Authorization", "Bearer run-token")
+		w := httptest.NewRecorder()
+		h.HeartbeatServiceRun(w, r, "service", "run")
+		want := controlstate.ServiceRunHealth{Healthy: health.Healthy, StreamCapacity: health.StreamCapacity, ActiveStreams: health.ActiveStreams}
+		if w.Code != 200 || store.calls != 1 || store.service != "service" || store.run != "run" || store.token != "run-token" || store.health != want {
+			t.Fatalf("heartbeat changed its authenticated scope or report: status=%d calls=%d health=%+v", w.Code, store.calls, store.health)
+		}
+		var state controlv1.ServiceRunState
+		if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil {
+			t.Fatal(err)
+		}
+		if state.Healthy == nil || *state.Healthy != health.Healthy || state.StreamCapacity == nil || *state.StreamCapacity != health.StreamCapacity || state.ActiveStreams == nil || *state.ActiveStreams != health.ActiveStreams {
+			t.Fatalf("heartbeat response lost explicit health or stream counts: %+v", state)
+		}
+	}
+}
+
 type privateSelectionResponseStore struct {
 	PublicURLStore
-	serviceVisitorStore
+	ServiceStore
 	issued controlstate.ServiceSelection
 }
 
@@ -38,7 +83,7 @@ func TestPrivateSelectionReturnsServiceEndpointWithoutStreamCrypto(t *testing.T)
 		ServiceRunID: "srun_0123456789ABCDEFGHIJKL",
 		ExpiresAt:    time.Now().Add(time.Minute), RunNumber: 1,
 	}}
-	h := &handler{store: store, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
+	h := &handler{store: store, dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
 	r := httptest.NewRequest(http.MethodPost, "/v1/services/"+service+"/select-run", strings.NewReader(`{"device_id":"`+device+`"}`))
 	r.Header.Set("Authorization", "Bearer access-token")
 	w := httptest.NewRecorder()

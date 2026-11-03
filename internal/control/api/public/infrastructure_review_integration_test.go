@@ -41,7 +41,7 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandler(Config{}, d, d, nil)
+	handler, err := NewHandler(Config{}, DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
