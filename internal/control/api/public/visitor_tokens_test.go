@@ -12,6 +12,7 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
 
 func TestVisitorTokenSourceRejectsMixedUnknownAndIncompleteVariants(t *testing.T) {
@@ -41,6 +42,17 @@ func TestVisitorTokenSourceRejectsMixedUnknownAndIncompleteVariants(t *testing.T
 		if err != nil || parsed == nil || needsHuman != human {
 			t.Fatal("incorrect source authentication boundary", err)
 		}
+	}
+}
+
+func TestVisitorTokenResponseServiceTrustRevision(t *testing.T) {
+	issued := controlstate.IssuedVisitorToken{ServiceTrustRevision: 3, Permission: visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_test"}}}
+	if response := visitorTokenResponse(issued); response.ServiceTrustRevision == nil || *response.ServiceTrustRevision != 3 {
+		t.Fatal("service permission omitted its current metadata revision")
+	}
+	issued.Permission.Scope.Kind = visitorscope.PublicURL
+	if response := visitorTokenResponse(issued); response.ServiceTrustRevision != nil {
+		t.Fatal("public URL permission included a service metadata revision")
 	}
 }
 

@@ -133,6 +133,28 @@ func TestConnectorRefreshDoesNotReselectRetainedRun(t *testing.T) {
 	}
 }
 
+func TestConnectorPermissionMetadataRequiresCurrentServiceRevision(t *testing.T) {
+	f := newConnectorFixture(t, "quic")
+	permission, err := f.VisitorPermission(t.Context(), f.run.ServiceID)
+	if err != nil || validateConnectorPermissionMetadata(f.config, permission) != nil {
+		t.Fatal("current service permission was rejected", err)
+	}
+	permission.ServiceTrustRevision = nil
+	if err := validateConnectorPermissionMetadata(f.config, permission); !errors.Is(err, ErrServiceConnection) {
+		t.Fatal("missing service revision was accepted", err)
+	}
+	revision := f.config.TrustRevision + 1
+	permission.ServiceTrustRevision = &revision
+	var reload *MetadataReloadError
+	if err := validateConnectorPermissionMetadata(f.config, permission); !errors.As(err, &reload) || reload.SelectedRevision != revision {
+		t.Fatal("stale service revision did not request metadata reload", err)
+	}
+	permission.Resource.Id = "svc_other"
+	if err := validateConnectorPermissionMetadata(f.config, permission); !errors.Is(err, ErrServiceConnection) {
+		t.Fatal("another service supplied a metadata revision", err)
+	}
+}
+
 func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 	for _, boundary := range []string{"run", "pair", "permission", "installation"} {
 		t.Run(boundary, func(t *testing.T) {
@@ -151,7 +173,7 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 				return f.device.Sign(message)
 			}
 			control, err := NewControlWithConfig(ControlConfig{
-				Signer: f.ConnectorSigner,
+				Signer:  f.ConnectorSigner,
 				Resolve: f.ResolveService,
 				Pair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
 					pair, err := f.PrepareConnectorPeerPair(ctx, service, request)
@@ -166,6 +188,7 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 						if boundary == "installation" {
 							pair.PublisherPreparedUntil = new(deadline)
 						}
+						blocked.Store(true)
 					}
 					return pair, err
 				},
@@ -178,7 +201,6 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 						if boundary == "permission" {
 							permission.ExpiresAt = deadline
 						}
-						blocked.Store(true)
 					}
 					return permission, err
 				}, Close: func() error { return nil },
