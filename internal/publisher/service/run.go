@@ -203,7 +203,7 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 	}
 	b.connections = next
 	for _, p := range b.connectorPeers {
-		if !b.peerRelaysCurrentLocked(p.binding) {
+		if !b.peerRelaysCurrentLocked(p.bindingLocked()) {
 			obsolete = append(obsolete, p)
 		}
 	}

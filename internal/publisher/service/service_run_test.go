@@ -87,7 +87,7 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 				defer cancel()
 				client, server := connectorInnerPair(t, ctx, verification)
 				done := make(chan error, 1)
-				go func() { done <- peer.Serve(ctx, server) }()
+				go func() { done <- serveConnectorInner(ctx, peer, server) }()
 				raw, err := client.OpenStream(ctx)
 				if err != nil {
 					t.Fatal(err)
