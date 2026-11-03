@@ -23,6 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -158,6 +159,13 @@ type heldSlot struct{ stopped chan struct{} }
 func (s *heldSlot) Serve(ctx context.Context) error { <-ctx.Done(); return nil }
 func (s *heldSlot) Close() error                    { close(s.stopped); return nil }
 
+type transportedSlot struct {
+	*heldSlot
+	transport tunnel.Transport
+}
+
+func (s *transportedSlot) Transport() tunnel.Transport { return s.transport }
+
 func lifecycleFixture(t *testing.T) (RunConfig, *lifecycleControl) {
 	t.Helper()
 	p, bound, _, _ := privateFixture(t, "127.0.0.1:1")
@@ -190,7 +198,7 @@ func TestPrivateLifecycleKeepsTwoSlotsClosesAndRetriesExactStart(t *testing.T) {
 	config, f := lifecycleFixture(t)
 	var slots [2]*heldSlot
 	connected := make(chan struct{}, 2)
-	config.Connect = func(_ context.Context, _ *Bound, slot uint8) (SlotSession, error) {
+	config.Connect = func(_ context.Context, _ *Bound, slot uint8, _ ConnectOptions) (SlotSession, error) {
 		session := &heldSlot{stopped: make(chan struct{})}
 		slots[slot] = session
 		connected <- struct{}{}
@@ -277,23 +285,41 @@ func TestPrivateLifecycleReplacesOnlyChangedSlotAndKeepsEndpointPlan(t *testing.
 		f.mu.Unlock()
 		return nil
 	}
-	connected := make(chan uint8, 4)
-	config.Connect = func(_ context.Context, bound *Bound, slot uint8) (SlotSession, error) {
+	type connection struct {
+		slot    uint8
+		options ConnectOptions
+	}
+	connected := make(chan connection, 4)
+	config.Connect = func(_ context.Context, bound *Bound, slot uint8, options ConnectOptions) (SlotSession, error) {
 		if bound.prepared.Preparation.RunNumber != f.firstStart || bound.prepared.managedHostname != f.prep.Hostname {
 			t.Error("slot replacement changed run or managed endpoint")
 		}
-		connected <- slot
-		return &heldSlot{stopped: make(chan struct{})}, nil
+		connected <- connection{slot, options}
+		transport := tunnel.TransportQUIC
+		if options.PreferTCP {
+			transport = tunnel.TransportTLSTCP
+		}
+		return &transportedSlot{heldSlot: &heldSlot{stopped: make(chan struct{})}, transport: transport}, nil
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- Publish(ctx, config) }()
 	counts := [2]int{}
+	var first ConnectOptions
 	for range 3 {
 		select {
-		case slot := <-connected:
-			counts[slot]++
+		case current := <-connected:
+			counts[current.slot]++
+			if current.options.PreferTCP != (counts[current.slot] == 2) {
+				t.Fatal("replacement did not receive its slot's transport preference", current.options.PreferTCP)
+			}
+			if first.QUIC == nil {
+				first = current.options
+			}
+			if current.options.QUIC != first.QUIC || current.options.TCP != first.TCP {
+				t.Fatal("slot retry recomposed the run's verified connectors")
+			}
 		case err := <-done:
 			t.Fatalf("run stopped on slot replacement: %v", err)
 		case <-ctx.Done():
@@ -359,7 +385,7 @@ func (f *lifecycleControl) AuthorizeServiceClientCertificate(context.Context, st
 func TestPrivateLifecycleStopsWhenControlRevokesRun(t *testing.T) {
 	config, f := lifecycleFixture(t)
 	f.revoke = true
-	config.Connect = func(_ context.Context, _ *Bound, _ uint8) (SlotSession, error) {
+	config.Connect = func(_ context.Context, _ *Bound, _ uint8, _ ConnectOptions) (SlotSession, error) {
 		return &heldSlot{stopped: make(chan struct{})}, nil
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)

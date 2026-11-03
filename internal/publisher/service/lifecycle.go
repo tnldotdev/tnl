@@ -8,6 +8,7 @@ import (
 	"net"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	serviceconfig "github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -17,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/tcptarget"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -49,9 +51,11 @@ type RunConfig struct {
 	TargetResolver    TargetResolver
 	resolvedTargetTLS *tls.Config
 	HeartbeatInterval time.Duration
-	Connect           func(context.Context, *Bound, uint8) (SlotSession, error)
+	Connect           func(context.Context, *Bound, uint8, ConnectOptions) (SlotSession, error)
 	Ready             func() error
 	TransportTLS      *tls.Config
+	RelayQUIC         muxsession.Connector
+	RelayTCP          muxsession.Connector
 	Metadata          controlv1.ServiceMetadata
 	StreamCapacity    int32
 	Healthy           func(context.Context) bool
@@ -76,6 +80,10 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	if config.Control == nil || config.Access == nil || config.Identity.ServiceId == nil ||
 		config.Identity.Kind != authorityv1.Service || *config.Identity.ServiceId != config.ServiceID {
 		return ErrPrivateStream
+	}
+	connectOptions, err := config.connectionOptions()
+	if err != nil {
+		return err
 	}
 	var discoveredTLS *tls.Config
 	if config.TargetResolver != nil {
@@ -311,10 +319,12 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		}
 	}()
 	paths, err := tunnel.NewSlots(context.WithoutCancel(ctx), tunnel.SlotsConfig{SingleUse: true, Connect: func(ctx context.Context, slot uint8, preferTCP bool) (tunnel.SlotSession, error) {
+		options := connectOptions
+		options.PreferTCP = preferTCP
 		if config.Connect != nil {
-			return config.Connect(ctx, bound, slot)
+			return config.Connect(ctx, bound, slot, options)
 		}
-		return bound.ConnectSlotWithPreference(ctx, slot, preferTCP, config.TransportTLS)
+		return bound.ConnectSlot(ctx, slot, options)
 	}})
 	if err != nil {
 		return err
@@ -415,6 +425,30 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 			}
 		}
 	}
+}
+
+// compose relay trust once for the run, independently of target and visitor TLS.
+// supplied connectors must preserve certificate verification for the assigned
+// server name even when they redirect the dial address to a local fixture.
+func (config RunConfig) connectionOptions() (ConnectOptions, error) {
+	roots := config.TransportTLS
+	if roots == nil {
+		roots = &tls.Config{MinVersion: tls.VersionTLS13}
+	} else {
+		if roots.InsecureSkipVerify {
+			return ConnectOptions{}, ErrPrivateStream
+		}
+		roots = roots.Clone()
+		roots.MinVersion = max(roots.MinVersion, tls.VersionTLS13)
+	}
+	options := ConnectOptions{QUIC: config.RelayQUIC, TCP: config.RelayTCP}
+	if options.QUIC == nil {
+		options.QUIC = muxsession.QUICConnector{TLSConfig: roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}
+	}
+	if options.TCP == nil {
+		options.TCP = muxsession.TLSYamuxConnector{TLSConfig: roots}
+	}
+	return options, nil
 }
 
 // recoverControlResponse keeps an uncertain mutation inside its owning

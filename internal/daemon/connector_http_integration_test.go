@@ -49,8 +49,9 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 	go func() {
 		done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target,
 			Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: heartbeat,
-			Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
-				claimed, err := bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
+			RelayQUIC: quic, RelayTCP: tcp,
+			Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8, options publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
+				claimed, err := bound.ConnectSlot(ctx, slot, options)
 				if err == nil && f.publisherConnections != nil {
 					select {
 					case f.publisherConnections <- claimed:
