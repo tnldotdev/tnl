@@ -210,7 +210,7 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 	if row.RevokedAt.Valid {
 		return r, ErrWorkloadDenied
 	}
-	if now.Before(row.CreatedAt.Time) || !r.LeaseExpiresAt.After(now) || !r.ExpiresAt.After(now) {
+	if now.Before(row.CreatedAt.Time) || now.Before(row.RenewedAt.Time) || !r.LeaseExpiresAt.After(now) || !r.ExpiresAt.After(now) {
 		return r, ErrWorkloadExpired
 	}
 	secret, _, err := d.storageKey.Open(row.StorageKeyID, workloadCredentialContext(id), row.CredentialCiphertext)
@@ -249,10 +249,7 @@ func lockWorkloadCredential(ctx context.Context, tx pgx.Tx, credential string, n
 		return "", publisherLookupError(err, ErrWorkloadDenied)
 	}
 	var run, attempt, check string
-	// now belongs to the request, not the later row-lock acquisition. a renewal
-	// committed in between extends this same session; it cannot invalidate the
-	// waiting credential or move creation, revocation, or fixed-expiry fences.
-	err = tx.QueryRow(ctx, `SELECT id,COALESCE(run_id,''),COALESCE(run_attempt,''),COALESCE(check_run_id,'') FROM control.workload_sessions WHERE id=$1 AND revoked_at IS NULL AND created_at<=$2 AND lease_expires_at>$2 AND expires_at>$2 FOR UPDATE`, id, now).Scan(&id, &run, &attempt, &check)
+	err = tx.QueryRow(ctx, `SELECT id,COALESCE(run_id,''),COALESCE(run_attempt,''),COALESCE(check_run_id,'') FROM control.workload_sessions WHERE id=$1 AND revoked_at IS NULL AND created_at<=$2 AND renewed_at<=$2 AND lease_expires_at>$2 AND expires_at>$2 FOR UPDATE`, id, now).Scan(&id, &run, &attempt, &check)
 	if err == nil {
 		observability.WorkloadExecution(ctx, id, run, attempt, check)
 	}

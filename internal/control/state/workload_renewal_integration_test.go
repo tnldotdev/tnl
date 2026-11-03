@@ -120,29 +120,8 @@ func TestIntegrationWorkloadRenewalOverlapsObservation(t *testing.T) {
 			t.Fatal("policy observation borrowed time after its request clock")
 		}
 	})
-	t.Run("visitor permission", func(t *testing.T) {
-		issued, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, WorkloadTokenSource{Credential: session.Credential}, observed)
-		if err != nil {
-			t.Fatal("concurrent renewal rejected visitor permission", err)
-		}
-		if issued.Permission.ExpiresAt.After(observed.Add(WorkloadLease)) {
-			t.Fatal("permission escaped its observation budget")
-		}
-	})
-	t.Run("credential and session", func(t *testing.T) {
-		if _, err := d.ListWorkloadServices(ctx, session.Credential, observed); err != nil {
-			t.Error("concurrent renewal invalidated the workload credential", err)
-		}
-		replayed, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, observed)
-		if err != nil {
-			t.Fatal("older in-flight renewal rejected current session", err)
-		}
-		if !replayed.LeaseExpiresAt.Equal(renewed.LeaseExpiresAt) || !replayed.ExpiresAt.Equal(session.ExpiresAt) {
-			t.Fatal("older in-flight renewal moved the current deadline")
-		}
-	})
-	t.Run("creation and expiry fences", func(t *testing.T) {
-		for _, at := range []time.Time{now.Add(-time.Millisecond), renewed.LeaseExpiresAt, session.ExpiresAt} {
+	t.Run("source clock and lifetime fences", func(t *testing.T) {
+		for _, at := range []time.Time{now.Add(-time.Millisecond), observed, renewed.LeaseExpiresAt, session.ExpiresAt} {
 			if _, err := d.ListWorkloadServices(ctx, session.Credential, at); !errors.Is(err, ErrWorkloadDenied) {
 				t.Error("invalid lifetime accepted a workload credential", err)
 			}
@@ -152,7 +131,7 @@ func TestIntegrationWorkloadRenewalOverlapsObservation(t *testing.T) {
 		if err := d.RevokeWorkloadSession(ctx, session.ID, session.Credential, observed.Add(2*time.Millisecond)); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, WorkloadTokenSource{Credential: session.Credential}, observed); !errors.Is(err, ErrWorkloadDenied) {
+		if _, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, WorkloadTokenSource{Credential: session.Credential}, observed.Add(3*time.Millisecond)); !errors.Is(err, ErrWorkloadDenied) {
 			t.Fatal("in-flight request ignored committed revocation", err)
 		}
 		apply(t, readPolicy(t, 0, observed))

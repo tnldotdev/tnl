@@ -144,11 +144,11 @@ changed claim constraints revoke issued sessions in the apply transaction.
 service narrowing removes issued rights permanently; later additions never
 expand an existing session. apply and exchange serialize on the same team lock.
 
-an in-flight request may read a renewal committed after its request timestamp.
-`renewed_at` is not a credential's start time: the same session remains current.
-policy observations retain that parent lease, capped at 90 seconds from the
-observation, rather than publishing its absence and canceling live streams.
-creation, revocation, selected services, and fixed expiry still fence access.
+a publisher policy read may observe a renewal committed after its request clock.
+the snapshot retains that current parent, capped at 90 seconds from the observation,
+rather than publishing its absence and canceling live streams. source authentication
+still rejects clock rollback. a superseded in-flight permission proof cannot renew
+authority, but leaves a current stream behind its existing guard deadline.
 
 ## use visitor capabilities
 
