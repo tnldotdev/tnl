@@ -136,6 +136,69 @@ func TestConnectorRefreshPreparesReplacementOpeningsBeforePublishing(t *testing.
 	exchange("after-refresh")
 }
 
+func TestConnectorRefreshDoesNotReselectRetainedRun(t *testing.T) {
+	f := newConnectorFixture(t, "quic")
+	var selections atomic.Int32
+	control, err := NewControlWithConfig(ControlConfig{
+		Signer: f.ConnectorSigner,
+		Resolve: func(ctx context.Context, service string) (Run, error) {
+			if selections.Add(1) != 1 {
+				return Run{}, ErrServiceConnection // placement would select a different or full run.
+			}
+			return f.ResolveService(ctx, service)
+		},
+		Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission, Close: func() error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := f.config
+	config.Control = control
+	setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
+	p, err := prepareConnectorConnection(t.Context(), setup, config, f.device)
+	stop()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	p.mu.Lock()
+	changed, runID := p.changed, p.run.ServiceRunID
+	p.mu.Unlock()
+	select {
+	case <-changed:
+	case <-time.After(4 * time.Second):
+		t.Fatal("retained run was not renewed")
+	}
+	p.mu.Lock()
+	kept := p.run.ServiceRunID == runID && p.run.ValidUntil.Equal(p.until) && p.ctx.Err() == nil
+	p.mu.Unlock()
+	if !kept || selections.Load() != 1 {
+		t.Fatal("refresh re-ran placement or ended the retained run", kept, selections.Load())
+	}
+}
+
+func TestConnectorPermissionMetadataRequiresCurrentServiceRevision(t *testing.T) {
+	f := newConnectorFixture(t, "quic")
+	permission, err := f.VisitorPermission(t.Context(), f.run.ServiceID)
+	if err != nil || validateConnectorPermissionMetadata(f.config, permission) != nil {
+		t.Fatal("current service permission was rejected", err)
+	}
+	permission.ServiceTrustRevision = nil
+	if err := validateConnectorPermissionMetadata(f.config, permission); !errors.Is(err, ErrServiceConnection) {
+		t.Fatal("missing service revision was accepted", err)
+	}
+	revision := f.config.TrustRevision + 1
+	permission.ServiceTrustRevision = &revision
+	var reload *MetadataReloadError
+	if err := validateConnectorPermissionMetadata(f.config, permission); !errors.As(err, &reload) || reload.SelectedRevision != revision {
+		t.Fatal("stale service revision did not request metadata reload", err)
+	}
+	permission.Resource.Id = "svc_other"
+	if err := validateConnectorPermissionMetadata(f.config, permission); !errors.Is(err, ErrServiceConnection) {
+		t.Fatal("another service supplied a metadata revision", err)
+	}
+}
+
 func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 	for _, boundary := range []string{"run", "pair", "permission", "installation"} {
 		t.Run(boundary, func(t *testing.T) {
@@ -154,20 +217,14 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 				return f.device.Sign(message)
 			}
 			control, err := NewControlWithConfig(ControlConfig{
-				Signer: f.ConnectorSigner,
-				Resolve: func(ctx context.Context, service string) (Run, error) {
-					run, err := f.ResolveService(ctx, service)
-					if armed.Load() {
-						deadline = time.Now().Add(200 * time.Millisecond)
-						if boundary == "run" {
-							run.ValidUntil = deadline
-						}
-					}
-					return run, err
-				},
+				Signer:  f.ConnectorSigner,
+				Resolve: f.ResolveService,
 				Pair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
 					pair, err := f.PrepareConnectorPeerPair(ctx, service, request)
 					if armed.Load() {
+						if boundary == "pair" || boundary == "installation" {
+							deadline = time.Now().Add(200 * time.Millisecond)
+						}
 						if boundary == "pair" {
 							pair.ExpiresAt = deadline
 							pair.PublisherPreparedUntil = new(deadline)
@@ -175,6 +232,7 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 						if boundary == "installation" {
 							pair.PublisherPreparedUntil = new(deadline)
 						}
+						blocked.Store(true)
 					}
 					return pair, err
 				},
@@ -182,9 +240,11 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 					permission, err := f.VisitorPermission(ctx, service)
 					if armed.Load() {
 						if boundary == "permission" {
+							deadline = time.Now().Add(200 * time.Millisecond)
+						}
+						if boundary == "permission" {
 							permission.ExpiresAt = deadline
 						}
-						blocked.Store(true)
 					}
 					return permission, err
 				}, Close: func() error { return nil },
@@ -210,6 +270,15 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 			case <-entered:
 			case <-time.After(3 * time.Second):
 				t.Fatal("refresh did not reach background signing")
+			}
+			if boundary == "run" {
+				// expire the last confirmed run while signing is paused.
+				p.mu.Lock()
+				deadline = time.Now().Add(200 * time.Millisecond)
+				p.run.ValidUntil = deadline
+				oldRun = deadline
+				p.notifyLocked()
+				p.mu.Unlock()
 			}
 			<-time.After(time.Until(deadline))
 			resume()

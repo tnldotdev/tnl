@@ -72,7 +72,7 @@ func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor st
 	}
 	permission := issued.Permission
 	result = controlv1.VisitorCredential{GrantId: id, Kind: controlv1.VisitorCredentialKind(input.Kind), RefreshCredential: secret, ExpiresAt: input.ExpiresAt,
-		Permission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service}, Hostname: permission.Hostname, Port: int(permission.Port), VisitorPolicyRevision: permission.VisitorPolicyRevision, ExpiresAt: permission.ExpiresAt, VisitorToken: issued.Token.Reveal()}}
+		Permission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service}, Hostname: permission.Hostname, Port: int(permission.Port), ServiceTrustRevision: &issued.ServiceTrustRevision, VisitorPolicyRevision: permission.VisitorPolicyRevision, ExpiresAt: permission.ExpiresAt, VisitorToken: issued.Token.Reveal()}}
 	if input.Kind == "share" {
 		origin, err := serviceHTTPOrigin(endpoint)
 		if err != nil {

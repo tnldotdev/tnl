@@ -139,8 +139,14 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		return nil, result
 	}
 	p.permission, result = config.Control.VisitorPermission(setup, config.ServiceID)
-	if result != nil || !validConnectorPermission(p.run, p.permission) || setup.Err() != nil {
+	if result != nil || setup.Err() != nil {
 		return nil, errors.Join(ErrServiceConnection, result, context.Cause(setup))
+	}
+	if result = validateConnectorPermissionMetadata(config, p.permission); result != nil {
+		return nil, result
+	}
+	if !validConnectorPermission(p.run, p.permission) {
+		return nil, ErrServiceConnection
 	}
 	if result = p.fillOpenings(); result != nil {
 		return nil, result
@@ -213,6 +219,16 @@ func validateConnectorRun(config Config, run Run) error {
 
 func validConnectorPermission(run Run, permission controlv1.VisitorTokenResponse) bool {
 	return permission.Resource.Kind == controlv1.VisitorResourceScopeKindService && permission.Resource.Id == run.ServiceID && run.Endpoint != nil && permission.Hostname == run.Endpoint.Hostname && permission.Port == run.Endpoint.Port && permission.VisitorToken != "" && permission.ExpiresAt.After(time.Now())
+}
+
+func validateConnectorPermissionMetadata(config Config, permission controlv1.VisitorTokenResponse) error {
+	if permission.Resource.Kind != controlv1.VisitorResourceScopeKindService || permission.Resource.Id != config.ServiceID || permission.ServiceTrustRevision == nil || *permission.ServiceTrustRevision < 1 {
+		return ErrServiceConnection
+	}
+	if *permission.ServiceTrustRevision != config.TrustRevision {
+		return metadataReload(config.ServiceID, config.TrustRevision, *permission.ServiceTrustRevision)
+	}
+	return nil
 }
 
 func (p *connectorConnection) currentLocked() bool {
@@ -322,25 +338,23 @@ func (p *connectorConnection) refresh() {
 		run, previous, until := p.run, p.pair, p.until
 		p.mu.Unlock()
 		call, stop := context.WithDeadline(p.ctx, minConnectorCall(until))
-		next, err := p.config.Control.ResolveService(call, run.ServiceID)
+		// selection is for new connectors. the permission checks current service
+		// metadata even if the exact run has since closed; neither check places a
+		// live stream on another run.
+		next := run
+		permission, err := p.config.Control.VisitorPermission(call, run.ServiceID)
 		if err == nil {
-			err = validateConnectorRun(p.config, next)
-		}
-		if err == nil && (next.ServiceRunID != run.ServiceRunID || next.RunNumber != run.RunNumber || next.PairReady != nil && next.PairReady.PublisherIdentityId != run.PairReady.PublisherIdentityId) {
-			err = ErrServiceConnection
+			err = validateConnectorPermissionMetadata(p.config, permission)
 		}
 		var pair controlv1.ConnectorPeerPair
 		var key [32]byte
 		var bound time.Time
 		if err == nil {
 			pair, key, bound, _, err = prepareConnectorPair(call, p.config.Control, p.signer, next, p.owner, &previous)
+			next.ValidUntil = bound
 		}
-		var permission controlv1.VisitorTokenResponse
-		if err == nil {
-			permission, err = p.config.Control.VisitorPermission(call, run.ServiceID)
-			if err == nil && !validConnectorPermission(next, permission) {
-				err = ErrServiceConnection
-			}
+		if err == nil && !validConnectorPermission(next, permission) {
+			err = ErrServiceConnection
 		}
 		if err == nil {
 			err = context.Cause(call)
