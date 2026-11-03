@@ -30,6 +30,15 @@ supervises control workers; maintenance operations do not import daemon startup.
 Standalone adapters enforce the same identities, leases, and authorization as
 split HTTP calls.
 
+the public handler takes explicit `public.Stores` capabilities. `DatabaseStores`
+binds the built-in database at compile time; providing methods on another store
+does not enable an omitted capability. optional stores retain their unavailable
+HTTP responses.
+
+`security/targettrust` validates captured target trust and converts its project
+and saved-service digest formats. project code reads local CA sources; control
+validates captured bytes without loading the control host's system trust store.
+
 ## database and schema boundary
 
 PostgreSQL sources live in `state/migrations`, `state/queries`, and

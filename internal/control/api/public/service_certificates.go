@@ -43,7 +43,7 @@ func (h *handler) serviceCertificates(w http.ResponseWriter, r *http.Request) (m
 		writeBearerProblem(w)
 		return nil, "", false
 	}
-	store, ok := h.store.(managedCertificateStore)
+	store, ok := h.dependencies.ServiceCertificates, h.dependencies.ServiceCertificates != nil
 	if !ok {
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "managed certificate issuance is unavailable")
 	}

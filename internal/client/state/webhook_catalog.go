@@ -7,11 +7,12 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/state/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/client/webhooksource"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // CachedWebhookPolicy returns the last policy for one server and fixed provider.
 func (d *Database) CachedWebhookPolicy(ctx context.Context, server, provider string) (webhooksource.CacheEntry, error) {
-	if !webhooksource.Valid(provider) {
+	if !controlv1.WebhookProvider(provider).Valid() {
 		return webhooksource.CacheEntry{}, errors.New("invalid webhook provider")
 	}
 	store, err := d.Server(ctx, server)
@@ -28,7 +29,7 @@ func (d *Database) CachedWebhookPolicy(ctx context.Context, server, provider str
 
 // SaveWebhookPolicy updates the bounded client-state copy of a validated catalog response.
 func (d *Database) SaveWebhookPolicy(ctx context.Context, server, provider string, entry webhooksource.CacheEntry) error {
-	if !webhooksource.Valid(provider) || len(entry.JSON) == 0 || len(entry.JSON) > 16384 || len(entry.ETag) > 128 ||
+	if !controlv1.WebhookProvider(provider).Valid() || len(entry.JSON) == 0 || len(entry.JSON) > 16384 || len(entry.ETag) > 128 ||
 		entry.CheckedAt.IsZero() || !entry.ExpiresAt.After(entry.CheckedAt) {
 		return errors.New("invalid cached webhook policy")
 	}

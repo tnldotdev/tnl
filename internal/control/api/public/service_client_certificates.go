@@ -1,12 +1,10 @@
 package public
 
 import (
-	"context"
 	"net/http"
 	"net/netip"
 	"time"
 
-	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/observability"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -22,9 +20,7 @@ func (h *handler) IssueServiceClientCertificate(w http.ResponseWriter, r *http.R
 		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid service client certificate request")
 		return
 	}
-	store, ok := h.store.(interface {
-		IssueServiceClientCertificate(context.Context, string, string, string, []byte, time.Time) (controlstate.ServiceClientCertificate, error)
-	})
+	store, ok := h.dependencies.ServiceClientCertificates, h.dependencies.ServiceClientCertificates != nil
 	if !ok {
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "service client certificates are unavailable")
 		return
@@ -50,9 +46,7 @@ func (h *handler) AuthorizeServiceClientCertificate(w http.ResponseWriter, r *ht
 		return
 	}
 	source, _ := netip.ParseAddr(body.SourceIp)
-	store, ok := h.store.(interface {
-		AuthorizeServiceClientCertificate(context.Context, string, string, string, string, int64, netip.Addr, []byte, time.Time) (controlstate.ServiceVisitorValidity, error)
-	})
+	store, ok := h.dependencies.ServiceClientCertificates, h.dependencies.ServiceClientCertificates != nil
 	if !ok {
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "service client authorization is unavailable")
 		return

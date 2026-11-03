@@ -185,6 +185,11 @@ authorization: installation still waits for the local workload policy, and every
 application stream proves its own current permission. A carrier failure changes
 packet delivery, not the inner session, target sockets, or replay history.
 
+connector stream guards consult the current admission before using a cached
+deadline. renewal can replace that deadline without replacing the stream;
+expired or revoked admission still stops it. certificate visitors instead keep
+their last confirmed deadline while waiting for another authority check.
+
 ## integration urls and aliases
 
 `integrations` elects one worker per saved project integration URL using shared

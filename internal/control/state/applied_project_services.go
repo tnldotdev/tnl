@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
 
 // apply can close or update several named services and local realizations. the
@@ -93,7 +93,7 @@ func appliedServiceTargetTrust(trust *ProjectTargetTLS) (*ServiceTargetTLS, erro
 	if trust == nil {
 		return nil, nil
 	}
-	snapshot, err := (clientproject.TargetTrustSnapshot{Hostname: trust.Hostname, CAPEM: []byte(trust.CAPEM), Digest: trust.Digest}).TargetTrust()
+	snapshot, err := (targettrust.Declaration{Hostname: trust.Hostname, CAPEM: []byte(trust.CAPEM), Digest: trust.Digest}).Snapshot()
 	if err != nil {
 		return nil, errors.Join(ErrProjectConfigurationInvalid, err)
 	}

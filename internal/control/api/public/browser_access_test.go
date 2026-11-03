@@ -52,7 +52,7 @@ func (s *shareReviewerTokenIssuer) IssueVisitorToken(_ context.Context, _ string
 
 func TestShareReviewerBrowserHandoffKeepsIdentityAndShareAccessSeparate(t *testing.T) {
 	store := &shareReviewerTokenIssuer{}
-	h := &handler{store: store, config: Config{ControlURL: "https://control.example.test"}}
+	h := &handler{store: store, dependencies: Stores{VisitorTokens: store}, config: Config{ControlURL: "https://control.example.test"}}
 	id, secret := "shr_0123456789abcdefghijkl", "share-secret"
 	result, err := h.redeemedBrowserHandoffPermission(t.Context(), "url_0123456789abcdefghijkl", "browser-session", controlv1.BrowserHandoffRequest{ShareId: &id, ShareSecret: &secret})
 	if err != nil || result.VisitorToken != "share-permission" || len(store.requested) != 2 {
@@ -140,9 +140,11 @@ func TestBrowserOIDCLoginBindsCodeNonceAndPreviewReturn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sessions := &browserSessionStore{shareRoutesStub: &shareRoutesStub{}, session: controlstate.ControlSession{SessionID: sessionID, AccessToken: access, RefreshToken: refresh, AccessExpiresAt: time.Now().Add(time.Hour), RefreshExpiresAt: time.Now().Add(24 * time.Hour), Identity: controlstate.IdentityContext{Identity: controlstate.Identity{ID: "identity_1"}}}}
 	h := &handler{
-		config: Config{OIDCIssuer: provider.URL, OIDCClientID: "tnl-browser", OIDCScopes: []string{"openid"}, ServerDomain: "example.test", HTTPClient: provider.Client()},
-		store:  &browserSessionStore{shareRoutesStub: &shareRoutesStub{}, session: controlstate.ControlSession{SessionID: sessionID, AccessToken: access, RefreshToken: refresh, AccessExpiresAt: time.Now().Add(time.Hour), RefreshExpiresAt: time.Now().Add(24 * time.Hour), Identity: controlstate.IdentityContext{Identity: controlstate.Identity{ID: "identity_1"}}}}, previews: &previewStoreStub{preview: controlstate.Preview{
+		config:       Config{OIDCIssuer: provider.URL, OIDCClientID: "tnl-browser", OIDCScopes: []string{"openid"}, ServerDomain: "example.test", HTTPClient: provider.Client()},
+		dependencies: Stores{BrowserSessions: sessions},
+		store:        sessions, previews: &previewStoreStub{preview: controlstate.Preview{
 			ID: "pv_0123456789abcdefghijkl", TeamID: "team_1", PublicURLIDs: []string{"url_0123456789abcdefghijkl"},
 		}},
 		browserAccess: store, browserOIDC: verifier, browserAuthority: authorityClient,

@@ -1,4 +1,4 @@
-// package privatetrust captures public CA material for publisher-to-target TLS.
+// package targettrust captures public CA material for publisher-to-target TLS.
 // no publisher private key or database credential is included in a snapshot.
 package targettrust
 
@@ -311,11 +311,23 @@ func canonicalHostname(host string) string {
 	return strings.ToLower(host)
 }
 
+// Validate checks portable trust without consulting local files or system roots.
+func (s Snapshot) Validate() error {
+	if !s.valid() {
+		return ErrInvalidBundle
+	}
+	if !s.System {
+		_, err := parseBundle(s.PEM)
+		return err
+	}
+	return nil
+}
+
 // Verifier builds publisher-to-target trust. custom CA-only bundles add to
 // system roots; neither selection permits plaintext or unverified fallback.
 func (s Snapshot) Verifier() (*tls.Config, error) {
-	if !s.valid() {
-		return nil, ErrInvalidBundle
+	if err := s.Validate(); err != nil {
+		return nil, err
 	}
 	roots, err := x509.SystemCertPool()
 	if err != nil {
@@ -325,9 +337,6 @@ func (s Snapshot) Verifier() (*tls.Config, error) {
 		return nil, ErrInvalidBundle
 	}
 	if !s.System {
-		if _, err := parseBundle(s.PEM); err != nil {
-			return nil, err
-		}
 		if !roots.AppendCertsFromPEM(s.PEM) {
 			return nil, ErrInvalidBundle
 		}

@@ -22,7 +22,7 @@ type visitorTokenIssuer interface {
 }
 
 func (h *handler) redeemedVisitorPermission(ctx context.Context, scope visitorscope.Scope, source controlstate.VisitorTokenSource) (controlv1.VisitorTokenResponse, error) {
-	issuer, ok := h.store.(visitorTokenIssuer)
+	issuer, ok := h.dependencies.VisitorTokens, h.dependencies.VisitorTokens != nil
 	if !ok {
 		return controlv1.VisitorTokenResponse{}, controlstate.ErrVisitorSigningKey
 	}
@@ -45,7 +45,7 @@ func visitorTokenResponse(issued controlstate.IssuedVisitorToken) controlv1.Visi
 
 func (h *handler) IssueVisitorToken(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	store, ok := h.store.(visitorTokenIssuer)
+	store, ok := h.dependencies.VisitorTokens, h.dependencies.VisitorTokens != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "visitor token issuance is unavailable")
 		return
