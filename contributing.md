@@ -160,6 +160,10 @@ one connector owner serving real HTTP and PostgreSQL while another request stall
 Prepared reads publish metadata and transport identity together; they never wait
 for another service's preparation or an assertion exchange.
 
+for detached socket ownership, startup cleanup, parent-exit output, and CLI
+presentation, run `task go:test:detached`. the shared process proofs live with
+`internal/client/detached`; built-CLI workflow proofs keep their integration tier.
+
 For config serialization, evaluated native-owner snapshots, resolved target trust,
 service references, and local status protocols, run `task go:test:config-contracts`
 through `mise exec --`. `task js:typecheck` checks the same reference restrictions

@@ -43,7 +43,7 @@ func TestIntegrationVisitorTokenAPIHasOneSourceAndNoManagementAuthority(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := testHandler(t, Config{ControlURL: "https://control.example.test", ManagedDomain: "example.test"}, d, d, nil)
+	mux := testHandler(t, Config{ControlURL: "https://control.example.test", ManagedDomain: "example.test"}, d, d, nil, DatabaseStores(d))
 	request := func(path, body, token string) *httptest.ResponseRecorder {
 		t.Helper()
 		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))

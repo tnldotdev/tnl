@@ -38,7 +38,7 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 	}
 	team := session.Identity.Memberships[0].TeamID
 	const server = "https://control.example"
-	h, err := NewHandler(Config{ControlURL: server}, d, d, nil)
+	h, err := NewHandler(Config{ControlURL: server}, DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

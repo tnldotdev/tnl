@@ -311,7 +311,7 @@ func (h *handler) CreatePublishRun(
 		writeBearerProblem(response)
 		return
 	}
-	store, ok := h.store.(PublisherRunStore)
+	store, ok := h.dependencies.PublisherRuns, h.dependencies.PublisherRuns != nil
 	if !ok {
 		writeProblem(response, 503, controlv1.Unavailable, "publisher authentication is unavailable")
 		return

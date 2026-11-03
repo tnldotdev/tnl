@@ -197,7 +197,8 @@ func TestIntegrationManagedCertificateRunAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	work.CertificatePEM = append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})...)
-	work.State, work.NotBefore, work.NotAfter = "waiting_for_install", &leaf.NotBefore, &leaf.NotAfter
+	renew := leaf.NotBefore.Add(leaf.NotAfter.Sub(leaf.NotBefore) * 2 / 3)
+	work.State, work.NotBefore, work.NotAfter, work.RenewAt = "waiting_for_install", &leaf.NotBefore, &leaf.NotAfter, &renew
 	work.Authorizations[0].State = "complete"
 	work.Authorizations[0].CleanupCompletedAt = &now
 	if _, err = d.SaveACMEOrderWork(t.Context(), work, now); err != nil {

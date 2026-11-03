@@ -11,12 +11,11 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestNewHandlerRejectsInvalidCredentials(t *testing.T) {
-	if _, err := NewHandler(Config{OIDCIssuer: "invalid", OIDCClientID: "server"}, nil, nil, nil); err == nil {
+	if _, err := NewHandler(Config{OIDCIssuer: "invalid", OIDCClientID: "server"}, Stores{}, nil, nil); err == nil {
 		t.Fatal("invalid OIDC configuration accepted")
 	}
 }
@@ -235,7 +234,7 @@ func TestControlDiscoveryAdvertisesAuthenticationFacts(t *testing.T) {
 
 func TestControlDiscoveryUsesControlOwnedDeviceLogin(t *testing.T) {
 	result := controlDiscovery(Config{
-		Role: daemonconfig.RoleControl, OIDCIssuer: "https://issuer.example.test",
+		Role: "control", OIDCIssuer: "https://issuer.example.test",
 		OIDCClientID: "client_1",
 	})
 	if result.Authentication.Oidc == nil ||

@@ -18,7 +18,7 @@ import (
 
 type serviceHeartbeatStore struct {
 	PublicURLStore
-	serviceRunStore
+	ServiceRunStore
 	service, run, token string
 	health              controlstate.ServiceRunHealth
 	calls               int
@@ -37,7 +37,7 @@ func TestServiceHeartbeatPreservesExplicitHealthAndStreamCounts(t *testing.T) {
 		{Healthy: true, StreamCapacity: 7, ActiveStreams: 7},
 	} {
 		store := &serviceHeartbeatStore{}
-		h := &handler{store: store}
+		h := &handler{store: store, dependencies: Stores{ServiceRuns: store}}
 		body, err := json.Marshal(health)
 		if err != nil {
 			t.Fatal(err)
@@ -62,7 +62,7 @@ func TestServiceHeartbeatPreservesExplicitHealthAndStreamCounts(t *testing.T) {
 
 type privateSelectionResponseStore struct {
 	PublicURLStore
-	serviceVisitorStore
+	ServiceStore
 	issued controlstate.ServiceSelection
 }
 
@@ -83,7 +83,7 @@ func TestPrivateSelectionReturnsServiceEndpointWithoutStreamCrypto(t *testing.T)
 		ServiceRunID: "srun_0123456789ABCDEFGHIJKL",
 		ExpiresAt:    time.Now().Add(time.Minute), RunNumber: 1,
 	}}
-	h := &handler{store: store, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
+	h := &handler{store: store, dependencies: Stores{Services: store}, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal()}}
 	r := httptest.NewRequest(http.MethodPost, "/v1/services/"+service+"/select-run", strings.NewReader(`{"device_id":"`+device+`"}`))
 	r.Header.Set("Authorization", "Bearer access-token")
 	w := httptest.NewRecorder()

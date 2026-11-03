@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/tnldotdev/tnl/internal/client/webhooksource"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // Webhook declares one exact endpoint on the project's stable webhook hostname.
@@ -83,7 +83,7 @@ func ValidateWebhooks(services Services, definitions map[string]Webhook) error {
 			return fmt.Errorf("webhooks.%s: path is also used by %s", name, previous)
 		}
 		paths[endpoint.Path] = name
-		if !webhooksource.Valid(endpoint.Provider) {
+		if !controlv1.WebhookProvider(endpoint.Provider).Valid() {
 			return fmt.Errorf("webhooks.%s: provider must be a supported provider", name)
 		}
 		if endpoint.Delivery != "" && endpoint.Delivery != "fanout" && endpoint.Delivery != "selected" {

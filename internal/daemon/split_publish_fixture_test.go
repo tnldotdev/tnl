@@ -280,10 +280,10 @@ func splitPublishRelayConfig(t *testing.T, controlHostname, serverDomain, relayS
 	cfg.RelayAddress = relayServiceID + "." + serverDomain + ":443"
 	cfg.RelayTLSCertificateFile = certificate.certificateFile
 	cfg.RelayTLSPrivateKeyFile = certificate.privateKeyFile
-	listeners := runtimeListeners{metrics: serviceRuntimeListener(t), relayTCP: serviceRuntimeListener(t), relayInternal: serviceRuntimeListener(t)}
+	listeners := runtimeListeners{metrics: serviceRuntimeListener(t), relayTCP: serviceRuntimeListener(t), relayInternal: serviceRuntimeListener(t), relayUDP: integrationPacketListener(t)}
 	cfg.MetricsListen = listeners.metrics.Addr().String()
 	cfg.RelayTCPListen = listeners.relayTCP.Addr().String()
-	cfg.RelayUDPListen = unusedUDPAddress(t)
+	cfg.RelayUDPListen = listeners.relayUDP.LocalAddr().String()
 	cfg.InternalRelayListen = listeners.relayInternal.Addr().String()
 	cfg.InternalRelayAddress = cfg.InternalRelayListen
 	return cfg, listeners
