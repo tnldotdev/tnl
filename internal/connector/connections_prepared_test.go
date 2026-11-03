@@ -163,12 +163,12 @@ func TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget(t *testing.T) {
 	if count != 1 {
 		t.Fatal("rotation should attach once", count)
 	}
-	for key, proof := range b.assertions {
-		if proof.Digest != b.verification.Digest {
+	for key, entry := range b.assertions {
+		if entry.proof.Digest != b.verification.Digest {
 			continue
 		}
-		proof.ExpiresAt = now.Add(-time.Second)
-		b.assertions[key] = proof
+		entry.proof.ExpiresAt = now.Add(-time.Second)
+		b.assertions[key] = entry
 	}
 	if err := b.UseAssertion(t.Context(), "first"); err == nil {
 		t.Fatal("expired verification cache bypassed current authority denial")

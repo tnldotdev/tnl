@@ -88,9 +88,13 @@ type connectorConnectionSession struct {
 	deadline         time.Time
 	sessionGate      chan struct{}
 	verification     *connectorruntime.AssertionVerification
-	assertions       map[string]connectorruntime.AssertionVerification
-	assertionChecks  map[string]time.Time
+	assertions       map[string]verifiedAssertion
 	verifiedSession  string
+}
+
+type verifiedAssertion struct {
+	proof        connectorruntime.AssertionVerification
+	checkedUntil time.Time // current authorization may need checking before the proof expires.
 }
 
 // the configured scope never changes with listener readiness or session renewal.
@@ -106,8 +110,8 @@ type connectorPreparedSnapshot struct {
 func (b *connectorConnectionBackend) publishLocked() {
 	s := &connectorPreparedSnapshot{metadata: b.metadata, connections: map[string]connectorruntime.Connection{}, errors: map[string]error{}}
 	s.assertions = make(map[string]connectorruntime.AssertionVerification, len(b.assertions))
-	for digest, proof := range b.assertions {
-		s.assertions[digest] = proof
+	for digest, assertion := range b.assertions {
+		s.assertions[digest] = assertion.proof
 	}
 	if b.verification != nil {
 		v := *b.verification
@@ -716,10 +720,11 @@ func (b *connectorConnectionBackend) reuseAssertion(assertion string) bool {
 		return false
 	}
 	digest := sha256.Sum256([]byte(assertion))
-	proof, known := b.assertions[hex.EncodeToString(digest[:])]
-	if !known || !b.assertionChecks[proof.Digest].After(time.Now()) || !proof.ExpiresAt.After(time.Now()) || b.verifiedSession != session.Id || !session.LeaseExpiresAt.After(time.Now()) || !session.ExpiresAt.After(time.Now()) {
+	entry, known := b.assertions[hex.EncodeToString(digest[:])]
+	if !known || !entry.checkedUntil.After(time.Now()) || !entry.proof.ExpiresAt.After(time.Now()) || b.verifiedSession != session.Id || !session.LeaseExpiresAt.After(time.Now()) || !session.ExpiresAt.After(time.Now()) {
 		return false
 	}
+	proof := entry.proof
 	b.verification = &proof
 	b.publishLocked()
 	return true
@@ -733,28 +738,24 @@ func (b *connectorConnectionBackend) rememberAssertion(assertion string, expires
 	digest := sha256.Sum256([]byte(assertion))
 	b.verification = &connectorruntime.AssertionVerification{Digest: hex.EncodeToString(digest[:]), Binding: session.Binding, ExpiresAt: expires}
 	if b.assertions == nil || b.verifiedSession != session.Id {
-		b.assertions = map[string]connectorruntime.AssertionVerification{}
-		b.assertionChecks = map[string]time.Time{}
+		b.assertions = map[string]verifiedAssertion{}
 	}
-	for key, proof := range b.assertions {
-		if !proof.ExpiresAt.After(time.Now()) {
+	for key, entry := range b.assertions {
+		if !entry.proof.ExpiresAt.After(time.Now()) {
 			delete(b.assertions, key)
-			delete(b.assertionChecks, key)
 		}
 	}
 	if len(b.assertions) >= 128 {
 		for key := range b.assertions {
 			delete(b.assertions, key)
-			delete(b.assertionChecks, key)
 			break
 		}
 	}
-	b.assertions[b.verification.Digest] = *b.verification
 	checkedUntil := time.Now().Add(30 * time.Second)
 	if expires.Before(checkedUntil) {
 		checkedUntil = expires
 	}
-	b.assertionChecks[b.verification.Digest] = checkedUntil
+	b.assertions[b.verification.Digest] = verifiedAssertion{proof: *b.verification, checkedUntil: checkedUntil}
 	b.verifiedSession = session.Id
 }
 func (b *connectorConnectionBackend) Verification() *connectorruntime.AssertionVerification {
