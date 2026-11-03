@@ -215,10 +215,15 @@ func detachedRequestData(root, id, request string, limit int64) ([]byte, error) 
 	return data, err
 }
 
-func Launch(ctx context.Context, root, id, binary string, args []string, ready func(string) error) (result error) {
+// Launch passes the canonical state root and child pid to ready after startup.
+func Launch(ctx context.Context, root, id, binary string, args []string, ready func(root, pid string) error) error {
+	return launchWithOptions(ctx, root, id, binary, args, clientstate.OpenOptions{}, ready)
+}
+
+func launchWithOptions(ctx context.Context, root, id, binary string, args []string, options clientstate.OpenOptions, ready func(root, pid string) error) (result error) {
 	ctx, finish := observability.ClientOperation(ctx, "client.detach")
 	defer func() { finish(result) }()
-	state, err := clientstate.Open(ctx, root)
+	state, err := clientstate.OpenWithOptions(ctx, root, options)
 	if err != nil {
 		return err
 	}
@@ -230,7 +235,9 @@ func Launch(ctx context.Context, root, id, binary string, args []string, ready f
 	if err != nil {
 		return err
 	}
-	return awaitDetachedCommandReady(ctx, cmd, root, id, 30*time.Second, ready)
+	return awaitDetachedCommandReady(ctx, cmd, root, id, 30*time.Second, func(pid string) error {
+		return ready(root, pid)
+	})
 }
 
 func NewID() (string, error) {

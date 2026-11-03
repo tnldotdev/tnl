@@ -51,7 +51,7 @@ func detachPublish(ctx context.Context, args []string, stateDir string, output i
 	if len(titles) != 0 {
 		command = titles[0]
 	}
-	return detached.Launch(ctx, root, id, binary, childArgs, func(pid string) error {
+	return detached.Launch(ctx, root, id, binary, childArgs, func(root, pid string) error {
 		if command == "tnl connect" {
 			mode := statusOutputHuman
 			for i, arg := range args {
