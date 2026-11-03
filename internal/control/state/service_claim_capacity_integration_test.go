@@ -139,12 +139,12 @@ func TestIntegrationPrivateClaimExpiredResponseRecovery(t *testing.T) {
 	// credential expires too, but it still owns its existing tunnel.
 	lost, sibling := run.Connections[0], run.Connections[1]
 	for at := now.Add(30 * time.Second); at.Before(lost.CredentialExpiresAt); at = at.Add(30 * time.Second) {
-		if _, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, at); err != nil {
+		if _, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, at, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	later := lost.CredentialExpiresAt.Add(time.Second)
-	recovered, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, later)
+	recovered, err := d.HeartbeatServiceRun(ctx, run.ServiceID, run.RunID, run.Token, later, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0})
 	if err != nil {
 		t.Fatal(err)
 	}

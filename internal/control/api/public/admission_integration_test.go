@@ -133,7 +133,7 @@ func TestIntegrationDrainingControlAuthenticatedRenewalAndCleanup(t *testing.T) 
 		t.Fatal("drain blocked authenticated public renewal", err)
 	}
 	managedToken := credentials.ServiceRunToken(serviceRun.RunToken)
-	if _, err := client.HeartbeatServiceRun(ctx, service.Id, prepared.ServiceRunId, managedToken); err != nil {
+	if _, err := client.HeartbeatServiceRun(ctx, service.Id, prepared.ServiceRunId, managedToken, controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal("drain blocked authenticated managed renewal", err)
 	}
 	if err := client.ClosePublishRun(ctx, publicRun.PublishRun.Id, publicToken); err != nil {

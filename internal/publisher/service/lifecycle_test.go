@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,6 +41,7 @@ type lifecycleControl struct {
 	bad                                 error
 	approved                            *controlv1.Service
 	declaration                         controlv1.ServiceRunDeclaration
+	reports                             chan controlv1.ServiceRunHeartbeat
 }
 
 func (f *lifecycleControl) ReportServiceRunObservations(_ context.Context, service, run string, number int64, token credentials.ServiceRunToken, _ serviceaudit.Batch) error {
@@ -118,10 +120,13 @@ func (f *lifecycleControl) StartServiceRun(_ context.Context, id, run, token str
 	return setup, nil
 }
 
-func (f *lifecycleControl) HeartbeatServiceRun(_ context.Context, id, run string, token credentials.ServiceRunToken) (controlv1.ServiceRunState, error) {
+func (f *lifecycleControl) HeartbeatServiceRun(_ context.Context, id, run string, token credentials.ServiceRunToken, health controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.heartbeats++
+	if f.reports != nil {
+		f.reports <- health
+	}
 	if id != f.prep.ServiceId || run != f.prep.ServiceRunId || token.String() != f.setup.RunToken {
 		f.bad = errors.New("heartbeat used another run")
 	}
@@ -134,13 +139,13 @@ func (f *lifecycleControl) HeartbeatServiceRun(_ context.Context, id, run string
 	if f.revoke && f.heartbeats >= 2 {
 		state = "closed"
 	}
+	if !health.Healthy && state == "ready" {
+		state = "starting"
+	}
 	return controlv1.ServiceRunState{ServiceId: id, ServiceRunId: run, RunNumber: f.prep.RunNumber,
+		Healthy: &health.Healthy, StreamCapacity: &health.StreamCapacity, ActiveStreams: &health.ActiveStreams,
 		PublisherConnections: connections,
 		PublisherExpiresAt:   time.Now().Add(time.Minute), State: state}, nil
-}
-
-func (f *lifecycleControl) HeartbeatServiceRunHealth(ctx context.Context, id, run string, token credentials.ServiceRunToken, _ controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
-	return f.HeartbeatServiceRun(ctx, id, run, token)
 }
 
 func (f *lifecycleControl) CloseServiceRun(_ context.Context, id, run string, token credentials.ServiceRunToken) error {
@@ -266,6 +271,70 @@ func TestPrivateLifecycleRejectsUnapprovedProtocolOrTrustBeforePreparingRun(t *t
 			}
 		})
 	}
+}
+
+func TestPrivateLifecycleReportsTargetHealthCapacityAndActiveStreams(t *testing.T) {
+	config, f := lifecycleFixture(t)
+	f.reports = make(chan controlv1.ServiceRunHeartbeat, 32)
+	config.StreamCapacity = 3
+	var healthy atomic.Bool
+	healthy.Store(true)
+	config.Healthy = func(context.Context) bool { return healthy.Load() }
+	releases := make(chan func(), 1)
+	config.Connect = func(_ context.Context, bound *Bound, slot uint8) (SlotSession, error) {
+		if slot == 0 {
+			bound.mu.Lock()
+			ref := bound.prepared.connectionRef(bound.connections[slot])
+			bound.mu.Unlock()
+			release, ok := bound.reserveStream(ref)
+			if !ok {
+				return nil, ErrPrivateStream
+			}
+			releases <- release
+		}
+		return &heldSlot{stopped: make(chan struct{})}, nil
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	done := make(chan struct{})
+	var result error
+	go func() {
+		defer close(done)
+		result = Publish(ctx, config)
+	}()
+	defer func() {
+		cancel()
+		<-done
+		if result != nil {
+			t.Error(result)
+		}
+	}()
+	wait := func(want controlv1.ServiceRunHeartbeat) {
+		t.Helper()
+		for {
+			select {
+			case got := <-f.reports:
+				if got == want {
+					return
+				}
+			case <-done:
+				t.Fatal("publisher stopped before reporting health and capacity", result)
+			case <-ctx.Done():
+				t.Fatal("publisher did not report health and capacity", want)
+			}
+		}
+	}
+	wait(controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 3, ActiveStreams: 0})
+	wait(controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 3, ActiveStreams: 1})
+	healthy.Store(false)
+	wait(controlv1.ServiceRunHeartbeat{Healthy: false, StreamCapacity: 3, ActiveStreams: 1})
+	healthy.Store(true)
+	select {
+	case release := <-releases:
+		release()
+	case <-ctx.Done():
+		t.Fatal("publisher did not reserve a stream")
+	}
+	wait(controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 3, ActiveStreams: 0})
 }
 
 func TestPrivateLifecycleReplacesOnlyChangedSlotAndKeepsEndpointPlan(t *testing.T) {

@@ -419,10 +419,7 @@ func replenishServiceConnections(ctx context.Context, q *controlstatedb.Queries,
 	return nil
 }
 
-func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, token string, now time.Time, reports ...ServiceRunHealth) (result ServiceRunState, retErr error) {
-	if len(reports) > 1 {
-		return result, ErrServiceAccess
-	}
+func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, token string, now time.Time, report ServiceRunHealth) (result ServiceRunState, retErr error) {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -436,16 +433,13 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 	if err != nil {
 		return result, err
 	}
-	if len(reports) == 1 {
-		report := reports[0]
-		if report.StreamCapacity < 1 || report.StreamCapacity > 1<<20 || report.ActiveStreams < 0 {
-			return result, ErrServiceAccess
-		}
-		if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET healthy=$2,stream_capacity=$3,reported_streams=$4 WHERE id=$1`, runID, report.Healthy, report.StreamCapacity, report.ActiveStreams); err != nil {
-			return result, err
-		}
-		run.Healthy, run.StreamCapacity, run.ReportedStreams = report.Healthy, report.StreamCapacity, report.ActiveStreams
+	if report.StreamCapacity < 1 || report.StreamCapacity > 1<<20 || report.ActiveStreams < 0 {
+		return result, ErrServiceAccess
 	}
+	if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET healthy=$2,stream_capacity=$3,reported_streams=$4 WHERE id=$1`, runID, report.Healthy, report.StreamCapacity, report.ActiveStreams); err != nil {
+		return result, err
+	}
+	run.Healthy, run.StreamCapacity, run.ReportedStreams = report.Healthy, report.StreamCapacity, report.ActiveStreams
 	run, err = q.RenewServiceRun(ctx, controlstatedb.RenewServiceRunParams{
 		ID: runID, ServiceID: serviceID, RunNumber: run.RunNumber,
 		RunTokenDigest: run.RunTokenDigest, PublisherExpiresAt: timestamptz(now.Add(45 * time.Second)), Now: timestamptz(now),
