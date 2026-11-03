@@ -20,7 +20,9 @@ import (
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 // hold the same lock across actual HTTP decisions and the outage transition.
@@ -273,7 +275,9 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	// the relay may close both legs before the owner receives a typed denial.
 	// control above must independently deny this exact device in either case.
 	joinRevoked(func(err error) bool {
-		return defaultConnectorRevocationDenied(err) || errors.Is(err, connectorstream.ErrServiceConnection)
+		var denial *tunnel.ProtocolError
+		return defaultConnectorRevocationDenied(err) || errors.Is(err, connectorstream.ErrServiceConnection) ||
+			errors.As(err, &denial) && denial.Code == tunnelv1.Unauthenticated
 	})
 }
 
