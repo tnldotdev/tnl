@@ -17,7 +17,7 @@ import (
 
 type connectorPeerPairStore interface {
 	PrepareConnectorPeerPair(context.Context, controlstate.ConnectorPeerPairRequest, time.Time) (controlstate.ConnectorPeerPair, error)
-	RenewConnectorPeerPair(context.Context, controlstate.ConnectorPeerPairRequest, time.Time) (controlstate.ConnectorPeerPair, error)
+	RenewConnectorPeerPair(context.Context, string, controlstate.ConnectorPeerPairRequest, time.Time) (controlstate.ConnectorPeerPair, error)
 }
 
 func connectorPairRelays(relays [2]controlstate.ConnectorPeerPairRelay) []controlv1.ConnectorPeerPairRelay {
@@ -130,10 +130,17 @@ func (h *handler) connectorPair(w http.ResponseWriter, r *http.Request, serviceI
 	if pairID == "" {
 		result, err = store.PrepareConnectorPeerPair(ctx, request, time.Now())
 	} else {
-		result, err = store.RenewConnectorPeerPair(ctx, request, time.Now())
+		result, err = store.RenewConnectorPeerPair(ctx, h.config.ControlURL, request, time.Now())
 	}
 	if err != nil {
 		connectorPairProblem(w, err)
+		return
+	}
+	if pairID != "" {
+		writeJSON(w, 200, controlv1.ConnectorPeerPairRenewal{Pair: connectorPairResponse(result), RunValidUntil: result.RunValidUntil,
+			Protocol: controlv1.ServiceProtocol(result.Metadata.Protocol), TrustRevision: result.Metadata.TrustRevision,
+			Endpoint:          controlv1.ServiceEndpoint{Hostname: result.Metadata.Endpoint.Hostname, Port: result.Metadata.Endpoint.Port, Public: result.Metadata.Endpoint.Public},
+			VisitorPermission: visitorTokenResponse(result.VisitorPermission)})
 		return
 	}
 	writeJSON(w, 200, connectorPairResponse(result))

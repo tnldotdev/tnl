@@ -173,7 +173,7 @@ func TestIntegrationConnectorPeerPairSupersededProofCannotBorrowRenewal(t *testi
 			renew := original
 			renew.Action, renew.PreviousPairID, renew.PreviousGeneration, renew.RequestedAt = "renew", pair.ID, pair.DeliveryGeneration, f.now.Add(11*time.Second)
 			f.sign(t, &renew)
-			current, err := f.d.RenewConnectorPeerPair(f.visitor, renew, renew.RequestedAt)
+			current, err := f.d.RenewConnectorPeerPair(f.visitor, "https://control.example.test", renew, renew.RequestedAt)
 			if err != nil || !current.ExpiresAt.After(pair.ExpiresAt) {
 				t.Fatal("fixture never advanced authority through a fresh renewal", err)
 			}
@@ -183,7 +183,7 @@ func TestIntegrationConnectorPeerPairSupersededProofCannotBorrowRenewal(t *testi
 			if !errors.Is(err, ErrServiceConflict) || old.ID != "" || !bytes.Equal(before, connectorPairSavedAuthority(t, f.d, pair.ID)) {
 				t.Fatal("superseded proof borrowed a later authorization or changed state", err)
 			}
-			latest, err := f.d.RenewConnectorPeerPair(f.visitor, renew, f.now.Add(13*time.Second))
+			latest, err := f.d.RenewConnectorPeerPair(f.visitor, "https://control.example.test", renew, f.now.Add(13*time.Second))
 			if err != nil || latest.ID != current.ID || latest.Key != current.Key || !latest.ExpiresAt.Equal(current.ExpiresAt) {
 				t.Fatal("latest uncertain renewal lost its exact material or bound", err)
 			}
@@ -251,7 +251,7 @@ func TestIntegrationConnectorPeerPairIndependentClaimBoundsAndReports(t *testing
 			r := f.request
 			r.Action, r.PreviousPairID, r.PreviousGeneration, r.RequestedAt = "renew", pair.ID, pair.DeliveryGeneration, f.now.Add(3*time.Second)
 			f.sign(t, &r)
-			if _, err := f.d.RenewConnectorPeerPair(f.visitor, r, r.RequestedAt); err != nil {
+			if _, err := f.d.RenewConnectorPeerPair(f.visitor, "https://control.example.test", r, r.RequestedAt); err != nil {
 				t.Fatal(err)
 			}
 			var afterClaims []byte

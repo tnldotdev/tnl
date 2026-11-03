@@ -1950,6 +1950,17 @@ type ConnectorPeerPairRelay struct {
 	TlsServerName         string                  `json:"tls_server_name"`
 }
 
+// ConnectorPeerPairRenewal One authenticated authority decision for the pinned run, pair lease and signed visitor permission. All deadlines share pair.observed_at; install local bounds from request start so transit spends the interval. Publisher installation and relay claims retain their independently confirmed deadlines.
+type ConnectorPeerPairRenewal struct {
+	// Endpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	Endpoint          ServiceEndpoint      `json:"endpoint"`
+	Pair              ConnectorPeerPair    `json:"pair"`
+	Protocol          ServiceProtocol      `json:"protocol"`
+	RunValidUntil     time.Time            `json:"run_valid_until"`
+	TrustRevision     int64                `json:"trust_revision"`
+	VisitorPermission VisitorTokenResponse `json:"visitor_permission"`
+}
+
 // ConnectorPeerPairRequest Sign the canonical ConnectorPeerPairProofMessage Go v1 array, not the snake_case HTTP object. Source is selected by kind; a device uses the sole control bearer, a workload uses its credential and no control bearer. Each connector owner creates with a distinct idempotency key and retains that stable owner key across create, renew and replace. A pair ID and generation alone never prove ownership. Replacement also names the exact predecessor and issues a new pair, delivery ID, key and generation; it does not transfer a running session. An uncertain response repeats the exact signed request, including its timestamp, action and owner key.
 type ConnectorPeerPairRequest struct {
 	Action              ConnectorPeerPairRequestAction `json:"action"`
@@ -5331,13 +5342,13 @@ type ClientInterface interface {
 	// RenewConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
 	RenewConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RenewConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
 	RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListServiceGrants performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
@@ -7860,7 +7871,7 @@ func (c *Client) PrepareConnectorPeerPair(ctx context.Context, serviceId Service
 // RenewConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
 // with any type of body and a specified content type.
 //
-// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
 func (c *Client) RenewConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenewConnectorPeerPairRequestWithBody(c.Server, serviceId, pairId, contentType, body)
 	if err != nil {
@@ -7876,7 +7887,7 @@ func (c *Client) RenewConnectorPeerPairWithBody(ctx context.Context, serviceId S
 // RenewConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
 func (c *Client) RenewConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenewConnectorPeerPairRequest(c.Server, serviceId, pairId, body)
 	if err != nil {
@@ -16335,7 +16346,7 @@ type ClientWithResponsesInterface interface {
 	// RenewConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RenewConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error)
@@ -16343,7 +16354,7 @@ type ClientWithResponsesInterface interface {
 	// RenewConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+	// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
 	RenewConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error)
 
 	// ListServiceGrantsWithResponse performs a GET /v1/services/{service_id}/grants (the `ListServiceGrants` operationId) request.
@@ -21021,13 +21032,13 @@ type RenewConnectorPeerPairResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *ConnectorPeerPair
+	JSON200 *ConnectorPeerPairRenewal
 	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationproblemJSONDefault *Problem
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r RenewConnectorPeerPairResponse) GetJSON200() *ConnectorPeerPair {
+func (r RenewConnectorPeerPairResponse) GetJSON200() *ConnectorPeerPairRenewal {
 	return r.JSON200
 }
 
@@ -24805,7 +24816,7 @@ func (c *ClientWithResponses) PrepareConnectorPeerPairWithResponse(ctx context.C
 // RenewConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
 // with any type of body and a specified content type.
 //
-// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) RenewConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error) {
@@ -24819,7 +24830,7 @@ func (c *ClientWithResponses) RenewConnectorPeerPairWithBodyWithResponse(ctx con
 // RenewConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+// Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
 func (c *ClientWithResponses) RenewConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewConnectorPeerPairResponse, error) {
 	rsp, err := c.RenewConnectorPeerPair(ctx, serviceId, pairId, body, reqEditors...)
 	if err != nil {
@@ -28577,7 +28588,7 @@ func ParseRenewConnectorPeerPairResponse(rsp *http.Response) (*RenewConnectorPee
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ConnectorPeerPair
+		var dest ConnectorPeerPairRenewal
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

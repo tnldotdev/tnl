@@ -72,13 +72,13 @@ func TestConnectorRefreshPreparesReplacementOpeningsBeforePublishing(t *testing.
 		return f.device.Sign(message)
 	}
 	control, err := NewControlWithConfig(ControlConfig{
-		Signer: f.ConnectorSigner, Resolve: f.ResolveService, Pair: f.PrepareConnectorPeerPair,
-		Permission: func(ctx context.Context, service string) (controlv1.VisitorTokenResponse, error) {
-			permission, err := f.VisitorPermission(ctx, service)
+		Signer: f.ConnectorSigner, Resolve: f.ResolveService, Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission,
+		RenewPair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+			renewal, err := f.RenewConnectorPeerPair(ctx, service, request)
 			if armed.Load() {
 				blocked.Store(true)
 			}
-			return permission, err
+			return renewal, err
 		}, Close: func() error { return nil },
 	})
 	if err != nil {
@@ -154,39 +154,29 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 				return f.device.Sign(message)
 			}
 			control, err := NewControlWithConfig(ControlConfig{
-				Signer: f.ConnectorSigner,
-				Resolve: func(ctx context.Context, service string) (Run, error) {
-					run, err := f.ResolveService(ctx, service)
+				Signer:  f.ConnectorSigner,
+				Resolve: f.ResolveService, Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission,
+				RenewPair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+					renewal, err := f.RenewConnectorPeerPair(ctx, service, request)
 					if armed.Load() {
 						deadline = time.Now().Add(200 * time.Millisecond)
 						if boundary == "run" {
-							run.ValidUntil = deadline
+							renewal.RunValidUntil = deadline
 						}
-					}
-					return run, err
-				},
-				Pair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
-					pair, err := f.PrepareConnectorPeerPair(ctx, service, request)
-					if armed.Load() {
 						if boundary == "pair" {
-							pair.ExpiresAt = deadline
-							pair.PublisherPreparedUntil = new(deadline)
+							renewal.Pair.ExpiresAt = deadline
+							renewal.Pair.PublisherPreparedUntil = new(deadline)
+							renewal.VisitorPermission.ExpiresAt = deadline
 						}
 						if boundary == "installation" {
-							pair.PublisherPreparedUntil = new(deadline)
+							renewal.Pair.PublisherPreparedUntil = new(deadline)
 						}
-					}
-					return pair, err
-				},
-				Permission: func(ctx context.Context, service string) (controlv1.VisitorTokenResponse, error) {
-					permission, err := f.VisitorPermission(ctx, service)
-					if armed.Load() {
 						if boundary == "permission" {
-							permission.ExpiresAt = deadline
+							renewal.VisitorPermission.ExpiresAt = deadline
 						}
 						blocked.Store(true)
 					}
-					return permission, err
+					return renewal, err
 				}, Close: func() error { return nil },
 			})
 			if err != nil {

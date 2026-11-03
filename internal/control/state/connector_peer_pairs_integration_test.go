@@ -711,7 +711,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 		t.Fatal(err)
 	}
 	renew.Signature = ed25519.Sign(private, message)
-	firstRenewal, err := d.RenewConnectorPeerPair(ctx, renew, renew.RequestedAt)
+	firstRenewal, err := d.RenewConnectorPeerPair(ctx, "https://control.example.test", renew, renew.RequestedAt)
 	if err != nil || firstRenewal.ID != pair.ID || firstRenewal.Key != pair.Key || firstRenewal.DeliveryID != pair.DeliveryID || firstRenewal.DeliveryGeneration != pair.DeliveryGeneration || !firstRenewal.ExpiresAt.After(pair.ExpiresAt) {
 		t.Fatal("fresh recheck did not extend the pair after the first run heartbeat", err)
 	}
@@ -724,7 +724,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if _, err := d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, now.Add(62*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	uncertain, err := d.RenewConnectorPeerPair(ctx, renew, now.Add(63*time.Second))
+	uncertain, err := d.RenewConnectorPeerPair(ctx, "https://control.example.test", renew, now.Add(63*time.Second))
 	if err != nil || !uncertain.ExpiresAt.Equal(firstRenewal.ExpiresAt) || uncertain.DeliveryID != pair.DeliveryID || uncertain.DeliveryGeneration != pair.DeliveryGeneration {
 		t.Fatal("replayed renewal silently extended the serving deadline", err)
 	}
@@ -734,7 +734,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 		t.Fatal(err)
 	}
 	renew.Signature = ed25519.Sign(private, message)
-	secondRenewal, err := d.RenewConnectorPeerPair(ctx, renew, renew.RequestedAt)
+	secondRenewal, err := d.RenewConnectorPeerPair(ctx, "https://control.example.test", renew, renew.RequestedAt)
 	if err != nil || secondRenewal.ID != pair.ID || secondRenewal.Key != pair.Key || secondRenewal.DeliveryID != pair.DeliveryID || secondRenewal.DeliveryGeneration != pair.DeliveryGeneration || !secondRenewal.ExpiresAt.After(firstRenewal.ExpiresAt) {
 		t.Fatal("second fresh recheck did not extend inner pair lifetime", err)
 	}
@@ -767,7 +767,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 		t.Fatal(err)
 	}
 	renew.Signature = ed25519.Sign(private, message)
-	if _, err := d.RenewConnectorPeerPair(ctx, renew, late); !errors.Is(err, ErrServiceAccess) {
+	if _, err := d.RenewConnectorPeerPair(ctx, "https://control.example.test", renew, late); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("expired pair was renewed after its serving deadline", err)
 	}
 	if err := d.ConfirmConnectorPeerPairPrepared(ctx, serviceID, run.RunID, pair.ID, run.Token, report, late); !errors.Is(err, ErrServiceAccess) {

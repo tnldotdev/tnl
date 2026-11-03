@@ -46,9 +46,9 @@ type connectorConnection struct {
 	mu            sync.Mutex
 	run           Run
 	pair          controlv1.ConnectorPeerPair
-	key           [32]byte
 	until         time.Time
 	preparedUntil time.Time
+	reportedUntil time.Time
 	source        string
 	permission    controlv1.VisitorTokenResponse
 	legs          [2]*connectorRelayLeg
@@ -96,7 +96,8 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	}
 	p.run.ServiceTLS = config.ServiceTLS
 	var create controlv1.ConnectorPeerPairRequest
-	p.pair, p.key, p.until, create, result = prepareConnectorPair(setup, config.Control, signer, p.run, p.owner, nil)
+	var key [32]byte
+	p.pair, key, p.until, create, result = prepareConnectorPair(setup, config.Control, signer, p.run, p.owner)
 	if result != nil {
 		return nil, result
 	}
@@ -106,7 +107,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	var starts sync.WaitGroup
 	for slot := range 2 {
 		starts.Go(func() {
-			p.legs[slot], results[slot] = connectConnectorLeg(setup, life, config, signer, p.pair, p.key, slot)
+			p.legs[slot], results[slot] = connectConnectorLeg(setup, life, config, signer, p.pair, key, slot)
 		})
 	}
 	starts.Wait()
@@ -117,10 +118,10 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		return nil, ErrServiceConnection
 	}
 	p.source = p.legs[0].receipt.SourceIP
-	if p.preparedUntil, result = awaitConnectorPublisher(setup, config.Control, p.run.ServiceID, create, p.pair); result != nil {
+	if p.preparedUntil, p.reportedUntil, result = awaitConnectorPublisher(setup, config.Control, p.run.ServiceID, create, p.pair); result != nil {
 		return nil, result
 	}
-	p.endpoint, result = peer.New(life, peer.Config{Key: p.key, Role: 0, Paths: [2]peer.Carrier{p.legs[0].carrier, p.legs[1].carrier}})
+	p.endpoint, result = peer.New(life, peer.Config{Key: key, Role: 0, Paths: [2]peer.Carrier{p.legs[0].carrier, p.legs[1].carrier}})
 	if result != nil {
 		return nil, result
 	}
@@ -322,25 +323,15 @@ func (p *connectorConnection) refresh() {
 		run, previous, until := p.run, p.pair, p.until
 		p.mu.Unlock()
 		call, stop := context.WithDeadline(p.ctx, minConnectorCall(until))
-		next, err := p.config.Control.ResolveService(call, run.ServiceID)
+		renewal, bound, err := renewConnectorPair(call, p.config.Control, p.signer, run, p.owner, previous)
+		pair, permission, next := renewal.Pair, renewal.VisitorPermission, run
 		if err == nil {
+			// all returned intervals share one authority observation. anchor each
+			// at request start so RPC transit and background signing spend them.
+			next.ValidUntil = bound.Add(renewal.RunValidUntil.Sub(pair.ExpiresAt))
+			next.Protocol, next.TrustRevision, next.Endpoint = string(renewal.Protocol), renewal.TrustRevision, &renewal.Endpoint
+			permission.ExpiresAt = bound.Add(permission.ExpiresAt.Sub(pair.ExpiresAt))
 			err = validateConnectorRun(p.config, next)
-		}
-		if err == nil && (next.ServiceRunID != run.ServiceRunID || next.RunNumber != run.RunNumber || next.PairReady != nil && next.PairReady.PublisherIdentityId != run.PairReady.PublisherIdentityId) {
-			err = ErrServiceConnection
-		}
-		var pair controlv1.ConnectorPeerPair
-		var key [32]byte
-		var bound time.Time
-		if err == nil {
-			pair, key, bound, _, err = prepareConnectorPair(call, p.config.Control, p.signer, next, p.owner, &previous)
-		}
-		var permission controlv1.VisitorTokenResponse
-		if err == nil {
-			permission, err = p.config.Control.VisitorPermission(call, run.ServiceID)
-			if err == nil && !validConnectorPermission(next, permission) {
-				err = ErrServiceConnection
-			}
 		}
 		if err == nil {
 			err = context.Cause(call)
@@ -369,12 +360,20 @@ func (p *connectorConnection) refresh() {
 			continue
 		}
 		p.mu.Lock()
-		preparedUntil := p.preparedUntil
-		if pair.PublisherPreparedUntil != nil && !pair.PublisherPreparedUntil.After(pair.ExpiresAt) {
-			preparedUntil = bound.Add(pair.PublisherPreparedUntil.Sub(pair.ExpiresAt))
+		preparedUntil, reportedUntil := p.preparedUntil, p.reportedUntil
+		if reported := pair.PublisherPreparedUntil; reported != nil {
+			candidate := bound.Add(reported.Sub(pair.ExpiresAt))
+			if reported.After(reportedUntil) {
+				preparedUntil = candidate
+				reportedUntil = *reported
+			} else {
+				// a narrowed pair cap cannot make an older installation report
+				// fresh again when a later pair renewal restores that cap.
+				preparedUntil = earliestConnectorDeadline(preparedUntil, candidate)
+			}
 		}
 		now := time.Now()
-		if !p.currentLocked() || key != p.key || !bound.After(now) || !preparedUntil.After(now) || !next.ValidUntil.After(now) || !permission.ExpiresAt.After(now) {
+		if !p.currentLocked() || !bound.After(now) || !preparedUntil.After(now) || !next.ValidUntil.After(now) || !permission.ExpiresAt.After(now) {
 			p.mu.Unlock()
 			p.cancel(ErrServiceConnection)
 			return
@@ -382,7 +381,7 @@ func (p *connectorConnection) refresh() {
 		next.ServiceTLS = p.config.ServiceTLS
 		// pair renewal is not publisher installation renewal. retain only a
 		// current, independently reported installation deadline on this owner.
-		p.preparedUntil = preparedUntil
+		p.preparedUntil, p.reportedUntil = preparedUntil, reportedUntil
 		p.run, p.pair, p.until, p.permission = next, pair, bound, permission
 		p.openings = openings
 		active := make([]*connectorUse, 0, len(p.active))

@@ -92,7 +92,7 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := NewHandler(Config{}, d, d, nil)
+	h, err := NewHandler(Config{ControlURL: "https://control.example.test"}, d, d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,8 +478,12 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 	if w := call(path+"/"+pair.PairId+"/renew", owner.AccessToken.String(), bad); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte(pair.DeliveryId)) {
 		t.Fatal("renew failed", w.Code, w.Body.String())
 	}
-	if delivered, err := api.RenewDeviceConnectorPeerPair(ctx, service.ID, pair.PairId, device.ID, bad); err != nil || delivered.PairId != pair.PairId || delivered.Key != pair.Key || delivered.DeliveryId != pair.DeliveryId {
+	if delivered, err := api.RenewDeviceConnectorPeerPair(ctx, service.ID, pair.PairId, device.ID, bad); err != nil || delivered.Pair.PairId != pair.PairId || delivered.Pair.Key != pair.Key || delivered.Pair.DeliveryId != pair.DeliveryId {
 		t.Fatal("device client renewal lost delivery", err)
+	} else if delivered.VisitorPermission.VisitorToken == "" || delivered.VisitorPermission.Resource.Kind != controlv1.VisitorResourceScopeKindService || delivered.VisitorPermission.Resource.Id != service.ID ||
+		delivered.VisitorPermission.Hostname != selected.Endpoint.Hostname || delivered.VisitorPermission.Port != selected.Endpoint.Port || delivered.VisitorPermission.ExpiresAt.After(delivered.Pair.ExpiresAt) ||
+		!delivered.RunValidUntil.After(delivered.Pair.ObservedAt) || delivered.TrustRevision != selected.TrustRevision || delivered.Protocol != selected.Protocol {
+		t.Fatal("device client renewal lost coherent run validity or visitor permission")
 	}
 	bad.Action, bad.IdempotencyKey = "replace", request.IdempotencyKey
 	bad.RequestedAt = time.Now().UTC().Truncate(time.Microsecond).Add(2 * time.Microsecond)

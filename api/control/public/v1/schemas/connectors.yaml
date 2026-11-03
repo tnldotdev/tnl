@@ -123,6 +123,18 @@ schemas:
         maxItems: 2
         items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRelay" }
       expires_at: { type: string, format: date-time }
+  ConnectorPeerPairRenewal:
+    type: object
+    additionalProperties: false
+    description: One authenticated authority decision for the pinned run, pair lease and signed visitor permission. All deadlines share pair.observed_at; install local bounds from request start so transit spends the interval. Publisher installation and relay claims retain their independently confirmed deadlines.
+    required: [pair, run_valid_until, protocol, trust_revision, endpoint, visitor_permission]
+    properties:
+      pair: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPair" }
+      run_valid_until: { type: string, format: date-time }
+      protocol: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+      trust_revision: { type: integer, format: int64, minimum: 1 }
+      endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
+      visitor_permission: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenResponse" }
   VisitorDevice:
     type: object
     additionalProperties: false
