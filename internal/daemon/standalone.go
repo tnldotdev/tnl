@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	quic "github.com/quic-go/quic-go"
 	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
 	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
@@ -38,8 +37,7 @@ type standaloneSettings struct {
 	publicListen            string
 	publicListener          net.Listener
 	relayUDPListen          string
-	quicIdleTimeout         time.Duration
-	quicMaxIncomingStreams  int64
+	quic                    muxsession.QUICConfig
 	serverHostname          string
 	relayHostname           string
 	relayTransportTLS       *tls.Config
@@ -52,17 +50,16 @@ type standaloneSettings struct {
 
 func standaloneSettingsFrom(cfg daemonconfig.Config) standaloneSettings {
 	return standaloneSettings{
-		control:                controlSettingsFrom(cfg),
-		publicListen:           cfg.IngressListen,
-		relayUDPListen:         cfg.RelayUDPListen,
-		quicIdleTimeout:        cfg.QUICIdleTimeout,
-		quicMaxIncomingStreams: cfg.QUICMaxIncomingStreams,
-		serverHostname:         cfg.ServerHostname(),
-		relayHostname:          cfg.StandaloneRelayHostname(),
-		ingressLeaseDuration:   cfg.IngressLeaseDuration,
-		relayLeaseDuration:     cfg.RelayLeaseDuration,
-		ingress:                ingressSettingsFrom(cfg),
-		relay:                  relaySettingsFrom(cfg),
+		control:              controlSettingsFrom(cfg),
+		publicListen:         cfg.IngressListen,
+		relayUDPListen:       cfg.RelayUDPListen,
+		quic:                 cfg.RelayQUICConfig(),
+		serverHostname:       cfg.ServerHostname(),
+		relayHostname:        cfg.StandaloneRelayHostname(),
+		ingressLeaseDuration: cfg.IngressLeaseDuration,
+		relayLeaseDuration:   cfg.RelayLeaseDuration,
+		ingress:              ingressSettingsFrom(cfg),
+		relay:                relaySettingsFrom(cfg),
 	}
 }
 
@@ -106,7 +103,7 @@ func (d *daemon) startStandalone(
 		transportTLS = certificateSource.TLSConfig()
 		certificateChanged = certificateSource.Install
 	}
-	maxStreams, err := runtimeCapacity("publisher connection stream", settings.quicMaxIncomingStreams)
+	maxStreams, err := runtimeCapacity("publisher connection stream", settings.quic.Config.MaxIncomingStreams)
 	if err != nil {
 		return err
 	}
@@ -200,10 +197,7 @@ func (d *daemon) startStandalone(
 		selected.GetConfigForClient = nil
 		return selected, nil
 	}}
-	udpListener, err := muxsession.ListenQUIC(settings.relayUDPListen, sharedTLS, muxsession.QUICConfig{Config: &quic.Config{
-		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
-		EnableDatagrams: true,
-	}})
+	udpListener, err := muxsession.ListenQUIC(settings.relayUDPListen, sharedTLS, settings.quic)
 	if err != nil {
 		return fmt.Errorf("listen for standalone QUIC infrastructure: %w", err)
 	}

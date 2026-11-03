@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	quic "github.com/quic-go/quic-go"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -44,23 +43,22 @@ type relayRuntime struct {
 }
 
 type relayProcessSettings struct {
-	controlEndpoint        string
-	controlAddress         string
-	clusterSecret          string
-	relayServiceID         string
-	relayID                string
-	relayAddress           string
-	tlsServerName          string
-	transportTLS           *tls.Config
-	internalListen         string
-	internalListener       net.Listener
-	internalAddress        string
-	tcpListen              string
-	tcpListener            net.Listener
-	udpListen              string
-	quicIdleTimeout        time.Duration
-	quicMaxIncomingStreams int64
-	runtime                relaySettings
+	controlEndpoint  string
+	controlAddress   string
+	clusterSecret    string
+	relayServiceID   string
+	relayID          string
+	relayAddress     string
+	tlsServerName    string
+	transportTLS     *tls.Config
+	internalListen   string
+	internalListener net.Listener
+	internalAddress  string
+	tcpListen        string
+	tcpListener      net.Listener
+	udpListen        string
+	quic             muxsession.QUICConfig
+	runtime          relaySettings
 }
 
 func relayProcessSettingsFrom(cfg daemonconfig.Config) relayProcessSettings {
@@ -70,13 +68,12 @@ func relayProcessSettingsFrom(cfg daemonconfig.Config) relayProcessSettings {
 		clusterSecret:  cfg.ClusterSecret,
 		relayServiceID: cfg.RelayServiceID, relayID: cfg.RelayID,
 		relayAddress: cfg.RelayAddress, tlsServerName: tlsServerName,
-		internalListen:         cfg.InternalRelayListen,
-		internalAddress:        cfg.InternalRelayAddress,
-		tcpListen:              cfg.RelayTCPListen,
-		udpListen:              cfg.RelayUDPListen,
-		quicIdleTimeout:        cfg.QUICIdleTimeout,
-		quicMaxIncomingStreams: cfg.QUICMaxIncomingStreams,
-		runtime:                relaySettingsFrom(cfg),
+		internalListen:  cfg.InternalRelayListen,
+		internalAddress: cfg.InternalRelayAddress,
+		tcpListen:       cfg.RelayTCPListen,
+		udpListen:       cfg.RelayUDPListen,
+		quic:            cfg.RelayQUICConfig(),
+		runtime:         relaySettingsFrom(cfg),
 	}
 }
 
@@ -105,7 +102,7 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 		transportTLS = certificateSource.TLSConfig()
 		certificateChanged = certificateSource.Install
 	}
-	maxStreams, err := runtimeCapacity("publisher connection stream", settings.quicMaxIncomingStreams)
+	maxStreams, err := runtimeCapacity("publisher connection stream", settings.quic.Config.MaxIncomingStreams)
 	if err != nil {
 		_ = internalListener.Close()
 		return err
@@ -118,10 +115,7 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 			return fmt.Errorf("listen for TLS/TCP publisher connections: %w", err)
 		}
 	}
-	udpListener, err := muxsession.ListenQUIC(settings.udpListen, transportTLS, muxsession.QUICConfig{Config: &quic.Config{
-		MaxIdleTimeout: settings.quicIdleTimeout, MaxIncomingStreams: settings.quicMaxIncomingStreams,
-		EnableDatagrams: true,
-	}})
+	udpListener, err := muxsession.ListenQUIC(settings.udpListen, transportTLS, settings.quic)
 	if err != nil {
 		_ = tcpListener.Close()
 		_ = internalListener.Close()

@@ -59,6 +59,7 @@ services:
       TNLD_METRICS_LISTEN: 0.0.0.0:9090
       TNLD_ROLE: standalone
       TNLD_RELAY_UDP_LISTEN: :443
+      TNLD_RELAY_QUIC_PROFILE: standard
     ports:
       - "${TNL_PUBLIC_BIND:-0.0.0.0}:443:443/tcp"
       - "${TNL_PUBLIC_BIND:-0.0.0.0}:443:443/udp"
