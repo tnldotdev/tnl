@@ -32,7 +32,7 @@ func TestRejectedHeartbeatCannotAdvanceConfirmedLeaseMeasurement(t *testing.T) {
 	config, control := lifecycleFixture(t)
 	control.revoke = true
 	config.Control = &invalidLeaseControl{lifecycleControl: control}
-	config.Connect = func(context.Context, *Bound, uint8) (SlotSession, error) {
+	config.Connect = func(context.Context, *Bound, uint8, ConnectOptions) (SlotSession, error) {
 		return &heldSlot{stopped: make(chan struct{})}, nil
 	}
 	metrics := observability.New("publisher")
@@ -75,7 +75,7 @@ func TestReadinessRecoversAfterHeartbeatFailureWithoutRepeatingReady(t *testing.
 	healthy.Store(true)
 	config.Ready = func() error { readyCalls.Add(1); return nil }
 	config.Healthy = func(context.Context) bool { return healthy.Load() }
-	config.Connect = func(context.Context, *Bound, uint8) (SlotSession, error) {
+	config.Connect = func(context.Context, *Bound, uint8, ConnectOptions) (SlotSession, error) {
 		return &heldSlot{stopped: make(chan struct{})}, nil
 	}
 	statuses := make(chan RunStatus, 128)

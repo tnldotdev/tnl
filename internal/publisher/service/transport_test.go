@@ -109,7 +109,11 @@ func TestPrivatePublisherProductionSlotQUICAndTLSNoReplayAfterPathLoss(t *testin
 					}
 				}()
 			}
-			claimed, err := bound.ConnectSlotWithPreference(ctx, 0, false, roots)
+			options, err := (RunConfig{TransportTLS: roots}).connectionOptions()
+			if err != nil {
+				t.Fatal(err)
+			}
+			claimed, err := bound.ConnectSlot(ctx, 0, options)
 			if err != nil {
 				t.Fatal(err)
 			}
