@@ -649,7 +649,7 @@ func TestConnectorServiceOwnerLossFencesBeforeCloseAndRetainsCUntilJoin(t *testi
 	for a := range p.streams {
 		admission = a
 	}
-	ref := b.assignments[b.connections[0].PublisherConnectionId]
+	ref := b.prepared.connectionRef(b.connections[0])
 	b.mu.Unlock()
 	if admission == nil {
 		t.Fatal("no real admitted stream")
@@ -751,7 +751,7 @@ func TestConnectorServiceResolutionUsesOriginalSetupDeadline(t *testing.T) {
 		t.Fatal("expired setup still permitted use")
 	}
 	b.mu.Lock()
-	ref := b.assignments[b.connections[0].PublisherConnectionId]
+	ref := b.prepared.connectionRef(b.connections[0])
 	b.mu.Unlock()
 	if release, available := b.reserveStream(ref); available {
 		release()

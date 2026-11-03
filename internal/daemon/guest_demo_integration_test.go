@@ -15,6 +15,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,6 +30,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/demo"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -37,8 +39,9 @@ import (
 
 type integrationGuestPublisherControl struct {
 	*clientcontrol.Client
-	native   *publisheridentity.Native
-	assigned controlv1.PublicURL
+	native       *publisheridentity.Native
+	assigned     controlv1.PublicURL
+	shareRedeems chan error
 }
 
 func (c integrationGuestPublisherControl) PublisherIdentityID() string {
@@ -54,6 +57,15 @@ func (c integrationGuestPublisherControl) CreatePublicURL(_ context.Context, bod
 
 func (c integrationGuestPublisherControl) CreatePublishRun(ctx context.Context, id, retry string) (controlv1.PublishRunSetup, error) {
 	return c.native.CreatePublishRun(ctx, id, retry)
+}
+
+func (c integrationGuestPublisherControl) RedeemPublishRunShare(ctx context.Context, runID string, body controlv1.RedeemShareRequest, token credentials.PublishRunToken) (controlv1.ShareRedemption, error) {
+	redemption, err := c.Client.RedeemPublishRunShare(ctx, runID, body, token)
+	select {
+	case c.shareRedeems <- err:
+	default:
+	}
+	return redemption, err
 }
 
 func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testing.T) {
@@ -330,14 +342,16 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	if err := native.SelectPublicURL(publicURL); err != nil {
 		t.Fatal(err)
 	}
+	shareRedeems := make(chan error, 1)
 	handle := startOwnedIntegrationPublisher(t, owner, publisher.Config{
-		Control: integrationGuestPublisherControl{Client: authenticated.Control, native: native, assigned: publicURL}, TeamID: issued.TeamId, MembershipID: issued.MembershipId,
+		Control: integrationGuestPublisherControl{Client: authenticated.Control, native: native, assigned: publicURL, shareRedeems: shareRedeems}, TeamID: issued.TeamId, MembershipID: issued.MembershipId,
 		ControlURL: serverURL,
 		DomainID:   issued.DomainId, Hostname: hostname, PublicURLScope: controlv1.Member, Purpose: controlv1.Demo,
 		PolicyRevision: 1, Target: localDemo.Target(),
 		AllowedIPPrefixes: prefixes,
 		Ephemeral:         true, State: store,
 		Demo: true, Feedback: true, Service: "demo",
+		Logf:          t.Logf,
 		QUICConnector: quic, TCPConnector: tcp,
 	}, func() string { return integrationPublisherDiagnostics(inspect, pebble.logPath) })
 	ready := waitForPublisherReady(t, handle)
@@ -365,11 +379,35 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	visitor.client.Jar = jar
-	entry, err := visitor.client.Get(ready.PublicURL + "/__tnl/share/" + share.Id + "." + base64.RawURLEncoding.EncodeToString(secret))
-	if err != nil || entry.StatusCode != http.StatusOK {
-		t.Fatalf("guest share link = %+v, %v", entry, err)
+	shareClient := *visitor.client
+	shareClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	entry, err := shareClient.Get(ready.PublicURL + "/__tnl/share/" + share.Id + "." + base64.RawURLEncoding.EncodeToString(secret))
+	if err != nil {
+		var requestError *url.Error
+		if errors.As(err, &requestError) {
+			// the request URL contains the share secret; report only the cause.
+			err = requestError.Err
+		}
+		t.Fatalf("guest share redemption: %v", err)
+	}
+	if entry.StatusCode != http.StatusSeeOther || entry.Header.Get("Location") != ready.PublicURL+"/" {
+		entry.Body.Close()
+		select {
+		case controlErr := <-shareRedeems:
+			t.Fatalf("guest share redemption = %d, control error = %v", entry.StatusCode, controlErr)
+		default:
+			t.Fatalf("guest share redemption = %d, control not contacted", entry.StatusCode)
+		}
 	}
 	_ = entry.Body.Close()
+	redirected, err := visitor.client.Get(ready.PublicURL + "/")
+	if err != nil {
+		t.Fatalf("guest share redirect: %v", err)
+	}
+	redirected.Body.Close()
+	if redirected.StatusCode != http.StatusOK {
+		t.Fatalf("guest share redirect = %d", redirected.StatusCode)
+	}
 	response, err := visitor.client.Get(ready.PublicURL + "/state")
 	if err != nil {
 		t.Fatalf("guest visitor: %v%s", err, integrationPublisherDiagnostics(inspect, pebble.logPath))

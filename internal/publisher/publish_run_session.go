@@ -165,7 +165,7 @@ func runSession(
 		if err := client.EnableShareAccess(ctx, setup.PublishRun.Id, version, previewID, publishRunToken); err != nil {
 			return fmt.Errorf("publisher: enable share access: %w", err)
 		}
-		shareRuntime = &shareAccess{client: client, runID: setup.PublishRun.Id, version: version, token: publishRunToken}
+		shareRuntime = &shareAccess{client: client, runID: setup.PublishRun.Id, version: version, token: publishRunToken, logf: config.Logf}
 	}
 	var material clientstate.Material
 	identity := authority.identity
