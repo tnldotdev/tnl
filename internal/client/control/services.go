@@ -130,11 +130,7 @@ func (c *Client) GetPublisherService(ctx context.Context, publisherAccess string
 	})
 }
 
-func (c *Client) HeartbeatServiceRun(ctx context.Context, serviceID, runID string, token credentials.ServiceRunToken) (controlv1.ServiceRunState, error) {
-	return c.HeartbeatServiceRunHealth(ctx, serviceID, runID, token, controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 64})
-}
-
-func (c *Client) HeartbeatServiceRunHealth(ctx context.Context, serviceID, runID string, token credentials.ServiceRunToken, health controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
+func (c *Client) HeartbeatServiceRun(ctx context.Context, serviceID, runID string, token credentials.ServiceRunToken, health controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
 	return request[controlv1.ServiceRunState](ctx, c, token.String(), func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.HeartbeatServiceRun(ctx, serviceID, runID, health, editors...)
 	})

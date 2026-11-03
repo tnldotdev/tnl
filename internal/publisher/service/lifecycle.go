@@ -34,7 +34,7 @@ type RunControl interface {
 	ConnectorPeerControl
 	GetPublisherService(context.Context, string) (controlv1.Service, error)
 	PrepareServiceRun(context.Context, string, string, string, controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error)
-	HeartbeatServiceRunHealth(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error)
+	HeartbeatServiceRun(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error)
 	CloseServiceRun(context.Context, string, string, credentials.ServiceRunToken) error
 	ReportServiceRunObservations(context.Context, string, string, int64, credentials.ServiceRunToken, serviceaudit.Batch) error
 }
@@ -292,7 +292,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		active := bound.reservedStreams
 		bound.mu.Unlock()
 		status.TargetHealthy = config.Healthy(ctx)
-		state, err = config.Control.HeartbeatServiceRunHealth(ctx, config.ServiceID, setup.ServiceRunId, runToken,
+		state, err = config.Control.HeartbeatServiceRun(ctx, config.ServiceID, setup.ServiceRunId, runToken,
 			controlv1.ServiceRunHeartbeat{Healthy: status.TargetHealthy, StreamCapacity: config.StreamCapacity, ActiveStreams: int32(active)})
 		if err == nil {
 			err = bound.ApplyHeartbeat(state)

@@ -20,8 +20,8 @@ type failingHeartbeatControl struct {
 
 type invalidLeaseControl struct{ *lifecycleControl }
 
-func (c *invalidLeaseControl) HeartbeatServiceRunHealth(ctx context.Context, id, run string, token credentials.ServiceRunToken, h controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
-	state, err := c.lifecycleControl.HeartbeatServiceRunHealth(ctx, id, run, token, h)
+func (c *invalidLeaseControl) HeartbeatServiceRun(ctx context.Context, id, run string, token credentials.ServiceRunToken, h controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
+	state, err := c.lifecycleControl.HeartbeatServiceRun(ctx, id, run, token, h)
 	if state.State == "closed" {
 		state.PublisherExpiresAt = time.Now().Add(2 * time.Hour)
 	}
@@ -59,11 +59,11 @@ func TestRejectedHeartbeatCannotAdvanceConfirmedLeaseMeasurement(t *testing.T) {
 	}
 }
 
-func (c *failingHeartbeatControl) HeartbeatServiceRunHealth(ctx context.Context, id, run string, token credentials.ServiceRunToken, h controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
+func (c *failingHeartbeatControl) HeartbeatServiceRun(ctx context.Context, id, run string, token credentials.ServiceRunToken, h controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
 	if c.fail.Swap(false) {
 		return controlv1.ServiceRunState{}, failure.Wrap("refresh publisher", failure.ServerUnavailable, errors.New("fixture heartbeat failed"))
 	}
-	return c.lifecycleControl.HeartbeatServiceRunHealth(ctx, id, run, token, h)
+	return c.lifecycleControl.HeartbeatServiceRun(ctx, id, run, token, h)
 }
 
 func TestReadinessRecoversAfterHeartbeatFailureWithoutRepeatingReady(t *testing.T) {
