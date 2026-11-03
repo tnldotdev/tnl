@@ -9,14 +9,6 @@ import (
 )
 
 func TestTrafficValidationRejectsUnsafeOperatorSettings(t *testing.T) {
-	defaults, ceiling := trafficlimits.Default(), trafficlimits.Ceiling()
-	if err := ValidateTraffic(defaults, ceiling); err != nil {
-		t.Fatal(err)
-	}
-	defaults.RatePer = time.Millisecond
-	if err := ValidateTraffic(defaults, ceiling); err == nil {
-		t.Fatal("equivalent rate exceeded ceiling")
-	}
 	for _, p := range []ingress.PendingConfig{{Timeout: -time.Second}, {UploadBytes: -1}, {DownloadBytes: 2 << 20}, {Connections: 1, SourceConnections: 2}, {SourceRate: -1}} {
 		if _, _, err := ValidateIngressTraffic(ingress.TrafficConfig{}, p); err == nil {
 			t.Fatalf("accepted %+v", p)

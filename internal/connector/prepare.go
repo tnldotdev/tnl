@@ -8,8 +8,10 @@ import (
 	"net"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/connector/kubeconfig"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
@@ -17,9 +19,116 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+// the loopback address and kubeconfig belong to the listener, not an adapter.
+// each replacement owns a new attempt and joins the old transport before reuse.
+type ownedServiceListener struct {
+	listener *connectorruntime.ListenerSwitch
+	kube     serviceKubeconfig
+	attempt  *servicePreparation
+}
+
+type serviceKubeconfig struct {
+	source kubeconfig.Source
+	result kubeconfig.Result
+}
+
+type servicePreparation struct {
+	service controlv1.Service
+	cancel  context.CancelFunc
+	done    chan struct{}
+	state   servicePreparationState // protected by the backend's mu.
+}
+
+type servicePreparationState interface{ servicePreparationState() }
+
+type preparingService struct{}
+type servingService struct {
+	connection      connectorruntime.Connection
+	control         connectorstream.Control
+	sessionID       string
+	authorizedUntil time.Time
+}
+
+// a failed startup remains unprepared; failure after publication invalidates the
+// prepared read with its original error. neither terminal state can become ready.
+type preparationFailed struct{ err error }
+type servingFailed struct{ err error }
+
+func (preparingService) servicePreparationState()  {}
+func (*servingService) servicePreparationState()   {}
+func (preparationFailed) servicePreparationState() {}
+func (servingFailed) servicePreparationState()     {}
+
+func (p *servicePreparation) fail(err error) {
+	switch p.state.(type) {
+	case preparingService:
+		p.state = preparationFailed{err}
+	case *servingService:
+		p.state = servingFailed{err}
+	}
+}
+
+func (p *servicePreparation) result() (*servingService, error) {
+	switch state := p.state.(type) {
+	case *servingService:
+		return state, nil
+	case preparationFailed:
+		return nil, state.err
+	case servingFailed:
+		return nil, state.err
+	default:
+		return nil, connectorruntime.ErrUnprepared
+	}
+}
+
+func (p *servicePreparation) matches(service controlv1.Service) bool {
+	return p != nil && service.Id == p.service.Id && service.Protocol == p.service.Protocol && service.Endpoint != nil && p.service.Endpoint != nil && *service.Endpoint == *p.service.Endpoint
+}
+
+func (p *servicePreparation) serving(client *workload.Client) *servingService {
+	serving, ok := p.state.(*servingService)
+	if !ok {
+		return nil
+	}
+	if _, current := serving.sessionLease(client, p.service.Id); !current {
+		return nil
+	}
+	return serving
+}
+
+func (serving *servingService) sessionLease(client *workload.Client, serviceID string) (time.Time, bool) {
+	if client == nil {
+		return time.Time{}, true
+	}
+	session, err := client.Session()
+	if err != nil || session.Id != serving.sessionID || !slices.Contains(session.ServiceIds, serviceID) {
+		return time.Time{}, false
+	}
+	return session.LeaseExpiresAt, true
+}
+
+func (owner *ownedServiceListener) serving(service controlv1.Service, client *workload.Client) *servingService {
+	if owner == nil || !owner.attempt.matches(service) {
+		return nil
+	}
+	return owner.attempt.serving(client)
+}
+
+func (owner *ownedServiceListener) kubeconfig() (serviceKubeconfig, bool) {
+	if owner == nil || owner.attempt.service.Protocol != controlv1.Kubernetes {
+		return serviceKubeconfig{}, false
+	}
+	switch owner.attempt.state.(type) {
+	case *servingService, servingFailed:
+		return owner.kube, true
+	default:
+		return serviceKubeconfig{}, false
+	}
+}
+
 // preparation is incremental and failure is local to the requested service.
 // the exchanged service-ID snapshot is independent of this listener map.
-func (b *connectorConnectionBackend) prepareService(ctx context.Context, name string, previous *preparedConnection, service controlv1.Service, client *workload.Client) (*preparedConnection, error) {
+func (b *connectorConnectionBackend) prepareService(ctx context.Context, name string, previous *ownedServiceListener, service controlv1.Service, client *workload.Client) (*servicePreparation, error) {
 	if !slices.Contains(b.scope.Services, name) {
 		return nil, connectorruntime.ErrUnavailable
 	}
@@ -29,24 +138,8 @@ func (b *connectorConnectionBackend) prepareService(ctx context.Context, name st
 	if string(service.Protocol) != config.Protocol(b.project.Config.Services[name]) {
 		return nil, connectorruntime.ErrInvalid
 	}
-	endpoint := service.Endpoint
-	b.mu.Lock()
-	deadline := b.deadline
-	b.mu.Unlock()
-	connection := connectorruntime.Connection{Schema: 1, Protocol: string(service.Protocol), Host: "127.0.0.1", Port: endpoint.Port, ExpiresAt: deadline}
-	transportID, err := opaqueid.New("ctg_")
-	if err != nil {
-		return nil, err
-	}
-	connection.TransportID = transportID
-	p := &preparedConnection{service: service, connection: connection}
-	if previous != nil {
-		p.listener = previous.listener
-		p.connection.Kubeconfig, p.connection.Context = previous.connection.Kubeconfig, previous.connection.Context
-		p.kubeSource = previous.kubeSource
-	}
-	verification := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: endpoint.Hostname}
 	var control connectorstream.Control
+	var err error
 	// each new adapter receives a fresh transport ID even when its listener stays.
 	identity := ""
 	if client != nil {
@@ -58,20 +151,36 @@ func (b *connectorConnectionBackend) prepareService(ctx context.Context, name st
 	if err != nil {
 		return nil, err
 	}
-	run, err := control.ResolveService(ctx, service.Id)
-	if err != nil {
+	return b.prepareListener(ctx, name, previous, service, client, control, identity)
+}
+
+func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name string, previous *ownedServiceListener, service controlv1.Service, client *workload.Client, control connectorstream.Control, identity string) (*servicePreparation, error) {
+	// until Serve takes ownership, every exit closes this adapter here.
+	defer func() {
 		if closer, ok := control.(io.Closer); ok {
 			_ = closer.Close()
 		}
+	}()
+	endpoint := service.Endpoint
+	b.mu.Lock()
+	deadline := b.deadline
+	b.mu.Unlock()
+	connection := connectorruntime.Connection{Schema: 1, Protocol: string(service.Protocol), Host: "127.0.0.1", Port: endpoint.Port, ExpiresAt: deadline}
+	verification := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: endpoint.Hostname}
+	run, err := control.ResolveService(ctx, service.Id)
+	if err != nil {
 		return nil, err
 	}
 	if run.Protocol != string(service.Protocol) || run.Endpoint == nil || *run.Endpoint != *endpoint {
-		if closer, ok := control.(io.Closer); ok {
-			_ = closer.Close()
-		}
 		return nil, connectorruntime.ErrUnavailable
 	}
-	if p.listener == nil {
+	// the service and identity are already validated; the resolved revision must
+	// also be valid before Serve accepts ownership of adapter cleanup.
+	if run.TrustRevision < 1 {
+		return nil, errors.Join(connectorruntime.ErrUnavailable, connectorstream.ErrServiceConnection)
+	}
+	owner := previous
+	if owner == nil {
 		port := endpoint.Port
 		// independently verified SDK identities cannot share a local capability
 		// or compete for the same managed port. metadata retains the remote port.
@@ -80,90 +189,122 @@ func (b *connectorConnectionBackend) prepareService(ctx context.Context, name st
 		}
 		base, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 		if err != nil {
-			if closer, ok := control.(io.Closer); ok {
-				_ = closer.Close()
-			}
 			return nil, err
 		}
-		p.listener = connectorruntime.NewListenerSwitch(base)
+		owner = &ownedServiceListener{listener: connectorruntime.NewListenerSwitch(base)}
 	}
 	b.mu.Lock()
-	if b.closed || b.workload != client {
+	if b.closed || b.workload != client || b.listeners[name] != previous {
 		b.mu.Unlock()
 		if previous == nil {
-			_ = p.listener.Close()
-		}
-		if closer, ok := control.(io.Closer); ok {
-			_ = closer.Close()
+			_ = owner.listener.Close()
 		}
 		return nil, connectorruntime.ErrUnprepared
 	}
-	if previous != nil && previous.cancel != nil {
-		previous.cancel()
+	lifetime, cancel := context.WithCancel(b.lifetime)
+	p := &servicePreparation{service: service, cancel: cancel, done: make(chan struct{}), state: preparingService{}}
+	var old *servicePreparation
+	if previous != nil {
+		old = previous.attempt
 	}
-	b.prepared[name] = p
+	owner.attempt = p
+	b.listeners[name] = owner
 	b.publishLocked()
 	b.mu.Unlock()
-	lifetime, cancel := context.WithCancel(b.lifetime)
-	p.cancel = cancel
 	prepared := false
 	defer func() {
 		if !prepared {
 			cancel()
+			<-p.done
 		}
 	}()
-	listener := p.listener.Next()
 	ready := make(chan struct{})
-	done := make(chan error, 1)
-	connection.Port = listener.Addr().(*net.TCPAddr).Port
+	connection.Port = owner.listener.Addr().(*net.TCPAddr).Port
 	configuration := connectorstream.Config{Control: control, ServiceID: service.Id, IdentityID: identity, Protocol: string(service.Protocol), TrustRevision: run.TrustRevision, Endpoint: endpoint, ServiceTLS: verification, CleanupContext: b.cleanup, Ready: func() error { close(ready); return nil }}
 	b.workers.Go(func() {
-		defer listener.Close()
-		err := connectorstream.Serve(lifetime, listener, configuration)
-		b.mu.Lock()
-		if b.prepared[name] == p {
-			if b.lifetime.Err() == nil {
-				p.err = errors.Join(connectorruntime.ErrUnavailable, err)
-			} else if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
-				b.cleanupErr = errors.Join(b.cleanupErr, err)
-			}
-			b.publishLocked()
+		defer close(p.done)
+		if old != nil && old.cancel != nil {
+			old.cancel()
+			<-old.done
 		}
+		listener := owner.listener.Next()
+		err := func() error {
+			defer listener.Close()
+			return connectorstream.Serve(lifetime, listener, configuration)
+		}()
+		b.mu.Lock()
+		b.finishPreparationLocked(name, owner, p, err)
 		b.mu.Unlock()
-		done <- err
 	})
+	control = nil // the worker's configuration now owns adapter cleanup.
 	select {
 	case <-ready:
-	case err := <-done:
-		return nil, errors.Join(connectorruntime.ErrUnavailable, err)
+	case <-p.done:
+		b.mu.Lock()
+		_, err := p.result()
+		b.mu.Unlock()
+		return nil, err
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	connection.Kubeconfig, connection.Context = p.connection.Kubeconfig, p.connection.Context
-	p.connection = connection
-	p.control = control
+	serving := &servingService{connection: connection, control: configuration.Control}
 	if client != nil {
 		session, err := client.Session()
 		if err != nil {
 			return nil, err
 		}
-		p.sessionID = session.Id
+		serving.sessionID = session.Id
 	}
 	if string(service.Protocol) == "http" || string(service.Protocol) == "kubernetes" {
-		p.connection.URL = "https://" + net.JoinHostPort(endpoint.Hostname, strconv.Itoa(endpoint.Port))
+		serving.connection.URL = "https://" + net.JoinHostPort(endpoint.Hostname, strconv.Itoa(endpoint.Port))
 	}
-	if string(service.Protocol) == "kubernetes" && p.connection.Kubeconfig == "" {
-		if err := b.prepareKube(ctx, name, p); err != nil {
+	kube := owner.kube
+	if string(service.Protocol) == "kubernetes" && kube.result.File == "" {
+		var err error
+		kube, err = b.prepareKube(ctx, name, service, connection)
+		if err != nil {
 			return nil, err
 		}
 	}
+	serving.connection.Kubeconfig, serving.connection.Context = kube.result.File, kube.result.Context
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.closed || b.workload != client || p.err != nil {
-		return nil, errors.Join(connectorruntime.ErrUnprepared, p.err)
+	if err := b.publishServiceLocked(name, owner, p, serving, kube, client); err != nil {
+		return nil, err
 	}
-	p.ready = true
-	b.publishLocked()
 	prepared = true
 	return p, nil
+}
+
+func (b *connectorConnectionBackend) finishPreparationLocked(name string, owner *ownedServiceListener, p *servicePreparation, err error) {
+	if b.listeners[name] != owner || owner.attempt != p {
+		return
+	}
+	p.fail(errors.Join(connectorruntime.ErrUnavailable, err))
+	if b.lifetime.Err() != nil && err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
+		b.cleanupErr = errors.Join(b.cleanupErr, err)
+	}
+	b.publishLocked()
+}
+
+func (b *connectorConnectionBackend) publishServiceLocked(name string, owner *ownedServiceListener, p *servicePreparation, serving *servingService, kube serviceKubeconfig, client *workload.Client) error {
+	if _, starting := p.state.(preparingService); !starting {
+		_, err := p.result()
+		return errors.Join(connectorruntime.ErrUnprepared, err)
+	}
+	if b.closed || b.workload != client || b.listeners[name] != owner || owner.attempt != p || !p.matches(b.services[name]) {
+		return connectorruntime.ErrUnprepared
+	}
+	if _, current := serving.sessionLease(client, p.service.Id); !current {
+		return connectorruntime.ErrUnprepared
+	}
+	transportID, err := opaqueid.New("ctg_")
+	if err != nil {
+		return err
+	}
+	serving.connection.TransportID = transportID
+	owner.kube = kube
+	p.state = serving
+	b.publishLocked()
+	return nil
 }

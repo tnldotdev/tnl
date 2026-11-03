@@ -6,9 +6,21 @@ import (
 	"testing"
 )
 
-func testHandler(t *testing.T, cfg Config, store Store, authorization AuthorizationStore, readiness func(context.Context) error) *http.ServeMux {
+// Store composes the base fixtures; optional API stores are always explicit.
+type Store interface {
+	PublicURLStore
+	CertificateStore
+	AdminStore
+}
+
+func testHandler(t *testing.T, cfg Config, store Store, authorization AuthorizationStore, readiness func(context.Context) error, features ...Stores) *http.ServeMux {
 	t.Helper()
-	handler, err := NewHandler(cfg, store, authorization, readiness)
+	stores := Stores{}
+	if len(features) != 0 {
+		stores = features[0]
+	}
+	stores.PublicURLs, stores.Certificates, stores.Admin = store, store, store
+	handler, err := NewHandler(cfg, stores, authorization, readiness)
 	if err != nil {
 		t.Fatal(err)
 	}

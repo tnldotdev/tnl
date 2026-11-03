@@ -618,9 +618,7 @@ func startServiceHTTPGroupPublisher(t *testing.T, f *privateSeparatedFixture, ap
 	ctx, cancel := context.WithCancel(t.Context())
 	ready, done := make(chan struct{}), make(chan error, 1)
 	go func() {
-		done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, b *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
-			return b.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
-		}})
+		done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
 	}()
 	t.Cleanup(func() {
 		cancel()

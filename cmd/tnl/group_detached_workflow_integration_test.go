@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/detached"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -54,23 +55,23 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("detached OLD identity with %s selector: %v %s", selector, err, output)
 		}
-		entries, err := os.ReadDir(detachedDir(task))
+		entries, err := os.ReadDir(filepath.Join(task, "d"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		var id string
 		for _, entry := range entries {
-			if validDetachedID(entry.Name()) {
+			if detached.ValidID(entry.Name()) {
 				id = entry.Name()
 			}
 		}
 		if id == "" {
 			t.Fatal("detached child did not own its control socket")
 		}
-		t.Cleanup(func() { _, _ = detachedRequest(task, id, "stop") })
+		t.Cleanup(func() { _, _ = detached.Request(task, id, "stop") })
 		workflowWait(t, 25*time.Second, func() bool {
 			// a previous invocation's healthy member is not this child's ready run.
-			state, _, err := detachedStatus(task, id)
+			state, _, err := detached.Status(task, id)
 			if err != nil || state != "ready" {
 				return false
 			}
@@ -98,10 +99,10 @@ func TestIntegrationCLIGroupDetachedHistoricalIdentity(t *testing.T) {
 		})
 		cancel()
 		<-joined
-		if _, err := detachedRequest(task, id, "stop"); err != nil {
+		if _, err := detached.Request(task, id, "stop"); err != nil {
 			t.Fatal(err)
 		}
-		workflowWait(t, 20*time.Second, func() bool { _, err := os.Lstat(filepath.Join(detachedDir(task), id)); return os.IsNotExist(err) })
+		workflowWait(t, 20*time.Second, func() bool { _, err := os.Lstat(filepath.Join(task, "d", id)); return os.IsNotExist(err) })
 	}
 	if f.groupEnrollmentRequests.Load() != 2 {
 		t.Fatal("detached replacement enrolled another replica")

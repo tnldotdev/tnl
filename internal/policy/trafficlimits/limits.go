@@ -62,6 +62,14 @@ func (l Limits) Within(c Limits) bool {
 		totalWithin(l.TotalUploadBytes, c.TotalUploadBytes) && totalWithin(l.TotalDownloadBytes, c.TotalDownloadBytes)
 }
 
+// ValidateDefaults checks the resolved defaults used by control and ingress.
+func ValidateDefaults(defaults, ceiling Limits) error {
+	if !defaults.Within(ceiling) {
+		return errors.New("traffic defaults must be valid and within operator ceilings")
+	}
+	return nil
+}
+
 func totalWithin(value, ceiling int64) bool { return ceiling == 0 || value > 0 && value <= ceiling }
 
 // Selection contains only explicitly selected values. control resolves it once

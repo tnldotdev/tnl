@@ -49,8 +49,9 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 	go func() {
 		done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target,
 			Metadata: controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool}, HeartbeatInterval: heartbeat,
-			Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
-				claimed, err := bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
+			RelayQUIC: quic, RelayTCP: tcp,
+			Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8, options publisherservice.ConnectOptions) (publisherservice.SlotSession, error) {
+				claimed, err := bound.ConnectSlot(ctx, slot, options)
 				if err == nil && f.publisherConnections != nil {
 					select {
 					case f.publisherConnections <- claimed:
@@ -204,6 +205,9 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				}
 				if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 					t.Fatal(err)
+				}
+				if _, err := f.identity.routes.SelectServiceRun(t.Context(), service.Id, device.Subject.DeviceID); !defaultConnectorRevocationDenied(err) {
+					t.Fatalf("control did not deny the exact revoked device: %v", err)
 				}
 				if _, err := io.Copy(io.Discard, reader); err == nil {
 					t.Fatal("revocation did not interrupt the live HTTP stream")

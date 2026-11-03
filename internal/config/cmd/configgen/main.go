@@ -13,7 +13,6 @@ import (
 
 	"github.com/invopop/jsonschema"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
-	"github.com/tnldotdev/tnl/internal/client/webhooksource"
 	"github.com/tnldotdev/tnl/internal/config"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
@@ -309,11 +308,11 @@ func webhookSchema() *jsonschema.Schema {
 	properties.Set("path", &jsonschema.Schema{Type: "string", Pattern: `^/[a-zA-Z0-9._~-]+(/[a-zA-Z0-9._~-]+)*$`})
 	properties.Set("delivery", &jsonschema.Schema{Type: "string", Enum: []any{"fanout", "selected"}})
 	properties.Set("methods", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string", Enum: []any{"GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"}}, UniqueItems: true})
-	providerValues := make([]any, 0, len(webhooksource.Names()))
-	for _, name := range webhooksource.Names() {
-		providerValues = append(providerValues, name)
-	}
-	properties.Set("provider", &jsonschema.Schema{Type: "string", Enum: providerValues})
+	// the static declaration owns its schema; runtime catalog fetching is unrelated.
+	type declaration config.Webhook
+	declared := (&jsonschema.Reflector{Anonymous: true, ExpandedStruct: true}).Reflect(declaration{})
+	provider, _ := declared.Properties.Get("provider")
+	properties.Set("provider", provider)
 	properties.Set("source_ips", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), Items: &jsonschema.Schema{Type: "string"}, UniqueItems: true})
 	return &jsonschema.Schema{Type: "object", Required: []string{"path", "service", "provider"}, Properties: properties, AdditionalProperties: jsonschema.FalseSchema}
 }
