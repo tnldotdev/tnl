@@ -2672,6 +2672,11 @@
           "type": "string",
           "description": "Public QUIC publisher-connection listen address."
         },
+        "relay_quic_profile": {
+          "type": "string",
+          "description": "Relay QUIC listener profile: standard or fly.",
+          "default": "standard"
+        },
         "internal_relay_listen": {
           "type": "string",
           "description": "Internal forwarding listen address."
