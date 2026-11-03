@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -114,15 +115,20 @@ func connectorPeerFixture(t *testing.T, target string, lifetime ...time.Duration
 
 func connectorInnerPair(t *testing.T, ctx context.Context, verification *tls.Config) (muxsession.Session, muxsession.Session) {
 	t.Helper()
+	return connectorInnerPairWithConfig(t, ctx, verification, tunnel.ConnectorQUICConfig())
+}
+
+func connectorInnerPairWithConfig(t *testing.T, ctx context.Context, verification *tls.Config, config *quic.Config) (muxsession.Session, muxsession.Session) {
+	t.Helper()
 	// use the fixture's independent root for this inner transport, rather than
 	// borrowing visitor or target key material for its client authentication.
 	certificate, trust := managedTestCertificate(t, verification.ServerName)
-	listener, err := muxsession.ListenQUIC("127.0.0.1:0", &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}, muxsession.QUICConfig{})
+	listener, err := muxsession.ListenQUIC("127.0.0.1:0", &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}, muxsession.QUICConfig{Config: config})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-	client, err := (muxsession.QUICConnector{TLSConfig: trust}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: trust.ServerName})
+	client, err := (muxsession.QUICConnector{TLSConfig: trust, Config: muxsession.QUICConfig{Config: config}}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: trust.ServerName})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,6 +178,7 @@ func TestConnectorServicePeerConsumerForwardsAndRejectsReplayLocally(t *testing.
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, server) }()
+	connectorControl(t, ctx, client)
 	open := func(entry tunnelv1.ConnectorPeerVisitorEntry) *tls.Conn {
 		raw, err := client.OpenStream(ctx)
 		if err != nil {
@@ -180,7 +187,7 @@ func TestConnectorServicePeerConsumerForwardsAndRejectsReplayLocally(t *testing.
 		if _, err = tunnelv1.WriteConnectorPeerVisitorOpening(raw, entry, nil); err != nil {
 			t.Fatal(err)
 		}
-		return tls.Client(tunnel.NewConnectorRequestWriter(raw), verification)
+		return connectorVisitorTLS(raw, verification, entry.VisitorConnectionID)
 	}
 	prepared, err := connectorstream.PrepareConnector(ctx, client, connectorstream.Run{ServiceID: first.ServiceID, ServiceRunID: first.ServiceRunID, RunNumber: first.RunNumber, Protocol: "tcp", TrustRevision: int64(first.MetadataRevision), ValidUntil: time.Now().Add(time.Minute), Endpoint: &controlv1.ServiceEndpoint{Hostname: verification.ServerName, Port: int(b.prepared.servicePort)}, ServiceTLS: verification}, first)
 	if err != nil {
@@ -440,6 +447,7 @@ func TestConnectorServiceDeniedOpeningCannotResolveOrReadMySQLTarget(t *testing.
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, server) }()
+	connectorControl(t, ctx, client)
 	raw, err := client.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -499,11 +507,15 @@ func TestConnectorServiceRevokedGuardFencesDialWhileStopCallbackWaits(t *testing
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, server) }()
+	connectorControl(t, ctx, client)
 	raw, err := client.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tunnelv1.WriteConnectorPeerVisitorOpening(raw, opening("L"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := tunnelv1.ReadConnectorPeerVisitorAccepted(raw, opening("L").VisitorConnectionID); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -581,6 +593,7 @@ func TestConnectorServicePeerHTTPConsumerJoinsHandlerAndTarget(t *testing.T) {
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, server) }()
+	connectorControl(t, ctx, client)
 	raw, err := client.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -588,7 +601,7 @@ func TestConnectorServicePeerHTTPConsumerJoinsHandlerAndTarget(t *testing.T) {
 	if _, err = tunnelv1.WriteConnectorPeerVisitorOpening(raw, opening("J"), nil); err != nil {
 		t.Fatal(err)
 	}
-	secured := tls.Client(tunnel.NewConnectorRequestWriter(raw), verification)
+	secured := connectorVisitorTLS(raw, verification, opening("J").VisitorConnectionID)
 	defer secured.Close()
 	if err := secured.HandshakeContext(ctx); err != nil {
 		t.Fatal(err)
@@ -673,6 +686,7 @@ func TestConnectorServiceOwnerLossFencesBeforeCloseAndRetainsCUntilJoin(t *testi
 	go func() {
 		served <- serveConnectorInner(ctx, p, &heldConnectorSessionClose{Session: server, entered: entered, release: release})
 	}()
+	connectorControl(t, ctx, client)
 	entry := opening("I")
 	raw, err := client.OpenStream(ctx)
 	if err != nil {
@@ -681,7 +695,7 @@ func TestConnectorServiceOwnerLossFencesBeforeCloseAndRetainsCUntilJoin(t *testi
 	if _, err = tunnelv1.WriteConnectorPeerVisitorOpening(raw, entry, nil); err != nil {
 		t.Fatal(err)
 	}
-	secured := tls.Client(tunnel.NewConnectorRequestWriter(raw), verification)
+	secured := connectorVisitorTLS(raw, verification, entry.VisitorConnectionID)
 	defer secured.Close()
 	if err := secured.HandshakeContext(ctx); err != nil {
 		t.Fatal(err)
@@ -778,6 +792,9 @@ func TestConnectorServiceResolutionUsesOriginalSetupDeadline(t *testing.T) {
 	if _, err := tunnelv1.WriteConnectorPeerVisitorOpening(client, opening("K"), nil); err != nil {
 		t.Fatal(err)
 	}
+	if err := tunnelv1.ReadConnectorPeerVisitorAccepted(client, opening("K").VisitorConnectionID); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case resolve := <-entered:
 		if deadline, ok := resolve.Deadline(); !ok || !deadline.Equal(a.setupUntil) {
@@ -870,6 +887,7 @@ func TestConnectorPreparationCannotPublishAfterSetupCancellation(t *testing.T) {
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
 	go func() { served <- serveConnectorInner(ctx, p, server) }()
+	connectorControl(t, ctx, client)
 	defer func() { p.Close(); <-served }()
 	gate := &heldConnectorPreparation{Session: client, clearing: make(chan struct{}), release: make(chan struct{}), closing: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(gate.release) })

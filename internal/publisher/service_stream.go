@@ -44,10 +44,6 @@ type ServiceStream struct {
 }
 
 func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result error) {
-	var afterConnectorEOF func()
-	if reader, ok := visitor.(interface{ ContinueAfterTLSCloseNotify() }); ok {
-		afterConnectorEOF = reader.ContinueAfterTLSCloseNotify
-	}
 	var valid bool
 	s.Visitor, valid = normalizeManagedVisitor(s.Visitor)
 	protocol, _ := observability.ParseProtocol(string(s.Protocol))
@@ -263,7 +259,7 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	secured := tls.Server(visitor, frontTLS)
 	var client net.Conn = secured
 	if connector != nil {
-		client = &connectorServiceConn{conn: secured, ctx: ctx, admission: connector, afterEOF: afterConnectorEOF}
+		client = &connectorServiceConn{conn: secured, ctx: ctx, admission: connector}
 	}
 	tlsCtx, tlsDone := observability.PublisherOperation(setup, "visitor_tls")
 	err = secured.HandshakeContext(tlsCtx)

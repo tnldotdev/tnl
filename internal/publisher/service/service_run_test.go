@@ -25,7 +25,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
-	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -88,6 +87,7 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 				client, server := connectorInnerPair(t, ctx, verification)
 				done := make(chan error, 1)
 				go func() { done <- serveConnectorInner(ctx, peer, server) }()
+				connectorControl(t, ctx, client)
 				raw, err := client.OpenStream(ctx)
 				if err != nil {
 					t.Fatal(err)
@@ -95,7 +95,7 @@ func TestManagedPublicConnectorAcceptsLoopbackHTTPAuthority(t *testing.T) {
 				if _, err := tunnelv1.WriteConnectorPeerVisitorOpening(raw, opening("L"), nil); err != nil {
 					t.Fatal(err)
 				}
-				secure := tls.Client(tunnel.NewConnectorRequestWriter(raw), verification)
+				secure := connectorVisitorTLS(raw, verification, opening("L").VisitorConnectionID)
 				if err := secure.HandshakeContext(ctx); err != nil {
 					t.Fatal(err)
 				}

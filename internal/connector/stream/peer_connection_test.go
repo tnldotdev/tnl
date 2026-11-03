@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -29,7 +28,7 @@ func TestConnectorRefreshBlockedWriterDoesNotSpendSiblingBudget(t *testing.T) {
 	healthy, healthyPeer := net.Pipe()
 	defer healthyPeer.Close()
 	makeUse := func(conn net.Conn, entry tunnelv1.ConnectorPeerVisitorEntry) *connectorUse {
-		prepared := &PreparedConnector{ctx: p.ctx, conn: conn, callbackDone: make(chan struct{}), writer: tunnel.NewConnectorRequestWriter(conn)}
+		prepared := &PreparedConnector{ctx: p.ctx, conn: conn, callbackDone: make(chan struct{})}
 		prepared.stop = context.AfterFunc(p.ctx, func() { defer close(prepared.callbackDone); _ = conn.Close() })
 		return &connectorUse{entry: entry, prepared: prepared}
 	}
@@ -39,17 +38,31 @@ func TestConnectorRefreshBlockedWriterDoesNotSpendSiblingBudget(t *testing.T) {
 	p.mu.Unlock()
 	defer blockedUse.prepared.Close()
 	defer healthyUse.prepared.Close()
+	updates := make(chan tunnelv1.ConnectorPermissionUpdate, 2)
+	f.mu.Lock()
+	f.peers[p.pair.PairId].updates = updates
+	f.mu.Unlock()
+	written := make(chan error, 1)
+	go func() { _, err := blocked.Write([]byte("blocked application bytes")); written <- err }()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		p.renewActive([]*connectorUse{blockedUse, healthyUse}, permission, time.Now().Add(5*time.Second))
 	}()
-	_ = healthyPeer.SetReadDeadline(time.Now().Add(time.Second))
-	frame, err := tunnelv1.ReadConnectorRequestFrame(healthyPeer)
-	if err != nil || frame.Kind != tunnelv1.ConnectorRequestPermission {
-		t.Fatal("blocked writer spent sibling renewal budget", err)
+	seen := make(map[string]bool)
+	for range 2 {
+		select {
+		case update := <-updates:
+			seen[update.VisitorConnectionID] = true
+		case <-time.After(time.Second):
+			t.Fatal("blocked application writer spent renewal budget")
+		}
+	}
+	if !seen[blockedUse.entry.VisitorConnectionID] || !seen[healthyUse.entry.VisitorConnectionID] {
+		t.Fatal("control stream did not independently renew both visitors")
 	}
 	_ = blockedPeer.Close()
+	<-written
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):

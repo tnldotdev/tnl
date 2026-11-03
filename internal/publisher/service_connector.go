@@ -3,7 +3,6 @@ package publisher
 import (
 	"context"
 	"errors"
-	"io"
 	"net"
 	"sync"
 	"time"
@@ -18,7 +17,6 @@ type connectorServiceConn struct {
 	admission ServiceConnectorAdmission
 	closeOnce sync.Once
 	closeErr  error
-	afterEOF  func()
 }
 
 func connectorCheck(ctx context.Context, admission ServiceConnectorAdmission) error {
@@ -40,9 +38,6 @@ func (c *connectorServiceConn) Read(p []byte) (int, error) {
 		if current := connectorCheck(c.ctx, c.admission); current != nil {
 			return 0, current
 		}
-	}
-	if errors.Is(err, io.EOF) && c.afterEOF != nil {
-		c.afterEOF()
 	}
 	return n, err
 }

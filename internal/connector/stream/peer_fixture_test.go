@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -23,13 +24,16 @@ import (
 // openings, TLS, renewal and cleanup. publisher policy is covered by its owner
 // and the real daemon consumer tests, not reimplemented here.
 type fixtureConnectorPeer struct {
-	owner   string
-	pair    controlv1.ConnectorPeerPair
-	key     [32]byte
-	paths   [2]chan peer.Carrier
-	nonces  [2][]byte
-	seen    map[string]struct{}
-	session muxsession.Session
+	owner           string
+	pair            controlv1.ConnectorPeerPair
+	key             [32]byte
+	paths           [2]chan peer.Carrier
+	nonces          [2][]byte
+	seen            map[string]struct{}
+	session         muxsession.Session
+	updates         chan tunnelv1.ConnectorPermissionUpdate
+	control         muxsession.Stream
+	permissionReply func(tunnelv1.ConnectorPermissionUpdate, *tunnel.ConnectorPermissionResponder)
 }
 
 type fixtureTLSGate struct {
@@ -134,7 +138,7 @@ func (f *connectorFixture) serveConnectorPeer(p *fixtureConnectorPeer, ready cha
 			return &f.badCertificate, nil
 		}
 		return &f.certificate, nil
-	}}, &quic.Config{InitialPacketSize: tunnelv1.MaxPeerPacketBytes, DisablePathMTUDiscovery: true, MaxIncomingStreams: 64})
+	}}, tunnel.ConnectorQUICConfig())
 	if err != nil {
 		return
 	}
@@ -153,6 +157,36 @@ func (f *connectorFixture) serveConnectorPeer(p *fixtureConnectorPeer, ready cha
 	f.mu.Unlock()
 	var workers sync.WaitGroup
 	defer workers.Wait()
+	setup, stop := context.WithTimeout(f.ctx, 3*time.Second)
+	permissions, err := tunnel.AcceptConnectorPermissionControl(setup, session)
+	stop()
+	if err != nil {
+		return
+	}
+	f.mu.Lock()
+	p.control = permissions
+	f.mu.Unlock()
+	control, cancelControl := context.WithCancel(f.ctx)
+	defer cancelControl()
+	workers.Go(func() {
+		_ = tunnel.ServeConnectorPermissionControl(control, permissions, func(update tunnelv1.ConnectorPermissionUpdate, responder *tunnel.ConnectorPermissionResponder) {
+			f.mu.Lock()
+			updates := p.updates
+			reply := p.permissionReply
+			f.mu.Unlock()
+			if updates != nil {
+				select {
+				case updates <- update:
+				case <-control.Done():
+				}
+			}
+			if reply != nil {
+				workers.Go(func() { reply(update, responder) })
+			} else {
+				_ = responder.Respond(update, true)
+			}
+		}, func() { _ = session.Close() })
+	})
 	for {
 		stream, err := session.AcceptStream(f.ctx)
 		if err != nil {

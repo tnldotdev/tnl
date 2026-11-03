@@ -15,6 +15,34 @@ import (
 var ErrConnectorPeerVisitorOpening = errors.New("tunnelv1: invalid connector peer visitor opening")
 
 const ConnectorPeerVisitorStream StreamKind = "connector_peer_visitor"
+const ConnectorPeerVisitorAccepted StreamKind = "connector_peer_visitor_accepted"
+
+// one acceptance precedes protocol response bytes on the application stream.
+// a connector cannot prepare or renew this visitor until admission exists at
+// the publisher; independent QUIC stream delivery must not imply that order.
+type connectorPeerVisitorAcceptance struct {
+	ProtocolVersion     uint32     `json:"protocol_version"`
+	Kind                StreamKind `json:"kind"`
+	VisitorConnectionID string     `json:"visitor_connection_id"`
+}
+
+func WriteConnectorPeerVisitorAccepted(w io.Writer, visitor string) error {
+	if !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) {
+		return ErrConnectorPeerVisitorOpening
+	}
+	return writeJSONFrame(w, connectorPeerVisitorAcceptance{Version, ConnectorPeerVisitorAccepted, visitor}, 256)
+}
+
+func ReadConnectorPeerVisitorAccepted(r io.Reader, visitor string) error {
+	var accepted connectorPeerVisitorAcceptance
+	if err := readJSONFrame(r, &accepted, 256); err != nil {
+		return err
+	}
+	if !opaqueid.Valid(visitor, opaqueid.VisitorConnectionPrefix) || accepted.ProtocolVersion != Version || accepted.Kind != ConnectorPeerVisitorAccepted || accepted.VisitorConnectionID != visitor {
+		return ErrConnectorPeerVisitorOpening
+	}
+	return nil
+}
 
 // ConnectorPeerSession is the independently checked pair, relay receipt, and
 // publisher run state. callers must obtain SourceIP from the checked relay

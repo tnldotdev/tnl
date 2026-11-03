@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/tls"
 	"encoding/base64"
 	"io"
 	"net"
@@ -15,7 +14,6 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
-	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -141,6 +139,7 @@ func TestConnectorRenewalWaitsForBackgroundRevisionWithinOriginalGuard(t *testin
 			client, server := connectorInnerPair(t, ctx, verification)
 			served := make(chan error, 1)
 			go func() { served <- serveConnectorInner(ctx, p, server) }()
+			connectorControl(t, ctx, client)
 			defer func() { p.Close(); <-served; <-targetDone }()
 			raw, err := client.OpenStream(ctx)
 			if err != nil {
@@ -149,7 +148,7 @@ func TestConnectorRenewalWaitsForBackgroundRevisionWithinOriginalGuard(t *testin
 			if _, err := tunnelv1.WriteConnectorPeerVisitorOpening(raw, entry, nil); err != nil {
 				t.Fatal(err)
 			}
-			secured := tls.Client(tunnel.NewConnectorRequestWriter(raw), verification)
+			secured := connectorVisitorTLS(raw, verification, entry.VisitorConnectionID)
 			defer secured.Close()
 			_ = secured.SetDeadline(time.Now().Add(time.Second))
 			if _, err := secured.Write([]byte("ready")); err != nil {

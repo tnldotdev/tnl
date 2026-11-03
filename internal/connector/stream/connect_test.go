@@ -339,9 +339,12 @@ func (f *connectorFixture) visitor(ctx context.Context, raw muxsession.Stream, n
 	if replay {
 		return
 	}
-	reader := tunnel.NewConnectorRequestReader(raw, initial, func(tunnelv1.ConnectorVisitorPermission) error { return nil })
-	defer reader.Finish()
-	stream = reader
+	if err := tunnelv1.WriteConnectorPeerVisitorAccepted(raw, entry.VisitorConnectionID); err != nil {
+		return
+	}
+	if len(initial) != 0 {
+		return // production connector preparation sends an empty initial block.
+	}
 	certificate := f.certificate
 	if f.wrongCertificate.Load() {
 		certificate = f.badCertificate

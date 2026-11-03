@@ -21,7 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func realTunnelPair(t *testing.T, transport string) (*Session, *Session) {
+func realTunnelTLS(t *testing.T) (*tls.Config, *tls.Config) {
 	t.Helper()
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -39,7 +39,12 @@ func realTunnelPair(t *testing.T, transport string) (*Session, *Session) {
 	roots := x509.NewCertPool()
 	roots.AddCert(leaf)
 	certificate := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: private}
-	serverTLS, clientTLS := &tls.Config{Certificates: []tls.Certificate{certificate}}, &tls.Config{RootCAs: roots}
+	return &tls.Config{Certificates: []tls.Certificate{certificate}}, &tls.Config{RootCAs: roots}
+}
+
+func realTunnelPair(t *testing.T, transport string) (*Session, *Session) {
+	t.Helper()
+	serverTLS, clientTLS := realTunnelTLS(t)
 	ctx := tunnelContext(t)
 	var accept func() (muxsession.Session, error)
 	var closeListener func()

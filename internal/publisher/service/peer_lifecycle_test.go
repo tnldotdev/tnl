@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"io"
 	"net"
@@ -125,6 +124,7 @@ func TestConnectorPeerCloseKeepsPendingChargeUntilPhysicalCloseJoins(t *testing.
 	go func() {
 		served <- serveConnectorInner(ctx, p, &heldConnectorSessionClose{Session: server, entered: entered, release: release})
 	}()
+	connectorControl(t, ctx, client)
 	stream, err := client.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -277,7 +277,7 @@ func TestConnectorPeerServingOwnsFixedCarriersAndRetainedInnerSession(t *testing
 	defer transport.Close()
 	trust := verification.Clone()
 	trust.NextProtos = []string{muxsession.ALPN}
-	connection, err := transport.Dial(ctx, packets.RemoteAddr(), trust, &quic.Config{InitialPacketSize: tunnelv1.MaxPeerPacketBytes, DisablePathMTUDiscovery: true})
+	connection, err := transport.Dial(ctx, packets.RemoteAddr(), trust, tunnel.ConnectorQUICConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,6 +286,7 @@ func TestConnectorPeerServingOwnsFixedCarriersAndRetainedInnerSession(t *testing
 		t.Fatal(err)
 	}
 	defer inner.Close()
+	connectorControl(t, ctx, inner)
 	stream, err := inner.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -293,7 +294,7 @@ func TestConnectorPeerServingOwnsFixedCarriersAndRetainedInnerSession(t *testing
 	if _, err := tunnelv1.WriteConnectorPeerVisitorOpening(stream, opening("T"), nil); err != nil {
 		t.Fatal(err)
 	}
-	secured := tls.Client(tunnel.NewConnectorRequestWriter(stream), verification)
+	secured := connectorVisitorTLS(stream, verification, opening("T").VisitorConnectionID)
 	defer secured.Close()
 	_ = secured.SetDeadline(time.Now().Add(3 * time.Second))
 	echo := func(text string) {
