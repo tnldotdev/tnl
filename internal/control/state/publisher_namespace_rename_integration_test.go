@@ -62,7 +62,7 @@ func TestIntegrationPublisherNamespaceRenameAtomicAuthority(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(grants, after) {
 		t.Fatal("visitor grants changed", err)
 	}
-	if _, err := d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, request.Now); err == nil {
+	if _, err := d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, request.Now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err == nil {
 		t.Fatal("old run token survived namespace rename")
 	}
 	if _, err := d.PrepareServiceRun(t.Context(), assignment.ServiceID, access.PublisherIdentity, "stale-authority", request.Now, ServiceMetadata{Protocol: assignment.Configuration.Protocol, TrustRevision: assignment.TrustRevision}); err == nil {

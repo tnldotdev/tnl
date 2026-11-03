@@ -20,8 +20,7 @@ type serviceControl interface {
 
 type serviceRunControl interface {
 	PrepareServiceRun(context.Context, string, string, string, controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error)
-	HeartbeatServiceRun(context.Context, string, string, credentials.ServiceRunToken) (controlv1.ServiceRunState, error)
-	HeartbeatServiceRunHealth(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error)
+	HeartbeatServiceRun(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error)
 	CloseServiceRun(context.Context, string, string, credentials.ServiceRunToken) error
 }
 
@@ -63,24 +62,12 @@ func (n *Native) PrepareServiceRun(ctx context.Context, serviceID, key, access s
 	return control.PrepareServiceRun(ctx, serviceID, key, access, declaration)
 }
 
-func (n *Native) HeartbeatServiceRun(ctx context.Context, serviceID, runID string, token credentials.ServiceRunToken) (controlv1.ServiceRunState, error) {
+func (n *Native) HeartbeatServiceRun(ctx context.Context, serviceID, runID string, token credentials.ServiceRunToken, health controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
 	control, err := n.serviceControl(serviceID)
 	if err != nil {
 		return controlv1.ServiceRunState{}, err
 	}
-	r, err := control.HeartbeatServiceRun(ctx, serviceID, runID, token)
-	if err == nil {
-		err = n.renewRuntime(ctx)
-	}
-	return r, err
-}
-
-func (n *Native) HeartbeatServiceRunHealth(ctx context.Context, serviceID, runID string, token credentials.ServiceRunToken, health controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
-	control, err := n.serviceControl(serviceID)
-	if err != nil {
-		return controlv1.ServiceRunState{}, err
-	}
-	r, err := control.HeartbeatServiceRunHealth(ctx, serviceID, runID, token, health)
+	r, err := control.HeartbeatServiceRun(ctx, serviceID, runID, token, health)
 	if err == nil {
 		err = n.renewRuntime(ctx)
 	}

@@ -1,21 +1,15 @@
 package state
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
-	"net/netip"
 	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
-	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
 
 // private metadata contains public trust material only, never a target address,
@@ -49,50 +43,7 @@ func (m ServiceMetadata) Validate() error {
 		return nil
 	}
 	s := m.TLS
-	mode := "pem"
-	if s.System {
-		mode = "system"
-	}
-	digest := sha256.Sum256([]byte(s.Hostname + "\x00" + mode + "\x00" + s.PEM))
-	if s.Digest != hex.EncodeToString(digest[:]) {
-		return ErrServiceConflict
-	}
-	return validateServiceTrustRoots(s.Hostname, s.PEM, s.System)
-}
-
-// applied and saved-service snapshots use the same CA and hostname rules.
-func validateServiceTrustRoots(hostname, caPEM string, system bool) error {
-	host, err := naming.CanonicalizeHostname(hostname)
-	if ip, ipErr := netip.ParseAddr(hostname); ipErr == nil {
-		host, err = ip.String(), nil
-	}
-	if err != nil || host != hostname || len(caPEM) > 1<<20 || system == (caPEM != "") {
-		return ErrServiceConflict
-	}
-	if system {
-		return nil
-	}
-	remaining := []byte(caPEM)
-	count := 0
-	for len(bytes.TrimSpace(remaining)) != 0 {
-		if !bytes.HasPrefix(bytes.TrimSpace(remaining), []byte("-----BEGIN CERTIFICATE-----")) {
-			return ErrServiceConflict
-		}
-		block, rest := pem.Decode(remaining)
-		if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
-			return ErrServiceConflict
-		}
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil || !cert.IsCA || cert.KeyUsage != 0 && cert.KeyUsage&x509.KeyUsageCertSign == 0 {
-			return ErrServiceConflict
-		}
-		count++
-		if count > 32 {
-			return ErrServiceConflict
-		}
-		remaining = rest
-	}
-	if count == 0 {
+	if (targettrust.Snapshot{Hostname: s.Hostname, PEM: []byte(s.PEM), System: s.System, Digest: s.Digest}).Validate() != nil {
 		return ErrServiceConflict
 	}
 	return nil

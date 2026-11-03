@@ -280,16 +280,16 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 	if _, err = d.GetPublisherGroupAssignments(t.Context(), a.lease.AccessToken, now); !errors.Is(err, ErrPublisherGroup) {
 		t.Fatal("revoked replica retained group lease", err)
 	}
-	if _, err = d.HeartbeatServiceRun(t.Context(), serviceRuns[0].ServiceID, serviceRuns[0].RunID, serviceRuns[0].Token, now); !errors.Is(err, ErrServiceAccess) {
+	if _, err = d.HeartbeatServiceRun(t.Context(), serviceRuns[0].ServiceID, serviceRuns[0].RunID, serviceRuns[0].Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked replica retained private run", err)
 	}
-	if _, err = d.HeartbeatServiceRun(t.Context(), serviceRuns[1].ServiceID, serviceRuns[1].RunID, serviceRuns[1].Token, now); !errors.Is(err, ErrServiceAccess) {
+	if _, err = d.HeartbeatServiceRun(t.Context(), serviceRuns[1].ServiceID, serviceRuns[1].RunID, serviceRuns[1].Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked replica retained service HTTP run", err)
 	}
-	if state, err := d.HeartbeatServiceRun(t.Context(), serviceRuns[2].ServiceID, serviceRuns[2].RunID, serviceRuns[2].Token, now); err != nil || state.State != "ready" {
+	if state, err := d.HeartbeatServiceRun(t.Context(), serviceRuns[2].ServiceID, serviceRuns[2].RunID, serviceRuns[2].Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil || state.State != "ready" {
 		t.Fatal("revoking one replica disturbed its peer private run", err)
 	}
-	if state, err := d.HeartbeatServiceRun(t.Context(), serviceRuns[3].ServiceID, serviceRuns[3].RunID, serviceRuns[3].Token, now); err != nil || state.State != "ready" {
+	if state, err := d.HeartbeatServiceRun(t.Context(), serviceRuns[3].ServiceID, serviceRuns[3].RunID, serviceRuns[3].Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil || state.State != "ready" {
 		t.Fatal("revoking one replica disturbed its peer HTTP run", err)
 	}
 	// a trust change keeps the saved service ID, closes old runs, and replaces
@@ -320,7 +320,7 @@ func TestIntegrationAppliedProjectGroupAssignmentsRunsAndRevocation(t *testing.T
 		if run.ServiceID != serviceRuns[0].ServiceID {
 			continue
 		}
-		if _, err = d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now); !errors.Is(err, ErrServiceAccess) {
+		if _, err = d.HeartbeatServiceRun(t.Context(), run.ServiceID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); !errors.Is(err, ErrServiceAccess) {
 			t.Fatal("old private run survived trust change", err)
 		}
 	}

@@ -30,7 +30,7 @@ func TestTargetTrustSnapshotsAgreeForAllProtocolsAndPublisherGroups(t *testing.T
 				if err != nil {
 					t.Fatal(err)
 				}
-				remote, err := applied.TargetTrust()
+				remote, err := applied.Snapshot()
 				if err != nil || remote.Digest != local.Digest || remote.Hostname != host || !remote.System {
 					t.Fatalf("local and applied trust diverged: %+v %+v %v", local, remote, err)
 				}

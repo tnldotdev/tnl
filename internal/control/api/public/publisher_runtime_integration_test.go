@@ -65,14 +65,13 @@ func (c *runtimeHTTPTransport) set(h http.Handler, peer, source string) {
 type runtimeNativeControl struct{ *clientcontrol.Client }
 
 var _ interface {
-	HeartbeatServiceRun(context.Context, string, string, credentials.ServiceRunToken) (controlv1.ServiceRunState, error)
-	HeartbeatServiceRunHealth(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error)
+	HeartbeatServiceRun(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error)
 } = (*runtimeNativeControl)(nil)
 
 func (*runtimeNativeControl) HeartbeatPublishRun(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
 	return controlv1.PublishRunHeartbeat{}, nil
 }
-func (*runtimeNativeControl) HeartbeatServiceRunHealth(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
+func (*runtimeNativeControl) HeartbeatServiceRun(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
 	return controlv1.ServiceRunState{}, nil
 }
 
@@ -95,7 +94,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	}
 	m := session.Identity.Memberships[0]
 	const server = "https://control.example"
-	h, err := NewHandler(Config{ControlURL: server}, d, d, nil)
+	h, err := NewHandler(Config{ControlURL: server}, DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +399,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	}
 	native.WithRuntime(installed)
 	transport.set(proxy, "10.0.0.2:1234", "2606:4700:4700::1111")
-	if _, err = native.HeartbeatServiceRunHealth(ctx, service.Id, "service-run", credentials.ServiceRunToken("test"), controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 64}); err != nil {
+	if _, err = native.HeartbeatServiceRun(ctx, service.Id, "service-run", credentials.ServiceRunToken("test"), controlv1.ServiceRunHeartbeat{Healthy: true, StreamCapacity: 64}); err != nil {
 		t.Fatal(err)
 	}
 	if s := read(identity.ClientId); s.AddressFamily != "ipv6" || !s.Active {

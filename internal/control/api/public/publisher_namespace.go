@@ -37,7 +37,7 @@ func publisherRequestSource(r *http.Request) string {
 }
 
 func (h *handler) authenticatePublisher(w http.ResponseWriter, r *http.Request) (PublisherIdentityStore, controlstate.PublisherIdentity, bool) {
-	store, ok := h.store.(PublisherIdentityStore)
+	store, ok := h.dependencies.PublisherIdentities, h.dependencies.PublisherIdentities != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "publisher authentication is unavailable")
 		return nil, controlstate.PublisherIdentity{}, false

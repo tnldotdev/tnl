@@ -41,7 +41,7 @@ func (h *handler) GetAdminServerStatus(response http.ResponseWriter, request *ht
 		converted[index] = int(value)
 	}
 	writeJSON(response, http.StatusOK, controlv1.AdminServerStatus{
-		Role: controlv1.AdminServerStatusRole(h.config.Role), StartedAt: h.config.StartedAt,
+		Role: h.config.Role, StartedAt: h.config.StartedAt,
 		CurrentTime: now, EnabledPublicUrls: converted[0], SuspendedPublicUrls: converted[1],
 		StartingPublishRuns: converted[2], ReadyPublishRuns: converted[3],
 		IngressLeases: converted[4], RelayLeases: converted[5],

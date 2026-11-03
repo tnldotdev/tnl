@@ -40,7 +40,6 @@ import (
 	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
 	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/development/oidc"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -664,7 +663,7 @@ func newCLIWorkflow(t *testing.T) *cliWorkflow {
 	if _, err := database.UpdateACMEAccountRegistration(t.Context(), account.ID, account.ContactEmail, "https://ca.integration.test/account", "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := controlpublic.NewHandler(controlpublic.Config{Role: daemonconfig.RoleControl, ControlURL: f.url, ManagedDomain: "apps.integration.test", ManagedURLMode: naming.ManagedURLModeSimple, OIDCIssuer: provider.URL, OIDCClientID: "server", OIDCClientSecret: "fixture-secret", OIDCScopes: []string{"openid"}, AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 24 * time.Hour, CertificateIssuance: true, DNSAutomation: true, ACMEDirectoryURL: directory}, database, database, nil)
+	handler, err := controlpublic.NewHandler(controlpublic.Config{Role: "control", ControlURL: f.url, ManagedDomain: "apps.integration.test", ManagedURLMode: naming.ManagedURLModeSimple, OIDCIssuer: provider.URL, OIDCClientID: "server", OIDCClientSecret: "fixture-secret", OIDCScopes: []string{"openid"}, AccessTokenLifetime: time.Hour, RefreshTokenLifetime: 24 * time.Hour, CertificateIssuance: true, DNSAutomation: true, ACMEDirectoryURL: directory}, controlpublic.DatabaseStores(database), database, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1068,7 +1067,8 @@ func (f *cliWorkflow) certificateWork(t *testing.T, database *controlstate.Datab
 				return
 			}
 			work.CertificatePEM = append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.issuer.Raw})...)
-			work.State, work.NotBefore, work.NotAfter, work.AvailableAt = "waiting_for_install", &before, &after, now
+			renew := before.Add(after.Sub(before) * 2 / 3)
+			work.State, work.NotBefore, work.NotAfter, work.RenewAt, work.AvailableAt = "waiting_for_install", &before, &after, &renew, now
 			if _, err := database.SaveACMEOrderWork(f.ctx, work, now); err != nil && f.ctx.Err() == nil {
 				t.Errorf("local CA completion: %v", err)
 				return

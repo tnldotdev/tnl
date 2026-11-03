@@ -1,7 +1,6 @@
 package public
 
 import (
-	"context"
 	"net/http"
 	"time"
 
@@ -16,9 +15,7 @@ func (h *handler) GetProjectService(w http.ResponseWriter, r *http.Request, proj
 	if !ok {
 		return
 	}
-	store, ok := h.store.(interface {
-		GetProjectService(context.Context, controlstate.GetProjectServiceRequest) (controlstate.ServiceRecord, error)
-	})
+	store, ok := h.dependencies.ProjectServices, h.dependencies.ProjectServices != nil
 	if !ok {
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "applied service lookup is unavailable")
 		return

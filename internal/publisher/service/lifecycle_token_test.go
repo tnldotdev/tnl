@@ -16,7 +16,7 @@ type opaqueTokenControl struct {
 	heartbeats     int
 }
 
-func (c *opaqueTokenControl) HeartbeatServiceRunHealth(_ context.Context, _, _ string, token credentials.ServiceRunToken, _ controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
+func (c *opaqueTokenControl) HeartbeatServiceRun(_ context.Context, _, _ string, token credentials.ServiceRunToken, _ controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error) {
 	c.heartbeatToken = token
 	c.heartbeats++
 	return controlv1.ServiceRunState{}, c.heartbeatErr

@@ -61,7 +61,7 @@ func TestIntegrationShareTokenPreparesExactPermission(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
-	control, err := controlpublic.NewHandler(controlpublic.Config{ControlURL: server.URL, ManagedDomain: "example.test", OIDCIssuer: server.URL + "/oidc", OIDCClientID: "fixture", OIDCClientSecret: "fixture", OIDCScopes: []string{"openid"}}, d, d, nil)
+	control, err := controlpublic.NewHandler(controlpublic.Config{ControlURL: server.URL, ManagedDomain: "example.test", OIDCIssuer: server.URL + "/oidc", OIDCClientID: "fixture", OIDCClientSecret: "fixture", OIDCScopes: []string{"openid"}}, controlpublic.DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

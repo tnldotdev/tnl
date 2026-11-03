@@ -167,8 +167,16 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if err != nil || retried.Token == bound.Token || retried.Connections[0].Credential != bound.Connections[0].Credential {
 		t.Fatalf("retry rotated assignment or failed: %+v, %v", retried, err)
 	}
-	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, bound.Token, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	var beforeStaleHeartbeat string
+	if err = conn.QueryRow(ctx, `SELECT to_jsonb(run)::text FROM control.service_runs run WHERE id=$1`, prepared.RunID).Scan(&beforeStaleHeartbeat); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, bound.Token, now.Add(time.Second), controlstate.ServiceRunHealth{Healthy: false, StreamCapacity: 7, ActiveStreams: 3}); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("old run token survived retry: %v", err)
+	}
+	var afterStaleHeartbeat string
+	if err = conn.QueryRow(ctx, `SELECT to_jsonb(run)::text FROM control.service_runs run WHERE id=$1`, prepared.RunID).Scan(&afterStaleHeartbeat); err != nil || afterStaleHeartbeat != beforeStaleHeartbeat {
+		t.Fatal("stale token changed durable health, readiness or lease", err)
 	}
 	managedcert.Install(t, d, prepared, retried, now)
 	lease := func(relayID string) controlstate.RelayLeaseIdentity {
@@ -198,7 +206,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 			t.Fatalf("ready before two relays: %+v", inventory)
 		}
 	}
-	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now); err != nil {
+	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal(err)
 	}
 	exec(`UPDATE control.services SET public=true WHERE id=$1`, service.ID)
@@ -221,7 +229,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec(`UPDATE control.relay_leases SET lease_expires_at=$1 WHERE relay_id='relay-a'`, now.Add(5*time.Second))
-	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now); err != nil {
+	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(6 * time.Second)
@@ -247,7 +255,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if _, err = d.PrepareServiceRun(ctx, service.ID, p, "retired-key", now, controlstate.ServiceMetadata{Protocol: "tcp", TrustRevision: 1}); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("retired key prepared another run: %v", err)
 	}
-	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now); err != nil {
+	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatalf("retired enrollment key ended already-bound run: %v", err)
 	}
 	afterRotation, err := d.StartServiceRun(ctx, service.ID, prepared.RunID, prepared.RunNumber, p, now)
@@ -360,7 +368,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		t.Fatal("grant expiry did not end exactly admitted visitor")
 	}
 	exec(`UPDATE control.relay_leases SET draining=true WHERE relay_id=$1`, lost.RelayServiceID)
-	waiting, err := d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now)
+	waiting, err := d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0})
 	if err != nil || waiting.State != "ready" || waiting.Connections[1].PublisherConnectionID != survivor.PublisherConnectionID || waiting.Connections[1].Revision != survivor.Revision {
 		t.Fatalf("waiting for replacement harmed surviving slot: %+v, %v", waiting, err)
 	}
@@ -369,7 +377,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 		t.Fatalf("existing visitor admissions changed during relay recovery: before=%d after=%d: %v", admittedBefore, admittedAfter, err)
 	}
 	exec(`UPDATE control.relay_leases SET draining=false WHERE relay_id=$1`, lost.RelayServiceID)
-	repaired, err := d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now)
+	repaired, err := d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0})
 	if err != nil || repaired.State != "ready" || repaired.Connections[0].Revision != lost.Revision+1 ||
 		repaired.Connections[0].PublisherConnectionID == lost.PublisherConnectionID ||
 		repaired.Connections[0].RelayServiceID == survivor.RelayServiceID ||
@@ -419,7 +427,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if _, err = d.SelectServiceRun(ctx, service.ID, visitorID, device, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked publisher grant selected a run: %v", err)
 	}
-	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now); !errors.Is(err, controlstate.ErrServiceAccess) {
+	if _, err = d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("revoked publisher grant renewed run: %v", err)
 	}
 	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), prepared.ServicePort, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
@@ -487,7 +495,7 @@ func TestIntegrationServiceAuthority(t *testing.T) {
 	if _, err = d.AdmitPublicServiceVisitor(ctx, ingress, controlstate.PrimaryIngressPoolID, newID(opaqueid.VisitorConnectionPrefix), prepared.ServicePort, source, now); !errors.Is(err, controlstate.ErrServiceAccess) {
 		t.Fatalf("zero live relays accepted visitor before forwarding: %v", err)
 	}
-	recovering, err := d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now)
+	recovering, err := d.HeartbeatServiceRun(ctx, service.ID, prepared.RunID, retried.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0})
 	if err != nil || recovering.State != "starting" || recovering.Connections[0].Revision <= newSlot.Revision ||
 		recovering.Connections[1].Revision <= survivor.Revision {
 		t.Fatalf("zero-relay replacement assignments: %+v, %v", recovering, err)

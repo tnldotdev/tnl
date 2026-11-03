@@ -315,17 +315,14 @@ func unusedTCPAddress(t *testing.T) string {
 	}
 }
 
-func unusedUDPAddress(t *testing.T) string {
+func integrationPacketListener(t *testing.T) net.PacketConn {
 	t.Helper()
 	connection, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	address := connection.LocalAddr().String()
-	if err := connection.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return address
+	t.Cleanup(func() { _ = connection.Close() })
+	return connection
 }
 
 func splitTestConfig(role daemonconfig.Role, metricsAddress string) daemonconfig.Config {
@@ -343,7 +340,7 @@ func splitTestConfig(role daemonconfig.Role, metricsAddress string) daemonconfig
 	}
 }
 
-func splitTestRelayConfig(t *testing.T, controlHostname, relayServiceID, relayID, certificateFile, privateKeyFile string) daemonconfig.Config {
+func splitTestRelayConfig(t *testing.T, controlHostname, relayServiceID, relayID, certificateFile, privateKeyFile string) (daemonconfig.Config, runtimeListeners) {
 	t.Helper()
 	cfg := splitTestConfig(daemonconfig.RoleRelay, unusedTCPAddress(t))
 	cfg.ControlHostname = controlHostname
@@ -354,10 +351,11 @@ func splitTestRelayConfig(t *testing.T, controlHostname, relayServiceID, relayID
 	cfg.RelayTLSCertificateFile = certificateFile
 	cfg.RelayTLSPrivateKeyFile = privateKeyFile
 	cfg.RelayTCPListen = unusedTCPAddress(t)
-	cfg.RelayUDPListen = unusedUDPAddress(t)
+	listeners := runtimeListeners{relayUDP: integrationPacketListener(t)}
+	cfg.RelayUDPListen = listeners.relayUDP.LocalAddr().String()
 	cfg.InternalRelayListen = unusedTCPAddress(t)
 	cfg.InternalRelayAddress = cfg.InternalRelayListen
-	return cfg
+	return cfg, listeners
 }
 
 func splitTestServiceHTTPClient(t *testing.T, roots *x509.CertPool, controlAddress string) *http.Client {

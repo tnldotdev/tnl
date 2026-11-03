@@ -261,7 +261,7 @@ func TestCreatePublishRunReturnsAuthoritativeRouteState(t *testing.T) {
 			ChallengeMethod: certificateidentity.ChallengeDNS01,
 		},
 	}}
-	h := &handler{config: Config{DNSAutomation: true}, store: store, authorizer: authorizer}
+	h := &handler{config: Config{DNSAutomation: true}, store: store, dependencies: Stores{PublisherRuns: store}, authorizer: authorizer}
 	store.publicURL.PolicyRevision = 9
 	store.publisher = &controlstate.PublisherIdentity{ID: "publisher_1", KeyID: "key_1", GrantID: "grant_1", CreatorID: "identity_1", Scope: controlstate.PublisherScope{TeamID: "team_1", Kind: "saved_public_url", PublicURLID: "public_url_1"}}
 	store.publisherPlan = authorizer.decision.CertificatePlan
@@ -296,7 +296,7 @@ func TestCreatePublishRunRejectsUnconfiguredDNSPlan(t *testing.T) {
 	store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_1"}}
 	store.publisher = &controlstate.PublisherIdentity{ID: "publisher_1", Scope: controlstate.PublisherScope{TeamID: "team_1", Kind: "saved_public_url", PublicURLID: "public_url_1"}}
 	store.publisherPlan = &authorization.CertificatePlan{ChallengeMethod: "dns-01"}
-	h := &handler{store: store, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{CertificatePlan: &authorization.CertificatePlan{ChallengeMethod: "dns-01"}}}}
+	h := &handler{store: store, dependencies: Stores{PublisherRuns: store}, authorizer: &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{CertificatePlan: &authorization.CertificatePlan{ChallengeMethod: "dns-01"}}}}
 	request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1/publish-runs", nil)
 	request.Header.Set("Authorization", "Bearer access-token")
 	response := httptest.NewRecorder()

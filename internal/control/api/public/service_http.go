@@ -29,7 +29,7 @@ func (h *handler) serviceHTTP(w http.ResponseWriter, r *http.Request) (serviceHT
 		writeBearerProblem(w)
 		return nil, "", false
 	}
-	store, ok := h.store.(serviceHTTPStore)
+	store, ok := h.dependencies.ServiceHTTP, h.dependencies.ServiceHTTP != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "service HTTP authorization is unavailable")
 	}
@@ -144,9 +144,7 @@ func (h *handler) ListServiceHTTPGrants(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	store, ok := h.store.(interface {
-		ListServiceHTTPGrants(context.Context, string, string, time.Time) ([]controlv1.ServiceHTTPGrantSummary, error)
-	})
+	store, ok := h.dependencies.ServiceHTTP, h.dependencies.ServiceHTTP != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "service HTTP grants are unavailable")
 		return
