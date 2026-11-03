@@ -169,7 +169,7 @@ func TestIntegrationServiceActorRequestBindingAndCurrentManager(t *testing.T) {
 	serviceResult(t, f.serviceCall("GET", base, serviceOwnerSub, nil, jti), 200, nil)
 	serviceProblem(t, f.serviceCall("GET", base+"/grants", serviceOwnerSub, nil, jti), 401, authorityv1.Unauthenticated)
 	// no service assertion authenticates the existing public URL control API.
-	public, err := NewHandler(Config{}, f.d, f.d, nil)
+	public, err := NewHandler(Config{}, DatabaseStores(f.d), f.d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestIntegrationServiceActorInvitationAndServiceHTTPLifecycle(t *testing.T) 
 	if len(summaries) != 1 || summaries[0].Id != httpGrant.GrantId || summaries[0].Subject.Kind != "service" || summaries[0].Subject.Id != service.ID || strings.Contains(listed.Body.String(), httpGrant.RefreshCredential) || strings.Contains(listed.Body.String(), httpGrant.Permission.VisitorToken) {
 		t.Fatal("HTTP inventory lost exact owned ID or exposed secret")
 	}
-	native, err := NewHandler(Config{}, f.d, f.d, nil)
+	native, err := NewHandler(Config{}, DatabaseStores(f.d), f.d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

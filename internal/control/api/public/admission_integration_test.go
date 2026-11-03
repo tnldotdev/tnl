@@ -55,7 +55,7 @@ func TestIntegrationDrainingControlAuthenticatedRenewalAndCleanup(t *testing.T) 
 		}
 	}
 	var draining atomic.Bool
-	h, err := NewHandler(Config{DNSAutomation: true, AcceptingNewWork: func() bool { return !draining.Load() }}, d, d, nil)
+	h, err := NewHandler(Config{DNSAutomation: true, AcceptingNewWork: func() bool { return !draining.Load() }}, DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

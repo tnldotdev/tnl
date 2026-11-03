@@ -95,7 +95,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	}
 	m := session.Identity.Memberships[0]
 	const server = "https://control.example"
-	h, err := NewHandler(Config{ControlURL: server}, d, d, nil)
+	h, err := NewHandler(Config{ControlURL: server}, DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

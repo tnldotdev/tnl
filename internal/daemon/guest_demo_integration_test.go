@@ -78,7 +78,7 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 	h, err := controlpublic.NewHandler(controlpublic.Config{
 		ManagedDomain:    "tnl.wtf",
 		GuestDemoEnabled: true, DNSAutomation: true,
-	}, state, state, state.Readiness)
+	}, controlpublic.DatabaseStores(state), state, state.Readiness)
 	if err != nil {
 		t.Fatal(err)
 	}

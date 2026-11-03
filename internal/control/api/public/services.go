@@ -37,7 +37,7 @@ func (h *handler) serviceVisitor(w http.ResponseWriter, r *http.Request) (servic
 	if !ok {
 		return nil, "", false
 	}
-	store, ok := h.store.(serviceVisitorStore)
+	store, ok := h.dependencies.Services, h.dependencies.Services != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "services are unavailable")
 		return nil, "", false
@@ -176,9 +176,7 @@ func (h *handler) GetPublisherService(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, 404, controlv1.NotFound, "service not found")
 		return
 	}
-	store, ok := h.store.(interface {
-		GetServiceForPublisher(context.Context, string, controlstate.PublisherIdentity, time.Time) (controlstate.ServiceRecord, error)
-	})
+	store, ok := h.dependencies.Services, h.dependencies.Services != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "service state is unavailable")
 		return
