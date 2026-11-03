@@ -30,6 +30,9 @@ func TestIntegrationVisitorTokenIssuanceUsesCurrentScopeAndParentDeadlines(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
+	if issued.ServiceTrustRevision != 0 {
+		t.Fatal("public URL permission included a service metadata revision")
+	}
 	keys := stateTestVisitorKeys(t, d, now)
 	verified, err := visitortoken.VerifyBearer(issued.Token, stateTestVisitorView(issued.Permission, keys, now), now)
 	if err != nil || verified.Facts().Scope != scope || verified.Facts().Subject != (visitortoken.Browser{IdentityID: principal.IdentityID, SessionID: principal.SessionID}) || !verified.Facts().ExpiresAt.Equal(now.Add(5*time.Minute).Truncate(time.Second)) {
@@ -61,6 +64,41 @@ func TestIntegrationVisitorTokenIssuanceUsesCurrentScopeAndParentDeadlines(t *te
 	if _, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, BrowserSessionTokenSource{Secret: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))}, now); !errors.Is(err, ErrVisitorPermission) {
 		t.Fatal("unknown browser sign-in fell back to anonymous", err)
 	}
+}
+
+func TestIntegrationServicePermissionReportsCurrentTrustRevisionWithoutSelectingRun(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "visitor_token_service_metadata")
+	request := oidcRouteRequest(t, d, now)
+	session := newOIDCSession(t, d, now)
+	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
+	ctx := WithControlPrincipal(t.Context(), principal)
+	service, err := d.CreateServiceAt(ctx, request.TeamID, principal.IdentityID, "revision", "revision", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{8}, 32))
+	device, err := d.EnrollVisitorDevice(ctx, principal.IdentityID, key.Public().(ed25519.PublicKey), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
+	read := func(want int64) {
+		t.Helper()
+		issued, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, DeviceTokenSource{DeviceID: device.ID}, now)
+		if err != nil || issued.ServiceTrustRevision != want {
+			t.Fatalf("service permission trust revision = %d, want %d: %v", issued.ServiceTrustRevision, want, err)
+		}
+		var runs int
+		if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.service_runs WHERE service_id=$1`, service.ID).Scan(&runs); err != nil || runs != 0 {
+			t.Fatal("permission issuance selected a publisher run", err)
+		}
+	}
+	read(service.TrustRevision)
+	updated, err := d.ConfigureService(ctx, service.ID, principal.IdentityID, ServiceMetadata{Protocol: "tcp", TrustRevision: service.TrustRevision}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read(updated.TrustRevision)
 }
 
 func TestIntegrationConcurrentVisitorTokenIssuanceRetriesSerialization(t *testing.T) {
@@ -280,6 +318,9 @@ func TestIntegrationVisitorTokenWorkloadKeepsSelectedServicesKeyAndFixedDeadline
 	issued, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, source, now)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if issued.ServiceTrustRevision < 1 {
+		t.Fatal("workload permission omitted service metadata revision")
 	}
 	parent, ok := issued.Permission.Subject.(visitortoken.Workload)
 	if !ok || parent.SessionID != session.ID || issued.Permission.ExpiresAt.After(session.LeaseExpiresAt) || issued.Permission.ExpiresAt.After(session.ExpiresAt) {
