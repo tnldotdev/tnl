@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -463,18 +462,22 @@ func TestBlockedGrantCanRestartWithoutLeakingErrorText(t *testing.T) {
 
 func TestServiceRejectsASecondSupervisor(t *testing.T) {
 	r := testRegistry(t)
-	cancel, done := startEngine(t, Engine{Registry: r, PollInterval: 5 * time.Millisecond})
-	await(t, func() bool {
-		lock, err := filelock.Acquire(filepath.Join(r.Root(), "service.lock"), filelock.Nonblocking, r.owner)
-		if lock != nil {
-			lock.Close()
-		}
-		return errors.Is(err, filelock.ErrLocked)
-	})
+	locked := make(chan struct{})
+	cancel, done := startEngine(t, Engine{Registry: r, PollInterval: 5 * time.Millisecond, Initialize: func(context.Context) error {
+		close(locked)
+		return nil
+	}})
+	select {
+	case <-locked:
+	case err := <-done:
+		t.Fatal("first supervisor exited before acquiring its lock", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("first supervisor did not acquire its lock")
+	}
 	ctx, stop := context.WithTimeout(t.Context(), time.Second)
 	defer stop()
-	if err := (Engine{Registry: r}).Serve(ctx); err == nil {
-		t.Fatal("two supervisors acquired the same registry")
+	if err := (Engine{Registry: r}).Serve(ctx); !errors.Is(err, filelock.ErrLocked) {
+		t.Fatal("second supervisor did not report lock contention", err)
 	}
 	joinEngine(t, cancel, done)
 }

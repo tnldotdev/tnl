@@ -25,7 +25,7 @@ func (h *handler) workloadVisitor(w http.ResponseWriter, r *http.Request) (Workl
 		writeBearerProblem(w)
 		return nil, "", false
 	}
-	store, ok := h.store.(WorkloadVisitorStore)
+	store, ok := h.dependencies.Workloads, h.dependencies.Workloads != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "workload visitor access is unavailable")
 		return nil, "", false

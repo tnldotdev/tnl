@@ -56,7 +56,7 @@ func (h *handler) projectManager(w http.ResponseWriter, r *http.Request, team st
 
 func (h *handler) ApplyProjectConfiguration(w http.ResponseWriter, r *http.Request, project string) {
 	w.Header().Set("Cache-Control", "no-store")
-	store, ok := h.store.(ProjectConfigurationStore)
+	store, ok := h.dependencies.ProjectConfiguration, h.dependencies.ProjectConfiguration != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "project configuration is unavailable")
 		return
@@ -96,7 +96,7 @@ func (h *handler) ApplyProjectConfiguration(w http.ResponseWriter, r *http.Reque
 
 func (h *handler) GetProjectConfiguration(w http.ResponseWriter, r *http.Request, project string, params controlv1.GetProjectConfigurationParams) {
 	w.Header().Set("Cache-Control", "no-store")
-	store, ok := h.store.(ProjectConfigurationStore)
+	store, ok := h.dependencies.ProjectConfiguration, h.dependencies.ProjectConfiguration != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "project configuration is unavailable")
 		return

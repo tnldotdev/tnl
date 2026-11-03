@@ -10,6 +10,38 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
+func TestConnectorPeerPreparationRetriesUnconfirmedInstallation(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		installed time.Duration
+		want      bool
+	}{
+		{"not confirmed", 0, true},
+		{"confirmation near expiry", 5 * time.Second, true},
+		{"confirmation expired", -time.Second, true},
+		{"confirmation current", time.Minute, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			b, p, _, _, _ := connectorPeerFixture(t, "127.0.0.1:1")
+			binding := p.bindingSnapshot()
+			binding.until = time.Now().Add(time.Minute)
+			binding.authorityUntil = binding.until
+			if err := p.Renew(binding); err != nil {
+				t.Fatal(err)
+			}
+			b.mu.Lock()
+			if test.installed != 0 {
+				p.installedUntil = time.Now().Add(test.installed)
+			}
+			b.mu.Unlock()
+			candidate := controlv1.ConnectorPeerPairCandidate{PairId: binding.pairID, DeliveryGeneration: binding.generation}
+			if got := b.peerNeedsPreparation(candidate); got != test.want {
+				t.Fatalf("installation retry = %t, want %t after binding renewal", got, test.want)
+			}
+		})
+	}
+}
+
 func TestNativeWorkloadInstallationWaitsForBackgroundPolicy(t *testing.T) {
 	b, p, _, _, control := connectorPeerFixture(t, "127.0.0.1:1")
 	binding := p.bindingSnapshot()

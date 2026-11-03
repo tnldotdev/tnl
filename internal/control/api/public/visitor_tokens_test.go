@@ -58,6 +58,7 @@ func TestVisitorTokenResponseServiceTrustRevision(t *testing.T) {
 
 type serviceBrowserTokenStore struct {
 	PublicURLStore
+	ServiceHTTPStore
 	refreshed, issued bool
 	err               error
 }
@@ -87,7 +88,7 @@ func TestVisitorTokenRefreshesServiceBrowserBeforeIssuingPermission(t *testing.T
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &serviceBrowserTokenStore{err: test.err}
-			h := &handler{store: store}
+			h := &handler{store: store, dependencies: Stores{VisitorTokens: store, ServiceHTTP: store}}
 			request := httptest.NewRequest(http.MethodPost, "/v1/visitor-tokens", strings.NewReader(`{"resource":{"kind":"service","id":"svc_`+strings.Repeat("A", 22)+`"},"source":{"kind":"browser_session","secret":"`+strings.Repeat("B", 43)+`"}}`))
 			response := httptest.NewRecorder()
 			h.IssueVisitorToken(response, request)

@@ -84,12 +84,13 @@ func TestConnectionKubernetesUsesSavedAuthHint(t *testing.T) {
 	localCluster, localRegion := "unapplied-local", "us-west-2"
 	b := connectorConnectionBackend{directory: directory, executable: "/absolute/tnl", connectorConnectionSession: connectorConnectionSession{teamID: team}, scope: connectorruntime.Context{Workload: "test", Server: "https://control.example", TeamID: team, SourceID: "source", ProjectLabel: "shop"}}
 	b.project.Config.Services = map[string]config.Service{"cluster": {Target: &config.ServiceTarget{Type: "eks", Cluster: &localCluster, Region: &localRegion}}}
-	p := preparedConnection{service: controlv1.Service{Id: service, Endpoint: &controlv1.ServiceEndpoint{Hostname: "cluster.example"}, KubernetesAuth: &controlv1.KubernetesAuth{Provider: controlv1.KubernetesEKS, Cluster: "applied-cluster", Region: "us-east-1"}}, connection: connectorruntime.Connection{Host: "127.0.0.1", Port: 25443, URL: "https://cluster.example:25443"}}
-	if err := b.prepareKube(t.Context(), "cluster", &p); err != nil {
+	saved := controlv1.Service{Id: service, Endpoint: &controlv1.ServiceEndpoint{Hostname: "cluster.example"}, KubernetesAuth: &controlv1.KubernetesAuth{Provider: controlv1.KubernetesEKS, Cluster: "applied-cluster", Region: "us-east-1"}}
+	kube, err := b.prepareKube(t.Context(), "cluster", saved, connectorruntime.Connection{Host: "127.0.0.1", Port: 25443, URL: "https://cluster.example:25443"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.sessionKubePlan.CleanupSession(t.Context(), b.sessionKubeResult) })
-	if p.kubeSource.EKS == nil || p.kubeSource.EKS.Cluster != "applied-cluster" || p.kubeSource.EKS.Region != "us-east-1" {
+	if kube.source.EKS == nil || kube.source.EKS.Cluster != "applied-cluster" || kube.source.EKS.Region != "us-east-1" {
 		t.Fatal("native credentials used unapplied local selectors")
 	}
 }

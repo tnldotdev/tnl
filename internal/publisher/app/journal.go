@@ -21,6 +21,7 @@ var ErrRegistrationStale = errors.New("app registration is stale")
 
 // Service uses Name as its registration key: a configured service name or an
 // invocation ID. an invocation key is never a configured tunnel service name.
+// lifecycle transitions live in service_lifecycle.go; this remains the wire DTO.
 type Service struct {
 	Project           string       `json:"project,omitempty"`
 	Name              string       `json:"service"`

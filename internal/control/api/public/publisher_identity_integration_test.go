@@ -65,7 +65,7 @@ func testPublisherIdentityHTTPContract(t *testing.T, selection *trafficlimits.Se
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, err := NewHandler(Config{DNSAutomation: true}, d, d, nil)
+	control, err := NewHandler(Config{DNSAutomation: true}, DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

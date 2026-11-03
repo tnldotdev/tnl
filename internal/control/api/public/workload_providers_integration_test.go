@@ -63,7 +63,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if _, err = controlauthority.Register(mux, controlauthority.Config{ControlURL: server.URL, HTTPClient: issuer.Client}, d); err != nil {
 				t.Fatal(err)
 			}
-			h, err := NewHandler(Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple}, d, d, nil)
+			h, err := NewHandler(Config{ControlURL: server.URL, ManagedURLMode: naming.ManagedURLModeSimple}, DatabaseStores(d), d, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

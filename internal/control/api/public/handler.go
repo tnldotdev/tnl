@@ -5,14 +5,12 @@ import (
 	"context"
 	"net"
 	"net/http"
-	"net/netip"
 	"time"
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/control/webhooks"
-	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
@@ -29,7 +27,7 @@ const (
 type Config struct {
 	TrafficDefaults                   trafficlimits.Limits
 	TrafficCeiling                    trafficlimits.Limits
-	Role                              daemonconfig.Role
+	Role                              controlv1.AdminServerStatusRole
 	StartedAt                         time.Time
 	ManagedDomain                     string
 	ManagedURLMode                    naming.ManagedURLMode
@@ -90,13 +88,6 @@ type AdminStore interface {
 	SetMaintenanceControl(context.Context, controlstate.MaintenanceControlName, bool, string, string, time.Time) (controlstate.MaintenanceControl, error)
 }
 
-// Store composes the control API's independent state boundaries.
-type Store interface {
-	PublicURLStore
-	CertificateStore
-	AdminStore
-}
-
 type PreviewStore interface {
 	CreatePreview(context.Context, string, string, string, time.Time) (controlstate.Preview, error)
 	GetPreview(context.Context, string) (controlstate.Preview, error)
@@ -155,6 +146,7 @@ type AuthorizationStore interface {
 }
 
 type handler struct {
+	dependencies      Stores
 	visitorState      VisitorStore
 	config            Config
 	store             PublicURLStore
@@ -168,17 +160,10 @@ type handler struct {
 	shares            ShareStore
 	shareAccess       ShareAccessStore
 	feedback          FeedbackStore
-	guests            interface {
-		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
-		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
-		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
-		GuestSourceMatches(controlstate.GuestTrial, string) (bool, error)
-		AllocateGuestDemoNumber(context.Context, string, time.Time) (int64, error)
-		GuestIssuanceAllowed(context.Context, netip.Addr, time.Time) error
-	}
-	readiness      func(context.Context) error
-	authorizer     publicURLAuthorizer
-	webhookCatalog *webhooks.Catalog
+	guests            GuestStore
+	readiness         func(context.Context) error
+	authorizer        publicURLAuthorizer
+	webhookCatalog    *webhooks.Catalog
 }
 
 var _ controlv1.ServerInterface = (*handler)(nil)
@@ -186,7 +171,7 @@ var _ controlv1.ServerInterface = (*handler)(nil)
 // NewHandler constructs the control API.
 func NewHandler(
 	cfg Config,
-	store Store,
+	stores Stores,
 	authorizationStore AuthorizationStore,
 	readiness func(context.Context) error,
 ) (*http.ServeMux, error) {
@@ -196,46 +181,18 @@ func NewHandler(
 	if cfg.TrafficCeiling == (trafficlimits.Limits{}) {
 		cfg.TrafficCeiling = trafficlimits.Ceiling()
 	}
-	if err := daemonconfig.ValidateTraffic(cfg.TrafficDefaults, cfg.TrafficCeiling); err != nil {
+	if err := trafficlimits.ValidateDefaults(cfg.TrafficDefaults, cfg.TrafficCeiling); err != nil {
 		return nil, err
 	}
 	cfg.TrafficDefaults.RatePer = cfg.TrafficDefaults.Period()
 	cfg.TrafficCeiling.RatePer = cfg.TrafficCeiling.Period()
-	h := &handler{config: cfg, store: store, certificates: store, admin: store, readiness: readiness}
-	if visitorState, ok := store.(VisitorStore); ok {
-		h.visitorState = visitorState
-	}
+	h := &handler{dependencies: stores, config: cfg, store: stores.PublicURLs, certificates: stores.Certificates, admin: stores.Admin, readiness: readiness,
+		visitorState: stores.Visitors, previews: stores.Previews, previewTeamAccess: stores.PreviewTeamAccess,
+		browserAccess: stores.BrowserAccess, shares: stores.Shares, shareAccess: stores.ShareAccess,
+		feedback: stores.Feedback, guests: stores.Guests}
 	h.webhookCatalog = cfg.WebhookCatalog
 	if h.webhookCatalog == nil {
 		h.webhookCatalog = webhooks.New(cfg.HTTPClient)
-	}
-	if previews, ok := store.(PreviewStore); ok {
-		h.previews = previews
-	}
-	if access, ok := store.(PreviewTeamAccessStore); ok {
-		h.previewTeamAccess = access
-	}
-	if access, ok := store.(BrowserAccessStore); ok {
-		h.browserAccess = access
-	}
-	if shares, ok := store.(ShareStore); ok {
-		h.shares = shares
-	}
-	if shareAccess, ok := store.(ShareAccessStore); ok {
-		h.shareAccess = shareAccess
-	}
-	if feedback, ok := store.(FeedbackStore); ok {
-		h.feedback = feedback
-	}
-	if guestStore, ok := store.(interface {
-		CreateGuestTrial(context.Context, controlstate.NewGuestTrial, string, time.Time) (string, error)
-		GuestTrialByAccessToken(context.Context, credentials.AccessToken) (controlstate.GuestTrial, error)
-		GuestOwnsPublicURL(context.Context, string, string) (bool, error)
-		GuestSourceMatches(controlstate.GuestTrial, string) (bool, error)
-		AllocateGuestDemoNumber(context.Context, string, time.Time) (int64, error)
-		GuestIssuanceAllowed(context.Context, netip.Addr, time.Time) error
-	}); ok {
-		h.guests = guestStore
 	}
 	if h.config.StartedAt.IsZero() {
 		h.config.StartedAt = time.Now().UTC()
@@ -263,7 +220,7 @@ func NewHandler(
 		}
 	}
 	if cfg.GuestDemoEnabled && h.guests != nil && h.authorizer != nil {
-		if guestStore, ok := store.(guestAuthorizationStore); ok {
+		if guestStore := stores.GuestAuthorization; guestStore != nil {
 			h.authorizer = guestAuthorizer{
 				fallback: h.authorizer, store: guestStore, managedDomain: cfg.ManagedDomain,
 				dnsAutomation: cfg.DNSAutomation,

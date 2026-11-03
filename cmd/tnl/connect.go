@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/tnldotdev/tnl/internal/client/detached"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -78,7 +79,7 @@ func (flags connectStartCommand) options() connector.StartOptions {
 		Foreground: flags.Foreground, Detach: flags.Detach, Install: flags.Install, System: flags.System, SystemStateDir: flags.SystemStateDir, DetachedChild: flags.DetachedChild, Stdio: flags.Stdio, Output: string(flags.Output), DetachLaunch: flags.detach,
 		Ready: func(destination io.Writer, profile connector.Profile, listen string) error {
 			return writeNativeConnection(destination, profile, flags.Output, listen)
-		}, Starting: detachedPublicationStarting, PublicationReady: detachedPublicationReady, Prepared: detachedConnectorPrepared}
+		}, Starting: detached.Starting, PublicationReady: detached.Ready, Prepared: func(ctx context.Context, profile connector.Profile) { detached.SetConnection(ctx, profile) }}
 }
 
 func runConnectStart(ctx context.Context, flags connectStartCommand, output, diagnostics io.Writer) error {
