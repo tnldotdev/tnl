@@ -32,10 +32,11 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 	t.Helper()
 	databaseURL, inspect := standaloneTestDatabase(t)
 	publicListener := serviceRuntimeListener(t)
-	publicAddress, relayUDPAddress := publicListener.Addr().String(), unusedUDPAddress(t)
+	relayUDP := integrationPacketListener(t)
+	publicAddress, relayUDPAddress := publicListener.Addr().String(), relayUDP.LocalAddr().String()
 	dns := newPrivateFixtureDNS(t)
 	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address)
-	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDPAddress, pebble.directoryURL)
+	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDP, pebble.directoryURL)
 	ca := newIntegrationTestCA(t)
 	controlCertificate := ca.issueServer(t, cfg.ServerHostname())
 	// publication fixtures exercise public URL issuance. relay DNS-01 polling
@@ -74,7 +75,7 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 		visitor: newIntegrationVisitor(t, pebble.roots, publicAddress, owner)}
 }
 
-func standalonePublishConfig(t *testing.T, databaseURL string, publicListener net.Listener, relayUDPAddress, directoryURL string) (daemonconfig.Config, runtimeListeners) {
+func standalonePublishConfig(t *testing.T, databaseURL string, publicListener net.Listener, relayUDP net.PacketConn, directoryURL string) (daemonconfig.Config, runtimeListeners) {
 	t.Helper()
 	const serverDomain = "integration.test"
 	// standalone uses one public listener and creates its internal listeners on
@@ -82,7 +83,8 @@ func standalonePublishConfig(t *testing.T, databaseURL string, publicListener ne
 	servicePorts, serviceListeners := reserveIntegrationServicePorts(t)
 	listeners := runtimeListeners{
 		control: serviceRuntimeListener(t), metrics: serviceRuntimeListener(t),
-		ingress: combineIngressListeners(append([]net.Listener{publicListener}, serviceListeners...)),
+		relayUDP: relayUDP,
+		ingress:  combineIngressListeners(append([]net.Listener{publicListener}, serviceListeners...)),
 	}
 	t.Cleanup(func() { _ = listeners.ingress.Close() })
 	return daemonconfig.Config{
@@ -91,7 +93,7 @@ func standalonePublishConfig(t *testing.T, databaseURL string, publicListener ne
 		ControlListen: listeners.control.Addr().String(), PrivateControlListen: "127.0.0.1:1", IngressListen: publicListener.Addr().String(),
 		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
 		Route53ManagedZoneID: "fixture-zone", Route53ServerZoneID: "fixture-zone", Route53Region: "us-east-1", IngressIPv4Addresses: []string{"127.0.0.1"},
-		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: relayUDPAddress, InternalRelayListen: "127.0.0.1:1",
+		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: relayUDP.LocalAddr().String(), InternalRelayListen: "127.0.0.1:1",
 		ServerDomain: serverDomain, ManagedDomain: "routes." + serverDomain,
 		ACMEDirectoryURL: directoryURL, ACMEEmail: "integration@example.test", ACMEAcceptTerms: true, ACMEProfile: "tlsserver",
 		PublicURLCertificateWorkers: 4,

@@ -16,6 +16,13 @@ import (
 // PeerBinding can only be constructed from the current run's authenticated
 // control delivery. application openings and packet equality cannot mint it.
 type PeerBinding struct {
+	peerIdentity
+	peerLease
+}
+
+// peerIdentity is fixed for the lifetime of a retained inner session. lease
+// renewal supplies new deadline evidence, never another identity or carrier.
+type peerIdentity struct {
 	pairID, serviceID, runID, publisherID string
 	generation                            int64
 	number                                uint64
@@ -24,8 +31,11 @@ type PeerBinding struct {
 	source                                netip.Addr
 	subject                               tunnelv1.VisitorSubject
 	relays                                [2]controlv1.ConnectorPeerPairRelay
-	until                                 time.Time
-	authorityUntil                        time.Time
+}
+
+type peerLease struct {
+	until          time.Time
+	authorityUntil time.Time
 }
 
 func (PeerBinding) String() string   { return "connector peer binding" }
@@ -57,8 +67,9 @@ func PreparePeerBinding(ctx context.Context, control peerDeliveryControl, servic
 		!opaqueid.Valid(d.PublisherIdentityId, opaqueid.PublisherIdentityPrefix) || len(d.Relays) != 2 || d.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute || !started.Add(duration).After(time.Now()) || ctx.Err() != nil {
 		return PeerBinding{}, ErrPrivateStream
 	}
-	b := PeerBinding{pairID: pairID, serviceID: serviceID, runID: runID, publisherID: d.PublisherIdentityId,
-		generation: generation, number: uint64(d.RunNumber), delivery: id, source: source, subject: subject, until: started.Add(duration), authorityUntil: d.ExpiresAt}
+	b := PeerBinding{peerIdentity: peerIdentity{pairID: pairID, serviceID: serviceID, runID: runID, publisherID: d.PublisherIdentityId,
+		generation: generation, number: uint64(d.RunNumber), delivery: id, source: source, subject: subject},
+		peerLease: peerLease{until: started.Add(duration), authorityUntil: d.ExpiresAt}}
 	copy(b.key[:], key)
 	copy(b.relays[:], d.Relays)
 	if b.key == [32]byte{} || b.relays[0].PublisherConnectionId == b.relays[1].PublisherConnectionId || b.relays[0].RelayLease.RelayServiceId == b.relays[1].RelayLease.RelayServiceId {

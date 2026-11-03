@@ -73,7 +73,7 @@ func TestIntegrationServiceAuditBatchAPI(t *testing.T) {
 		runs = append(runs, id)
 		tokens = append(tokens, token)
 	}
-	h, err := NewHandler(Config{}, d, d, nil)
+	h, err := NewHandler(Config{}, DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

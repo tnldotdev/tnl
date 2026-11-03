@@ -59,7 +59,7 @@ func newConnectorPairFixture(t *testing.T) connectorPairFixture {
 			t.Fatal(err)
 		}
 	}
-	if _, err := d.HeartbeatServiceRun(t.Context(), service.ID, run.RunID, run.Token, now); err != nil {
+	if _, err := d.HeartbeatServiceRun(t.Context(), service.ID, run.RunID, run.Token, now, ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal(err)
 	}
 	public, key, err := ed25519.GenerateKey(rand.Reader)

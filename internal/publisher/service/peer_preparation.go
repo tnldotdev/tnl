@@ -114,7 +114,9 @@ func (b *Bound) peerNeedsPreparation(candidate controlv1.ConnectorPeerPairCandid
 		return false
 	}
 	if p := b.connectorPeers[candidate.PairId]; p != nil {
-		return p.currentLocked() && p.binding.generation == candidate.DeliveryGeneration && (!p.prepared || !b.peerRelaysCurrentLocked(p.binding) || time.Until(p.binding.until) < 15*time.Second)
+		// renewing local delivery does not confirm installation at control. a
+		// failed confirmation must retry against the last confirmed deadline.
+		return p.currentLocked() && p.identity.generation == candidate.DeliveryGeneration && (p.installedUntil.IsZero() || time.Until(p.installedUntil) < 15*time.Second || time.Until(p.lease.until) < 15*time.Second)
 	}
 	for _, slot := range b.packetSlots {
 		if slot == nil {
@@ -145,7 +147,7 @@ func (b *Bound) prepareConnectorPeer(ctx context.Context, control ConnectorPeerC
 	if p == nil {
 		p, err = b.BindPeer(ctx, binding)
 		if err == nil {
-			serving.Go(func() { defer p.Close(); _ = p.ServeRelayPackets(ctx) })
+			serving.Go(func() { _ = p.Serve(ctx) })
 		}
 	} else {
 		err = p.Renew(binding)
@@ -156,14 +158,14 @@ func (b *Bound) prepareConnectorPeer(ctx context.Context, control ConnectorPeerC
 	confirm, done := context.WithTimeout(ctx, 2*time.Second)
 	defer done()
 	select {
-	case <-p.packetReady:
+	case <-p.ready:
 	case <-p.ctx.Done():
 		return
 	case <-confirm.Done():
 		return
 	}
 	b.mu.Lock()
-	current := p.currentLocked() && p.binding.until.Equal(binding.until)
+	current := p.currentLocked() && p.lease == binding.peerLease
 	b.mu.Unlock()
 	if !current {
 		return
@@ -182,8 +184,8 @@ func (b *Bound) prepareConnectorPeer(ctx context.Context, control ConnectorPeerC
 		return
 	}
 	b.mu.Lock()
-	if p.currentLocked() && p.binding.until.Equal(binding.until) {
-		p.prepared = true
+	if p.currentLocked() && p.lease == binding.peerLease {
+		p.installedUntil = binding.until
 	}
 	b.mu.Unlock()
 }

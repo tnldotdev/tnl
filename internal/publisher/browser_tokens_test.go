@@ -28,6 +28,100 @@ type browserTokenClientFixture struct {
 	issue func(context.Context, controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error)
 }
 
+func TestBrowserTokensRedemptionRepreparesSupersededPermission(t *testing.T) {
+	for _, kind := range []string{"browser", "share"} {
+		t.Run(kind, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				policy, key, browser := browserTokensFixture(t)
+				var subject visitortoken.Subject = browser
+				source := browserSourceFixture(liveBrowserCookie)
+				if kind == "share" {
+					id := "shr_" + strings.Repeat("S", 22)
+					subject = visitortoken.Share{ShareID: id}
+					source, _ = json.Marshal(controlv1.VisitorTokenShareSessionSource{Kind: controlv1.VisitorTokenShareSession, ShareId: id, Secret: liveBrowserCookie})
+				}
+				parent := time.Now().Add(30 * time.Minute)
+				initial := signedBrowserPermission(t, policy, key, subject, time.Now().Add(time.Minute))
+				policy.client.(*policyClientFixture).revision.Store(2)
+				if err := policy.refresh(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				client := &browserTokenClientFixture{issue: func(_ context.Context, body controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
+					if body.Resource != initial.Resource || string(body.Source) != string(source) {
+						t.Error("replacement changed its resource or session source")
+					}
+					return signedBrowserPermission(t, policy, key, subject, initial.ExpiresAt), nil
+				}}
+				tokens, err := startBrowserTokens(t.Context(), client, policy.lease, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer tokens.Close()
+				access := &browserAccess{policy: policy, tokens: tokens}
+				prepared, err := access.prepareToken(t.Context(), source, initial, parent)
+				if err != nil {
+					t.Fatal("policy advanced after redemption but the same session could not prepare current permission", err)
+				}
+				entry := tokens.sources[sha256.Sum256(source)]
+				if client.calls.Load() != 1 || entry == nil || entry.response.VisitorToken != prepared.VisitorToken || prepared.VisitorPolicyRevision != 2 || !entry.parentDeadline.Equal(parent) {
+					t.Fatal("redemption did not prepare exactly one current same-session permission")
+				}
+				response := httptest.NewRecorder()
+				if err := visitorPermissionCookie(response, prepared); err != nil {
+					t.Fatal(err)
+				}
+				cookies := response.Result().Cookies()
+				if len(cookies) != 1 || cookies[0].Value != prepared.VisitorToken || cookies[0].Value == initial.VisitorToken {
+					t.Fatal("redemption returned the superseded permission cookie")
+				}
+			})
+		})
+	}
+}
+
+func TestBrowserTokensRedemptionReplacementCannotChangeSubjectOrIgnoreDenial(t *testing.T) {
+	for _, test := range []string{"denied", "another subject", "past parent", "late response"} {
+		t.Run(test, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				policy, key, subject := browserTokensFixture(t)
+				parent := time.Now().Add(time.Minute)
+				initial := signedBrowserPermission(t, policy, key, subject, parent)
+				policy.client.(*policyClientFixture).revision.Store(2)
+				if err := policy.refresh(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				client := &browserTokenClientFixture{issue: func(ctx context.Context, _ controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
+					next, until := subject, parent
+					switch test {
+					case "denied":
+						return controlv1.VisitorTokenResponse{}, &clientcontrol.ProblemError{Status: http.StatusForbidden}
+					case "another subject":
+						next.SessionID = "cs_" + strings.Repeat("Z", 22)
+					case "past parent":
+						until = until.Add(time.Minute)
+					case "late response":
+						<-ctx.Done()
+					}
+					return signedBrowserPermission(t, policy, key, next, until), nil
+				}}
+				tokens, err := startBrowserTokens(t.Context(), client, policy.lease, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer tokens.Close()
+				access := &browserAccess{policy: policy, tokens: tokens}
+				prepared, err := access.prepareToken(t.Context(), browserSourceFixture(liveBrowserCookie), initial, parent)
+				if err == nil || prepared.VisitorToken != "" || len(tokens.sources) != 0 || len(tokens.tokens) != 0 || client.calls.Load() != 1 {
+					t.Fatal("failed preparation installed permission, retried denial, or changed its subject/deadline", err)
+				}
+				if test == "late response" && !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatal("late response escaped the fixed preparation budget", err)
+				}
+			})
+		})
+	}
+}
+
 func TestBrowserTokensRedemptionWaitsForConcurrentPolicyWithoutReissuingPermission(t *testing.T) {
 	for _, share := range []bool{false, true} {
 		t.Run(map[bool]string{false: "browser", true: "share"}[share], func(t *testing.T) {
@@ -88,7 +182,10 @@ func TestBrowserTokensRedemptionWaitsForConcurrentPolicyWithoutReissuingPermissi
 				go func() { refresh <- policy.refresh(t.Context()) }()
 				<-started
 				access := &browserAccess{policy: policy, tokens: tokens}
-				go func() { prepared <- access.prepareToken(t.Context(), source, response, permission.ExpiresAt) }()
+				go func() {
+					_, err := access.prepareToken(t.Context(), source, response, permission.ExpiresAt)
+					prepared <- err
+				}()
 				synctest.Wait()
 				if reads.Load() != 2 {
 					t.Error("redemption raced another stale policy request", reads.Load())
@@ -359,7 +456,7 @@ func browserTokensFixture(t *testing.T) (*visitorPolicy, ed25519.PrivateKey, vis
 	return policy, key, visitortoken.Browser{IdentityID: "ident_" + strings.Repeat("C", 22), SessionID: "cs_" + strings.Repeat("D", 22)}
 }
 
-func signedBrowserPermission(t *testing.T, policy *visitorPolicy, key ed25519.PrivateKey, subject visitortoken.Browser, until time.Time) controlv1.VisitorTokenResponse {
+func signedBrowserPermission(t *testing.T, policy *visitorPolicy, key ed25519.PrivateKey, subject visitortoken.Subject, until time.Time) controlv1.VisitorTokenResponse {
 	t.Helper()
 	view, enabled, _ := policy.lease.Current()
 	if !enabled {

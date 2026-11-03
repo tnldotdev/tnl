@@ -130,7 +130,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 				RelayRunId: lease.RelayRunID, RelayLeaseRevision: int64(lease.RelayLeaseRevision)},
 			RelayAddress: lease.RelayAddress, TlsServerName: lease.TLSServerName}
 	}
-	publicHandler, err := controlpublic.NewHandler(controlpublic.Config{}, d, d, nil)
+	publicHandler, err := controlpublic.NewHandler(controlpublic.Config{}, controlpublic.DatabaseStores(d), d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

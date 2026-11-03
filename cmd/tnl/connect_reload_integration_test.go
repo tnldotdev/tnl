@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	clientdetached "github.com/tnldotdev/tnl/internal/client/detached"
+
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
@@ -185,7 +187,7 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				}
 				if detached {
 					workflowWait(t, time.Second, func() bool {
-						status, err := detachedRequest(person, detachedID, "status")
+						status, err := clientdetached.Request(person, detachedID, "status")
 						return err == nil && status == fmt.Sprintf("ready %d", os.Getpid())
 					})
 				}
@@ -267,7 +269,7 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 				t.Fatal("new invocation did not refetch visitor inventory")
 			}
 			if detached {
-				status, err := detachedRequest(person, detachedID, "status")
+				status, err := clientdetached.Request(person, detachedID, "status")
 				if err != nil || status != fmt.Sprintf("starting %d", os.Getpid()) {
 					t.Fatalf("pending authorization advertised readiness: %q %v", status, err)
 				}

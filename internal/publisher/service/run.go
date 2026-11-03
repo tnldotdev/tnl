@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -203,7 +202,7 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 	}
 	b.connections = next
 	for _, p := range b.connectorPeers {
-		if !b.peerRelaysCurrentLocked(p.binding) {
+		if !b.peerRelaysCurrentLocked(p.bindingLocked()) {
 			obsolete = append(obsolete, p)
 		}
 	}
@@ -251,39 +250,32 @@ func (b *Bound) reserveStream(ref tunnelv1.ServicePublisherConnectionRef) (func(
 	return sync.OnceFunc(func() { b.mu.Lock(); b.reservedStreams--; b.mu.Unlock() }), true
 }
 
-// ConnectSlot uses server-authenticated WebPKI on both transport candidates.
-// tunnel.Race returns only after the relay accepts this exact private claim.
+// ConnectOptions supplies both address-aware, WebPKI-verified relay transports.
 // no target CA or private TLS key is used for relay authentication.
-func (b *Bound) ConnectSlot(ctx context.Context, slot uint8) (*Claimed, error) {
-	return b.ConnectSlotWithPreference(ctx, slot, false, nil)
+type ConnectOptions struct {
+	QUIC, TCP muxsession.Connector
+	PreferTCP bool
 }
 
-func (b *Bound) ConnectSlotWithPreference(ctx context.Context, slot uint8, preferTCP bool, roots *tls.Config) (*Claimed, error) {
-	if roots == nil {
-		roots = &tls.Config{MinVersion: tls.VersionTLS13}
-	}
-	if roots.InsecureSkipVerify {
+// ConnectSlot races the configured transports until the relay accepts this exact
+// private claim, then installs one dispatcher only while its assignment is current.
+func (b *Bound) ConnectSlot(ctx context.Context, slot uint8, options ConnectOptions) (*Claimed, error) {
+	if options.QUIC == nil || options.TCP == nil {
 		return nil, ErrPrivateStream
 	}
-	return b.ConnectSlotWithTransports(ctx, slot, preferTCP, muxsession.QUICConnector{TLSConfig: roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}, muxsession.TLSYamuxConnector{TLSConfig: roots})
-}
-
-// ConnectSlotWithTransports retains the production claim and stale-assignment
-// checks when a caller supplies address-aware, certificate-verified connectors.
-func (b *Bound) ConnectSlotWithTransports(ctx context.Context, slot uint8, preferTCP bool, quic, tcp muxsession.Connector) (*Claimed, error) {
 	endpoint, hello, err := b.Hello(slot)
 	if err != nil {
 		return nil, err
 	}
-	primary := tunnel.Candidate{Connector: requirePeerDatagrams(quic), Endpoint: endpoint, Transport: tunnel.TransportQUIC}
-	fallback := tunnel.Candidate{Connector: tcp, Endpoint: endpoint, Transport: tunnel.TransportTLSTCP}
-	if preferTCP {
+	primary := tunnel.Candidate{Connector: requirePeerDatagrams(options.QUIC), Endpoint: endpoint, Transport: tunnel.TransportQUIC}
+	fallback := tunnel.Candidate{Connector: options.TCP, Endpoint: endpoint, Transport: tunnel.TransportTLSTCP}
+	if options.PreferTCP {
 		primary, fallback = fallback, primary
 	}
 	connectCtx, finish := observability.PublisherOperation(ctx, "private_connect")
 	session, transport, err := tunnel.Race(connectCtx, primary, fallback, 250*time.Millisecond, hello)
 	finish(err)
-	observability.PublisherConnection(ctx, string(transport), preferTCP, err)
+	observability.PublisherConnection(ctx, string(transport), options.PreferTCP, err)
 	if err != nil {
 		return nil, err
 	}
