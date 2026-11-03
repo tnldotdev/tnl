@@ -79,6 +79,13 @@ revoked session, changed identity, or changed policy; it cannot trigger silent
 replacement. a lost exchange retains its key/nonce until control confirms its
 outcome, including expiry.
 
+one pending replacement owns that key/nonce, its fixed service selection, and
+its progress. after exchange succeeds, inventory retries attach to the confirmed
+session rather than exchanging again. shutdown joins operations, then recovers
+an ambiguous exchange and revokes any issued, unpromoted session within the
+caller's cleanup budget. only an ambiguous exchange retains its assertion for
+that recovery; promotion never changes an existing adapter's subject or rights.
+
 ## sdk calls
 
 ```ts

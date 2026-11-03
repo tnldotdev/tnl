@@ -22,7 +22,10 @@ func (b *connectorConnectionBackend) Close(ctx context.Context) error {
 			result = errors.Join(result, p.listener.Close())
 		}
 	}
-	clients := []*workload.Client{b.workload, b.replacement}
+	clients := []*workload.Client{b.workload}
+	if b.replacement != nil {
+		clients = append(clients, b.replacement.client)
+	}
 	b.mu.Unlock()
 	// revocation and path cleanup share the caller's budget and start together.
 	// failed releases cannot consume the time reserved for session revocation.
@@ -54,7 +57,10 @@ func (b *connectorConnectionBackend) Close(ctx context.Context) error {
 		b.mu.Lock()
 		pending := b.replacement
 		b.mu.Unlock()
-		revoke(pending)
+		if pending != nil {
+			add(pending.recoverForCleanup(ctx))
+			revoke(pending.client)
+		}
 		b.workers.Wait()
 		b.mu.Lock()
 		err := b.cleanupErr
