@@ -61,7 +61,7 @@ func TestPrivateConnectSlotPreferenceAndFallback(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, bound, _, _ := privateFixture(t, "127.0.0.1:1")
-			relay := newPrivateSlotRelay(t, bound, test.datagrams, nil)
+			relay := newPrivateSlotRelay(t, bound, test.datagrams, nil, nil)
 			options := relay.options(t, relay.roots)
 			options.PreferTCP = test.preferTCP
 			if test.failFirst {
@@ -83,7 +83,7 @@ func TestPrivateConnectSlotPreferenceAndFallback(t *testing.T) {
 				t.Fatal("wrong transport or missing dispatcher/packet owner", claimed.Transport())
 			}
 			if !test.datagrams {
-				awaitPrivateSlot(t, relay.closed[0])
+				relay.assertRejectedQUICClosed(t)
 				if relay.hellos[0].Load() != 0 {
 					t.Fatal("QUIC without negotiated datagrams consumed a single-use hello")
 				}
@@ -106,7 +106,46 @@ func TestPrivateConnectSlotPreferenceAndFallback(t *testing.T) {
 				winner = 1
 			}
 			awaitPrivateSlot(t, relay.closed[winner])
+			relay.stop()
+			for _, done := range relay.closed {
+				awaitPrivateSlot(t, done)
+			}
 		})
+	}
+}
+
+func TestPrivateConnectSlotRejectsQUICBeforeRelayAccept(t *testing.T) {
+	_, bound, _, _ := privateFixture(t, "127.0.0.1:1")
+	// keep the fixture worker out of Accept even after the real client completes
+	// TLS. only fixture shutdown can release this gate, not the client's close.
+	acceptGate := make(chan struct{})
+	relay := newPrivateSlotRelay(t, bound, false, nil, acceptGate)
+	awaitPrivateSlot(t, relay.quicAcceptGated)
+	claimed, err := bound.ConnectSlot(t.Context(), 0, relay.options(t, relay.roots))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = claimed.Close() })
+	if claimed.Transport() != tunnel.TransportTLSTCP || bound.packetSlots[0] != claimed || claimed.dispatcher == nil || claimed.packets == nil {
+		t.Fatal("unaccepted QUIC session prevented a claimed TCP fallback")
+	}
+	relay.assertRejectedQUICClosed(t)
+	if relay.hellos[0].Load() != 0 || relay.hellos[1].Load() != 1 {
+		t.Fatal("rejected QUIC consumed a hello or TCP fallback did not authenticate")
+	}
+	select {
+	case <-relay.closed[0]:
+		t.Fatal("QUIC fixture worker exited before its owning cancellation")
+	default:
+	}
+	_ = claimed.Close()
+	if bound.packetSlots[0] != nil {
+		t.Fatal("closed fallback retained its packet slot")
+	}
+	awaitPrivateSlot(t, claimed.packets.Done())
+	relay.stop()
+	for _, done := range relay.closed {
+		awaitPrivateSlot(t, done)
 	}
 }
 
@@ -114,7 +153,7 @@ func TestPrivateConnectSlotRejectsUnverifiedRelayTLS(t *testing.T) {
 	for _, name := range []string{"untrusted-ca", "wrong-hostname"} {
 		t.Run(name, func(t *testing.T) {
 			_, bound, _, _ := privateFixture(t, "127.0.0.1:1")
-			relay := newPrivateSlotRelay(t, bound, true, nil)
+			relay := newPrivateSlotRelay(t, bound, true, nil, nil)
 			roots := relay.roots
 			if name == "untrusted-ca" {
 				roots = &tls.Config{RootCAs: x509.NewCertPool()}
@@ -148,7 +187,7 @@ func TestPrivateConnectSlotRequiresExplicitTransports(t *testing.T) {
 
 func TestPrivateConnectSlotOwnsOneDispatcherAndJoinsOnClose(t *testing.T) {
 	_, bound, _, _ := privateFixture(t, "127.0.0.1:1")
-	relay := newPrivateSlotRelay(t, bound, true, nil)
+	relay := newPrivateSlotRelay(t, bound, true, nil, nil)
 	options := relay.options(t, relay.roots)
 	options.PreferTCP = true
 	tcp := options.TCP
@@ -217,7 +256,7 @@ func TestPrivateConnectSlotWaitsForClaimAndClosesLosingTransport(t *testing.T) {
 		case <-ctx.Done():
 			return context.Cause(ctx)
 		}
-	})
+	}, nil)
 	claimed, err := bound.ConnectSlot(t.Context(), 0, relay.options(t, relay.roots))
 	if err != nil {
 		t.Fatal(err)
@@ -243,7 +282,7 @@ func TestPrivateConnectSlotRejectsAssignmentChangedDuringHello(t *testing.T) {
 				next[0].ConnectionAssignmentRevision++
 				return bound.ApplyHeartbeat(controlv1.ServiceRunState{ServiceId: bound.prepared.Preparation.ServiceId, ServiceRunId: bound.prepared.Preparation.ServiceRunId,
 					RunNumber: bound.prepared.Preparation.RunNumber, State: "ready", PublisherExpiresAt: time.Now().Add(time.Minute), PublisherConnections: next[:]})
-			})
+			}, nil)
 			options := relay.options(t, relay.roots)
 			// only the gated hello may replace this assignment in this proof.
 			options.TCP = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
@@ -259,11 +298,64 @@ func TestPrivateConnectSlotRejectsAssignmentChangedDuringHello(t *testing.T) {
 }
 
 type privateSlotRelay struct {
-	address string
-	roots   *tls.Config
-	calls   [2]atomic.Int32
-	hellos  [2]atomic.Int32
-	closed  [2]chan struct{}
+	address         string
+	roots           *tls.Config
+	calls           [2]atomic.Int32
+	hellos          [2]atomic.Int32
+	closed          [2]chan struct{}
+	clientQUIC      chan *privateSlotQUICSession
+	quicAcceptGated chan struct{}
+	stop            func()
+}
+
+// keep the real session's DATAGRAM and verified TLS capabilities visible to the
+// production check. observe Close returning, not remote acceptance or cleanup.
+type privateSlotQUICTransport interface {
+	muxsession.Session
+	muxsession.DatagramSession
+	muxsession.AcceptedPeer
+}
+
+type privateSlotQUICSession struct {
+	privateSlotQUICTransport
+	closed   chan struct{}
+	once     sync.Once
+	openings atomic.Int32
+}
+
+var _ privateSlotQUICTransport = (*privateSlotQUICSession)(nil)
+
+func (s *privateSlotQUICSession) Close() error {
+	err := s.privateSlotQUICTransport.Close()
+	s.once.Do(func() { close(s.closed) })
+	return err
+}
+
+func (s *privateSlotQUICSession) OpenStream(ctx context.Context) (muxsession.Stream, error) {
+	s.openings.Add(1)
+	return s.privateSlotQUICTransport.OpenStream(ctx)
+}
+
+func (r *privateSlotRelay) assertRejectedQUICClosed(t *testing.T) {
+	t.Helper()
+	var client *privateSlotQUICSession
+	select {
+	case client = <-r.clientQUIC:
+	case <-time.After(3 * time.Second):
+		t.Fatal("QUIC connector did not return its negotiated session")
+	}
+	if state := client.TLSConnectionState(); state.Version < tls.VersionTLS13 || len(state.VerifiedChains) == 0 || client.SupportsDatagrams() {
+		t.Fatal("rejected QUIC did not retain verified TLS without negotiated datagrams")
+	}
+	awaitPrivateSlot(t, client.closed)
+	select {
+	case <-client.Done():
+	default:
+		t.Fatal("rejected QUIC Close returned before its session joined")
+	}
+	if client.openings.Load() != 0 {
+		t.Fatal("rejected QUIC opened a control stream for a single-use hello")
+	}
 }
 
 // both transports redirect only the dial address; the assigned server name and
@@ -281,14 +373,25 @@ func (r *privateSlotRelay) options(t *testing.T, roots *tls.Config) ConnectOptio
 				return nil, ErrPrivateStream
 			}
 			endpoint.Address = r.address
-			return connector.Connect(ctx, endpoint)
+			outer, err := connector.Connect(ctx, endpoint)
+			if err != nil || slot != 0 {
+				return outer, err
+			}
+			capabilities, ok := outer.(privateSlotQUICTransport)
+			if !ok {
+				t.Error("QUIC session lacks DATAGRAM or verified TLS capabilities")
+				return nil, errors.Join(ErrPrivateStream, outer.Close())
+			}
+			observed := &privateSlotQUICSession{privateSlotQUICTransport: capabilities, closed: make(chan struct{})}
+			r.clientQUIC <- observed
+			return observed, nil
 		})
 	}
 	options.QUIC, options.TCP = redirect(0, options.QUIC), redirect(1, options.TCP)
 	return options
 }
 
-func newPrivateSlotRelay(t *testing.T, bound *Bound, datagrams bool, authenticate func(context.Context, tunnel.Transport, muxsession.Session) error) *privateSlotRelay {
+func newPrivateSlotRelay(t *testing.T, bound *Bound, datagrams bool, authenticate func(context.Context, tunnel.Transport, muxsession.Session) error, quicAcceptGate <-chan struct{}) *privateSlotRelay {
 	t.Helper()
 	serverTLS, roots := privateTransportTLS(t)
 	tcp, err := net.Listen("tcp", "127.0.0.1:0")
@@ -301,7 +404,7 @@ func newPrivateSlotRelay(t *testing.T, bound *Bound, datagrams bool, authenticat
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = udp.Close() })
-	r := &privateSlotRelay{address: tcp.Addr().String(), roots: roots, closed: [2]chan struct{}{make(chan struct{}), make(chan struct{})}}
+	r := &privateSlotRelay{address: tcp.Addr().String(), roots: roots, closed: [2]chan struct{}{make(chan struct{}), make(chan struct{})}, clientQUIC: make(chan *privateSlotQUICSession, 1), quicAcceptGated: make(chan struct{})}
 	bound.connections[0].RelayAddress, bound.connections[0].TlsServerName = "assigned.relay.test:443", "relay.test"
 	ref, credential := bound.prepared.connectionRef(bound.connections[0]), bound.connections[0].PublisherConnectionCredential
 	ctx, cancel := context.WithCancel(t.Context())
@@ -313,6 +416,14 @@ func newPrivateSlotRelay(t *testing.T, bound *Bound, datagrams bool, authenticat
 			var err error
 			transport := tunnel.TransportQUIC
 			if slot == 0 {
+				if quicAcceptGate != nil {
+					close(r.quicAcceptGated)
+					select {
+					case <-quicAcceptGate:
+					case <-ctx.Done():
+						return
+					}
+				}
 				outer, err = udp.Accept(ctx)
 			} else {
 				transport = tunnel.TransportTLSTCP
@@ -349,12 +460,13 @@ func newPrivateSlotRelay(t *testing.T, bound *Bound, datagrams bool, authenticat
 			}
 		})
 	}
-	t.Cleanup(func() {
+	r.stop = sync.OnceFunc(func() {
 		cancel()
 		_ = tcp.Close()
 		_ = udp.Close()
 		workers.Wait()
 	})
+	t.Cleanup(r.stop)
 	return r
 }
 
