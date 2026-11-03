@@ -10,6 +10,7 @@
   },
   "files": [
     "test/types/config-type-test.ts",
+    "test/types/connector-snapshot-type-test.ts",
     "test/types/sdk-type-test.ts",
     "test/types/next-type-test.ts",
     "test/types/runtime-type-test.ts",

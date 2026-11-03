@@ -25,20 +25,52 @@ import {
   requiredHostname,
   validServiceName,
   type ProjectRuntime,
-  type ServiceProtocol,
 } from "../project/runtime.js";
 
-interface Snapshot {
-  readonly protocol: ServiceProtocol;
+interface SnapshotAddress {
   readonly host: "127.0.0.1";
   readonly port: number;
-  readonly ssl?: TnlNativeTLSOptions;
-  readonly url?: `https://${string}`;
-  readonly kubeconfig?: string;
-  readonly context?: string;
   readonly expires: number;
   readonly transportID?: string;
 }
+type Snapshot = SnapshotAddress &
+  (
+    | {
+        readonly protocol: "tcp";
+        readonly ssl?: never;
+        readonly url?: never;
+        readonly kubeconfig?: never;
+        readonly context?: never;
+      }
+    | {
+        readonly protocol: "postgres";
+        readonly ssl: TnlNativeTLSOptions;
+        readonly url?: never;
+        readonly kubeconfig?: never;
+        readonly context?: never;
+      }
+    | {
+        readonly protocol: "mysql";
+        readonly ssl: TnlNativeTLSOptions;
+        readonly url?: never;
+        readonly kubeconfig?: never;
+        readonly context?: never;
+      }
+    | {
+        readonly protocol: "http";
+        readonly ssl: TnlNativeTLSOptions;
+        readonly url: `https://${string}`;
+        readonly kubeconfig?: never;
+        readonly context?: never;
+      }
+    | {
+        readonly protocol: "kubernetes";
+        readonly ssl: TnlNativeTLSOptions;
+        readonly url: `https://${string}`;
+        readonly kubeconfig: string;
+        readonly context: string;
+      }
+  );
 type Settings = TnlConnectionRegistry[keyof TnlConnectionRegistry];
 interface Prepared {
   readonly project: ProjectRuntime;
@@ -561,8 +593,9 @@ function parsePrepared(value: unknown, name: string, file: string): Prepared {
   if (
     metadata === undefined ||
     metadata.protocol !== snapshot.protocol ||
-    (snapshot.ssl !== undefined && metadata.hostname !== snapshot.ssl.servername) ||
-    (snapshot.url !== undefined && metadata.url !== snapshot.url)
+    (snapshot.protocol !== "tcp" && metadata.hostname !== snapshot.ssl.servername) ||
+    ((snapshot.protocol === "http" || snapshot.protocol === "kubernetes") &&
+      metadata.url !== snapshot.url)
   )
     throw new TnlError("sdk.response_invalid");
   let verification: Prepared["verification"];
@@ -630,69 +663,79 @@ export function parseConnection(value: unknown): Snapshot {
     (typeof object.transport_id !== "string" || !/^ctg_[A-Za-z0-9]{22}$/.test(object.transport_id))
   )
     throw new TnlError("sdk.response_invalid");
-  let ssl: TnlNativeTLSOptions | undefined;
-  if (object.protocol !== "tcp") {
-    const tls = record(object.ssl, "native TLS");
-    exactKeys(
-      tls,
-      ["servername", "rejectUnauthorized", ...(Object.hasOwn(tls, "ca") ? ["ca"] : [])],
-      "native TLS",
-    );
-    const servername = requiredHostname(tls.servername, "service hostname");
-    if (
-      tls.rejectUnauthorized !== true ||
-      (Object.hasOwn(tls, "ca") &&
-        (typeof tls.ca !== "string" || tls.ca.length === 0 || tls.ca.length > 32 * 1024))
-    )
-      throw new TnlError("sdk.response_invalid");
-    ssl = Object.freeze({
-      servername,
-      rejectUnauthorized: true,
-      ...(typeof tls.ca === "string" ? { ca: tls.ca } : {}),
-    });
-  } else if (Object.hasOwn(object, "ssl")) throw new TnlError("sdk.response_invalid");
-  let url: `https://${string}` | undefined;
-  if (object.protocol === "http" || object.protocol === "kubernetes") {
-    if (typeof object.url !== "string" || ssl === undefined)
-      throw new TnlError("sdk.response_invalid");
-    try {
-      const endpoint = new URL(object.url);
-      if (
-        endpoint.protocol !== "https:" ||
-        endpoint.hostname !== ssl.servername ||
-        object.url !== endpoint.origin
-      )
-        throw new TnlError("sdk.response_invalid");
-      url = object.url as `https://${string}`;
-    } catch {
-      throw new TnlError("sdk.response_invalid");
-    }
-  } else if (Object.hasOwn(object, "url")) throw new TnlError("sdk.response_invalid");
-  if (object.protocol === "kubernetes") {
-    if (
-      typeof object.kubeconfig !== "string" ||
-      !path.isAbsolute(object.kubeconfig) ||
-      object.kubeconfig.length > 4096 ||
-      object.kubeconfig.includes("\0") ||
-      typeof object.context !== "string" ||
-      !object.context.startsWith("tnl:") ||
-      object.context.length > 1024
-    )
-      throw new TnlError("sdk.response_invalid");
-  } else if (Object.hasOwn(object, "kubeconfig") || Object.hasOwn(object, "context"))
-    throw new TnlError("sdk.response_invalid");
-  return Object.freeze({
-    protocol: object.protocol,
+  const address: SnapshotAddress = {
     host: object.host,
     port: object.port,
     expires: Date.parse(object.expires_at),
     ...(typeof object.transport_id === "string" ? { transportID: object.transport_id } : {}),
-    ...(ssl === undefined ? {} : { ssl }),
-    ...(url === undefined ? {} : { url }),
-    ...(typeof object.kubeconfig === "string" && typeof object.context === "string"
-      ? { kubeconfig: object.kubeconfig, context: object.context }
-      : {}),
+  };
+  if (object.protocol === "tcp") {
+    if (["ssl", "url", "kubeconfig", "context"].some((key) => Object.hasOwn(object, key)))
+      throw new TnlError("sdk.response_invalid");
+    return Object.freeze({ ...address, protocol: object.protocol });
+  }
+  const tls = record(object.ssl, "native TLS");
+  exactKeys(
+    tls,
+    ["servername", "rejectUnauthorized", ...(Object.hasOwn(tls, "ca") ? ["ca"] : [])],
+    "native TLS",
+  );
+  const servername = requiredHostname(tls.servername, "service hostname");
+  if (
+    tls.rejectUnauthorized !== true ||
+    (Object.hasOwn(tls, "ca") &&
+      (typeof tls.ca !== "string" || tls.ca.length === 0 || tls.ca.length > 32 * 1024))
+  )
+    throw new TnlError("sdk.response_invalid");
+  const ssl: TnlNativeTLSOptions = Object.freeze({
+    servername,
+    rejectUnauthorized: true,
+    ...(typeof tls.ca === "string" ? { ca: tls.ca } : {}),
   });
+  if (object.protocol === "postgres" || object.protocol === "mysql") {
+    if (["url", "kubeconfig", "context"].some((key) => Object.hasOwn(object, key)))
+      throw new TnlError("sdk.response_invalid");
+    return Object.freeze({ ...address, protocol: object.protocol, ssl });
+  }
+  if (typeof object.url !== "string") throw new TnlError("sdk.response_invalid");
+  let endpoint: URL;
+  try {
+    endpoint = new URL(object.url);
+  } catch {
+    throw new TnlError("sdk.response_invalid");
+  }
+  if (
+    endpoint.protocol !== "https:" ||
+    endpoint.hostname !== ssl.servername ||
+    object.url !== endpoint.origin
+  )
+    throw new TnlError("sdk.response_invalid");
+  const url: `https://${string}` = `https://${endpoint.host}`;
+  switch (object.protocol) {
+    case "http":
+      if (Object.hasOwn(object, "kubeconfig") || Object.hasOwn(object, "context"))
+        throw new TnlError("sdk.response_invalid");
+      return Object.freeze({ ...address, protocol: object.protocol, ssl, url });
+    case "kubernetes":
+      if (
+        typeof object.kubeconfig !== "string" ||
+        !path.isAbsolute(object.kubeconfig) ||
+        object.kubeconfig.length > 4096 ||
+        object.kubeconfig.includes("\0") ||
+        typeof object.context !== "string" ||
+        !object.context.startsWith("tnl:") ||
+        object.context.length > 1024
+      )
+        throw new TnlError("sdk.response_invalid");
+      return Object.freeze({
+        ...address,
+        protocol: object.protocol,
+        ssl,
+        url,
+        kubeconfig: object.kubeconfig,
+        context: object.context,
+      });
+  }
 }
 
 export function managedFetch(
@@ -729,7 +772,11 @@ export function managedFetch(
       lifetime.throwIfAborted();
       const snapshot = await cancellable(lifetime, () => current(lifetime));
       lifetime.throwIfAborted();
-      if (snapshot.url !== url || snapshot.ssl === undefined || snapshot.expires <= Date.now())
+      if (
+        (snapshot.protocol !== "http" && snapshot.protocol !== "kubernetes") ||
+        snapshot.url !== url ||
+        snapshot.expires <= Date.now()
+      )
         throw new TnlError("sdk.response_invalid");
       // unknown older snapshots never authorize reuse of a prior transport.
       const nextKey = JSON.stringify([
@@ -755,7 +802,7 @@ export function managedFetch(
           headersTimeout: 0,
           bodyTimeout: 0,
           connect(options, callback) {
-            if (options.protocol !== "https:" || options.hostname !== snapshot.ssl?.servername)
+            if (options.protocol !== "https:" || options.hostname !== snapshot.ssl.servername)
               return callback(new TnlError("sdk.configuration_invalid"), null);
             return connect(
               {
@@ -862,54 +909,50 @@ function responseIdentity(response: Response, url: string, type: string): Respon
 }
 
 function settings(name: string, snapshot: Snapshot, externalFile?: string): Settings {
-  if (snapshot.protocol === "tcp")
-    return Object.freeze({ host: snapshot.host, port: snapshot.port });
-  if (snapshot.protocol === "http" && snapshot.url !== undefined) {
-    const key = JSON.stringify([cacheKey(), name, snapshot.url, externalFile]);
-    let fetch = fetches.get(key);
-    if (fetch === undefined) {
-      if (fetches.size >= 32) throw new TnlError("sdk.connection_unavailable");
-      fetch = managedFetch(snapshot.url, async (signal) => {
-        signal?.throwIfAborted();
-        const current = await waitForPreparation(prepare(name, externalFile), signal);
-        signal?.throwIfAborted();
-        return current.snapshot;
+  switch (snapshot.protocol) {
+    case "tcp":
+      return Object.freeze({ host: snapshot.host, port: snapshot.port });
+    case "http": {
+      const key = JSON.stringify([cacheKey(), name, snapshot.url, externalFile]);
+      let fetch = fetches.get(key);
+      if (fetch === undefined) {
+        if (fetches.size >= 32) throw new TnlError("sdk.connection_unavailable");
+        fetch = managedFetch(snapshot.url, async (signal) => {
+          signal?.throwIfAborted();
+          const current = await waitForPreparation(prepare(name, externalFile), signal);
+          signal?.throwIfAborted();
+          return current.snapshot;
+        });
+        fetches.set(key, fetch);
+      }
+      return Object.freeze({
+        url: snapshot.url,
+        fetch,
       });
-      fetches.set(key, fetch);
     }
-    return Object.freeze({
-      url: snapshot.url,
-      fetch,
-    });
+    case "kubernetes":
+      return Object.freeze({
+        server: `https://${snapshot.host}:${snapshot.port}`,
+        kubeconfig: snapshot.kubeconfig,
+        context: snapshot.context,
+      });
+    case "mysql":
+      // mysql2 verifies config.host, ignoring ssl.servername. its supported stream
+      // factory keeps each pool connection on loopback without changing TLS identity.
+      // both mysql drivers mutate ssl; never hand a driver the frozen wire snapshot.
+      return Object.freeze({
+        host: snapshot.ssl.servername,
+        port: snapshot.port,
+        ssl: { ...snapshot.ssl, verifyIdentity: true as const },
+        stream: () => connectTCP({ host: snapshot.host, port: snapshot.port }),
+      });
+    case "postgres":
+      return Object.freeze({
+        host: snapshot.host,
+        port: snapshot.port,
+        ssl: snapshot.ssl,
+      });
   }
-  if (
-    snapshot.protocol === "kubernetes" &&
-    snapshot.url !== undefined &&
-    snapshot.kubeconfig !== undefined &&
-    snapshot.context !== undefined
-  )
-    return Object.freeze({
-      server: `https://${snapshot.host}:${snapshot.port}`,
-      kubeconfig: snapshot.kubeconfig,
-      context: snapshot.context,
-    });
-  if (snapshot.protocol === "mysql" && snapshot.ssl !== undefined)
-    // mysql2 verifies config.host, ignoring ssl.servername. its supported stream
-    // factory keeps each pool connection on loopback without changing TLS identity.
-    // both mysql drivers mutate ssl; never hand a driver the frozen wire snapshot.
-    return Object.freeze({
-      host: snapshot.ssl.servername,
-      port: snapshot.port,
-      ssl: { ...snapshot.ssl, verifyIdentity: true as const },
-      stream: () => connectTCP({ host: snapshot.host, port: snapshot.port }),
-    });
-  if (snapshot.protocol === "postgres" && snapshot.ssl !== undefined)
-    return Object.freeze({
-      host: snapshot.host,
-      port: snapshot.port,
-      ssl: snapshot.ssl,
-    });
-  throw new TnlError("sdk.response_invalid");
 }
 
 // cancellation releases one caller's wait without abandoning a shared owner.
