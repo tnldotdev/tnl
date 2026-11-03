@@ -57,6 +57,7 @@ func TestPublicURLWorkerAdvancesExactDNSOrder(t *testing.T) {
 		t.Fatalf("presenting order work = %#v", work)
 	}
 	work.Authorizations[0].State = "presented"
+	work.Authorizations[0].PresentationReference = "presentation_1"
 	if err := worker.advance(t.Context(), api, &work, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +132,7 @@ func TestPublicURLWorkerReportsACMEChallengeProblem(t *testing.T) {
 		Authorizations: []controlstate.ACMEAuthorizationWork{{
 			Identifier: hostname, AuthorizationURL: authorizationURL, ChallengeType: "dns-01",
 			ChallengeURL: challengeURL, State: "validating",
+			ChallengeToken: "token-1", ChallengeDigest: [32]byte{1}, PresentationReference: "presentation_1", ExpiresAt: timePointer(now.Add(time.Hour)),
 		}},
 	}
 	err := worker.advance(t.Context(), api, &work, now)
@@ -157,6 +159,7 @@ func TestPublicURLWorkerWaitsForDNSBeforeAcceptingChallenge(t *testing.T) {
 		Authorizations: []controlstate.ACMEAuthorizationWork{{
 			Identifier: hostname, AuthorizationURL: authorizationURL, ChallengeType: "dns-01",
 			ChallengeURL: challengeURL, State: "presented",
+			ChallengeToken: "token-1", ChallengeDigest: [32]byte{1}, PresentationReference: "presentation_1", ExpiresAt: timePointer(now.Add(time.Hour)),
 		}},
 	}
 	if err := worker.advance(t.Context(), api, &work, now); err != nil || api.acceptCalls != 0 ||
@@ -285,6 +288,7 @@ func TestPublicURLWorkerAdvancesDNSOrderAndCleansPresentation(t *testing.T) {
 		t.Fatalf("persistable DNS authorization = %#v", work.Authorizations)
 	}
 	work.Authorizations[0].ID = "acme_authorization_dns"
+	work.Authorizations[0].PresentationReference = "presentation_dns"
 	if err := worker.advance(t.Context(), api, &work, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -356,8 +360,8 @@ func TestPublicURLWorkerStartsSharedDNSAuthorizationsBeforeEitherValidates(t *te
 		State: "authorizing", OrderURL: api.order.URL, Subject: testCertificateSubject("public_url_shared"), ChallengeMethod: "dns-01",
 		CertificateIdentifiers: identifiers,
 		Authorizations: []controlstate.ACMEAuthorizationWork{
-			{ID: "auth_wildcard", Identifier: identifiers[0], AuthorizationURL: urls[0], ChallengeType: "dns-01", ChallengeURL: "https://acme.example.test/challenge/wildcard", State: "presenting", ExpiresAt: &expires, AvailableAt: now},
-			{ID: "auth_exact", Identifier: identifiers[1], AuthorizationURL: urls[1], ChallengeType: "dns-01", ChallengeURL: "https://acme.example.test/challenge/exact", State: "presenting", ExpiresAt: &expires, AvailableAt: now},
+			{ID: "auth_wildcard", Identifier: identifiers[0], AuthorizationURL: urls[0], ChallengeType: "dns-01", ChallengeURL: "https://acme.example.test/challenge/wildcard", ChallengeToken: "wildcard-token", ChallengeDigest: [32]byte{1}, PresentationReference: "presentation_wildcard", State: "presenting", ExpiresAt: &expires, AvailableAt: now},
+			{ID: "auth_exact", Identifier: identifiers[1], AuthorizationURL: urls[1], ChallengeType: "dns-01", ChallengeURL: "https://acme.example.test/challenge/exact", ChallengeToken: "exact-token", ChallengeDigest: [32]byte{2}, PresentationReference: "presentation_exact", State: "presenting", ExpiresAt: &expires, AvailableAt: now},
 		},
 	}
 	for iteration := range 4 {

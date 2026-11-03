@@ -278,7 +278,7 @@ func dnsSafetyOrder(t *testing.T, phase string, now time.Time) (*acmeStub, contr
 	work := controlstate.ACMEOrderWork{
 		Subject: testCertificateSubject("public_url_1"), State: controlstate.ACMEOrderState(phase), ChallengeMethod: "dns-01", CSRDER: csr, CertificateIdentifiers: []string{hostname},
 		Account: controlstate.ACMEAccount{AccountURL: "https://acme.example.test/account/1"}, OrderURL: api.order.URL,
-		Authorizations: []controlstate.ACMEAuthorizationWork{{ID: "authorization_1", Identifier: hostname, AuthorizationURL: api.order.Authorizations[0], ChallengeURL: "https://acme.example.test/challenge/1", ChallengeType: "dns-01", ChallengeDigest: sha256.Sum256([]byte("challenge")), PresentationReference: "presentation_1", State: controlstate.ACMEAuthorizationState(phase), ExpiresAt: &expires}},
+		Authorizations: []controlstate.ACMEAuthorizationWork{{ID: "authorization_1", Identifier: hostname, AuthorizationURL: api.order.Authorizations[0], ChallengeURL: "https://acme.example.test/challenge/1", ChallengeType: "dns-01", ChallengeToken: "challenge", ChallengeDigest: sha256.Sum256([]byte("challenge")), PresentationReference: "presentation_1", State: controlstate.ACMEAuthorizationState(phase), ExpiresAt: &expires}},
 	}
 	if phase == "presenting" || phase == "presented" {
 		work.State = "authorizing"

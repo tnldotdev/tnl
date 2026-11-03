@@ -57,6 +57,9 @@ func TestIntegrationBaselineACMEAuthorizationConstraints(t *testing.T) {
 	}
 	for _, test := range []struct{ name, query, code string }{
 		{"partial_challenge", `UPDATE control.acme_authorizations SET challenge_token = NULL WHERE id = 'legacy-authorization'`, "23514"},
+		{"dns_missing_presentation", `UPDATE control.acme_authorizations SET presentation_reference = NULL WHERE id = 'legacy-authorization'`, "23514"},
+		{"unsupported_tls_alpn_without_presentation", `UPDATE control.acme_authorizations SET challenge_type = 'tls-alpn-01', presentation_reference = NULL WHERE id = 'legacy-authorization'`, "23514"},
+		{"unsupported_tls_alpn_with_presentation", `UPDATE control.acme_authorizations SET challenge_type = 'tls-alpn-01' WHERE id = 'legacy-authorization'`, "23514"},
 		{"unfinished_reuse", `UPDATE control.acme_authorizations SET state = 'presenting' WHERE id = 'reused'`, "23514"},
 		{"unvalidated_reuse", `UPDATE control.acme_authorizations SET validated_at = NULL WHERE id = 'reused'`, "23514"},
 		{"uncleaned_reuse", `UPDATE control.acme_authorizations SET cleanup_completed_at = NULL WHERE id = 'reused'`, "23514"},

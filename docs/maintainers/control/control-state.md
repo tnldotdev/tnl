@@ -290,6 +290,13 @@ claims one order, advances it, and saves it only while its lease, work epoch,
 and order revision still match. Each saved authorization has its own revision.
 The Go state types name the same values that PostgreSQL stores.
 
+workers check payload completeness through views for finalization, challenge work,
+and issued material without changing the persisted DTOs. issued material carries
+all three dates as values; identity and expiry checks still belong to issuance
+and installation, not DNS cleanup.
+failed or canceled work still recovers the CA's actual certificate lifetime when
+finalization may have succeeded without a reply.
+
 Public URL certificate work has two stages that can advance independently:
 
 | Work          | Progression                                                                                          | Other outcomes                      |

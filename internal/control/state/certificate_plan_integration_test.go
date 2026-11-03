@@ -387,6 +387,8 @@ func createPlanIssuanceWork(t *testing.T, database *Database, now time.Time, aut
 		work.State = "waiting_for_install"
 		work.CertificatePEM = append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})...)
 		work.NotBefore, work.NotAfter = &leaf.NotBefore, &leaf.NotAfter
+		renewAt := leaf.NotBefore.Add(leaf.NotAfter.Sub(leaf.NotBefore) * 2 / 3)
+		work.RenewAt = &renewAt
 		work.OrderURL, work.FinalizeURL, work.CertificateURL = "https://acme.example.test/order/1", "https://acme.example.test/finalize/1", "https://acme.example.test/certificate/1"
 		for index := range work.Authorizations {
 			work.Authorizations[index].State = "complete"

@@ -325,6 +325,11 @@ func acmeOrderWork(
 		}
 		work.Authorizations[index] = value
 	}
+	if work.State == ACMEOrderWaitingForInstall || work.State == ACMEOrderInstalled {
+		if _, err := work.IssuedCertificate(); err != nil {
+			return ACMEOrderWork{}, err
+		}
+	}
 	return work, nil
 }
 
@@ -336,6 +341,11 @@ func validateACMEOrderWork(work ACMEOrderWork) error {
 		!work.State.valid() || !work.ChallengeMethod.Valid() ||
 		work.AvailableAt.IsZero() || len(work.LastError) > 1024 {
 		return ErrCertificateIssuanceInvalid
+	}
+	if work.State == ACMEOrderWaitingForInstall || work.State == ACMEOrderInstalled {
+		if _, err := work.IssuedCertificate(); err != nil {
+			return err
+		}
 	}
 	identifiers := make(map[string]bool, len(work.Authorizations))
 	urls := make(map[string]bool, len(work.Authorizations))
@@ -370,10 +380,8 @@ func validateACMEAuthorizationWork(authorization ACMEAuthorizationWork) error {
 			authorization.ChallengeToken != "" || authorization.ChallengeDigest != ([32]byte{}) || authorization.PresentationReference != "" {
 			return ErrCertificateIssuanceInvalid
 		}
-	} else if !validStateText(authorization.ChallengeURL) || !validStateText(authorization.ChallengeToken) ||
-		!authorization.ChallengeType.Valid() ||
-		(authorization.ChallengeType == certificateidentity.ChallengeDNS01) != validStateText(authorization.PresentationReference) {
-		return ErrCertificateIssuanceInvalid
+	} else if _, err := authorization.Challenge(); err != nil {
+		return err
 	}
 	return nil
 }
