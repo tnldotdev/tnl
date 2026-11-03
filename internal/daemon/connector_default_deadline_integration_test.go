@@ -256,11 +256,25 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	joinOutage(func(err error) bool { return errors.Is(err, connectorstream.ErrServiceConnection) })
 	// revocation publishes shared run policy, so test it after the isolated
 	// outage deadline rather than changing the unavailable owner's policy early.
+	_ = other.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := io.WriteString(other, "still-connected\n"); err != nil {
+		t.Fatal("sibling closed before revocation:", err)
+	}
+	if _, err := io.ReadFull(other, make([]byte, len("still-connected\n"))); err != nil {
+		t.Fatal("sibling closed before revocation:", err)
+	}
 	if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.identity.routes.SelectServiceRun(t.Context(), service.Id, device.Subject.DeviceID); !defaultConnectorRevocationDenied(err) {
+		t.Fatalf("control did not deny the revoked sibling: %v", err)
+	}
 	assertClosed(other, time.Now().Add(30*time.Second))
-	joinRevoked(defaultConnectorRevocationDenied)
+	// the relay may close both legs before the owner receives a typed denial.
+	// control above must independently deny this exact device in either case.
+	joinRevoked(func(err error) bool {
+		return defaultConnectorRevocationDenied(err) || errors.Is(err, connectorstream.ErrServiceConnection)
+	})
 }
 
 // only the deliberately revoked sibling may end with these typed denials:
