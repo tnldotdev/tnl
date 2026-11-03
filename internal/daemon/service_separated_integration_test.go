@@ -230,8 +230,8 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 			} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
 				t.Fatal("revocation did not close the admitted connector stream", err)
 			}
-			if _, err := control.ResolveService(t.Context(), service.Id); err == nil {
-				t.Fatal("revoked device selected another publisher run")
+			if _, err := f.identity.routes.SelectServiceRun(t.Context(), service.Id, device.Subject.DeviceID); !defaultConnectorRevocationDenied(err) {
+				t.Fatalf("control did not deny the exact revoked device: %v", err)
 			}
 			var publicURLs int
 			if err := f.inspect.QueryRowContext(t.Context(), `SELECT count(*) FROM control.public_urls`).Scan(&publicURLs); err != nil || publicURLs != 0 {

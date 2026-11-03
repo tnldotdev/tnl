@@ -71,27 +71,15 @@ func closePeerCarriers(paths [2]peer.Carrier) {
 	}
 }
 
-// ServeRelayPackets registers both current claimed connections, then serves one
-// retained inner QUIC session through the existing connector admission owner.
-func (p *PeerSession) ServeRelayPackets(ctx context.Context) error {
-	p.bound.mu.Lock()
-	if !p.currentLocked() || p.packetStarted || ctx.Err() != nil {
-		p.bound.mu.Unlock()
-		return ErrPrivateStream
-	}
-	p.packetStarted = true
-	p.packets.Add(1)
-	binding := p.binding
-	p.bound.mu.Unlock()
-	defer p.packets.Done()
-	defer p.stop()
+func (p *PeerSession) serveRelayPackets(ctx context.Context) error {
+	binding := p.bindingSnapshot()
 	paths, err := p.bound.peerCarriers(binding)
 	if err != nil {
 		return err
 	}
-	defer closePeerCarriers(paths)
 	packets, err := peer.New(p.ctx, peer.Config{Key: binding.key, Role: 1, Paths: paths})
 	if err != nil {
+		closePeerCarriers(paths)
 		return err
 	}
 	defer packets.Close()
@@ -107,7 +95,9 @@ func (p *PeerSession) ServeRelayPackets(ctx context.Context) error {
 		return err
 	}
 	defer listener.Close()
-	close(p.packetReady)
+	if err := p.markReady(ctx); err != nil {
+		return err
+	}
 	connection, err := listener.Accept(p.ctx)
 	if err != nil {
 		return err
@@ -117,5 +107,15 @@ func (p *PeerSession) ServeRelayPackets(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return p.Serve(ctx, session)
+	return p.serveSession(session)
+}
+
+func (p *PeerSession) markReady(ctx context.Context) error {
+	p.bound.mu.Lock()
+	defer p.bound.mu.Unlock()
+	if ctx.Err() != nil || !p.currentLocked() {
+		return ErrPrivateStream
+	}
+	close(p.ready)
+	return nil
 }

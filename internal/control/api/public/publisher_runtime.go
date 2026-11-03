@@ -1,7 +1,6 @@
 package public
 
 import (
-	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -14,9 +13,7 @@ import (
 
 func (h *handler) ObservePublisherRuntime(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	store, ok := h.store.(interface {
-		PublisherRuntime(context.Context, controlstate.PublisherRuntimeRequest) (controlstate.PublisherRuntimeResponse, error)
-	})
+	store, ok := h.dependencies.PublisherRuntime, h.dependencies.PublisherRuntime != nil
 	if !ok || h.config.ControlURL == "" {
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher runtime observation is unavailable")
 		return

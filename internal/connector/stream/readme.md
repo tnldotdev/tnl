@@ -38,6 +38,10 @@ stream. The caller clears readiness, fetches current metadata, joins the old
 runner and starts a new control adapter/listener. Queued or live connections
 are closed, not replayed.
 
+renewal keeps the selected run. the service visitor-permission response supplies
+the current trust revision, so metadata changes end the runner even when
+placement would choose a different run or the retained run is full.
+
 The connector compares ingress acceptance with its authenticated session's
 identity, device and observed source. The publisher independently rechecks the
 trusted admission against control before opening its configured target.

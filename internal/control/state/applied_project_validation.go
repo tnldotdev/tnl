@@ -1,8 +1,6 @@
 package state
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"net"
 	"net/netip"
@@ -18,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/applicationlimits"
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 )
 
 const maximumAppliedInteger = 1<<53 - 1
@@ -133,11 +132,7 @@ func normalizeAppliedProjectService(s *ProjectServiceConfiguration) error {
 	}
 	if s.TargetTLS != nil {
 		t := s.TargetTLS
-		digest := sha256.Sum256([]byte("tnl-target-tls/v1\x00" + t.Hostname + "\x00" + t.CAPEM))
-		if t.Digest != hex.EncodeToString(digest[:]) {
-			return ErrProjectConfigurationInvalid
-		}
-		if validateServiceTrustRoots(t.Hostname, t.CAPEM, t.CAPEM == "") != nil {
+		if (targettrust.Declaration{Hostname: t.Hostname, CAPEM: []byte(t.CAPEM), Digest: t.Digest}).Validate() != nil {
 			return ErrProjectConfigurationInvalid
 		}
 	}

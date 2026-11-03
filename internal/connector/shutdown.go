@@ -17,9 +17,9 @@ func (b *connectorConnectionBackend) Close(ctx context.Context) error {
 	if b.cancel != nil {
 		b.cancel()
 	}
-	for _, p := range b.prepared {
-		if p.listener != nil {
-			result = errors.Join(result, p.listener.Close())
+	for _, owner := range b.listeners {
+		if owner.listener != nil {
+			result = errors.Join(result, owner.listener.Close())
 		}
 	}
 	clients := []*workload.Client{b.workload}

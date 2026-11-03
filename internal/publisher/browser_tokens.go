@@ -110,7 +110,7 @@ func (b *browserTokens) verify(response controlv1.VisitorTokenResponse, parent t
 	// a signed response may precede installation of its policy revision. verify
 	// its signature and response binding before classifying that race as retryable.
 	if facts.VisitorPolicyRevision != view.VisitorPolicyRevision {
-		return visitortoken.VerifiedPermission{}, visitortoken.ErrPolicy
+		return permission, visitortoken.ErrPolicy
 	}
 	if err := visitortoken.CheckCurrent(permission, view, time.Now()); err != nil {
 		return visitortoken.VerifiedPermission{}, err

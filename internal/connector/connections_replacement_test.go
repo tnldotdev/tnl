@@ -207,11 +207,11 @@ func runConnectionReplacement(t *testing.T, options replacementTestOptions) {
 	if options.raceExchange {
 		httpClient = &http.Client{Transport: &lateReplacementExchange{transport: httpClient.Transport, entered: entered, release: release}}
 	}
-	b := &connectorConnectionBackend{scope: connectorruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: []string{"db", "removed"}}, httpClient: httpClient, connectorConnectionSession: connectorConnectionSession{workload: client, deadline: oldSession.ExpiresAt}, prepared: map[string]*preparedConnection{}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"db": {Protocol: new("postgres")}}}}}}
+	b := &connectorConnectionBackend{scope: connectorruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: []string{"db", "removed"}}, httpClient: httpClient, connectorConnectionSession: connectorConnectionSession{workload: client, deadline: oldSession.ExpiresAt}, listeners: map[string]*ownedServiceListener{}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"db": {Protocol: new("postgres")}}}}}}
 	// a replacement session invalidates old snapshots without rebuilding their
 	// listeners. only a later Connect for the requested service may do that work.
-	b.prepared["db"] = &preparedConnection{ready: true, sessionID: oldID, service: controlv1.Service{Id: service, Protocol: controlv1.Postgres, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 15443}}}
-	b.prepared["removed"] = &preparedConnection{ready: true, sessionID: oldID}
+	b.listeners["db"] = &ownedServiceListener{attempt: &servicePreparation{state: &servingService{sessionID: oldID}, service: controlv1.Service{Id: service, Protocol: controlv1.Postgres, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 15443}}}}
+	b.listeners["removed"] = &ownedServiceListener{attempt: &servicePreparation{state: &servingService{sessionID: oldID}}}
 	if options.raceExchange {
 		b.lifetime, b.cancel = context.WithCancel(t.Context())
 		attached, closed := make(chan error, 1), make(chan error, 1)
@@ -301,7 +301,7 @@ func runConnectionReplacement(t *testing.T, options replacementTestOptions) {
 	if err != nil {
 		t.Fatal("replacement did not recover its committed exchange", err)
 	}
-	if len(b.prepared) != 2 || len(b.services) != 1 || b.metadata.Services["db"].Protocol != "postgres" {
+	if len(b.listeners) != 2 || len(b.services) != 1 || b.metadata.Services["db"].Protocol != "postgres" {
 		t.Fatal("authorized snapshot was confused with prepared listeners")
 	}
 	current, err := b.workload.Session()

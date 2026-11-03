@@ -24,7 +24,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/connector/kubeconfig"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/observability"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -32,21 +31,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
-
-type preparedConnection struct {
-	service         controlv1.Service
-	connection      connectorruntime.Connection
-	kubeSource      kubeconfig.Source
-	kubePlan        kubeconfig.Plan
-	kubeResult      kubeconfig.Result
-	err             error
-	listener        *connectorruntime.ListenerSwitch
-	ready           bool
-	cancel          context.CancelFunc
-	control         connectorstream.Control
-	authorizedUntil time.Time
-	sessionID       string
-}
 
 type connectorConnectionBackend struct {
 	connectorConnectionSession
@@ -56,7 +40,7 @@ type connectorConnectionBackend struct {
 	stateDir, assertion, directory, executable, runnerTemp string
 	httpClient                                             *http.Client
 	acquisition                                            workloadmanifest.Acquisition
-	prepared                                               map[string]*preparedConnection
+	listeners                                              map[string]*ownedServiceListener
 	initialServices                                        []string
 	services                                               map[string]controlv1.Service
 	metadata                                               meta.PublicMetadata
@@ -87,9 +71,13 @@ type connectorConnectionSession struct {
 	deadline        time.Time
 	sessionGate     chan struct{}
 	verification    *connectorruntime.AssertionVerification
-	assertions      map[string]connectorruntime.AssertionVerification
-	assertionChecks map[string]time.Time
+	assertions      map[string]verifiedAssertion
 	verifiedSession string
+}
+
+type verifiedAssertion struct {
+	proof        connectorruntime.AssertionVerification
+	checkedUntil time.Time // current authorization may need checking before the proof expires.
 }
 
 // the configured scope never changes with listener readiness or session renewal.
@@ -105,23 +93,25 @@ type connectorPreparedSnapshot struct {
 func (b *connectorConnectionBackend) publishLocked() {
 	s := &connectorPreparedSnapshot{metadata: b.metadata, connections: map[string]connectorruntime.Connection{}, errors: map[string]error{}}
 	s.assertions = make(map[string]connectorruntime.AssertionVerification, len(b.assertions))
-	for digest, proof := range b.assertions {
-		s.assertions[digest] = proof
+	for digest, assertion := range b.assertions {
+		s.assertions[digest] = assertion.proof
 	}
 	if b.verification != nil {
 		v := *b.verification
 		s.verification = &v
 	}
-	for name, p := range b.prepared {
-		if !p.ready {
-			continue
-		}
+	for name, owner := range b.listeners {
+		p := owner.attempt
 		service, allowed := b.services[name]
-		if !allowed || service.Id != p.service.Id || service.Protocol != p.service.Protocol || service.Endpoint == nil || p.service.Endpoint == nil || *service.Endpoint != *p.service.Endpoint {
+		if !allowed || !p.matches(service) {
 			continue
 		}
-		if p.err != nil {
-			s.errors[name] = p.err
+		if failed, ok := p.state.(servingFailed); ok {
+			s.errors[name] = failed.err
+			continue
+		}
+		serving, ok := p.state.(*servingService)
+		if !ok {
 			continue
 		}
 		if b.closed {
@@ -129,17 +119,14 @@ func (b *connectorConnectionBackend) publishLocked() {
 			continue
 		}
 		deadline := b.deadline
-		if b.workload != nil {
-			session, err := b.workload.Session()
-			if err != nil || session.Id != p.sessionID {
-				continue
-			}
-			if !slices.Contains(session.ServiceIds, p.service.Id) {
-				continue
-			}
-			deadline = minTime(deadline, session.LeaseExpiresAt)
+		lease, current := serving.sessionLease(b.workload, p.service.Id)
+		if !current {
+			continue
 		}
-		c := p.connection
+		if b.workload != nil {
+			deadline = minTime(deadline, lease)
+		}
+		c := serving.connection
 		c.ExpiresAt = deadline
 		if p.service.Protocol != controlv1.Tcp {
 			c.SSL = &connectorruntime.TLSOptions{ServerName: p.service.Endpoint.Hostname, RejectUnauthorized: true}
@@ -184,7 +171,7 @@ func (b *connectorConnectionBackend) cleanup() context.Context {
 }
 
 func (b *connectorConnectionBackend) Start(ctx context.Context) (meta.PublicMetadata, time.Time, error) {
-	b.prepared = map[string]*preparedConnection{}
+	b.listeners = map[string]*ownedServiceListener{}
 	b.teamID = b.scope.TeamID
 	lifetime, cancel := context.WithCancel(observability.Independent(context.WithoutCancel(ctx)))
 	b.cancel = cancel
@@ -303,17 +290,15 @@ func (b *connectorConnectionBackend) Connect(ctx context.Context, name string) (
 	}
 	b.mu.Lock()
 	service, found := b.services[name]
-	p := b.prepared[name]
+	owner := b.listeners[name]
 	client := b.workload
-	authorizedUntil := time.Time{}
-	if p != nil {
-		authorizedUntil = p.authorizedUntil
-	}
+	serving := owner.serving(service, client)
+	warm := serving != nil && time.Now().Before(serving.authorizedUntil)
 	b.mu.Unlock()
 	if !found || ValidateService(service) != nil || string(service.Protocol) != config.Protocol(b.project.Config.Services[name]) {
 		return connectorruntime.Connection{}, connectorruntime.ErrInvalid
 	}
-	if p != nil && time.Now().Before(authorizedUntil) {
+	if warm {
 		if snapshot, err := b.Prepared(name); err == nil {
 			return snapshot, nil
 		}
@@ -329,48 +314,53 @@ func (b *connectorConnectionBackend) Connect(ctx context.Context, name string) (
 		}
 	}
 	b.mu.Lock()
-	failed := p != nil && p.err != nil
-	if p != nil && client != nil {
-		session, err := client.Session()
-		failed = failed || err != nil || session.Id != p.sessionID
-	}
+	serving = owner.serving(service, client)
+	warm = serving != nil && time.Now().Before(serving.authorizedUntil)
 	b.mu.Unlock()
 	// refresh approved metadata only at an explicit preparation boundary. the
 	// service ID stays fenced by the current session's immutable authorization.
-	if p == nil || !p.ready || failed || !time.Now().Before(authorizedUntil) {
+	if !warm {
 		fresh, err := b.refreshService(ctx, name, service, client)
 		if err != nil {
 			return connectorruntime.Connection{}, err
 		}
-		if p != nil && (fresh.Endpoint == nil || p.service.Endpoint == nil || *fresh.Endpoint != *p.service.Endpoint) {
-			failed = true
-		}
 		service = fresh
 	}
-	if p == nil || !p.ready || failed {
-		var err error
-		p, err = b.prepareService(ctx, name, p, service, client)
+	b.mu.Lock()
+	serving = owner.serving(service, client)
+	var p *servicePreparation
+	if serving != nil {
+		p = owner.attempt
+	}
+	b.mu.Unlock()
+	if p == nil {
+		p, err = b.prepareService(ctx, name, owner, service, client)
 		if err != nil {
 			return connectorruntime.Connection{}, err
 		}
 	}
 	b.mu.Lock()
-	err = p.err
+	serving, err = p.result()
 	b.mu.Unlock()
 	if err != nil {
 		return connectorruntime.Connection{}, err
 	}
-	if b.human != nil && p.control != nil {
-		if _, err := p.control.ResolveService(ctx, p.service.Id); err != nil {
+	if b.human != nil && serving.control != nil {
+		if _, err := serving.control.ResolveService(ctx, p.service.Id); err != nil {
 			return connectorruntime.Connection{}, err
 		}
 	}
 	b.mu.Lock()
-	if b.workload != client || b.closed {
+	if b.workload != client || b.closed || b.listeners[name].attempt != p {
 		b.mu.Unlock()
 		return connectorruntime.Connection{}, connectorruntime.ErrUnprepared
 	}
-	p.authorizedUntil = validUntil
+	serving, err = p.result()
+	if err != nil {
+		b.mu.Unlock()
+		return connectorruntime.Connection{}, err
+	}
+	serving.authorizedUntil = validUntil
 	b.publishLocked()
 	b.mu.Unlock()
 	return b.Prepared(name)
@@ -614,8 +604,10 @@ func (b *connectorConnectionBackend) attach(ctx context.Context, assertion strin
 	// a denied assertion does not stop other listeners. discard only their
 	// cached admission observations so subsequent preparation checks live access.
 	b.mu.Lock()
-	for _, p := range b.prepared {
-		p.authorizedUntil = time.Time{}
+	for _, owner := range b.listeners {
+		if serving, ok := owner.attempt.state.(*servingService); ok {
+			serving.authorizedUntil = time.Time{}
+		}
 	}
 	b.mu.Unlock()
 	if errors.Is(err, workload.ErrSessionExpired) {
@@ -640,10 +632,11 @@ func (b *connectorConnectionBackend) reuseAssertion(assertion string) bool {
 		return false
 	}
 	digest := sha256.Sum256([]byte(assertion))
-	proof, known := b.assertions[hex.EncodeToString(digest[:])]
-	if !known || !b.assertionChecks[proof.Digest].After(time.Now()) || !proof.ExpiresAt.After(time.Now()) || b.verifiedSession != session.Id || !session.LeaseExpiresAt.After(time.Now()) || !session.ExpiresAt.After(time.Now()) {
+	entry, known := b.assertions[hex.EncodeToString(digest[:])]
+	if !known || !entry.checkedUntil.After(time.Now()) || !entry.proof.ExpiresAt.After(time.Now()) || b.verifiedSession != session.Id || !session.LeaseExpiresAt.After(time.Now()) || !session.ExpiresAt.After(time.Now()) {
 		return false
 	}
+	proof := entry.proof
 	b.verification = &proof
 	b.publishLocked()
 	return true
@@ -657,28 +650,24 @@ func (b *connectorConnectionBackend) rememberAssertion(assertion string, expires
 	digest := sha256.Sum256([]byte(assertion))
 	b.verification = &connectorruntime.AssertionVerification{Digest: hex.EncodeToString(digest[:]), Binding: session.Binding, ExpiresAt: expires}
 	if b.assertions == nil || b.verifiedSession != session.Id {
-		b.assertions = map[string]connectorruntime.AssertionVerification{}
-		b.assertionChecks = map[string]time.Time{}
+		b.assertions = map[string]verifiedAssertion{}
 	}
-	for key, proof := range b.assertions {
-		if !proof.ExpiresAt.After(time.Now()) {
+	for key, entry := range b.assertions {
+		if !entry.proof.ExpiresAt.After(time.Now()) {
 			delete(b.assertions, key)
-			delete(b.assertionChecks, key)
 		}
 	}
 	if len(b.assertions) >= 128 {
 		for key := range b.assertions {
 			delete(b.assertions, key)
-			delete(b.assertionChecks, key)
 			break
 		}
 	}
-	b.assertions[b.verification.Digest] = *b.verification
 	checkedUntil := time.Now().Add(30 * time.Second)
 	if expires.Before(checkedUntil) {
 		checkedUntil = expires
 	}
-	b.assertionChecks[b.verification.Digest] = checkedUntil
+	b.assertions[b.verification.Digest] = verifiedAssertion{proof: *b.verification, checkedUntil: checkedUntil}
 	b.verifiedSession = session.Id
 }
 func (b *connectorConnectionBackend) Verification() *connectorruntime.AssertionVerification {
@@ -699,49 +688,47 @@ func (b *connectorConnectionBackend) ProjectRuntime() meta.PublicMetadata {
 func (b *connectorConnectionBackend) Kubeconfig() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for _, p := range b.prepared {
-		if p.ready && p.connection.Kubeconfig != "" {
-			return p.connection.Kubeconfig
+	for _, owner := range b.listeners {
+		if kube, ok := owner.kubeconfig(); ok && kube.result.File != "" {
+			return kube.result.File
 		}
 	}
 	return ""
 }
-func (b *connectorConnectionBackend) prepareKube(ctx context.Context, name string, p *preparedConnection) error {
+func (b *connectorConnectionBackend) prepareKube(ctx context.Context, name string, service controlv1.Service, connection connectorruntime.Connection) (serviceKubeconfig, error) {
 	b.kubeMu.Lock()
 	defer b.kubeMu.Unlock()
-	source, err := kubeconfig.ResolveSource(kubeconfig.Source{TokenFile: b.kubeOptions.KubeTokenFile, ConfigFile: b.kubeOptions.KubeUserConfig, ExistingUser: b.kubeOptions.KubeUser}, p.service.KubernetesAuth)
+	source, err := kubeconfig.ResolveSource(kubeconfig.Source{TokenFile: b.kubeOptions.KubeTokenFile, ConfigFile: b.kubeOptions.KubeUserConfig, ExistingUser: b.kubeOptions.KubeUser}, service.KubernetesAuth)
 	if err != nil {
-		return err
+		return serviceKubeconfig{}, err
 	}
-	p.kubeSource = source
+	var plan kubeconfig.Plan
 	if b.scope.Workload != "" {
 		if b.sessionKubePlan.Path == "" {
 			b.sessionKubePlan, err = kubeconfig.PlanSession(b.directory, "session")
 		}
-		p.kubePlan = b.sessionKubePlan
+		plan = b.sessionKubePlan
 		if b.sessionKubeResult.File != "" {
-			p.kubePlan.Exclusive = false
+			plan.Exclusive = false
 		}
 	} else {
 		home, homeErr := os.UserHomeDir()
 		if homeErr != nil {
-			return homeErr
+			return serviceKubeconfig{}, homeErr
 		}
-		p.kubePlan, err = kubeconfig.PlanLocal(home, os.Getenv("KUBECONFIG"))
+		plan, err = kubeconfig.PlanLocal(home, os.Getenv("KUBECONFIG"))
 	}
 	if err != nil {
-		return err
+		return serviceKubeconfig{}, err
 	}
-	owner := kubeconfig.Owner{ControlURL: b.scope.Server, TeamID: b.teamID, SourceID: b.scope.SourceID, ServiceID: p.service.Id}
-	p.kubeResult, err = p.kubePlan.Prepare(ctx, kubeconfig.Options{Owner: owner, ProjectLabel: b.scope.ProjectLabel, Service: name, Namespace: b.kubeOptions.Namespace, Server: "https://" + net.JoinHostPort(p.connection.Host, strconv.Itoa(p.connection.Port)), TLSServerName: p.service.Endpoint.Hostname, Helper: b.executable, Profile: filepath.Join(b.directory, "handle.json"), CredentialArgs: []string{"runtime", "connections", "kube-credential", "--handle", filepath.Join(b.directory, "handle.json"), "--service", name}})
+	owner := kubeconfig.Owner{ControlURL: b.scope.Server, TeamID: b.teamID, SourceID: b.scope.SourceID, ServiceID: service.Id}
+	result, err := plan.Prepare(ctx, kubeconfig.Options{Owner: owner, ProjectLabel: b.scope.ProjectLabel, Service: name, Namespace: b.kubeOptions.Namespace, Server: "https://" + net.JoinHostPort(connection.Host, strconv.Itoa(connection.Port)), TLSServerName: service.Endpoint.Hostname, Helper: b.executable, Profile: filepath.Join(b.directory, "handle.json"), CredentialArgs: []string{"runtime", "connections", "kube-credential", "--handle", filepath.Join(b.directory, "handle.json"), "--service", name}})
 	if err == nil {
 		if b.scope.Workload != "" {
-			b.sessionKubeResult = p.kubeResult
+			b.sessionKubeResult = result
 		}
-		p.connection.Kubeconfig = p.kubeResult.File
-		p.connection.Context = p.kubeResult.Context
 	}
-	return err
+	return serviceKubeconfig{source: source, result: result}, err
 }
 
 func (b *connectorConnectionBackend) Credential(ctx context.Context, name string) (credentialv1.ExecCredential, error) {
@@ -751,12 +738,13 @@ func (b *connectorConnectionBackend) Credential(ctx context.Context, name string
 	}
 	defer finish()
 	b.mu.Lock()
-	p := b.prepared[name]
-	if p == nil || !p.ready || p.connection.Protocol != "kubernetes" {
+	owner := b.listeners[name]
+	kube, ok := owner.kubeconfig()
+	if !ok {
 		b.mu.Unlock()
 		return credentialv1.ExecCredential{}, kubeconfig.ErrCredential
 	}
-	source := p.kubeSource
+	source := kube.source
 	b.mu.Unlock()
 	credential, err := kubeconfig.Credential(ctx, kubeconfig.Profile{Source: source}, nil)
 	if err != nil {

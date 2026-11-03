@@ -50,7 +50,7 @@ func TestIntegrationAliasBrowserHTTPAuthorizationAndLogout(t *testing.T) {
 	if _, err := f.sql.Exec(ctx, `UPDATE control.publish_runs SET state='ready',ready_at=$2 WHERE id=$1`, run.PublishRunID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	api, err := NewHandler(Config{ControlURL: f.server.URL, HTTPClient: f.server.Client()}, f.d, f.d, nil)
+	api, err := NewHandler(Config{ControlURL: f.server.URL, HTTPClient: f.server.Client()}, DatabaseStores(f.d), f.d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestIntegrationShareReviewerSignInRetainsShareVisitorPermission(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	api, err := NewHandler(Config{ControlURL: f.server.URL, HTTPClient: f.server.Client()}, f.d, f.d, nil)
+	api, err := NewHandler(Config{ControlURL: f.server.URL, HTTPClient: f.server.Client()}, DatabaseStores(f.d), f.d, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
