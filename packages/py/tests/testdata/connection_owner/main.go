@@ -26,14 +26,17 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 type backend struct {
-	expires    time.Time
-	ca         string
-	port       int
-	streamPort int
-	listeners  []net.Listener
+	expires           time.Time
+	ca                string
+	port              int
+	streamPort        int
+	transportID       string
+	streamTransportID string
+	listeners         []net.Listener
 }
 
 func (b *backend) Start(context.Context) (meta.PublicMetadata, time.Time, error) {
@@ -46,12 +49,12 @@ func (b *backend) Start(context.Context) (meta.PublicMetadata, time.Time, error)
 }
 func (b *backend) Connect(_ context.Context, service string) (connectorruntime.Connection, error) {
 	if service == "stream" {
-		return connectorruntime.Connection{Schema: 1, Protocol: "tcp", Host: "127.0.0.1", Port: b.streamPort, ExpiresAt: b.expires}, nil
+		return connectorruntime.Connection{Schema: 1, Protocol: "tcp", Host: "127.0.0.1", Port: b.streamPort, ExpiresAt: b.expires, TransportID: b.streamTransportID}, nil
 	}
 	if service != "database" {
 		return connectorruntime.Connection{}, connectorruntime.ErrInvalid
 	}
-	return connectorruntime.Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: b.port, SSL: &connectorruntime.TLSOptions{ServerName: "database.example.test", RejectUnauthorized: true, CA: b.ca}, ExpiresAt: b.expires}, nil
+	return connectorruntime.Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: b.port, SSL: &connectorruntime.TLSOptions{ServerName: "database.example.test", RejectUnauthorized: true, CA: b.ca}, ExpiresAt: b.expires, TransportID: b.transportID}, nil
 }
 func (b *backend) Renew(context.Context) (time.Time, error) { return b.expires, nil }
 func (b *backend) Prepared(service string) (connectorruntime.Connection, error) {
@@ -119,6 +122,14 @@ func run() error {
 	go echo(listener, tlsConfig, *postgresAuth)
 	scope := connectorruntime.Context{Schema: 1, Directory: parent, ConfigDigest: strings.Repeat("a", 64), Server: "https://control.example.test", Audience: "https://control.example.test", ProjectKey: "project", SourceID: "source", WorktreeKey: "worktree", Services: []string{"database", "stream"}}
 	b := &backend{expires: expires, ca: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), port: listener.Addr().(*net.TCPAddr).Port, streamPort: stream.Addr().(*net.TCPAddr).Port, listeners: []net.Listener{listener, stream}}
+	b.transportID, err = opaqueid.New("ctg_")
+	if err != nil {
+		return err
+	}
+	b.streamTransportID, err = opaqueid.New("ctg_")
+	if err != nil {
+		return err
+	}
 	return connectorruntime.Serve(ctx, scope, directory, flags.Arg(1), b, os.Stdout)
 }
 

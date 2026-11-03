@@ -76,7 +76,7 @@ func TestIntegrationDatabaseSDKSmoke(t *testing.T) {
 					"database": {Protocol: string(setting.protocol), Namespace: "production.storefront.example.test", Hostname: hostname, Port: number},
 				}},
 				connections: map[string]connectorruntime.Connection{
-					"database": {Schema: 1, Protocol: string(setting.protocol), Host: "127.0.0.1", Port: number, ExpiresAt: deadline,
+					"database": {Schema: 1, Protocol: string(setting.protocol), Host: "127.0.0.1", Port: number, ExpiresAt: deadline, TransportID: "ctg_aaaaaaaaaaaaaaaaaaaaaa",
 						SSL: &connectorruntime.TLSOptions{ServerName: hostname, RejectUnauthorized: true, CA: string(certificates.ca)}},
 				},
 			}

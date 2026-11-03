@@ -50,7 +50,7 @@ func connectionBackendFixture(t *testing.T, handle func(http.ResponseWriter, *ht
 		protocol := []controlv1.ServiceProtocol{"http", "postgres"}[i]
 		b.services[name] = controlv1.Service{Id: ids[i], Protocol: protocol, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: name + ".example.test", Port: 15443 + i}}
 	}
-	b.listeners["api"] = &ownedServiceListener{attempt: &servicePreparation{service: b.services["api"], state: &servingService{sessionID: id, connection: connectorruntime.Connection{Schema: 1, Protocol: "http", Host: "127.0.0.1", Port: 15443}}}}
+	b.listeners["api"] = &ownedServiceListener{attempt: &servicePreparation{service: b.services["api"], state: &servingService{sessionID: id, connection: connectorruntime.Connection{Schema: 1, Protocol: "http", Host: "127.0.0.1", Port: 15443, TransportID: "ctg_aaaaaaaaaaaaaaaaaaaaaa"}}}}
 	return b
 }
 
@@ -105,6 +105,12 @@ func TestConnectionApprovedMetadataRefreshRetainsExactServiceScope(t *testing.T)
 		_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": id, "service": "api", "protocol": "http", "endpoint": endpoint}}})
 	})
 	approved := b.services["api"]
+	b.metadata.Services["api"], _ = meta.NewEndpoint("example.test", approved.Endpoint.Hostname, "http", approved.Endpoint.Port, false)
+	b.listeners["api"].attempt.state.(*servingService).connection.URL = "https://api.example.test:15443"
+	previous, err := b.Snapshot("api")
+	if err != nil || previous.Validate() != nil {
+		t.Fatal("fixture has no valid prepared transport", err)
+	}
 	endpoint = *approved.Endpoint
 	endpoint.Hostname, endpoint.Port = "updated.example.test", 25443
 	fresh, err := b.refreshService(t.Context(), "api", approved, b.workload)
@@ -113,6 +119,24 @@ func TestConnectionApprovedMetadataRefreshRetainsExactServiceScope(t *testing.T)
 	}
 	if _, err := b.Prepared("api"); !errors.Is(err, connectorruntime.ErrUnprepared) {
 		t.Fatal("new metadata was paired with an old transport", err)
+	}
+	// recovery publishes the new transport and approved metadata together, while
+	// callers retaining an earlier snapshot keep its original metadata and ID.
+	current := b.listeners["api"].attempt.state.(*servingService)
+	session, err := b.workload.Session()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.mu.Lock()
+	b.listeners["api"].attempt = &servicePreparation{service: fresh, state: &servingService{sessionID: session.Id, connection: connectorruntime.Connection{Schema: 1, Protocol: "http", Host: "127.0.0.1", Port: current.connection.Port, URL: "https://updated.example.test:25443", TransportID: "ctg_bbbbbbbbbbbbbbbbbbbbbb"}}}
+	b.publishLocked()
+	b.mu.Unlock()
+	recovered, err := b.Snapshot("api")
+	if err != nil || recovered.Validate() != nil || recovered.Connection.Port != previous.Connection.Port || recovered.Connection.TransportID == previous.Connection.TransportID || recovered.ProjectRuntime.Services["api"].Hostname != endpoint.Hostname || recovered.Connection.SSL.ServerName != endpoint.Hostname || recovered.Connection.URL != recovered.ProjectRuntime.Services["api"].URL {
+		t.Fatal("recovery did not pair current metadata and transport identity", err)
+	}
+	if previous.Connection.TransportID != "ctg_aaaaaaaaaaaaaaaaaaaaaa" || previous.ProjectRuntime.Services["api"].Hostname != approved.Endpoint.Hostname || previous.Connection.SSL.ServerName != approved.Endpoint.Hostname {
+		t.Fatal("recovery changed a previously returned snapshot")
 	}
 	replacementID = "svc_" + strings.Repeat("c", 22)
 	if _, err := b.refreshService(t.Context(), "api", fresh, b.workload); err == nil {

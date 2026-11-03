@@ -442,8 +442,8 @@ func (b *connectorConnectionBackend) SnapshotFor(name, assertion string) (connec
 	if !ok {
 		return connectorruntime.Prepared{}, connectorruntime.ErrUnprepared
 	}
-	if !c.ExpiresAt.After(time.Now()) {
-		return connectorruntime.Prepared{}, connectorruntime.ErrExpired
+	if err := c.Validate(); err != nil {
+		return connectorruntime.Prepared{}, err
 	}
 	var verification *connectorruntime.AssertionVerification
 	if s.verification != nil && s.verification.ExpiresAt.After(time.Now()) {

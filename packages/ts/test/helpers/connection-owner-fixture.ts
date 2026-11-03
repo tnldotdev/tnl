@@ -93,6 +93,7 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
           port: address.port,
           url,
           expires_at,
+          transport_id: `ctg_${randomBytes(11).toString("hex")}`,
           ssl: { servername: "database.team.example", rejectUnauthorized: true },
           ...(protocol === "kubernetes"
             ? { kubeconfig: path.join(directory, "kubeconfig"), context: "tnl:database" }

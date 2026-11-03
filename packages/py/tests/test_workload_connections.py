@@ -224,6 +224,7 @@ def test_rotating_assertions_and_services_share_only_control_verified_owners(
                 "host": "127.0.0.1",
                 "port": 34567,
                 "expires_at": deadline,
+                "transport_id": "ctg_" + ("a" if protocol == "postgres" else "b") * 22,
                 "ssl": {"servername": f"{name}.example.test", "rejectUnauthorized": True},
             },
         }

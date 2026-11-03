@@ -29,6 +29,7 @@ def snapshot(**changes: object) -> dict[str, object]:
         "port": 34567,
         "ssl": {"servername": "database.example.test", "rejectUnauthorized": True},
         "expires_at": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
+        "transport_id": "ctg_aaaaaaaaaaaaaaaaaaaaaa",
         **changes,
     }
 
@@ -583,6 +584,43 @@ def test_invalid_or_expired_native_material_fails_closed(changes: dict[str, obje
     with pytest.raises(tnl.TnlError) as caught:
         _connections._snapshot(snapshot(**changes))
     assert "secret" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "transport",
+    [
+        pytest.param(..., id="missing"),
+        None,
+        "",
+        1,
+        "ctg_short",
+        "old_" + "a" * 22,
+        "ctg_" + "a" * 21,
+        "ctg_" + "a" * 23,
+        "ctg_" + "a" * 21 + "_",
+        "ctg_" + "a" * 21 + "é",
+        "ctg_" + "a" * 22 + "\n",
+    ],
+)
+def test_snapshot_and_prepared_require_a_valid_transport_identity(transport: object) -> None:
+    value = prepared(transport_id=transport)
+    connection = value["connection"]
+    assert isinstance(connection, dict)
+    if transport is ...:
+        del connection["transport_id"]
+    for parse in (
+        lambda: _connections._snapshot(connection),
+        lambda: _connections._prepared(value, "database"),
+    ):
+        with pytest.raises(tnl.TnlError) as caught:
+            parse()
+        assert caught.value.code == "sdk.connection_invalid"
+
+
+def test_transport_identity_is_private_native_metadata() -> None:
+    connection = _connections._snapshot(snapshot(transport_id="ctg_0123456789ABCDEFGHIJaz"))
+    assert isinstance(connection, tnl.PostgresConnection)
+    assert not hasattr(connection, "transport_id")
 
 
 def test_http_keeps_managed_origin_and_project_protocol_drift_is_rejected(

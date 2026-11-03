@@ -198,13 +198,16 @@ test("streamed response bodies can outlive 30 seconds without an SDK total abort
   }
 }, 40_000);
 
-test("session generation changes replace a same-address pool without replay or transferring an old stream", async () => {
+test("transport identity reuses a pool and replacement at the same address retires it without replay", async () => {
   const sockets = new WeakMap<object, number>();
+  const closed = new Set<number>();
   let sequence = 0;
+  let oldSocket: number | undefined;
   const bodies: string[] = [];
   let finishOld: (() => void) | undefined;
   const server = createServer({ key, cert }, (request, response) => {
     if (request.url === "/old-stream") {
+      oldSocket = sockets.get(request.socket);
       response.writeHead(200).write("old-start\n");
       finishOld = () => response.end("old-finish\n");
       return;
@@ -221,13 +224,17 @@ test("session generation changes replace a same-address pool without replay or t
       response.end(`${sockets.get(request.socket)}:${body}`);
     });
   });
-  server.on("secureConnection", (socket) => sockets.set(socket, ++sequence));
+  server.on("secureConnection", (socket) => {
+    const id = ++sequence;
+    sockets.set(socket, id);
+    socket.once("close", () => closed.add(id));
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("missing listener");
     const origin = "https://api.tnl.invalid:8443";
-    let generation = "ctg_aaaaaaaaaaaaaaaaaaaaaa";
+    let transportID = "ctg_aaaaaaaaaaaaaaaaaaaaaa";
     const fetch = managedFetch(origin, async () =>
       parseConnectionSnapshot({
         schema: 1,
@@ -237,24 +244,38 @@ test("session generation changes replace a same-address pool without replay or t
         url: origin,
         ssl: { servername: "api.tnl.invalid", rejectUnauthorized: true, ca: cert },
         expires_at: new Date(Date.now() + 3600_000).toISOString(),
-        transport_id: generation,
+        transport_id: transportID,
       }),
     );
     await (await fetch("/echo", { method: "POST", body: "warm" })).text();
+    for (let i = 0; i < 6; i++) {
+      await (await fetch("/echo", { method: "POST", body: "reuse" })).text();
+    }
+    // undici may use a second socket before the first returns to the idle queue.
+    expect(sequence).toBeLessThanOrEqual(2);
     const old = await fetch("/old-stream");
     const reader = old.body?.getReader();
     if (reader === undefined) throw new Error("missing body");
     expect(new TextDecoder().decode((await reader.read()).value)).toBe("old-start\n");
     const idle = await (await fetch("/echo", { method: "POST", body: "idle" })).text();
-    generation = "ctg_bbbbbbbbbbbbbbbbbbbbbb";
+    transportID = "ctg_bbbbbbbbbbbbbbbbbbbbbb";
     const current = await (await fetch("/echo", { method: "POST", body: "once" })).text();
     expect(current.split(":")[0]).not.toBe(idle.split(":")[0]);
+    await expect.poll(() => closed.has(Number(idle.split(":")[0]))).toBe(true);
+    expect(closed.has(oldSocket ?? 0)).toBe(false);
     finishOld?.();
     expect(new TextDecoder().decode((await reader.read()).value)).toBe("old-finish\n");
     expect((await reader.read()).done).toBe(true);
-    expect(bodies).toEqual(["warm", "idle", "once"]);
+    await expect.poll(() => closed.has(oldSocket ?? 0)).toBe(true);
+    expect(bodies).toEqual(["warm", ...Array<string>(6).fill("reuse"), "idle", "once"]);
     await expect(fetch("/drop", { method: "POST", body: "drop-once" })).rejects.toThrow();
-    expect(bodies).toEqual(["warm", "idle", "once", "drop-once"]);
+    expect(bodies).toEqual([
+      "warm",
+      ...Array<string>(6).fill("reuse"),
+      "idle",
+      "once",
+      "drop-once",
+    ]);
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));

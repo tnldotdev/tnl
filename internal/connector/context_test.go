@@ -85,7 +85,7 @@ func TestConnectionKubernetesUsesSavedAuthHint(t *testing.T) {
 	b := connectorConnectionBackend{directory: directory, executable: "/absolute/tnl", connectorConnectionSession: connectorConnectionSession{teamID: team}, scope: connectorruntime.Context{Workload: "test", Server: "https://control.example", TeamID: team, SourceID: "source", ProjectLabel: "shop"}}
 	b.project.Config.Services = map[string]config.Service{"cluster": {Target: &config.ServiceTarget{Type: "eks", Cluster: &localCluster, Region: &localRegion}}}
 	saved := controlv1.Service{Id: service, Endpoint: &controlv1.ServiceEndpoint{Hostname: "cluster.example"}, KubernetesAuth: &controlv1.KubernetesAuth{Provider: controlv1.KubernetesEKS, Cluster: "applied-cluster", Region: "us-east-1"}}
-	kube, err := b.prepareKube(t.Context(), "cluster", saved, connectorruntime.Connection{Host: "127.0.0.1", Port: 25443, URL: "https://cluster.example:25443"})
+	kube, err := b.prepareKube(t.Context(), "cluster", saved, connectorruntime.Connection{Host: "127.0.0.1", Port: 25443, URL: "https://cluster.example:25443", TransportID: "ctg_aaaaaaaaaaaaaaaaaaaaaa"})
 	if err != nil {
 		t.Fatal(err)
 	}

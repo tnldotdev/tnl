@@ -12,6 +12,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
 const Schema = 1
@@ -89,11 +90,21 @@ type Connection struct {
 	Kubeconfig  string      `json:"kubeconfig,omitempty"`
 	Context     string      `json:"context,omitempty"`
 	ExpiresAt   time.Time   `json:"expires_at"`
-	TransportID string      `json:"transport_id,omitempty"`
+	TransportID string      `json:"transport_id"`
 }
 
 func (Connection) String() string   { return "private connector connection" }
 func (Connection) GoString() string { return "private connector connection" }
+
+func (c Connection) Validate() error {
+	if c.Schema != Schema || !opaqueid.Valid(c.TransportID, "ctg_") {
+		return ErrInvalid
+	}
+	if !c.ExpiresAt.After(time.Now()) {
+		return ErrExpired
+	}
+	return nil
+}
 
 // Prepared pairs one owner's public metadata with its current private snapshot.
 // readers never re-evaluate project configuration, Git, or authentication.
@@ -114,6 +125,13 @@ type AssertionVerification struct {
 
 func (Prepared) String() string   { return "private prepared connection" }
 func (Prepared) GoString() string { return "private prepared connection" }
+
+func (p Prepared) Validate() error {
+	if p.Schema != Schema {
+		return ErrInvalid
+	}
+	return p.Connection.Validate()
+}
 
 type Status struct {
 	Schema           int                 `json:"schema"`
