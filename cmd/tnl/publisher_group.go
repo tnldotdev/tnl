@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/buildinfo"
+	"github.com/tnldotdev/tnl/internal/client/detached"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/clioutput"
@@ -315,10 +316,10 @@ func runPublisherServe(ctx context.Context, flags publisherServeCommand, project
 	if err := lock.Close(); err != nil {
 		return err
 	}
-	detachedPublicationStarting(ctx)
+	detached.Starting(ctx)
 	return servePublisherGroup(ctx, job, profile, private, func(revision int64, healthy bool) error {
 		if healthy {
-			detachedPublicationReady(ctx)
+			detached.Ready(ctx)
 		}
 		state := "reconciling"
 		if healthy {

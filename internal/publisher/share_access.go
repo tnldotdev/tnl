@@ -69,7 +69,7 @@ func (a *shareAccess) redeem(ctx context.Context, path string) (controlv1.ShareR
 	if a.browser != nil && a.browser.tokens != nil {
 		source, err := json.Marshal(controlv1.VisitorTokenShareSessionSource{Kind: controlv1.VisitorTokenShareSession, ShareId: result.ShareId, Secret: result.CookieSecret})
 		if err == nil {
-			err = a.browser.prepareToken(ctx, source, result.Permission, result.ExpiresAt)
+			result.Permission, err = a.browser.prepareToken(ctx, source, result.Permission, result.ExpiresAt)
 		}
 		if err != nil {
 			if a.logf != nil {

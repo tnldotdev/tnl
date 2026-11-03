@@ -1,7 +1,6 @@
 package public
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -16,9 +15,7 @@ func (h *handler) GetLocalProjectService(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	store, ok := h.store.(interface {
-		GetLocalProjectService(context.Context, controlstate.GetLocalProjectServiceRequest) (controlstate.LocalProjectService, error)
-	})
+	store, ok := h.dependencies.LocalProjects, h.dependencies.LocalProjects != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "local project services are unavailable")
 		return
@@ -54,9 +51,7 @@ func (h *handler) RealizeLocalProjectService(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	store, ok := h.store.(interface {
-		RealizeLocalProjectService(context.Context, controlstate.RealizeLocalProjectServiceRequest) (controlstate.LocalProjectService, error)
-	})
+	store, ok := h.dependencies.LocalProjects, h.dependencies.LocalProjects != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "local project services are unavailable")
 		return
@@ -75,9 +70,7 @@ func (h *handler) GetProjectPublicMetadata(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	store, ok := h.store.(interface {
-		GetProjectPublicMetadata(context.Context, string, string, string, time.Time) (controlstate.ProjectPublicMetadata, error)
-	})
+	store, ok := h.dependencies.LocalProjects, h.dependencies.LocalProjects != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "project public metadata is unavailable")
 		return

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/detached"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -188,7 +189,7 @@ func (o *publishOutput) starting(tunnelID, target string) error {
 	o.tunnelID = tunnelID
 	o.target = target
 	if o.detachedCtx != nil {
-		detachedPublicationStarting(o.detachedCtx)
+		detached.Starting(o.detachedCtx)
 	}
 	if o.mode == publishOutputHuman {
 		return nil
@@ -280,7 +281,7 @@ func (o *publishOutput) ready(url string, publishRunNumber uint64) error {
 		}
 	}
 	if o.detachedCtx != nil {
-		detachedPublicationReady(o.detachedCtx)
+		detached.Ready(o.detachedCtx)
 	}
 	return nil
 }

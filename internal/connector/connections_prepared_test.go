@@ -110,7 +110,8 @@ func TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget(t *testing.T) {
 			t.Error("invalid inventory was accepted", name)
 		}
 	}
-	b.prepared["db"] = &preparedConnection{service: b.services["db"], ready: true, sessionID: id, connection: connectorruntime.Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: 15443, TransportID: "ctg_aaaaaaaaaaaaaaaaaaaaaa"}}
+	serving := &servingService{sessionID: id, connection: connectorruntime.Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: 15443, TransportID: "ctg_aaaaaaaaaaaaaaaaaaaaaa"}}
+	b.listeners["db"] = &ownedServiceListener{attempt: &servicePreparation{service: b.services["db"], state: serving}}
 	if _, err := b.Connect(t.Context(), "db"); err != nil {
 		t.Fatal(err)
 	}
@@ -140,15 +141,15 @@ func TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget(t *testing.T) {
 	if cold != 5 || warm != cold {
 		t.Fatalf("control budget cold=%d warm_delta=%d, want 5/0", cold, warm-cold)
 	}
-	if len(b.prepared) != 1 {
+	if len(b.listeners) != 1 {
 		t.Fatal("unrequested sibling opened a listener")
 	}
-	b.prepared["db"].sessionID = "wls_" + strings.Repeat("o", 22)
+	serving.sessionID = "wls_" + strings.Repeat("o", 22)
 	b.publishLocked()
 	if _, err := b.Prepared("db"); !errors.Is(err, connectorruntime.ErrUnprepared) {
 		t.Fatal("old-session adapter inherited a replacement session deadline", err)
 	}
-	b.prepared["db"].sessionID = id
+	serving.sessionID = id
 	b.publishLocked()
 	if err := b.UseAssertion(t.Context(), "rotated"); err != nil {
 		t.Fatal(err)
@@ -163,12 +164,12 @@ func TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget(t *testing.T) {
 	if count != 1 {
 		t.Fatal("rotation should attach once", count)
 	}
-	for key, proof := range b.assertions {
-		if proof.Digest != b.verification.Digest {
+	for key, entry := range b.assertions {
+		if entry.proof.Digest != b.verification.Digest {
 			continue
 		}
-		proof.ExpiresAt = now.Add(-time.Second)
-		b.assertions[key] = proof
+		entry.proof.ExpiresAt = now.Add(-time.Second)
+		b.assertions[key] = entry
 	}
 	if err := b.UseAssertion(t.Context(), "first"); err == nil {
 		t.Fatal("expired verification cache bypassed current authority denial")

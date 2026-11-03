@@ -41,7 +41,7 @@ func publisherProblem(w http.ResponseWriter, operation string, err error) {
 }
 
 func (h *handler) publisherEditor(w http.ResponseWriter, r *http.Request, team string) (PublisherIdentityStore, controlstate.Membership, string, bool) {
-	store, ok := h.store.(PublisherIdentityStore)
+	store, ok := h.dependencies.PublisherIdentities, h.dependencies.PublisherIdentities != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "publisher identities are unavailable")
 		return nil, controlstate.Membership{}, "", false
