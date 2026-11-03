@@ -3,11 +3,14 @@ package resolve
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/failure"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
@@ -49,7 +52,7 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := clientproject.ServiceWorktreeLabel("api", worktree) + ".ecstatic-penguin.tnl.dev"
-	if service.Namespace != "ecstatic-penguin.tnl.dev" || service.Hostname != want || service.URL != "https://"+want {
+	if service.Namespace != "ecstatic-penguin.tnl.dev" || service.Hostname != want || service.URL != "https://"+want || service.Port != 443 || !service.Public {
 		t.Fatalf("service metadata = %#v", service)
 	}
 	claimed := "studio.example.test"
@@ -60,8 +63,26 @@ func TestConfiguredProjectHostnameFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	want = clientproject.ServiceWorktreeLabel("api", worktree) + ".chase.studio.example.test"
-	if service.Namespace != "chase.studio.example.test" || service.Hostname != want || service.URL != "https://"+want {
+	if service.Namespace != "chase.studio.example.test" || service.Hostname != want || service.URL != "https://"+want || service.Port != 443 || !service.Public {
 		t.Fatalf("custom-domain metadata = %#v", service)
+	}
+}
+
+func TestConfiguredServiceRejectsNonHTTPPublicURLMetadata(t *testing.T) {
+	for _, protocol := range []string{"tcp", "postgres", "mysql", "kubernetes", "", "ssh"} {
+		t.Run(protocol, func(t *testing.T) {
+			effective := clientproject.ResolvedService{
+				Publish: &config.Publish{Protocol: &protocol},
+				Tunnel:  &config.Tunnel{Name: new("api")},
+			}
+			metadata, err := ConfiguredService("api", clientproject.Worktree{}, effective, appliedTestContext())
+			if err == nil || !reflect.DeepEqual(metadata, meta.Service{}) {
+				t.Fatalf("non-HTTP public URL received endpoint metadata: %+v, error: %v", metadata, err)
+			}
+			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ProjectConfigInvalid {
+				t.Fatalf("protocol rejection lost its configuration failure classification: %v", err)
+			}
+		})
 	}
 }
 
