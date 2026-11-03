@@ -3,12 +3,14 @@ package stream
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -89,7 +91,7 @@ func TestConnectorPermissionAcknowledgementFencesFollowingApplicationBytes(t *te
 }
 
 func TestConnectorTerminalPermissionControlRetiresOwnerBeforeAnotherArrival(t *testing.T) {
-	for _, mode := range []string{"eof", "reset", "truncated", "oversize"} {
+	for _, mode := range []string{"eof", "reset", "truncated", "oversize", "transport closed"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newConnectorFixture(t, "quic")
 			setup, cancel := context.WithTimeout(t.Context(), 3*time.Second)
@@ -110,6 +112,8 @@ func TestConnectorTerminalPermissionControlRetiresOwnerBeforeAnotherArrival(t *t
 				_ = control.CloseWrite()
 			case "oversize":
 				_, _ = control.Write(binary.BigEndian.AppendUint32(nil, 257))
+			case "transport closed":
+				_ = p.transport.Close()
 			default:
 				_ = control.CloseWrite()
 			}
@@ -117,6 +121,13 @@ func TestConnectorTerminalPermissionControlRetiresOwnerBeforeAnotherArrival(t *t
 			case <-p.ctx.Done():
 			case <-time.After(time.Second):
 				t.Fatal("terminal ACK channel left its owner reusable")
+			}
+			cause := context.Cause(p.ctx)
+			if !errors.Is(cause, ErrServiceConnection) {
+				t.Fatal("terminal control owner lost its obsolete connection classification", cause)
+			}
+			if mode == "eof" && !errors.Is(cause, io.EOF) {
+				t.Fatal("terminal control owner discarded the underlying control cause", cause)
 			}
 			local, app := net.Pipe()
 			defer app.Close()
@@ -132,5 +143,23 @@ func TestConnectorTerminalPermissionControlRetiresOwnerBeforeAnotherArrival(t *t
 				t.Fatal("terminal control owner did not join its physical children")
 			}
 		})
+	}
+}
+
+func TestConnectorTerminalPermissionControlPreservesEarlierAuthorizationCause(t *testing.T) {
+	f := newConnectorFixture(t, "quic")
+	setup, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	p, err := prepareConnectorConnection(t.Context(), setup, f.config, f.device)
+	cancel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	denied := failure.Wrap("renew connector permission", failure.ServerDenied, io.ErrClosedPipe)
+	p.cancel(denied)
+	_ = p.transport.Close()
+	p.Close()
+	if cause := context.Cause(p.ctx); cause != denied || !errors.Is(cause, io.ErrClosedPipe) {
+		t.Fatal("terminal control cleanup replaced the first authorization cause", cause)
 	}
 }

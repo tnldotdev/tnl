@@ -146,7 +146,12 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	if result != nil {
 		return nil, result
 	}
-	p.workers.Go(func() { <-p.permissions.Done(); p.cancel(p.permissions.Err()) })
+	p.workers.Go(func() {
+		<-p.permissions.Done()
+		// match session retirement while preserving the transport cause. an
+		// earlier authority failure remains the context's first cancellation cause.
+		p.cancel(errors.Join(ErrServiceConnection, p.permissions.Err()))
+	})
 	p.permission, result = config.Control.VisitorPermission(setup, config.ServiceID)
 	if result != nil || setup.Err() != nil {
 		return nil, errors.Join(ErrServiceConnection, result, context.Cause(setup))
