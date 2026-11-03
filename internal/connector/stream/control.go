@@ -77,10 +77,18 @@ func (c *controlAdapter) PrepareConnectorPeerPair(ctx context.Context, service s
 	if !visitorsubject.Equal(body.Subject, device.Subject) {
 		return controlv1.ConnectorPeerPair{}, ErrServiceConnection
 	}
-	if body.Action == "renew" && body.PreviousPairId != nil {
-		return c.client.RenewDeviceConnectorPeerPair(ctx, service, *body.PreviousPairId, device.Subject.DeviceID, body)
-	}
 	return c.client.PrepareDeviceConnectorPeerPair(ctx, service, device.Subject.DeviceID, body)
+}
+
+func (c *controlAdapter) RenewConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+	device, err := c.ConnectorSigner(ctx, c.identityID)
+	if err != nil {
+		return controlv1.ConnectorPeerPairRenewal{}, err
+	}
+	if body.Action != "renew" || body.PreviousPairId == nil || !visitorsubject.Equal(body.Subject, device.Subject) {
+		return controlv1.ConnectorPeerPairRenewal{}, ErrServiceConnection
+	}
+	return c.client.RenewDeviceConnectorPeerPair(ctx, service, *body.PreviousPairId, device.Subject.DeviceID, body)
 }
 
 func (c *controlAdapter) VisitorPermission(ctx context.Context, service string) (controlv1.VisitorTokenResponse, error) {

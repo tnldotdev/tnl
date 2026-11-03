@@ -51,6 +51,16 @@ does not sign a replacement owner. pair renewal cannot extend the publisher's
 independently observed installation deadline. both failed fixed carriers end the
 packet endpoint immediately; a single failure leaves the warm sibling usable.
 
+background renewal names the retained run and exact pair instead of selecting a
+run again. control checks current source permission, run, publisher and relay
+authority, then signs that same permission and retains its signing key in the
+pair transaction. the reply carries the run validity, pair lease, metadata and
+canonical visitor permission together. signing and commit waits must finish
+before the old pair authority expires. the connector anchors each returned
+interval to request start; transit and opening preparation spend that interval.
+an unchanged publisher installation report cannot recover time already spent,
+and relay claim renewals keep their own confirmed deadlines.
+
 the connector prepares signed application openings before local arrival. the
 publisher checks each opening against its installed pair and current signed
 permission before target resolution, dialing, or a server-first greeting. the

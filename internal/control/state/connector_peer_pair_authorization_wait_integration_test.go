@@ -42,7 +42,7 @@ func TestIntegrationConnectorPeerPairAuthorizationExpiryDuringWait(t *testing.T)
 					f.sign(t, &r)
 					if test.action == "renew-reply" {
 						var err error
-						pair, err = f.d.RenewConnectorPeerPair(f.visitor, r, r.RequestedAt)
+						pair, err = f.d.RenewConnectorPeerPair(f.visitor, "https://control.example.test", r, r.RequestedAt)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -122,7 +122,7 @@ func TestIntegrationConnectorPeerPairAuthorizationExpiryDuringWait(t *testing.T)
 				entered <- time.Now()
 				at := f.now.Add(2 * time.Millisecond)
 				if r.Action == "renew" {
-					_, err := f.d.RenewConnectorPeerPair(ctx, r, at)
+					_, err := f.d.RenewConnectorPeerPair(ctx, "https://control.example.test", r, at)
 					return err
 				}
 				_, err := f.d.PrepareConnectorPeerPair(ctx, r, at)
@@ -189,7 +189,7 @@ func TestIntegrationConnectorPeerPairAuthorizationCurrentStateAfterWait(t *testi
 				}
 				done, join := connectorPairWorker(t, f.visitor, func(ctx context.Context) error {
 					if action == "renew" {
-						_, err := f.d.RenewConnectorPeerPair(ctx, r, r.RequestedAt)
+						_, err := f.d.RenewConnectorPeerPair(ctx, "https://control.example.test", r, r.RequestedAt)
 						return err
 					}
 					_, err := f.d.PrepareConnectorPeerPair(ctx, r, f.now)
