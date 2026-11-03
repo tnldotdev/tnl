@@ -8,7 +8,6 @@ import (
 	"errors"
 	"net/http"
 
-	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
@@ -17,6 +16,7 @@ import (
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
 	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
+	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -147,11 +147,11 @@ func (p GroupPublisher) Publish(ctx context.Context, assignment controlv1.Publis
 	}
 	plan := targetplan.TargetPlan{Protocol: config.ProtocolName(service.Protocol), Target: assignment.Configuration.Target}
 	if trust := assignment.Configuration.TargetTls; trust != nil {
-		snapshot := clientproject.TargetTrustSnapshot{Hostname: trust.Hostname, Digest: trust.Digest}
+		snapshot := targettrust.Declaration{Hostname: trust.Hostname, Digest: trust.Digest}
 		if trust.CaPem != nil {
 			snapshot.CAPEM = []byte(*trust.CaPem)
 		}
-		plan.Trust, err = snapshot.TargetTrust()
+		plan.Trust, err = snapshot.Snapshot()
 		if err != nil {
 			return err
 		}

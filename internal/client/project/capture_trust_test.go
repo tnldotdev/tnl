@@ -59,7 +59,7 @@ func TestPrivateTrustCaptureUsesResolvedContainerHTTPOrigin(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			private, err := applied.TargetTrust()
+			private, err := applied.Snapshot()
 			if err != nil || private.Digest != trust.Digest {
 				t.Fatalf("declared and resolved target trust disagree: %v", err)
 			}
