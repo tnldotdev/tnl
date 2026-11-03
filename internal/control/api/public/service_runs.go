@@ -12,7 +12,7 @@ import (
 
 type serviceRunStore interface {
 	PrepareServiceRun(context.Context, string, controlstate.PublisherIdentity, string, time.Time, controlstate.ServiceMetadata) (controlstate.ServiceRunPreparation, error)
-	HeartbeatServiceRun(context.Context, string, string, string, time.Time, ...controlstate.ServiceRunHealth) (controlstate.ServiceRunState, error)
+	HeartbeatServiceRun(context.Context, string, string, string, time.Time, controlstate.ServiceRunHealth) (controlstate.ServiceRunState, error)
 	CloseServiceRun(context.Context, string, string, string, time.Time) error
 }
 

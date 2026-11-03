@@ -96,9 +96,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			publisherCtx, stopPublisher := context.WithCancel(t.Context())
 			publisherReady, publisherDone := make(chan struct{}), make(chan error, 1)
 			go func() {
-				publisherDone <- publisherservice.Publish(publisherCtx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: targetAddress, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(publisherReady); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
-					return bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
-				}})
+				publisherDone <- publisherservice.Publish(publisherCtx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: targetAddress, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(publisherReady); return nil }, RelayQUIC: quic, RelayTCP: tcp})
 			}()
 			t.Cleanup(func() {
 				stopPublisher()

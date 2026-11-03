@@ -252,7 +252,7 @@ func TestIntegrationPrivateClaimCommittedResponseLoss(t *testing.T) {
 				t.Fatalf("loss %d did not retain exact committed claim: %s %s %v", attempt, state, owner, err)
 			}
 			assertOwner("connected")
-			if _, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now); err != nil {
+			if _, err := d.HeartbeatServiceRun(ctx, service.ID, run.RunID, run.Token, now, controlstate.ServiceRunHealth{Healthy: true, StreamCapacity: 8, ActiveStreams: 0}); err != nil {
 				t.Fatal(err)
 			}
 		}
