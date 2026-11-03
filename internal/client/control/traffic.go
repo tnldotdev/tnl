@@ -8,9 +8,9 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// CreatePublisherRunWithTraffic preserves the publisher proof boundary while
-// carrying an optional selection through the typed control API request.
-func (c *Client) CreatePublisherRunWithTraffic(ctx context.Context, id, retry, token, proof string, selection *trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
+// create a signed publisher run with the selected traffic limits; nil uses
+// control's defaults.
+func (c *Client) CreatePublisherRun(ctx context.Context, id, retry, token, proof string, selection *trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
 	body, err := publishRunTrafficRequest(selection)
 	if err != nil {
 		return controlv1.PublishRunSetup{}, err

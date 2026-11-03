@@ -57,9 +57,6 @@ func (c *Client) DeletePublisherPublicURL(ctx context.Context, token, id string)
 	})
 	return err
 }
-func (c *Client) CreatePublisherRun(ctx context.Context, id, retry, token, proof string) (controlv1.PublishRunSetup, error) {
-	return c.CreatePublisherRunWithTraffic(ctx, id, retry, token, proof, nil)
-}
 func (c *Client) EnrollGuestPublisher(ctx context.Context, id string, public ed25519.PublicKey) (controlv1.GuestPublisherIdentity, error) {
 	return requestWithAccess[controlv1.GuestPublisherIdentity](ctx, c, func(ctx context.Context, e ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.EnrollGuestPublisher(ctx, controlv1.EnrollGuestPublisherRequest{PublicUrlId: id, PublicKey: base64.RawURLEncoding.EncodeToString(public)}, e...)

@@ -30,7 +30,8 @@ type NativeControl interface {
 	PublisherPublicURL(context.Context, string) (controlv1.PublicURL, error)
 	AllocatePublisherPublicURL(context.Context, string, controlv1.AllocateEphemeralPublicURLRequest) (controlv1.PublicURL, error)
 	DeletePublisherPublicURL(context.Context, string, string) error
-	CreatePublisherRun(context.Context, string, string, string, string) (controlv1.PublishRunSetup, error)
+	// nil traffic selection uses control's defaults.
+	CreatePublisherRun(context.Context, string, string, string, string, *trafficlimits.Selection) (controlv1.PublishRunSetup, error)
 	ClosePublishRun(context.Context, string, credentials.PublishRunToken) error
 	MarkPublishRunReady(context.Context, string, uint64, credentials.PublishRunToken) error
 	HeartbeatPublishRun(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error)
@@ -170,14 +171,7 @@ func (n *Native) CreatePublishRun(ctx context.Context, id, retry string) (contro
 	if err != nil {
 		return controlv1.PublishRunSetup{}, err
 	}
-	if n.traffic != nil {
-		control, ok := n.NativeControl.(TrafficControl)
-		if !ok {
-			return controlv1.PublishRunSetup{}, ErrTrafficUnsupported
-		}
-		return control.CreatePublisherRunWithTraffic(ctx, id, retry, token, proof, n.traffic.Clone())
-	}
-	return n.NativeControl.CreatePublisherRun(ctx, id, retry, token, proof)
+	return n.NativeControl.CreatePublisherRun(ctx, id, retry, token, proof, n.traffic.Clone())
 }
 
 func (n *Native) DeletePublicURL(ctx context.Context, id string) error {
