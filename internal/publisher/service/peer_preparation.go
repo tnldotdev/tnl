@@ -114,7 +114,9 @@ func (b *Bound) peerNeedsPreparation(candidate controlv1.ConnectorPeerPairCandid
 		return false
 	}
 	if p := b.connectorPeers[candidate.PairId]; p != nil {
-		return p.currentLocked() && p.identity.generation == candidate.DeliveryGeneration && (p.installedUntil.IsZero() || time.Until(p.lease.until) < 15*time.Second)
+		// renewing local delivery does not confirm installation at control. a
+		// failed confirmation must retry against the last confirmed deadline.
+		return p.currentLocked() && p.identity.generation == candidate.DeliveryGeneration && (p.installedUntil.IsZero() || time.Until(p.installedUntil) < 15*time.Second || time.Until(p.lease.until) < 15*time.Second)
 	}
 	for _, slot := range b.packetSlots {
 		if slot == nil {

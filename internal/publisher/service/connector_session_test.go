@@ -160,7 +160,14 @@ func TestConnectorServicePeerConsumerForwardsAndRejectsReplayLocally(t *testing.
 	}()
 	b, p, verification, opening, control := connectorPeerFixture(t, target.Addr().String(), 2*time.Second)
 	audits := make(chan serviceaudit.Observation, 8)
-	b.audit = connectorAuditSink(func(o serviceaudit.Observation) bool { audits <- o; return true })
+	rejected := make(chan struct{})
+	b.audit = connectorAuditSink(func(o serviceaudit.Observation) bool {
+		audits <- o
+		if o.EventType == "connection.open" && o.Outcome == "denied" {
+			close(rejected)
+		}
+		return true
+	})
 	first, replayed := opening("F"), opening("F")
 	client, server := connectorInnerPair(t, ctx, verification)
 	served := make(chan error, 1)
@@ -240,6 +247,13 @@ func TestConnectorServicePeerConsumerForwardsAndRejectsReplayLocally(t *testing.
 		t.Fatal("same visitor entered twice on the retained pair")
 	}
 	_ = replay.Close()
+	// remote TLS rejection can arrive before the worker releases its pending
+	// charge. the audit follows joined cleanup, not just the stream close.
+	select {
+	case <-rejected:
+	case <-ctx.Done():
+		t.Fatal("replayed visitor cleanup did not join", ctx.Err())
+	}
 	b.mu.Lock()
 	active, pending := b.reservedStreams, b.connectorPending
 	_, retained := p.streams[original]

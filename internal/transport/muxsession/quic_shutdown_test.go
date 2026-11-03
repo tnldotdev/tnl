@@ -7,6 +7,47 @@ import (
 	"time"
 )
 
+func TestQUICListenerOwnsReservedPacketSocket(t *testing.T) {
+	for _, valid := range []bool{false, true} {
+		t.Run(map[bool]string{false: "invalid TLS", true: "serving"}[valid], func(t *testing.T) {
+			packet, err := net.ListenPacket("udp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = packet.Close() })
+			address := packet.LocalAddr().String()
+			if other, err := net.ListenPacket("udp", address); err == nil {
+				_ = other.Close()
+				t.Fatal("reserved UDP socket did not retain its port")
+			}
+			serverTLS, _ := testTLSConfigs(t)
+			if !valid {
+				serverTLS = nil
+			}
+			listener, err := ListenQUICPacket(packet, serverTLS, QUICConfig{})
+			if valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if listener.Addr().String() != address {
+					t.Fatal("QUIC listener replaced its reserved socket")
+				}
+				if err := listener.Close(); err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil {
+				_ = listener.Close()
+				t.Fatal("invalid TLS started serving")
+			}
+			rebound, err := net.ListenPacket("udp", address)
+			if err != nil {
+				t.Fatal("QUIC listener leaked its reserved socket", err)
+			}
+			_ = rebound.Close()
+		})
+	}
+}
+
 func TestQUICListenerCloseReleasesAcceptedSocket(t *testing.T) {
 	serverTLS, clientTLS := testTLSConfigs(t)
 	listener, err := ListenQUIC("127.0.0.1:0", serverTLS, QUICConfig{})
