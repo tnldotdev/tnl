@@ -387,9 +387,7 @@ func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, tr
 		}
 		ready, done := make(chan struct{}), make(chan error, 1)
 		go func() {
-			done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: assignment.Configuration.Target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: time.Second, Ready: func() error { close(ready); return nil }, Connect: func(ctx context.Context, bound *publisherservice.Bound, slot uint8) (publisherservice.SlotSession, error) {
-				return bound.ConnectSlotWithTransports(ctx, slot, false, quic, tcp)
-			}})
+			done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: control, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: assignment.Configuration.Target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: time.Second, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
 		}()
 		t.Cleanup(func() {
 			cancel()

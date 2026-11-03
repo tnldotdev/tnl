@@ -75,6 +75,28 @@ func ListenQUIC(address string, tlsConfig *tls.Config, config QUICConfig) (*QUIC
 	return listenQUICWithALPN(address, tlsConfig, config, ALPN)
 }
 
+// ListenQUICPacket takes ownership of a reserved UDP socket, including on error.
+// callers can retain the bound address through configuration and startup without
+// releasing the port between discovery and serving.
+func ListenQUICPacket(packet net.PacketConn, tlsConfig *tls.Config, config QUICConfig) (*QUICListener, error) {
+	if packet == nil {
+		return nil, errors.New("muxsession: QUIC listener requires a packet socket")
+	}
+	serverConfig, err := transportTLSConfigForALPN(tlsConfig, "", true, ALPN)
+	if err != nil {
+		_ = packet.Close()
+		return nil, err
+	}
+	transport := &quic.Transport{Conn: packet}
+	listener, err := transport.Listen(serverConfig, quicConfig(config.Config))
+	if err != nil {
+		_ = transport.Close()
+		_ = packet.Close()
+		return nil, fmt.Errorf("muxsession: listen QUIC: %w", err)
+	}
+	return &QUICListener{listener: listener, transport: transport, packetConn: packet, alpn: ALPN}, nil
+}
+
 func listenQUICWithALPN(address string, tlsConfig *tls.Config, config QUICConfig, alpn string) (*QUICListener, error) {
 	serverConfig, err := transportTLSConfigForALPN(tlsConfig, "", true, alpn)
 	if err != nil {

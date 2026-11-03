@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/detached"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -446,7 +447,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 				return err
 			}
 			var cleanup func()
-			ctx, cleanup, err = serveDetached(ctx, root, serve.DetachedChild)
+			ctx, cleanup, err = detached.Serve(ctx, root, serve.DetachedChild)
 			if err != nil {
 				return err
 			}
@@ -477,7 +478,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		}
 		if connect.DetachedChild != "" {
 			var cleanup func()
-			ctx, cleanup, err = serveDetached(ctx, root, connect.DetachedChild)
+			ctx, cleanup, err = detached.Serve(ctx, root, connect.DetachedChild)
 			if err != nil {
 				return err
 			}
@@ -516,7 +517,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 				return err
 			}
 			var cleanup func()
-			ctx, cleanup, err = serveDetached(ctx, root, flags.Publish.DetachedChild)
+			ctx, cleanup, err = detached.Serve(ctx, root, flags.Publish.DetachedChild)
 			if err != nil {
 				return err
 			}

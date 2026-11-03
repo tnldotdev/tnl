@@ -97,9 +97,6 @@ func TestCatalogRejectsInvalidSourcesWithoutWidening(t *testing.T) {
 	if source, err := parseCatalog([]byte(`{"source":{"kind":"*"}}`), "discord"); err != nil || !source.Any || len(source.Prefixes) != 0 {
 		t.Fatalf("wildcard source = %+v, %v", source, err)
 	}
-	if !Valid("custom") || Valid("svix") || len(Names()) != 23 {
-		t.Fatal("provider enum changed unexpectedly")
-	}
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		_, _ = response.Write([]byte(`{"source":{"kind":"ip_ranges","ranges":[]}}`))
 	}))

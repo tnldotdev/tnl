@@ -1,8 +1,6 @@
 package config
 
 import (
-	"fmt"
-
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 )
 
@@ -43,15 +41,6 @@ func (c Config) IngressPending() trafficlimits.PendingConfig {
 		UploadBytes: c.PendingUploadBytes, DownloadBytes: c.PendingDownloadBytes,
 		PublicURLRate: c.PendingURLRate, PublicURLBurst: c.PendingURLBurst,
 		SourceRate: c.PendingSourceRate, SourceBurst: c.PendingSourceBurst}
-}
-
-// ValidateTraffic validates resolved operator defaults and ceilings. callers
-// apply this for control (publish-run selection) as well as ingress enforcement.
-func ValidateTraffic(defaults, ceiling trafficlimits.Limits) error {
-	if !defaults.Within(ceiling) {
-		return fmt.Errorf("traffic defaults must be valid and within operator ceilings")
-	}
-	return nil
 }
 
 // ValidateIngressTraffic resolves zero-valued local settings to bounded defaults.

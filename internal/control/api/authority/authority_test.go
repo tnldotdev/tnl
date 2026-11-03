@@ -63,7 +63,7 @@ func TestDomainClaimRequiresAutomationAndOptIn(t *testing.T) {
 }
 
 func TestAuthorityCompositionAndRetiredHumanExchanges(t *testing.T) {
-	mux, err := controlpublic.NewHandler(controlpublic.Config{}, nil, nil, nil)
+	mux, err := controlpublic.NewHandler(controlpublic.Config{}, controlpublic.Stores{}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

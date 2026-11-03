@@ -57,6 +57,7 @@ type relayProcessSettings struct {
 	tcpListen        string
 	tcpListener      net.Listener
 	udpListen        string
+	udpPacket        net.PacketConn
 	quic             muxsession.QUICConfig
 	runtime          relaySettings
 }
@@ -115,7 +116,7 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 			return fmt.Errorf("listen for TLS/TCP publisher connections: %w", err)
 		}
 	}
-	udpListener, err := muxsession.ListenQUIC(settings.udpListen, transportTLS, settings.quic)
+	udpListener, err := listenRelayQUIC(settings.udpListen, settings.udpPacket, transportTLS, settings.quic)
 	if err != nil {
 		_ = tcpListener.Close()
 		_ = internalListener.Close()
@@ -145,6 +146,13 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 	log.Printf("relay publisher TCP listening on %s", tcpListener.Addr())
 	log.Printf("relay publisher UDP listening on %s", udpListener.Addr())
 	return nil
+}
+
+func listenRelayQUIC(address string, packet net.PacketConn, trust *tls.Config, config muxsession.QUICConfig) (*muxsession.QUICListener, error) {
+	if packet != nil {
+		return muxsession.ListenQUICPacket(packet, trust, config)
+	}
+	return muxsession.ListenQUIC(address, trust, config)
 }
 
 type relayRuntimeConfig struct {

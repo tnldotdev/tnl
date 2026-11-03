@@ -37,6 +37,7 @@ type standaloneSettings struct {
 	publicListen            string
 	publicListener          net.Listener
 	relayUDPListen          string
+	relayUDPPacket          net.PacketConn
 	quic                    muxsession.QUICConfig
 	serverHostname          string
 	relayHostname           string
@@ -197,7 +198,7 @@ func (d *daemon) startStandalone(
 		selected.GetConfigForClient = nil
 		return selected, nil
 	}}
-	udpListener, err := muxsession.ListenQUIC(settings.relayUDPListen, sharedTLS, settings.quic)
+	udpListener, err := listenRelayQUIC(settings.relayUDPListen, settings.relayUDPPacket, sharedTLS, settings.quic)
 	if err != nil {
 		return fmt.Errorf("listen for standalone QUIC infrastructure: %w", err)
 	}

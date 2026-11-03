@@ -169,6 +169,37 @@ origin, not access: HTTP permission and IP checks use the publisher's newer
 policy. Its signed revision cannot be rewritten and its original deadline does
 not move. A delegation newer than installed publisher policy is rejected.
 
+browser/share redemption can also race a newer policy. explicit preparation
+may ask control for a replacement for the same signed subject and resource;
+only a locally current replacement is installed and returned as the cookie.
+the two-second preparation budget does not restart, denial stops replacement,
+and a known parent deadline cannot grow. ordinary app requests do no such work.
+
+## retained connector sessions
+
+`service.PeerSession.Serve` owns both fixed carrier registrations, the inner QUIC
+listener and session, the renewable deadline watch, and joined teardown. Binding
+reserves an exact pair without starting a watcher. `Close` cancels that serving
+operation and waits for setup, packet readers, and application workers to finish;
+it does not independently close the same resources. Closing before serving consumes
+the reservation without starting it.
+
+The peer identity fixes the pair, delivery, run, subject, source, key, and both
+relay claims. Renewal compares that complete identity and replaces only deadline
+evidence. Packet readiness is not publisher installation confirmation or visitor
+authorization: installation still waits for the local workload policy, and every
+application stream proves its own current permission. A carrier failure changes
+packet delivery, not the inner session, target sockets, or replay history.
+
+installation confirmation has its own deadline. renewing the local delivery
+does not advance it; a failed confirmation remains eligible for background retry
+before the last confirmed installation expires.
+
+connector stream guards consult the current admission before using a cached
+deadline. renewal can replace that deadline without replacing the stream;
+expired or revoked admission still stops it. certificate visitors instead keep
+their last confirmed deadline while waiting for another authority check.
+
 ## integration urls and aliases
 
 `integrations` elects one worker per saved project integration URL using shared

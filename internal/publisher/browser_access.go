@@ -167,6 +167,11 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 					permission, verifyErr = a.tokens.verify(result.Permission, result.ExpiresAt)
 				}
 			}
+			if errors.Is(verifyErr, visitortoken.ErrPolicy) && permission.Valid() {
+				// signature and response binding identify the source. preparation
+				// below must obtain current permission before installing its cookie.
+				verifyErr = nil
+			}
 			source, sourceErr := json.Marshal(controlv1.VisitorTokenBrowserSessionSource{Kind: controlv1.VisitorTokenBrowserSession, Secret: result.CookieSecret})
 			if verifyErr == nil {
 				if share, ok := permission.Facts().Subject.(visitortoken.Share); ok && share.ShareID == shareID && shareSecret != "" {
@@ -181,9 +186,9 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 			}
 			if err == nil {
 				if shareID != "" && permission.Facts().Subject == (visitortoken.Share{ShareID: shareID}) {
-					err = a.prepareSessionToken(request.Context(), source, result.Permission)
+					result.Permission, err = a.prepareSessionToken(request.Context(), source, result.Permission)
 				} else {
-					err = a.prepareToken(request.Context(), source, result.Permission, result.ExpiresAt)
+					result.Permission, err = a.prepareToken(request.Context(), source, result.Permission, result.ExpiresAt)
 				}
 			}
 			if err != nil {
@@ -274,7 +279,8 @@ func (a *browserAccess) handle(response http.ResponseWriter, request *http.Reque
 			http.Error(response, message, status)
 			return true
 		}
-		if err := a.prepareSessionToken(request.Context(), source, result); err != nil || visitorPermissionCookie(response, result) != nil {
+		result, err = a.prepareSessionToken(request.Context(), source, result)
+		if err != nil || visitorPermissionCookie(response, result) != nil {
 			http.Error(response, "visitor permission is unavailable", http.StatusServiceUnavailable)
 			return true
 		}
@@ -347,32 +353,76 @@ func browserSessionSource(request *http.Request) (json.RawMessage, error) {
 	return json.Marshal(controlv1.VisitorTokenBrowserSessionSource{Kind: controlv1.VisitorTokenBrowserSession, Secret: cookies[0].Value})
 }
 
-func (a *browserAccess) prepareToken(ctx context.Context, source json.RawMessage, permission controlv1.VisitorTokenResponse, parent time.Time) error {
-	if a.policy == nil || a.tokens == nil {
-		return errors.New("browser token preparation is unavailable")
-	}
-	if err := a.tokens.install(source, permission, parent); err == nil {
-		return nil
-	}
-	// redemption is explicit credential preparation. a new revision or signing
-	// key is loaded here, before redirecting to an ordinary application request.
-	if err := a.policy.refresh(ctx); err != nil {
-		return err
-	}
-	return a.tokens.install(source, permission, parent)
+func (a *browserAccess) prepareToken(ctx context.Context, source json.RawMessage, permission controlv1.VisitorTokenResponse, parent time.Time) (controlv1.VisitorTokenResponse, error) {
+	return a.preparePermission(ctx, source, permission, parent, false)
 }
 
-func (a *browserAccess) prepareSessionToken(ctx context.Context, source json.RawMessage, permission controlv1.VisitorTokenResponse) error {
+func (a *browserAccess) prepareSessionToken(ctx context.Context, source json.RawMessage, permission controlv1.VisitorTokenResponse) (controlv1.VisitorTokenResponse, error) {
+	return a.preparePermission(ctx, source, permission, permission.ExpiresAt, true)
+}
+
+func (a *browserAccess) preparePermission(ctx context.Context, source json.RawMessage, permission controlv1.VisitorTokenResponse, parent time.Time, session bool) (controlv1.VisitorTokenResponse, error) {
 	if a.policy == nil || a.tokens == nil {
-		return errors.New("browser token preparation is unavailable")
+		return controlv1.VisitorTokenResponse{}, errors.New("browser token preparation is unavailable")
 	}
-	if err := a.tokens.installFromSession(source, permission); err == nil {
-		return nil
+	call, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	for range 3 {
+		if err := refreshContextError(call); err != nil {
+			return controlv1.VisitorTokenResponse{}, err
+		}
+		if session {
+			parent = permission.ExpiresAt
+		}
+		install := func() error { return a.tokens.installSource(source, permission, parent, session) }
+		if err := install(); err == nil {
+			return permission, nil
+		} else if !errors.Is(err, visitortoken.ErrPolicy) && !errors.Is(err, visitortoken.ErrKey) {
+			return controlv1.VisitorTokenResponse{}, err
+		}
+		// only explicit credential preparation fetches policy. ordinary app
+		// requests cannot wait for policy or issue another visitor permission.
+		if err := a.policy.refresh(call); err != nil {
+			return controlv1.VisitorTokenResponse{}, err
+		}
+		if err := refreshContextError(call); err != nil {
+			return controlv1.VisitorTokenResponse{}, err
+		}
+		if err := install(); err == nil {
+			return permission, nil
+		}
+		proof, err := a.tokens.verify(permission, parent)
+		view, enabled, _ := a.policy.lease.Current()
+		if !errors.Is(err, visitortoken.ErrPolicy) || !proof.Valid() || !enabled || proof.Facts().VisitorPolicyRevision >= view.VisitorPolicyRevision {
+			if err == nil {
+				err = visitortoken.ErrPolicy
+			}
+			return controlv1.VisitorTokenResponse{}, err
+		}
+		// policy can advance after control redeemed the session. the signed old
+		// token proves its subject, not current access; control must authorize a
+		// replacement for that same session before any cookie is installed.
+		next, err := a.tokens.client.IssueVisitorToken(call, controlv1.VisitorTokenRequest{Resource: permission.Resource, Source: source})
+		if err != nil {
+			return controlv1.VisitorTokenResponse{}, err
+		}
+		if err := refreshContextError(call); err != nil {
+			return controlv1.VisitorTokenResponse{}, err
+		}
+		nextParent := parent
+		if session {
+			nextParent = next.ExpiresAt
+		}
+		nextProof, err := a.tokens.verify(next, nextParent)
+		if err != nil && !errors.Is(err, visitortoken.ErrPolicy) {
+			return controlv1.VisitorTokenResponse{}, err
+		}
+		if !nextProof.Valid() || !nextProof.SameIdentity(proof) {
+			return controlv1.VisitorTokenResponse{}, visitortoken.ErrBinding
+		}
+		permission = next
 	}
-	if err := a.policy.refresh(ctx); err != nil {
-		return err
-	}
-	return a.tokens.installFromSession(source, permission)
+	return controlv1.VisitorTokenResponse{}, visitortoken.ErrPolicy
 }
 
 func validBrowserPath(path string) bool {

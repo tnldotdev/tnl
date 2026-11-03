@@ -8,6 +8,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	ingresspool "github.com/tnldotdev/tnl/internal/ingress/pool"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 )
@@ -188,7 +189,7 @@ func (c Config) Validate() (retErr error) {
 			return err
 		}
 	}
-	if err := ValidateTraffic(c.TrafficDefaults(), c.TrafficCeiling()); err != nil {
+	if err := trafficlimits.ValidateDefaults(c.TrafficDefaults(), c.TrafficCeiling()); err != nil {
 		return err
 	}
 	if _, _, err := ValidateIngressTraffic(c.IngressTraffic(), c.IngressPending()); err != nil {

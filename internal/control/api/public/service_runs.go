@@ -12,12 +12,12 @@ import (
 
 type serviceRunStore interface {
 	PrepareServiceRun(context.Context, string, controlstate.PublisherIdentity, string, time.Time, controlstate.ServiceMetadata) (controlstate.ServiceRunPreparation, error)
-	HeartbeatServiceRun(context.Context, string, string, string, time.Time, ...controlstate.ServiceRunHealth) (controlstate.ServiceRunState, error)
+	HeartbeatServiceRun(context.Context, string, string, string, time.Time, controlstate.ServiceRunHealth) (controlstate.ServiceRunState, error)
 	CloseServiceRun(context.Context, string, string, string, time.Time) error
 }
 
 func (h *handler) serviceRuns(w http.ResponseWriter) (serviceRunStore, bool) {
-	store, ok := h.store.(serviceRunStore)
+	store, ok := h.dependencies.ServiceRuns, h.dependencies.ServiceRuns != nil
 	if !ok {
 		writeProblem(w, 503, controlv1.Unavailable, "service runs are unavailable")
 	}
@@ -107,9 +107,7 @@ func (h *handler) StartServiceRun(w http.ResponseWriter, r *http.Request, servic
 	if !ok {
 		return
 	}
-	store, ok := h.store.(interface {
-		StartServiceRun(context.Context, string, string, int64, controlstate.PublisherIdentity, time.Time) (controlstate.ServiceRunState, error)
-	})
+	store, ok := h.dependencies.ServiceRuns, h.dependencies.ServiceRuns != nil
 	if !ok {
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "service runs are unavailable")
 		return
