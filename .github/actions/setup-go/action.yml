@@ -1,0 +1,35 @@
+name: Set up Go and download dependencies
+description: Install the pinned Go toolchain and retry module downloads, never tests
+inputs:
+  go-version-file:
+    description: Go toolchain source
+    default: go.mod
+  cache:
+    description: Restore and save the Go cache
+    default: "true"
+  cache-dependency-path:
+    description: Dependency files used for the cache key
+    default: go.sum
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: ${{ inputs.go-version-file }}
+        cache: ${{ inputs.cache }}
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}
+    - name: Download locked Go modules
+      shell: bash
+      run: |
+        for module in . tools/testharness tools/staticcheck; do
+          for attempt in 1 2 3; do
+            if go -C "$module" mod download; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "module download failed; retrying download $((attempt + 1))/3 for $module" >&2
+            sleep "$attempt"
+          done
+        done

@@ -206,6 +206,9 @@ func TestIntegrationPrivateHTTPProductionControl(t *testing.T) {
 				if err := f.identity.routes.RevokeVisitorDevice(t.Context(), device.Subject.DeviceID); err != nil {
 					t.Fatal(err)
 				}
+				if _, err := f.identity.routes.SelectServiceRun(t.Context(), service.Id, device.Subject.DeviceID); !defaultConnectorRevocationDenied(err) {
+					t.Fatalf("control did not deny the exact revoked device: %v", err)
+				}
 				if _, err := io.Copy(io.Discard, reader); err == nil {
 					t.Fatal("revocation did not interrupt the live HTTP stream")
 				}

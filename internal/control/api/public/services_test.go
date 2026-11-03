@@ -18,7 +18,7 @@ import (
 
 type serviceHeartbeatStore struct {
 	PublicURLStore
-	serviceRunStore
+	ServiceRunStore
 	service, run, token string
 	health              controlstate.ServiceRunHealth
 	calls               int
@@ -37,7 +37,7 @@ func TestServiceHeartbeatPreservesExplicitHealthAndStreamCounts(t *testing.T) {
 		{Healthy: true, StreamCapacity: 7, ActiveStreams: 7},
 	} {
 		store := &serviceHeartbeatStore{}
-		h := &handler{store: store}
+		h := &handler{store: store, dependencies: Stores{ServiceRuns: store}}
 		body, err := json.Marshal(health)
 		if err != nil {
 			t.Fatal(err)

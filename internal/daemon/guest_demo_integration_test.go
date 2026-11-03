@@ -222,10 +222,11 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	databaseURL, inspect := standaloneTestDatabase(t)
 	publicListener := serviceRuntimeListener(t)
-	publicAddress, relayUDPAddress := publicListener.Addr().String(), unusedUDPAddress(t)
+	relayUDP := integrationPacketListener(t)
+	publicAddress, relayUDPAddress := publicListener.Addr().String(), relayUDP.LocalAddr().String()
 	dns := newPrivateFixtureDNS(t)
 	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address)
-	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDPAddress, pebble.directoryURL)
+	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDP, pebble.directoryURL)
 	cfg.GuestDemoEnabled = true
 	owner := newRuntimeTopology(t)
 	ca := newIntegrationTestCA(t)
