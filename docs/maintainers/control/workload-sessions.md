@@ -144,6 +144,12 @@ changed claim constraints revoke issued sessions in the apply transaction.
 service narrowing removes issued rights permanently; later additions never
 expand an existing session. apply and exchange serialize on the same team lock.
 
+an in-flight request may read a renewal committed after its request timestamp.
+`renewed_at` is not a credential's start time: the same session remains current.
+policy observations retain that parent lease, capped at 90 seconds from the
+observation, rather than publishing its absence and canceling live streams.
+creation, revocation, selected services, and fixed expiry still fence access.
+
 ## use visitor capabilities
 
 the control API accepts the workload credential only at:

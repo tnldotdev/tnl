@@ -287,7 +287,7 @@ func (d *Database) visitorPermissionForSource(ctx context.Context, tx pgx.Tx, sc
 		    JOIN control.workload_session_services selected ON selected.workload_session_id=w.id AND selected.service_id=$2
 		    JOIN control.teams team ON team.id=w.team_id AND team.deleted_at IS NULL
 		    JOIN control.applied_projects project ON project.team_id=w.team_id AND project.project_key=w.project_key
-		    WHERE w.id=$1 AND w.team_id=$3 AND w.revoked_at IS NULL AND w.created_at<=$4 AND w.renewed_at<=$4 AND w.lease_expires_at>$4 AND w.expires_at>$4`, workloadID, scope.ID, resource.TeamID, now).Scan(&public, &until)
+		    WHERE w.id=$1 AND w.team_id=$3 AND w.revoked_at IS NULL AND w.created_at<=$4 AND w.lease_expires_at>$4 AND w.expires_at>$4`, workloadID, scope.ID, resource.TeamID, now).Scan(&public, &until)
 		if err != nil {
 			return result, publisherLookupError(err, ErrVisitorPermission)
 		}
