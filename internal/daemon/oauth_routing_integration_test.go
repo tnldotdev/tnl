@@ -14,6 +14,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/integrations"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
@@ -25,7 +26,8 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 	t.Cleanup(func() { _ = state.Close() })
 	server, oauthHost := fixture.identity.controlOrigin, fixture.identity.hostname
 	quic, tcp := fixture.connectors()
-	oauth := fixture.identity.publisherConfig("http://127.0.0.1:1", quic, tcp)
+	oauth := fixture.identity.publisherConfig("", quic, tcp)
+	oauth.Purpose = controlv1.Oauth
 	oauth.Handler = integrations.OAuthHandler(state, server, oauthHost)
 	oauthPublisher := startOwnedIntegrationPublisher(t, fixture.owner, oauth, fixture.diagnostics)
 	oauthReady := waitForPublisherReady(t, oauthPublisher)
@@ -121,6 +123,18 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 		if authorization.StatusCode != http.StatusFound || !strings.Contains(authorization.Header.Get("Location"), "state="+app.name+"-state") {
 			t.Fatalf("%s authorization = %d %q", app.name, authorization.StatusCode, authorization.Header.Get("Location"))
 		}
+	}
+	// a new handler-backed run must load the same targetless URL and retain the
+	// callback state recorded before the publisher stopped.
+	stopIntegrationPublisher(t, oauthPublisher)
+	oauthPublisher = startOwnedIntegrationPublisher(t, fixture.owner, oauth, fixture.diagnostics)
+	restarted := fixture.waitReady(t, oauthPublisher)
+	if restarted.PublicURLID != oauthReady.PublicURLID || restarted.PublishRunNumber <= oauthReady.PublishRunNumber {
+		t.Fatalf("OAuth restart replaced saved URL or reused a run: %+v -> %+v", oauthReady, restarted)
+	}
+	saved, err := fixture.identity.routes.GetPublicURLByHostname(t.Context(), fixture.identity.teamID, oauthHost)
+	if err != nil || saved.Target != "" || saved.Ephemeral || saved.Purpose != controlv1.Oauth {
+		t.Fatalf("OAuth reload = %+v, %v", saved, err)
 	}
 	// return callbacks in the opposite order: the shared hostname must use the
 	// observed state, not the currently active service or the latest login.

@@ -205,13 +205,16 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		writeControlStateProblem(response, "read public URL for update", err)
 		return
 	}
-	httpProtocol := publicURL.ServiceProtocol == "" || publicURL.ServiceProtocol == controlstate.PublicURLServiceHTTP
+	if _, authorized := principal.teamIDs[publicURL.TeamID]; !authorized {
+		writeProblem(response, http.StatusNotFound, controlv1.NotFound, "resource not found")
+		return
+	}
 	storedProtocol := publicURL.ServiceProtocol
 	if storedProtocol == "" {
 		storedProtocol = controlstate.PublicURLServiceHTTP
 	}
-	if *body.Target == "" && (publicURL.Target != "" || !storedProtocol.ValidCreateTarget(publicURL.Purpose, "", publicURL.Ephemeral)) ||
-		*body.Target != "" && !httpProtocol {
+	if !storedProtocol.ValidCreateTarget(publicURL.Purpose, *body.Target, publicURL.Ephemeral) ||
+		*body.Target == "" && publicURL.Target != "" {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid target")
 		return
 	}

@@ -361,6 +361,12 @@ The single PostgreSQL baseline includes durable publisher certificate-plan
 checkpoints. Fresh identities have an empty plan inventory; submitted plans
 remain required after order cleanup. See [publisher groups](docs/maintainers/publisher/publisher-groups.md).
 
+The `tnl-control-fresh-v1-handler-backed-integrations` baseline stores OAuth and
+webhook public URLs with an empty target and forbids ephemeral integration URLs.
+Their publisher handlers receive requests without target preflight or forwarding.
+This baseline requires a fresh PostgreSQL database and a coordinated stop/start
+of all server roles; existing databases are not upgraded.
+
 For local services, an explicit `publicURL` block (`public_url` in static files)
 enables public HTTPS. Without it, the service is private, including `protocol: http`.
 Named groups use their own `public` setting for reachability and always require

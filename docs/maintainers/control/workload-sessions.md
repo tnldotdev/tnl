@@ -355,7 +355,7 @@ verification before dialing.
 ## verify
 
 the fresh PostgreSQL baseline and control's matching identity are
-`tnl-control-fresh-v1-relay-connector-peers`.
+`tnl-control-fresh-v1-handler-backed-integrations`.
 workload certificates can last through six hours; current authorization remains
 bounded by the renewable lease. it requires the
 same fresh-database, coordinated-baseline rollout as the assembled services work.
