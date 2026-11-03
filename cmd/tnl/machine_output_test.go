@@ -53,3 +53,29 @@ func TestMachineOutputDoesNotConsumeChildArguments(t *testing.T) {
 		t.Fatal("child arguments selected CLI machine output")
 	}
 }
+
+type retainedSDKFailureTest struct {
+	error
+	retained bool
+}
+
+func (e *retainedSDKFailureTest) Unwrap() error          { return e.error }
+func (e *retainedSDKFailureTest) RetainSDKFailure() bool { return e.retained }
+func (e *retainedSDKFailureTest) SDKFailureHandle() string {
+	return strings.Repeat("a", 64) + "." + strings.Repeat("1", 16)
+}
+
+func TestConnectionMachineRetainedFailureCarriesOnlyNativeCloseReference(t *testing.T) {
+	for _, retained := range []bool{false, true} {
+		err := failure.Wrap("prepare SDK connection", failure.ConnectionUnavailable, &retainedSDKFailureTest{error: errors.New("private-assertion"), retained: retained})
+		var output bytes.Buffer
+		writeMachineCommandError(&output, err)
+		var result commandDiagnostic
+		if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.SDKRetainedStartFailure != retained || (result.SDKFailureHandle != "") != retained || strings.Contains(output.String(), "private-assertion") {
+			t.Fatal("native failure observation was lost or exposed private input", output.String())
+		}
+	}
+}

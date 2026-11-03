@@ -34,6 +34,7 @@ type OwnerStartOptions struct {
 	ContextOptions
 	RunnerTemp                                         string
 	ParentPID                                          int
+	SDKRegistry                                        string
 	KubeTokenFile, KubeUserConfig, KubeUser, Namespace string
 }
 
@@ -213,6 +214,12 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 		return connectorruntime.ErrInvalid
 	}
 	backend := &connectorConnectionBackend{openSession: o.OpenSession, project: project, scope: scope, stateDir: options.StateDir, assertion: request.Assertion, directory: options.OwnerDirectory, runnerTemp: options.RunnerTemp, parentPID: options.ParentPID}
+	if options.SDKRegistry != "" {
+		if options.ParentPID <= 0 || connectorruntime.VerifyDirectory(options.SDKRegistry) != nil {
+			return connectorruntime.ErrInvalid
+		}
+		backend.sdk = &SDKOptions{OwnerStartOptions: options.OwnerStartOptions, Registry: options.SDKRegistry}
+	}
 	if options.ParentPID == 0 {
 		backend.initialServices = slices.Clone(scope.Services)
 	}

@@ -118,9 +118,10 @@ tasks:
 
   test:connections:budget:
     dir: "{{.ROOT_DIR}}"
-    desc: Measure verified cold/warm native control work and prepared-only sibling reads with local TLS fixtures
+    desc: Measure backend and production SDK cold/warm control work with local TLS fixtures
     cmds:
       - go test -race -v ./internal/connector -run='^TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget$' -count=1 -timeout=1m
+      - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwnerSDKSelectionBudget$' -count=1 -timeout=1m -args -tnl-test-tier=integration
 
   test:owner-lifecycle:
     dir: "{{.ROOT_DIR}}"

@@ -7,20 +7,7 @@ import { connectionSnapshotSchema } from "./snapshot.js";
 const assertionDeadlineSchema = deadlineSchema.refine(
   (value) => value <= Date.now() + 12 * 3600_000 + 60_000,
 );
-export const stoppedOwnerSchema = z.strictObject({
-  schema: z.literal(1),
-  state: z.literal("stopped"),
-});
-export const workloadIdentitySchema = z.strictObject({
-  schema: z.literal(1),
-  binding: digestSchema,
-  assertion_expires_at: assertionDeadlineSchema.exactOptional(),
-});
-// capture the cleanup capability before validating the rest of a startup reply.
-export const startupHandleSchema = z.object({
-  connection_handle: pathTextSchema.refine(path.isAbsolute),
-});
-export const startedOwnerSchema = z.strictObject({
+const startedOwnerSchema = z.strictObject({
   schema: z.literal(1),
   state: z.literal("ready"),
   pid: z.int().positive(),
@@ -44,6 +31,20 @@ export const preparedConnectionSchema = z.strictObject({
   connection: connectionSnapshotSchema,
   verification: verificationSchema.exactOptional(),
 });
+export const sdkPreparationSchema = z.union([
+  z.strictObject({
+    schema: z.literal(1),
+    owner: startedOwnerSchema,
+    // the prepared reader validates this once, including metadata binding.
+    prepared: z.unknown().nonoptional(),
+  }),
+  z.strictObject({
+    schema: z.literal(1),
+    reason: z.string(),
+    sdk_retained_start_failure: z.boolean().exactOptional(),
+    sdk_failure_handle: z.string().exactOptional(),
+  }),
+]);
 export const connectionHandleSchema = z.strictObject({
   schema: z.literal(1),
   url: z
