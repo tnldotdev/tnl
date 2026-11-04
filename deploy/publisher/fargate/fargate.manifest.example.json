@@ -3,7 +3,7 @@
   "project_key": "project-example",
   "source_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "documentation_path": "readme.md",
-  "documentation_sha256": "f4b5ca97f065fb4dca0e6db0f1eaf9ec76af4efa1e54cfe2ea1a583382f97362",
+  "documentation_sha256": "b97e4a95c03c630ae6b6ab3925016bc2707ece588109e856b699f79d97c66f4f",
   "publisher_groups": [
     {
       "name": "production",
