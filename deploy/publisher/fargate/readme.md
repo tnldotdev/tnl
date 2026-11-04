@@ -11,11 +11,11 @@ Use NAT or the appropriate service endpoints for private subnets. Publishers
 connect outward to relays, so they need no inbound ports.
 
 ```text
-your terminal       tnl control          aws
+Your terminal       tnl control          AWS
      |-- apply ---------->|              |
      |-- bootstrap ------>|              |
-     |-- save identities --------------->| secrets manager
-     |-- deploy template --------------->| fargate + efs
+     |-- save identities --------------->| Secrets Manager
+     |-- deploy template --------------->| Fargate + EFS
 ```
 
 ## generate the stack
