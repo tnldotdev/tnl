@@ -18,7 +18,7 @@ tnl publish http://127.0.0.1:4096 --name opencode --team studio --install --syst
 tnl asks you to sign in if needed, saves the URL, and uses sudo to install
 `tnl-publisher.service`. The app's readiness path, `/` by default, must return 2xx.
 
-Systemd starts the publisher at boot. Its identity lives in
+systemd starts the publisher at boot. Its identity lives in
 `/var/lib/tnl/publisher`, separate from your login. Keep that private directory
 across restarts.
 
