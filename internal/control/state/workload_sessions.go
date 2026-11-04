@@ -233,40 +233,18 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 	return r, nil
 }
 
-// authenticate never creates a ControlPrincipal. the team lock serializes
-// authorization with apply, including policy removal and service replacement.
-func lockWorkloadCredential(ctx context.Context, tx pgx.Tx, credential string, now time.Time) (id string, err error) {
-	if len(credential) < 5 || len(credential) > 256 || credential[:4] != "wlc_" {
-		return "", ErrWorkloadDenied
-	}
-	digest := sha256.Sum256([]byte(credential))
-	var team string
-	err = tx.QueryRow(ctx, `SELECT id,team_id FROM control.workload_sessions WHERE credential_digest=$1`, digest[:]).Scan(&id, &team)
-	if err != nil {
-		return "", publisherLookupError(err, ErrWorkloadDenied)
-	}
-	if _, err = controlstatedb.New(tx).LockLocalTeamForMutation(ctx, team); err != nil {
-		return "", publisherLookupError(err, ErrWorkloadDenied)
-	}
-	var run, attempt, check string
-	err = tx.QueryRow(ctx, `SELECT id,COALESCE(run_id,''),COALESCE(run_attempt,''),COALESCE(check_run_id,'') FROM control.workload_sessions WHERE id=$1 AND revoked_at IS NULL AND created_at<=$2 AND renewed_at<=$2 AND lease_expires_at>$2 AND expires_at>$2 FOR UPDATE`, id, now).Scan(&id, &run, &attempt, &check)
-	if err == nil {
-		observability.WorkloadExecution(ctx, id, run, attempt, check)
-	}
-	return id, publisherLookupError(err, ErrWorkloadDenied)
-}
-
 func (d *Database) RenewWorkloadSession(ctx context.Context, id, credential string, now time.Time) (r WorkloadSession, retErr error) {
+	clock := newAuthorizationClock(now)
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return r, err
 	}
 	defer rollback(ctx, tx, "renew workload", &retErr)()
-	current, err := lockWorkloadCredential(ctx, tx, credential, now)
+	current, err := lockWorkloadCredential(ctx, tx, credential, clock)
 	if err != nil {
 		return r, err
 	}
-	if current != id {
+	if current.ID != id {
 		return r, ErrWorkloadDenied
 	}
 	_, err = tx.Exec(ctx, `UPDATE control.workload_sessions SET renewed_at=$2,lease_expires_at=LEAST($2::timestamptz+interval '90 seconds',expires_at) WHERE id=$1 AND renewed_at<=$2::timestamptz-interval '30 seconds'`, id, now)
@@ -276,7 +254,7 @@ func (d *Database) RenewWorkloadSession(ctx context.Context, id, credential stri
 	if err = workloadAudit(ctx, tx, id, "renew", "", now); err != nil {
 		return r, err
 	}
-	r, err = d.workloadSession(ctx, tx, id, now)
+	r, err = d.workloadSession(ctx, tx, id, clock.current())
 	if err != nil {
 		return r, err
 	}
@@ -350,16 +328,17 @@ func VisitorSubjectAccess(ctx context.Context, tx pgx.Tx, service string, subjec
 }
 
 func (d *Database) CheckWorkloadService(ctx context.Context, credential, service string, now time.Time) (r WorkloadServiceAuthorization, retErr error) {
+	clock := newAuthorizationClock(now)
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return r, err
 	}
 	defer rollback(ctx, tx, "check workload service", &retErr)()
-	id, err := lockWorkloadCredential(ctx, tx, credential, now)
+	source, err := lockWorkloadCredential(ctx, tx, credential, clock)
 	if err != nil {
 		return r, err
 	}
-	r.Subject = workloadSubject(id)
+	r.Subject = workloadSubject(source.ID)
 	r.ServiceID = service
 	r.ValidUntil, r.PolicyRevision, err = VisitorSubjectAccess(ctx, tx, service, r.Subject, now)
 	if err != nil {

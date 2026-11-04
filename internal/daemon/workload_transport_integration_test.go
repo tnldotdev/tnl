@@ -120,6 +120,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 				if !t.Failed() {
 					return
 				}
+				t.Logf("workload source=%s lease=%s expires=%s", session.Id, session.LeaseExpiresAt, session.ExpiresAt)
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				defer cancel()
 				var bindings string
@@ -471,6 +472,7 @@ type workloadRuntimePaths struct {
 	urls        []string
 	streams     []io.ReadCloser
 	streamDone  []<-chan error
+	streamNames []string
 	database    *pgx.Conn
 }
 
@@ -571,6 +573,7 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			t.Cleanup(func() { _ = response.Body.Close() })
 			done := make(chan error, 1)
 			p.streamDone = append(p.streamDone, done)
+			p.streamNames = append(p.streamNames, name)
 			go func() { _, err := io.Copy(io.Discard, response.Body); done <- err }()
 		}
 	}
@@ -623,10 +626,10 @@ func (p *workloadRuntimePaths) step(t *testing.T, step int) {
 	if err := p.database.QueryRow(ctx, "SELECT 41+1").Scan(&n); err != nil || n != 42 {
 		t.Fatal("native PostgreSQL multi-step query", err)
 	}
-	for _, done := range p.streamDone {
+	for i, done := range p.streamDone {
 		select {
 		case err := <-done:
-			t.Fatal("active HTTP stream ended before expiry", err)
+			t.Fatal("active HTTP stream ended before expiry", p.streamNames[i], err)
 		default:
 		}
 	}

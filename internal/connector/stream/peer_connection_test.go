@@ -72,13 +72,13 @@ func TestConnectorRefreshPreparesReplacementOpeningsBeforePublishing(t *testing.
 		return f.device.Sign(message)
 	}
 	control, err := NewControlWithConfig(ControlConfig{
-		Signer: f.ConnectorSigner, Resolve: f.ResolveService, Pair: f.PrepareConnectorPeerPair,
-		Permission: func(ctx context.Context, service string) (controlv1.VisitorTokenResponse, error) {
-			permission, err := f.VisitorPermission(ctx, service)
+		Signer: f.ConnectorSigner, Resolve: f.ResolveService, Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission,
+		RenewPair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+			renewal, err := f.RenewConnectorPeerPair(ctx, service, request)
 			if armed.Load() {
 				blocked.Store(true)
 			}
-			return permission, err
+			return renewal, err
 		}, Close: func() error { return nil },
 	})
 	if err != nil {
@@ -147,7 +147,7 @@ func TestConnectorRefreshDoesNotReselectRetainedRun(t *testing.T) {
 			}
 			return f.ResolveService(ctx, service)
 		},
-		Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission, Close: func() error { return nil },
+		Pair: f.PrepareConnectorPeerPair, RenewPair: f.RenewConnectorPeerPair, Permission: f.VisitorPermission, Close: func() error { return nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -199,8 +199,50 @@ func TestConnectorPermissionMetadataRequiresCurrentServiceRevision(t *testing.T)
 	}
 }
 
+func TestConnectorRefreshReloadsChangedServiceRevision(t *testing.T) {
+	f := newConnectorFixture(t, "quic")
+	control, err := NewControlWithConfig(ControlConfig{
+		Signer: f.ConnectorSigner, Resolve: f.ResolveService, Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission,
+		RenewPair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+			renewal, err := f.RenewConnectorPeerPair(ctx, service, request)
+			renewal.TrustRevision++
+			renewal.VisitorPermission.ServiceTrustRevision = new(renewal.TrustRevision)
+			return renewal, err
+		}, Close: func() error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := f.config
+	config.Control = control
+	setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
+	p, err := prepareConnectorConnection(t.Context(), setup, config, f.device)
+	stop()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	p.mu.Lock()
+	oldRun, oldPair, oldPermission, oldInstallation := p.run.ValidUntil, p.until, p.permission.VisitorToken, p.preparedUntil
+	p.mu.Unlock()
+	select {
+	case <-p.ctx.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("coherent renewal accepted changed service trust without metadata reload")
+	}
+	var reload *MetadataReloadError
+	if !errors.As(context.Cause(p.ctx), &reload) || reload.SelectedRevision != config.TrustRevision+1 {
+		t.Fatal("changed service revision lost its metadata reload boundary", context.Cause(p.ctx))
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.run.ValidUntil.Equal(oldRun) || !p.until.Equal(oldPair) || p.permission.VisitorToken != oldPermission || !p.preparedUntil.Equal(oldInstallation) {
+		t.Fatal("changed service revision replaced the last confirmed authority")
+	}
+}
+
 func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
-	for _, boundary := range []string{"run", "pair", "permission", "installation"} {
+	for _, boundary := range []string{"run", "renewed run", "pair", "permission", "installation"} {
 		t.Run(boundary, func(t *testing.T) {
 			f := newConnectorFixture(t, "quic")
 			var armed, blocked atomic.Bool
@@ -218,35 +260,28 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 			}
 			control, err := NewControlWithConfig(ControlConfig{
 				Signer:  f.ConnectorSigner,
-				Resolve: f.ResolveService,
-				Pair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
-					pair, err := f.PrepareConnectorPeerPair(ctx, service, request)
+				Resolve: f.ResolveService, Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission,
+				RenewPair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+					renewal, err := f.RenewConnectorPeerPair(ctx, service, request)
 					if armed.Load() {
-						if boundary == "pair" || boundary == "installation" {
-							deadline = time.Now().Add(200 * time.Millisecond)
+						deadline = time.Now().Add(200 * time.Millisecond)
+						if boundary == "renewed run" {
+							renewal.RunValidUntil = deadline
 						}
 						if boundary == "pair" {
-							pair.ExpiresAt = deadline
-							pair.PublisherPreparedUntil = new(deadline)
+							renewal.Pair.ExpiresAt = deadline
+							renewal.Pair.PublisherPreparedUntil = new(deadline)
+							renewal.VisitorPermission.ExpiresAt = deadline
 						}
 						if boundary == "installation" {
-							pair.PublisherPreparedUntil = new(deadline)
+							renewal.Pair.PublisherPreparedUntil = new(deadline)
+						}
+						if boundary == "permission" {
+							renewal.VisitorPermission.ExpiresAt = deadline
 						}
 						blocked.Store(true)
 					}
-					return pair, err
-				},
-				Permission: func(ctx context.Context, service string) (controlv1.VisitorTokenResponse, error) {
-					permission, err := f.VisitorPermission(ctx, service)
-					if armed.Load() {
-						if boundary == "permission" {
-							deadline = time.Now().Add(200 * time.Millisecond)
-						}
-						if boundary == "permission" {
-							permission.ExpiresAt = deadline
-						}
-					}
-					return permission, err
+					return renewal, err
 				}, Close: func() error { return nil },
 			})
 			if err != nil {

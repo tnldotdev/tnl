@@ -60,7 +60,7 @@ func assertConnectorPairOwnerIsolation(t *testing.T, d *Database, ctx context.Co
 	crossed.Action, crossed.PreviousPairID, crossed.PreviousGeneration = "renew", first.ID, first.DeliveryGeneration
 	crossed.RequestedAt = now.Add(time.Microsecond)
 	sign(&crossed)
-	if _, err := d.RenewConnectorPeerPair(ctx, crossed, crossed.RequestedAt); !errors.Is(err, ErrServiceAccess) {
+	if _, err := d.RenewConnectorPeerPair(ctx, "https://control.example.test", crossed, crossed.RequestedAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("another owner's request key renewed the first pair", err)
 	}
 	crossed.Action = "replace"
