@@ -64,16 +64,15 @@ type connectorConnectionBackend struct {
 // session state is independent of configured scope and service coordination.
 // mu protects publication; sessionGate serializes exchanges without blocking readers.
 type connectorConnectionSession struct {
-	human            *Session
-	teamID           string
-	workload         *workload.Client
-	replacement      *workload.Client
-	replacementScope connectorruntime.Context
-	deadline         time.Time
-	sessionGate      chan struct{}
-	verification     *connectorruntime.AssertionVerification
-	assertions       map[string]verifiedAssertion
-	verifiedSession  string
+	human           *Session
+	teamID          string
+	workload        *workload.Client
+	replacement     *workloadReplacement
+	deadline        time.Time
+	sessionGate     chan struct{}
+	verification    *connectorruntime.AssertionVerification
+	assertions      map[string]verifiedAssertion
+	verifiedSession string
 }
 
 type verifiedAssertion struct {
@@ -617,82 +616,7 @@ func (b *connectorConnectionBackend) attach(ctx context.Context, assertion strin
 		if previous.Provider == controlv1.WorkloadGitHub {
 			return connectorruntime.ErrExpired
 		}
-		b.mu.Lock()
-		next := b.replacement
-		b.mu.Unlock()
-		if next == nil {
-			next, err = workload.New(b.scope.Server, b.httpClient)
-			if err != nil {
-				return err
-			}
-			b.mu.Lock()
-			if b.closed {
-				b.mu.Unlock()
-				return connectorruntime.ErrExpired
-			}
-			b.replacement = next
-			b.mu.Unlock()
-		}
-		identity, err := next.IdentifyPolicy(ctx, b.scope.TeamID, b.scope.ProjectKey, b.scope.SourceID, b.scope.Workload, assertion)
-		if err != nil {
-			return err
-		}
-		if identity.Binding != previous.Binding {
-			return connectorruntime.ErrUnauthorized
-		}
-		if b.replacementScope.Schema == 0 {
-			b.replacementScope = b.scope
-			b.replacementScope.Services = nil
-			for _, name := range b.scope.Services {
-				if slices.Contains(identity.Services, name) {
-					b.replacementScope.Services = append(b.replacementScope.Services, name)
-				}
-			}
-		}
-		if len(b.replacementScope.Services) == 0 {
-			return connectorruntime.ErrUnauthorized
-		}
-		session, err := exchangeConnectionWorkload(ctx, next, b.replacementScope, assertion)
-		if err != nil {
-			// only control-confirmed expiry permits a new retry nonce/key after
-			// an exchange response was lost for longer than its original lease.
-			if errors.Is(err, workload.ErrSessionExpired) {
-				b.mu.Lock()
-				b.replacement = nil
-				b.replacementScope = connectorruntime.Context{}
-				b.mu.Unlock()
-			}
-			return err
-		}
-		if session.Binding != previous.Binding {
-			_ = next.Revoke(ctx)
-			return connectorruntime.ErrUnauthorized
-		}
-		inventory, err := next.ListServices(ctx)
-		if err != nil {
-			return err
-		}
-		services, err := workloadInventoryServices(inventory, session.TeamId)
-		if err != nil {
-			return err
-		}
-		services, metadata, err := projectConnectionMetadata(b.project.Config, b.scope.Services, services)
-		if err != nil {
-			return err
-		}
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		if b.closed {
-			return connectorruntime.ErrExpired
-		}
-		b.workload = next
-		b.deadline = session.ExpiresAt
-		b.services, b.metadata = services, metadata
-		b.rememberAssertion(assertion, identity.AssertionExpiresAt, session)
-		b.replacement = nil
-		b.replacementScope = connectorruntime.Context{}
-		b.publishLocked()
-		return nil
+		return b.replaceWorkload(ctx, client, previous.Binding, assertion)
 	}
 	return err
 }
