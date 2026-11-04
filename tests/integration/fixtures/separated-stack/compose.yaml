@@ -71,7 +71,7 @@ x-visitor: &visitor
 
 services:
   build:
-    image: mirror.gcr.io/library/golang:1.27.3-bookworm@sha256:5c3e9b43cfd3bb95c7937462e29d87ada57b481a96fa23ad0eb61778d7a00110
+    image: docker.io/library/golang:1.27.3-bookworm@sha256:5c3e9b43cfd3bb95c7937462e29d87ada57b481a96fa23ad0eb61778d7a00110
     working_dir: /workspace
     environment:
       GOBIN: /artifacts
@@ -102,7 +102,7 @@ services:
         fi
 
   postgres:
-    image: mirror.gcr.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    image: docker.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
     cpus: "${DATABASE_CPUS:-1}"
     mem_limit: "${DATABASE_MEMORY:-512m}"
     memswap_limit: "${DATABASE_MEMORY:-512m}"

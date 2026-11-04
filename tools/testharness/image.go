@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/containerd/errdefs"
+	"github.com/cpuguy83/dockercfg"
+	"github.com/moby/moby/api/pkg/authconfig"
 	"github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -27,7 +30,21 @@ func prepareImage(ctx context.Context, cli *client.Client, image string) error {
 	} else if !errdefs.IsNotFound(err) {
 		return fmt.Errorf("inspect disposable service image %s: %w", image, err)
 	}
-	pull, err := cli.ImagePull(ctx, image, client.ImagePullOptions{})
+	options := client.ImagePullOptions{}
+	_, auth, err := testcontainers.DockerImageAuth(ctx, image)
+	switch {
+	case errors.Is(err, dockercfg.ErrCredentialsNotFound):
+		// public images also work without a local Docker login.
+	case err != nil:
+		// credential helpers may include secrets in their errors.
+		return fmt.Errorf("load Docker credentials for disposable service image %s: check Docker configuration and credential helpers", image)
+	default:
+		options.RegistryAuth, err = authconfig.Encode(auth)
+		if err != nil {
+			return fmt.Errorf("encode Docker credentials for disposable service image %s: %w", image, err)
+		}
+	}
+	pull, err := cli.ImagePull(ctx, image, options)
 	if err != nil {
 		return fmt.Errorf("pull disposable service image %s: %w", image, err)
 	}

@@ -67,7 +67,7 @@ func TestIntegrationLocalOIDCPrivateKeyMount(t *testing.T) {
 			t.Errorf("remove Linux host fixture: %v %s", err, out)
 		}
 	})
-	if out, err := docker(t.Context(), "run", "--rm", "--user", "0:0", "--entrypoint", "/bin/sh", "--mount", "type=bind,source="+dir+",target=/source,readonly", "--mount", "type=volume,source="+volume+",target=/linux-host", "caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d", "-ec", "cp /source/local.crt /source/local.key /linux-host/; chown 1000:1000 /linux-host/local.*; chmod 0644 /linux-host/local.crt; chmod 0600 /linux-host/local.key"); err != nil {
+	if out, err := docker(t.Context(), "run", "--rm", "--user", "0:0", "--entrypoint", "/bin/sh", "--mount", "type=bind,source="+dir+",target=/source,readonly", "--mount", "type=volume,source="+volume+",target=/linux-host", "docker.io/library/caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d", "-ec", "cp /source/local.crt /source/local.key /linux-host/; chown 1000:1000 /linux-host/local.*; chmod 0644 /linux-host/local.crt; chmod 0600 /linux-host/local.key"); err != nil {
 		t.Fatalf("seed private Linux key: %v %s", err, out)
 	}
 	mountpoint, err := docker(t.Context(), "volume", "inspect", "--format", "{{.Mountpoint}}", volume)
