@@ -66,7 +66,7 @@ func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor st
 	if err != nil {
 		return result, err
 	}
-	issued, err := d.issueVisitorToken(ctx, tx, issuer, visitorscope.Scope{Kind: visitorscope.Service, ID: service}, GrantTokenSource{Credential: secret}, now)
+	issued, err := d.issueVisitorToken(ctx, tx, issuer, visitorscope.Scope{Kind: visitorscope.Service, ID: service}, GrantTokenSource{Credential: secret}, newAuthorizationClock(now))
 	if err != nil {
 		return result, err
 	}

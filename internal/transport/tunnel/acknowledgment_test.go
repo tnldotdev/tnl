@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -10,6 +11,17 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+type closeAfterPeerCancellation struct {
+	muxsession.Stream
+	t        *testing.T
+	canceled <-chan struct{}
+}
+
+func (s *closeAfterPeerCancellation) Close() error {
+	await(s.t, s.canceled)
+	return s.Stream.Close()
+}
 
 func TestOpeningAcknowledgmentPrecedesMetadataAndVisitorBytes(t *testing.T) {
 	for _, transport := range []string{"quic", "tls_yamux"} {
@@ -67,13 +79,23 @@ func TestOpeningAcknowledgmentPrecedesMetadataAndVisitorBytes(t *testing.T) {
 					default:
 					}
 					if reject {
-						if err := deny(tunnelv1.CapacityExceeded); err != nil {
-							t.Fatal(err)
+						if transport == "quic" {
+							// force the opener to consume the rejection and cancel its
+							// stream before the responder closes the sending side.
+							reply := stream.(*replyStream)
+							peer := reply.Stream.(interface{ Context() context.Context })
+							reply.Stream = &closeAfterPeerCancellation{Stream: reply.Stream, t: t, canceled: peer.Context().Done()}
 						}
+						// receipt owns the rejection result. the opener's cleanup
+						// may cancel the responder's close after a successful write.
+						denyErr := deny(tunnelv1.CapacityExceeded)
 						got := await(t, result)
 						var protocolError *ProtocolError
 						if got.stream != nil || !errors.As(got.err, &protocolError) || protocolError.Code != tunnelv1.CapacityExceeded {
-							t.Fatal("rejection returned a usable stream or lost its cause", got.err)
+							t.Fatal("rejection returned a usable stream or lost its cause", got.err, denyErr)
+						}
+						if client.Err() != nil || server.Err() != nil {
+							t.Fatal("stream rejection closed its session", client.Err(), server.Err())
 						}
 						return
 					}

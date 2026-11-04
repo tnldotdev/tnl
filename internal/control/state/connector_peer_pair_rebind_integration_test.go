@@ -34,7 +34,7 @@ func TestIntegrationConnectorPeerPairRenewalRejectsChangedCarrier(t *testing.T) 
 			renew.ExpectedRelays[0].AssignmentRevision++
 		}
 		f.sign(t, &renew)
-		if _, err := f.d.RenewConnectorPeerPair(f.visitor, renew, renew.RequestedAt); !errors.Is(err, ErrServiceAccess) {
+		if _, err := f.d.RenewConnectorPeerPair(f.visitor, "https://control.example.test", renew, renew.RequestedAt); !errors.Is(err, ErrServiceAccess) {
 			t.Fatal("changed carrier renewed retained session", err)
 		}
 	}
