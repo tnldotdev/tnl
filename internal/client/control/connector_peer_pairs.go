@@ -25,13 +25,13 @@ func (c *Client) PrepareDeviceConnectorPeerPair(ctx context.Context, service, de
 	})
 }
 
-func (c *Client) RenewDeviceConnectorPeerPair(ctx context.Context, service, pair, device string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
+func (c *Client) RenewDeviceConnectorPeerPair(ctx context.Context, service, pair, device string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
 	source, err := json.Marshal(controlv1.VisitorTokenDeviceSource{Kind: controlv1.VisitorTokenDevice, DeviceId: device})
 	if err != nil {
-		return controlv1.ConnectorPeerPair{}, err
+		return controlv1.ConnectorPeerPairRenewal{}, err
 	}
 	body.Source = source
-	return requestWithAccess[controlv1.ConnectorPeerPair](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+	return requestWithAccess[controlv1.ConnectorPeerPairRenewal](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.RenewConnectorPeerPair(ctx, service, pair, body, editors...)
 	})
 }
@@ -47,13 +47,13 @@ func (c *Client) PrepareWorkloadConnectorPeerPair(ctx context.Context, service, 
 	})
 }
 
-func (c *Client) RenewWorkloadConnectorPeerPair(ctx context.Context, service, pair, credential string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
+func (c *Client) RenewWorkloadConnectorPeerPair(ctx context.Context, service, pair, credential string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
 	source, err := json.Marshal(controlv1.VisitorTokenWorkloadSource{Kind: controlv1.VisitorTokenWorkload, Credential: credential})
 	if err != nil {
-		return controlv1.ConnectorPeerPair{}, err
+		return controlv1.ConnectorPeerPairRenewal{}, err
 	}
 	body.Source = source
-	return request[controlv1.ConnectorPeerPair](ctx, c, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+	return request[controlv1.ConnectorPeerPairRenewal](ctx, c, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.RenewConnectorPeerPair(ctx, service, pair, body, editors...)
 	})
 }

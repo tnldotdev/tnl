@@ -30,6 +30,7 @@ const (
 	SettingIngressListen        Setting = "TNLD_INGRESS_LISTEN"
 	SettingRelayTCPListen       Setting = "TNLD_RELAY_TCP_LISTEN"
 	SettingRelayUDPListen       Setting = "TNLD_RELAY_UDP_LISTEN"
+	SettingRelayQUICProfile     Setting = "TNLD_RELAY_QUIC_PROFILE"
 	SettingInternalRelayListen  Setting = "TNLD_INTERNAL_RELAY_LISTEN"
 	SettingDNSServer            Setting = "TNLD_DNS_SERVER"
 	SettingEmailURL             Setting = "TNLD_EMAIL_URL"
@@ -61,7 +62,7 @@ func (setting Setting) valid() bool {
 	case SettingDatabaseURL, SettingDatabaseDirectURL, SettingStorageKey,
 		SettingMetricsListen, SettingControlListen, SettingPrivateControlListen, SettingIngressListen,
 		SettingPrivateControlCert, SettingPrivateControlKey,
-		SettingRelayTCPListen, SettingRelayUDPListen, SettingInternalRelayListen, SettingDNSServer,
+		SettingRelayTCPListen, SettingRelayUDPListen, SettingRelayQUICProfile, SettingInternalRelayListen, SettingDNSServer,
 		SettingEmailURL, SettingWebhookSecret, SettingWebServiceSecret, SettingOIDCIssuer:
 		return true
 	}

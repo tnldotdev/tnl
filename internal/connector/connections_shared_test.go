@@ -219,6 +219,15 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 				w.WriteHeader(403)
 				return
 			}
+			if body.Action == "renew" {
+				i := slices.Index(ids, pair.ServiceId)
+				_ = json.NewEncoder(w).Encode(controlv1.ConnectorPeerPairRenewal{Pair: pair, RunValidUntil: pair.ExpiresAt,
+					Protocol: controlv1.ServiceProtocol(protocols[i]), TrustRevision: trustRevision,
+					Endpoint: controlv1.ServiceEndpoint{Hostname: serviceNames[i] + ".example.test", Port: 15443 + i},
+					VisitorPermission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: pair.ServiceId},
+						Hostname: serviceNames[i] + ".example.test", Port: 15443 + i, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: pair.ExpiresAt}})
+				return
+			}
 			_ = json.NewEncoder(w).Encode(pair)
 		case r.URL.Path == "/v1/visitor-tokens":
 			var body controlv1.VisitorTokenRequest
@@ -232,7 +241,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 				w.WriteHeader(403)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: body.Resource, Hostname: serviceNames[i] + ".example.test", Port: 15443 + i, ServiceTrustRevision: &trustRevision, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: body.Resource, Hostname: serviceNames[i] + ".example.test", Port: 15443 + i, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(204)
 		default:

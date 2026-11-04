@@ -452,7 +452,18 @@ func (a *connectorAdmission) renewPermission(entry tunnelv1.ConnectorPeerVisitor
 			return ErrPrivateStream
 		}
 		err = a.guard.Renew(next)
-		if err == nil || next.Facts().VisitorPolicyRevision <= view.VisitorPolicyRevision {
+		if err == nil {
+			return nil
+		}
+		current, _, _ := a.peer.bound.prepared.policy.Current()
+		if next.Facts().VisitorPolicyRevision < current.VisitorPolicyRevision {
+			// an independent snapshot can overtake an authentic in-flight proof.
+			// it grants no renewal, but must not retire a still-current admission.
+			// the original guard deadline bounds the wait for a current proof.
+			_, err := a.CheckUse(a.ctx)
+			return err
+		}
+		if next.Facts().VisitorPolicyRevision <= view.VisitorPolicyRevision {
 			return err
 		}
 		// control may issue a newer revision before the independent background
