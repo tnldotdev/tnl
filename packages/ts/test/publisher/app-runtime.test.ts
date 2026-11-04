@@ -1,4 +1,6 @@
 import { createServer } from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { chmod, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -471,6 +473,27 @@ test("a Compose app waits for its scoped descriptor to be written", async () => 
     expect(await selected).toEqual(bootstrap.endpoint);
   });
   await bootstrap.close();
+});
+
+test("a mounted FIFO is rejected before open can block a filesystem worker", async () => {
+  const root = await mkdtemp(join(tmpdir(), "tnl-endpoint-fifo-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const file = join(root, "endpoint");
+  const run = promisify(execFile);
+  await run("mkfifo", ["-m", "600", file]);
+  await run(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import assert from 'node:assert/strict';
+    import {startRuntime} from ${JSON.stringify(new URL("../../dist/internal/publisher/local.js", import.meta.url).href)};
+    await assert.rejects(startRuntime(process.cwd(), '/unused/tnl'), {code:'sdk.configuration_invalid'});
+  `,
+    ],
+    { env: { ...process.env, TNL_APP_ENDPOINT: file }, timeout: 3000, killSignal: "SIGKILL" },
+  );
 });
 
 test("endpoint validation rejects owner scope, DNS, cross-service grants, and extra secrets", () => {

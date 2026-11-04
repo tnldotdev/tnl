@@ -13,11 +13,14 @@ import struct
 import subprocess
 import sys
 import threading
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
 import tnl
-from tnl import _connections, _native
+from tnl import _connection_ipc, _connections, _native
+from tnl._protocol import Endpoint
 
 
 def command_probe(root: Path, mode: str) -> None:
@@ -83,6 +86,100 @@ def fifo_probe(root: Path) -> None:
         assert error.code == "sdk.response_invalid"
     else:
         raise AssertionError("FIFO accepted")
+
+
+def ipc_probe(root: Path, mode: str) -> None:
+    """a peer making progress cannot extend the whole exchange deadline."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(2)
+    listener.settimeout(3)
+    port = listener.getsockname()[1]
+    root.chmod(0o700)
+    file = root / "handle.json"
+    file.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "url": f"http://127.0.0.1:{port}",
+                "key": "a" * 64,
+                "directory": str(root),
+                "config_digest": "b" * 64,
+                "expires_at": (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
+                "executable": "/installed/tnl",
+            }
+        )
+    )
+    file.chmod(0o600)
+    finished = threading.Event()
+    failures: list[BaseException] = []
+
+    def serve() -> None:
+        try:
+            for slow in (True, False):
+                with listener.accept()[0] as peer:
+                    peer.settimeout(2)
+                    peer.recv(16384)
+                    if slow:
+                        if mode.endswith("body"):
+                            peer.sendall(
+                                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                                b"Content-Length: 65536\r\n\r\n"
+                            )
+                        else:
+                            peer.sendall(b"HTTP/1.1 200 OK\r\nX-Slow: ")
+                        try:
+                            while True:
+                                peer.sendall(b" ")
+                                time.sleep(0.03)
+                        except (BrokenPipeError, ConnectionResetError):
+                            pass
+                    else:
+                        peer.sendall(
+                            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                            b"Content-Length: 2\r\nConnection: close\r\n\r\n{}"
+                        )
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            listener.close()
+            finished.set()
+
+    worker = threading.Thread(target=serve)
+    worker.start()
+    before = set(threading.enumerate())
+    if mode.startswith("ipc-publisher"):
+        _native._REQUEST_TIMEOUT = 0.2
+        native = _native.NativeRuntime()
+        endpoint = Endpoint(f"http://127.0.0.1:{port}", "a" * 64, "b" * 32, "app", "web")
+
+        async def request() -> None:
+            started = time.monotonic()
+            try:
+                await native.request(endpoint, "status")
+            except tnl.TnlError:
+                assert time.monotonic() - started < 2
+            else:
+                raise AssertionError("slow reply escaped total deadline")
+            assert await native.request(endpoint, "status") == {}
+
+        asyncio.run(request())
+    else:
+        _connection_ipc._TIMEOUT = 0.2
+        client = _connection_ipc.OwnerIPC(str(file))
+        started = time.monotonic()
+        try:
+            client.prepare("db")
+        except tnl.TnlError:
+            assert time.monotonic() - started < 2
+        else:
+            raise AssertionError("slow reply escaped total deadline")
+        assert client.prepare("db") == {}
+        client.close()
+    assert finished.wait(3)
+    worker.join(3)
+    assert not failures, failures
+    assert not (set(threading.enumerate()) - before), "IPC left a deadline worker alive"
 
 
 def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: bool) -> None:
@@ -254,6 +351,8 @@ if __name__ == "__main__":
     mode, directory, *args = sys.argv[1:]
     if mode == "fifo":
         fifo_probe(Path(directory))
+    elif mode.startswith("ipc-"):
+        ipc_probe(Path(directory), mode)
     elif mode.startswith("fork"):
         fork_probe(
             Path(directory),

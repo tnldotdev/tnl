@@ -70,7 +70,7 @@ async function readEndpoint(file: string, selection: EndpointSelection): Promise
   const parent = await lstat(path.dirname(file));
   if (!parent.isDirectory() || parent.mode & 0o077 || parent.uid !== process.getuid?.())
     throw new TnlError("sdk.configuration_invalid");
-  const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const handle = await open(file, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
   try {
     const info = await handle.stat();
     if (

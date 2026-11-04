@@ -47,6 +47,14 @@ def test_endpoint_fifo_is_rejected_before_a_blocking_open(tmp_path: Path) -> Non
     probe("fifo", tmp_path)
 
 
+@pytest.mark.parametrize("owner", ["connector", "publisher"])
+@pytest.mark.parametrize("phase", ["headers", "body"])
+def test_slow_ipc_reply_has_one_deadline_and_joins_workers(
+    tmp_path: Path, owner: str, phase: str
+) -> None:
+    probe(f"ipc-{owner}-{phase}", tmp_path)
+
+
 @pytest.mark.parametrize("mode", ["fork-unlocked", "fork-locked", "fork-busy"])
 def test_forked_exit_and_inherited_handles_cannot_stop_parent_owner(
     tmp_path: Path, native_connections: tuple[Path, Path], mode: str

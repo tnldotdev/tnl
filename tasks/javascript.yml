@@ -1,6 +1,13 @@
 version: "3"
 
 tasks:
+  test:ipc-boundaries:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check local SDK descriptor, HTTP, and process boundaries
+    deps: [":js:build"]
+    cmds:
+      - pnpm exec vitest run packages/ts/test/publisher/app-runtime.test.ts packages/ts/test/connector/connection-ipc.test.ts
+
   test:client-tracing:
     dir: "{{.ROOT_DIR}}"
     desc: Check SDK and framework tracing, connector carriers and lifecycle cleanup
