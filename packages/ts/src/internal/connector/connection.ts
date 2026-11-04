@@ -1,6 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
 import { mkdtemp, realpath } from "node:fs/promises";
 import { connect as connectTCP } from "node:net";
 import { tmpdir } from "node:os";
@@ -9,7 +8,8 @@ import { Pool, buildConnector, fetch as transportFetch, type Dispatcher } from "
 import { TnlCleanupError, TnlError } from "../../errors.js";
 import type { TnlConnectionHandle, TnlConnectionRegistry, TnlFetch } from "../../project.js";
 import { awaitableConnection } from "./awaitable_connection.js";
-import { ownerIPC, prepareExternal, type OwnerIPC } from "./connection_ipc.js";
+import { ownerIPC, prepareExternal } from "./connection_ipc.js";
+import { context, contextKey, type NativeScope } from "./context.js";
 import { cancellable } from "./cancellation.js";
 import type { ConnectionSnapshot } from "./snapshot.js";
 import * as z from "zod";
@@ -24,21 +24,8 @@ import { isServiceName } from "../values.js";
 
 type Settings = TnlConnectionRegistry[keyof TnlConnectionRegistry];
 type Prepared = ReturnType<typeof parsePrepared>;
-interface NativeScope {
-  readonly registry: string;
-  readonly binary: string;
-  readonly environment: Pick<
-    NodeJS.ProcessEnv,
-    "TNL_STATE_DIR" | "TNL_SERVER" | "TNL_CONNECTION_HANDLE"
-  >;
-  readonly requests: Map<string, Promise<unknown>>;
-  entry?: { readonly file: string; readonly ipc: Promise<OwnerIPC> };
-  selected?: { readonly file: string; readonly expiresAt: number };
-}
 const maximumBytes = 128 * 1024;
-const scopes = new Map<string, Promise<NativeScope>>();
-const selectedScopes = new Map<string, NativeScope>();
-const fetches = new Map<string, TnlFetch>();
+const { scopes, selectedScopes, fetches } = context;
 const command = ["--no-telemetry", "runtime", "connections"];
 
 function machineError(cause: unknown, operation?: string): TnlError {
@@ -135,20 +122,6 @@ function machineSyncUntraced(binary: string, args: string[]): unknown {
   }
 }
 
-function cacheKey(): string {
-  try {
-    return JSON.stringify([
-      realpathSync(process.cwd()),
-      process.env.TNL_STATE_DIR,
-      process.env.TNL_SERVER,
-      process.env.TNL_CONNECTION_HANDLE,
-      // service preparation is incremental within one identity/policy owner.
-    ]);
-  } catch {
-    throw new TnlError("sdk.configuration_invalid");
-  }
-}
-
 function readArgs(file: string, name: string): string[] {
   if (!path.isAbsolute(file) || file.length > 4096 || file.includes("\0"))
     throw new TnlError("sdk.configuration_invalid");
@@ -158,7 +131,9 @@ function readArgs(file: string, name: string): string[] {
 }
 
 function nativeScope(key: string): Promise<NativeScope> {
-  let loading = scopes.get(key);
+  const binary = resolveNativeBinary();
+  const nativeKey = JSON.stringify([key, binary]);
+  let loading = scopes.get(nativeKey);
   if (loading === undefined) {
     if (scopes.size >= 32) throw new TnlError("sdk.connection_unavailable");
     // pin the cache key's selection before yielding, not provider inputs or traces.
@@ -170,9 +145,12 @@ function nativeScope(key: string): Promise<NativeScope> {
     loading = (async () => {
       const scope: NativeScope = {
         registry: await mkdtemp(path.join(await realpath(tmpdir()), "tnl-sdk-")),
-        binary: resolveNativeBinary(),
+        binary,
         environment,
         requests: new Map(),
+        open: ownerIPC,
+        // keep native error classification with the copy that owns this IPC.
+        select: (...args) => requestSelection(scope, ...args),
       };
       const cleanup = independent("sdk.app.cleanup", async () => {
         await machine(scope, [
@@ -187,10 +165,15 @@ function nativeScope(key: string): Promise<NativeScope> {
       process.once("beforeExit", () => {
         void cleanup().catch(() => {});
       });
-      selectedScopes.set(key, scope);
+      let selected = selectedScopes.get(key);
+      if (selected === undefined) {
+        selected = new Map();
+        selectedScopes.set(key, selected);
+      }
+      selected.set(binary, scope);
       return scope;
     })();
-    scopes.set(key, loading);
+    scopes.set(nativeKey, loading);
   }
   return loading;
 }
@@ -201,7 +184,7 @@ function prepare(name: string, externalFile?: string): Promise<Prepared> {
 
 async function prepareUntraced(name: string, externalFile: string | undefined): Promise<Prepared> {
   const requestedAt = new Date().toISOString();
-  const base = cacheKey();
+  const base = contextKey();
   if (externalFile !== undefined) {
     readArgs(externalFile, name);
     return parsePrepared(await prepareExternal(externalFile, name), name, externalFile);
@@ -256,7 +239,7 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
   let request = scope.requests.get(key);
   if (request === undefined) {
     if (scope.requests.size >= 64) throw new TnlError("sdk.connection_unavailable");
-    request = requestSelection(scope, args, input, name, assertion, selectionOptions);
+    request = scope.select(args, input, name, assertion, selectionOptions);
     scope.requests.set(key, request);
   }
   let raw: unknown;
@@ -276,7 +259,7 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
   const prepared = parsePrepared(value.prepared, name, file);
   scope.selected = { file, expiresAt: owner.expires_at };
   if (scope.entry === undefined) {
-    const ipc = ownerIPC(file);
+    const ipc = scope.open(file);
     void ipc.catch(() => {});
     scope.entry = { file, ipc };
   }
@@ -322,7 +305,7 @@ async function requestSelection(
 function readPrepared(name: string): Prepared {
   const owner =
     process.env.TNL_CONNECTION_HANDLE === undefined
-      ? selectedScopes.get(cacheKey())?.selected
+      ? selectedScopes.get(contextKey())?.get(resolveNativeBinary())?.selected
       : undefined;
   if (owner?.expiresAt !== undefined && owner.expiresAt <= Date.now())
     throw new TnlError("sdk.connection_unprepared");
@@ -528,7 +511,13 @@ function settings(name: string, snapshot: ConnectionSnapshot, externalFile?: str
     case "tcp":
       return Object.freeze({ host: snapshot.host, port: snapshot.port });
     case "http": {
-      const key = JSON.stringify([cacheKey(), name, snapshot.url, externalFile]);
+      const key = JSON.stringify([
+        contextKey(),
+        externalFile === undefined ? resolveNativeBinary() : undefined,
+        name,
+        snapshot.url,
+        externalFile,
+      ]);
       let fetch = fetches.get(key);
       if (fetch === undefined) {
         if (fetches.size >= 32) throw new TnlError("sdk.connection_unavailable");

@@ -82,6 +82,11 @@ func TestIntegrationConnectionConnectorOwnerSDKSelectionBudget(t *testing.T) {
 	}
 }
 
+func TestIntegrationConnectionConnectorOwnerSDKProcessContext(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	runConnectionNativeOwnerStartup(t, "http", true, "javascript-copies")
+}
+
 type connectorConnectionFixture struct {
 	Handle   string
 	Env      []string
@@ -96,7 +101,12 @@ func readSDKSelection(t *testing.T, directory, service string) (connectorruntime
 	if err != nil || len(files) != 1 {
 		t.Fatal("SDK did not create exactly one registry", files, err)
 	}
-	data, err := os.ReadFile(files[0])
+	return readSDKRegistry(t, files[0], service)
+}
+
+func readSDKRegistry(t *testing.T, file, service string) (connectorruntime.SDKOwner, connectorruntime.Connection) {
+	t.Helper()
+	data, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,9 +231,15 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 	renewed := make(chan struct{})
 	var renewedOnce sync.Once
 	var certificateRequests atomic.Int64
-	var current authorityv1.WorkloadSession
-	var clientPublic ed25519.PublicKey
+	type workloadSession struct {
+		authorityv1.WorkloadSession
+		public  ed25519.PublicKey
+		revoked bool
+	}
+	sessions := map[string]*workloadSession{}
 	var exchangeAttempts atomic.Int32
+	var isolatedSDKContexts atomic.Bool
+	ownerKeys := map[string]*workloadSession{}
 	var authorityMu sync.Mutex
 	controlCalls := map[string]int{}
 	issuer := githubtest.New(t)
@@ -233,6 +249,10 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 		defer authorityMu.Unlock()
 		path := strings.ReplaceAll(strings.ReplaceAll(r.URL.Path, sessionID, "{session}"), service, "{service}")
 		controlCalls[r.Method+" "+path]++
+		current := sessions[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
+		if current == nil {
+			current = &workloadSession{}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/v1/workload-sessions/identity":
@@ -247,7 +267,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 				return
 			}
 			_ = json.NewEncoder(w).Encode(authorityv1.WorkloadIdentity{Binding: strings.Repeat("b", 64), Services: []string{serviceName}, AssertionExpiresAt: time.Unix(claims.ExpiresAt, 0)})
-		case r.URL.Path == "/v1/workload-sessions/"+sessionID+"/assertions":
+		case r.URL.Path == "/v1/workload-sessions/"+current.Id+"/assertions":
 			var input authorityv1.WorkloadAssertion
 			if json.NewDecoder(r.Body).Decode(&input) != nil {
 				w.WriteHeader(400)
@@ -255,14 +275,14 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 			}
 			claims, err := verifier.Verify(r.Context(), input.Assertion)
 			signature, decodeErr := base64.RawURLEncoding.DecodeString(input.Signature)
-			if err != nil || decodeErr != nil || r.Header.Get("Authorization") != "Bearer "+current.Credential || !ed25519.Verify(clientPublic, workloadproof.Attach(sessionID, claims.AssertionDigest), signature) {
+			if err != nil || decodeErr != nil || current.revoked || !ed25519.Verify(current.public, workloadproof.Attach(current.Id, claims.AssertionDigest), signature) {
 				w.WriteHeader(403)
 				return
 			}
 			current.AssertionExpiresAt = new(time.Unix(claims.ExpiresAt, 0))
 			_ = json.NewEncoder(w).Encode(current)
 		case strings.HasSuffix(r.URL.Path, "/authorization"):
-			if revoked.Load() {
+			if current.Id == "" || current.revoked {
 				w.WriteHeader(403)
 				return
 			}
@@ -282,14 +302,34 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 				w.WriteHeader(400)
 				return
 			}
-			if current.Id == "" {
-				clientPublic = ed25519.PublicKey(public)
-				current = authorityv1.WorkloadSession{Id: sessionID, TeamId: team, ProjectKey: exchange.ProjectKey, Workload: exchange.Workload, Provider: controlv1.WorkloadGitHub, Github: &authorityv1.WorkloadGitHubExecution{RepositoryId: "12345", RepositoryOwnerId: "6789", RunId: "111", RunAttempt: "1", CheckRunId: "222"}, Credential: "wlc_" + strings.Repeat("x", 43), ExpiresAt: time.Now().Add(time.Hour), LeaseExpiresAt: time.Now().Add(90 * time.Second), RenewAfter: time.Now().Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &sessionID}}
-				current.Binding = strings.Repeat("b", 64)
-			} else if !ed25519.PublicKey(public).Equal(clientPublic) {
-				t.Error("exchange retried with another owner key")
-				w.WriteHeader(403)
-				return
+			current = ownerKeys[exchange.PublicKey]
+			if current == nil {
+				if len(ownerKeys) > 0 && !isolatedSDKContexts.Load() {
+					t.Error("exchange retried with another owner key")
+					w.WriteHeader(403)
+					return
+				}
+				// isolation begins only after the original lost-reply retry and
+				// warm budget checks. each new context must supply a fresh key.
+				id := sessionID
+				if len(ownerKeys) > 0 {
+					id, err = opaqueid.New("wls_")
+					if err != nil {
+						t.Error(err)
+						w.WriteHeader(500)
+						return
+					}
+					native.AllowWorkload(id)
+				}
+				credential := make([]byte, 32)
+				if _, err := rand.Read(credential); err != nil {
+					t.Error(err)
+					w.WriteHeader(500)
+					return
+				}
+				current = &workloadSession{public: ed25519.PublicKey(public), WorkloadSession: authorityv1.WorkloadSession{Id: id, TeamId: team, ProjectKey: exchange.ProjectKey, Workload: exchange.Workload, Provider: controlv1.WorkloadGitHub, Github: &authorityv1.WorkloadGitHubExecution{RepositoryId: "12345", RepositoryOwnerId: "6789", RunId: "111", RunAttempt: "1", CheckRunId: "222"}, Credential: "wlc_" + base64.RawURLEncoding.EncodeToString(credential), ExpiresAt: time.Now().Add(time.Hour), LeaseExpiresAt: time.Now().Add(90 * time.Second), RenewAfter: time.Now().Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, Binding: strings.Repeat("b", 64)}}
+				ownerKeys[exchange.PublicKey] = current
+				sessions[current.Credential] = current
 			}
 			if exchangeAttempts.Add(1) == 1 {
 				connection, _, err := w.(http.Hijacker).Hijack()
@@ -301,8 +341,8 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 				return
 			}
 			_ = json.NewEncoder(w).Encode(current)
-		case r.URL.Path == "/v1/workload-sessions/"+sessionID+"/renew":
-			if revoked.Load() || r.Header.Get("Authorization") != "Bearer "+current.Credential {
+		case r.URL.Path == "/v1/workload-sessions/"+current.Id+"/renew":
+			if current.revoked {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
@@ -316,11 +356,16 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 		case strings.Contains(r.URL.Path, "/connector-peer-pairs"):
 			var requested controlv1.ConnectorPeerPairRequest
 			var source controlv1.VisitorTokenWorkloadSource
-			if revoked.Load() || json.NewDecoder(r.Body).Decode(&requested) != nil || json.Unmarshal(requested.Source, &source) != nil || source.Credential != current.Credential {
+			if json.NewDecoder(r.Body).Decode(&requested) != nil || json.Unmarshal(requested.Source, &source) != nil {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			pair, err := native.Prepare(r.Context(), requested, clientPublic)
+			current = sessions[source.Credential]
+			if current == nil || current.revoked || requested.Subject.WorkloadSessionId == nil || *requested.Subject.WorkloadSessionId != current.Id {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			pair, err := native.Prepare(r.Context(), requested, current.public)
 			if err != nil {
 				w.WriteHeader(http.StatusForbidden)
 				return
@@ -338,7 +383,12 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 		case r.URL.Path == "/v1/visitor-tokens":
 			var requested controlv1.VisitorTokenRequest
 			var source controlv1.VisitorTokenWorkloadSource
-			if revoked.Load() || json.NewDecoder(r.Body).Decode(&requested) != nil || json.Unmarshal(requested.Source, &source) != nil || source.Credential != current.Credential || requested.Resource.Kind != "service" || requested.Resource.Id != service {
+			if json.NewDecoder(r.Body).Decode(&requested) != nil || json.Unmarshal(requested.Source, &source) != nil || requested.Resource.Kind != "service" || requested.Resource.Id != service {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			current = sessions[source.Credential]
+			if current == nil || current.revoked {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
@@ -348,6 +398,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 			w.WriteHeader(403)
 		case r.Method == "DELETE":
 			if strings.HasPrefix(r.URL.Path, "/v1/workload-sessions/") {
+				current.revoked = true
 				revoked.Store(true)
 			}
 			w.WriteHeader(204)
@@ -473,7 +524,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 		t.Fatal(err)
 	}
 	assertion := issuer.Sign(t, githubtest.Claims(server, time.Now()))
-	if startup == "javascript" || startup == "python" {
+	if startup == "javascript" || startup == "javascript-copies" || startup == "python" {
 		manifest := workloadmanifest.Manifest{Schema: 1, Server: scope.Server, Team: scope.TeamID, ProjectKey: scope.ProjectKey, SourceFingerprint: scope.SourceID, ProjectLabel: scope.ProjectLabel,
 			Workloads: map[string]workloadmanifest.Workload{"test": {Provider: "github", Services: []string{serviceName}, MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "github-actions", Audience: scope.Server}}}, Services: map[string]string{serviceName: protocol}}
 		if err := manifest.Validate(); err != nil {
@@ -494,6 +545,9 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 		ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
 		defer cancel()
 		child := exec.CommandContext(ctx, "node", fixture)
+		if startup == "javascript-copies" {
+			child = exec.CommandContext(ctx, "node", fixture, "copies")
+		}
 		child.Env = append(slices.Clone(env), "TMPDIR="+root)
 		if startup == "python" {
 			python, _ := filepath.Abs("../../../packages/py/.venv/bin/python")
@@ -541,10 +595,39 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 		authorityMu.Lock()
 		warm := maps.Clone(controlCalls)
 		authorityMu.Unlock()
-		_, _ = io.WriteString(input, "stop\n")
 		if !maps.Equal(cold, warm) {
 			t.Fatalf("%s warm SDK preparation made control RPCs: cold=%v after=%v", startup, cold, warm)
 		}
+		if startup == "javascript-copies" {
+			isolatedSDKContexts.Store(true)
+			_, _ = io.WriteString(input, "isolate\n")
+			if !lines.Scan() || lines.Text() != "isolated" {
+				t.Fatal("SDK did not preserve project, state, and server isolation")
+			}
+			registries, err := filepath.Glob(filepath.Join(root, "tnl-sdk-*", "registry.json"))
+			if err != nil || len(registries) != 4 {
+				t.Fatal("expected four isolated native registries", registries, err)
+			}
+			transports := map[string]bool{}
+			ports := map[int]bool{}
+			for _, registry := range registries {
+				isolatedOwner, snapshot := readSDKRegistry(t, registry, serviceName)
+				if transports[snapshot.TransportID] || ports[snapshot.Port] {
+					t.Fatal("isolated contexts shared a transport or listener")
+				}
+				transports[snapshot.TransportID], ports[snapshot.Port] = true, true
+				if isolatedOwner == owner && (snapshot.TransportID != first.TransportID || snapshot.Port != first.Port || !snapshot.ExpiresAt.Equal(first.ExpiresAt)) {
+					t.Fatal("isolated context replaced the original transport or fixed expiry")
+				}
+			}
+			authorityMu.Lock()
+			keys := len(ownerKeys)
+			authorityMu.Unlock()
+			if keys != 4 || exchangeAttempts.Load() != 5 {
+				t.Fatalf("isolated contexts reused owner keys or repeated exchange: keys=%d exchanges=%d", keys, exchangeAttempts.Load())
+			}
+		}
+		_, _ = io.WriteString(input, "stop\n")
 		t.Logf("%s SDK decoded cold and ten warm native responses with stable transport and expiry; cold=%v warm=0", startup, cold)
 		return cold
 	}
