@@ -76,11 +76,7 @@ const connection = () => ({
 });
 const prepared = () => ({ schema: 1, project_runtime: project, connection: connection() });
 const started = () => ({
-  schema: 1,
-  state: "ready",
-  pid: 123,
   expires_at: new Date(Date.now() + 60_000).toISOString(),
-  project_runtime: project,
   connection_handle: "/private/prepared/handle.json",
   executable: "/installed/matching/tnl",
 });

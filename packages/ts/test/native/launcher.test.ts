@@ -6,6 +6,8 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -86,7 +88,11 @@ test("native binary resolution preserves installation checks", () => {
   writeFileSync(binary, "", { mode: 0o600 });
   assert.throws(() => resolveNativeBinary(options), { code: "sdk.native_invalid" });
   chmodSync(binary, 0o700);
-  assert.equal(resolveNativeBinary(options), binary);
+  assert.equal(resolveNativeBinary(options), realpathSync(binary));
+  const linked = path.join(directory, "linked-tnl");
+  renameSync(binary, linked);
+  symlinkSync(linked, binary);
+  assert.equal(resolveNativeBinary(options), realpathSync(linked));
 });
 
 test("launcher emits one safe line for a manifest value containing control characters", () => {

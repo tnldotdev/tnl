@@ -363,7 +363,14 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
         process.exitCode = 1;
         return;
       }
-      process.stdout.write(JSON.stringify({ schema: 1, owner: selected, prepared }));
+      const { connection_handle, executable, expires_at } = selected;
+      process.stdout.write(
+        JSON.stringify({
+          schema: 1,
+          owner: { connection_handle, executable, expires_at },
+          prepared,
+        }),
+      );
       return;
     }
     if (operation === "start") {

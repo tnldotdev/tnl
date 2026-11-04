@@ -152,13 +152,9 @@ function response(args: string[], input: unknown): unknown {
     return {
       schema: 1,
       owner: {
-        schema: 1,
-        state: "ready",
-        pid: 1,
         expires_at: new Date(Date.now() + 3600_000).toISOString(),
         executable: "/fixture/tnl",
         connection_handle: file,
-        project_runtime: project(),
       },
       prepared: response(
         ["--no-telemetry", "runtime", "connections", "read", "--handle", file, "--service", name],

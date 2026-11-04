@@ -49,11 +49,11 @@ type sdkRegistry struct {
 // an empty owner is a reserved startup or a completed failure, never a visitor
 // capability. a failed record keeps its owner until native Stop has joined.
 type sdkOwnerRecord struct {
-	Owner        sdkOwnerRef    `json:"owner"`
-	Failure      failure.Reason `json:"failure,omitempty"`
-	FinishedAt   time.Time      `json:"finished_at,omitzero"`
-	StartFailure bool           `json:"start_failure,omitempty"`
-	Adopted      bool           `json:"adopted,omitempty"`
+	Owner        connectorruntime.SDKOwner `json:"owner"`
+	Failure      failure.Reason            `json:"failure,omitempty"`
+	FinishedAt   time.Time                 `json:"finished_at,omitzero"`
+	StartFailure bool                      `json:"start_failure,omitempty"`
+	Adopted      bool                      `json:"adopted,omitempty"`
 }
 
 type sdkStartFailure struct {
@@ -73,12 +73,6 @@ func (e *sdkStartFailure) SDKFailureHandle() string {
 
 func sdkFailureHandle(key string, completed time.Time) string {
 	return key + "." + sdkDigest(completed.Format(time.RFC3339Nano))[:16]
-}
-
-type sdkOwnerRef struct {
-	ConnectionHandle string    `json:"connection_handle"`
-	Executable       string    `json:"executable"`
-	ExpiresAt        time.Time `json:"expires_at"`
 }
 
 // the hooks keep selection proofs beside their owner without a subprocess or
@@ -217,7 +211,7 @@ func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assert
 		// denial, expiry and IPC failure retain the exact owner capability.
 		return connectorruntime.SDKPrepared{}, err
 	}
-	return connectorruntime.SDKPrepared{Schema: 1, Owner: owner, Prepared: prepared}, nil
+	return connectorruntime.SDKPrepared{Schema: 1, Owner: owner.SDKOwner(), Prepared: prepared}, nil
 }
 
 func (o sdkOperations) sdkIdentity(ctx context.Context, options SDKOptions, scope connectorruntime.Context, policy, assertion string) (connectorruntime.AssertionVerification, error) {
@@ -354,7 +348,7 @@ func (o sdkOperations) sdkOwner(ctx context.Context, options SDKOptions, scope c
 		owner = status
 		return sdkUpdate(context.WithoutCancel(ctx), options, func(r *sdkRegistry) error {
 			closed = r.Closed
-			r.Owners[key] = sdkOwnerRecord{Owner: sdkOwnerRef{ConnectionHandle: status.ConnectionHandle, Executable: status.Executable, ExpiresAt: status.ExpiresAt}}
+			r.Owners[key] = sdkOwnerRecord{Owner: status.SDKOwner()}
 			return nil
 		})
 	}); err != nil {
@@ -475,7 +469,7 @@ func (o sdkOperations) stopSDK(ctx context.Context, options SDKOptions) error {
 				return
 			}
 			defer gate.Close()
-			var owner sdkOwnerRef
+			var owner connectorruntime.SDKOwner
 			if err := sdkUpdate(bounded, options, func(r *sdkRegistry) error { owner = r.Owners[key].Owner; return nil }); err != nil {
 				errorsByOwner[i] = err
 				return
@@ -501,7 +495,7 @@ func (o sdkOperations) sdkDiscard(ctx context.Context, options SDKOptions, key s
 		if current.Owner.ConnectionHandle != owner.ConnectionHandle || current.Adopted {
 			return nil
 		}
-		record = sdkOwnerRecord{Owner: sdkOwnerRef{ConnectionHandle: owner.ConnectionHandle, Executable: owner.Executable, ExpiresAt: owner.ExpiresAt}, Failure: failure.ServerResponseInvalid}
+		record = sdkOwnerRecord{Owner: owner.SDKOwner(), Failure: failure.ServerResponseInvalid}
 		r.Owners[key] = record
 		return nil
 	}); err != nil {

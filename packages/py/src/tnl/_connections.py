@@ -618,23 +618,15 @@ class _Scope:
         owner = _object(
             value.get("owner"),
             {
-                "schema",
-                "state",
-                "pid",
                 "expires_at",
-                "project_runtime",
                 "connection_handle",
                 "executable",
-                "kubeconfig",
             },
         )
         file = _text(owner.get("connection_handle"))
         if (
             type(value.get("schema")) is not int
             or value["schema"] != 1
-            or type(owner.get("schema")) is not int
-            or owner["schema"] != 1
-            or owner.get("state") != "ready"
             or not Path(file).is_absolute()
             or owner.get("executable") != str(binary)
         ):

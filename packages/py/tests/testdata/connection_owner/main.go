@@ -49,7 +49,7 @@ func (b *backend) SDKPrepare(ctx context.Context, request connectorruntime.Reque
 	if err != nil {
 		return connectorruntime.SDKPrepared{}, err
 	}
-	return connectorruntime.SDKPrepared{Schema: 1, Owner: b.status, Prepared: connectorruntime.Prepared{Schema: 1, ProjectRuntime: metadata, Connection: connection}}, nil
+	return connectorruntime.SDKPrepared{Schema: 1, Owner: b.status.SDKOwner(), Prepared: connectorruntime.Prepared{Schema: 1, ProjectRuntime: metadata, Connection: connection}}, nil
 }
 
 func (b *backend) Start(context.Context) (meta.PublicMetadata, time.Time, error) {

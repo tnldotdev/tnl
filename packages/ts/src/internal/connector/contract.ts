@@ -7,15 +7,10 @@ import { connectionSnapshotSchema } from "./snapshot.js";
 const assertionDeadlineSchema = deadlineSchema.refine(
   (value) => value <= Date.now() + 12 * 3600_000 + 60_000,
 );
-const startedOwnerSchema = z.strictObject({
-  schema: z.literal(1),
-  state: z.literal("ready"),
-  pid: z.int().positive(),
+const sdkOwnerSchema = z.strictObject({
   expires_at: deadlineSchema,
-  project_runtime: projectRuntimeSchema,
   connection_handle: pathTextSchema.refine(path.isAbsolute),
-  executable: z.string().refine(path.isAbsolute),
-  kubeconfig: z.string().refine(path.isAbsolute).exactOptional(),
+  executable: pathTextSchema.refine(path.isAbsolute),
 });
 const verificationSchema = z
   .strictObject({
@@ -34,7 +29,7 @@ export const preparedConnectionSchema = z.strictObject({
 export const sdkPreparationSchema = z.union([
   z.strictObject({
     schema: z.literal(1),
-    owner: startedOwnerSchema,
+    owner: sdkOwnerSchema,
     // the prepared reader validates this once, including metadata binding.
     prepared: z.unknown().nonoptional(),
   }),
