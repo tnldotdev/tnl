@@ -130,7 +130,9 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
                 current = cast(dict[str, object], native(binary, "start"))
             return {
                 "schema": 1,
-                "owner": current,
+                "owner": {
+                    key: current[key] for key in ("connection_handle", "executable", "expires_at")
+                },
                 "prepared": command(
                     binary,
                     "prepare",

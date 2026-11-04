@@ -94,13 +94,14 @@ tasks:
 
   test:connections:
     desc: Check private owner IPC, verified connector HTTPS, Kubernetes, and connection lifetimes
-    deps: [":js:build"]
+    deps: [":js:build", ":py:sync"]
     cmds:
       - go test -race ./internal/connector/runtime ./internal/connector/workload ./internal/control/oidc -count=1 -timeout=3m
       - go test -race ./cmd/tnl ./internal/connector ./tests/integration/connector -run='^Test(Connection|IntegrationConnectionConnectorOwner)' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   test:connections:budget:
     desc: Measure backend and production SDK cold/warm control work with local TLS fixtures
+    deps: [":js:build", ":py:sync"]
     cmds:
       - go test -race -v ./internal/connector -run='^TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget$' -count=1 -timeout=1m
       - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwnerSDKSelectionBudget$' -count=1 -timeout=1m -args -tnl-test-tier=integration

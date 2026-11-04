@@ -122,8 +122,20 @@ type Prepared struct {
 // retain their separate schema-1 shapes.
 type SDKPrepared struct {
 	Schema   int      `json:"schema"`
-	Owner    Status   `json:"owner"`
+	Owner    SDKOwner `json:"owner"`
 	Prepared Prepared `json:"prepared"`
+}
+
+// SDKOwner is the same capability reference on cold startup and warm selection.
+// project metadata belongs to the prepared snapshot, not the owner reference.
+type SDKOwner struct {
+	ConnectionHandle string    `json:"connection_handle"`
+	Executable       string    `json:"executable"`
+	ExpiresAt        time.Time `json:"expires_at"`
+}
+
+func (s Status) SDKOwner() SDKOwner {
+	return SDKOwner{ConnectionHandle: s.ConnectionHandle, Executable: s.Executable, ExpiresAt: s.ExpiresAt}
 }
 
 // AssertionVerification comes only from authority-confirmed exact assertion
