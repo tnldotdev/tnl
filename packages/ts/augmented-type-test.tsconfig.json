@@ -7,8 +7,5 @@
     "skipLibCheck": false,
     "types": []
   },
-  "files": [
-    "test/types/runtime-augmented-type-test.ts",
-    "test/types/runtime-augmented-cjs-type-test.cts"
-  ]
+  "files": ["test/types/runtime-augmented.test-d.ts", "test/types/runtime-augmented.test-d.cts"]
 }

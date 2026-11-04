@@ -1,73 +1,43 @@
 import path from "node:path";
 import * as z from "zod";
 import { ActionError } from "./errors.js";
+import { projectRuntimeSchema } from "../../packages/ts/src/internal/project/runtime.js";
+import {
+  deadlineSchema,
+  httpsOriginSchema,
+  serviceNameSchema,
+} from "../../packages/ts/src/internal/values.js";
 
 const text = z.string().min(1).max(4096);
 const absolute = text.refine((value) => path.isAbsolute(value));
-export const serviceKey = z
-  .string()
-  .regex(/^[a-z](?:[a-z0-9-]*[a-z0-9])?$/)
-  .max(32);
-export const contextSchema = z.strictObject({
-  schema: z.literal(1),
-  directory: absolute,
-  config_digest: z.string().regex(/^[a-f0-9]{64}$/),
-  server: text,
-  audience: text,
-  team_id: text,
-  project_key: text,
-  source_id: text,
-  worktree_key: text,
-  project_label: text,
-  workload: serviceKey,
-  services: z
-    .array(serviceKey)
-    .min(1)
-    .max(32)
-    .refine((values) => new Set(values).size === values.length),
-});
-const origin = z.strictObject({ hostname: text, url: text });
-const projectRuntime = z.strictObject({
-  namespace: text,
-  dev: z.boolean(),
-  worktree: z
-    .strictObject({
-      label: z.strictObject({
-        project: text,
-        checkout: text.optional(),
-        id: text,
-        fullLabel: text,
-      }),
-    })
-    .optional(),
-  services: z.record(
-    serviceKey,
-    z.strictObject({
-      protocol: z.enum(["http", "postgres", "mysql", "tcp", "kubernetes"]),
-      namespace: text,
-      hostname: text,
-      port: z.number().int().min(1).max(65535),
-      public: z.boolean(),
-      url: text.optional(),
-      paths: z
-        .record(z.string(), z.strictObject({ service: text, url: text, stripPrefix: z.boolean() }))
-        .optional(),
-    }),
-  ),
-  oauth: origin.optional(),
-  webhooks: z
-    .record(z.string(), origin.extend({ service: text, path: text, methods: z.array(text) }))
-    .optional(),
-  aliases: z.record(z.string(), origin.extend({ service: text })).optional(),
-});
+export const contextSchema = z
+  .strictObject({
+    schema: z.literal(1),
+    directory: absolute,
+    config_digest: z.string().regex(/^[a-f0-9]{64}$/),
+    server: httpsOriginSchema.refine((value) => value.length <= 4096),
+    audience: text,
+    team_id: text,
+    project_key: text,
+    source_id: text,
+    worktree_key: text,
+    project_label: text,
+    workload: serviceNameSchema,
+    services: z
+      .array(serviceNameSchema)
+      .min(1)
+      .max(32)
+      .refine((values) => new Set(values).size === values.length),
+  })
+  .refine((context) => context.audience === context.server);
 export const readySchema = z.object({
   schema: z.literal(1),
   state: z.literal("ready"),
   pid: z.number().int().positive(),
-  expires_at: text,
+  expires_at: deadlineSchema.refine((expires) => expires <= Date.now() + 6 * 60 * 60 * 1000),
   executable: absolute,
   connection_handle: absolute,
-  project_runtime: projectRuntime,
+  project_runtime: projectRuntimeSchema,
   kubeconfig: absolute.optional(),
 });
 export const cleanupSchema = z.strictObject({
@@ -76,7 +46,7 @@ export const cleanupSchema = z.strictObject({
   handle: absolute.optional(),
   start_attempted: z.literal(true).optional(),
 });
-export type Cleanup = z.infer<typeof cleanupSchema>;
+export type Cleanup = z.output<typeof cleanupSchema>;
 
 export function inside(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);

@@ -11,7 +11,9 @@ import {
   type EndpointSelection,
 } from "./local.js";
 import { closeServer, listeningTarget, isBunServer, type LocalHTTPServer } from "./register.js";
-import { record, exactKeys } from "../project/runtime.js";
+import * as z from "zod";
+import { parseValue } from "../validation.js";
+import { httpsOriginSchema, pathTextSchema, registrationIDSchema } from "../values.js";
 import { parseStatus } from "./status.js";
 import type { TnlRatePeriod } from "../../config.gen.js";
 
@@ -334,120 +336,70 @@ function parseRegistration(
   value: unknown,
   owner: string,
   target: string,
-): { version: 1; registration_id: string; owner: string; target: string } {
-  try {
-    const object = record(value, "invocation registration");
-    exactKeys(object, ["version", "registration_id", "owner", "target"], "invocation registration");
-    if (
-      object.version !== 1 ||
-      typeof object.registration_id !== "string" ||
-      !/^reg_[a-f0-9]{32}$/.test(object.registration_id) ||
-      object.owner !== owner ||
-      object.target !== target
-    )
-      throw new TnlError("sdk.response_invalid");
-    return { version: 1, registration_id: object.registration_id, owner, target };
-  } catch {
+): z.output<typeof registrationSchema> {
+  const registration = parseValue(registrationSchema, value, "sdk.response_invalid");
+  if (registration.owner !== owner || registration.target !== target)
     throw new TnlError("sdk.response_invalid");
-  }
+  return registration;
 }
+
+const registrationSchema = z
+  .strictObject({
+    version: z.literal(1),
+    registration_id: registrationIDSchema,
+    owner: z.string(),
+    target: z.string(),
+  })
+  .readonly();
+const credentialFileSchema = pathTextSchema.refine(path.isAbsolute);
+const networkSchema = z
+  .string()
+  .max(64)
+  .refine((value) => {
+    const parts = value.split("/");
+    const ip = isIP(parts[0] ?? "");
+    return (
+      ip !== 0 &&
+      parts.length <= 2 &&
+      (parts.length === 1 ||
+        (/^(0|[1-9][0-9]*)$/.test(parts[1] ?? "") && Number(parts[1]) <= (ip === 4 ? 32 : 128)))
+    );
+  });
+const accessModeSchema = z.enum(["restricted", "anonymous"]);
+const openOptionsSchema = z
+  .strictObject({
+    publisherCredentialFile: credentialFileSchema.optional(),
+    publisherIdentityID: z
+      .string()
+      .regex(/^pub_[A-Za-z0-9]{22}$/)
+      .optional(),
+    server: httpsOriginSchema.refine((value) => value.length <= 4096).optional(),
+    directory: pathTextSchema.optional(),
+    stateDir: pathTextSchema.optional(),
+    targetHostname: z.string().min(1).optional(),
+    access: z
+      .union([
+        accessModeSchema,
+        z.strictObject({
+          mode: accessModeSchema.optional(),
+          ip: z.array(networkSchema).min(1).max(32).optional(),
+        }),
+      ])
+      .optional(),
+    // control owns limit normalization, including the generated rate-period contract.
+    limits: z.unknown().optional(),
+    signal: z.instanceof(AbortSignal).optional(),
+  })
+  .refine(
+    (options) =>
+      options.publisherCredentialFile === undefined || options.publisherIdentityID === undefined,
+  );
 
 function validateOptions(options: OpenOptions): void {
-  if (
-    options === null ||
-    typeof options !== "object" ||
-    Array.isArray(options) ||
-    Object.keys(options).some(
-      (key) =>
-        ![
-          "publisherCredentialFile",
-          "publisherIdentityID",
-          "server",
-          "directory",
-          "stateDir",
-          "targetHostname",
-          "access",
-          "limits",
-          "signal",
-        ].includes(key),
-    ) ||
-    (options.publisherCredentialFile !== undefined &&
-      !validPublisherCredentialFile(options.publisherCredentialFile)) ||
-    (options.publisherCredentialFile !== undefined && options.publisherIdentityID !== undefined) ||
-    (options.publisherIdentityID !== undefined &&
-      (typeof options.publisherIdentityID !== "string" ||
-        !/^pub_[A-Za-z0-9]{22}$/.test(options.publisherIdentityID))) ||
-    (options.server !== undefined &&
-      (typeof options.server !== "string" || !validServer(options.server))) ||
-    (options.directory !== undefined &&
-      (typeof options.directory !== "string" ||
-        options.directory === "" ||
-        options.directory.length > 4096 ||
-        options.directory.includes("\0"))) ||
-    (options.stateDir !== undefined &&
-      (typeof options.stateDir !== "string" ||
-        options.stateDir === "" ||
-        options.stateDir.length > 4096 ||
-        options.stateDir.includes("\0"))) ||
-    (options.targetHostname !== undefined &&
-      (typeof options.targetHostname !== "string" || options.targetHostname === "")) ||
-    (options.access !== undefined && !validAccess(options.access)) ||
-    (options.signal !== undefined && !(options.signal instanceof AbortSignal))
-  )
-    throw new TnlError("sdk.configuration_invalid");
+  parseValue(openOptionsSchema, options, "sdk.configuration_invalid");
 }
-
 function validPublisherCredentialFile(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    path.isAbsolute(value) &&
-    value.length <= 4096 &&
-    !value.includes("\0")
-  );
-}
-
-function validServer(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (
-      value.length <= 4096 &&
-      url.protocol === "https:" &&
-      url.username === "" &&
-      url.password === "" &&
-      value === url.origin
-    );
-  } catch {
-    return false;
-  }
-}
-function validNetwork(value: unknown): boolean {
-  if (typeof value !== "string" || value.length > 64) return false;
-  const parts = value.split("/");
-  const ip = isIP(parts[0] ?? "");
-  return (
-    ip !== 0 &&
-    parts.length <= 2 &&
-    (parts.length === 1 ||
-      (/^(0|[1-9][0-9]*)$/.test(parts[1] ?? "") && Number(parts[1]) <= (ip === 4 ? 32 : 128)))
-  );
-}
-
-function validAccess(value: unknown): boolean {
-  if (value === "restricted" || value === "anonymous") return true;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const policy = value as Record<string, unknown>;
-  if (Object.keys(policy).some((key) => !["mode", "ip"].includes(key))) return false;
-  if (policy.mode !== undefined && policy.mode !== "restricted" && policy.mode !== "anonymous")
-    return false;
-  if (
-    policy.ip !== undefined &&
-    (!Array.isArray(policy.ip) ||
-      policy.ip.length === 0 ||
-      policy.ip.length > 32 ||
-      policy.ip.some((ip: unknown) => !validNetwork(ip)))
-  )
-    return false;
-  return true;
+  return credentialFileSchema.safeParse(value).success;
 }
 
 function aborted(): DOMException {

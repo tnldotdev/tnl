@@ -323,8 +323,20 @@ SDK tests and helpers live under `packages/ts/test`, grouped by publisher,
 connector, project, frameworks, native, helpers, types, and fixtures. Focused
 `js:test:{connections,frameworks,client-tracing}` targets select those paths and
 build first. Normal tests use built modules; coverage aliases instrument the
-matching source owners. Positive/negative compiler assertions stay in
-`test/types` and their explicit package-level TypeScript projects.
+matching source owners. Compiler assertions use named Vitest tests in
+`test/types/*.test-d.ts` (or `.test-d.cts` for CommonJS). Run them with
+`mise exec -- pnpm exec vitest run --config vitest.types.config.ts` after building.
+The ordinary and augmented projects compile separately so module augmentation
+cannot hide failures in the ungenerated API. Use `expectTypeOf` for exact types,
+`assertType` for assignment compatibility, and `assert` to prove narrowing.
+
+Keep runtime schemas with their operation owner and infer validated types with
+`z.output`. The SDK uses normal `tsc` declaration inference; `isolatedDeclarations`
+would require duplicating these shapes. Shared values live in
+`packages/ts/src/internal/values.ts`; the independently bundled action also uses
+the SDK's browser-safe project metadata schema. Browser API schemas still come
+from OpenAPI. Translate validation failures at the owning error boundary and
+keep secret-bearing Zod issues out of public diagnostics.
 
 Keep the package root safe to import in a browser. Public exports are the root,
 `/config`, `/next`, `/vite`, and Node-only `/workload`. The root supports ESM,

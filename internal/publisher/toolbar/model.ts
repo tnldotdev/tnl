@@ -83,16 +83,16 @@ export const reportInputSchema = BrowserFeedbackReportRequest.extend({
   evidence: evidenceSchema,
 });
 
-export type ElementSnapshot = z.infer<typeof elementSchema>;
-export type Anchor = z.infer<typeof anchorSchema>;
-export type AnchorData = NonNullable<z.infer<typeof summarySchema>["anchor"]>;
-export type TextBoundary = z.infer<typeof boundarySchema>;
-export type Action = z.infer<typeof actionSchema>;
-export type Evidence = z.infer<typeof evidenceSchema>;
-export type Summary = z.infer<typeof summarySchema>;
-export type Thread = z.infer<typeof threadSchema>;
-export type FeedbackEvent = z.infer<typeof eventSchema>;
-export type ThreadPage = z.infer<typeof threadPageSchema>;
-export type EventPage = z.infer<typeof eventPageSchema>;
-export type BrowserEvent = z.infer<typeof BrowserFeedbackEventRequest>["type"];
-export type ReportInput = z.infer<typeof reportInputSchema>;
+export type ElementSnapshot = z.output<typeof elementSchema>;
+export type Anchor = z.output<typeof anchorSchema>;
+export type AnchorData = NonNullable<z.output<typeof summarySchema>["anchor"]>;
+export type TextBoundary = z.output<typeof boundarySchema>;
+export type Action = z.output<typeof actionSchema>;
+export type Evidence = z.output<typeof evidenceSchema>;
+export type Summary = z.output<typeof summarySchema>;
+export type Thread = z.output<typeof threadSchema>;
+export type FeedbackEvent = z.output<typeof eventSchema>;
+export type ThreadPage = z.output<typeof threadPageSchema>;
+export type EventPage = z.output<typeof eventPageSchema>;
+export type BrowserEvent = z.output<typeof BrowserFeedbackEventRequest>["type"];
+export type ReportInput = z.output<typeof reportInputSchema>;

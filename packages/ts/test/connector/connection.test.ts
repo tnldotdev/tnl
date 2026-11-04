@@ -1,5 +1,6 @@
-import { describe, expect, test } from "vitest";
-import { managedFetch, parseConnection } from "../../src/internal/connector/connection.js";
+import { assert, describe, expect, test } from "vitest";
+import { managedFetch } from "../../src/internal/connector/connection.js";
+import { parseConnectionSnapshot } from "../../src/internal/connector/snapshot.js";
 
 const database = {
   schema: 1,
@@ -21,13 +22,13 @@ describe("private connection snapshots", () => {
     { ...database, protocol: "http", url: origin },
     { ...database, protocol: "kubernetes", url: origin, ...kubernetes },
   ])("returns only the validated fields for $protocol", (wire) => {
-    const snapshot = parseConnection(wire);
+    const snapshot = parseConnectionSnapshot(wire);
     const { schema: _schema, expires_at, ...fields } = wire;
     expect(snapshot).toEqual({ ...fields, expires: Date.parse(expires_at) });
     expect(Object.isFrozen(snapshot)).toBe(true);
     if (snapshot.protocol !== "tcp") expect(Object.isFrozen(snapshot.ssl)).toBe(true);
     expect(
-      parseConnection({
+      parseConnectionSnapshot({
         ...wire,
         transport_id: "ctg_aaaaaaaaaaaaaaaaaaaaaa",
       }),
@@ -38,7 +39,7 @@ describe("private connection snapshots", () => {
     (protocol) => {
       for (const fields of [{}, { ssl: undefined }, { ssl: null }])
         expect(() =>
-          parseConnection({
+          parseConnectionSnapshot({
             ...endpoint,
             protocol,
             ...(["http", "kubernetes"].includes(protocol) ? { url: origin } : {}),
@@ -58,7 +59,7 @@ describe("private connection snapshots", () => {
     ({ wire, forbidden }) => {
       for (const field of forbidden)
         for (const value of [undefined, null, "not-allowed"])
-          expect(() => parseConnection({ ...wire, [field]: value })).toThrow(
+          expect(() => parseConnectionSnapshot({ ...wire, [field]: value })).toThrow(
             expect.objectContaining({ code: "sdk.response_invalid" }),
           );
     },
@@ -71,7 +72,7 @@ describe("private connection snapshots", () => {
       { ...missing, kubeconfig: kubernetes.kubeconfig },
       { ...missing, context: kubernetes.context },
     ])
-      expect(() => parseConnection(fields)).toThrow();
+      expect(() => parseConnectionSnapshot(fields)).toThrow();
     for (const kubeconfig of [
       undefined,
       null,
@@ -79,9 +80,9 @@ describe("private connection snapshots", () => {
       "/private/\0kubeconfig",
       `/${"x".repeat(4096)}`,
     ])
-      expect(() => parseConnection({ ...wire, kubeconfig })).toThrow();
+      expect(() => parseConnectionSnapshot({ ...wire, kubeconfig })).toThrow();
     for (const context of [undefined, null, "cluster", `tnl:${"x".repeat(1021)}`])
-      expect(() => parseConnection({ ...wire, context })).toThrow();
+      expect(() => parseConnectionSnapshot({ ...wire, context })).toThrow();
   });
   test("fetch cancellation includes native credential acquisition", async () => {
     const abort = new AbortController();
@@ -117,7 +118,8 @@ describe("private connection snapshots", () => {
   test.each(["postgres", "mysql"])(
     "keeps %s private admission independent of application TLS credentials",
     (protocol) => {
-      const connection = parseConnection({ ...database, protocol });
+      const connection = parseConnectionSnapshot({ ...database, protocol });
+      assert(connection.protocol === "postgres" || connection.protocol === "mysql");
       expect(connection.ssl).toEqual(database.ssl);
       expect(connection.ssl).not.toHaveProperty("ca");
       expect(connection.ssl).not.toHaveProperty("cert");
@@ -128,12 +130,12 @@ describe("private connection snapshots", () => {
     "rejects application credentials in %s connector options",
     (protocol) => {
       const ssl = { ...database.ssl, cert: "current-certificate", key: "current-key" };
-      expect(() => parseConnection({ ...database, protocol, ssl })).toThrow();
+      expect(() => parseConnectionSnapshot({ ...database, protocol, ssl })).toThrow();
       for (const partial of [
         { ...database.ssl, cert: "cert" },
         { ...database.ssl, key: "key" },
       ])
-        expect(() => parseConnection({ ...database, protocol, ssl: partial })).toThrow();
+        expect(() => parseConnectionSnapshot({ ...database, protocol, ssl: partial })).toThrow();
     },
   );
   test("rejects stale, widened, unverified, malformed, and credential-bearing endpoint data", () => {
@@ -158,16 +160,17 @@ describe("private connection snapshots", () => {
       { ...database, ssl: { ...database.ssl, key: "x".repeat(128 * 1024) } },
       { ...database, ssl: { ...database.ssl, unexpected: true } },
     ])
-      expect(() => parseConnection(value)).toThrow();
+      expect(() => parseConnectionSnapshot(value)).toThrow();
   });
   test.each(["http", "kubernetes"])("keeps %s URLs on the managed origin", (protocol) => {
     const fields = protocol === "kubernetes" ? kubernetes : {};
-    const snapshot = parseConnection({
+    const snapshot = parseConnectionSnapshot({
       ...database,
       protocol,
       url: origin,
       ...fields,
     });
+    assert(snapshot.protocol === "http" || snapshot.protocol === "kubernetes");
     expect(snapshot).toMatchObject({
       host: "127.0.0.1",
       port: 15432,
@@ -187,8 +190,8 @@ describe("private connection snapshots", () => {
       undefined,
       null,
     ])
-      expect(() => parseConnection({ ...database, protocol, ...fields, url })).toThrow();
-    expect(() => parseConnection({ ...database, protocol, ...fields })).toThrow();
+      expect(() => parseConnectionSnapshot({ ...database, protocol, ...fields, url })).toThrow();
+    expect(() => parseConnectionSnapshot({ ...database, protocol, ...fields })).toThrow();
   });
   test("managed fetch rejects non-HTTP snapshots and a different managed origin", async () => {
     for (const wire of [
@@ -197,16 +200,20 @@ describe("private connection snapshots", () => {
       { ...endpoint, protocol: "tcp" },
       { ...database, protocol: "http", url: origin },
     ]) {
-      const fetch = managedFetch("https://api.example", async () => parseConnection(wire));
+      const fetch = managedFetch("https://api.example", async () => parseConnectionSnapshot(wire));
       await expect(fetch("/")).rejects.toMatchObject({ code: "sdk.response_invalid" });
     }
   });
   test("opaque TCP returns only the outer-TLS helper, with no application TLS options", () => {
-    expect(parseConnection({ ...endpoint, protocol: "tcp", host: "127.0.0.1" })).toMatchObject({
+    expect(
+      parseConnectionSnapshot({ ...endpoint, protocol: "tcp", host: "127.0.0.1" }),
+    ).toMatchObject({
       protocol: "tcp",
       host: "127.0.0.1",
     });
-    expect(() => parseConnection({ ...database, protocol: "tcp", host: "127.0.0.1" })).toThrow();
+    expect(() =>
+      parseConnectionSnapshot({ ...database, protocol: "tcp", host: "127.0.0.1" }),
+    ).toThrow();
   });
   test("browser connect rejects with an owned server-only diagnostic", async () => {
     const { tnl } = await import("../../src/index.browser.js");

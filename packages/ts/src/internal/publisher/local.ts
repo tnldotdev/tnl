@@ -8,17 +8,42 @@ import { promisify } from "node:util";
 import { TnlError } from "../../errors.js";
 import { resolveNativeBinary } from "../native/launcher.js";
 import { launchEnvironment, traceHeaders, operation as traceOperation } from "../tracing.js";
-import { exactKeys, record, validServiceName } from "../project/runtime.js";
+import * as z from "zod";
+import { parseValue } from "../validation.js";
+import { digestSchema, invocationIDSchema, serviceNameSchema } from "../values.js";
 
-export interface RuntimeEndpoint {
-  readonly version: 1;
-  readonly url: string;
-  readonly capability: string;
-  readonly owner_id: string;
-  readonly scope: "app" | "invocation";
-  readonly service?: string;
-  readonly invocation_id?: string;
-}
+const endpointFields = {
+  version: z.literal(1),
+  url: z
+    .string()
+    .max(128)
+    .refine((value) => {
+      const url = URL.parse(value);
+      if (url === null) return false;
+      const hostname = url.hostname.replace(/^\[|\]$/g, "");
+      const port = value.match(/:([1-9][0-9]{0,4})$/)?.[1];
+      return (
+        port !== undefined &&
+        Number(port) <= 65535 &&
+        value === `http://${url.hostname}:${port}` &&
+        ((isIP(hostname) === 4 && hostname.startsWith("127.")) || hostname === "::1")
+      );
+    }),
+  capability: digestSchema,
+  owner_id: z.string().regex(/^[a-f0-9]{32}$/),
+};
+const endpointSchema = z
+  .discriminatedUnion("scope", [
+    z.strictObject({ ...endpointFields, scope: z.literal("app"), service: serviceNameSchema }),
+    z.strictObject({
+      ...endpointFields,
+      scope: z.literal("invocation"),
+      invocation_id: invocationIDSchema,
+    }),
+  ])
+  .readonly();
+const problemSchema = z.strictObject({ code: z.string(), message: z.string() });
+export type RuntimeEndpoint = z.output<typeof endpointSchema>;
 
 export interface EndpointSelection {
   readonly service?: string | undefined;
@@ -26,89 +51,17 @@ export interface EndpointSelection {
   readonly stateDir?: string;
 }
 
-export function allowedKeys(
-  object: Record<string, unknown>,
-  keys: readonly string[],
-  description: string,
-): void {
-  exactKeys(
-    object,
-    keys.filter((key) => Object.hasOwn(object, key)),
-    description,
-  );
-}
-
 export function parseEndpoint(value: unknown, selection: EndpointSelection = {}): RuntimeEndpoint {
-  try {
-    const object = record(value, "local publisher endpoint");
-    allowedKeys(
-      object,
-      ["version", "url", "capability", "owner_id", "scope", "service", "invocation_id"],
-      "local publisher endpoint",
-    );
-    if (
-      object.version !== 1 ||
-      typeof object.url !== "string" ||
-      object.url.length > 128 ||
-      typeof object.capability !== "string" ||
-      !/^[a-f0-9]{64}$/.test(object.capability) ||
-      typeof object.owner_id !== "string" ||
-      !/^[a-f0-9]{32}$/.test(object.owner_id)
-    )
-      throw new TnlError("sdk.response_invalid");
-    const url = new URL(object.url);
-    const hostname = url.hostname.replace(/^\[|\]$/g, "");
-    const port = object.url.match(/:([1-9][0-9]{0,4})$/)?.[1];
-    if (
-      url.protocol !== "http:" ||
-      url.username !== "" ||
-      url.password !== "" ||
-      url.search !== "" ||
-      url.hash !== "" ||
-      port === undefined ||
-      Number(port) > 65535 ||
-      object.url !== `http://${url.hostname}:${port}` ||
-      !((isIP(hostname) === 4 && hostname.startsWith("127.")) || hostname === "::1")
-    )
-      throw new TnlError("sdk.response_invalid");
-    if (object.scope === "app") {
-      if (
-        !validServiceName(object.service) ||
-        object.invocation_id !== undefined ||
-        selection.invocationID !== undefined ||
-        (selection.service !== undefined && object.service !== selection.service)
-      )
-        throw new TnlError("sdk.response_invalid");
-      return Object.freeze({
-        version: 1,
-        url: object.url,
-        capability: object.capability,
-        owner_id: object.owner_id,
-        scope: "app",
-        service: object.service,
-      });
-    }
-    if (
-      object.scope !== "invocation" ||
-      object.service !== undefined ||
-      typeof object.invocation_id !== "string" ||
-      !/^ivk_[A-Za-z0-9]{22}$/.test(object.invocation_id) ||
-      selection.service !== undefined ||
-      selection.invocationID !== object.invocation_id
-    )
-      throw new TnlError("sdk.response_invalid");
-    return Object.freeze({
-      version: 1,
-      url: object.url,
-      capability: object.capability,
-      owner_id: object.owner_id,
-      scope: "invocation",
-      invocation_id: object.invocation_id,
-    });
-  } catch {
-    // descriptors contain capabilities; never attach their contents to errors.
+  const endpoint = parseValue(endpointSchema, value, "sdk.response_invalid");
+  if (
+    endpoint.scope === "app"
+      ? selection.invocationID !== undefined ||
+        (selection.service !== undefined && selection.service !== endpoint.service)
+      : selection.service !== undefined || selection.invocationID !== endpoint.invocation_id
+  ) {
     throw new TnlError("sdk.response_invalid");
   }
+  return endpoint;
 }
 
 async function readEndpoint(file: string, selection: EndpointSelection): Promise<RuntimeEndpoint> {
@@ -266,10 +219,7 @@ function runtimeRequestUntraced(
               throw new TnlError("sdk.response_invalid");
             const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
             if (response.statusCode !== 200) {
-              const problem = record(value, "local publisher error");
-              exactKeys(problem, ["code", "message"], "local publisher error");
-              if (typeof problem.code !== "string" || typeof problem.message !== "string")
-                throw new TnlError("sdk.response_invalid");
+              const problem = parseValue(problemSchema, value, "sdk.response_invalid");
               throw new TnlError(
                 problem.code === "runtime.owner_conflict"
                   ? "sdk.owner_conflict"

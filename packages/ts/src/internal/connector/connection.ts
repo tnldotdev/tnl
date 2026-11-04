@@ -5,83 +5,29 @@ import { connect as connectTCP } from "node:net";
 import * as path from "node:path";
 import { Pool, buildConnector, fetch as transportFetch, type Dispatcher } from "undici/index.js";
 import { TnlCleanupError, TnlError } from "../../errors.js";
-import type {
-  TnlConnectionHandle,
-  TnlConnectionRegistry,
-  TnlNativeTLSOptions,
-  TnlFetch,
-} from "../../project.js";
+import type { TnlConnectionHandle, TnlConnectionRegistry, TnlFetch } from "../../project.js";
 import { awaitableConnection } from "./awaitable_connection.js";
 import { ownerIPC, prepareExternal, type OwnerIPC } from "./connection_ipc.js";
 import { cancellable } from "./cancellation.js";
+import type { ConnectionSnapshot } from "./snapshot.js";
+import * as z from "zod";
+import { parseValue } from "../validation.js";
+import {
+  stoppedOwnerSchema,
+  workloadIdentitySchema,
+  startupHandleSchema,
+  startedOwnerSchema,
+  preparedConnectionSchema,
+} from "./contract.js";
 import { usesWorkload, selectWorkload, acquireAssertion } from "./workload/provider.js";
 export { configureWorkload } from "./workload/provider.js";
 import { resolveNativeBinary } from "../native/launcher.js";
 import { launchEnvironment, operation, operationSync, independent } from "../tracing.js";
-import {
-  exactKeys,
-  record,
-  parseProjectRuntime,
-  requiredHostname,
-  validServiceName,
-  type ProjectRuntime,
-} from "../project/runtime.js";
+import type { ProjectRuntime } from "../project/runtime.js";
+import { isServiceName } from "../values.js";
 
-interface SnapshotAddress {
-  readonly host: "127.0.0.1";
-  readonly port: number;
-  readonly expires: number;
-  readonly transportID?: string;
-}
-type Snapshot = SnapshotAddress &
-  (
-    | {
-        readonly protocol: "tcp";
-        readonly ssl?: never;
-        readonly url?: never;
-        readonly kubeconfig?: never;
-        readonly context?: never;
-      }
-    | {
-        readonly protocol: "postgres";
-        readonly ssl: TnlNativeTLSOptions;
-        readonly url?: never;
-        readonly kubeconfig?: never;
-        readonly context?: never;
-      }
-    | {
-        readonly protocol: "mysql";
-        readonly ssl: TnlNativeTLSOptions;
-        readonly url?: never;
-        readonly kubeconfig?: never;
-        readonly context?: never;
-      }
-    | {
-        readonly protocol: "http";
-        readonly ssl: TnlNativeTLSOptions;
-        readonly url: `https://${string}`;
-        readonly kubeconfig?: never;
-        readonly context?: never;
-      }
-    | {
-        readonly protocol: "kubernetes";
-        readonly ssl: TnlNativeTLSOptions;
-        readonly url: `https://${string}`;
-        readonly kubeconfig: string;
-        readonly context: string;
-      }
-  );
 type Settings = TnlConnectionRegistry[keyof TnlConnectionRegistry];
-interface Prepared {
-  readonly project: ProjectRuntime;
-  readonly snapshot: Snapshot;
-  readonly file: string;
-  readonly verification?: {
-    readonly digest: string;
-    readonly binding: string;
-    readonly expires: number;
-  };
-}
+type Prepared = ReturnType<typeof parsePrepared>;
 interface OwnedConnection {
   readonly file: string;
   readonly binary: string;
@@ -134,10 +80,9 @@ function machineError(cause: unknown): TnlError {
   if (typeof cause === "object" && cause !== null && "stderr" in cause) {
     try {
       const stderr = cause.stderr;
-      const problem = record(
-        JSON.parse(typeof stderr === "string" ? stderr : ""),
-        "native diagnostic",
-      );
+      const problem = z
+        .object({ reason: z.string() })
+        .parse(JSON.parse(typeof stderr === "string" ? stderr : ""));
       if (
         problem.reason === "TNL_CLIENT_AUTHENTICATION_REQUIRED" ||
         problem.reason === "TNL_CLIENT_AUTH_RECOVERY_REQUIRED"
@@ -242,13 +187,11 @@ async function stopOwner(key: string, owner: OwnedConnection): Promise<void> {
   const stopping =
     owner.stopping ??
     (owner.stopping = (async () => {
-      const value = record(
+      parseValue(
+        stoppedOwnerSchema,
         await machine(owner.binary, ["stop", "--handle", owner.file]),
-        "connection cleanup",
+        "sdk.response_invalid",
       );
-      exactKeys(value, ["schema", "state"], "connection cleanup");
-      if (value.schema !== 1 || value.state !== "stopped")
-        throw new TnlError("sdk.response_invalid");
       if (owners.get(key) === owner) owners.delete(key);
       if (owner.ipc !== undefined)
         void owner.ipc.then(
@@ -334,40 +277,16 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
             contexts.delete(policyKey);
             throw error;
           }
-          const identity = record(
+          const identity = parseValue(
+            workloadIdentitySchema,
             await machine(binary, ["identity", ...startArgs], undefined, {
               schema: 1,
               context: nativeContext,
               assertion,
             }),
-            "workload identity",
+            "sdk.workload_response_invalid",
           );
-          exactKeys(
-            identity,
-            [
-              "schema",
-              "binding",
-              ...(Object.hasOwn(identity, "assertion_expires_at") ? ["assertion_expires_at"] : []),
-            ],
-            "workload identity",
-          );
-          if (
-            identity.schema !== 1 ||
-            typeof identity.binding !== "string" ||
-            !/^[0-9a-f]{64}$/.test(identity.binding)
-          )
-            throw new TnlError("sdk.workload_response_invalid");
-          let expires: number | undefined;
-          if (Object.hasOwn(identity, "assertion_expires_at")) {
-            if (
-              typeof identity.assertion_expires_at !== "string" ||
-              !Number.isFinite(Date.parse(identity.assertion_expires_at)) ||
-              Date.parse(identity.assertion_expires_at) <= Date.now() ||
-              Date.parse(identity.assertion_expires_at) > Date.now() + 12 * 3600_000 + 60_000
-            )
-              throw new TnlError("sdk.workload_response_invalid");
-            expires = Date.parse(identity.assertion_expires_at);
-          }
+          const expires = identity.assertion_expires_at;
           return {
             context: nativeContext,
             binding: identity.binding,
@@ -439,13 +358,11 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
         // only a kernel-held lifetime lock can distinguish owner death from a
         // failed/denied read. a live owner's listener is never duplicated.
         try {
-          const recovered = record(
+          parseValue(
+            stoppedOwnerSchema,
             await machine(binary, ["recover", "--handle", owner.file]),
-            "owner recovery",
+            "sdk.response_invalid",
           );
-          exactKeys(recovered, ["schema", "state"], "owner recovery");
-          if (recovered.schema !== 1 || recovered.state !== "stopped")
-            throw new TnlError("sdk.response_invalid");
         } catch {
           throw error;
         }
@@ -472,17 +389,17 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
     if (startup === undefined) {
       if (owners.size + starting.size >= 32) throw new TnlError("sdk.workload_unavailable");
       startup = (async () => {
-        const value = record(
-          await machine(
-            binary,
-            ["start", ...startArgs, "--parent-pid", String(process.pid)],
-            undefined,
-            assertion === undefined ? undefined : { schema: 1, context, assertion },
-          ),
-          "connection startup",
+        const value = await machine(
+          binary,
+          ["start", ...startArgs, "--parent-pid", String(process.pid)],
+          undefined,
+          assertion === undefined ? undefined : { schema: 1, context, assertion },
         );
-        const file = value.connection_handle;
-        if (typeof file !== "string") throw new TnlError("sdk.response_invalid");
+        const file = parseValue(
+          startupHandleSchema,
+          value,
+          "sdk.response_invalid",
+        ).connection_handle;
         readArgs(file, name);
         const exitCleanup = independent("sdk.app.cleanup", () => stopOwner(key, startedOwner));
         const startedOwner: OwnedConnection = {
@@ -496,38 +413,8 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
         owners.set(key, startedOwner);
         process.once("beforeExit", startedOwner.onExit);
         try {
-          exactKeys(
-            value,
-            [
-              "schema",
-              "state",
-              "pid",
-              "expires_at",
-              "project_runtime",
-              "connection_handle",
-              "executable",
-              ...(Object.hasOwn(value, "kubeconfig") ? ["kubeconfig"] : []),
-            ],
-            "connection startup",
-          );
-          if (
-            value.schema !== 1 ||
-            value.state !== "ready" ||
-            typeof value.connection_handle !== "string" ||
-            typeof value.pid !== "number" ||
-            !Number.isSafeInteger(value.pid) ||
-            value.pid <= 0 ||
-            typeof value.expires_at !== "string" ||
-            !Number.isFinite(Date.parse(value.expires_at)) ||
-            Date.parse(value.expires_at) <= Date.now() ||
-            typeof value.executable !== "string" ||
-            !path.isAbsolute(value.executable) ||
-            (Object.hasOwn(value, "kubeconfig") &&
-              (typeof value.kubeconfig !== "string" || !path.isAbsolute(value.kubeconfig)))
-          )
-            throw new TnlError("sdk.response_invalid");
-          parseProjectRuntime(value.project_runtime, "connection startup project");
-          startedOwner.expiresAt = Date.parse(value.expires_at);
+          const startup = parseValue(startedOwnerSchema, value, "sdk.response_invalid");
+          startedOwner.expiresAt = startup.expires_at;
           startedOwner.ready = true;
           return startedOwner;
         } catch (error) {
@@ -574,47 +461,21 @@ function readPrepared(name: string): Prepared {
   return parsePrepared(machineSync(resolveNativeBinary(), readArgs(file, name)), name, file);
 }
 
-function parsePrepared(value: unknown, name: string, file: string): Prepared {
-  const object = record(value, "prepared connection");
-  exactKeys(
-    object,
-    [
-      "schema",
-      "project_runtime",
-      "connection",
-      ...(Object.hasOwn(object, "verification") ? ["verification"] : []),
-    ],
-    "prepared connection",
-  );
-  if (object.schema !== 1) throw new TnlError("sdk.response_invalid");
-  const project = parseProjectRuntime(object.project_runtime, "connection project");
-  const snapshot = parseConnection(object.connection);
+function parsePrepared(value: unknown, name: string, file: string) {
+  const {
+    project_runtime: project,
+    connection: snapshot,
+    verification,
+  } = parseValue(preparedConnectionSchema, value, "sdk.response_invalid");
   const metadata = project.services[name];
   if (
     metadata === undefined ||
     metadata.protocol !== snapshot.protocol ||
     (snapshot.protocol !== "tcp" && metadata.hostname !== snapshot.ssl.servername) ||
     ((snapshot.protocol === "http" || snapshot.protocol === "kubernetes") &&
-      metadata.url !== snapshot.url)
+      (!("url" in metadata) || metadata.url !== snapshot.url))
   )
     throw new TnlError("sdk.response_invalid");
-  let verification: Prepared["verification"];
-  if (Object.hasOwn(object, "verification")) {
-    const v = record(object.verification, "assertion verification");
-    exactKeys(v, ["digest", "binding", "expires_at"], "assertion verification");
-    if (
-      typeof v.digest !== "string" ||
-      !/^[0-9a-f]{64}$/.test(v.digest) ||
-      typeof v.binding !== "string" ||
-      !/^[0-9a-f]{64}$/.test(v.binding) ||
-      typeof v.expires_at !== "string" ||
-      !Number.isFinite(Date.parse(v.expires_at)) ||
-      Date.parse(v.expires_at) <= Date.now() ||
-      Date.parse(v.expires_at) > Date.now() + 12 * 3600_000 + 60_000
-    )
-      throw new TnlError("sdk.response_invalid");
-    verification = { digest: v.digest, binding: v.binding, expires: Date.parse(v.expires_at) };
-  }
   return Object.freeze({
     project,
     snapshot,
@@ -623,124 +484,9 @@ function parsePrepared(value: unknown, name: string, file: string): Prepared {
   });
 }
 
-export function parseConnection(value: unknown): Snapshot {
-  const object = record(value, "private connection response");
-  exactKeys(
-    object,
-    [
-      "schema",
-      "protocol",
-      "host",
-      "port",
-      "expires_at",
-      ...["ssl", "url", "kubeconfig", "context", "transport_id"].filter((key) =>
-        Object.hasOwn(object, key),
-      ),
-    ],
-    "private connection response",
-  );
-  if (
-    object.schema !== 1 ||
-    !(
-      object.protocol === "http" ||
-      object.protocol === "postgres" ||
-      object.protocol === "mysql" ||
-      object.protocol === "tcp" ||
-      object.protocol === "kubernetes"
-    ) ||
-    object.host !== "127.0.0.1" ||
-    typeof object.port !== "number" ||
-    !Number.isInteger(object.port) ||
-    object.port < 1 ||
-    object.port > 65535 ||
-    typeof object.expires_at !== "string" ||
-    !Number.isFinite(Date.parse(object.expires_at)) ||
-    Date.parse(object.expires_at) <= Date.now()
-  )
-    throw new TnlError("sdk.response_invalid");
-  if (
-    Object.hasOwn(object, "transport_id") &&
-    (typeof object.transport_id !== "string" || !/^ctg_[A-Za-z0-9]{22}$/.test(object.transport_id))
-  )
-    throw new TnlError("sdk.response_invalid");
-  const address: SnapshotAddress = {
-    host: object.host,
-    port: object.port,
-    expires: Date.parse(object.expires_at),
-    ...(typeof object.transport_id === "string" ? { transportID: object.transport_id } : {}),
-  };
-  if (object.protocol === "tcp") {
-    if (["ssl", "url", "kubeconfig", "context"].some((key) => Object.hasOwn(object, key)))
-      throw new TnlError("sdk.response_invalid");
-    return Object.freeze({ ...address, protocol: object.protocol });
-  }
-  const tls = record(object.ssl, "native TLS");
-  exactKeys(
-    tls,
-    ["servername", "rejectUnauthorized", ...(Object.hasOwn(tls, "ca") ? ["ca"] : [])],
-    "native TLS",
-  );
-  const servername = requiredHostname(tls.servername, "service hostname");
-  if (
-    tls.rejectUnauthorized !== true ||
-    (Object.hasOwn(tls, "ca") &&
-      (typeof tls.ca !== "string" || tls.ca.length === 0 || tls.ca.length > 32 * 1024))
-  )
-    throw new TnlError("sdk.response_invalid");
-  const ssl: TnlNativeTLSOptions = Object.freeze({
-    servername,
-    rejectUnauthorized: true,
-    ...(typeof tls.ca === "string" ? { ca: tls.ca } : {}),
-  });
-  if (object.protocol === "postgres" || object.protocol === "mysql") {
-    if (["url", "kubeconfig", "context"].some((key) => Object.hasOwn(object, key)))
-      throw new TnlError("sdk.response_invalid");
-    return Object.freeze({ ...address, protocol: object.protocol, ssl });
-  }
-  if (typeof object.url !== "string") throw new TnlError("sdk.response_invalid");
-  let endpoint: URL;
-  try {
-    endpoint = new URL(object.url);
-  } catch {
-    throw new TnlError("sdk.response_invalid");
-  }
-  if (
-    endpoint.protocol !== "https:" ||
-    endpoint.hostname !== ssl.servername ||
-    object.url !== endpoint.origin
-  )
-    throw new TnlError("sdk.response_invalid");
-  const url: `https://${string}` = `https://${endpoint.host}`;
-  switch (object.protocol) {
-    case "http":
-      if (Object.hasOwn(object, "kubeconfig") || Object.hasOwn(object, "context"))
-        throw new TnlError("sdk.response_invalid");
-      return Object.freeze({ ...address, protocol: object.protocol, ssl, url });
-    case "kubernetes":
-      if (
-        typeof object.kubeconfig !== "string" ||
-        !path.isAbsolute(object.kubeconfig) ||
-        object.kubeconfig.length > 4096 ||
-        object.kubeconfig.includes("\0") ||
-        typeof object.context !== "string" ||
-        !object.context.startsWith("tnl:") ||
-        object.context.length > 1024
-      )
-        throw new TnlError("sdk.response_invalid");
-      return Object.freeze({
-        ...address,
-        protocol: object.protocol,
-        ssl,
-        url,
-        kubeconfig: object.kubeconfig,
-        context: object.context,
-      });
-  }
-}
-
 export function managedFetch(
   url: `https://${string}`,
-  current: (signal?: AbortSignal) => Promise<Snapshot>,
+  current: (signal?: AbortSignal) => Promise<ConnectionSnapshot>,
 ): TnlFetch {
   let active = 0;
   let pool: Pool | undefined;
@@ -908,7 +654,7 @@ function responseIdentity(response: Response, url: string, type: string): Respon
   return response;
 }
 
-function settings(name: string, snapshot: Snapshot, externalFile?: string): Settings {
+function settings(name: string, snapshot: ConnectionSnapshot, externalFile?: string): Settings {
   switch (snapshot.protocol) {
     case "tcp":
       return Object.freeze({ host: snapshot.host, port: snapshot.port });
@@ -972,7 +718,7 @@ export function connectionHandle(
   name: string,
   updateProject: (project: ProjectRuntime) => void,
 ): TnlConnectionHandle<Settings> {
-  if (!validServiceName(name)) throw new TnlError("sdk.configuration_invalid");
+  if (!isServiceName(name)) throw new TnlError("sdk.configuration_invalid");
   const externalFile = process.env.TNL_CONNECTION_HANDLE;
   const result = (prepared: Prepared) => {
     updateProject(prepared.project);
