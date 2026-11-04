@@ -424,7 +424,7 @@ func (p *connectorConnection) renewActive(active []*connectorUse, permission con
 			until := minConnectorCall(bound)
 			entry, err := connectorOpening(p.signer, stream.entry, permission.VisitorToken)
 			if err == nil {
-				err = stream.prepared.writer.RenewUntil(entry.Permission, until)
+				err = stream.prepared.writer.Renew(entry.Permission, until)
 			}
 			if err != nil {
 				_ = stream.prepared.Close()
