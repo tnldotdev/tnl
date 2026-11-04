@@ -56,6 +56,9 @@ type ConnectorPeerPair struct {
 	Relays                                           [2]ConnectorPeerPairRelay
 	ExpiresAt                                        time.Time
 	ObservedAt, PublisherPreparedUntil               time.Time
+	RunValidUntil                                    time.Time
+	Metadata                                         ServiceMetadata
+	VisitorPermission                                IssuedVisitorToken
 }
 
 func (ConnectorPeerPair) String() string   { return "connector peer pair" }
@@ -92,21 +95,21 @@ func (d *Database) PrepareConnectorPeerPair(ctx context.Context, r ConnectorPeer
 	if r.Action != "create" && r.Action != "replace" {
 		return result, ErrServiceAccess
 	}
-	return d.authorizeConnectorPeerPair(ctx, r, now)
+	return d.authorizeConnectorPeerPair(ctx, r, "", now)
 }
 
 // RenewConnectorPeerPair rechecks current authority for an unexpired pair before
 // extending its serving deadline. it never changes the delivery generation.
-func (d *Database) RenewConnectorPeerPair(ctx context.Context, r ConnectorPeerPairRequest, now time.Time) (ConnectorPeerPair, error) {
+func (d *Database) RenewConnectorPeerPair(ctx context.Context, issuer string, r ConnectorPeerPairRequest, now time.Time) (ConnectorPeerPair, error) {
 	if r.Action != "renew" {
 		return ConnectorPeerPair{}, ErrServiceAccess
 	}
-	return d.authorizeConnectorPeerPair(ctx, r, now)
+	return d.authorizeConnectorPeerPair(ctx, r, issuer, now)
 }
 
-func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPeerPairRequest, now time.Time) (result ConnectorPeerPair, retErr error) {
-	started := time.Now()
-	checkedNow := func() time.Time { return now.Add(time.Since(started)) }
+func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPeerPairRequest, issuer string, now time.Time) (result ConnectorPeerPair, retErr error) {
+	clock := newAuthorizationClock(now)
+	started, checkedNow := clock.started, clock.current
 	message, err := r.proof().Message()
 	requestAt := r.RequestedAt.UTC().Truncate(time.Microsecond)
 	if err != nil || len(r.Signature) != ed25519.SignatureSize || d.storageKey == nil || now.IsZero() ||
@@ -126,32 +129,17 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	defer rollback(ctx, tx, "prepare connector peer pair", &retErr)()
 	// the source reader owns current service visitor permission, including the
 	// session/credential deadline. it takes the team/service admission locks.
-	permission, err := d.visitorPermissionForSource(ctx, tx, scope, r.Source, now)
+	authority, err := d.visitorAuthorityForSource(ctx, tx, scope, r.Source, clock)
 	if err != nil {
 		return result, err
 	}
+	permission := authority.Permission
 	subject, err := visitortoken.ConnectorSubject(permission.Subject)
 	if err != nil || subject != r.Subject {
 		return result, ErrServiceAccess
 	}
-	key, until, err := AuthenticateVisitorSubjectKey(ctx, tx, subject, r.ServiceID, now)
-	if err != nil {
-		return result, err
-	}
-	keyDigest, err := visitortoken.KeyDigest(key)
-	if err != nil || len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, message, r.Signature) {
-		return result, ErrServiceAccess
-	}
-	switch signed := permission.Subject.(type) {
-	case visitortoken.Device:
-		if signed.KeySHA256 != keyDigest {
-			return result, ErrServiceAccess
-		}
-	case visitortoken.Workload:
-		if signed.KeySHA256 != keyDigest {
-			return result, ErrServiceAccess
-		}
-	default:
+	key := authority.PublicKey
+	if len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, message, r.Signature) {
 		return result, ErrServiceAccess
 	}
 	q := controlstatedb.New(tx)
@@ -175,7 +163,7 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	if err != nil {
 		return result, err
 	}
-	deadline := minTime(publisherUntil, minTime(now.Add(5*time.Minute), minTime(permission.ExpiresAt, until)))
+	deadline := minTime(publisherUntil, minTime(permission.ExpiresAt, authority.ConnectorUntil))
 	// retain the entry-time serving cap. elapsed time only narrows the time left
 	// to authorize; a slow database must not mint a later deadline.
 	recheckUntil := minTime(deadline, requestAt.Add(5*time.Minute))
@@ -373,6 +361,33 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	result.ObservedAt = now
 	if row.PublisherPreparedUntil.Valid && row.PublisherPreparedUntil.Time.After(now) {
 		result.PublisherPreparedUntil = minTime(row.PublisherPreparedUntil.Time, result.ExpiresAt)
+	}
+	if r.Action == "renew" {
+		// sign the permission already authenticated under these admission locks,
+		// not a second source read or a later transaction. key retention rolls
+		// back with pair renewal if any final authority deadline is spent.
+		service, err := q.GetService(ctx, r.ServiceID)
+		if err != nil {
+			return ConnectorPeerPair{}, err
+		}
+		result.Metadata, err = checkedServiceMetadata(service)
+		if err != nil {
+			return ConnectorPeerPair{}, err
+		}
+		if result.Metadata.Endpoint == nil {
+			return ConnectorPeerPair{}, ErrServiceMetadata
+		}
+		result.RunValidUntil = publisherUntil
+		permission.ExpiresAt = minTime(permission.ExpiresAt, result.ExpiresAt).Truncate(time.Second)
+		if !permission.ExpiresAt.After(checkedNow()) {
+			return ConnectorPeerPair{}, ErrServiceAccess
+		}
+		token, err := d.signVisitorPermission(ctx, tx, issuer, permission, now)
+		if err != nil {
+			return ConnectorPeerPair{}, err
+		}
+		result.VisitorPermission = IssuedVisitorToken{Token: token, Permission: permission, ServiceTrustRevision: result.Metadata.TrustRevision}
+		recheckUntil = minTime(recheckUntil, permission.ExpiresAt)
 	}
 	// execute deferred constraints while expiry can still roll back every write,
 	// including predecessor deletion and renewal. all authority rows above remain

@@ -68,6 +68,16 @@ func assertNativeHTTPCommittedResponseRecovery(t *testing.T, conn *pgx.Conn, sou
 		t.Fatal(err)
 	}
 	prepare := func(body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
+		if body.Action == "renew" {
+			var result controlv1.ConnectorPeerPairRenewal
+			var err error
+			if source.DeviceID != "" {
+				result, err = api.RenewDeviceConnectorPeerPair(ctx, service, *body.PreviousPairId, source.DeviceID, body)
+			} else {
+				result, err = api.RenewWorkloadConnectorPeerPair(ctx, service, *body.PreviousPairId, source.Credential, body)
+			}
+			return result.Pair, err
+		}
 		if source.DeviceID != "" {
 			return api.PrepareDeviceConnectorPeerPair(ctx, service, source.DeviceID, body)
 		}
@@ -81,8 +91,8 @@ func assertNativeHTTPCommittedResponseRecovery(t *testing.T, conn *pgx.Conn, sou
 			t.Error(err)
 		}
 	}()
-	for _, action := range []controlv1.ConnectorPeerPairRequestAction{"create", "replace"} {
-		if action == "replace" {
+	for _, action := range []controlv1.ConnectorPeerPairRequestAction{"create", "replace", "renew"} {
+		if action != "create" {
 			priorID, priorGeneration := pair.PairId, pair.DeliveryGeneration
 			request.Action, request.PreviousPairId, request.PreviousGeneration = action, &priorID, &priorGeneration
 			request.RequestedAt = time.Now().UTC().Truncate(time.Microsecond)
@@ -108,6 +118,9 @@ func assertNativeHTTPCommittedResponseRecovery(t *testing.T, conn *pgx.Conn, sou
 				if action == "replace" && (result.PairId == pair.PairId || result.Key == pair.Key || result.DeliveryGeneration <= pair.DeliveryGeneration) {
 					t.Fatal("replacement did not rotate the exact owner's delivery")
 				}
+				if action == "renew" && (result.PairId != pair.PairId || result.Key != pair.Key || result.DeliveryId != pair.DeliveryId || result.DeliveryGeneration != pair.DeliveryGeneration) {
+					t.Fatal("renewal changed the retained owner's exact delivery")
+				}
 				pair = result
 			}
 			var owners int
@@ -127,8 +140,19 @@ func assertNativeHTTPCommittedResponseRecovery(t *testing.T, conn *pgx.Conn, sou
 				t.Fatal("retry changed the signed request or owner key")
 			}
 			var delivered controlv1.ConnectorPeerPair
-			if err := json.Unmarshal(replies[index], &delivered); err != nil || delivered.ObservedAt.IsZero() || delivered.ObservedAt.After(pair.ObservedAt) {
+			if action == "renew" {
+				var renewal controlv1.ConnectorPeerPairRenewal
+				if err := json.Unmarshal(replies[index], &renewal); err != nil || renewal.VisitorPermission.VisitorToken == "" ||
+					renewal.VisitorPermission.Resource.Id != service || renewal.VisitorPermission.ExpiresAt.After(renewal.Pair.ExpiresAt) || !renewal.RunValidUntil.After(renewal.Pair.ObservedAt) ||
+					renewal.VisitorPermission.ServiceTrustRevision == nil || *renewal.VisitorPermission.ServiceTrustRevision != renewal.TrustRevision || renewal.TrustRevision < 1 {
+					t.Fatal("lost committed renewal did not contain coherent permission authority", err)
+				}
+				delivered = renewal.Pair
+			} else if err := json.Unmarshal(replies[index], &delivered); err != nil {
 				t.Fatal("invalid committed reply", err)
+			}
+			if delivered.ObservedAt.IsZero() || delivered.ObservedAt.After(pair.ObservedAt) {
+				t.Fatal("invalid committed observation")
 			}
 			delivered.ObservedAt = pair.ObservedAt
 			if !reflect.DeepEqual(delivered, pair) {

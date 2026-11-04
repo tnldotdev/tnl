@@ -464,6 +464,8 @@ components:
       $ref: "./schemas/connectors.yaml#/schemas/ConnectorPeerPairRequest"
     ConnectorPeerPair:
       $ref: "./schemas/connectors.yaml#/schemas/ConnectorPeerPair"
+    ConnectorPeerPairRenewal:
+      $ref: "./schemas/connectors.yaml#/schemas/ConnectorPeerPairRenewal"
     ServiceID:
       $ref: "./schemas/services.yaml#/schemas/ServiceID"
     VisitorConnectionID:
