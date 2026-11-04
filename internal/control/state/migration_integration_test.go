@@ -119,6 +119,7 @@ func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, previous := range []string{
+		"tnl-control-fresh-v1-relay-connector-peers",
 		"tnl-control-fresh-v1-permissions-browser-refresh-serving-readiness",
 		"tnl-control-fresh-v1-permissions",
 		"tnl-control-fresh-v1-services",

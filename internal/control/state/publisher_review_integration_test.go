@@ -227,6 +227,9 @@ func TestIntegrationPublisherSavedPurposesHaveExactGrants(t *testing.T) {
 	for _, purpose := range []PublicURLPurpose{PublicURLPurposeApp, PublicURLPurposeOAuth, PublicURLPurposeWebhooks, PublicURLPurposeAlias, PublicURLPurposeDemo} {
 		r := base
 		r.Purpose, r.CanonicalHostname, r.IdempotencyKey = purpose, string(purpose)+"."+base.CanonicalHostname, string(purpose)
+		if purpose == PublicURLPurposeOAuth || purpose == PublicURLPurposeWebhooks {
+			r.Target = ""
+		}
 		publicURL := createTestPublicURL(t, d, r, now)
 		p, private := reviewPublisher(t, d, publicURL, r.ActingIdentityID, now)
 		a := publisherAccess(t, d, p, private, "", now)

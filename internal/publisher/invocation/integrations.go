@@ -25,10 +25,6 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-// control stores a fixed placeholder for integration URLs. workers handle
-// requests directly after visitor TLS ends at the publisher and never dial it.
-const integrationURLTarget = "http://127.0.0.1:1"
-
 func projectIntegrationGroup(project clientproject.Project, namespace string) string {
 	return clientproject.SharedProjectIdentity(project.Worktree, project.Root) + "\x00" + namespace
 }
@@ -49,7 +45,7 @@ func projectOAuthPublisher(ctx context.Context, state *clientstate.Database, pro
 }
 
 func integrationURLConfig(services publisherServices, hostname string, purpose controlv1.PublicURLPurpose) publisher.Config {
-	config := services.config(integrationURLTarget, []string{}, publisher.ApplicationLimits{Concurrency: 32})
+	config := services.config("", []string{}, publisher.ApplicationLimits{Concurrency: 32})
 	config.Hostname, config.PublicURLScope, config.Ephemeral = hostname, services.publicURLScope, false
 	config.Purpose, config.ServiceProtocol, config.InspectionMode = purpose, controlv1.Http, inspection.None
 	return config

@@ -41,7 +41,7 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 		response.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
-	handler, err := NewWithMounts(upstream.URL, "route.example", 0, nil)
+	handler, err := New(Config{Target: upstream.URL, Hostname: "route.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,11 +87,11 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 	}
 }
 
-func TestNewWithMountsDiagnosesInvalidPublicURLHostname(t *testing.T) {
-	if _, err := NewWithMounts("3000", "INVALID.example", 0, nil); err == nil {
-		t.Fatal("NewWithMounts accepted a noncanonical public URL hostname")
+func TestNewDiagnosesInvalidPublicURLHostname(t *testing.T) {
+	if _, err := New(Config{Target: "3000", Hostname: "INVALID.example"}); err == nil {
+		t.Fatal("New accepted a noncanonical public URL hostname")
 	} else if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.PublicURLInvalid {
-		t.Fatalf("NewWithMounts diagnostic = %q, %t", code, ok)
+		t.Fatalf("New diagnostic = %q, %t", code, ok)
 	}
 }
 
@@ -105,7 +105,7 @@ func TestProxyDiagnosesUnavailableTarget(t *testing.T) {
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewWithMounts(target, "route.example", 0, nil)
+	handler, err := New(Config{Target: target, Hostname: "route.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestProxyReportsTargetFailureOnceUntilItRecovers(t *testing.T) {
 	}))
 	defer upstream.Close()
 	var failures atomic.Int32
-	handler, err := NewWithMounts(upstream.URL, "route.example", 0, nil, func() { failures.Add(1) })
+	handler, err := New(Config{Target: upstream.URL, Hostname: "route.example", OnTargetFailure: func() { failures.Add(1) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestProxyPreservesLocalServiceErrors(t *testing.T) {
 		http.Error(response, "application failure", http.StatusBadGateway)
 	}))
 	defer upstream.Close()
-	handler, err := NewWithMounts(upstream.URL, "route.example", 0, nil)
+	handler, err := New(Config{Target: upstream.URL, Hostname: "route.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,11 +252,12 @@ func testProxyForwardsWebSocketUpgrade(t *testing.T, mounted bool) {
 	})
 	base := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(base.Close)
-	handler, err := NewWithMounts(upstream.URL, "route.example", 1, nil)
+	handler, err := New(Config{Target: upstream.URL, Hostname: "route.example", MaxConnsPerHost: 1})
 	path := "/hmr"
 	if mounted {
 		path = "/api/hmr"
-		handler, err = NewWithMounts(base.URL, "route.example", 1, []Mount{{Prefix: "/api", Target: upstream.URL, StripPrefix: true}})
+		handler, err = New(Config{Target: base.URL, Hostname: "route.example", MaxConnsPerHost: 1,
+			Mounts: []Mount{{Prefix: "/api", Target: upstream.URL, StripPrefix: true}}})
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -299,25 +300,6 @@ func testProxyForwardsWebSocketUpgrade(t *testing.T, mounted bool) {
 	if string(payload) != "hot" {
 		t.Fatalf("payload = %q", payload)
 	}
-	// an upgraded connection still occupies a request slot even though the
-	// HTTP transport no longer owns it as an ordinary pooled connection.
-	overloadClient := frontend.Client()
-	overloadClient.Timeout = 2 * time.Second
-	overloadClient.Transport.(*http.Transport).TLSClientConfig.ServerName = "route.example"
-	overloadClient.Transport.(*http.Transport).TLSClientConfig.InsecureSkipVerify = true // self-signed test certificate for another host.
-	overloadRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, frontend.URL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	overloadRequest.Host = "route.example"
-	overloadResponse, err := overloadClient.Do(overloadRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = overloadResponse.Body.Close()
-	if overloadResponse.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("request during upgrade = %d", overloadResponse.StatusCode)
-	}
 	if _, err := io.WriteString(connection, "client upgrade bytes"); err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +329,7 @@ func TestProxyFlushesStreamingResponses(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 	t.Cleanup(unblock)
-	handler, err := NewWithMounts(upstream.URL, "route.example", 0, nil)
+	handler, err := New(Config{Target: upstream.URL, Hostname: "route.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,8 +413,8 @@ func TestProxyUsesVerifiedHTTPSTargetAndMountedService(t *testing.T) {
 	if err := PreflightWithOptions(proxyContext(t), upstream.URL, options); err != nil {
 		t.Fatalf("verified HTTPS preflight: %v", err)
 	}
-	handler, err := NewWithMountsHooksOptions(upstream.URL, "route.example", 0,
-		[]Mount{{Prefix: "/api", Target: upstream.URL, StripPrefix: true, Options: options}}, ResponseHooks{}, options)
+	handler, err := New(Config{Target: upstream.URL, Hostname: "route.example", TargetOptions: options,
+		Mounts: []Mount{{Prefix: "/api", Target: upstream.URL, StripPrefix: true, Options: options}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -489,7 +489,7 @@ func TestRouteServerNegotiatesHTTP2AndProxiesLocalHTTP(t *testing.T) {
 func TestIntegrationURLHandlerSeesTrustedVisitorSourceAndRejectsOtherAuthorities(t *testing.T) {
 	sources := make(chan string, 1)
 	url, err := newTestPublicURLServer(t, PublicURLServerConfig{
-		Hostname: "route.example", Target: "http://127.0.0.1:1",
+		Hostname: "route.example", Purpose: controlv1.Webhooks,
 		Certificate: publicURLTestCertificate(t, "route.example"),
 		Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 			sources <- request.RemoteAddr

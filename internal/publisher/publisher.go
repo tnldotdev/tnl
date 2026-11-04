@@ -8,9 +8,9 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
-	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -58,17 +58,18 @@ func Run(ctx context.Context, config Config) (result error) {
 		return errors.New("publisher: only HTTP uses public URL runs; use a service for TCP")
 	}
 	ctx = observability.WithPublisherProtocol(ctx, "http")
-	if config.ServiceProtocol == controlv1.Http {
+	config.Target, err = normalizeHTTPMode(config.Target, config.Handler, config.ResolveTarget, config.Mounts, config.TargetOptions, config.TargetTLSName, config.Purpose)
+	if err != nil {
+		return err
+	}
+	if (config.Purpose == controlv1.Oauth || config.Purpose == controlv1.Webhooks) && config.Ephemeral {
+		return diagnostic.Wrap(diagnostic.PublicURLInvalid, errors.New("integration URL cannot be ephemeral"))
+	}
+	if config.Handler == nil {
 		if config.TargetTLSName != "" {
 			config.TargetOptions.ServerName = config.TargetTLSName
 		}
-		config.Target, err = targetsyntax.NormalizeTarget(config.Target)
-		if err != nil {
-			return err
-		}
-		if config.Handler == nil {
-			err = publisherproxy.PreflightWithOptions(ctx, config.Target, config.TargetOptions)
-		}
+		err = publisherproxy.PreflightWithOptions(ctx, config.Target, config.TargetOptions)
 	}
 	if err != nil {
 		return err

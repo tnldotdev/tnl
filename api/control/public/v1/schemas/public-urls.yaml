@@ -49,7 +49,7 @@ schemas:
       target:
         type: string
         pattern: "^$|^https?://"
-        description: Empty for saved app or alias public URLs whose publisher supplies its HTTP target locally.
+        description: Empty for handler-backed OAuth and webhook URLs, and for saved app or alias public URLs whose publisher supplies its HTTP target locally.
       service_protocol:
         $ref: "../openapi.yaml#/components/schemas/PublicURLServiceProtocol"
       publisher_pool: { type: boolean, default: false }
@@ -141,7 +141,7 @@ schemas:
       target:
         type: string
         pattern: "^$|^https?://"
-        description: Leave empty for a saved app or alias public URL whose publisher supplies its HTTP target locally. Ephemeral, demo, OAuth, and webhook URLs require a target.
+        description: Must be empty for OAuth and webhook URLs, which are non-ephemeral and served by publisher handlers. May be empty for a saved app or alias public URL whose publisher supplies its HTTP target locally. Demo and ephemeral app or alias URLs require a target.
       service_protocol:
         $ref: "../openapi.yaml#/components/schemas/PublicURLServiceProtocol"
       publisher_pool: { type: boolean, default: false }
@@ -170,7 +170,7 @@ schemas:
       target:
         type: string
         pattern: "^$|^https?://"
-        description: empty only when keeping a saved app or alias public URL targetless.
+        description: Must remain empty for OAuth and webhook URLs. May be empty when keeping a saved app or alias public URL targetless.
       allowed_ip_prefixes:
         type: array
         uniqueItems: true

@@ -17,7 +17,7 @@ import (
 func nativeIntegrationConfig(ctx context.Context, database *clientstate.Database, services publisherServices, hostname string, purpose controlv1.PublicURLPurpose, allowed ...[]string) (publisher.Config, error) {
 	cfg := integrationURLConfig(services, hostname, purpose)
 	if len(allowed) != 0 {
-		cfg.AllowedIPPrefixes = slices.Clone(allowed[0])
+		cfg.AllowedIPPrefixes = append([]string{}, allowed[0]...)
 	}
 	lock, err := clientstate.LockHostnameContext(ctx, services.state, hostname)
 	if err != nil {
@@ -31,7 +31,7 @@ func nativeIntegrationConfig(ctx context.Context, database *clientstate.Database
 			return cfg, keyErr
 		}
 		protocol := controlv1.Http
-		body := controlv1.CreatePublicURLRequest{TeamId: services.teamID, DomainId: services.domainID, CanonicalHostname: hostname, PublicUrlScope: services.publicURLScope, Purpose: purpose, ServiceProtocol: &protocol, Target: integrationURLTarget, AllowedIpPrefixes: &cfg.AllowedIPPrefixes}
+		body := controlv1.CreatePublicURLRequest{TeamId: services.teamID, DomainId: services.domainID, CanonicalHostname: hostname, PublicUrlScope: services.publicURLScope, Purpose: purpose, ServiceProtocol: &protocol, Target: "", AllowedIpPrefixes: &cfg.AllowedIPPrefixes}
 		if services.publicURLScope == controlv1.Member {
 			body.MembershipId = &services.membershipID
 		}
@@ -40,7 +40,7 @@ func nativeIntegrationConfig(ctx context.Context, database *clientstate.Database
 	if err != nil {
 		return cfg, err
 	}
-	if publicURL.TeamId != services.teamID || publicURL.DomainId != services.domainID || publicURL.CanonicalHostname != hostname || publicURL.Purpose != purpose || publicURL.ServiceProtocol != controlv1.Http || publicURL.Ephemeral || publicURL.LifecycleState != controlv1.Enabled || publicURL.PublicUrlScope != services.publicURLScope {
+	if publicURL.TeamId != services.teamID || publicURL.DomainId != services.domainID || publicURL.CanonicalHostname != hostname || publicURL.Purpose != purpose || publicURL.ServiceProtocol != controlv1.Http || publicURL.Target != "" || publicURL.Ephemeral || publicURL.LifecycleState != controlv1.Enabled || publicURL.PublicUrlScope != services.publicURLScope {
 		return cfg, failure.Wrap("read integration URL", failure.ServerResponseInvalid, errors.New("integration URL differs from the selected project"))
 	}
 	if publicURL.PublicUrlScope == controlv1.Member && (publicURL.MembershipId == nil || *publicURL.MembershipId != services.membershipID) || publicURL.PublicUrlScope == controlv1.Shared && publicURL.MembershipId != nil {
@@ -50,8 +50,8 @@ func nativeIntegrationConfig(ctx context.Context, database *clientstate.Database
 	if publicURL.AllowedIpPrefixes != nil {
 		currentPolicy = *publicURL.AllowedIpPrefixes
 	}
-	if publicURL.Target != integrationURLTarget || !slices.Equal(currentPolicy, cfg.AllowedIPPrefixes) {
-		publicURL, err = services.routes.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{Target: integrationURLTarget, AllowedIpPrefixes: cfg.AllowedIPPrefixes})
+	if !slices.Equal(currentPolicy, cfg.AllowedIPPrefixes) {
+		publicURL, err = services.routes.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{Target: "", AllowedIpPrefixes: cfg.AllowedIPPrefixes})
 		if err != nil {
 			return cfg, err
 		}

@@ -136,6 +136,13 @@ each can admit 20 connections in total. HTTP/2
 requests on one connection spend one connection slot, while request concurrency
 and rate limits still apply separately.
 
+The publisher applies one application request budget to base targets, path mounts,
+and inline handlers. `proxy.New(proxy.Config{...})` only forwards admitted work;
+its `MaxConnsPerHost` sizes each target transport and may make a request wait for
+a connection, but does not admit or reject application work. Dynamic base target
+selection includes an immutable identity so replacement at the same address
+retires the old connection pool without interrupting admitted requests.
+
 [Public admission](../../../internal/publisher/public_url_capacity.go) bounds
 pending setups to four per registered relay service and eight per run. Opening
 headers cannot select the relay service. Pending pressure never evicts admitted
