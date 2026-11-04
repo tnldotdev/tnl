@@ -425,24 +425,11 @@ func (c *Controller) Ready(now time.Time) bool {
 		lease.LeaseExpiresAt.After(now) && c.publicServingJoined(lease, now)
 }
 
-func (c *Controller) Lookup(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, bool) {
-	entry, reason := c.LookupWithReason(canonicalHostname, now)
-	return entry, reason == LookupCurrent
-}
-
-func (c *Controller) LookupWithReason(canonicalHostname string, now time.Time) (ingressv1.IngressRoutingTableEntry, LookupReason) {
-	entries, reason := c.LookupAllWithReason(canonicalHostname, now)
-	if len(entries) == 0 {
-		return ingressv1.IngressRoutingTableEntry{}, reason
-	}
-	return entries[0], LookupCurrent
-}
-
-func (c *Controller) LookupAllWithReason(host string, now time.Time) ([]ingressv1.IngressRoutingTableEntry, LookupReason) {
+func (c *Controller) Lookup(host string, now time.Time) ([]ingressv1.IngressRoutingTableEntry, LookupReason) {
 	if !c.Ready(now) {
 		return nil, LookupIngressUnavailable
 	}
-	entries, reason := c.routingTable.LookupAllWithReason(host, now)
+	entries, reason := c.routingTable.Lookup(host, now)
 	if reason != LookupCurrent {
 		return nil, reason
 	}

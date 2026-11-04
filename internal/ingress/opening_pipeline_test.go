@@ -51,10 +51,12 @@ func TestPublicOpeningMaximumClientHelloAndUsage(t *testing.T) {
 	usage := newUsageRecorder()
 	config := publicURLConfig(backends...)
 	lookup := config.Lookup
-	config.Lookup = func(host string) (PublicURL, LookupReason) {
-		route, reason := lookup(host)
-		route.AccessMode = "anonymous"
-		return route, reason
+	config.Lookup = func(host string) ([]PublicURL, LookupReason) {
+		candidates, reason := lookup(host)
+		for index := range candidates {
+			candidates[index].AccessMode = "anonymous"
+		}
+		return candidates, reason
 	}
 	config.OpenUsage = usage.Open
 	_, address := startIngress(t, config)

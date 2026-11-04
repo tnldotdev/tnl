@@ -64,15 +64,17 @@ func startIngress(t *testing.T, config Config, configure ...func(*Server)) (*Ser
 		config.MaxConnections = 8
 	}
 	if config.Lookup == nil {
-		config.Lookup = func(string) (PublicURL, LookupReason) { return PublicURL{}, LookupNotFound }
+		config.Lookup = func(string) ([]PublicURL, LookupReason) { return nil, LookupNotFound }
 	}
 	lookup := config.Lookup
-	config.Lookup = func(host string) (PublicURL, LookupReason) {
-		route, reason := lookup(host)
-		if reason == LookupCurrent && route.AccessMode == "" {
-			route.AccessMode = "anonymous"
+	config.Lookup = func(host string) ([]PublicURL, LookupReason) {
+		candidates, reason := lookup(host)
+		for index := range candidates {
+			if reason == LookupCurrent && candidates[index].AccessMode == "" {
+				candidates[index].AccessMode = "anonymous"
+			}
 		}
-		return route, reason
+		return candidates, reason
 	}
 	server, err := New(listener, config)
 	if err != nil {
@@ -135,11 +137,11 @@ func exchangePing(t *testing.T, c *tls.Conn) {
 }
 
 func publicURLConfig(backends ...ingressbackend.Backend) Config {
-	return Config{Lookup: func(host string) (PublicURL, LookupReason) {
+	return Config{Lookup: func(host string) ([]PublicURL, LookupReason) {
 		if host != "route.example" {
-			return PublicURL{}, "not_found"
+			return nil, LookupNotFound
 		}
-		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, RecoveryEpisodeID: 7, Backends: backends, AllowAll: true, AttestSource: testBackendSourceProof}, ""
+		return []PublicURL{{ID: "public_url_test", PublishRunID: "publish_run_test", PublishRunNumber: 1, RecoveryEpisodeID: 7, Backends: backends, AllowAll: true, AttestSource: testBackendSourceProof}}, LookupCurrent
 	}}
 }
 

@@ -248,8 +248,8 @@ func (d *daemon) startIngressRuntime(
 	}
 	ingressConfig := ingress.Config{
 		AuditSink: runtime.audit,
-		LookupPool: func(hostname string) ([]ingress.PublicURL, ingress.LookupReason) {
-			entries, reason := controller.LookupAllWithReason(hostname, time.Now())
+		Lookup: func(hostname string) ([]ingress.PublicURL, ingress.LookupReason) {
+			entries, reason := controller.Lookup(hostname, time.Now())
 			if reason != ingress.LookupCurrent {
 				return nil, reason
 			}
