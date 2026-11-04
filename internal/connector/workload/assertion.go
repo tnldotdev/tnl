@@ -8,11 +8,15 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
+	"golang.org/x/sys/unix"
 )
 
 var ErrAssertionSource = errors.New("select exactly one workload assertion, token file, or callback")
@@ -53,13 +57,17 @@ func (s AssertionSource) Acquire(ctx context.Context) (string, error) {
 		return boundedAssertion(raw)
 	}
 	if s.TokenFile != "" {
-		f, err := os.Open(s.TokenFile)
+		f, err := os.OpenFile(s.TokenFile, os.O_RDONLY|unix.O_NONBLOCK, 0)
 		if err != nil {
 			return "", errors.Join(ErrAssertionUnavailable, err)
 		}
 		defer f.Close()
+		info, err := f.Stat()
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 32<<10 {
+			return "", ErrAssertionUnavailable
+		}
 		b, err := io.ReadAll(io.LimitReader(f, (32<<10)+1))
-		if err != nil {
+		if err != nil || len(b) > 32<<10 {
 			return "", errors.Join(ErrAssertionUnavailable, err)
 		}
 		return boundedAssertion(string(b))
@@ -67,8 +75,9 @@ func (s AssertionSource) Acquire(ctx context.Context) (string, error) {
 	return boundedAssertion(s.Assertion)
 }
 func boundedAssertion(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || len(raw) > 32<<10 || strings.ContainsAny(raw, "\r\n\x00\t ") {
+	space := func(r rune) bool { return unicode.IsSpace(r) || r == '\ufeff' }
+	raw = strings.TrimFunc(raw, space)
+	if raw == "" || len(raw) > 32<<10 || !utf8.ValidString(raw) || strings.ContainsRune(raw, 0) || strings.ContainsFunc(raw, space) {
 		return "", ErrAssertionUnavailable
 	}
 	return raw, nil
@@ -76,10 +85,14 @@ func boundedAssertion(raw string) (string, error) {
 
 // acquire uses nonsecret build hints. control independently selects saved trust.
 // Vercel functions should supply @vercel/oidc's request-scoped helper as callback.
-func Acquire(ctx context.Context, hints workloadmanifest.Acquisition, callback func(context.Context) (string, error)) (string, error) {
+func Acquire(ctx context.Context, hints workloadmanifest.Acquisition, callback func(context.Context) (string, error), getenv func(string) string) (string, error) {
 	source := AssertionSource{Callback: callback}
 	switch hints.Method {
-	case "github-actions", "callback":
+	case "github-actions":
+		if callback == nil {
+			source.Callback = func(ctx context.Context) (string, error) { return githubAssertion(ctx, hints.Audience, nil, getenv) }
+		}
+	case "callback":
 		if callback == nil {
 			return "", ErrAssertionUnavailable
 		}
@@ -90,9 +103,9 @@ func Acquire(ctx context.Context, hints workloadmanifest.Acquisition, callback f
 		source.TokenFile = hints.TokenFile
 	case "vercel-oidc":
 		if callback == nil {
-			source.TokenFile = os.Getenv("VERCEL_OIDC_TOKEN_FILE")
+			source.TokenFile = getenv("VERCEL_OIDC_TOKEN_FILE")
 			if source.TokenFile == "" {
-				source.Assertion = os.Getenv("VERCEL_OIDC_TOKEN")
+				source.Assertion = getenv("VERCEL_OIDC_TOKEN")
 			}
 		}
 	case "fly-machine-api":
@@ -104,6 +117,56 @@ func Acquire(ctx context.Context, hints workloadmanifest.Acquisition, callback f
 		return "", ErrAssertionSource
 	}
 	return source.Acquire(ctx)
+}
+
+// the audience comes from the generated manifest; the runtime supplies only its
+// HTTPS token endpoint and bearer credential. redirects never carry that bearer.
+func githubAssertion(ctx context.Context, audience string, transport http.RoundTripper, getenv func(string) string) (string, error) {
+	if getenv("GITHUB_ACTIONS") != "true" {
+		return "", ErrAssertionUnavailable
+	}
+	endpoint, err := url.Parse(getenv("ACTIONS_ID_TOKEN_REQUEST_URL"))
+	if err != nil || endpoint.Scheme != "https" || endpoint.Hostname() == "" || endpoint.User != nil || endpoint.Fragment != "" {
+		return "", ErrAssertionUnavailable
+	}
+	bearer, err := boundedAssertion(getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN"))
+	if err != nil {
+		return "", ErrAssertionUnavailable
+	}
+	query := endpoint.Query()
+	query.Set("audience", audience)
+	endpoint.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return "", ErrAssertionUnavailable
+	}
+	request.Header.Set("Authorization", "Bearer "+bearer)
+	if transport == nil {
+		transport = http.DefaultTransport.(*http.Transport).Clone()
+	}
+	client := &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	defer client.CloseIdleConnections()
+	response, err := client.Do(request)
+	if err != nil {
+		return "", ErrAssertionUnavailable
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", ErrAssertionUnavailable
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, (40<<10)+1))
+	if err != nil || len(data) > 40<<10 || !utf8.Valid(data) {
+		return "", ErrAssertionUnavailable
+	}
+	var value struct {
+		Value string `json:"value"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&value) != nil || decoder.Decode(new(any)) != io.EOF {
+		return "", ErrAssertionUnavailable
+	}
+	return boundedAssertion(value.Value)
 }
 
 // Fly's documented endpoint returns a text/plain signed JWT. the fixed local
@@ -134,7 +197,7 @@ func flyAssertion(ctx context.Context, audience, socket string) (string, error) 
 		return "", ErrAssertionUnavailable
 	}
 	b, err := io.ReadAll(io.LimitReader(response.Body, (32<<10)+1))
-	if err != nil {
+	if err != nil || len(b) > 32<<10 {
 		return "", errors.Join(ErrAssertionUnavailable, err)
 	}
 	return boundedAssertion(string(b))

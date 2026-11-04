@@ -65,7 +65,7 @@ tasks:
     desc: Check the built connector owner and SDK through prepared HTTP and Kubernetes connections
     deps: [":js:build", ":py:sync"]
     cmds:
-      - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwner(HTTP|Kubernetes|SDKSelectionBudget|SDKProcessContext)$' -count=1 -timeout=6m -args -tnl-test-tier=integration
+      - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwner(HTTP|Kubernetes|SDKSelectionBudget|SDKProcessContext|SDKNativeWorkloadAcquisition)$' -count=1 -timeout=6m -args -tnl-test-tier=integration
 
   kubernetes:
     desc: Run kubectl against a digest-pinned disposable kind cluster (Docker, kubectl, kind v0.30.0)

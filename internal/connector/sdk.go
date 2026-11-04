@@ -35,6 +35,9 @@ type SDKOptions struct {
 	RequestedAt        string
 	startedAt          time.Time
 	RetainStartFailure bool
+	WorkloadSelection  *connectorruntime.SDKWorkloadRequest
+	WorkloadPolicy     string
+	Environment        *connectorruntime.SDKEnvironment
 }
 
 type sdkRegistry struct {
@@ -132,12 +135,16 @@ func PrepareSDK(ctx context.Context, options SDKOptions, input io.Reader) (conne
 
 func (o sdkOperations) prepareSDK(ctx context.Context, options SDKOptions, input io.Reader) (connectorruntime.SDKPrepared, error) {
 	var request struct {
-		Schema    int    `json:"schema"`
-		Assertion string `json:"assertion,omitempty"`
+		Schema         int                                  `json:"schema"`
+		Assertion      string                               `json:"assertion,omitempty"`
+		Workload       *connectorruntime.SDKWorkloadRequest `json:"sdk_workload,omitempty"`
+		WorkloadPolicy string                               `json:"sdk_workload_policy,omitempty"`
+		Environment    *connectorruntime.SDKEnvironment     `json:"sdk_environment,omitempty"`
 	}
 	if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 {
 		return connectorruntime.SDKPrepared{}, connectorruntime.ErrInvalid
 	}
+	options.WorkloadSelection, options.WorkloadPolicy, options.Environment = request.Workload, request.WorkloadPolicy, request.Environment
 	return o.selectSDK(ctx, options, request.Assertion)
 }
 
@@ -163,6 +170,19 @@ func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assert
 			return connectorruntime.SDKPrepared{}, failure.Wrap("observe SDK owner recovery", failure.ConnectionUnavailable, err)
 		}
 	}
+	var selected workloadmanifest.Selection
+	var source string
+	if options.WorkloadSelection != nil {
+		var err error
+		selected, source, err = selectSDKWorkload(options.Directory, options.Service, *options.WorkloadSelection)
+		if err != nil {
+			return connectorruntime.SDKPrepared{}, err
+		}
+		if options.WorkloadPolicy != selected.Policy {
+			return connectorruntime.SDKPrepared{}, workloadmanifest.ErrInvalid
+		}
+		options.Workload, options.Manifest = selected.Name, selected.Path
+	}
 	if options.Workload == "" && assertion != "" {
 		return connectorruntime.SDKPrepared{}, connectorruntime.ErrInvalid
 	}
@@ -170,7 +190,19 @@ func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assert
 	if err != nil {
 		return connectorruntime.SDKPrepared{}, err
 	}
-	if options.Workload != "" && assertion == "" {
+	if options.WorkloadSelection != nil {
+		if scope.ConfigDigest != selected.Policy {
+			return connectorruntime.SDKPrepared{}, workloadmanifest.ErrInvalid
+		}
+		environment := connectorruntime.SDKEnvironment{}
+		if options.Environment != nil {
+			environment = *options.Environment
+		}
+		assertion, err = acquireSDKWorkload(ctx, selected, source, *options.WorkloadSelection, environment, assertion)
+		if err != nil {
+			return connectorruntime.SDKPrepared{}, err
+		}
+	} else if options.Workload != "" && assertion == "" {
 		manifest, err := workloadmanifest.Read(options.Manifest)
 		if err != nil {
 			return connectorruntime.SDKPrepared{}, err
@@ -181,7 +213,7 @@ func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assert
 		}
 		bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		assertion, err = workload.Acquire(bounded, hints, nil)
+		assertion, err = workload.Acquire(bounded, hints, nil, os.Getenv)
 		if err != nil {
 			return connectorruntime.SDKPrepared{}, err
 		}
@@ -399,11 +431,12 @@ func (b *connectorConnectionBackend) SDKPrepare(ctx context.Context, request con
 	defer finish()
 	options := *b.sdk
 	options.Workload, options.Manifest = request.Workload, request.Manifest
+	options.WorkloadSelection, options.WorkloadPolicy, options.Environment = request.SDKWorkload, request.SDKWorkloadPolicy, request.SDKEnvironment
 	options.Service = request.Service
 	options.RequestedAt = request.RequestedAt
 	options.ContextOptions.Service = nil
 	operations := nativeSDKOperations()
-	if request.Workload == "" && b.scope.Workload == "" {
+	if request.Workload == "" && request.SDKWorkload == nil && b.scope.Workload == "" {
 		operations.resolve = func(context.Context, ContextOptions) (connectorruntime.Context, error) { return b.scope, nil }
 	}
 	remote := operations.prepare

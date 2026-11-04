@@ -135,6 +135,25 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			return
 		}
 		switch operation {
+		case "sdk-workload":
+			provider, ok := backend.(interface {
+				SDKWorkload(context.Context, Request) (SDKWorkload, error)
+			})
+			if !ok {
+				writeConnectionFailure(w, ErrInvalid)
+				return
+			}
+			selected, err := provider.SDKWorkload(r.Context(), request)
+			if err != nil {
+				reason, known := failure.ReasonOf(err)
+				if !known {
+					reason = failure.ConnectionUnavailable
+				}
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_ = json.NewEncoder(w).Encode(map[string]any{"schema": 1, "reason": reason})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(selected)
 		case "sdk-prepare":
 			provider, ok := backend.(interface {
 				SDKPrepare(context.Context, Request) (SDKPrepared, error)
