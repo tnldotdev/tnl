@@ -71,6 +71,7 @@ const connection = () => ({
   host: "127.0.0.1",
   port: 24567,
   expires_at: new Date(Date.now() + 60_000).toISOString(),
+  transport_id: "ctg_aaaaaaaaaaaaaaaaaaaaaa",
   ssl: { servername: service.hostname, rejectUnauthorized: true },
 });
 const prepared = () => ({ schema: 1, project_runtime: project, connection: connection() });
@@ -323,6 +324,24 @@ describe("awaitable root connection handles", () => {
       }
     }
   });
+
+  test.each([undefined, "", "ctg_invalid"])(
+    "prepared reads reject an invalid transport identity (%j) before updating metadata",
+    async (transport_id) => {
+      vi.stubEnv("TNL_CONNECTION_HANDLE", "/private/action/handle.json");
+      const value = { ...prepared(), connection: { ...connection(), transport_id } };
+      native.sync.mockReturnValue(JSON.stringify(value));
+      native.async.mockResolvedValue({ stdout: JSON.stringify(value) });
+      const { connectionHandle } = await import("../../src/internal/connector/connection.js");
+      const update = vi.fn();
+      const handle = connectionHandle("database", update);
+      expect(() => ({ ...handle })).toThrow(
+        expect.objectContaining({ code: "sdk.response_invalid" }),
+      );
+      await expect(Promise.resolve(handle)).rejects.toMatchObject({ code: "sdk.response_invalid" });
+      expect(update).not.toHaveBeenCalled();
+    },
+  );
 
   test("failed preparation can retry and native stderr never reaches errors", async () => {
     const { connectionHandle } = await import("../../src/internal/connector/connection.js");

@@ -28,7 +28,7 @@ const address = {
   host: z.literal("127.0.0.1"),
   port: portSchema,
   expires_at: deadlineSchema,
-  transport_id: transportIDSchema.exactOptional(),
+  transport_id: transportIDSchema,
 };
 const http = { ...address, ssl: tlsSchema, url: httpsOriginSchema };
 
@@ -49,7 +49,7 @@ export const connectionSnapshotSchema = z
   .transform(({ schema: _schema, expires_at, transport_id, ...value }) => ({
     ...value,
     expires: expires_at,
-    ...(transport_id === undefined ? {} : { transportID: transport_id }),
+    transportID: transport_id,
   }))
   .readonly();
 

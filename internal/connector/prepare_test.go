@@ -58,7 +58,7 @@ func TestConnectionPreparationTransitions(t *testing.T) {
 				t.Fatal("starting attempt was published", err)
 			}
 			if ready {
-				if err := b.publishServiceLocked("api", owner, p, &servingService{connection: connectorruntime.Connection{Protocol: "http", Host: "127.0.0.1", Port: 25443}}, serviceKubeconfig{}, nil); err != nil {
+				if err := b.publishServiceLocked("api", owner, p, &servingService{connection: connectorruntime.Connection{Schema: 1, Protocol: "http", Host: "127.0.0.1", Port: 25443}}, serviceKubeconfig{}, nil); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := b.Prepared("api"); err != nil {
@@ -135,7 +135,7 @@ func TestConnectionPreparationNewTransportIdentity(t *testing.T) {
 	for range 2 {
 		p := &servicePreparation{service: service, state: preparingService{}}
 		owner.attempt = p
-		serving := &servingService{connection: connectorruntime.Connection{Protocol: "http", Host: "127.0.0.1", Port: 25443}}
+		serving := &servingService{connection: connectorruntime.Connection{Schema: 1, Protocol: "http", Host: "127.0.0.1", Port: 25443}}
 		if err := b.publishServiceLocked("api", owner, p, serving, serviceKubeconfig{}, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -165,7 +165,7 @@ func TestConnectionPreparationPublicationSessionFence(t *testing.T) {
 				t.Fatal(err)
 			}
 			service := b.services["api"]
-			serving := &servingService{sessionID: session.Id}
+			serving := &servingService{sessionID: session.Id, connection: connectorruntime.Connection{Schema: 1}}
 			switch scenario {
 			case "old-session":
 				serving.sessionID = "wls_" + strings.Repeat("o", 22)
@@ -324,7 +324,7 @@ func TestConnectionPreparationFailureJoinsResourcesAndReusesListener(t *testing.
 				}
 				base = &preparationListener{Listener: listener}
 				oldCtx, cancel := context.WithCancel(b.lifetime)
-				old := &servicePreparation{service: service, state: &servingService{}, cancel: cancel, done: make(chan struct{})}
+				old := &servicePreparation{service: service, state: &servingService{connection: connectorruntime.Connection{Schema: 1, TransportID: "ctg_aaaaaaaaaaaaaaaaaaaaaa"}}, cancel: cancel, done: make(chan struct{})}
 				previous = &ownedServiceListener{listener: connectorruntime.NewListenerSwitch(base), attempt: old, kube: serviceKubeconfig{result: kubeconfig.Result{File: "retained-kubeconfig", Context: "retained-context"}}}
 				b.listeners["api"] = previous
 				b.publishLocked()

@@ -192,6 +192,10 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 				writeConnectionFailure(w, err)
 				return
 			}
+			if err := connection.Validate(); err != nil {
+				writeConnectionFailure(w, err)
+				return
+			}
 			if operation != "connect" {
 				if provider, ok := backend.(interface {
 					SnapshotFor(string, string) (Prepared, error)
@@ -200,6 +204,10 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 					// immutable publication, even if another request replaces a session.
 					prepared, err := provider.SnapshotFor(request.Service, request.Assertion)
 					if err != nil {
+						writeConnectionFailure(w, err)
+						return
+					}
+					if err := prepared.Validate(); err != nil {
 						writeConnectionFailure(w, err)
 						return
 					}

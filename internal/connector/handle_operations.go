@@ -38,11 +38,8 @@ func connectionSnapshot(ctx context.Context, path, service, operation string) (c
 	if err := connectorruntime.Call(bounded, path, operation, connectorruntime.Request{Schema: 1, Directory: handle.Directory, ConfigDigest: handle.ConfigDigest, Service: service}, &prepared); err != nil {
 		return connectorruntime.Prepared{}, err
 	}
-	if prepared.Schema != connectorruntime.Schema || prepared.Connection.Schema != connectorruntime.Schema {
-		return connectorruntime.Prepared{}, connectorruntime.ErrInvalid
-	}
-	if !prepared.Connection.ExpiresAt.After(time.Now()) {
-		return connectorruntime.Prepared{}, connectorruntime.ErrExpired
+	if err := prepared.Validate(); err != nil {
+		return connectorruntime.Prepared{}, err
 	}
 	return prepared, nil
 }

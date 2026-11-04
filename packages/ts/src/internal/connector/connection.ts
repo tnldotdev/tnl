@@ -493,7 +493,6 @@ export function managedFetch(
   let dispatcher: Dispatcher | undefined;
   let poolKey: string | undefined;
   const retired = new Set<Pool>();
-  let legacyGeneration = 0;
   return async (input, init) => {
     const running = [...retired, ...(pool === undefined ? [] : [pool])].reduce(
       (sum, p) => sum + p.stats.running + p.stats.pending,
@@ -524,12 +523,11 @@ export function managedFetch(
         snapshot.expires <= Date.now()
       )
         throw new TnlError("sdk.response_invalid");
-      // unknown older snapshots never authorize reuse of a prior transport.
       const nextKey = JSON.stringify([
         snapshot.host,
         snapshot.port,
         snapshot.ssl,
-        snapshot.transportID ?? ++legacyGeneration,
+        snapshot.transportID,
       ]);
       if (pool === undefined || poolKey !== nextKey) {
         if (pool !== undefined) {

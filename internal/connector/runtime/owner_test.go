@@ -43,7 +43,7 @@ func (b *fixtureBackend) Connect(ctx context.Context, name string) (Connection, 
 		return Connection{}, ErrInvalid
 	}
 	b.credential.Add(1)
-	return Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: 15432, ExpiresAt: b.deadline, SSL: &TLSOptions{ServerName: "db.example", RejectUnauthorized: true}}, nil
+	return Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: 15432, ExpiresAt: b.deadline, SSL: &TLSOptions{ServerName: "db.example", RejectUnauthorized: true}, TransportID: "ctg_aaaaaaaaaaaaaaaaaaaaaa"}, nil
 }
 func (b *fixtureBackend) Renew(context.Context) (time.Time, error) { return b.deadline, nil }
 func (b *fixtureBackend) Prepared(name string) (Connection, error) {
@@ -169,13 +169,13 @@ type lazyFixtureBackend struct {
 func (b *lazyFixtureBackend) Connect(_ context.Context, name string) (Connection, error) {
 	b.network.Add(1)
 	b.prepared[name] = true
-	return Connection{Schema: 1, Protocol: "tcp", Host: "127.0.0.1", Port: 15432, ExpiresAt: b.deadline}, nil
+	return Connection{Schema: 1, Protocol: "tcp", Host: "127.0.0.1", Port: 15432, ExpiresAt: b.deadline, TransportID: "ctg_bbbbbbbbbbbbbbbbbbbbbb"}, nil
 }
 func (b *lazyFixtureBackend) Prepared(name string) (Connection, error) {
 	if !b.prepared[name] {
 		return Connection{}, ErrUnavailable
 	}
-	return Connection{Schema: 1, Protocol: "tcp", Host: "127.0.0.1", Port: 15432, ExpiresAt: b.deadline}, nil
+	return Connection{Schema: 1, Protocol: "tcp", Host: "127.0.0.1", Port: 15432, ExpiresAt: b.deadline, TransportID: "ctg_bbbbbbbbbbbbbbbbbbbbbb"}, nil
 }
 
 func TestConnectionPreparedSiblingNeverStartsNetworkWork(t *testing.T) {

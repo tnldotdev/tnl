@@ -134,15 +134,14 @@ def _snapshot(value: object) -> Connection:
     )
     if type(obj.get("schema")) is not int or obj["schema"] != 1:
         raise _error("invalid")
-    if "transport_id" in obj:
-        transport = _text(obj["transport_id"])
-        if (
-            not transport.startswith("ctg_")
-            or len(transport) != 26
-            or not transport[4:].isascii()
-            or not transport[4:].isalnum()
-        ):
-            raise _error("invalid")
+    transport = _text(obj.get("transport_id"))
+    if (
+        not transport.startswith("ctg_")
+        or len(transport) != 26
+        or not transport[4:].isascii()
+        or not transport[4:].isalnum()
+    ):
+        raise _error("invalid")
     port = obj.get("port")
     if obj.get("host") != "127.0.0.1" or type(port) is not int or not 1 <= port <= 65535:
         raise _error("invalid")

@@ -8,6 +8,7 @@ const database = {
   host: "127.0.0.1",
   port: 15432,
   expires_at: new Date(Date.now() + 60_000).toISOString(),
+  transport_id: "ctg_aaaaaaaaaaaaaaaaaaaaaa",
   ssl: { servername: "database.team.example", rejectUnauthorized: true },
 };
 const { ssl: _ssl, ...endpoint } = database;
@@ -23,8 +24,12 @@ describe("private connection snapshots", () => {
     { ...database, protocol: "kubernetes", url: origin, ...kubernetes },
   ])("returns only the validated fields for $protocol", (wire) => {
     const snapshot = parseConnectionSnapshot(wire);
-    const { schema: _schema, expires_at, ...fields } = wire;
-    expect(snapshot).toEqual({ ...fields, expires: Date.parse(expires_at) });
+    const { schema: _schema, expires_at, transport_id, ...fields } = wire;
+    expect(snapshot).toEqual({
+      ...fields,
+      expires: Date.parse(expires_at),
+      transportID: transport_id,
+    });
     expect(Object.isFrozen(snapshot)).toBe(true);
     if (snapshot.protocol !== "tcp") expect(Object.isFrozen(snapshot.ssl)).toBe(true);
     expect(
@@ -83,6 +88,30 @@ describe("private connection snapshots", () => {
       expect(() => parseConnectionSnapshot({ ...wire, kubeconfig })).toThrow();
     for (const context of [undefined, null, "cluster", `tnl:${"x".repeat(1021)}`])
       expect(() => parseConnectionSnapshot({ ...wire, context })).toThrow();
+  });
+  test.each([
+    undefined,
+    null,
+    "",
+    1,
+    "ctg_short",
+    `old_${"a".repeat(22)}`,
+    `ctg_${"a".repeat(21)}`,
+    `ctg_${"a".repeat(23)}`,
+    `ctg_${"a".repeat(21)}_`,
+    `ctg_${"a".repeat(21)}é`,
+    `ctg_${"a".repeat(22)}\n`,
+  ])("rejects a missing, empty, or malformed transport identity (%j)", (transport_id) => {
+    const { transport_id: _transport, ...withoutIdentity } = database;
+    const value = transport_id === undefined ? withoutIdentity : { ...database, transport_id };
+    expect(() => parseConnectionSnapshot(value)).toThrow(
+      expect.objectContaining({ code: "sdk.response_invalid" }),
+    );
+  });
+  test("retains the required opaque transport identity", () => {
+    expect(parseConnectionSnapshot(database).transportID).toBe(database.transport_id);
+    const transport_id = "ctg_0123456789ABCDEFGHIJaz";
+    expect(parseConnectionSnapshot({ ...database, transport_id }).transportID).toBe(transport_id);
   });
   test("fetch cancellation includes native credential acquisition", async () => {
     const abort = new AbortController();

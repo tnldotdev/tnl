@@ -19,7 +19,7 @@ import (
 )
 
 func TestConnectionReadUsesOnlyExistingPreparedOwner(t *testing.T) {
-	for _, scenario := range []string{"ready", "expired-handle", "expired-owner", "expired-snapshot", "invalid-schema", "bare-snapshot", "canceled", "denied"} {
+	for _, scenario := range []string{"ready", "expired-handle", "expired-owner", "expired-snapshot", "invalid-schema", "bare-snapshot", "missing-transport", "empty-transport", "malformed-transport", "canceled", "denied"} {
 		t.Run(scenario, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
@@ -54,7 +54,12 @@ func TestConnectionReadUsesOnlyExistingPreparedOwner(t *testing.T) {
 				if scenario == "expired-snapshot" {
 					expires = time.Now().Add(-time.Second)
 				}
-				snapshot := connectorruntime.Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: 15432, SSL: &connectorruntime.TLSOptions{ServerName: "approved.example.test", RejectUnauthorized: true}, ExpiresAt: expires}
+				snapshot := connectorruntime.Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: 15432, SSL: &connectorruntime.TLSOptions{ServerName: "approved.example.test", RejectUnauthorized: true}, ExpiresAt: expires, TransportID: "ctg_aaaaaaaaaaaaaaaaaaaaaa"}
+				if scenario == "empty-transport" {
+					snapshot.TransportID = ""
+				} else if scenario == "malformed-transport" {
+					snapshot.TransportID = "ctg_invalid"
+				}
 				if scenario == "bare-snapshot" {
 					_ = json.NewEncoder(w).Encode(snapshot)
 					return
@@ -62,6 +67,14 @@ func TestConnectionReadUsesOnlyExistingPreparedOwner(t *testing.T) {
 				prepared := connectorruntime.Prepared{Schema: 1, ProjectRuntime: meta.PublicMetadata{Namespace: "example.test", Services: map[string]meta.Service{"database": {Protocol: "postgres", Namespace: "example.test", Hostname: "approved.example.test", Port: 15432, Public: true}}}, Connection: snapshot}
 				if scenario == "invalid-schema" {
 					prepared.Schema = 2
+				}
+				if scenario == "missing-transport" {
+					encoded, _ := json.Marshal(prepared)
+					var value map[string]any
+					_ = json.Unmarshal(encoded, &value)
+					delete(value["connection"].(map[string]any), "transport_id")
+					_ = json.NewEncoder(w).Encode(value)
+					return
 				}
 				_ = json.NewEncoder(w).Encode(prepared)
 			}))
@@ -82,7 +95,7 @@ func TestConnectionReadUsesOnlyExistingPreparedOwner(t *testing.T) {
 			err = run(ctx, []string{"runtime", "connections", "read", "--handle", path, "--service", "database"}, &output, &output)
 			if scenario == "ready" {
 				var prepared connectorruntime.Prepared
-				if err != nil || connectorruntime.ReadJSON(&output, &prepared) != nil || prepared.Schema != 1 || prepared.Connection.Host != "127.0.0.1" || prepared.Connection.Port != 15432 || prepared.Connection.SSL == nil || prepared.Connection.SSL.ServerName != "approved.example.test" || prepared.ProjectRuntime.Services["database"].Hostname != prepared.Connection.SSL.ServerName {
+				if err != nil || connectorruntime.ReadJSON(&output, &prepared) != nil || prepared.Validate() != nil || prepared.Connection.Host != "127.0.0.1" || prepared.Connection.Port != 15432 || prepared.Connection.SSL == nil || prepared.Connection.SSL.ServerName != "approved.example.test" || prepared.ProjectRuntime.Services["database"].Hostname != prepared.Connection.SSL.ServerName {
 					t.Fatal("read lost the prepared snapshot", err, output.String())
 				}
 			} else {
@@ -90,7 +103,7 @@ func TestConnectionReadUsesOnlyExistingPreparedOwner(t *testing.T) {
 				if scenario == "denied" || scenario == "canceled" {
 					want = failure.ConnectionUnavailable
 				}
-				if scenario == "invalid-schema" || scenario == "bare-snapshot" {
+				if scenario == "invalid-schema" || scenario == "bare-snapshot" || strings.HasSuffix(scenario, "-transport") {
 					want = failure.ConnectionRequestInvalid
 				}
 				if reason, _ := failure.ReasonOf(err); reason != want || output.Len() != 0 {
