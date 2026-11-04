@@ -42,6 +42,13 @@ func (f *databaseTLSFixture) Close() {
 // DNS-only certificate forces visitors dialing loopback to verify the explicit
 // provider hostname. no system roots, keychain changes, or external DB is used.
 func startDatabaseTLS(ctx context.Context, service string) (_ *databaseTLSFixture, retErr error) {
+	image := mysqlImage
+	if service == "postgres-tls" {
+		image = postgresImage
+	}
+	if err := prepareFixtureImage(ctx, image); err != nil {
+		return nil, err
+	}
 	directory, err := os.MkdirTemp("", "tnl-database-tls-")
 	if err != nil {
 		return nil, err

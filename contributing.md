@@ -71,6 +71,9 @@ and remove digest-pinned disposable databases; it is not a product binary
 dependency. Each PostgreSQL-backed invocation shares one PostgreSQL container
 while each test creates its own database. The same harness drives the runtime
 load topology and fault sweeps without a TypeScript container runner.
+The harness decodes Docker's pull result before creating a fixture, so registry
+errors are reported at the pull rather than as a later missing-image error.
+It keeps the pinned digest and does not retry failed tests.
 The complete runtime tier has a 20-minute budget, including real lease-cycle
 tests; a shell running the full multi-package integration tier needs a longer
 deadline than an individual package. CI runs four state shards, four runtime

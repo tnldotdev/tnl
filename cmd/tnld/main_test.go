@@ -45,6 +45,24 @@ func TestWriteTerminalErrorUsesTypedOperatorCopy(t *testing.T) {
 	}
 }
 
+func TestRelayQUICProfileDiagnostic(t *testing.T) {
+	var output bytes.Buffer
+	err := run(t.Context(), []string{"serve", "--relay-quic-profile=invalid-secret-value"}, &output)
+	typed, ok := failure.Of(err)
+	if !ok || typed.Reason() != failure.ServerConfigInvalid || typed.Setting() != failure.SettingRelayQUICProfile {
+		t.Fatalf("invalid QUIC profile lost its diagnostic setting: %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("invalid configuration wrote stdout: %q", output.String())
+	}
+	writeTerminalError(&output, err)
+	want := "tnld: validate relay QUIC profile TNLD_RELAY_QUIC_PROFILE: server configuration is invalid; " +
+		"run tnld config check and correct the reported setting\n"
+	if output.String() != want {
+		t.Fatalf("profile diagnostic = %q; want %q", output.String(), want)
+	}
+}
+
 func TestRunMigrateRequiresDirectURL(t *testing.T) {
 	t.Setenv("TNLD_DATABASE_DIRECT_URL", "")
 	err := run(t.Context(), []string{"migrate"}, new(bytes.Buffer))

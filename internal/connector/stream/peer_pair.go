@@ -20,14 +20,13 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func prepareConnectorPair(ctx context.Context, control Control, signer Signer, run Run, owner string, previous *controlv1.ConnectorPeerPair) (controlv1.ConnectorPeerPair, [32]byte, time.Time, controlv1.ConnectorPeerPairRequest, error) {
-	var key [32]byte
+func connectorPairRequest(signer Signer, run Run, owner string, previous *controlv1.ConnectorPeerPair) (controlv1.ConnectorPeerPairRequest, error) {
 	var body controlv1.ConnectorPeerPairRequest
 	if run.PairReady == nil {
-		return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, failure.Wrap("prepare connector relay carriers", failure.ConnectionUnavailable, ErrServiceConnection)
+		return body, failure.Wrap("prepare connector relay carriers", failure.ConnectionUnavailable, ErrServiceConnection)
 	}
 	if len(run.PairReady.Relays) != 2 || !opaqueid.Valid(run.PairReady.PublisherIdentityId, opaqueid.PublisherIdentityPrefix) || signer.Subject.Validate() != nil {
-		return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, ErrServiceConnection
+		return body, ErrServiceConnection
 	}
 	body = controlv1.ConnectorPeerPairRequest{Action: "create", IdempotencyKey: owner, ServiceRunId: run.ServiceRunID, RunNumber: int64(run.RunNumber), PublisherIdentityId: run.PairReady.PublisherIdentityId,
 		Subject: visitorsubject.Wire(signer.Subject), ExpectedRelays: run.PairReady.Relays, RequestedAt: time.Now().UTC().Truncate(time.Microsecond)}
@@ -36,33 +35,83 @@ func prepareConnectorPair(ctx context.Context, control Control, signer Signer, r
 	}
 	message, err := controlv1.ConnectorPeerPairProofMessage(run.ServiceID, body)
 	if err != nil {
-		return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, err
+		return body, err
 	}
 	signature := signer.Sign(message)
 	if !ed25519.Verify(signer.PublicKey, message, signature) {
-		return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, ErrServiceConnection
+		return body, ErrServiceConnection
 	}
 	body.Signature = base64.RawURLEncoding.EncodeToString(signature)
-	started := time.Now()
+	return body, nil
+}
+
+func requestConnectorPair[T any](ctx context.Context, call func() (T, error)) (result T, err error) {
 	// an uncertain reply repeats this exact signed request, not a new owner or
 	// timestamp. the caller's bounded preparation/renewal context is the ceiling.
-	var pair controlv1.ConnectorPeerPair
 	for {
-		pair, err = control.PrepareConnectorPeerPair(ctx, run.ServiceID, body)
+		result, err = call()
 		if err == nil || !connectorTemporary(err) {
-			break
+			return result, err
 		}
 		timer := time.NewTimer(100 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, context.Cause(ctx)
+			var zero T
+			return zero, context.Cause(ctx)
 		case <-timer.C:
 		}
 	}
+}
+
+func prepareConnectorPair(ctx context.Context, control Control, signer Signer, run Run, owner string) (controlv1.ConnectorPeerPair, [32]byte, time.Time, controlv1.ConnectorPeerPairRequest, error) {
+	body, err := connectorPairRequest(signer, run, owner, nil)
 	if err != nil {
-		return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, err
+		return controlv1.ConnectorPeerPair{}, [32]byte{}, time.Time{}, body, err
 	}
+	started := time.Now()
+	pair, err := requestConnectorPair(ctx, func() (controlv1.ConnectorPeerPair, error) {
+		return control.PrepareConnectorPeerPair(ctx, run.ServiceID, body)
+	})
+	if err != nil {
+		return controlv1.ConnectorPeerPair{}, [32]byte{}, time.Time{}, body, err
+	}
+	key, until, err := validateConnectorPair(ctx, signer, run, body, pair, started, nil)
+	if err != nil {
+		return controlv1.ConnectorPeerPair{}, [32]byte{}, time.Time{}, body, err
+	}
+	return pair, key, until, body, nil
+}
+
+func renewConnectorPair(ctx context.Context, control Control, signer Signer, run Run, owner string, previous controlv1.ConnectorPeerPair) (controlv1.ConnectorPeerPairRenewal, time.Time, error) {
+	body, err := connectorPairRequest(signer, run, owner, &previous)
+	if err != nil {
+		return controlv1.ConnectorPeerPairRenewal{}, time.Time{}, err
+	}
+	started := time.Now()
+	renewal, err := requestConnectorPair(ctx, func() (controlv1.ConnectorPeerPairRenewal, error) {
+		return control.RenewConnectorPeerPair(ctx, run.ServiceID, body)
+	})
+	if err != nil {
+		return controlv1.ConnectorPeerPairRenewal{}, time.Time{}, err
+	}
+	_, until, err := validateConnectorPair(ctx, signer, run, body, renewal.Pair, started, &previous)
+	if err != nil {
+		return controlv1.ConnectorPeerPairRenewal{}, time.Time{}, err
+	}
+	permission := renewal.VisitorPermission
+	permission.ExpiresAt = started.Add(permission.ExpiresAt.Sub(renewal.Pair.ObservedAt))
+	if permission.ServiceTrustRevision == nil || *permission.ServiceTrustRevision < 1 || *permission.ServiceTrustRevision != renewal.TrustRevision ||
+		!renewal.RunValidUntil.After(renewal.Pair.ObservedAt) || !validConnectorPermission(run, permission) ||
+		!renewal.VisitorPermission.ExpiresAt.After(renewal.Pair.ObservedAt) || renewal.VisitorPermission.ExpiresAt.After(renewal.Pair.ExpiresAt) ||
+		renewal.Pair.PublisherPreparedUntil != nil && renewal.Pair.PublisherPreparedUntil.After(renewal.Pair.ExpiresAt) {
+		return controlv1.ConnectorPeerPairRenewal{}, time.Time{}, ErrServiceConnection
+	}
+	return renewal, until, nil
+}
+
+func validateConnectorPair(ctx context.Context, signer Signer, run Run, body controlv1.ConnectorPeerPairRequest, pair controlv1.ConnectorPeerPair, started time.Time, previous *controlv1.ConnectorPeerPair) ([32]byte, time.Time, error) {
+	var key [32]byte
 	secret, keyErr := base64.RawURLEncoding.Strict().DecodeString(pair.Key)
 	defer clear(secret)
 	_, idErr := tunnelv1.ParsePeerDeliveryIdentifier(pair.DeliveryId)
@@ -70,26 +119,26 @@ func prepareConnectorPair(ctx context.Context, control Control, signer Signer, r
 	until := started.Add(duration)
 	if keyErr != nil || len(secret) != 32 || idErr != nil || !opaqueid.Valid(pair.PairId, "cpp_") || pair.DeliveryGeneration < 1 || pair.ServiceId != run.ServiceID || pair.ServiceRunId != run.ServiceRunID || pair.RunNumber != int64(run.RunNumber) || pair.PublisherIdentityId != run.PairReady.PublisherIdentityId || !visitorsubject.Equal(pair.Subject, signer.Subject) ||
 		pair.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute || !until.After(time.Now()) || ctx.Err() != nil || len(pair.Relays) != 2 {
-		return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, ErrServiceConnection
+		return key, time.Time{}, ErrServiceConnection
 	}
 	for slot, relay := range pair.Relays {
 		if relay != body.ExpectedRelays[slot] {
-			return controlv1.ConnectorPeerPair{}, key, time.Time{}, body, ErrServiceConnection
+			return key, time.Time{}, ErrServiceConnection
 		}
 	}
 	copy(key[:], secret)
 	if key == [32]byte{} || previous != nil && (pair.PairId != previous.PairId || pair.DeliveryId != previous.DeliveryId || pair.DeliveryGeneration != previous.DeliveryGeneration || pair.Key != previous.Key) {
-		return controlv1.ConnectorPeerPair{}, [32]byte{}, time.Time{}, body, ErrServiceConnection
+		return [32]byte{}, time.Time{}, ErrServiceConnection
 	}
-	return pair, key, until, body, nil
+	return key, until, nil
 }
 
 // awaitConnectorPublisher repeats the original signed create only to observe the
 // installation barrier. it cannot renew authority or reset startup's deadline.
-func awaitConnectorPublisher(ctx context.Context, control Control, service string, request controlv1.ConnectorPeerPairRequest, expected controlv1.ConnectorPeerPair) (time.Time, error) {
+func awaitConnectorPublisher(ctx context.Context, control Control, service string, request controlv1.ConnectorPeerPairRequest, expected controlv1.ConnectorPeerPair) (time.Time, time.Time, error) {
 	for {
 		if err := context.Cause(ctx); err != nil {
-			return time.Time{}, err
+			return time.Time{}, time.Time{}, err
 		}
 		started := time.Now()
 		pair, err := control.PrepareConnectorPeerPair(ctx, service, request)
@@ -98,24 +147,24 @@ func awaitConnectorPublisher(ctx context.Context, control Control, service strin
 				pair.ServiceId != expected.ServiceId || pair.ServiceRunId != expected.ServiceRunId || pair.RunNumber != expected.RunNumber || pair.PublisherIdentityId != expected.PublisherIdentityId ||
 				!visitorsubject.Same(pair.Subject, expected.Subject) || len(pair.Relays) != 2 || pair.Relays[0] != expected.Relays[0] || pair.Relays[1] != expected.Relays[1] ||
 				pair.ObservedAt.IsZero() || !pair.ExpiresAt.After(pair.ObservedAt) || pair.ExpiresAt.Sub(pair.ObservedAt) > 5*time.Minute {
-				return time.Time{}, ErrServiceConnection
+				return time.Time{}, time.Time{}, ErrServiceConnection
 			}
 			if pair.PublisherPreparedUntil != nil {
 				if pair.PublisherPreparedUntil.After(pair.ExpiresAt) {
-					return time.Time{}, ErrServiceConnection
+					return time.Time{}, time.Time{}, ErrServiceConnection
 				}
 				if remaining := pair.PublisherPreparedUntil.Sub(pair.ObservedAt); remaining > 0 && started.Add(remaining).After(time.Now()) {
-					return started.Add(remaining), context.Cause(ctx)
+					return started.Add(remaining), *pair.PublisherPreparedUntil, context.Cause(ctx)
 				}
 			}
 		} else if !connectorTemporary(err) {
-			return time.Time{}, err
+			return time.Time{}, time.Time{}, err
 		}
 		timer := time.NewTimer(50 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return time.Time{}, context.Cause(ctx)
+			return time.Time{}, time.Time{}, context.Cause(ctx)
 		case <-timer.C:
 		}
 	}

@@ -11,11 +11,8 @@ import (
 )
 
 func TestRelayTransportRejectsRetiredALPNAndWrongHostname(t *testing.T) {
-	for _, tcp := range []bool{false, true} {
-		name := "quic"
-		if tcp {
-			name = "tls-tcp"
-		}
+	for _, name := range []string{"quic", "quic-basic", "tls-tcp"} {
+		tcp := name == "tls-tcp"
 		for _, variant := range []string{"current", "retired alpn", "unknown alpn", "wrong hostname", "untrusted certificate"} {
 			t.Run(name+"/"+variant, func(t *testing.T) {
 				serverTLS, roots := testTLSConfigs(t)
@@ -38,7 +35,12 @@ func TestRelayTransportRejectsRetiredALPNAndWrongHostname(t *testing.T) {
 						return AcceptTLSYamux(ctx, conn, serverTLS, TLSYamuxConfig{})
 					}
 				} else {
-					listener, err := ListenQUIC("127.0.0.1:0", serverTLS, QUICConfig{})
+					config := QUICConfig{}
+					if name == "quic-basic" {
+						config.UDPNetwork, config.BasicPacketConn = "udp4", true
+						config.Config = &quic.Config{InitialPacketSize: 1200, DisablePathMTUDiscovery: true}
+					}
+					listener, err := ListenQUIC("127.0.0.1:0", serverTLS, config)
 					if err != nil {
 						t.Fatal(err)
 					}

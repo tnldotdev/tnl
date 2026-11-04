@@ -27,17 +27,18 @@ type WorkloadService struct {
 }
 
 func (d *Database) ListWorkloadServices(ctx context.Context, credential string, now time.Time) (result []WorkloadService, retErr error) {
+	clock := newAuthorizationClock(now)
 	result = []WorkloadService{}
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer rollback(ctx, tx, "list workload services", &retErr)()
-	id, err := lockWorkloadCredential(ctx, tx, credential, now)
+	source, err := lockWorkloadCredential(ctx, tx, credential, clock)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.Query(ctx, `SELECT s.id,r.service,s.protocol,s.certificate_hostname,s.service_port,s.public FROM control.workload_session_services r JOIN control.services s ON s.id=r.service_id AND s.enabled AND s.deleted_at IS NULL WHERE r.workload_session_id=$1 ORDER BY r.service`, id)
+	rows, err := tx.Query(ctx, `SELECT s.id,r.service,s.protocol,s.certificate_hostname,s.service_port,s.public FROM control.workload_session_services r JOIN control.services s ON s.id=r.service_id AND s.enabled AND s.deleted_at IS NULL WHERE r.workload_session_id=$1 ORDER BY r.service`, source.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +68,7 @@ func (d *Database) ListWorkloadServices(ctx context.Context, credential string, 
 }
 
 func (d *Database) IssueWorkloadServiceClientCertificate(ctx context.Context, credential, service string, csrDER []byte, now time.Time) (result ServiceClientCertificate, retErr error) {
+	clock := newAuthorizationClock(now)
 	var protocol string
 	if err := d.pool.QueryRow(ctx, `SELECT protocol FROM control.services WHERE id=$1`, service).Scan(&protocol); err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
@@ -91,19 +93,16 @@ func (d *Database) IssueWorkloadServiceClientCertificate(ctx context.Context, cr
 		return result, err
 	}
 	defer rollback(ctx, tx, "issue workload service certificate", &retErr)()
-	id, err := lockWorkloadCredential(ctx, tx, credential, now)
+	source, err := lockWorkloadCredential(ctx, tx, credential, clock)
 	if err != nil {
 		return result, err
 	}
-	_, _, err = VisitorSubjectAccess(ctx, tx, service, workloadSubject(id), now)
+	id := source.ID
+	_, _, err = VisitorSubjectAccess(ctx, tx, service, workloadSubject(id), source.CheckedAt)
 	if err != nil {
 		return result, err
 	}
-	var public []byte
-	var until time.Time
-	if err = tx.QueryRow(ctx, `SELECT public_key,expires_at FROM control.workload_sessions WHERE id=$1`, id).Scan(&public, &until); err != nil {
-		return result, err
-	}
+	public, until := source.PublicKey, source.ExpiresAt
 	key, ok := csr.PublicKey.(ed25519.PublicKey)
 	if !ok || !bytes.Equal(key, public) {
 		return result, ErrWorkloadDenied
