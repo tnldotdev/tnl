@@ -33,7 +33,7 @@ mise exec -- task go:test:focused PACKAGES=./internal/publisher/target RUN=Test
 
 Find integration, race, load, and packaging checks with
 `mise exec -- task --list-all`. Integration tests need Docker and Pebble
-(installed by mise); their Tasks create and clean up test databases. Some CLI
+(installed by mise); their tasks create and clean up test databases. Some CLI
 integration tests need Linux. The full CI matrix lives in
 [the workflows](.github/workflows/).
 
