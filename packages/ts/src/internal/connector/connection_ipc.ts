@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { TnlError } from "../../errors.js";
 import { connectionHandleSchema } from "./contract.js";
 import { operation, traceHeaders } from "../tracing.js";
+import { context, type CachedIPC } from "./context.js";
 
 export interface OwnerIPC {
   readonly expiresAt: number;
@@ -16,14 +17,7 @@ export interface OwnerIPC {
   close(): void;
 }
 
-interface CachedIPC {
-  readonly loading: Promise<OwnerIPC>;
-  active: number;
-  failed?: boolean;
-  expiresAt?: number;
-  timer?: ReturnType<typeof setTimeout>;
-}
-const external = new Map<string, CachedIPC>();
+const { external } = context;
 function retire(filename: string, entry: CachedIPC): void {
   if (external.get(filename) === entry) external.delete(filename);
   clearTimeout(entry.timer);
