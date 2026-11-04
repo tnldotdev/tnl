@@ -1,4 +1,5 @@
 # `@tnldotdev/tnl-darwin-x64`
 
-This is the macOS x64 binary package used by `@tnldotdev/tnl`. It is not
-intended to be installed directly.
+tnl for macOS on Intel (x64).
+Install [`@tnldotdev/tnl`](https://www.npmjs.com/package/@tnldotdev/tnl);
+it selects this binary automatically.

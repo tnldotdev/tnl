@@ -1,4 +1,5 @@
 # `@tnldotdev/tnl-darwin-arm64`
 
-This is the macOS arm64 binary package used by `@tnldotdev/tnl`. It is not
-intended to be installed directly.
+tnl for macOS on Apple silicon (arm64).
+Install [`@tnldotdev/tnl`](https://www.npmjs.com/package/@tnldotdev/tnl);
+it selects this binary automatically.
