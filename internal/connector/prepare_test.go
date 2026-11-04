@@ -239,6 +239,10 @@ func TestConnectionPreparationInvalidResolvedRunClosesAdapterOnce(t *testing.T) 
 					t.Error("invalid resolved run reached pair preparation")
 					return controlv1.ConnectorPeerPair{}, connectorstream.ErrServiceConnection
 				},
+				RenewPair: func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+					t.Error("invalid resolved run reached pair renewal")
+					return controlv1.ConnectorPeerPairRenewal{}, connectorstream.ErrServiceConnection
+				},
 				Permission: func(context.Context, string) (controlv1.VisitorTokenResponse, error) {
 					t.Error("invalid resolved run reached visitor permission")
 					return controlv1.VisitorTokenResponse{}, connectorstream.ErrServiceConnection
@@ -296,6 +300,10 @@ func TestConnectionPreparationFailureJoinsResourcesAndReusesListener(t *testing.
 				Pair: func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
 					t.Error("failed preparation reached pair creation")
 					return controlv1.ConnectorPeerPair{}, failure
+				},
+				RenewPair: func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+					t.Error("failed preparation reached pair renewal")
+					return controlv1.ConnectorPeerPairRenewal{}, failure
 				},
 				Permission: func(context.Context, string) (controlv1.VisitorTokenResponse, error) {
 					t.Error("failed preparation reached visitor permission")

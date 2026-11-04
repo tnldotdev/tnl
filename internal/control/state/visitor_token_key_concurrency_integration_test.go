@@ -168,7 +168,7 @@ func TestIntegrationVisitorSigningRotationWait(t *testing.T) {
 				defer rollbackTestTransaction(t, gate)
 				if order == "issue-first" {
 					// issuance retains the issuer lock until its permission commits.
-					original, err = d.issueVisitorToken(ctx, gate, testVisitorIssuer, scope, BrowserTokenSource{}, now)
+					original, err = d.issueVisitorToken(ctx, gate, testVisitorIssuer, scope, BrowserTokenSource{}, newAuthorizationClock(now))
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -190,7 +190,7 @@ func TestIntegrationVisitorSigningRotationWait(t *testing.T) {
 					}
 					defer rollbackTestTransaction(t, tx)
 					done, joinIssue := connectorPairWorker(t, ctx, func(ctx context.Context) error {
-						_, err := d.issueVisitorToken(ctx, tx, testVisitorIssuer, scope, BrowserTokenSource{}, now)
+						_, err := d.issueVisitorToken(ctx, tx, testVisitorIssuer, scope, BrowserTokenSource{}, newAuthorizationClock(now))
 						return err
 					})
 					defer joinIssue()

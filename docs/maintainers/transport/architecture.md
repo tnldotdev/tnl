@@ -137,6 +137,12 @@ its worker and callbacks before releasing admission. relay transport uses
 `muxsession.ALPN` for both native and publisher connections; their proofs, not a
 second ALPN, separate authority.
 
+`daemon/config` resolves `TNLD_RELAY_QUIC_PROFILE` for relay and standalone.
+`standard` (the default) keeps ordinary UDP capabilities; `fly` uses IPv4,
+socket-routed replies, 1200-byte initial packets, and no path MTU discovery.
+The listen hostname does not select a profile. `muxsession` receives only concrete
+socket and QUIC settings; its client keeps a separate 1200-byte initial default.
+
 Visitor TLS ends at the publisher. Relay transport TLS authenticates the relay
 address separately. `target.tls` controls the independent publisher-to-target hop:
 direct HTTP/TCP TLS, PostgreSQL SSLRequest, or MySQL greeting/SSLRequest. Omission

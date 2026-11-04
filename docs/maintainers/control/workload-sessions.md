@@ -144,6 +144,23 @@ changed claim constraints revoke issued sessions in the apply transaction.
 service narrowing removes issued rights permanently; later additions never
 expand an existing session. apply and exchange serialize on the same team lock.
 
+a publisher policy read may observe a renewal committed after its request clock.
+the snapshot retains that current parent, capped at 90 seconds from the observation,
+rather than publishing its absence and canceling live streams.
+
+credential authentication locks the team and session before checking the source.
+its clock advances by elapsed work, so a renewal committed during a lock wait is
+current; revocation or expiry during the same wait denies the request. a source
+timestamp still ahead of that clock is rejected. the checked key and deadlines
+feed both permission signing and pair authorization. issuance retains its
+entry-time budget, so waiting cannot extend the fixed window or the serving cap.
+
+pair renewal returns the pair, signed permission, run deadline, and service
+metadata from one transaction. the connector installs them together under its
+lifetime lock. publisher installation remains an independent deadline: pair
+renewal alone cannot extend it. a superseded in-flight permission proof cannot
+renew authority, but leaves a current stream behind its existing guard deadline.
+
 ## use visitor capabilities
 
 the control API accepts the workload credential only at:
