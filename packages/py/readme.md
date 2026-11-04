@@ -1,50 +1,76 @@
 # tnldotdev-tnl
 
-take a shortcut through the internet.
+Give your Python ASGI app an HTTPS URL through tnl. Requires Python 3.12+
+on macOS or Linux, arm64 or x64.
 
-Use a Python ASGI app to publish a temporary public URL through tnl. Install
-the wheel for your macOS or Linux arm64 or x64 machine:
+## publish an asgi app
+
+Install the [tnl CLI](https://tnl.dev/docs/releases) for setup, then add the SDK and
+prepare a namespace publisher:
 
 ```console
 uv add tnldotdev-tnl
-```
-
-Set up a namespace publisher once, then use `async with tnl.open(app)`:
-
-```console
+tnl auth login
 tnl publisher setup --namespace
 ```
 
-`open` starts ASGI lifespan before publishing, waits for the URL to become
-routable, and removes it when the context exits. The native publisher selects
-the locally provisioned namespace identity, or `TNL_PUBLISHER_CREDENTIAL_FILE` if set.
-Pass `publisher_credential_file="/absolute/private/publisher.json"` or
-`publisher_identity_id="pub_..."` to select one explicitly. A configured invalid file
-fails instead of falling back to another identity. The native publisher keeps
-its signing key private; it never enters app metadata or status.
+If your ASGI app lives in `myapp.py`, save this as `preview.py`:
 
-Context exit joins native publication cleanup before stopping ASGI. Cancellation
-also waits for an in-flight registration and cleanup; a lost registration reply
-is reconciled using the same invocation identity. If `await tunnel.close()` fails,
-the listener stays running so cleanup can be retried rather than dropping active
-requests before the native publisher has drained.
+```python
+import asyncio
 
-For a configured app service, `tnl.run("myapp:app")` registers the listener
-after Uvicorn binds it. Pass `service="api"` when the project has more than
-one app service; the working directory selects the project, not the service.
-Local publication needs no Git repository or origin. After changing project
-configuration, stop and restart all apps and named local publishers for that
-project together; the connector owner retains one evaluated configuration.
+import tnl
+from myapp import app
 
-See the [Python ASGI guide](https://tnl.dev/docs/publish#publish-a-python-asgi-app)
-for FastAPI, visitor policy, limits, streaming, and WebSocket examples.
 
-Use `db = await tnl.connect("database")` to prepare a declared service through
-the connector connection runtime. Every protocol, including HTTP and Kubernetes,
-needs the wheel's matching native `tnl` binary. With `TNL_CONNECTION_HANDLE`
-already prepared, `tnl.connect("database").snapshot()` reads its current settings
-synchronously.
-Run `tnl generate` and add `./.tnl/generated/python` as a project-local editable
-dependency to use exact static service types with `from tnl_project import tnl`.
-See the [Python connection boundary](connections.md) for lifecycle, TLS,
-database-client adapters, and the generic TypeScript-factory boundary.
+async def main():
+    async with tnl.open(app) as tunnel:
+        print(tunnel.url)
+        await tunnel.wait()
+
+
+asyncio.run(main())
+```
+
+Run `uv run python preview.py`. tnl starts the app and waits until its temporary
+public URL can receive visitors. Press Ctrl+C to remove the URL and stop the
+app. By default, visitors need a current sign-in, share link, or token.
+
+To use a provisioned publisher credential instead of local setup, pass
+`publisher_credential_file="/absolute/private/publisher.json"` to `tnl.open`, or
+set `TNL_PUBLISHER_CREDENTIAL_FILE`.
+
+## use a configured app
+
+Declare an app service in `tnl.yml`:
+
+```yaml
+version: 1
+tnl:
+  services:
+    api:
+      public_url: {}
+      target:
+        type: app
+```
+
+Then start it with Uvicorn through tnl:
+
+```python
+import tnl
+
+if __name__ == "__main__":
+    tnl.run("myapp:app", service="api", port=0, reload=True)
+```
+
+Run from the project directory. `service="api"` selects the service above.
+`port=0` picks a free port, and
+`tnl wait` checks public readiness. Restart the project's apps together after
+changing configuration.
+
+## connect to a service
+
+Use `await tnl.connect("database")` to get settings for a declared service.
+The platform wheel includes the native tnl binary required for every protocol.
+See [Python connection examples](https://github.com/tnldotdev/tnl/blob/main/packages/py/connections.md) for PostgreSQL, TCP, Kubernetes,
+and the current MySQL and HTTP adapter limits.
