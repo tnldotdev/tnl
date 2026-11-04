@@ -8,7 +8,7 @@ binary included in its platform wheel.
 
 ## postgres with psycopg
 
-Add psycopg with `uv add "psycopg[binary]"`. For a PostgreSQL service named `database`:
+Add Psycopg with `uv add "psycopg[binary]"`. For a PostgreSQL service named `database`:
 
 ```python
 import asyncio
@@ -78,12 +78,12 @@ finally:
     await handle.aclose()
 ```
 
-- **Kubernetes:** use the returned `kubeconfig` and `context`, including the
+- **Kubernetes:** Use the returned `kubeconfig` and `context`, including the
   kubeconfig's native credential plugin.
-- **MySQL:** settings include a verified `ssl.SSLContext`, but there is no
+- **MySQL:** Settings include a verified `ssl.SSLContext`, but there is no
   drop-in PyMySQL/mysqlclient adapter. A driver must dial `host` while verifying
   `server_hostname`. Passing the loopback address as the TLS name fails verification.
-- **HTTP:** there is no bundled httpx transport. An adapter must dial the local
+- **HTTP:** There is no bundled HTTPX transport. An adapter must dial the local
   connector while preserving the managed origin, TLS name, and request
   authorization. Passing the returned `url` to an ordinary HTTP client is insufficient.
 
