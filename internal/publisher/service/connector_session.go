@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -20,7 +21,7 @@ import (
 
 const maxConnectorPeerOwners = 64
 const maxConnectorPeerHistory = 4096
-const maxConnectorPeerStreams = 64
+const maxConnectorPeerStreams = tunnel.MaxConnectorApplicationStreams
 
 // PeerSession retains one exact control-delivered pair and its inner session.
 // neither a carrier change nor a sibling connector changes this owner. a new
@@ -186,6 +187,22 @@ func (p *PeerSession) serve(ctx context.Context, run func() error) error {
 func (p *PeerSession) serveSession(session muxsession.Session) error {
 	defer session.Close()
 	defer p.stop()
+	setup, cancelSetup := context.WithTimeout(p.ctx, 10*time.Second)
+	permissions, err := tunnel.AcceptConnectorPermissionControl(setup, session)
+	cancelSetup()
+	if err != nil {
+		if p.ctx.Err() != nil || errors.Is(err, muxsession.ErrClosed) {
+			return nil
+		}
+		return err
+	}
+	control, cancelControl := context.WithCancel(p.ctx)
+	controlDone := make(chan struct{})
+	go func() {
+		defer close(controlDone)
+		_ = tunnel.ServeConnectorPermissionControl(control, permissions, p.dispatchPermission, p.stop)
+	}()
+	defer func() { cancelControl(); <-controlDone }()
 	for {
 		stream, err := session.AcceptStream(p.ctx)
 		if err != nil {
@@ -215,6 +232,11 @@ type connectorAdmission struct {
 	cancel                                         context.CancelFunc
 	stream                                         net.Conn
 	guard                                          *visitorlease.ConnectorGuard
+	entry                                          tunnelv1.ConnectorPeerVisitorEntry
+	permission                                     visitortoken.VerifiedPermission
+	renewals                                       chan connectorPermissionRenewal
+	renewDone                                      chan struct{}
+	lastUpdate                                     uint64
 	retiring, admitted, authorized, pending, ready bool
 	setupUntil                                     time.Time
 	timer                                          *time.Timer
@@ -304,6 +326,17 @@ func (a *connectorAdmission) FinishSetup() error {
 type connectorOwnedConn struct {
 	net.Conn
 	admission *connectorAdmission
+	prefix    *bytes.Reader
+	readMu    sync.Mutex
+}
+
+func (c *connectorOwnedConn) Read(p []byte) (int, error) {
+	c.readMu.Lock()
+	defer c.readMu.Unlock()
+	if c.prefix.Len() > 0 {
+		return c.prefix.Read(p)
+	}
+	return c.Conn.Read(p)
 }
 
 func (c *connectorOwnedConn) Close() error { return c.admission.closeStream() }
@@ -325,14 +358,13 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 	a.audit = serviceaudit.Observation{ServiceID: binding.serviceID, ServiceKind: "service", RunID: binding.runID,
 		RunNumber: int64(binding.number), PairID: binding.pairID, VisitorConnectionID: visitorID,
 		SourceIP: binding.source.String(), EventType: "connection.open", Outcome: "denied", Reason: "authorization"}
-	var reader *tunnel.ConnectorRequestReader
 	callerDone := make(chan struct{})
 	stopCaller := context.AfterFunc(a.caller, func() { defer close(callerDone); a.stopAndClose() })
 	defer func() {
 		a.Stop()
 		result = errors.Join(result, a.closeStream())
-		if reader != nil {
-			result = errors.Join(result, reader.Finish())
+		if a.renewDone != nil {
+			<-a.renewDone
 		}
 		if a.guard != nil {
 			a.guard.Close()
@@ -415,30 +447,101 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 		a.admitted = true
 		a.pending = false
 		b.connectorPending--
+		a.entry, a.permission = entry, permission
+		a.renewals = make(chan connectorPermissionRenewal, 1)
+		a.renewDone = make(chan struct{})
 	}
 	b.mu.Unlock()
 	if !valid {
 		return ErrPrivateStream
 	}
-	owned := &connectorOwnedConn{Conn: a.stream, admission: a}
-	reader = tunnel.NewConnectorRequestReader(owned, initial, func(proof tunnelv1.ConnectorVisitorPermission) error {
-		nextEntry := entry
-		nextEntry.Permission = proof
-		err := a.renewPermission(nextEntry, permission)
-		if err != nil {
-			a.stopAndClose()
-		}
+	go a.renewPermissions()
+	if _, err := a.CheckUse(a.ctx); err != nil {
 		return err
-	})
+	}
+	// retain the original setup deadline while acknowledging admission. no
+	// application protocol response or target work precedes this acceptance.
+	if err := tunnelv1.WriteConnectorPeerVisitorAccepted(a.stream, entry.VisitorConnectionID); err != nil {
+		return err
+	}
+	owned := &connectorOwnedConn{Conn: a.stream, admission: a, prefix: bytes.NewReader(initial)}
 	if err := a.stream.SetDeadline(time.Time{}); err != nil {
 		return err
 	}
 	visitorCtx := observability.WithVisitor(observability.ExtractWireTrace(a.ctx, entry.TraceContext), entry.VisitorConnectionID)
-	return b.forwardManaged(visitorCtx, reader, publisher.ConnectorVisitor{Admission: a}, "")
+	return b.forwardManaged(visitorCtx, owned, publisher.ConnectorVisitor{Admission: a}, "")
+}
+
+// dispatch never waits for policy installation or application IO. at most one
+// update waits behind a visitor's active verification; overload retires only
+// that visitor. unknown, pending and retired visitors cannot acquire authority.
+type connectorPermissionRenewal struct {
+	update    tunnelv1.ConnectorPermissionUpdate
+	responder *tunnel.ConnectorPermissionResponder
+}
+
+func (p *PeerSession) dispatchPermission(update tunnelv1.ConnectorPermissionUpdate, responder *tunnel.ConnectorPermissionResponder) {
+	b := p.bound
+	b.mu.Lock()
+	var overloaded *connectorAdmission
+	if p.currentLocked() {
+		for a := range p.streams {
+			if !a.admitted || a.retiring || a.entry.VisitorConnectionID != update.VisitorConnectionID {
+				continue
+			}
+			if update.UpdateNumber <= a.lastUpdate {
+				break
+			}
+			a.lastUpdate = update.UpdateNumber
+			select {
+			case a.renewals <- connectorPermissionRenewal{update: update, responder: responder}:
+			default:
+				a.retiring = true
+				overloaded = a
+			}
+			break
+		}
+	}
+	b.mu.Unlock()
+	if overloaded != nil {
+		// cancellation is callback-free here; the owning worker closes and joins
+		// the physical stream. a slow Close cannot stall the control decoder.
+		overloaded.cancel()
+	}
+}
+
+func (a *connectorAdmission) renewPermissions() {
+	defer close(a.renewDone)
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case renewal := <-a.renewals:
+			entry := a.entry
+			entry.Permission = renewal.update.Permission
+			err := a.renewPermission(entry, a.permission)
+			if err != nil {
+				a.Stop()
+			}
+			if ackErr := renewal.responder.Respond(renewal.update, err == nil); ackErr != nil || err != nil {
+				a.stopAndClose()
+				return
+			}
+		}
+	}
 }
 
 func (a *connectorAdmission) renewPermission(entry tunnelv1.ConnectorPeerVisitorEntry, original visitortoken.VerifiedPermission) error {
+	// capture once: a newer snapshot or another update cannot reset the budget
+	// while this proof waits for its policy revision to arrive.
+	until, err := a.CheckUse(a.ctx)
+	if err != nil {
+		return err
+	}
 	for {
+		if !until.After(time.Now()) {
+			return ErrPrivateStream
+		}
 		view, enabled, _ := a.peer.bound.prepared.policy.Current()
 		if !enabled {
 			return ErrPrivateStream
@@ -449,6 +552,9 @@ func (a *connectorAdmission) renewPermission(entry tunnelv1.ConnectorPeerVisitor
 			return err
 		}
 		if !next.SameIdentity(original) {
+			return ErrPrivateStream
+		}
+		if !until.After(time.Now()) {
 			return ErrPrivateStream
 		}
 		err = a.guard.Renew(next)
@@ -469,7 +575,7 @@ func (a *connectorAdmission) renewPermission(entry tunnelv1.ConnectorPeerVisitor
 		// control may issue a newer revision before the independent background
 		// snapshot arrives. this proof grants nothing until that snapshot agrees;
 		// only the existing guard's original bound can cover the wait.
-		until, err := a.CheckUse(a.ctx)
+		_, err = a.CheckUse(a.ctx)
 		if err != nil {
 			return err
 		}

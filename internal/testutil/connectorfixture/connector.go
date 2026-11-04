@@ -242,7 +242,7 @@ func (n *Connector) serve(p *connectorPair, ready chan<- error) {
 	defer transport.Close()
 	tlsConfig := n.tls.Clone()
 	tlsConfig.NextProtos = []string{muxsession.ALPN}
-	listener, err := transport.Listen(tlsConfig, &quic.Config{InitialPacketSize: tunnelv1.MaxPeerPacketBytes, DisablePathMTUDiscovery: true, MaxIncomingStreams: 64})
+	listener, err := transport.Listen(tlsConfig, tunnel.ConnectorQUICConfig())
 	if err != nil {
 		return
 	}
@@ -258,6 +258,19 @@ func (n *Connector) serve(p *connectorPair, ready chan<- error) {
 	defer session.Close()
 	var workers sync.WaitGroup
 	defer workers.Wait()
+	setup, stop := context.WithTimeout(n.ctx, 3*time.Second)
+	permissions, err := tunnel.AcceptConnectorPermissionControl(setup, session)
+	stop()
+	if err != nil {
+		return
+	}
+	control, cancelControl := context.WithCancel(n.ctx)
+	defer cancelControl()
+	workers.Go(func() {
+		_ = tunnel.ServeConnectorPermissionControl(control, permissions, func(update tunnelv1.ConnectorPermissionUpdate, responder *tunnel.ConnectorPermissionResponder) {
+			_ = responder.Respond(update, true)
+		}, func() { _ = session.Close() })
+	})
 	for {
 		stream, err := session.AcceptStream(n.ctx)
 		if err != nil {
@@ -284,8 +297,12 @@ func (n *Connector) serve(p *connectorPair, ready chan<- error) {
 			if replay {
 				return
 			}
-			reader := tunnel.NewConnectorRequestReader(stream, initial, func(tunnelv1.ConnectorVisitorPermission) error { return nil })
-			defer reader.Finish()
+			if err := tunnelv1.WriteConnectorPeerVisitorAccepted(stream, entry.VisitorConnectionID); err != nil {
+				return
+			}
+			if len(initial) != 0 {
+				return // production connector preparation sends no initial bytes.
+			}
 			target, err := (&net.Dialer{Timeout: time.Second}).DialContext(n.ctx, "tcp", n.target)
 			if err != nil {
 				return
@@ -293,7 +310,7 @@ func (n *Connector) serve(p *connectorPair, ready chan<- error) {
 			defer target.Close()
 			stopTarget := context.AfterFunc(n.ctx, func() { _ = target.Close() })
 			defer stopTarget()
-			_, _ = streamcopy.Copy(reader, target)
+			_, _ = streamcopy.Copy(stream, target)
 		})
 	}
 }

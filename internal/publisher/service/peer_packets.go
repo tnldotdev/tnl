@@ -4,11 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"time"
 
 	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -90,7 +90,7 @@ func (p *PeerSession) serveRelayPackets(ctx context.Context) error {
 			return nil, ErrPrivateStream
 		}
 		return p.bound.prepared.currentCertificate()
-	}}, &quic.Config{InitialPacketSize: tunnelv1.MaxPeerPacketBytes, DisablePathMTUDiscovery: true, MaxIncomingStreams: maxConnectorPeerStreams, MaxIncomingUniStreams: 1, MaxIdleTimeout: 30 * time.Second, KeepAlivePeriod: 10 * time.Second})
+	}}, tunnel.ConnectorQUICConfig())
 	if err != nil {
 		return err
 	}

@@ -24,19 +24,29 @@ import (
 // call control, reset setup time, or replace the target after live bytes fail.
 // the pair/session owner must close these children before replacing its run.
 type PreparedConnector struct {
-	ctx          context.Context
-	conn         net.Conn
-	mu           sync.Mutex
-	taken        bool
-	closed       bool
-	stop         func() bool
-	callbackDone chan struct{}
-	physicalOnce sync.Once
-	physicalErr  error
-	closeOnce    sync.Once
-	closeErr     error
-	work         sync.WaitGroup
-	writer       *tunnel.ConnectorRequestWriter
+	ctx                context.Context
+	conn               net.Conn
+	mu                 sync.Mutex
+	taken              bool
+	closed             bool
+	stop               func() bool
+	callbackDone       chan struct{}
+	physicalOnce       sync.Once
+	physicalErr        error
+	closeOnce          sync.Once
+	closeErr           error
+	work               sync.WaitGroup
+	permissionPending  chan struct{}
+	permissionErr      error
+	permissionUpdates  chan preparedPermissionRenewal
+	permissionCancel   context.CancelFunc
+	permissionRenewing bool
+}
+
+type preparedPermissionRenewal struct {
+	writer *tunnel.ConnectorPermissionWriter
+	update tunnelv1.ConnectorPermissionUpdate
+	until  time.Time
 }
 
 // PrepareConnector consumes a source-prepared opening without RPC or signing.
@@ -93,17 +103,21 @@ func prepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 	if _, err := tunnelv1.WriteConnectorPeerVisitorOpening(raw, entry, nil); err != nil {
 		return nil, err
 	}
-	writer := tunnel.NewConnectorRequestWriter(raw)
-	var connection net.Conn = writer
+	// application and control streams have independent delivery. preparation is
+	// not eligible for renewal until the publisher confirms this exact admission.
+	if err := tunnelv1.ReadConnectorPeerVisitorAccepted(raw, entry.VisitorConnectionID); err != nil {
+		return nil, err
+	}
+	var connection net.Conn = raw
 	if run.Protocol == "tcp" {
 		trust := run.ServiceTLS.Clone()
 		trust.ServerName = run.Endpoint.Hostname
 		trust.MinVersion = max(trust.MinVersion, tls.VersionTLS12)
-		secured := tls.Client(writer, trust)
+		secured := tls.Client(raw, trust)
 		if err := secured.HandshakeContext(setup); err != nil {
 			return nil, failure.Wrap("prepare connector visitor TLS", failure.ConnectionTLSRejected, err)
 		}
-		connection = &connectorTLSConn{Conn: secured, writer: writer}
+		connection = secured
 	}
 	if ctx.Err() != nil || !run.ValidUntil.After(time.Now()) {
 		return nil, ErrServiceConnection
@@ -117,7 +131,7 @@ func prepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 		return nil, ErrServiceConnection
 	}
 	setupStopped = true
-	p := &PreparedConnector{ctx: ctx, conn: connection, writer: writer, callbackDone: make(chan struct{})}
+	p := &PreparedConnector{ctx: ctx, conn: connection, callbackDone: make(chan struct{})}
 	p.stop = context.AfterFunc(ctx, func() { defer close(p.callbackDone); _ = p.closePhysical() })
 	owned = true
 	return p, nil
@@ -132,12 +146,70 @@ func (p *PreparedConnector) finish() {
 	p.closeOnce.Do(func() {
 		p.mu.Lock()
 		p.closed = true
+		if p.permissionPending != nil {
+			close(p.permissionPending)
+			p.permissionPending = nil
+		}
+		if p.permissionCancel != nil {
+			p.permissionCancel()
+		}
 		p.mu.Unlock()
 		p.closeErr = p.closePhysical()
 		if !p.stop() {
 			<-p.callbackDone
 		}
 	})
+}
+
+// one worker and one replaceable pending proof belong to this prepared visitor.
+// a future-policy ACK wait cannot delay the owner's next refresh or its siblings.
+func (p *PreparedConnector) queuePermission(renewal preparedPermissionRenewal) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.ctx.Err() != nil || p.permissionErr != nil {
+		return ErrServiceConnection
+	}
+	if p.permissionPending == nil {
+		p.permissionPending = make(chan struct{})
+	}
+	if p.permissionUpdates == nil {
+		ctx, cancel := context.WithCancel(p.ctx)
+		p.permissionCancel = cancel
+		p.permissionUpdates = make(chan preparedPermissionRenewal, 1)
+		p.work.Add(1)
+		go p.renewPermissions(ctx, p.permissionUpdates)
+	}
+	select {
+	case p.permissionUpdates <- renewal:
+	default:
+		// immutable newer authority replaces only queued work, never the proof
+		// currently awaiting its publisher decision or that decision's fence.
+		select {
+		case <-p.permissionUpdates:
+		default:
+		}
+		p.permissionUpdates <- renewal
+	}
+	return nil
+}
+
+func (p *PreparedConnector) renewPermissions(ctx context.Context, updates <-chan preparedPermissionRenewal) {
+	defer p.work.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case renewal := <-updates:
+			until := earliestConnectorDeadline(renewal.until, time.Now().Add(10*time.Second))
+			call, cancel := context.WithDeadline(ctx, until)
+			err := p.renewPermission(call, func() error { return renewal.writer.Renew(call, renewal.update) })
+			cancel()
+			if err != nil {
+				p.finish() // the owner joins this worker; it never joins itself.
+				return
+			}
+		}
+	}
 }
 
 func (p *PreparedConnector) Close() error {
@@ -147,6 +219,56 @@ func (p *PreparedConnector) Close() error {
 	p.finish()
 	p.work.Wait()
 	return p.closeErr
+}
+
+// renewPermission fences only new writes for this visitor until the publisher
+// acknowledges its signed update. an already-entered write never delays control
+// renewal. denial leaves a permanent fence before any waiting write is released.
+func (p *PreparedConnector) renewPermission(ctx context.Context, renew func() error) error {
+	p.mu.Lock()
+	if p.closed || p.ctx.Err() != nil || ctx.Err() != nil || p.permissionRenewing || p.permissionErr != nil {
+		p.mu.Unlock()
+		return ErrServiceConnection
+	}
+	if p.permissionPending == nil {
+		p.permissionPending = make(chan struct{})
+	}
+	p.permissionRenewing = true
+	p.mu.Unlock()
+	err := renew()
+	p.mu.Lock()
+	if err != nil {
+		p.permissionErr = err
+	}
+	p.permissionRenewing = false
+	if p.permissionPending != nil && (err != nil || len(p.permissionUpdates) == 0) {
+		close(p.permissionPending)
+		p.permissionPending = nil
+	}
+	p.mu.Unlock()
+	return err
+}
+
+func (p *PreparedConnector) waitPermission(ctx context.Context) error {
+	for {
+		p.mu.Lock()
+		pending := p.permissionPending
+		invalid := p.closed || p.ctx.Err() != nil || ctx.Err() != nil || p.permissionErr != nil
+		p.mu.Unlock()
+		if invalid {
+			return ErrServiceConnection
+		}
+		if pending == nil {
+			return nil
+		}
+		select {
+		case <-pending:
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		case <-p.ctx.Done():
+			return context.Cause(p.ctx)
+		}
+	}
 }
 
 // Forward consumes this one prepared stream and joins both copy directions.
@@ -199,7 +321,7 @@ type preparedConnectorUse struct {
 func (c *preparedConnectorUse) current() error {
 	c.owner.mu.Lock()
 	defer c.owner.mu.Unlock()
-	if c.owner.closed || c.owner.ctx.Err() != nil || c.ctx.Err() != nil {
+	if c.owner.closed || c.owner.ctx.Err() != nil || c.ctx.Err() != nil || c.owner.permissionErr != nil {
 		return ErrServiceConnection
 	}
 	return nil
@@ -217,13 +339,13 @@ func (c *preparedConnectorUse) Read(p []byte) (int, error) {
 	return n, err
 }
 func (c *preparedConnectorUse) Write(p []byte) (int, error) {
-	if err := c.current(); err != nil {
+	if err := c.owner.waitPermission(c.ctx); err != nil {
 		return 0, err
 	}
 	return c.owner.conn.Write(p)
 }
 func (c *preparedConnectorUse) CloseWrite() error {
-	if err := c.current(); err != nil {
+	if err := c.owner.waitPermission(c.ctx); err != nil {
 		return err
 	}
 	if writer, ok := c.owner.conn.(interface{ CloseWrite() error }); ok {
@@ -246,10 +368,3 @@ func (c *preparedConnectorUse) SetReadDeadline(at time.Time) error {
 func (c *preparedConnectorUse) SetWriteDeadline(at time.Time) error {
 	return c.owner.conn.SetWriteDeadline(at)
 }
-
-type connectorTLSConn struct {
-	*tls.Conn
-	writer *tunnel.ConnectorRequestWriter
-}
-
-func (c *connectorTLSConn) CloseWrite() error { return c.writer.CloseTLSWrite(c.Conn) }

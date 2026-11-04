@@ -43,6 +43,7 @@ type connectorConnection struct {
 	transport     *quic.Transport
 	connection    *quic.Conn
 	session       muxsession.Session
+	permissions   *tunnel.ConnectorPermissionWriter
 	mu            sync.Mutex
 	run           Run
 	pair          controlv1.ConnectorPeerPair
@@ -131,7 +132,9 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	p.transport = &quic.Transport{Conn: p.endpoint}
 	trust := config.ServiceTLS.Clone()
 	trust.ServerName, trust.NextProtos = p.run.Endpoint.Hostname, []string{muxsession.ALPN}
-	p.connection, result = p.transport.Dial(setup, p.endpoint.RemoteAddr(), trust, &quic.Config{InitialPacketSize: tunnelv1.MaxPeerPacketBytes, DisablePathMTUDiscovery: true, MaxIncomingStreams: 0, MaxIncomingUniStreams: 1, MaxIdleTimeout: 30 * time.Second, KeepAlivePeriod: 10 * time.Second})
+	innerConfig := tunnel.ConnectorQUICConfig()
+	innerConfig.MaxIncomingStreams = -1
+	p.connection, result = p.transport.Dial(setup, p.endpoint.RemoteAddr(), trust, innerConfig)
 	if result != nil {
 		return nil, failure.Wrap("prepare connector peer TLS", failure.ConnectionTLSRejected, result)
 	}
@@ -139,6 +142,16 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	if result != nil {
 		return nil, result
 	}
+	p.permissions, result = tunnel.OpenConnectorPermissionControl(life, setup, p.session)
+	if result != nil {
+		return nil, result
+	}
+	p.workers.Go(func() {
+		<-p.permissions.Done()
+		// match session retirement while preserving the transport cause. an
+		// earlier authority failure remains the context's first cancellation cause.
+		p.cancel(errors.Join(ErrServiceConnection, p.permissions.Err()))
+	})
 	p.permission, result = config.Control.VisitorPermission(setup, config.ServiceID)
 	if result != nil || setup.Err() != nil {
 		return nil, errors.Join(ErrServiceConnection, result, context.Cause(setup))
@@ -233,7 +246,7 @@ func validateConnectorPermissionMetadata(config Config, permission controlv1.Vis
 }
 
 func (p *connectorConnection) currentLocked() bool {
-	return p.ctx.Err() == nil && p.until.After(time.Now()) && p.preparedUntil.After(time.Now()) && p.run.ValidUntil.After(time.Now()) && p.permission.ExpiresAt.After(time.Now())
+	return p.ctx.Err() == nil && (p.permissions == nil || p.permissions.Err() == nil) && p.until.After(time.Now()) && p.preparedUntil.After(time.Now()) && p.run.ValidUntil.After(time.Now()) && p.permission.ExpiresAt.After(time.Now())
 }
 
 func (p *connectorConnection) notifyLocked() { close(p.changed); p.changed = make(chan struct{}) }
@@ -416,15 +429,14 @@ func (p *connectorConnection) refresh() {
 }
 
 func (p *connectorConnection) renewActive(active []*connectorUse, permission controlv1.VisitorTokenResponse, bound time.Time) {
-	// each active stream has its own write gate. a blocked application write
-	// must not spend the renewal budget of an unrelated stream.
+	// signing stays off the arrival path. independent submissions retain #525's
+	// isolation, but never write or change deadlines on an application stream.
 	var renewals sync.WaitGroup
 	for _, stream := range active {
 		renewals.Go(func() {
-			until := minConnectorCall(bound)
 			entry, err := connectorOpening(p.signer, stream.entry, permission.VisitorToken)
 			if err == nil {
-				err = stream.prepared.writer.Renew(entry.Permission, until)
+				err = stream.prepared.queuePermission(preparedPermissionRenewal{writer: p.permissions, update: tunnelv1.ConnectorPermissionUpdate{VisitorConnectionID: entry.VisitorConnectionID, Permission: entry.Permission}, until: bound})
 			}
 			if err != nil {
 				_ = stream.prepared.Close()
@@ -573,6 +585,9 @@ func (p *connectorConnection) Close() {
 		p.mu.Unlock()
 		if p.session != nil {
 			_ = p.session.Close()
+		}
+		if p.permissions != nil {
+			p.permissions.Close()
 		}
 		if p.transport != nil {
 			_ = p.transport.Close()
