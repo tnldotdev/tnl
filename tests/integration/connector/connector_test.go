@@ -82,6 +82,24 @@ func TestIntegrationConnectionConnectorOwnerSDKSelectionBudget(t *testing.T) {
 	}
 }
 
+func TestIntegrationConnectionConnectorOwnerSDKNativeWorkloadAcquisition(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	var baseline map[string]int
+	for _, language := range []string{"javascript-provider", "python-provider"} {
+		t.Run(language, func(t *testing.T) {
+			actual := runConnectionNativeOwnerStartup(t, "http", true, language)
+			total := 0
+			for _, count := range actual {
+				total += count
+			}
+			if total != 12 || baseline != nil && !maps.Equal(baseline, actual) {
+				t.Fatalf("native provider changed the cold control budget: got %v, want twelve calls matching both SDKs", actual)
+			}
+			baseline = actual
+		})
+	}
+}
+
 func TestIntegrationConnectionConnectorOwnerSDKProcessContext(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	runConnectionNativeOwnerStartup(t, "http", true, "javascript-copies")
@@ -244,9 +262,25 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 	controlCalls := map[string]int{}
 	issuer := githubtest.New(t)
 	var verifier *oidc.GitHubWorkloadVerifier
+	var providerAssertion, providerAudience string
+	var providerCalls atomic.Int32
 	authority := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authorityMu.Lock()
 		defer authorityMu.Unlock()
+		if r.URL.Path == "/sdk-provider-token" {
+			bearer := "provider-cold"
+			if providerCalls.Add(1) > 4 {
+				bearer = "provider-warm"
+			}
+			if r.Method != "GET" || r.Header.Get("Authorization") != "Bearer "+bearer || r.URL.Query().Get("audience") != providerAudience {
+				t.Error("native provider acquisition used stale application inputs or wrong audience")
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"value": providerAssertion})
+			return
+		}
 		path := strings.ReplaceAll(strings.ReplaceAll(r.URL.Path, sessionID, "{session}"), service, "{service}")
 		controlCalls[r.Method+" "+path]++
 		current := sessions[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
@@ -524,7 +558,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 		t.Fatal(err)
 	}
 	assertion := issuer.Sign(t, githubtest.Claims(server, time.Now()))
-	if startup == "javascript" || startup == "javascript-copies" || startup == "python" {
+	if strings.HasPrefix(startup, "javascript") || strings.HasPrefix(startup, "python") {
 		manifest := workloadmanifest.Manifest{Schema: 1, Server: scope.Server, Team: scope.TeamID, ProjectKey: scope.ProjectKey, SourceFingerprint: scope.SourceID, ProjectLabel: scope.ProjectLabel,
 			Workloads: map[string]workloadmanifest.Workload{"test": {Provider: "github", Services: []string{serviceName}, MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "github-actions", Audience: scope.Server}}}, Services: map[string]string{serviceName: protocol}}
 		if err := manifest.Validate(); err != nil {
@@ -549,12 +583,24 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 			child = exec.CommandContext(ctx, "node", fixture, "copies")
 		}
 		child.Env = append(slices.Clone(env), "TMPDIR="+root)
-		if startup == "python" {
+		if startup == "javascript-provider" {
+			child.Args = append(child.Args, "provider")
+		}
+		if strings.HasPrefix(startup, "python") {
 			python, _ := filepath.Abs("../../../packages/py/.venv/bin/python")
 			fixture, _ := filepath.Abs("../../../packages/py/tests/native_selection.py")
 			source, _ := filepath.Abs("../../../packages/py/src")
 			child = exec.CommandContext(ctx, python, fixture, binary)
 			child.Env = append(slices.Clone(env), "PYTHONPATH="+source, "TMPDIR="+root)
+			if startup == "python-provider" {
+				child.Args = append(child.Args, "provider")
+			}
+		}
+		if strings.HasSuffix(startup, "-provider") {
+			authorityMu.Lock()
+			providerAssertion, providerAudience = assertion, scope.Server
+			authorityMu.Unlock()
+			child.Env = append(child.Env, "GITHUB_ACTIONS=true", "ACTIONS_ID_TOKEN_REQUEST_URL="+server+"/sdk-provider-token?audience=wrong", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=provider-cold")
 		}
 		child.Dir = root
 		input, err := child.StdinPipe()
@@ -597,6 +643,9 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 		authorityMu.Unlock()
 		if !maps.Equal(cold, warm) {
 			t.Fatalf("%s warm SDK preparation made control RPCs: cold=%v after=%v", startup, cold, warm)
+		}
+		if strings.HasSuffix(startup, "-provider") && providerCalls.Load() != 15 {
+			t.Fatalf("native provider acquisition was coalesced or repeated: got %d, want four concurrent cold plus ten warm and one healthy retry", providerCalls.Load())
 		}
 		if startup == "javascript-copies" {
 			isolatedSDKContexts.Store(true)

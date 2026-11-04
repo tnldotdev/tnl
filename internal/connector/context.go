@@ -20,6 +20,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
@@ -279,6 +280,14 @@ func Reason(err error) failure.Reason {
 		return reason
 	}
 	switch {
+	case errors.Is(err, workloadmanifest.ErrInvalid):
+		return failure.WorkloadManifestInvalid
+	case errors.Is(err, workloadmanifest.ErrRequired):
+		return failure.WorkloadRequired
+	case errors.Is(err, workloadmanifest.ErrDenied):
+		return failure.WorkloadServiceDenied
+	case errors.Is(err, workload.ErrAssertionSource), errors.Is(err, workload.ErrAssertionUnavailable):
+		return failure.WorkloadAssertionUnavailable
 	case errors.Is(err, connectorruntime.ErrTeam):
 		return failure.ConnectionTeamBinding
 	case errors.Is(err, connectorruntime.ErrTransport):

@@ -2,10 +2,25 @@ package authority
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
+
+// optional execution metadata must be absent for other providers, including an
+// explicit null. decoding into the generated pointer alone loses that distinction.
+func validateWorkloadSessionWire(payload []byte, session authorityv1.WorkloadSession) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return err
+	}
+	if _, present := fields["github"]; present && session.Provider != "github" {
+		return errors.New("unexpected workload execution metadata")
+	}
+	return nil
+}
 
 func (c *Client) IdentifyWorkload(ctx context.Context, body authorityv1.WorkloadIdentityRequest) (authorityv1.WorkloadIdentity, error) {
 	return requestWithToken[authorityv1.WorkloadIdentity](ctx, c, "", func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
