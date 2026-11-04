@@ -37,39 +37,79 @@ func TestNativeTrafficClonePreservesOptionalValues(t *testing.T) {
 	}
 }
 
-func (s *trafficControlStub) CreatePublisherRunWithTraffic(_ context.Context, id, retry, token, proof string, selection *trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
+func (s *trafficControlStub) CreatePublisherRun(_ context.Context, id, retry, token, proof string, selection *trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
 	s.url, s.retry, s.token, s.proof, s.selection = id, retry, token, proof, selection
 	return controlv1.PublishRunSetup{}, nil
 }
 
 func TestNativeTrafficSelectionKeepsSignedRunBoundary(t *testing.T) {
 	private := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
-	control := &trafficControlStub{}
-	n := &Native{NativeControl: control, authority: &lostEnrollmentResponse{}, private: private, publicURL: controlv1.PublicURL{Id: "url"}}
-	connections := 48
-	selected, err := n.WithTraffic(&trafficlimits.Selection{Connections: &connections})
+	for _, test := range []struct {
+		name      string
+		selection *trafficlimits.Selection
+	}{
+		{name: "defaults"},
+		{name: "explicit", selection: &trafficlimits.Selection{Connections: new(48)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			control := &trafficControlStub{}
+			n := &Native{NativeControl: control, authority: &lostEnrollmentResponse{}, private: private, publicURL: controlv1.PublicURL{Id: "url"}}
+			selected, err := n.WithTraffic(test.selection)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if _, err := selected.CreatePublishRun(t.Context(), "url", "retry"); err != nil {
+					t.Fatal(err)
+				}
+				if control.url != "url" || control.retry != "retry" || control.token != "access" || !reflect.DeepEqual(control.selection, test.selection) || n.traffic != nil {
+					t.Fatal("traffic selection or scoped authentication changed")
+				}
+				public := private.Public().(ed25519.PublicKey)
+				if _, err := publisherproof.VerifyRun(public, control.proof, "url", "retry"); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := publisherproof.VerifyRun(public, control.proof, "other", "retry"); err == nil {
+					t.Fatal("proof authorized another public URL")
+				}
+				if _, err := publisherproof.VerifyRun(public, control.proof, "url", "other"); err == nil {
+					t.Fatal("proof authorized another attempt")
+				}
+				if control.selection != nil {
+					*control.selection.Connections = 1
+				}
+			}
+			if _, err := selected.CreatePublishRun(t.Context(), "other", "retry"); !errors.Is(err, ErrScope) {
+				t.Fatalf("unscoped run: %v", err)
+			}
+		})
+	}
+}
+
+func TestNativeTrafficSelectionsAreIndependent(t *testing.T) {
+	n := &Native{NativeControl: &unusedControl{}}
+	selection := &trafficlimits.Selection{Connections: new(48)}
+	first, err := n.WithTraffic(selection)
 	if err != nil {
 		t.Fatal(err)
 	}
-	connections = 24
-	if _, err := selected.CreatePublishRun(t.Context(), "url", "retry"); err != nil {
+	second, err := first.WithTraffic(selection)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if control.url != "url" || control.retry != "retry" || control.token != "access" || control.selection == nil || *control.selection.Connections != 48 || n.traffic != nil {
-		t.Fatal("traffic selection or scoped authentication changed")
+	*selection.Connections = 24
+	*first.traffic.Connections = 12
+	if *second.traffic.Connections != 48 || n.traffic != nil {
+		t.Fatal("one worker changed another worker's selection")
 	}
-	if _, err := publisherproof.VerifyRun(private.Public().(ed25519.PublicKey), control.proof, "url", "retry"); err != nil {
-		t.Fatal(err)
+	defaults, err := first.WithTraffic(nil)
+	if err != nil || defaults.traffic != nil || *first.traffic.Connections != 12 {
+		t.Fatal("selecting defaults changed the original worker", err)
 	}
-	*control.selection.Connections = 1
-	if _, err := selected.CreatePublishRun(t.Context(), "url", "retry"); err != nil || *control.selection.Connections != 48 {
-		t.Fatal("control mutated the worker's traffic selection", err)
+	if _, err := first.WithTraffic(&trafficlimits.Selection{Connections: new(0)}); err == nil || *first.traffic.Connections != 12 {
+		t.Fatal("invalid selection changed the original worker")
 	}
-	if _, err := selected.CreatePublishRun(t.Context(), "other", "retry"); !errors.Is(err, ErrScope) {
-		t.Fatalf("unscoped run: %v", err)
-	}
-	n.NativeControl = &unusedControl{}
-	if _, err := n.WithTraffic(&trafficlimits.Selection{Connections: &connections}); !errors.Is(err, ErrTrafficUnsupported) {
-		t.Fatalf("silently dropped selection: %v", err)
+	if _, err := (*Native)(nil).WithTraffic(selection); !errors.Is(err, ErrScope) {
+		t.Fatalf("nil adapter: %v", err)
 	}
 }

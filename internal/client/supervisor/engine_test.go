@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/filelock"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
@@ -163,7 +164,12 @@ func TestInstalledRunConflictRetriesOnlyWhileRuntimeIsCurrent(t *testing.T) {
 func (c *jobControl) PublisherPublicURL(context.Context, string) (controlv1.PublicURL, error) {
 	return c.publicURL, nil
 }
-func (c *jobControl) CreatePublisherRun(_ context.Context, url, retry, access, proof string) (controlv1.PublishRunSetup, error) {
+func (c *jobControl) CreatePublisherRun(_ context.Context, url, retry, access, proof string, selection *trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
+	if selection != nil {
+		if err := selection.Validate(); err != nil {
+			return controlv1.PublishRunSetup{}, err
+		}
+	}
 	if access != "test-access-never-log" {
 		return controlv1.PublishRunSetup{}, publisheridentity.ErrScope
 	}

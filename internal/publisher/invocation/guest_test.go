@@ -11,6 +11,7 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -50,7 +51,12 @@ func (s *guestEnrollmentStub) ExchangePublisherAssertion(_ context.Context, clie
 	return "guest-publisher-access", nil
 }
 
-func (s *guestEnrollmentStub) CreatePublisherRun(_ context.Context, id, retry, token, proof string) (controlv1.PublishRunSetup, error) {
+func (s *guestEnrollmentStub) CreatePublisherRun(_ context.Context, id, retry, token, proof string, selection *trafficlimits.Selection) (controlv1.PublishRunSetup, error) {
+	if selection != nil {
+		if err := selection.Validate(); err != nil {
+			return controlv1.PublishRunSetup{}, err
+		}
+	}
 	if id != s.identity.PublicUrlId || token != "guest-publisher-access" {
 		return controlv1.PublishRunSetup{}, errors.New("guest used a bootstrap session to create a run")
 	}

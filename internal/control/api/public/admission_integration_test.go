@@ -101,7 +101,7 @@ func TestIntegrationDrainingControlAuthenticatedRenewalAndCleanup(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	publicRun, err := client.CreatePublisherRun(ctx, u.ID, "drain-run", access, proof)
+	publicRun, err := client.CreatePublisherRun(ctx, u.ID, "drain-run", access, proof, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestIntegrationDrainingControlAuthenticatedRenewalAndCleanup(t *testing.T) 
 		t.Fatal(err)
 	}
 	draining.Store(true)
-	if _, err := client.CreatePublisherRun(ctx, u.ID, "drain-run", access, proof); !errors.Is(err, clientcontrol.ErrUnavailable) {
+	if _, err := client.CreatePublisherRun(ctx, u.ID, "drain-run", access, proof, nil); !errors.Is(err, clientcontrol.ErrUnavailable) {
 		t.Fatal("drain admitted public run", err)
 	}
 	if _, err := client.PrepareServiceRun(ctx, service.Id, "drain-private", managedAccess, controlv1.ServiceRunDeclaration{Protocol: controlv1.Postgres, TrustRevision: 1}); !errors.Is(err, clientcontrol.ErrUnavailable) {

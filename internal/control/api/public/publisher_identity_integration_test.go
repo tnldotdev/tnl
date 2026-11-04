@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"reflect"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -25,6 +27,21 @@ import (
 
 func TestIntegrationPublisherIdentityHTTPContract(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	for _, test := range []struct {
+		name      string
+		selection *trafficlimits.Selection
+	}{
+		{name: "defaults"},
+		{name: "explicit", selection: &trafficlimits.Selection{Connections: new(48)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			testPublisherIdentityHTTPContract(t, test.selection)
+		})
+	}
+}
+
+func testPublisherIdentityHTTPContract(t *testing.T, selection *trafficlimits.Selection) {
+	t.Helper()
 	url := testutil.NewDisposablePostgresDatabaseURL(t, "publisher_http")
 	if err := controlstate.Migrate(t.Context(), url); err != nil {
 		t.Fatal(err)
@@ -96,19 +113,34 @@ func TestIntegrationPublisherIdentityHTTPContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	setup, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, proof)
+	setup, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, proof, selection)
 	if err != nil {
 		t.Fatal(err)
 	}
-	retry, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, proof)
-	if err != nil || retry.PublishRun.Id != setup.PublishRun.Id || retry.PublishRunToken != setup.PublishRunToken {
+	wantConnections := trafficlimits.Default().Connections
+	if selection != nil {
+		wantConnections = *selection.Connections
+	}
+	if setup.Traffic == nil || setup.Traffic.Connections != wantConnections {
+		t.Fatalf("HTTP run traffic = %+v, want %d connections", setup.Traffic, wantConnections)
+	}
+	retry, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, proof, selection)
+	if err != nil || retry.PublishRun.Id != setup.PublishRun.Id || retry.PublishRunToken != setup.PublishRunToken || !reflect.DeepEqual(retry.Traffic, setup.Traffic) {
 		t.Fatalf("HTTP run retry changed credentials: %v", err)
 	}
+	changed := &trafficlimits.Selection{Connections: new(24)}
+	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, proof, changed); !errors.Is(err, clientcontrol.ErrStatusConflict) {
+		t.Fatalf("HTTP run retry changed traffic selection: %v", err)
+	}
 	wrongProof, _ := publisherproof.SignRun(private, u.ID, "other-attempt")
-	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, wrongProof); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, wrongProof, selection); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatalf("HTTP run proof crossed attempts: %v", err)
 	}
-	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", session.AccessToken.String(), proof); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+	wrongURLProof, _ := publisherproof.SignRun(private, "other-url", "http-run")
+	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, wrongURLProof, selection); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
+		t.Fatalf("HTTP run proof crossed public URLs: %v", err)
+	}
+	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", session.AccessToken.String(), proof, selection); !errors.Is(err, clientcontrol.ErrUnauthenticated) {
 		t.Fatalf("control session bypassed identity authentication: %v", err)
 	}
 	// a publisher token cannot become a control session or change saved policy.
@@ -133,7 +165,7 @@ func TestIntegrationPublisherIdentityHTTPContract(t *testing.T) {
 	if _, err := authority.ExchangePublisherAssertion(t.Context(), p.ClientId, p.GrantId, replacement, newPrivate); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, proof); err != nil {
+	if _, err := client.CreatePublisherRun(t.Context(), u.ID, "http-run", access, proof, selection); err != nil {
 		t.Fatalf("rotation broke a retry with the still-valid issued token: %v", err)
 	}
 	// signatures include the selected grant; exchanging one for another fails.

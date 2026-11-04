@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
@@ -30,19 +31,32 @@ func TestPublisherRunTrafficUsesTypedBodyAndProofHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	connections, rate, per, upload := 48, 40, "2s", int64(4<<20)
-	selection := &trafficlimits.Selection{Connections: &connections, Rate: &rate, RatePer: &per, UploadBytes: &upload}
-	if _, err := client.CreatePublisherRunWithTraffic(t.Context(), "url", "retry", "publisher-access", "signed-proof", selection); err != nil {
+	selection := &trafficlimits.Selection{Connections: new(48), Rate: new(40), RatePer: new("2s"), Burst: new(50), UploadBytes: new(int64(4 << 20)), DownloadBytes: new(int64(8 << 20)), TotalConnections: new(int64(0)), TotalUploadBytes: new(int64(1 << 30)), TotalDownloadBytes: new(int64(2 << 30))}
+	if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof", selection); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof"); err != nil {
+	if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof", nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(bodies) != 2 || bodies[0].Traffic == nil || *bodies[0].Traffic.Connections != 48 || *bodies[0].Traffic.RatePer != "2s" || *bodies[0].Traffic.UploadBytes != upload || bodies[0].Traffic.DownloadBytes != nil || bodies[1].Traffic != nil {
+	if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof", &trafficlimits.Selection{Connections: new(24)}); err != nil {
+		t.Fatal(err)
+	}
+	want := &controlv1.TrafficSelection{
+		Connections: selection.Connections, Rate: selection.Rate, RatePer: selection.RatePer, Burst: selection.Burst,
+		UploadBytes: selection.UploadBytes, DownloadBytes: selection.DownloadBytes,
+		TotalConnections: selection.TotalConnections, TotalUploadBytes: selection.TotalUploadBytes, TotalDownloadBytes: selection.TotalDownloadBytes,
+	}
+	if len(bodies) != 3 || !reflect.DeepEqual(bodies[0].Traffic, want) || bodies[1].Traffic != nil || !reflect.DeepEqual(bodies[2].Traffic, &controlv1.TrafficSelection{Connections: new(24)}) {
 		t.Fatalf("typed traffic selections: %+v", bodies)
 	}
-	invalid := 0
-	if _, err := client.CreatePublisherRunWithTraffic(t.Context(), "url", "retry", "publisher-access", "signed-proof", &trafficlimits.Selection{Rate: &invalid}); err == nil || len(bodies) != 2 {
-		t.Fatal("invalid selection reached the server")
+	for _, invalid := range []*trafficlimits.Selection{
+		{Rate: new(0)},
+		{Connections: new(0)},
+		{RatePer: new("invalid")},
+		{TotalUploadBytes: new(int64(-1))},
+	} {
+		if _, err := client.CreatePublisherRun(t.Context(), "url", "retry", "publisher-access", "signed-proof", invalid); err == nil || len(bodies) != 3 {
+			t.Fatal("invalid selection reached the server")
+		}
 	}
 }
