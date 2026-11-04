@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { assert, afterEach, describe, expect, test, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import * as z from "zod";
 import {
@@ -83,9 +83,10 @@ describe("root runtime", () => {
     };
     const payload = { ...project, services: { ...project.services, web }, dev: true };
     const runtime = parseRuntimePayload(JSON.stringify(payload));
-    expect(runtime?.services.web?.paths?.["/api"]?.url).toBe("https://web.member.example/api");
-    expect(Object.isFrozen(runtime?.services.web?.paths)).toBe(true);
-    expect(Object.isFrozen(runtime?.services.web?.paths?.["/api"])).toBe(true);
+    assert(runtime?.services.web?.protocol === "http");
+    expect(runtime.services.web.paths?.["/api"]?.url).toBe("https://web.member.example/api");
+    expect(Object.isFrozen(runtime.services.web.paths)).toBe(true);
+    expect(Object.isFrozen(runtime.services.web.paths?.["/api"])).toBe(true);
     for (const invalid of [
       { "/api": { ...web.paths["/api"], service: "Invalid" } },
       { "/api": { ...web.paths["/api"], url: "https://api.member.example/api" } },

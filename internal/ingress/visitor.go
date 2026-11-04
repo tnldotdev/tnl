@@ -54,24 +54,18 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		defer func() { s.config.Metrics.ObserveVisitor(visitorOutcome) }()
 	}
 	{
-		var reason LookupReason
-		if s.config.LookupPool != nil {
-			var candidates []PublicURL
-			candidates, reason = s.config.LookupPool(hello.ServerName)
-			if reason == LookupCurrent {
-				var release func()
-				route, release, reason = s.selectPoolRun(candidates)
-				if release != nil {
-					defer release()
-				}
-				if reason != LookupCurrent && len(candidates) > 0 {
-					// no run was selected. retain only the service identity so a
-					// full/unavailable pool does not disappear from its audit.
-					route = PublicURL{ID: candidates[0].ID}
-				}
+		candidates, reason := s.config.Lookup(hello.ServerName)
+		if reason == LookupCurrent {
+			var release func()
+			route, release, reason = s.selectPoolRun(candidates)
+			if release != nil {
+				defer release()
 			}
-		} else {
-			route, reason = s.config.Lookup(hello.ServerName)
+			if reason != LookupCurrent && len(candidates) > 0 {
+				// no run was selected. retain only the service identity so a
+				// full/unavailable pool does not disappear from its audit.
+				route = PublicURL{ID: candidates[0].ID}
+			}
 		}
 		ok = reason == LookupCurrent
 		switch reason {
@@ -280,7 +274,7 @@ func (s *Server) selectPoolRun(candidates []PublicURL) (PublicURL, func(), Looku
 	var load, capacity int64
 	start := 0
 	if len(candidates) > 0 {
-		start = int(s.nextBackend.Add(1) % uint64(len(candidates)))
+		start = int(s.nextPoolRun.Add(1) % uint64(len(candidates)))
 	}
 	for offset := range candidates {
 		index := (start + offset) % len(candidates)

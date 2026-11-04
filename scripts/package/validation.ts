@@ -7,7 +7,7 @@ export function parseJSON<Output>(
 ): Output {
   let value: unknown;
   try {
-    value = JSON.parse(serialized) as unknown;
+    value = JSON.parse(serialized);
   } catch (error) {
     throw new Error(`${description} is not valid JSON`, { cause: error });
   }

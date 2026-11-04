@@ -9,7 +9,7 @@ import { ActionError, checkCancelled, ownedError } from "./errors.js";
 
 export const exactVersion =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-const releaseVersion = z
+const releaseVersionSchema = z
   .string()
   .max(128)
   .regex(exactVersion)
@@ -17,9 +17,9 @@ const releaseVersion = z
     const prerelease = value.slice(value.indexOf("-") + 1);
     return !value.includes("-") || prerelease.split(".").every((part) => !/^0\d+$/.test(part));
   });
-const manifest = z.object({
+const manifestSchema = z.object({
   name: z.string(),
-  version: releaseVersion,
+  version: releaseVersionSchema,
   optionalDependencies: z.record(z.string(), z.string()).optional(),
   tnl: z
     .object({
@@ -45,12 +45,12 @@ export async function installedBinary(
     for (;;) {
       let value: unknown;
       try {
-        value = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as unknown;
+        value = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
       } catch (cause) {
         /* an export can live below a directory without a manifest */
         if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT")) throw cause;
       }
-      const parsed = manifest.safeParse(value);
+      const parsed = manifestSchema.safeParse(value);
       const identity = z.object({ name: z.literal("@tnldotdev/tnl") }).safeParse(value);
       if (identity.success) {
         if (!parsed.success)
@@ -62,7 +62,7 @@ export async function installedBinary(
       root = parent;
     }
     const mainPath = path.join(root, "package.json");
-    const main = manifest.parse(JSON.parse(await readFile(mainPath, "utf8")) as unknown);
+    const main = manifestSchema.parse(JSON.parse(await readFile(mainPath, "utf8")));
     if (expectedVersion !== undefined && main.version !== expectedVersion)
       throw new ActionError("TNL_ACTION_BINARY_UNAVAILABLE");
     if (!["linux", "darwin"].includes(process.platform) || !["arm64", "x64"].includes(process.arch))
@@ -71,7 +71,7 @@ export async function installedBinary(
     if (main.optionalDependencies?.[name] !== main.version)
       throw new ActionError("TNL_ACTION_BINARY_UNAVAILABLE");
     const nativePath = createRequire(mainPath).resolve(`${name}/package.json`);
-    const native = manifest.parse(JSON.parse(await readFile(nativePath, "utf8")) as unknown);
+    const native = manifestSchema.parse(JSON.parse(await readFile(nativePath, "utf8")));
     if (native.name !== name || native.version !== main.version)
       throw new ActionError("TNL_ACTION_BINARY_UNAVAILABLE");
     const binary = await realpath(path.join(path.dirname(nativePath), "bin/tnl"));
@@ -144,7 +144,7 @@ export async function selectBinary(options: {
     throw new ActionError("TNL_ACTION_BINARY_SELECTION_INVALID");
   let directory = options.directory;
   if (options.version) {
-    if (!releaseVersion.safeParse(options.version).success)
+    if (!releaseVersionSchema.safeParse(options.version).success)
       throw new ActionError("TNL_ACTION_VERSION_INVALID");
     directory = path.join(options.session, "install");
     try {

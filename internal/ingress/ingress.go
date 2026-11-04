@@ -50,9 +50,10 @@ type PublicURL struct {
 	assignments []tunnelv1.AdmissionHeader
 }
 
-// LookupFunc returns an empty reason for a current public URL. failure reasons
-// are fixed labels, never hostnames, identifiers, or error text.
-type LookupFunc func(string) (PublicURL, LookupReason)
+// LookupFunc returns the current candidate runs for a public URL, including a
+// one-element slice for a single run. failure reasons are fixed labels, never
+// hostnames, identifiers, or error text.
+type LookupFunc func(string) ([]PublicURL, LookupReason)
 
 type UsageConnection interface {
 	PolicyDenied(time.Time)
@@ -80,7 +81,6 @@ type Metrics interface {
 type Config struct {
 	AuditSink                 serviceaudit.Sink
 	Lookup                    LookupFunc
-	LookupPool                func(string) ([]PublicURL, LookupReason)
 	ServerHostname            string
 	HandleControl             func(net.Conn) bool
 	RelayHostname             string
@@ -125,6 +125,7 @@ type Server struct {
 	closing         bool
 	done            chan struct{}
 	active          sync.WaitGroup
+	nextPoolRun     atomic.Uint64
 	nextBackend     atomic.Uint64
 	traffic         *trafficAdmission
 	servicePorts    tcpport.Inventory
@@ -132,7 +133,7 @@ type Server struct {
 }
 
 func New(listener net.Listener, config Config) (*Server, error) {
-	if listener == nil || !config.PublicServicesOnly && config.Lookup == nil && config.LookupPool == nil || config.PublicServicesOnly && config.PublicServices == nil {
+	if listener == nil || !config.PublicServicesOnly && config.Lookup == nil || config.PublicServicesOnly && config.PublicServices == nil {
 		return nil, errors.New("ingress: listener and route lookup are required")
 	}
 	if config.MaxConnections <= 0 {

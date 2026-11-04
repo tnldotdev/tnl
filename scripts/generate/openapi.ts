@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseDocument, stringify } from "yaml";
+import * as z from "zod";
 
 export const root = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -30,11 +31,11 @@ export const packagePaths: Record<keyof typeof contracts, string> = {
   localpublisherv1: "publisher/local/v1",
 };
 
-export function record(value: unknown): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("expected an OpenAPI object");
-  }
-  return value as Record<string, unknown>;
+const objectSchema = z.record(z.string(), z.unknown());
+export function record(value: unknown): z.output<typeof objectSchema> {
+  const parsed = objectSchema.safeParse(value);
+  if (!parsed.success) throw new Error("expected an OpenAPI object", { cause: parsed.error });
+  return parsed.data;
 }
 
 function target(reference: string, source: string): string {

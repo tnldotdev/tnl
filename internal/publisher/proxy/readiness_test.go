@@ -25,11 +25,11 @@ func TestReadinessHeadersDoNotWaitForHTMLBodyModification(t *testing.T) {
 	}))
 	defer backend.Close()
 	var modified atomic.Bool
-	handler, err := NewWithMountsHooks(backend.URL, "app.example", 0, nil, ResponseHooks{ModifyHTML: func(*http.Response) error {
+	handler, err := New(Config{Target: backend.URL, Hostname: "app.example", Hooks: ResponseHooks{ModifyHTML: func(*http.Response) error {
 		modified.Store(true)
 		t.Error("readiness ran the HTML body modifier")
 		return nil
-	}})
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
