@@ -57,7 +57,7 @@ func TestRuntimeWriterRejectsOversizedMetadataAndInvalidRoots(t *testing.T) {
 	}
 	metadata.Namespace = "member.example"
 	for _, name := range []string{"api", "web", "worker", "admin", "app", "console", "preview", "other"} {
-		service, err := NewService(metadata.Namespace, name+".member.example", "http", nil)
+		service, err := NewEndpoint(metadata.Namespace, name+".member.example", "http", 443, true)
 		if err != nil {
 			t.Fatal(err)
 		}
