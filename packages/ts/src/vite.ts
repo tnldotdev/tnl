@@ -8,8 +8,11 @@ import {
   type PreparedService,
 } from "./internal/publisher/app.js";
 import { operation } from "./internal/tracing.js";
+import * as z from "zod";
+import { parseValue } from "./internal/validation.js";
 
 const runtimeDefineName = "process.env.TNL_PROJECT_RUNTIME";
+const allowedHostsSchema = z.union([z.literal(true), z.array(z.string())]).optional();
 
 /** configures a Vite development server to register its listener and add project metadata. */
 export default function tnl(options: PrepareOptions = {}): Plugin {
@@ -25,7 +28,11 @@ export default function tnl(options: PrepareOptions = {}): Plugin {
       }
 
       const server = userConfig.server ?? {};
-      validateAllowedHosts(server.allowedHosts);
+      const allowedHosts = parseValue(
+        allowedHostsSchema,
+        server.allowedHosts,
+        "sdk.configuration_invalid",
+      );
       assignment = await operation("vite.prepare", () => prepareService(options, "vite"));
       const result = {
         ...runtimeDefine(serializeRuntimePayload(assignment, true)),
@@ -36,7 +43,7 @@ export default function tnl(options: PrepareOptions = {}): Plugin {
             service: assignment.service,
           }).reduce<string[] | true>(
             (hosts, hostname) => addAllowedHost(hosts, hostname),
-            server.allowedHosts ?? [],
+            allowedHosts ?? [],
           ),
         },
       };
@@ -101,14 +108,4 @@ function addAllowedHost(
     return true;
   }
   return [...new Set([...(allowedHosts ?? []), hostname])];
-}
-
-function validateAllowedHosts(value: string[] | true | undefined): void {
-  if (
-    value !== undefined &&
-    value !== true &&
-    (!Array.isArray(value) || !value.every((host) => typeof host === "string"))
-  ) {
-    throw new TnlError("sdk.configuration_invalid");
-  }
 }

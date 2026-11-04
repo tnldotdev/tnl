@@ -59,12 +59,12 @@ func TestIngressEnforcesProxySourceAndPublicURLAllowlist(t *testing.T) {
 	backend, usage := newTLSBackend(t), newUsageRecorder()
 	metrics := new(testMetrics)
 	var lookups atomic.Int32
-	config := Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Metrics: metrics, OpenUsage: usage.Open, Lookup: func(host string) (PublicURL, LookupReason) {
+	config := Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Metrics: metrics, OpenUsage: usage.Open, Lookup: func(host string) ([]PublicURL, LookupReason) {
 		lookups.Add(1)
 		if host != "route.example" {
-			return PublicURL{}, "not_found"
+			return nil, LookupNotFound
 		}
-		return PublicURL{ID: "public_url_test", PublishRunNumber: 1, Backends: []ingressbackend.Backend{backend}, HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24"), AttestSource: testBackendSourceProof}, ""
+		return []PublicURL{{ID: "public_url_test", PublishRunID: "publish_run_test", PublishRunNumber: 1, Backends: []ingressbackend.Backend{backend}, HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24"), AttestSource: testBackendSourceProof}}, LookupCurrent
 	}}
 	server, address := startIngress(t, config)
 	malformed := ingressClient(t, address, "route.example", "198.51.100.1:40001")
@@ -119,12 +119,12 @@ func TestDeniedConnectionsHaveSeparateCapacity(t *testing.T) {
 	usage := newUsageRecorder()
 	config := Config{
 		RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Pending: PendingConfig{Connections: 2, PublicURLConnections: 1, SourceConnections: 1}, OpenUsage: usage.Open,
-		Lookup: func(host string) (PublicURL, LookupReason) {
+		Lookup: func(host string) ([]PublicURL, LookupReason) {
 			if host != "route.example" {
-				return PublicURL{}, "not_found"
+				return nil, LookupNotFound
 			}
-			return PublicURL{ID: "public_url_test", PublishRunNumber: 1, AccessMode: "restricted", Backends: []ingressbackend.Backend{backend},
-				HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24"), AttestSource: testBackendSourceProof}, ""
+			return []PublicURL{{ID: "public_url_test", PublishRunID: "publish_run_test", PublishRunNumber: 1, AccessMode: "restricted", Backends: []ingressbackend.Backend{backend},
+				HashedIPPolicy: hashedPolicyForTest(t, "198.51.100.0/24"), AttestSource: testBackendSourceProof}}, LookupCurrent
 		},
 	}
 	_, address := startIngress(t, config)
@@ -171,7 +171,9 @@ func TestIngressRecordsRouteCapacityAndVisitorStreamOpenFailure(t *testing.T) {
 	config.OpenUsage = usage.Open
 	config.MaxConnections = 2
 	config.Traffic.Default = trafficlimits.Default()
-	config.Traffic.Default.Connections = 1
+	// lifetime admission follows pool selection and remains attributable to a run.
+	// a full concurrent pool has no selected run; pool_selection_test covers it.
+	config.Traffic.Default.TotalConnections = 1
 	_, address := startIngress(t, config)
 	first := ingressClient(t, address, "route.example", "")
 	result := ingressWorker(t, func() { unblock(); _ = first.Close() }, first.Handshake)

@@ -59,6 +59,7 @@ func TestUpdateRouteAuthorizesExactRouteAndCanonicalMutation(t *testing.T) {
 		ID: "public_url_1", TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember,
 		PolicyRevision: 3, LifecycleState: controlstate.PublicURLLifecycleEnabled,
+		Purpose:           controlstate.PublicURLPurposeApp,
 		AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, MutationRevision: 4,
 		Ephemeral: true,
 	}}
@@ -105,6 +106,7 @@ func TestUpdateRouteAcceptsLargeIPPolicyRequest(t *testing.T) {
 		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000",
 		PublicURLScope: controlstate.PublicURLScopeMember, LifecycleState: controlstate.PublicURLLifecycleEnabled,
 		PolicyRevision: 3, MutationRevision: 4,
+		Purpose: controlstate.PublicURLPurposeApp,
 	}}
 	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{
 		IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1",
@@ -192,6 +194,7 @@ func TestRouteMutationsDoNotRevealRoutesOutsideCurrentTeams(t *testing.T) {
 		ID: "public_url_1", TeamID: "team_other", DomainID: "domain_1", MembershipID: "membership_1",
 		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000",
 		PublicURLScope: controlstate.PublicURLScopeMember, MutationRevision: 1,
+		Purpose: controlstate.PublicURLPurposeApp,
 	}}
 	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal()}
 	h := &handler{store: store, authorizer: authorizer}
@@ -440,7 +443,7 @@ func publicURLMutationCalls() []publicURLMutationCall {
 func TestRouteMutationRejectionDoesNotReachStore(t *testing.T) {
 	for _, test := range publicURLMutationCalls() {
 		t.Run(test.name, func(t *testing.T) {
-			store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_1", MutationRevision: 7}}
+			store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_1", Purpose: controlstate.PublicURLPurposeApp, MutationRevision: 7}}
 			authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), mutationErr: authorization.ErrForbidden}
 			h := &handler{store: store, authorizer: authorizer}
 			request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1", strings.NewReader(`{"target":"http://127.0.0.1:4000","allowed_ip_prefixes":[]}`))
@@ -520,8 +523,10 @@ func TestCreateSavedPublicURLWithoutATarget(t *testing.T) {
 		{"ephemeral app", "app", `,"ephemeral":true`, http.StatusBadRequest},
 		{"ephemeral alias", "alias", `,"ephemeral":true`, http.StatusBadRequest},
 		{"saved demo", "demo", "", http.StatusBadRequest},
-		{"saved oauth", "oauth", "", http.StatusBadRequest},
-		{"saved webhooks", "webhooks", "", http.StatusBadRequest},
+		{"saved oauth", "oauth", "", http.StatusCreated},
+		{"saved webhooks", "webhooks", "", http.StatusCreated},
+		{"ephemeral oauth", "oauth", `,"ephemeral":true`, http.StatusBadRequest},
+		{"ephemeral webhooks", "webhooks", `,"ephemeral":true`, http.StatusBadRequest},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body := `{"team_id":"team_1","membership_id":"membership_1","domain_id":"domain_1","canonical_hostname":"demo.example","public_url_scope":"member","target":"","purpose":"` + test.purpose + `"` + test.suffix + `}`
@@ -535,7 +540,7 @@ func TestCreateSavedPublicURLWithoutATarget(t *testing.T) {
 			}
 		})
 	}
-	if len(store.requests) != 2 || store.requests[0].Target != "" || store.requests[1].Purpose != controlstate.PublicURLPurposeAlias || len(authorizer.requests) != 2 {
+	if len(store.requests) != 4 || store.requests[0].Target != "" || store.requests[1].Purpose != controlstate.PublicURLPurposeAlias || len(authorizer.requests) != 4 {
 		t.Fatalf("targetless creation = %#v, authorization = %#v", store.requests, authorizer.requests)
 	}
 }
@@ -572,8 +577,10 @@ func TestTargetlessSavedPublicURLPolicyUpdateValidatesPurposeAndLifecycle(t *tes
 		{"saved alias", controlstate.PublicURLPurposeAlias, "", false, http.StatusOK},
 		{"ephemeral app", controlstate.PublicURLPurposeApp, "", true, http.StatusBadRequest},
 		{"ephemeral alias", controlstate.PublicURLPurposeAlias, "", true, http.StatusBadRequest},
-		{"oauth", controlstate.PublicURLPurposeOAuth, "", false, http.StatusBadRequest},
-		{"webhooks", controlstate.PublicURLPurposeWebhooks, "", false, http.StatusBadRequest},
+		{"oauth", controlstate.PublicURLPurposeOAuth, "", false, http.StatusOK},
+		{"webhooks", controlstate.PublicURLPurposeWebhooks, "", false, http.StatusOK},
+		{"ephemeral oauth", controlstate.PublicURLPurposeOAuth, "", true, http.StatusBadRequest},
+		{"ephemeral webhooks", controlstate.PublicURLPurposeWebhooks, "", true, http.StatusBadRequest},
 		{"demo", controlstate.PublicURLPurposeDemo, "", false, http.StatusBadRequest},
 		{"targeted alias", controlstate.PublicURLPurposeAlias, "http://127.0.0.1:3000", false, http.StatusBadRequest},
 		{"unknown purpose", "unknown", "", false, http.StatusBadRequest},

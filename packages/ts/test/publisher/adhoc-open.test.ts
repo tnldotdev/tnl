@@ -1,10 +1,17 @@
 import { createServer } from "node:http";
-import { expect, test } from "vitest";
+import { assert, expect, test } from "vitest";
+import * as z from "zod";
 import { TnlError } from "../../src/errors.js";
 import { openServer, openFetch } from "../../src/internal/publisher/open.js";
 import { parseStatus } from "../../src/internal/publisher/status.js";
 import { runtimeRequest, type RuntimeEndpoint } from "../../src/internal/publisher/local.js";
-import { record } from "../../src/internal/project/runtime.js";
+import { invocationIDSchema } from "../../src/internal/values.js";
+
+const invocationSchema = z.looseObject({
+  invocation_id: z.string(),
+  owner: z.string(),
+  target: z.string(),
+});
 
 const id = `reg_${"a".repeat(32)}`;
 const publicURL = "https://temporary.member.example";
@@ -43,7 +50,7 @@ test("status fences scope, registration, target, and publish run without public 
     parseStatus({ ...value, capability: "secret" }, "invocation", id, "http://127.0.0.1:1234"),
   ).toThrow(TnlError);
   const item = value.services[0];
-  if (item === undefined) throw new Error("missing service");
+  assert(item !== undefined);
   item.publish_run_number = 0;
   expect(() => parseStatus(value, "invocation", id, "http://127.0.0.1:1234")).toThrow(TnlError);
 });
@@ -67,10 +74,10 @@ test("real Node port-0 wildcard listener waits for exact native status and joins
       calls.push({ path: request.url, body });
       response.setHeader("Content-Type", "application/json");
       if (request.url === "/v1/ad-hoc/register") {
-        const payload = record(body, "invocation");
-        service = String(payload.invocation_id);
-        owner = String(payload.owner);
-        target = String(payload.target);
+        const payload = invocationSchema.parse(body);
+        service = payload.invocation_id;
+        owner = payload.owner;
+        target = payload.target;
         expect(payload.publisher_identity_id).toBe(`pub_${"A".repeat(22)}`);
         expect(payload.credential).toBeUndefined();
         response.end(JSON.stringify({ version: 1, registration_id: id, owner, target }));
@@ -102,7 +109,7 @@ test("real Node port-0 wildcard listener waits for exact native status and joins
           capability: "b".repeat(64),
           owner_id: "a".repeat(32),
           scope: "invocation",
-          invocation_id: selection?.invocationID ?? "",
+          invocation_id: invocationIDSchema.parse(selection?.invocationID),
         }),
         request: runtimeRequest,
         pause: async () => new Promise((resolve) => setTimeout(resolve, 1)),
@@ -140,14 +147,14 @@ test("default invocation rediscovery retains automatic publisher selection after
           capability: String(starts).repeat(64),
           owner_id: "a".repeat(32),
           scope: "invocation",
-          invocation_id: service,
+          invocation_id: invocationIDSchema.parse(service),
         };
       },
       request: async (_endpoint, operation, body) => {
         if (operation === "ad-hoc/register") {
-          const payload = record(body, "invocation");
-          target = String(payload.target);
-          ids.push(String(payload.invocation_id));
+          const payload = invocationSchema.parse(body);
+          target = payload.target;
+          ids.push(payload.invocation_id);
           expect(payload).not.toHaveProperty("publisher_identity_id");
           expect(payload).not.toHaveProperty("publisher_credential_file");
           expect(payload).not.toHaveProperty("enrollment_key");
@@ -191,13 +198,13 @@ test("close interrupts status polling and joins unregister without waiting for i
           capability: "b".repeat(64),
           owner_id: "a".repeat(32),
           scope: "invocation",
-          invocation_id: service,
+          invocation_id: invocationIDSchema.parse(service),
         };
       },
       request: async (_endpoint, operation, body) => {
         if (operation === "ad-hoc/register") {
-          const payload = record(body, "invocation");
-          target = String(payload.target);
+          const payload = invocationSchema.parse(body);
+          target = payload.target;
           return { version: 1, registration_id: id, owner: payload.owner, target };
         }
         if (operation === "status") return snapshot(service, target);
@@ -227,13 +234,13 @@ test("explicit publisher file is passed only to native and never enters status",
           capability: "b".repeat(64),
           owner_id: "a".repeat(32),
           scope: "invocation",
-          invocation_id: service,
+          invocation_id: invocationIDSchema.parse(service),
         };
       },
       request: async (_endpoint, operation, body) => {
         if (operation === "ad-hoc/register") {
-          const payload = record(body, "invocation");
-          target = String(payload.target);
+          const payload = invocationSchema.parse(body);
+          target = payload.target;
           expect(payload.publisher_credential_file).toBe("/private/publisher.json");
           expect(payload.publisher_identity_id).toBeUndefined();
           return { version: 1, registration_id: id, owner: payload.owner, target };
@@ -266,13 +273,13 @@ test("publisher file configured after the owner starts reaches the native invoca
             capability: "b".repeat(64),
             owner_id: "a".repeat(32),
             scope: "invocation",
-            invocation_id: service,
+            invocation_id: invocationIDSchema.parse(service),
           };
         },
         request: async (_endpoint, operation, body) => {
           if (operation === "ad-hoc/register") {
-            const payload = record(body, "invocation");
-            target = String(payload.target);
+            const payload = invocationSchema.parse(body);
+            target = payload.target;
             expect(payload.publisher_credential_file).toBe("/private/production-publisher.json");
             return { version: 1, registration_id: id, owner: payload.owner, target };
           }

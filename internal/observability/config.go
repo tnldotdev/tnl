@@ -54,19 +54,22 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 		c.Disabled = true
 		return c, nil
 	}
-	if err := validateSDKEnvironment(getenv); err != nil {
+	if err := validateSDKProviderEnvironment(getenv); err != nil {
 		return Config{}, err
 	}
-	var err error
-	c.Metrics, err = signalConfig(getenv, "METRICS", "metrics")
+	exporters, err := exporterSettingsFromEnv(getenv)
 	if err != nil {
 		return Config{}, err
 	}
-	c.Traces, err = signalConfig(getenv, "TRACES", "traces")
+	c.Metrics, err = signalConfig(getenv, "METRICS", exporters[""], exporters["METRICS"])
 	if err != nil {
 		return Config{}, err
 	}
-	c.Logs, err = signalConfig(getenv, "LOGS", "logs")
+	c.Traces, err = signalConfig(getenv, "TRACES", exporters[""], exporters["TRACES"])
+	if err != nil {
+		return Config{}, err
+	}
+	c.Logs, err = signalConfig(getenv, "LOGS", exporters[""], exporters["LOGS"])
 	if err != nil {
 		return Config{}, err
 	}
@@ -152,42 +155,30 @@ func ConfigFromEnv(getenv func(string) string) (Config, error) {
 	return c, nil
 }
 
-// validate every exporter input the pinned SDK parses, including generic values
-// overridden by per-signal values. explicit options do not suppress that parsing.
-// no process environment or global OTel handler is changed during construction.
-func validateSDKEnvironment(getenv func(string) string) error {
-	if err := validateSDKProviderEnvironment(getenv); err != nil {
-		return err
-	}
-	const virtual = "OTEL_EXPORTER_OTLP_TRACES_"
-	for _, prefix := range []string{"OTEL_EXPORTER_OTLP_", "OTEL_EXPORTER_OTLP_METRICS_", virtual, "OTEL_EXPORTER_OTLP_LOGS_"} {
-		_, err := signalConfig(func(key string) string {
-			if !strings.HasPrefix(key, virtual) {
-				return ""
-			}
-			suffix := strings.TrimPrefix(key, virtual)
-			value := getenv(prefix + suffix)
-			if suffix == "ENDPOINT" && value == "" {
-				return "https://validation.invalid"
-			}
-			return value
-		}, "TRACES", "traces")
-		if err != nil {
-			if typed, ok := failure.Of(err); ok {
-				return settingError(prefix + strings.TrimPrefix(string(typed.Setting()), virtual))
-			}
-			return err
+// parse every exporter input before applying precedence, including generic values
+// overridden by per-signal values. the pinned SDK reads them before its options.
+func exporterSettingsFromEnv(getenv func(string) string) (map[string]exporterSettings, error) {
+	settings := make(map[string]exporterSettings, 4)
+	for _, signal := range []string{"", "METRICS", "TRACES", "LOGS"} {
+		prefix := "OTEL_EXPORTER_OTLP_"
+		if signal != "" {
+			prefix += signal + "_"
 		}
+		parsed, err := parseExporterSettings(getenv, prefix)
+		if err != nil {
+			return nil, err
+		}
+		settings[signal] = parsed
 	}
 	for key, allowed := range map[string]string{
 		"OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE":        "cumulative",
 		"OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION": "explicit_bucket_histogram",
 	} {
 		if value := getenv(key); value != "" && !strings.EqualFold(value, allowed) {
-			return settingError(key)
+			return nil, settingError(key)
 		}
 	}
-	return nil
+	return settings, nil
 }
 
 // provider constructors also read these defaults before their explicit options.
@@ -232,60 +223,40 @@ func validServiceName(value string) bool {
 	return false
 }
 
-func signalConfig(getenv func(string) string, signal, path string) (SignalConfig, error) {
-	c := SignalConfig{Timeout: 5 * time.Second}
-	prefix := "OTEL_EXPORTER_OTLP_" + signal + "_"
-	selected := func(suffix string) string {
-		if value := getenv(prefix + suffix); value != "" {
-			return value
-		}
-		return getenv("OTEL_EXPORTER_OTLP_" + suffix)
-	}
-	switch getenv("OTEL_" + signal + "_EXPORTER") {
-	case "none":
-		return c, nil
-	case "", "otlp":
-	default:
-		return c, settingError("OTEL_" + signal + "_EXPORTER")
-	}
-	c.Endpoint = getenv(prefix + "ENDPOINT")
-	if c.Endpoint == "" {
-		if base := getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); base != "" {
-			c.Endpoint = strings.TrimRight(base, "/") + "/v1/" + path
+// zero fields mean unset, so precedence does not need to read or parse raw input.
+type exporterSettings struct {
+	endpoint    string
+	headers     map[string]string
+	timeout     time.Duration
+	compression string
+	roots       *x509.CertPool
+	client      *tls.Certificate
+}
+
+func parseExporterSettings(getenv func(string) string, prefix string) (exporterSettings, error) {
+	c := exporterSettings{endpoint: getenv(prefix + "ENDPOINT"), compression: getenv(prefix + "COMPRESSION")}
+	if c.endpoint != "" {
+		u, err := url.Parse(c.endpoint)
+		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(c.endpoint, "#") {
+			return c, settingError(prefix + "ENDPOINT")
 		}
 	}
-	if c.Endpoint == "" {
-		return c, nil
-	}
-	u, err := url.Parse(c.Endpoint)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return c, settingError(prefix + "ENDPOINT")
-	}
-	if protocol := selected("PROTOCOL"); protocol != "" && protocol != "http/protobuf" {
+	if protocol := getenv(prefix + "PROTOCOL"); protocol != "" && protocol != "http/protobuf" {
 		return c, settingError(prefix + "PROTOCOL")
 	}
-	if selected("INSECURE") != "" && selected("INSECURE") != "false" {
+	if insecure := getenv(prefix + "INSECURE"); insecure != "" && insecure != "false" {
 		return c, settingError(prefix + "INSECURE")
 	}
-	c.Timeout, err = milliseconds(selected("TIMEOUT"), 5*time.Second, 10*time.Second)
+	var err error
+	c.timeout, err = milliseconds(getenv(prefix+"TIMEOUT"), 0, 10*time.Second)
 	if err != nil {
 		return c, settingError(prefix + "TIMEOUT")
 	}
-	// the periodic reader and batch processor may shorten the exporter timeout.
-	for _, key := range map[string][]string{"METRICS": {"OTEL_METRIC_EXPORT_TIMEOUT"}, "TRACES": {"OTEL_BSP_EXPORT_TIMEOUT"}, "LOGS": {"OTEL_BLRP_EXPORT_TIMEOUT"}}[signal] {
-		if value := getenv(key); value != "" {
-			d, err := milliseconds(value, c.Timeout, 10*time.Second)
-			if err != nil {
-				return c, settingError(key)
-			}
-			c.Timeout = min(c.Timeout, d)
-		}
-	}
-	c.Headers = make(map[string]string)
-	if raw := selected("HEADERS"); raw != "" {
+	if raw := getenv(prefix + "HEADERS"); raw != "" {
 		if len(raw) > 8192 {
 			return c, settingError(prefix + "HEADERS")
 		}
+		c.headers = make(map[string]string)
 		for _, pair := range strings.Split(raw, ",") {
 			key, value, ok := strings.Cut(pair, "=")
 			key = strings.TrimSpace(key)
@@ -293,34 +264,92 @@ func signalConfig(getenv func(string) string, signal, path string) (SignalConfig
 			if !ok || err != nil || !validHeaderName(key) || strings.ContainsAny(value, "\r\n\x00") {
 				return c, settingError(prefix + "HEADERS")
 			}
-			c.Headers[key] = value
+			c.headers[key] = value
 		}
 	}
-	switch selected("COMPRESSION") {
-	case "", "none":
-	case "gzip":
-		c.Gzip = true
+	switch c.compression {
+	case "", "none", "gzip":
 	default:
 		return c, settingError(prefix + "COMPRESSION")
 	}
-	c.TLS = &tls.Config{MinVersion: tls.VersionTLS12}
-	if path := selected("CERTIFICATE"); path != "" {
+	if path := getenv(prefix + "CERTIFICATE"); path != "" {
 		pem, err := os.ReadFile(path)
 		if err != nil {
 			return c, settingError(prefix + "CERTIFICATE")
 		}
-		c.TLS.RootCAs = x509.NewCertPool()
-		if !c.TLS.RootCAs.AppendCertsFromPEM(pem) {
+		c.roots = x509.NewCertPool()
+		if !c.roots.AppendCertsFromPEM(pem) {
 			return c, settingError(prefix + "CERTIFICATE")
 		}
 	}
-	cert, key := selected("CLIENT_CERTIFICATE"), selected("CLIENT_KEY")
+	cert, key := getenv(prefix+"CLIENT_CERTIFICATE"), getenv(prefix+"CLIENT_KEY")
 	if cert != "" || key != "" {
-		pair, err := tls.LoadX509KeyPair(cert, key)
+		certPEM, err := os.ReadFile(cert)
 		if err != nil {
 			return c, settingError(prefix + "CLIENT_CERTIFICATE")
 		}
-		c.TLS.Certificates = []tls.Certificate{pair}
+		keyPEM, err := os.ReadFile(key)
+		if err != nil {
+			return c, settingError(prefix + "CLIENT_KEY")
+		}
+		pair, err := tls.X509KeyPair(certPEM, keyPEM)
+		if err != nil {
+			return c, settingError(prefix + "CLIENT_CERTIFICATE")
+		}
+		c.client = &pair
+	}
+	return c, nil
+}
+
+func signalConfig(getenv func(string) string, signal string, generic, specific exporterSettings) (SignalConfig, error) {
+	c := SignalConfig{Timeout: 5 * time.Second}
+	switch getenv("OTEL_" + signal + "_EXPORTER") {
+	case "none":
+		return c, nil
+	case "", "otlp":
+	default:
+		return c, settingError("OTEL_" + signal + "_EXPORTER")
+	}
+	c.Endpoint = specific.endpoint
+	if c.Endpoint == "" && generic.endpoint != "" {
+		c.Endpoint = strings.TrimRight(generic.endpoint, "/") + "/v1/" + strings.ToLower(signal)
+	}
+	if c.Endpoint == "" {
+		return c, nil
+	}
+	c.Headers = generic.headers
+	if specific.headers != nil {
+		c.Headers = specific.headers
+	}
+	if generic.timeout != 0 {
+		c.Timeout = generic.timeout
+	}
+	if specific.timeout != 0 {
+		c.Timeout = specific.timeout
+	}
+	// the periodic reader and batch processor may shorten the exporter timeout.
+	key := map[string]string{"METRICS": "OTEL_METRIC_EXPORT_TIMEOUT", "TRACES": "OTEL_BSP_EXPORT_TIMEOUT", "LOGS": "OTEL_BLRP_EXPORT_TIMEOUT"}[signal]
+	if value := getenv(key); value != "" {
+		d, err := milliseconds(value, c.Timeout, 10*time.Second)
+		if err != nil {
+			return c, settingError(key)
+		}
+		c.Timeout = min(c.Timeout, d)
+	}
+	c.Gzip = generic.compression == "gzip"
+	if specific.compression != "" {
+		c.Gzip = specific.compression == "gzip"
+	}
+	c.TLS = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: generic.roots}
+	if specific.roots != nil {
+		c.TLS.RootCAs = specific.roots
+	}
+	client := generic.client
+	if specific.client != nil {
+		client = specific.client
+	}
+	if client != nil {
+		c.TLS.Certificates = []tls.Certificate{*client}
 	}
 	return c, nil
 }

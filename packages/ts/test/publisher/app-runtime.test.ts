@@ -2,7 +2,8 @@ import { createServer } from "node:http";
 import { chmod, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, onTestFinished, test, vi } from "vitest";
+import { assert, afterEach, expect, onTestFinished, test, vi } from "vitest";
+import * as z from "zod";
 import {
   createPreparedService,
   runtimeRequest,
@@ -11,7 +12,7 @@ import {
 import { TnlError } from "../../dist/errors.js";
 import { startTestBootstrap } from "../helpers/bootstrap.js";
 import { createProjectFixture, testPublicProject } from "../helpers/project.js";
-import { record } from "../../dist/internal/project/runtime.js";
+import { invocationIDSchema } from "../../dist/internal/values.js";
 import { parseEndpoint, type RuntimeEndpoint } from "../../dist/internal/publisher/local.js";
 import { withProcessEnvironment } from "../helpers/environment.js";
 
@@ -73,7 +74,7 @@ test("accepts the native private protocol golden assignment", async () => {
       "utf8",
     ),
   );
-  const fixtures = record(golden, "private protocol fixture");
+  const fixtures = z.object({ assignment: z.unknown().nonoptional() }).parse(golden);
   const handle = await createPreparedService({ service: "web" }, "node", {
     start: async () => ({ ...testEndpoint, service: "web" }),
     request: async (_socket, operation) =>
@@ -124,7 +125,8 @@ test("preparation exposes only public metadata and registers an actual port-0 No
   onTestFinished(() => handle.close());
   expect(bootstrap.requests).toHaveLength(1);
   expect(bootstrap.requests[0]?.path).toBe("/v1/prepare");
-  expect(handle.services.api?.url).toBe("https://api.member.example");
+  assert(handle.services.api?.protocol === "http");
+  expect(handle.services.api.url).toBe("https://api.member.example");
   expect(JSON.stringify(handle)).not.toMatch(/owner|registration_id|capability|token|directory/);
   const server = createServer((_req, res) => res.end("app"));
   onTestFinished(() => new Promise<void>((resolve) => server.close(() => resolve())));
@@ -158,9 +160,8 @@ test("one app prepares without a service hint; cwd selects the project only", as
     },
     request: async (_endpoint, operation, body) => {
       if (operation === "prepare") {
-        const request = record(body, "prepare request");
-        expect(request.directory).toBe(process.cwd());
-        expect(request).not.toHaveProperty("service");
+        expect(body).toMatchObject({ directory: process.cwd() });
+        expect(body).not.toHaveProperty("service");
         return assignment();
       }
       return undefined;
@@ -181,9 +182,7 @@ test("multiple app services require an explicit service, even from a service sub
   );
   const request = vi.fn(async (_endpoint: RuntimeEndpoint, operation: string, body?: unknown) => {
     if (operation !== "prepare") return undefined;
-    const prepare = record(body, "prepare request");
-    expect(prepare.directory).toBe(directory);
-    expect(prepare.service).toBe("api");
+    expect(body).toMatchObject({ directory, service: "api" });
     return assignment();
   });
   await expect(
@@ -300,10 +299,15 @@ test("native publisher selection errors are authored without copying private det
       status: 400,
       responseBody: JSON.stringify({ code: nativeCode, message: "secret provider detail" }),
     });
+    assert(bootstrap.endpoint.scope === "app");
     const { service: _service, ...scoped } = bootstrap.endpoint;
     await expect(
       runtimeRequest(
-        { ...scoped, scope: "invocation", invocation_id: `ivk_${"A".repeat(22)}` },
+        {
+          ...scoped,
+          scope: "invocation",
+          invocation_id: invocationIDSchema.parse(`ivk_${"A".repeat(22)}`),
+        },
         "ad-hoc/register",
         {},
       ),

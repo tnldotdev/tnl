@@ -8,9 +8,9 @@ import {
   contextSchema,
   inside,
   readySchema,
-  serviceKey,
   type Cleanup,
 } from "./contract.js";
+import { serviceNameSchema } from "../../packages/ts/src/internal/values.js";
 import { connectorJSON } from "./native.js";
 import { selectBinary } from "./resolve.js";
 import { ActionError, checkCancelled, ownedError, safeActionMessage } from "./errors.js";
@@ -72,7 +72,7 @@ export async function post(): Promise<void> {
   if (!saved) return;
   let owned: Cleanup;
   try {
-    owned = cleanupSchema.parse(JSON.parse(saved) as unknown);
+    owned = cleanupSchema.parse(JSON.parse(saved));
   } catch (cause) {
     throw new ActionError("TNL_ACTION_STATE_INVALID", { cause });
   }
@@ -101,14 +101,15 @@ export async function main(options: {
 async function setup(options: Parameters<typeof main>[0]): Promise<void> {
   checkCancelled(options.signal);
   const workload = core.getInput("workload");
-  if (!serviceKey.safeParse(workload).success) throw new ActionError("TNL_ACTION_WORKLOAD_INVALID");
+  if (!serviceNameSchema.safeParse(workload).success)
+    throw new ActionError("TNL_ACTION_WORKLOAD_INVALID");
   const timeout = Number(core.getInput("timeout") || "90");
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > 300)
     throw new ActionError("TNL_ACTION_TIMEOUT_INVALID");
   const services = core.getMultilineInput("services");
   if (
     services.length > 32 ||
-    services.some((key) => !serviceKey.safeParse(key).success) ||
+    services.some((key) => !serviceNameSchema.safeParse(key).success) ||
     new Set(services).size !== services.length
   )
     throw new ActionError("TNL_ACTION_SERVICES_INVALID");
@@ -186,18 +187,13 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
     if (!parsed.success)
       throw new ActionError("TNL_ACTION_CONTEXT_INVALID", { cause: parsed.error });
     const context = parsed.data;
-    let server: URL;
     try {
-      server = new URL(context.server);
       if ((await realpath(context.directory)) !== context.directory)
         throw new ActionError("TNL_ACTION_CONTEXT_INVALID");
     } catch (cause) {
       throw ownedError(cause, "TNL_ACTION_CONTEXT_INVALID");
     }
     if (
-      server.protocol !== "https:" ||
-      server.origin !== context.server ||
-      context.audience !== context.server ||
       context.workload !== workload ||
       (!inside(context.directory, directory) && context.directory !== directory) ||
       services.some((key) => !context.services.includes(key))
@@ -256,9 +252,6 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
       !ready.success ||
       ready.data.executable !== binary ||
       owned.handle !== ready.data.connection_handle ||
-      !Number.isFinite(Date.parse(ready.data.expires_at)) ||
-      Date.parse(ready.data.expires_at) <= Date.now() ||
-      Date.parse(ready.data.expires_at) > Date.now() + 6 * 60 * 60 * 1000 ||
       Object.keys(ready.data.project_runtime.services).length !== context.services.length ||
       context.services.some((key) => !Object.hasOwn(ready.data.project_runtime.services, key)) ||
       (ready.data.kubeconfig !== undefined && !inside(session, ready.data.kubeconfig))

@@ -95,7 +95,8 @@ func TestIntegrationURLPublisherTerminatesVisitorTLSLocally(t *testing.T) {
 	fixture := newStandalonePublishFixture(t, "integration-url")
 	observed := make(chan string, 1)
 	quic, tcp := fixture.connectors()
-	config := fixture.identity.publisherConfig("http://127.0.0.1:1", quic, tcp)
+	config := fixture.identity.publisherConfig("", quic, tcp)
+	config.Purpose = controlv1.Webhooks
 	config.AllowedIPPrefixes = []string{"127.0.0.1/32"}
 	config.Handler = http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		observed <- request.RemoteAddr + " " + request.URL.RequestURI()
