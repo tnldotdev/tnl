@@ -8,13 +8,6 @@
     "skipLibCheck": true,
     "types": ["node", "react", "react-dom"]
   },
-  "files": [
-    "test/types/config-type-test.ts",
-    "test/types/sdk-type-test.ts",
-    "test/types/next-type-test.ts",
-    "test/types/runtime-type-test.ts",
-    "test/types/vite-type-test.ts",
-    "test/types/workload-type-test.ts",
-    "test/types/workload-cjs-type-test.cts"
-  ]
+  "include": ["test/types/*.test-d.ts", "test/types/*.test-d.cts"],
+  "exclude": ["test/types/runtime-augmented.test-d.ts", "test/types/runtime-augmented.test-d.cts"]
 }

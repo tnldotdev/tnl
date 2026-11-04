@@ -109,10 +109,10 @@ export const tnl = Object.freeze({
       runtime =
         runtime === undefined
           ? project
-          : parseProjectRuntime(
-              { ...runtime, services: { ...runtime.services, ...project.services } },
-              "connected project runtime",
-            );
+          : parseProjectRuntime({
+              ...runtime,
+              services: { ...runtime.services, ...project.services },
+            });
     });
   },
 }) as unknown as TnlRuntime;

@@ -1,16 +1,23 @@
 import { isIP } from "node:net";
 import { TnlError } from "../../errors.js";
+import * as z from "zod";
+import { parseValue } from "../validation.js";
+import { portSchema } from "../values.js";
 
 export type CanonicalTarget = `http://${string}` | `https://${string}`;
 
+export function canonicalListenerTarget<Protocol extends "http" | "https">(
+  host: string,
+  port: number,
+  scheme: Protocol,
+): `${Protocol}://${string}`;
+export function canonicalListenerTarget(host: string, port: number): `http://${string}`;
 export function canonicalListenerTarget(
   host: string,
   port: number,
   scheme: "http" | "https" = "http",
 ): CanonicalTarget {
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new TnlError("sdk.target_invalid");
-  }
+  parseValue(portSchema, port, "sdk.target_invalid");
   const hostname = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   const lowerHostname = hostname.toLowerCase();
   if (hostname === "0.0.0.0") {
@@ -40,17 +47,15 @@ export function canonicalListenerTarget(
 }
 
 export function canonicalLoopbackTarget(host: string, port: number): `http://${string}` {
-  return canonicalListenerTarget(host, port, "http") as `http://${string}`;
+  return canonicalListenerTarget(host, port, "http");
 }
 
+const listenerPortSchema = z
+  .string()
+  .regex(/^[0-9]+$/)
+  .transform(Number)
+  .pipe(portSchema);
 /** parses a decimal listener port from 1 through 65535. */
 export function parseListenerPort(value: string): number {
-  if (!/^[0-9]+$/.test(value)) {
-    throw new TnlError("sdk.target_invalid");
-  }
-  const port = Number(value);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new TnlError("sdk.target_invalid");
-  }
-  return port;
+  return parseValue(listenerPortSchema, value, "sdk.target_invalid");
 }

@@ -1,41 +1,17 @@
 import type { TnlProtocol } from "./config.js";
+import type { ProjectServiceMetadata, ServiceProtocol } from "./internal/project/runtime.js";
+import type { NativeTLSOptions } from "./internal/connector/snapshot.js";
 
 /** browser-safe addresses only; native credentials are returned by node methods. */
-export interface TnlProtocolRegistry {
-  http: {
-    namespace: string;
-    protocol: "http";
-    hostname: string;
-    port: number;
-    public: boolean;
-    url: `https://${string}`;
-  };
-  postgres: {
-    protocol: "postgres";
-    namespace: string;
-    hostname: string;
-    port: number;
-    public: boolean;
-  };
-  mysql: { protocol: "mysql"; namespace: string; hostname: string; port: number; public: boolean };
-  tcp: { protocol: "tcp"; namespace: string; hostname: string; port: number; public: boolean };
-  kubernetes: {
-    namespace: string;
-    protocol: "kubernetes";
-    hostname: string;
-    port: number;
-    public: boolean;
-    url: `https://${string}`;
-  };
-}
+export type TnlProtocolRegistry = {
+  [Protocol in ServiceProtocol]: Omit<
+    Extract<ProjectServiceMetadata, { protocol: Protocol }>,
+    "paths"
+  >;
+};
 
 /** native TLS options exist only in the result of a node connection method. */
-export interface TnlNativeTLSOptions {
-  readonly servername: string;
-  readonly rejectUnauthorized: true;
-  /** omitted by default so native clients use webpki server roots. */
-  readonly ca?: string;
-}
+export type TnlNativeTLSOptions = NativeTLSOptions;
 
 /** standard fetch calls, independent of platform-specific static helpers. */
 export type TnlFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
