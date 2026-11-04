@@ -21,6 +21,9 @@ func Parse(args []string) (Config, error) {
 
 func Resolve(config Config) (Config, error) {
 	config.resolveCapacities(processResources())
+	if config.RelayQUICProfile == "" {
+		config.RelayQUICProfile = "standard"
+	}
 	switch config.Role {
 	case RoleStandalone:
 		setControlDefaults(&config)

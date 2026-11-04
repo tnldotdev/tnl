@@ -12,6 +12,7 @@ type ControlConfig struct {
 	Signer       func(context.Context, string) (Signer, error)
 	Resolve      func(context.Context, string) (Run, error)
 	Pair         func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error)
+	RenewPair    func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error)
 	Permission   func(context.Context, string) (controlv1.VisitorTokenResponse, error)
 	Close        func() error
 	CloseContext func(context.Context) error
@@ -23,7 +24,7 @@ func (ControlConfig) GoString() string { return "private connector control confi
 type configuredControl struct{ config ControlConfig }
 
 func NewControlWithConfig(config ControlConfig) (Control, error) {
-	if config.Signer == nil || config.Resolve == nil || config.Pair == nil || config.Permission == nil || config.Close == nil {
+	if config.Signer == nil || config.Resolve == nil || config.Pair == nil || config.RenewPair == nil || config.Permission == nil || config.Close == nil {
 		return nil, ErrServiceConnection
 	}
 	return &configuredControl{config}, nil
@@ -36,6 +37,9 @@ func (c *configuredControl) ResolveService(ctx context.Context, id string) (Run,
 }
 func (c *configuredControl) PrepareConnectorPeerPair(ctx context.Context, id string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
 	return c.config.Pair(ctx, id, body)
+}
+func (c *configuredControl) RenewConnectorPeerPair(ctx context.Context, id string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+	return c.config.RenewPair(ctx, id, body)
 }
 func (c *configuredControl) VisitorPermission(ctx context.Context, id string) (controlv1.VisitorTokenResponse, error) {
 	return c.config.Permission(ctx, id)

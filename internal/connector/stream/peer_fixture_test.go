@@ -93,6 +93,22 @@ func (f *connectorFixture) PrepareConnectorPeerPair(ctx context.Context, service
 	}
 }
 
+func (f *connectorFixture) RenewConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+	pair, err := f.PrepareConnectorPeerPair(ctx, service, body)
+	if err != nil {
+		return controlv1.ConnectorPeerPairRenewal{}, err
+	}
+	permission, err := f.VisitorPermission(ctx, service)
+	f.mu.Lock()
+	run := f.run
+	f.mu.Unlock()
+	if permission.ExpiresAt.After(pair.ExpiresAt) {
+		permission.ExpiresAt = pair.ExpiresAt
+	}
+	return controlv1.ConnectorPeerPairRenewal{Pair: pair, RunValidUntil: run.ValidUntil, VisitorPermission: permission,
+		Protocol: controlv1.ServiceProtocol(run.Protocol), TrustRevision: run.TrustRevision, Endpoint: *run.Endpoint}, err
+}
+
 func (f *connectorFixture) serveConnectorPeer(p *fixtureConnectorPeer, ready chan<- error) {
 	// the fixture accepts each carrier once. there is no reconnect or
 	// replacement of a physical carrier within an existing inner session.

@@ -41,15 +41,17 @@ func (d *Database) IssueVisitorClientCertificate(ctx context.Context, issuerURL 
 }
 
 func (d *Database) issueVisitorClientCertificateTransaction(ctx context.Context, issuerURL string, scope visitorscope.Scope, source VisitorTokenSource, csrDER []byte, csr *x509.CertificateRequest, issuer *controlvisitor.Issuer, now time.Time) (result ServiceClientCertificate, retErr error) {
+	clock := newAuthorizationClock(now)
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err
 	}
 	defer rollback(ctx, tx, "issue visitor client certificate", &retErr)()
-	permission, err := d.visitorPermissionForSource(ctx, tx, scope, source, now)
+	authority, err := d.visitorAuthorityForSource(ctx, tx, scope, source, clock)
 	if err != nil {
 		return result, err
 	}
+	permission := authority.Permission
 	origin := permission.Subject
 	if workload, ok := origin.(visitortoken.Workload); ok {
 		digest, err := visitortoken.KeyDigest(csr.PublicKey)
