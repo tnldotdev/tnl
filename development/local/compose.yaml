@@ -2,7 +2,7 @@ name: tnl-local-dev
 
 services:
   control-proxy:
-    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    image: docker.io/library/caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
     ports: ["127.0.0.1:8445:8445/tcp"]
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
@@ -27,7 +27,7 @@ services:
       control:
         ipv4_address: 172.31.254.4
   oidc-certificates:
-    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    image: docker.io/library/caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
     user: "0:0"
     entrypoint: [/bin/sh, -ec]
     command:
@@ -65,7 +65,7 @@ services:
       - oidc-tls:/etc/tnl:ro
 
   postgres:
-    image: mirror.gcr.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    image: docker.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
     environment:
       POSTGRES_DB: tnl
       POSTGRES_PASSWORD: tnl

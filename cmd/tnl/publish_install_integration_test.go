@@ -656,7 +656,7 @@ func buildPublisherFixtureImage(t *testing.T, image, binary string, ca []byte) {
 		t.Fatal(err)
 	}
 	files := map[string][]byte{
-		"Dockerfile": []byte("FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac\nCOPY tnl /usr/local/bin/tnl\nCOPY inspect.test ca.crt /fixture/\nCOPY LICENSE NOTICE THIRD_PARTY_LICENSES.txt /licenses/tnl/\nENV SSL_CERT_FILE=/fixture/ca.crt\nENTRYPOINT [\"/usr/local/bin/tnl\"]\n"),
+		"Dockerfile": []byte("FROM docker.io/library/ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac\nCOPY tnl /usr/local/bin/tnl\nCOPY inspect.test ca.crt /fixture/\nCOPY LICENSE NOTICE THIRD_PARTY_LICENSES.txt /licenses/tnl/\nENV SSL_CERT_FILE=/fixture/ca.crt\nENTRYPOINT [\"/usr/local/bin/tnl\"]\n"),
 		"tnl":        data, "ca.crt": ca,
 		"inspect.test": inspector,
 	}

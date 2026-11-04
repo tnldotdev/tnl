@@ -37,6 +37,12 @@ Find integration, race, load, and packaging checks with
 integration tests need Linux. The full CI matrix lives in
 [the workflows](.github/workflows/).
 
+Docker Hub images use `docker.io` directly and stay pinned by digest. Docker,
+Compose, and the test harness use existing Docker credentials, including credential
+helpers. Use `docker login` if you need authenticated pulls locally. GitHub-hosted
+runners pulling public images are
+[exempt from Docker Hub's pull rate limit](https://docs.github.com/en/actions/reference/limits#docker-hubs-rate-limit-for-github-actions).
+
 ## edit generated sources
 
 Edit the source named in a generated file's header, then regenerate:

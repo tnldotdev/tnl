@@ -5,6 +5,7 @@ go 1.27.3
 require (
 	github.com/alecthomas/kong v1.16.1
 	github.com/containerd/errdefs v1.0.0
+	github.com/cpuguy83/dockercfg v0.3.2
 	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.1
 	github.com/testcontainers/testcontainers-go v0.44.0
@@ -35,7 +36,6 @@ require (
 	github.com/containerd/platforms v1.0.0-rc.5 // indirect
 	github.com/containerd/ttrpc v1.2.9 // indirect
 	github.com/containerd/typeurl/v2 v2.3.0 // indirect
-	github.com/cpuguy83/dockercfg v0.3.2 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/cli v29.8.2+incompatible // indirect
 	github.com/docker/compose/v5 v5.6.0 // indirect
