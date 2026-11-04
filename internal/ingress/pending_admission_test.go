@@ -21,7 +21,7 @@ func pendingAdmissionFixture(t *testing.T) (*Server, *visitorAdmission, tunnelv1
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, _ := startIngress(t, Config{Lookup: func(string) (PublicURL, LookupReason) { return route, LookupCurrent }})
+	s, _ := startIngress(t, Config{Lookup: func(string) ([]PublicURL, LookupReason) { return []PublicURL{route}, LookupCurrent }})
 	v, reason := s.admitVisitor(route, netip.MustParseAddr("198.51.100.1"), true)
 	if v == nil {
 		t.Fatal(reason)
@@ -100,6 +100,49 @@ func TestPendingPromotionRejectsClosedVisitor(t *testing.T) {
 	result := s.PromotePendingAdmission(t.Context(), h)
 	if result.Type != tunnelv1.StreamRejected || result.Code != tunnelv1.StalePublishRunNumber || s.Load() != 0 {
 		t.Fatal("closed visitor acquired ordinary capacity", result, s.Load())
+	}
+}
+
+func TestPendingPromotionFindsOnlyItsExactRunInPool(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*PublicURL)
+		omit   bool
+		reason LookupReason
+		want   tunnelv1.ErrorCode
+	}{
+		{name: "exact run behind healthy sibling"},
+		{name: "removed run", omit: true, want: tunnelv1.StalePublishRunNumber},
+		{name: "changed public URL", change: func(r *PublicURL) { r.ID = "replacement" }, want: tunnelv1.StalePublishRunNumber},
+		{name: "changed run number", change: func(r *PublicURL) { r.PublishRunNumber++ }, want: tunnelv1.StalePublishRunNumber},
+		{name: "changed IP policy", change: func(r *PublicURL) { r.AllowAll = false }, want: tunnelv1.Unauthenticated},
+		{name: "unavailable lookup", reason: LookupIngressUnavailable, want: tunnelv1.StalePublishRunNumber},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s, _, h, route := pendingAdmissionFixture(t)
+			sibling := *route
+			sibling.PublishRunID, sibling.PublishRunNumber = "healthy-sibling", route.PublishRunNumber+1
+			if test.change != nil {
+				test.change(route)
+			}
+			s.config.Lookup = func(string) ([]PublicURL, LookupReason) {
+				candidates := []PublicURL{sibling}
+				if !test.omit {
+					candidates = append(candidates, *route)
+				}
+				return candidates, test.reason
+			}
+			// promotion checks an already-owned stream, not new pool capacity.
+			s.poolRuns = map[string]int{route.PublishRunID: s.config.Traffic.Default.Connections}
+			result := s.PromotePendingAdmission(t.Context(), h)
+			if test.want == "" {
+				if result.Type != tunnelv1.StreamAccepted || s.Load() != 1 {
+					t.Fatal("exact run behind sibling was not promoted", result)
+				}
+			} else if result.Type != tunnelv1.StreamRejected || result.Code != test.want || s.Load() != 0 {
+				t.Fatal("promotion switched to a sibling or accepted stale state", result)
+			}
+		})
 	}
 }
 

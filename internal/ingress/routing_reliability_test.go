@@ -131,19 +131,23 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 			// reuse the server harness for real visitor TLS and byte forwarding.
 			before, after := newTLSBackend(t), newTLSBackend(t)
 			firstAttempt := newFailAfterProxyBackend(t, 0)
-			_, address := startIngress(t, Config{Metrics: metrics, Lookup: func(host string) (PublicURL, LookupReason) {
-				entry, ok := controller.Lookup(host, now())
-				if !ok {
-					return PublicURL{}, "not_found"
+			_, address := startIngress(t, Config{Metrics: metrics, Lookup: func(host string) ([]PublicURL, LookupReason) {
+				entries, reason := controller.Lookup(host, now())
+				if reason != LookupCurrent {
+					return nil, reason
 				}
-				backends := []ingressbackend.Backend{before}
-				if entry.PolicyRevision > 1 {
-					backends = []ingressbackend.Backend{firstAttempt, after}
+				candidates := make([]PublicURL, 0, len(entries))
+				for _, entry := range entries {
+					backends := []ingressbackend.Backend{before}
+					if entry.PolicyRevision > 1 {
+						backends = []ingressbackend.Backend{firstAttempt, after}
+					}
+					candidates = append(candidates, PublicURL{ID: entry.PublicUrlId, PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber), Backends: backends, AllowAll: true, AttestSource: testBackendSourceProof})
 				}
-				return PublicURL{ID: entry.PublicUrlId, PublishRunNumber: uint64(entry.PublishRunNumber), Backends: backends, AllowAll: true, AttestSource: testBackendSourceProof}, ""
+				return candidates, LookupCurrent
 			}})
 			advance(expires.Add(-time.Nanosecond))
-			if _, ok := controller.Lookup("route.example", now()); !ok {
+			if entries, reason := controller.Lookup("route.example", now()); reason != LookupCurrent || len(entries) != 1 {
 				t.Fatal("cached route rejected before expiry")
 			}
 			exchangePing(t, ingressClient(t, address, "route.example", ""))
@@ -158,7 +162,7 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 			if !controller.Ready(now()) {
 				t.Fatal("existing readiness must remain live-lease plus initialized map during the stall")
 			}
-			if _, ok := controller.Lookup("route.example", now()); ok {
+			if entries, reason := controller.Lookup("route.example", now()); reason != LookupPublicURLExpired || len(entries) != 0 {
 				t.Fatal("cached route survived its exact expiry boundary")
 			}
 			visitor := ingressClient(t, address, "route.example", "")
@@ -225,8 +229,8 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 				"last_successful_check_timestamp_seconds": float64(now().Unix()),
 				"last_caught_up_timestamp_seconds":        float64(now().Unix()),
 			})
-			if entry, ok := controller.Lookup("route.example", now()); !ok || entry.PolicyRevision != finalRevision || !controller.Ready(now()) {
-				t.Fatalf("routing did not recover: entry=%+v found=%t", entry, ok)
+			if entries, reason := controller.Lookup("route.example", now()); reason != LookupCurrent || len(entries) != 1 || entries[0].PolicyRevision != finalRevision || !controller.Ready(now()) {
+				t.Fatalf("routing did not recover: entries=%+v reason=%s", entries, reason)
 			}
 			exchangePing(t, ingressClient(t, address, "route.example", ""))
 			if got := ingressAwait(t, after.result); got.err != nil || got.request != "ping" || got.visitorConnectionID != firstAttempt.visitorConnectionID() {
@@ -239,7 +243,7 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 			if controller.Ready(lease.LeaseExpiresAt) {
 				t.Fatal("ingress ready at exact ingress lease expiry")
 			}
-			if _, ok := controller.Lookup("route.example", lease.LeaseExpiresAt); ok {
+			if entries, reason := controller.Lookup("route.example", lease.LeaseExpiresAt); reason != LookupIngressUnavailable || len(entries) != 0 {
 				t.Fatal("route available at ingress lease expiry")
 			}
 			for _, operation := range []string{"IngressFetchSnapshot", "IngressApplySnapshot", "IngressApplyEvents"} {
