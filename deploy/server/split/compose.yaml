@@ -136,6 +136,7 @@ services:
       TNLD_RELAY_SERVICE_ID: relay-a
       TNLD_RELAY_TCP_LISTEN: :443
       TNLD_RELAY_UDP_LISTEN: :443
+      TNLD_RELAY_QUIC_PROFILE: standard
     ports:
       - "${TNL_RELAY_A_BIND:?set TNL_RELAY_A_BIND}:443:443/tcp"
       - "${TNL_RELAY_A_BIND}:443:443/udp"
@@ -164,6 +165,7 @@ services:
       TNLD_RELAY_SERVICE_ID: relay-b
       TNLD_RELAY_TCP_LISTEN: :443
       TNLD_RELAY_UDP_LISTEN: :443
+      TNLD_RELAY_QUIC_PROFILE: standard
     ports:
       - "${TNL_RELAY_B_BIND:?set TNL_RELAY_B_BIND}:443:443/tcp"
       - "${TNL_RELAY_B_BIND}:443:443/udp"

@@ -48,6 +48,7 @@ type Config struct {
 	IngressListen         string   `name:"ingress-listen" env:"TNLD_INGRESS_LISTEN" help:"Public visitor TCP listen address."`
 	RelayTCPListen        string   `name:"relay-tcp-listen" env:"TNLD_RELAY_TCP_LISTEN" help:"Public TLS/TCP publisher-connection listen address."`
 	RelayUDPListen        string   `name:"relay-udp-listen" env:"TNLD_RELAY_UDP_LISTEN" help:"Public QUIC publisher-connection listen address."`
+	RelayQUICProfile      string   `name:"relay-quic-profile" env:"TNLD_RELAY_QUIC_PROFILE" default:"standard" help:"Relay QUIC listener profile: standard or fly."`
 	InternalRelayListen   string   `name:"internal-relay-listen" env:"TNLD_INTERNAL_RELAY_LISTEN" help:"Internal forwarding listen address."`
 	DNSServer             string   `name:"dns-server" env:"TNLD_DNS_SERVER" help:"DNS resolver used to verify custom domains. Defaults to the system resolver."`
 
@@ -172,6 +173,10 @@ func (c Config) Validate() (retErr error) {
 	}()
 	if !c.Role.RunsControl() && !c.Role.RunsIngress() && !c.Role.RunsRelay() {
 		return failure.Wrap("validate server role", failure.InvalidRole, errors.New("role must be standalone, control, ingress, or relay"))
+	}
+	if c.RelayQUICProfile != "" && c.RelayQUICProfile != "standard" && c.RelayQUICProfile != "fly" {
+		return failure.WrapSetting("validate relay QUIC profile", failure.ServerConfigInvalid,
+			failure.SettingRelayQUICProfile, errors.New("relay QUIC profile must be standard or fly"))
 	}
 	if _, err := c.ServicePortInventory(); err != nil {
 		return err

@@ -172,9 +172,12 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		policy.Ip = &ip
 	}
 	if scope.Kind == visitorscope.Service {
-		rows, err := tx.Query(ctx, `SELECT session.id,session.public_key,LEAST(session.lease_expires_at,session.expires_at)
+		// a renewal may commit after the request clock but before this snapshot.
+		// retain that current session, bounded by this observation's lease budget;
+		// omitting it would revoke live streams when the publisher applies policy.
+		rows, err := tx.Query(ctx, `SELECT session.id,session.public_key,LEAST(session.lease_expires_at,session.expires_at,$2::timestamptz+interval '90 seconds')
 		    FROM control.workload_sessions session JOIN control.workload_session_services selected ON selected.workload_session_id=session.id
-		    WHERE selected.service_id=$1 AND session.revoked_at IS NULL AND session.created_at<=$2 AND session.renewed_at<=$2 AND session.lease_expires_at>$2 AND session.expires_at>$2 ORDER BY session.id LIMIT 4097`, scope.ID, now)
+		    WHERE selected.service_id=$1 AND session.revoked_at IS NULL AND session.created_at<=$2 AND session.lease_expires_at>$2 AND session.expires_at>$2 ORDER BY session.id LIMIT 4097`, scope.ID, now)
 		if err != nil {
 			return result, err
 		}
