@@ -1,10 +1,12 @@
 package connector
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -25,14 +27,30 @@ import (
 // real TLS and HTTP proof bytes exercise the connector session boundary. provider
 // verification itself is covered by the signed-issuer/PG integration target.
 func TestConnectionReplacementRetainsLostExchangeKeyAndNarrowedScope(t *testing.T) {
-	runConnectionReplacement(t, false)
+	runConnectionReplacement(t, replacementTestOptions{})
 }
 
 func TestConnectionPendingReplacementIsRevokedAfterInventoryFailure(t *testing.T) {
-	runConnectionReplacement(t, true)
+	runConnectionReplacement(t, replacementTestOptions{pending: true})
 }
 
-func runConnectionReplacement(t *testing.T, pending bool) {
+func TestConnectionReplacementResumesConfirmedSessionAfterInventoryFailure(t *testing.T) {
+	runConnectionReplacement(t, replacementTestOptions{recoverInventory: true})
+}
+
+func TestConnectionPendingReplacementRecoversLostResponseForCleanup(t *testing.T) {
+	runConnectionReplacement(t, replacementTestOptions{closeLost: true})
+}
+
+func TestConnectionPendingReplacementShutdownJoinsLateExchange(t *testing.T) {
+	runConnectionReplacement(t, replacementTestOptions{raceExchange: true})
+}
+
+type replacementTestOptions struct {
+	pending, recoverInventory, closeLost, raceExchange bool
+}
+
+func runConnectionReplacement(t *testing.T, options replacementTestOptions) {
 	t.Helper()
 	const binding = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	team, service := "tm_"+strings.Repeat("t", 22), "svc_"+strings.Repeat("p", 22)
@@ -49,13 +67,21 @@ func runConnectionReplacement(t *testing.T, pending bool) {
 	var revoked bool
 	var preparing bool
 	var preparedRequests int
+	var identities, pendingAttachments int
+	recovery := false
+	oldRevoked := make(chan struct{}, 1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/v1/workload-sessions/identity":
-			_ = json.NewEncoder(w).Encode(authorityv1.WorkloadIdentity{Binding: binding, Services: []string{"db"}, AssertionExpiresAt: time.Now().Add(5 * time.Minute)})
+			identities++
+			services := []string{"db"}
+			if identities > 1 {
+				services = append(services, "removed")
+			}
+			_ = json.NewEncoder(w).Encode(authorityv1.WorkloadIdentity{Binding: binding, Services: services, AssertionExpiresAt: time.Now().Add(5 * time.Minute)})
 		case "/v1/workload-sessions/exchange":
 			var input authorityv1.WorkloadExchange
 			if json.NewDecoder(r.Body).Decode(&input) != nil {
@@ -92,7 +118,7 @@ func runConnectionReplacement(t *testing.T, pending bool) {
 				w.WriteHeader(403)
 				return
 			}
-			if dropped < 3 {
+			if !options.raceExchange && dropped < 3 {
 				dropped++
 				c, _, err := w.(http.Hijacker).Hijack()
 				if err != nil {
@@ -117,6 +143,20 @@ func runConnectionReplacement(t *testing.T, pending bool) {
 			w.WriteHeader(410)
 			_, _ = w.Write([]byte(`{"status":410,"code":"forbidden","detail":"session expired"}`))
 		case "/v1/workload-sessions/" + newID + "/assertions":
+			pendingAttachments++
+			if options.recoverInventory && pendingAttachments == 1 {
+				var input authorityv1.WorkloadAssertion
+				_ = json.NewDecoder(r.Body).Decode(&input)
+				signature, _ := base64.RawURLEncoding.DecodeString(input.Signature)
+				digest := sha256.Sum256([]byte(input.Assertion))
+				if input.Assertion != "latest" || r.Header.Get("Authorization") != "Bearer "+newSession.Credential || !ed25519.Verify(nextKey, workloadproof.Attach(newID, digest), signature) {
+					t.Error("inventory recovery did not attach to the confirmed session key")
+					w.WriteHeader(403)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(newSession)
+				return
+			}
 			w.WriteHeader(403)
 			_, _ = w.Write([]byte(`{"status":403,"code":"forbidden","detail":"session revoked"}`))
 		case "/v1/workload/services":
@@ -124,7 +164,7 @@ func runConnectionReplacement(t *testing.T, pending bool) {
 				w.WriteHeader(403)
 				return
 			}
-			if pending {
+			if options.pending || options.recoverInventory && !recovery {
 				w.WriteHeader(503)
 				_, _ = w.Write([]byte(`{"status":503,"code":"unavailable","detail":"inventory unavailable"}`))
 				return
@@ -147,6 +187,7 @@ func runConnectionReplacement(t *testing.T, pending bool) {
 			revoked = true
 			w.WriteHeader(204)
 		case "/v1/workload-sessions/" + oldID:
+			oldRevoked <- struct{}{}
 			w.WriteHeader(204)
 		default:
 			t.Error("replacement eagerly started an unrequested service", r.URL.Path)
@@ -161,31 +202,101 @@ func runConnectionReplacement(t *testing.T, pending bool) {
 	if _, err := client.Exchange(t.Context(), team, "project", strings.Repeat("a", 64), "worker", "first", []string{"db", "removed"}); err != nil {
 		t.Fatal(err)
 	}
-	b := &connectorConnectionBackend{scope: connectorruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: []string{"db", "removed"}}, httpClient: server.Client(), connectorConnectionSession: connectorConnectionSession{workload: client, deadline: oldSession.ExpiresAt}, listeners: map[string]*ownedServiceListener{}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"db": {Protocol: new("postgres")}}}}}}
+	httpClient := server.Client()
+	entered, release := make(chan struct{}), make(chan struct{})
+	if options.raceExchange {
+		httpClient = &http.Client{Transport: &lateReplacementExchange{transport: httpClient.Transport, entered: entered, release: release}}
+	}
+	b := &connectorConnectionBackend{scope: connectorruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: []string{"db", "removed"}}, httpClient: httpClient, connectorConnectionSession: connectorConnectionSession{workload: client, deadline: oldSession.ExpiresAt}, listeners: map[string]*ownedServiceListener{}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"db": {Protocol: new("postgres")}}}}}}
 	// a replacement session invalidates old snapshots without rebuilding their
 	// listeners. only a later Connect for the requested service may do that work.
 	b.listeners["db"] = &ownedServiceListener{attempt: &servicePreparation{state: &servingService{sessionID: oldID}, service: controlv1.Service{Id: service, Protocol: controlv1.Postgres, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 15443}}}}
 	b.listeners["removed"] = &ownedServiceListener{attempt: &servicePreparation{state: &servingService{sessionID: oldID}}}
+	if options.raceExchange {
+		b.lifetime, b.cancel = context.WithCancel(t.Context())
+		attached, closed := make(chan error, 1), make(chan error, 1)
+		go func() { attached <- b.Attach(t.Context(), "first") }()
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			close(release)
+			t.Fatal("replacement did not enter exchange")
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		defer cancel()
+		go func() { closed <- b.Close(ctx) }()
+		select {
+		case <-oldRevoked:
+		case <-ctx.Done():
+			close(release)
+			t.Fatal("shutdown did not revoke the active session during exchange")
+		}
+		select {
+		case err := <-closed:
+			close(release)
+			t.Fatal("shutdown did not join the exchange", err)
+		default:
+		}
+		close(release)
+		if err := <-attached; !errors.Is(err, connectorruntime.ErrExpired) && !errors.Is(err, context.Canceled) {
+			t.Fatal("late exchange revived a closed backend", err)
+		}
+		if err := <-closed; err != nil {
+			t.Fatal(err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if !revoked || b.workload != client || b.replacement == nil || exchanges != 2 {
+			t.Fatal("late issued replacement was promoted, lost, or not revoked", revoked, exchanges)
+		}
+		return
+	}
 	if err := b.Attach(t.Context(), "first"); err == nil || b.replacement == nil || b.workload != client {
 		t.Fatal("lost replacement exchange abandoned its original key or replaced the live adapter", err)
 	}
-	err = b.Attach(t.Context(), "rotated")
-	if pending {
-		if err == nil || b.replacement == nil {
-			t.Fatal("fixture did not retain its issued pending replacement", err)
-		}
-		if _, err := b.replacement.Session(); err != nil {
-			t.Fatal(err)
-		}
+	if _, ok := b.replacement.progress.(*replacementExchangePending); !ok {
+		t.Fatal("lost response did not retain the ambiguous exchange stage")
+	}
+	if options.closeLost {
 		if err := b.Close(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		if !revoked {
-			t.Fatal("issued pending replacement was not revoked")
+		if !revoked || b.workload != client || exchanges != 5 {
+			t.Fatal("cleanup abandoned the committed session or promoted it", revoked, exchanges)
 		}
 		return
+	}
+	err = b.Attach(t.Context(), "rotated")
+	if options.pending || options.recoverInventory {
+		if err == nil || b.replacement == nil {
+			t.Fatal("fixture did not retain its issued pending replacement", err)
+		}
+		if _, err := b.replacement.client.Session(); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := b.replacement.progress.(*replacementExchanged); !ok {
+			t.Fatal("inventory failure did not retain the confirmed session stage")
+		}
+		if options.recoverInventory {
+			mu.Lock()
+			recovery = true
+			mu.Unlock()
+			if err = b.Attach(t.Context(), "latest"); err != nil {
+				t.Fatal("inventory recovery did not resume its confirmed session", err)
+			}
+		} else {
+			if err := b.Close(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if !revoked {
+				t.Fatal("issued pending replacement was not revoked")
+			}
+			return
+		}
 	}
 	if err != nil {
 		t.Fatal("replacement did not recover its committed exchange", err)
@@ -230,4 +341,20 @@ func runConnectionReplacement(t *testing.T, pending bool) {
 	if !revoked {
 		t.Fatal("replacement session was not revoked during joined cleanup")
 	}
+}
+
+// simulate a transport that returns a committed exchange after cancellation.
+// the owner must join it and revoke its result instead of publishing it.
+type lateReplacementExchange struct {
+	transport        http.RoundTripper
+	entered, release chan struct{}
+}
+
+func (r *lateReplacementExchange) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.URL.Path == "/v1/workload-sessions/exchange" {
+		request = request.WithContext(context.WithoutCancel(request.Context()))
+		close(r.entered)
+		<-r.release
+	}
+	return r.transport.RoundTrip(request)
 }
