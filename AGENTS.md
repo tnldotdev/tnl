@@ -15,14 +15,16 @@ qualify claims:
 - Write “By default, visitors need a current sign-in, share link, or token,”
   not “Your app is completely private.”
 
-Keep the voice lowercase, spare, concrete, practical, and understated. Avoid
+Keep the voice spare, concrete, practical, and understated. Avoid
 hype and unnecessary jargon. Start public guides with what the reader can do;
 in maintainer docs, explain the relevant boundary. In diagnostics, say what
 failed and what to do next. Follow the CLI output rules below for presentation.
 
-Use lowercase documentation filenames and headings. Write `url` in lowercase
-in branded headings and page titles; use the canonical `public URL` in prose.
-Write code-comment prose in lowercase too, preserving the exact case of
+Use lowercase documentation filenames and Markdown headings. Use normal sentence
+capitalization in body text, bullets, and tables, with standard casing for proper
+names and acronyms. Write `url` in lowercase in branded headings and page titles;
+use the canonical `public URL` in prose.
+Write code-comment prose in lowercase, preserving the exact case of
 identifiers and literal values. Keep `AGENTS.md` and `SKILL.md` uppercase for
 agent discovery.
 
@@ -333,8 +335,7 @@ Frames follow this general form:
 # codebase and contracts
 
 `cmd/tnl` is the client CLI and `cmd/tnld` is the server process. Product
-releases contain `tnl` and `tnld`. Follow [contributor architecture](docs/maintainers/architecture.md)
-for runtime invariants, trust boundaries, and package/API ownership. Put
+releases contain `tnl` and `tnld`. Put
 operational procedures and current capability limits in
 [self-hosting](https://tnl.dev/docs/self-hosting).
 
@@ -413,12 +414,10 @@ owner and retain its Task selector, tier, fixtures, and execution evidence.
 
 # development workflow
 
-When adding or changing errors, follow [failure boundaries](docs/maintainers/development/errors.md).
-
 - Open a PR for every change.
 - Use semantic `type: summary` messages for every commit in a PR and for the PR title, such as `feat: ...`, `fix: ...`, `docs: ...`, `refactor: ...`, or `chore: ...`.
 - Use the versions in `mise.toml`. Bootstrap with `mise trust`, `mise install`, then `mise exec -- pnpm install --frozen-lockfile` and `mise exec -- uv sync --frozen --project packages/py`; run repository commands from the root through `mise exec --`.
-- Follow [contributing.md](contributing.md) for the validation sequence, generated-source ownership, local stack, and test-tier prerequisites.
+- Follow [contributing.md](contributing.md) for setup, common checks, generation, and the local stack.
 - `task generate-check` regenerates files before comparing generated paths to `HEAD`; it is not read-only. `task format-check` is read-only.
 - Task targets are the public test interface; use `go:test:integration:*` and `go:test:load:*`, and have CI call the same targets.
 - Use `-tnl-*` flags for Go test selection and inputs. Never introduce `TNL_TEST_*` environment variables.
@@ -426,7 +425,7 @@ When adding or changing errors, follow [failure boundaries](docs/maintainers/dev
 - PostgreSQL-backed targets must create, use, and remove digest-pinned disposable PostgreSQL themselves.
 - Use environment variables only for Task/Compose orchestration and resource limits; pass test-binary settings as flags.
 - Package `test` and `typecheck` scripts build explicitly; `*:run` variants reuse an existing build.
-- Author Node tooling and npm runtime code in TypeScript. Keep strict compiler and lint checks enabled; validate external data before narrowing it. The embedded project-config loader JavaScript is generated from `internal/client/project/loader.ts`. See the source/generator/output table in [contributing](contributing.md#edit-generated-sources); disposable SDK `dist` output is separate from committed generated source.
+- Author Node tooling and npm runtime code in TypeScript. Keep strict compiler and lint checks enabled; validate external data before narrowing it. The embedded project-config loader JavaScript is generated from `internal/client/project/loader.ts`. See the generation commands in [contributing](contributing.md#edit-generated-sources); disposable SDK `dist` output is separate from committed generated source.
 - Author the Python ASGI binding in `packages/py`, use the committed `uv.lock`, and run its Ruff, mypy, and pytest Task targets. Keep the app-owned native socket protocol shared with TypeScript and avoid storing ad-hoc credentials in snapshots or errors.
 
 # tests and benchmarks
@@ -443,7 +442,6 @@ When adding or changing errors, follow [failure boundaries](docs/maintainers/dev
 
 - The local stack order is `task local:up`, `task local:trust`, then `task local:login`. `local:trust` modifies the macOS login keychain; `local:down` preserves state, while `local:reset` removes trust, containers, volumes, and `.local`.
 - When AWS SSO expires, prefer `mise exec -- aws sso login --profile <profile> --no-browser --use-device-code`. If terminal output is buffered while the command polls, run it in the background with a private temporary log outside the repo and promptly give the user the prefilled `.../#/device?user_code=...` URL printed by AWS CLI. After approval, verify with `mise exec -- aws sts get-caller-identity --profile <profile>`; do not store the code in the repo or bypass authentication.
-- For release/version/tag work, load and follow `.agents/skills/tnl-release/SKILL.md`; do not duplicate or improvise its approval gates.
 - Keep GitHub Actions SHA-pinned with explicit permissions, timeouts, and `persist-credentials: false`; retain `actionlint` and `zizmor` checks.
 - CI publishes release artifacts and images but does not deploy production. Production Compose images must remain digest-pinned.
 - Release archives, native npm packages, and platform Python wheels must retain all required dependency license and legal files; see [contributing.md](contributing.md).

@@ -1,257 +1,115 @@
-# python connection boundary
+# python connections
 
-`tnl.connect("database")` selects a project service. Await the handle to prepare
-its connector owner and read one snapshot:
+Use `tnl.connect` from your project directory to reach a declared service.
+Start the service's publisher and run `tnl auth login` with an identity that can
+visit it. See the [AWS publisher guide](https://github.com/tnldotdev/tnl/blob/main/deploy/publisher/fargate/readme.md)
+for one way to run a publisher beside your database. The SDK uses the native tnl
+binary included in its platform wheel.
+
+## postgres with psycopg
+
+Add Psycopg with `uv add "psycopg[binary]"`. For a PostgreSQL service named `database`:
 
 ```python
+import asyncio
+import os
+from tempfile import NamedTemporaryFile
+
+import psycopg
 import tnl
+from tnl import PostgresConnection
 
-handle = tnl.connect("database")
-db = await handle
-assert db.host == "127.0.0.1"
-assert db.ssl.check_hostname
+
+async def main():
+    handle = tnl.connect("database")
+    try:
+        db = await handle
+        assert isinstance(db, PostgresConnection)
+        with NamedTemporaryFile(mode="w+") as roots:
+            if db.ca:
+                roots.write(db.ca)
+                roots.flush()
+            async with await psycopg.AsyncConnection.connect(
+                host=db.server_hostname,
+                hostaddr=db.host,
+                port=db.port,
+                sslmode="verify-full",
+                sslrootcert=roots.name if db.ca else "system",
+                channel_binding="disable",
+                gssencmode="disable",
+                user=os.environ["DB_USER"],
+                password=os.environ["DB_PASSWORD"],
+                dbname=os.environ["DB_NAME"],
+            ) as connection:
+                await connection.execute("select 1")
+    finally:
+        await handle.aclose()
+
+
+asyncio.run(main())
 ```
 
-The result is an immutable, non-awaitable Python object. `db.ssl` is a Python
-`ssl.SSLContext` with certificate verification and hostname checks enabled.
-`db.server_hostname` is the service hostname, while `db.host` and
-`db.port` select the actual native loopback listener. `db.ca` is optional PEM
-trust data, not a path. Client certificates and private keys never enter Python.
-HTTP snapshots also have `url`, the service HTTPS origin, independent of the
-loopback port. Kubernetes snapshots also have `kubeconfig` and `context` from
-the connector owner; use that kubeconfig's native credential plugin.
-Opaque TCP snapshots have only `host`, `port`, `protocol`, and `expires_at`;
-native code verifies and terminates their managed visitor TLS leg.
+`hostaddr` dials the local connector; `host` names the service whose certificate
+libpq must verify. Keep the temporary CA file open for the connection or pool's
+lifetime. `sslrootcert="system"` requires a libpq version with system-root
+support; on older versions, supply a trusted root file instead.
 
-Every protocol requires the wheel's matching native `tnl` binary, including HTTP
-and Kubernetes. A public managed endpoint does not remove the connector owner or
-select an alternate direct-dial SDK transport.
+PostgreSQL negotiates TLS inside its protocol. Keep the explicit channel-binding
+and GSS settings above: channel binding cannot cross the publisher's separate
+TLS connections, and `gssencmode="disable"` selects TLS negotiation.
+tnl access is separate from your database username and password.
 
-## prepared synchronous reads
+## other clients
 
-An existing connector owner can be supplied through the private
-`TNL_CONNECTION_HANDLE` environment variable. Then properties and `snapshot()`
-work synchronously, including from an active asyncio event loop:
-
-```python
-import tnl
-
-handle = tnl.connect("database")
-db = handle.snapshot()  # one coherent snapshot from the prepared owner
-host, port = db.host, db.port
-```
-
-Each handle property reads current material. Use `snapshot()` when several
-settings must come from the same read. Synchronous access never starts an owner
-or contacts control. An unprepared sibling fails without opening its listener.
-Without prepared settings, await the handle first. Python runs bounded native
-CLI subprocesses for synchronous reads. Async preparation uses a reusable,
-authenticated private IPC connection in a worker thread; native code owns the
-service transport and authorization.
-
-The SDK uses the platform wheel's existing native binary resolver, then these
-schema-1 commands:
-
-```text
-tnl --no-telemetry runtime connections start --directory DIR --parent-pid PID
-tnl --no-telemetry runtime connections read --handle FILE --service NAME
-tnl --no-telemetry runtime connections stop --handle FILE
-```
-
-Startup returns `connection_handle`, `executable`, and `project_runtime`. The SDK
-keeps the handle private and uses its selected wheel binary for later calls.
-Native code owns handle-file permissions, configuration/credential binding,
-authorization, listener setup, renewal, and cleanup. Python passes no secrets in
-arguments and discards native diagnostic output rather than exposing provider
-details. stdout is bounded to 128 KiB and each command to 65 seconds.
-The command deadline includes stdin backpressure, stdout reads, and process exit;
-failed commands kill and reap their child. Private request input is also bounded
-to 128 KiB. Canceling an async caller leaves its bounded worker to finish.
-
-Each async workload call reacquires its source assertion. Only exact assertion
-bytes with a control-confirmed binding and expiry may reuse identity selection.
-Native-only Fly acquisition intentionally retains per-await native identity
-selection because Python does not hold those assertion bytes. Synchronous reads
-never acquire or attach assertions.
-
-## lifecycle and expiry
-
-Handles for the same canonical directory and mounted handle share
-one human owner within a Python process. Workload handles share only after
-control verifies the same immutable identity and policy. Services prepare
-incrementally within that owner. Concurrent threads and awaiters coalesce
-startup. A failed startup is
-shared until the handle is closed; it does not repeatedly trigger sign-in.
-
-Call `handle.close()` or `await handle.aclose()` when finished. Closing affects
-all handles sharing that SDK-owned session. A supplied owner is left running.
-SDK-owned sessions also register cleanup after successful preparation, and the
-connector owner monitors the Python parent process. Canceling an await does not
-kill a shared startup needed by other callers; it finishes in its worker thread
-and retains those same cleanup boundaries. Imports perform no discovery,
-authentication, process startup, or environment mutation.
-
-Sessions belong to the Python process that created them. After `fork()`, inherited
-handles fail closed, inherited exit hooks cannot stop the parent's connector owner,
-and new handles use fresh locks and IPC. Create and await handles in each serving
-worker. Inactive workload policy contexts are reclaimed when their sessions close
-or identity selection fails; the 32-policy bound applies to active selections and
-sessions rather than every manifest hash the process has seen.
-
-Snapshots have `expires_at`. Read another snapshot before opening a new client
-connection; expired material fails closed. Human owner lifetime follows the
-application rather than a one-hour timer. Workload sessions keep their fixed
-deadline and renewable lease separately. A fresh verified assertion can authorize
-a replacement reusable-provider session for future accepts on the same listener.
-An early native process death is recoverable only after native proves its OS
-lifetime lock is released. A temporary IPC failure never permits a second owner.
-
-Synchronous properties and `snapshot()` on a known-expired owned session raise
-`sdk.connection_expired`; they never start a replacement. A shorter snapshot
-expiry or a transient native read failure does not replace a live owner. Await
-the handle explicitly when fresh preparation is needed.
-
-Existing snapshots stay immutable. The SDK does not mutate driver settings or
-refresh an existing pool. Drain and recreate database pools or connections with
-newly awaited settings; tnl never replays SQL during owner replacement.
-An owner supplied through `TNL_CONNECTION_HANDLE` remains caller-owned, including
-fixed-deadline workload sessions. After its expiry the caller must prepare a new
-owner and select its handle; the SDK does not stop or replace it. Revocation is
-not permission to recover old access: any new preparation must pass current
-native authorization.
-
-Preparation and snapshots are not lasting visitor grants. HTTP responses,
-WebSocket upgrades, and PostgreSQL streams retain current authorization and
-close at their last successful decision deadline during control outages. A new
-workload session can authorize future accepts on the listener, but cannot extend
-an old operation's original session deadline or replay its application bytes.
-
-## portable project types
-
-Run `tnl generate`, then add the generated package to this project's environment:
-
-```console
-uv add --editable ./.tnl/generated/python
-```
-
-`tnl init` runs that command for a Python project; `tnl init --no-install` prints
-it. The editable dependency wires both runtime imports and type-checker lookup
-to the same project-local package. It neither replaces `tnl` nor installs a
-global module. Commit `.tnl/generated/python/` and the project dependency/lock
-changes. Regenerate after changing declared services. `tnl generate --check`
-also checks the Python artifacts without writing them.
-
-```python
-from typing import Literal, assert_type
-from tnl_project import tnl
-
-handle = tnl.connect("database")
-db = await handle
-assert_type(db.protocol, Literal["postgres"])
-# tnl.connect("unknown") is a type error for a static project configuration.
-```
-
-Static YAML/JSON configurations emit exact `Literal` names and protocol-specific
-snapshot types. Runtime checks reject unknown names and protocol drift from a
-stale facade. An empty static configuration accepts no service name. Generated
-files contain service names and protocol types, never endpoints, trust data,
-credentials, or checkout paths.
-
-TypeScript configs, including factories, currently emit an explicitly generic
-Python facade. Their evaluated names and protocols are not proof of a stable
-cross-worktree declaration. Generic calls validate names in the native runtime
-and return the `Connection` union; narrow it with `isinstance` or `protocol`.
-The TypeScript declaration file continues to reference the source config type,
-preserving its optional services and protocol unions. Python does not convert
-one evaluated factory result into universally exact types.
-
-## client adapters
-
-For opaque TCP services, connect to the native loopback listener:
+Inside an async function, a `tcp` service works with an ordinary socket:
 
 ```python
 import socket
+import tnl
+from tnl import TCPConnection
 
-with socket.create_connection((stream.host, stream.port), timeout=10) as raw:
-    raw.sendall(b"hello")
+handle = tnl.connect("ssh")
+try:
+    stream = await handle
+    assert isinstance(stream, TCPConnection)
+    with socket.create_connection((stream.host, stream.port), timeout=10) as connection:
+        banner = connection.recv(256)
+finally:
+    await handle.aclose()
 ```
 
-PostgreSQL and MySQL negotiate TLS inside their database protocol. Do not wrap
-their raw socket as direct TLS. These snapshots are deliberately not arbitrary
-`**kwargs` for every database library:
+- **Kubernetes:** Use the returned `kubeconfig` and `context`, including the
+  kubeconfig's native credential plugin.
+- **MySQL:** Settings include a verified `ssl.SSLContext`, but there is no
+  drop-in PyMySQL/mysqlclient adapter. A driver must dial `host` while verifying
+  `server_hostname`. Passing the loopback address as the TLS name fails verification.
+- **HTTP:** There is no bundled HTTPX transport. An adapter must dial the local
+  connector while preserving the managed origin, TLS name, and request
+  authorization. Passing the returned `url` to an ordinary HTTP client is insufficient.
 
-- psycopg/libpq can separate the dial address from the verified hostname. Use
-  `host=db.server_hostname`, `hostaddr=db.host`, `port=db.port`, and
-  `sslmode="verify-full"`, `channel_binding="disable"`, and
-  `gssencmode="disable"`. libpq does not accept a Python `SSLContext`. When
-  `db.ca` is present, supply its PEM through a caller-owned private temporary
-  `sslrootcert` file for the full lifetime of the connection or pool. When it is
-  absent, use `sslrootcert="system"` on libpq versions supporting system roots,
-  or an explicit trusted root file on older versions. Database/user/password
-  remain the application's settings.
-  PostgreSQL SCRAM channel binding cannot cross the publisher's separate TLS
-  connections; disabling it retains certificate and hostname verification.
-  `gssencmode="disable"` selects PostgreSQL TLS negotiation rather than GSS
-  encryption. This API does not disable either option on the application's behalf.
-- PyMySQL accepts an `SSLContext` but uses its dial `host` for TLS hostname
-  verification. Passing `host=db.host` would verify `127.0.0.1`, not the managed
-  hostname. This API does not provide a drop-in PyMySQL/mysqlclient adapter;
-  choose a driver with an independently configurable TLS server name or supply
-  a reviewed driver adapter. `ssl_verify_identity=False` and disabling context
-  checks are not supported workarounds.
-- An HTTP URL alone does not configure a Python HTTP client's native loopback
-  dial address or private request authorization. Use a client adapter that
-  preserves the managed origin/SNI and the connector owner's admission boundary;
-  this SDK does not install a global resolver or an httpx transport.
+## keep connections current
 
-## checks
+Await a handle before opening a client. Returned settings are snapshots; await
+again for fresh settings when replacing a connection or pool. tnl does not update
+an existing pool or replay failed queries.
 
-`mise exec -- task py:check` runs the routine lifecycle, process bounds, expiry,
-and validation coverage. The project-metadata Go tests run strict mypy against
-generated facades, checking exact protocols, invalid literals, and non-awaitable
-results. They also retain the TypeScript union/optional-service compiler proof.
+After preparation, `handle.snapshot()` reads settings synchronously. It also
+works with a prepared `TNL_CONNECTION_HANDLE`; it cannot start a connector or
+sign in. Create handles inside each serving worker after a fork.
 
-For the real Go owner/CLI and hostname-verified Python TLS proof, build the two
-binaries into a private temporary directory, then pass their paths:
+Close clients before calling `handle.close()` or `await handle.aclose()`.
+Closing stops the SDK-owned connector shared by related handles. A connector
+supplied through `TNL_CONNECTION_HANDLE` remains the caller's responsibility.
+
+## typed service names
 
 ```console
-GOMAXPROCS=2 GOFLAGS=-p=2 mise exec -- go build -o /private/tmp/tnl-python-proof/tnl ./cmd/tnl
-GOMAXPROCS=2 GOFLAGS=-p=2 mise exec -- go build -o /private/tmp/tnl-python-proof/owner ./packages/py/tests/testdata/connection_owner
-mise exec -- uv run --frozen --project packages/py pytest -q packages/py/tests/test_connections_native.py --tnl-binary /private/tmp/tnl-python-proof/tnl --tnl-connection-owner /private/tmp/tnl-python-proof/owner
+tnl generate
+uv add --editable ./.tnl/generated/python
 ```
 
-This local fixture uses the real native IPC owner and native CLI read operation,
-an ephemeral certificate, PostgreSQL SSLRequest negotiation, and a real TLS
-socket. It checks failed hostname verification, opaque TCP settings, and unsafe
-handle permissions without contacting a deployed server.
-
-When psycopg is already installed in the test environment, the optional
-`test_installed_psycopg_uses_verified_hostname_and_explicit_transport_options`
-also uses actual libpq, the real native prepared-read operation, and the fixture's
-PostgreSQL password/TLS handshake. It checks the managed hostname with a loopback
-dial address, verified trust, the explicit options above, and rejection of an
-incorrect hostname or required channel binding. It does not qualify SQL, SCRAM
-authentication through a publisher, pooling, or other Python database drivers.
-The locked SDK test dependencies do not install psycopg; the test reports a skip
-when it is absent.
-Local qualification used Python 3.13.9, psycopg 3.2.9's binary implementation,
-and libpq 17.5 on macOS arm64.
-
-For configured-app metadata and Uvicorn registration, run:
-
-```console
-mise exec -- task py:test -- -k 'app_metadata or worker_registers'
-```
-
-The Go app fixture builds assignments with `projectmeta.NewEndpoint` and
-`Metadata.Public(true)`. Python validates HTTP, TCP, PostgreSQL, MySQL, and
-Kubernetes siblings, including their allocated ports and public/private exposure.
-Only the selected Uvicorn app must be HTTP; its `public_url` retains the native
-HTTPS origin and port even when its managed endpoint is private.
-
-The native subprocess checks use the real local publisher handler, scoped
-capability, and SQLite-backed registration manager for prepare, register, renew,
-and unregister. The publication worker is a fixture; these checks do not exercise
-control allocation, CLI owner discovery, certificates, relays, or visitor traffic.
-Separate real Uvicorn worker/reload checks use native-produced assignments through
-a Python HTTP fixture to verify listener binding and shutdown order.
+Replace `import tnl` with `from tnl_project import tnl`, keeping the connection
+class imports used above. YAML and JSON configurations generate
+exact service names and protocol types. TypeScript configurations return a union;
+narrow it with `isinstance`, as above. Commit `.tnl/generated/python/` and the
+dependency changes, and regenerate after changing services.

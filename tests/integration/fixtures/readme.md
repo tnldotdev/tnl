@@ -1,15 +1,16 @@
-# disposable integration fixtures
+# integration fixtures
 
-These files support explicit integration/load Tasks. run those Tasks from the
-repository root so the harness owns startup and cleanup.
+Run these tasks from the repository root with `mise exec -- task <task>`.
+The tasks and their test harnesses start and clean up the disposable containers.
 
-| fixture                                                   | owner and public task                                                                                              |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `separated-stack/compose.yaml`, `runtime-load.Dockerfile` | `tools/testharness`, `go:test:load:runtime`                                                                        |
-| `dns/compose.yaml`                                        | `tools/testharness`, `go:test:integration:dns`                                                                     |
-| `compose-publisher/main.go`                               | publisher target and daemon binary integration tests, `go:test:integration:compose` / `go:test:integration:binary` |
-| `publisher-install/test.Dockerfile`                       | privileged disposable Ubuntu/systemd, `go:test:integration:publisher-install`                                      |
+| Fixture                                                                | Used by                                                        |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------- |
+| [separated-stack/](separated-stack/)                                   | `go:test:load:runtime` and `go:test:load:connect`              |
+| [dns/compose.yaml](dns/compose.yaml)                                   | `go:test:integration:dns`                                      |
+| [compose-publisher/main.go](compose-publisher/main.go)                 | `go:test:integration:compose` and `go:test:integration:binary` |
+| [publisher-install/test.Dockerfile](publisher-install/test.Dockerfile) | `go:test:integration:publisher-install`                        |
 
-Compose build contexts and repository mounts climb four levels to the root.
-daemon runtime assertions remain beside daemon composition, including their
-private helpers; these fixture moves do not make daemon internals public.
+These need Docker. The binary tier requires Linux; publisher-install uses a
+privileged Ubuntu/systemd container. Task definitions live in
+[tasks/integration.yml](../../../tasks/integration.yml) and
+[tasks/load.yml](../../../tasks/load.yml).
