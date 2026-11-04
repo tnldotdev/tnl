@@ -80,23 +80,28 @@ interface Dependencies {
 }
 const defaultDependencies: Dependencies = { start: startRuntime, request: runtimeRequest };
 
-declare global {
-  var __tnlAppPreparations: Map<string, Promise<PreparedService>> | undefined;
+interface AppRegistry {
+  readonly preparations: Map<string, Promise<PreparedService>>;
+  readonly frameworkTargets: WeakMap<
+    PreparedService,
+    (target: `http://${string}`) => Promise<void>
+  >;
 }
-const preparations = (globalThis.__tnlAppPreparations ??= new Map<
-  string,
-  Promise<PreparedService>
->());
-const frameworkTargets = new WeakMap<
-  PreparedService,
-  (target: `http://${string}`) => Promise<void>
->();
+
+declare global {
+  var __tnlAppRegistry: AppRegistry | undefined;
+}
+// independently loaded SDK copies must recognize the same prepared handles.
+const registry = (globalThis.__tnlAppRegistry ??= {
+  preparations: new Map<string, Promise<PreparedService>>(),
+  frameworkTargets: new WeakMap<PreparedService, (target: `http://${string}`) => Promise<void>>(),
+});
 
 export function reportFrameworkTarget(
   handle: PreparedService,
   target: `http://${string}`,
 ): Promise<void> {
-  const report = frameworkTargets.get(handle);
+  const report = registry.frameworkTargets.get(handle);
   if (report === undefined) throw new TnlError("sdk.configuration_invalid");
   return report(target);
 }
@@ -109,13 +114,14 @@ export function prepareService(
   validateOptions(options);
   const directory = path.resolve(options.directory ?? process.cwd());
   const key = `${directory}\0${options.service ?? ""}\0${options.stateDir ?? process.env.TNL_STATE_DIR ?? ""}\0${process.env.TNL_APP_ENDPOINT ?? ""}\0${framework}`;
-  const existing = preparations.get(key);
+  const existing = registry.preparations.get(key);
   if (existing !== undefined) return existing;
-  const prepared = createPreparedService(options, framework, defaultDependencies, () =>
-    preparations.delete(key),
-  );
-  preparations.set(key, prepared);
-  void prepared.catch(() => preparations.delete(key));
+  const evict = () => {
+    if (registry.preparations.get(key) === prepared) registry.preparations.delete(key);
+  };
+  const prepared = createPreparedService(options, framework, defaultDependencies, evict);
+  registry.preparations.set(key, prepared);
+  void prepared.catch(evict);
   return prepared;
 }
 
@@ -317,7 +323,7 @@ async function createPreparedServiceUntraced(
       ),
     close,
   });
-  frameworkTargets.set(handle, (bound) =>
+  registry.frameworkTargets.set(handle, (bound) =>
     operation(
       framework === "next" && target !== undefined && target !== bound
         ? "next.restart"
