@@ -26,6 +26,9 @@ func runPublisherInstall(ctx context.Context, root string) error {
 		return err
 	}
 	defer exec.Command("docker", "image", "rm", id).Run()
+	if err := prepareFixtureImage(ctx, postgresImage); err != nil {
+		return err
+	}
 	database, err := postgres.Run(ctx, postgresImage, postgres.BasicWaitStrategies(), loopbackPort("5432"))
 	if err != nil {
 		return err

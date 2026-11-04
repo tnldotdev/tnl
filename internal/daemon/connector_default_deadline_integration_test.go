@@ -56,11 +56,24 @@ func (c defaultConnectorOwnerControl) PrepareConnectorPeerPair(ctx context.Conte
 		}
 		c.faults.changedPair = c.faults.changedPair || c.faults.pair != pair.PairId
 		c.faults.connectorUntil = until
-		if body.Action == controlv1.Renew {
-			c.faults.renewals++
-		}
 	}
 	return pair, err
+}
+
+func (c defaultConnectorOwnerControl) RenewConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+	c.faults.mu.Lock()
+	defer c.faults.mu.Unlock()
+	if c.faults.outage {
+		return controlv1.ConnectorPeerPairRenewal{}, clientcontrol.ErrUnavailable
+	}
+	started := time.Now()
+	renewal, err := c.Control.RenewConnectorPeerPair(ctx, service, body)
+	if err == nil {
+		c.faults.changedPair = c.faults.changedPair || c.faults.pair != renewal.Pair.PairId
+		c.faults.connectorUntil = started.Add(renewal.Pair.ExpiresAt.Sub(renewal.Pair.ObservedAt))
+		c.faults.renewals++
+	}
+	return renewal, err
 }
 
 type defaultConnectorPublisherControl struct {

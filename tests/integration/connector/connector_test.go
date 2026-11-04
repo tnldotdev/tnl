@@ -155,6 +155,8 @@ func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualif
 	_ = allocated.Close()
 	native := connectorfixture.NewConnector(t, ca, caKey, service, serviceRun, sessionID, managedHostname, providerAddress)
 	var revoked atomic.Bool
+	renewed := make(chan struct{})
+	var renewedOnce sync.Once
 	var certificateRequests atomic.Int64
 	var current authorityv1.WorkloadSession
 	var clientPublic ed25519.PublicKey
@@ -257,6 +259,15 @@ func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualif
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
+			if requested.Action == "renew" {
+				_ = json.NewEncoder(w).Encode(controlv1.ConnectorPeerPairRenewal{Pair: pair, RunValidUntil: pair.ExpiresAt,
+					Protocol: controlv1.ServiceProtocol(protocol), TrustRevision: trustRevision,
+					Endpoint: controlv1.ServiceEndpoint{Hostname: managedHostname, Port: port, Public: public},
+					VisitorPermission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKindService, Id: service},
+						Hostname: managedHostname, Port: port, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: pair.ExpiresAt}})
+				renewedOnce.Do(func() { close(renewed) })
+				return
+			}
 			_ = json.NewEncoder(w).Encode(pair)
 		case r.URL.Path == "/v1/visitor-tokens":
 			var requested controlv1.VisitorTokenRequest
@@ -265,7 +276,7 @@ func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualif
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: requested.Resource, Hostname: managedHostname, Port: port, ServiceTrustRevision: &trustRevision, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: requested.Resource, Hostname: managedHostname, Port: port, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
 		case strings.HasSuffix(r.URL.Path, "/client-certificate"):
 			certificateRequests.Add(1)
 			w.WriteHeader(403)
@@ -488,6 +499,13 @@ func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualif
 	preparedJSON, _ := json.Marshal(snapshot)
 	if bytes.Contains(preparedJSON, []byte(`"cert"`)) || bytes.Contains(preparedJSON, []byte(`"key"`)) {
 		t.Fatal("prepared connection exported application client credentials")
+	}
+	// both built-owner cases must cross background renewal before exercising
+	// their prepared connections; a fast startup must not hide a stale fixture.
+	select {
+	case <-renewed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("built connector owner did not renew its retained pair")
 	}
 	if protocol == "http" {
 		transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: snapshot.SSL.ServerName}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {

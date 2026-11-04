@@ -105,6 +105,9 @@ func run() error {
 		defer fixture.Close()
 		command = append(command, fixture.Flags...)
 	case "postgres":
+		if err := prepareFixtureImage(ctx, postgresImage); err != nil {
+			return err
+		}
 		container, err := postgres.Run(ctx, postgresImage, postgres.BasicWaitStrategies(), loopbackPort("5432"))
 		if err != nil {
 			return fmt.Errorf("start disposable PostgreSQL: %w", err)
@@ -116,6 +119,9 @@ func run() error {
 		}
 		command = append(command, "-tnl-test-postgres-url="+address)
 	case "redis":
+		if err := prepareFixtureImage(ctx, redisImage); err != nil {
+			return err
+		}
 		container, err := testcontainers.Run(ctx, redisImage,
 			testcontainers.WithExposedPorts("6379/tcp"), loopbackPort("6379"),
 			testcontainers.WithCmd("redis-server", "--requirepass", "testpass"),
