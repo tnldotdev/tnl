@@ -1,68 +1,44 @@
 # generated publisher deployment
 
-Commit this directory with your project configuration. Run `tnl generate --check`
-from the project to check every owned artifact without rewriting it. If you use
-a custom output directory, pass the same `--output-dir` to generation and checks.
+Commit this directory with your project configuration. `manifest.json` lists the
+generated AWS files for each publisher group:
 
-For each AWS publisher in `manifest.json`, the manifest names a group stack
-template, a `.storage-policy.json` stack policy and a `.parameters.example.json` file. Copy the example to a separately
-named actual parameter file; replace every `REQUIRED` entry before deployment.
-Generation never owns that actual file. Examples contain public identifiers and
-references only. Never put signing keys or identity JSON in parameter files.
+- `aws/NAME.yaml`: the CloudFormation stack;
+- `aws/NAME.storage-policy.json`: the policy that protects persistent identity storage;
+- `aws/NAME.parameters.example.json`: deployment settings to copy and fill in.
 
-Bootstrap supplies ControlURL, ProjectKey, Group, TeamID, PublisherGroupID,
-DeploymentID, TemplateSHA256 and every replica's instance, publisher identity ID,
-Secrets Manager ARN and pinned version. The manifest records exact per-replica
-parameter names. Preserve DeploymentID and surviving replica identities across
-updates; their EFS paths are `/tnl/DEPLOYMENT_ID/replica-N`.
+For a group named `production`, run this from the project root:
 
-The template injects nonsecret deployment/provider/replica/image/template metadata
-into the publisher process. A signed runtime observation labels it
-`publisher_reported`; it is not AWS attestation. Bootstrap being prepared does not
-mean a publisher has run, and observed runtime metadata does not prove readiness.
-
-Customer deployment settings include an existing VPC and task subnets, a
-digest-pinned publicly pullable image, names, CPU/memory, architecture, logging,
-KMS keys, permissions boundaries and optional existing compute resources. For EFS,
-provide MountSubnetCount and MountSubnet1 through that count: exactly one subnet
-per distinct AZ covering the task AZs.
-The stack always creates encrypted retained Regional EFS, private access points,
-and retained mount targets. Select one mount subnet per task AZ; clear only unused
-MountSubnet entries.
-The template does not discover subnets or change customer-owned resource policy.
-
-Deploy with your reviewed CloudFormation workflow. Named IAM roles, including
-those derived from ResourcePrefix, require CAPABILITY_NAMED_IAM; otherwise use
-CAPABILITY_IAM for generated roles. Templates exceeding 51,200 bytes require an
-S3 TemplateURL (or your tool's template_url), preserving their exact bytes.
-The supported 1–8 replica range stays within template count and S3 size limits;
-account vCPU and other service quotas still apply.
-
-Supply the generated storage policy as CloudFormation's stack policy when creating
-the stack and preserve it on every update. Retain preserves replaced data; it does
-not keep tasks mounted on the old filesystem. The policy denies replacement of EFS,
-access points, mount targets and their security groups, and deletion of the identity
-filesystem during updates. Before every update, compare fully resolved old/new
-parameter snapshots (including defaults and retired replica slots). Run this from
-a tnl source checkout, using absolute paths for the parameter files:
-
-```console
-GOMAXPROCS=2 GOFLAGS=-p=2 mise exec -- task deploy:publishers:storage-check PREVIOUS=deployed.parameters.json NEXT=next.parameters.json
+```sh
+cp .tnl/generated/aws/production.parameters.example.json production.parameters.json
 ```
 
-FileSystemKMSKeyArn, DeploymentID and the storage/network identity bindings are
-immutable for the deployment's lifetime. Keep the same filesystem, access points,
-private identity state and KMS key. The template always creates EFS; the checker
-rejects changes that would rebind a publisher to empty replacement storage.
+Prepare the replica identities with `tnl apply` and `tnl bootstrap production`,
+then fill the copy with the returned parameter bindings and your AWS settings.
+Replace every `REQUIRED` value. Keep signing keys in Secrets Manager; parameter
+files hold only references.
 
-Each service runs one independent publisher without rolling surge. `/state`
-remains task-local; `/identity` is retained private EFS state. Set a replica's
-DesiredCount to zero before revoking or replacing its identity. Stack removal
-retains EFS, access points, mount targets, their security groups and managed log groups. ECS RUNNING alone does not
-prove successful target or visitor traffic.
+Next, deploy the YAML with your CloudFormation workflow, supplying the completed
+parameters and the generated storage policy. Keep each replica's identity secret
+and EFS storage across updates. Follow the
+[deployment guide](https://github.com/tnldotdev/tnl/blob/main/deploy/publisher/fargate/readme.md)
+for bootstrap, networking, and deployment commands.
 
-`tnl generate` makes no control or AWS calls and never applies infrastructure.
-Do not edit manifest-owned files. Keep custom templates alongside them under
-different names. See the parameter descriptions in the generated template and
-the [publisher deployment reference](https://github.com/tnldotdev/tnl/blob/main/deploy/publisher/fargate/readme.md)
-for the complete network, role, KMS and lifecycle contract.
+Regenerate after changing project configuration, and check before deploying:
+
+```sh
+tnl generate
+tnl generate --check
+```
+
+If you chose a custom directory, adjust the copy path above and use the same
+directory for generation and checks:
+
+```sh
+tnl generate --output-dir infrastructure/generated
+tnl generate --check --output-dir infrastructure/generated
+```
+
+Pass that directory to bootstrap with `--generated-dir` too. Edit your copied
+parameter file, not the generated examples. Generation updates files only;
+bootstrap prepares identities; your CloudFormation workflow deploys the stack.

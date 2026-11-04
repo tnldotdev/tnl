@@ -1,108 +1,79 @@
-# install a publisher
+# keep an app online
 
-Keep one saved public URL serving an HTTP application after logout and restart.
-These reference files require a published tnl image containing this workflow.
-Set `TNL_IMAGE` to that release's complete immutable `image@sha256:…` reference;
-the example deliberately supplies no invented digest or floating tag.
-Compose rejects a missing image; the native publisher rejects a supplied
-`TNL_IMAGE` that is not an immutable SHA-256 image reference before enrollment.
+Run a publisher as a system service or beside your app in Docker Compose. It
+keeps the same public URL after you log out or restart the machine.
 
-## ubuntu
+You'll need a released `tnl` binary, an app that is already running, and permission
+to manage its tnl team. Visitors still need access under the saved URL's policy.
 
-Install the released `tnl` binary with its legal files, start your application,
-then run as the operator who can manage the selected team:
+## on ubuntu
 
-```console
+Install the released binary with its accompanying legal files, then run this as
+your normal user:
+
+```sh
 tnl publish http://127.0.0.1:4096 --name opencode --team studio --install --system
 ```
 
-tnl uses your existing login or asks you to sign in. It creates or reuses the
-saved hostname, preserves its visitor policy unless you explicitly configure
-another policy, and enrolls a publisher with one exact public URL grant. sudo
-asks for permission to copy the executable and legal files, save private root
-state, and enable/start `tnl-publisher.service`. Success includes the public URL
-and current publish run after a verified HTTP readiness request.
+tnl asks you to sign in if needed, saves the URL, and uses sudo to install
+`tnl-publisher.service`. The app's readiness path, `/` by default, must return 2xx.
 
-The system service uses `/var/lib/tnl/publisher` (0700), with private files and
-an encrypted signing key. It contains no human control access or refresh token.
-The setup journal in your client state lets an interrupted command retry with
-the same scoped identity. The installed service does not need that journal or
-your login at boot. Repeating setup with intact state reuses the saved URL ID.
+Systemd starts the publisher at boot. Its identity lives in
+`/var/lib/tnl/publisher`, separate from your login. Keep that private directory
+across restarts.
 
-For a configured public HTTP service with a stable address target, select its
-configuration key instead of passing the target:
-
-```console
-tnl --config /srv/opencode/tnl.json publish opencode --install --system
-```
-
-Setup evaluates the configuration as the operator before sudo. It selects the
-configured server, team, and public URL, and saves the target, `http.readiness.path`,
-target TLS hostname, and CA contents in the job. Relative `target.tls.ca_file`
-paths are resolved from the project directory, including when setup runs elsewhere.
-The supervisor uses this snapshot after restart or reboot; rerun setup to change
-it.
-
-```console
-tnl auth logout
+```sh
 sudo systemctl restart tnl-publisher.service
 sudo tnl service status opencode --system
 ```
 
-Systemd starts it at boot; each new publication uses a new publish run number
-on the same URL. User-login installations use `--install` without `--system`.
-After an abrupt stop, control may need to expire the previous run's lease first.
-The supervisor retries that conflict only while its signed runtime epoch is
-still current. A replaced epoch blocks; it never silently claims another epoch.
+If the app is already declared in project configuration, select its service:
 
-## compose
+```sh
+tnl --config /srv/opencode/tnl.json publish opencode --install --system
+```
 
-Use the maintained `compose.yaml` beside this guide as an additional file in
-your application's Compose project. The application service must be named
-`opencode`, listen on `0.0.0.0:4096` inside its container, and share the default
-Compose network with the publisher. No application port needs to be published.
+Installation saves the target and TLS settings. Rerun it after changing them.
+Omit `--system` for a service that starts when you log in.
 
-Create the saved URL once from a machine running the application, or select an
-existing URL from inventory. A normal foreground publish saves its URL when
-stopped with Ctrl-C:
+## with docker compose
 
-```console
+The example expects an app service named `opencode`, listening on
+`0.0.0.0:4096` on the same Compose network. You don't need to publish its port.
+Change `TNL_TARGET` if your service has another name or port.
+
+First, choose a saved URL. If you don't have one, publish from a machine that
+can reach the app, then press Ctrl-C; the URL stays saved:
+
+```sh
 tnl publish http://127.0.0.1:4096 --name opencode --team studio
 tnl url inventory --team studio
 tnl publisher enroll <public-url-id> --team studio --name opencode
 ```
 
-Copy `.env.example` to a private `.env` file (0600), set the released pinned
-`TNL_IMAGE`, `TNL_SERVER`, and the enrollment key printed by the last command.
-Keep `.env` outside source control. `TNL_TARGET=http://opencode:4096` is private
-publisher configuration; the saved public URL does not store this address.
+Copy this directory's `.env.example` to a private `.env` in your app's Compose
+directory. Set `TNL_SERVER` to the same server used above, `TNL_IMAGE` to a
+published `image@sha256:...` reference, and `TNL_ENROLL_KEY` to the key just printed.
+Keep `.env` out of Git.
 
-```console
+```sh
+chmod 600 .env
 docker compose --env-file .env -f compose.yaml -f /path/to/tnl/deploy/publisher/compose/compose.yaml up -d
 docker compose --env-file .env -f compose.yaml -f /path/to/tnl/deploy/publisher/compose/compose.yaml logs publisher
 ```
 
-The publisher runs ordinary foreground `tnl publish`. The named volume retains
-its root-owned private state and signing key. After the first successful start,
-remove `TNL_ENROLL_KEY` from `.env` and recreate the publisher container to remove
-the consumed key from its environment. Restart/recreation with the same volume
-needs no key and no human login. `unless-stopped` restarts it after Docker starts.
-The volume is mounted at `/var/lib/tnl`; tnl creates the private 0700
-`/var/lib/tnl/publisher` state directory within it.
+After the first successful start, remove `TNL_ENROLL_KEY` from `.env` and rerun
+the `up -d` command. The key is one-use; later starts use the identity in the
+`publisher-state` volume at `/var/lib/tnl/publisher`.
 
-Visitor access stays restricted by default: visitors need a current sign-in,
-share, or visitor token permitted by the saved policy. Readiness uses a
-short-lived, single-use proof bound to the current run, not an unauthenticated
-application request or a policy change. Its default `/` must return 2xx.
+Keep that volume. If it is lost, stop the old publisher, revoke its identity, and
+enroll a replacement for the same URL:
 
-## replace lost state
+```sh
+tnl publisher list --team studio
+tnl publisher revoke <publisher-identity-id> --team studio
+tnl publisher enroll <same-public-url-id> --team studio --name opencode
+```
 
-A consumed enrollment key cannot recreate a deleted signing key. A missing
-volume fails with `TNL_CLIENT_PUBLISHER_ENROLLMENT_REQUIRED`. Stop the old
-publisher, use `tnl publisher list --team studio` to identify and explicitly
-revoke its identity with `tnl publisher revoke <publisher-identity-id> --team studio`,
-then issue a fresh `tnl publisher enroll <same-public-url-id> --team studio`.
-Set the fresh key and recreate the container with a new persistent volume.
-The URL ID and hostname stay the same; the new publisher's run fences older
-publish runs. Stopping a container alone does not revoke its identity or grant.
-Never copy a person's client state into the volume.
+Put the new enrollment key in `.env` and start with a new persistent volume.
+Use publisher enrollment rather than copying your personal client state.
