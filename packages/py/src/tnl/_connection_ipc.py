@@ -6,12 +6,17 @@ import http.client
 import json
 import os
 import re
+import socket
 import stat
+import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from ._protocol import TnlError
+
+_TIMEOUT = 35.0
 
 
 def _failure() -> TnlError:
@@ -99,7 +104,9 @@ class OwnerIPC:
                 "directory": scope_directory,
                 "config_digest": digest,
             }
-            self.connection = http.client.HTTPConnection("127.0.0.1", endpoint.port, timeout=35)
+            self.connection = http.client.HTTPConnection(
+                "127.0.0.1", endpoint.port, timeout=_TIMEOUT
+            )
             return
         except Exception:
             self.close()
@@ -112,11 +119,36 @@ class OwnerIPC:
         if self.creator_pid != os.getpid():
             self.discard_inherited()
             raise _failure()
+        deadline = time.monotonic() + _TIMEOUT
+        watchdog: threading.Timer | None = None
+        expired = threading.Event()
         try:
             if self.closed or self.expires <= datetime.now(UTC):
                 raise ValueError("closed capability")
             if self.connection is None:
-                self.connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=35)
+                self.connection = http.client.HTTPConnection(
+                    "127.0.0.1", self.port, timeout=_TIMEOUT
+                )
+            self.connection.timeout = max(0.001, deadline - time.monotonic())
+            if self.connection.sock is None:
+                self.connection.connect()
+            peer = self.connection.sock
+            if peer is None or time.monotonic() >= deadline:
+                raise TimeoutError("owner IPC deadline")
+            peer.settimeout(max(0.001, deadline - time.monotonic()))
+
+            def interrupt() -> None:
+                # shutdown also interrupts the response's buffered file after
+                # HTTPConnection has detached a connection-close socket.
+                expired.set()
+                try:
+                    peer.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+            watchdog = threading.Timer(max(0, deadline - time.monotonic()), interrupt)
+            watchdog.daemon = True
+            watchdog.start()
             body: dict[str, object] = {**self.scope, "service": service}
             if assertion == "":
                 body["acquire_assertion"] = True
@@ -132,7 +164,9 @@ class OwnerIPC:
             response = self.connection.getresponse()
             data = response.read((128 << 10) + 1)
             if (
-                len(data) > 128 << 10
+                expired.is_set()
+                or time.monotonic() >= deadline
+                or len(data) > 128 << 10
                 or response.status != 200
                 or response.getheader("Content-Type", "").split(";")[0] != "application/json"
             ):
@@ -143,6 +177,10 @@ class OwnerIPC:
             if self.connection is not None:
                 self.connection.close()
                 self.connection = None
+        finally:
+            if watchdog is not None:
+                watchdog.cancel()
+                watchdog.join()
         raise _failure() from None
 
     def close(self) -> None:

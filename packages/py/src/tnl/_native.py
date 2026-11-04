@@ -19,6 +19,8 @@ from ._protocol import (
     parse_endpoint,
 )
 
+_REQUEST_TIMEOUT = 30.0
+
 
 def native_binary() -> Path:
     binary = Path(__file__).parent / "bin" / "tnl"
@@ -151,11 +153,14 @@ class NativeRuntime:
         if data is not None:
             headers["Content-Type"] = "application/json"
         try:
-            async with httpx.AsyncClient(
-                timeout=75 if operation == "unregister" else 30,
-                follow_redirects=False,
-                trust_env=False,
-            ) as client:
+            async with (
+                asyncio.timeout(75 if operation == "unregister" else _REQUEST_TIMEOUT),
+                httpx.AsyncClient(
+                    timeout=75 if operation == "unregister" else _REQUEST_TIMEOUT,
+                    follow_redirects=False,
+                    trust_env=False,
+                ) as client,
+            ):
                 async with client.stream(
                     "GET" if get else "POST",
                     endpoint.url + "/v1/" + operation,
@@ -217,7 +222,7 @@ class NativeRuntime:
                         ),
                     }.get(code, "the local publisher rejected the request")
                     raise TnlError(code, message)
-        except httpx.HTTPError:
+        except (httpx.HTTPError, TimeoutError):
             raise NativeUnavailable() from None
         except (ValueError, UnicodeDecodeError):
             raise InvalidResponse() from None
