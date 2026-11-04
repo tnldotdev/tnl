@@ -161,23 +161,25 @@ func retryVisitorPreparation[T any](ctx context.Context, now time.Time, work fun
 }
 
 func (d *Database) issueVisitorTokenTransaction(ctx context.Context, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result IssuedVisitorToken, retErr error) {
+	clock := newAuthorizationClock(now)
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return result, err
 	}
 	defer rollback(ctx, tx, "issue visitor token", &retErr)()
-	result, err = d.issueVisitorToken(ctx, tx, issuer, scope, source, now)
+	result, err = d.issueVisitorToken(ctx, tx, issuer, scope, source, clock)
 	if err != nil {
 		return IssuedVisitorToken{}, err
 	}
 	return result, tx.Commit(ctx)
 }
 
-func (d *Database) issueVisitorToken(ctx context.Context, tx pgx.Tx, issuer string, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result IssuedVisitorToken, retErr error) {
-	permission, err := d.visitorPermissionForSource(ctx, tx, scope, source, now)
+func (d *Database) issueVisitorToken(ctx context.Context, tx pgx.Tx, issuer string, scope visitorscope.Scope, source VisitorTokenSource, clock authorizationClock) (result IssuedVisitorToken, retErr error) {
+	authority, err := d.visitorAuthorityForSource(ctx, tx, scope, source, clock)
 	if err != nil {
 		return result, err
 	}
+	permission := authority.Permission
 	if scope.Kind == visitorscope.Service {
 		// service admission holds the same lock as metadata updates. read the
 		// current revision without selecting another publisher run.
@@ -185,7 +187,7 @@ func (d *Database) issueVisitorToken(ctx context.Context, tx pgx.Tx, issuer stri
 			return result, err
 		}
 	}
-	token, err := d.signVisitorPermission(ctx, tx, issuer, permission, now)
+	token, err := d.signVisitorPermission(ctx, tx, issuer, permission, clock.entered)
 	if err != nil {
 		return result, err
 	}
@@ -193,13 +195,22 @@ func (d *Database) issueVisitorToken(ctx context.Context, tx pgx.Tx, issuer stri
 	return result, nil
 }
 
-func (d *Database) visitorPermissionForSource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scope, source VisitorTokenSource, now time.Time) (result visitortoken.Permission, retErr error) {
+// visitorAuthority keeps the permission and its proof key from one locked source
+// decision. connector preparation consumes these facts without reauthenticating.
+type visitorAuthority struct {
+	Permission     visitortoken.Permission
+	PublicKey      ed25519.PublicKey
+	ConnectorUntil time.Time
+}
+
+func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scope, source VisitorTokenSource, clock authorizationClock) (result visitorAuthority, retErr error) {
+	now := clock.entered
 	var err error
 	// workload authentication owns the team guard and fixed session facts. it
 	// deliberately cannot create a human control principal.
-	workloadID := ""
+	var workloadSource workloadAuthority
 	if workload, ok := source.(WorkloadTokenSource); ok {
-		workloadID, err = lockWorkloadCredential(ctx, tx, workload.Credential, now)
+		workloadSource, err = lockWorkloadCredential(ctx, tx, workload.Credential, clock)
 		if err != nil {
 			return result, err
 		}
@@ -275,30 +286,35 @@ func (d *Database) visitorPermissionForSource(ctx context.Context, tx pgx.Tx, sc
 				return result, err
 			}
 			subject = visitortoken.Device{IdentityID: principal.IdentityID, SessionID: principal.SessionID, DeviceID: device.DeviceID, KeySHA256: digest}
+			result.PublicKey = ed25519.PublicKey(public)
+			result.ConnectorUntil = minTime(until, now.Add(2*time.Minute))
 		}
 	case WorkloadTokenSource:
-		if scope.Kind != visitorscope.Service || workloadID == "" {
+		if scope.Kind != visitorscope.Service || workloadSource.ID == "" {
 			return result, ErrVisitorPermission
 		}
-		var public []byte
 		// selected-service membership is an authority-confirmed workload fact,
 		// independent of human grants and of which publisher run is ready.
-		err := tx.QueryRow(ctx, `SELECT w.public_key,LEAST(w.lease_expires_at,w.expires_at) FROM control.workload_sessions w
+		var selected bool
+		err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.workload_sessions w
 		    JOIN control.workload_session_services selected ON selected.workload_session_id=w.id AND selected.service_id=$2
 		    JOIN control.teams team ON team.id=w.team_id AND team.deleted_at IS NULL
 		    JOIN control.applied_projects project ON project.team_id=w.team_id AND project.project_key=w.project_key
-		    WHERE w.id=$1 AND w.team_id=$3 AND w.revoked_at IS NULL AND w.created_at<=$4 AND w.renewed_at<=$4 AND w.lease_expires_at>$4 AND w.expires_at>$4`, workloadID, scope.ID, resource.TeamID, now).Scan(&public, &until)
+		    WHERE w.id=$1 AND w.team_id=$3)`, workloadSource.ID, scope.ID, resource.TeamID).Scan(&selected)
 		if err != nil {
 			return result, publisherLookupError(err, ErrVisitorPermission)
 		}
-		if len(public) != ed25519.PublicKeySize {
+		if !selected || len(workloadSource.PublicKey) != ed25519.PublicKeySize {
 			return result, ErrVisitorPermission
 		}
-		digest, err := visitortoken.KeyDigest(ed25519.PublicKey(public))
+		digest, err := visitortoken.KeyDigest(ed25519.PublicKey(workloadSource.PublicKey))
 		if err != nil {
 			return result, err
 		}
-		subject = visitortoken.Workload{SessionID: workloadID, KeySHA256: digest}
+		until = minTime(workloadSource.LeaseExpiresAt, workloadSource.ExpiresAt)
+		subject = visitortoken.Workload{SessionID: workloadSource.ID, KeySHA256: digest}
+		result.PublicKey = ed25519.PublicKey(workloadSource.PublicKey)
+		result.ConnectorUntil = minTime(until, now.Add(WorkloadLease))
 	case ShareTokenSource, ShareSessionTokenSource:
 		var shareID, sourceSecret string
 		var session bool
@@ -398,12 +414,12 @@ func (d *Database) visitorPermissionForSource(ctx context.Context, tx pgx.Tx, sc
 	default:
 		return result, ErrVisitorPermission
 	}
-	if !until.After(now) {
+	if !until.After(clock.current()) {
 		return result, ErrVisitorPermission
 	}
-	result = resource.permission(subject, until, now)
+	result.Permission = resource.permission(subject, until, now)
 	if explicitLifetime {
-		result.ExpiresAt = until.Truncate(time.Second)
+		result.Permission.ExpiresAt = until.Truncate(time.Second)
 	}
 	return result, nil
 }

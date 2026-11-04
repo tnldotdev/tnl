@@ -38,7 +38,7 @@ func TestConnectorPreparationWaitsForPublisherInstallationWithoutResigning(t *te
 		defer cancel()
 		control := installationObservation{pair: pair, requests: make(chan controlv1.ConnectorPeerPairRequest, 8)}
 		done := make(chan error, 1)
-		go func() { _, err := awaitConnectorPublisher(ctx, control, pair.ServiceId, request, pair); done <- err }()
+		go func() { _, _, err := awaitConnectorPublisher(ctx, control, pair.ServiceId, request, pair); done <- err }()
 		for range 2 {
 			select {
 			case observed := <-control.requests:
@@ -78,12 +78,15 @@ func TestConnectorPreparationWaitsForPublisherInstallationWithoutResigning(t *te
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			until, err := awaitConnectorPublisher(ctx, installationObservation{pair: response}, pair.ServiceId, request, pair)
+			until, reported, err := awaitConnectorPublisher(ctx, installationObservation{pair: response}, pair.ServiceId, request, pair)
 			if name == "installed" && err != nil || name != "installed" && !errors.Is(err, ErrServiceConnection) {
 				t.Fatal("installation observation lost its exact binding", err)
 			}
 			if name == "installed" && (!until.After(time.Now()) || until.After(time.Now().Add(time.Minute))) {
 				t.Fatal("installation observation lost its conservative bound")
+			}
+			if name == "installed" && !reported.Equal(*response.PublisherPreparedUntil) {
+				t.Fatal("installation observation lost its independently reported deadline")
 			}
 		})
 	}

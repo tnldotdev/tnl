@@ -24,7 +24,7 @@ import (
 
 type pairFactory func(*testing.T) (Session, Session)
 
-// the local equivalent of Fly's basic UDP listener survives a bounded amount
+// a basic UDP listener survives a bounded amount
 // of packet loss while held streams and fresh responses share a QUIC session.
 func TestQUICHeldAndFreshStreamsWithPacketLoss(t *testing.T) {
 	serverTLS, clientTLS := testTLSConfigs(t)
@@ -221,36 +221,6 @@ func TestQUICConnectorKeepsIdleSessionAlive(t *testing.T) {
 	}
 }
 
-func TestRequiresBasicQUICPacketConn(t *testing.T) {
-	for _, test := range []struct {
-		address string
-		want    bool
-	}{
-		{address: "fly-global-services:443", want: true},
-		{address: "127.0.0.1:443"},
-		{address: "[::]:443"},
-		{address: "missing-port"},
-	} {
-		if got := requiresBasicQUICPacketConn(test.address); got != test.want {
-			t.Errorf("requiresBasicQUICPacketConn(%q) = %t; want %t", test.address, got, test.want)
-		}
-	}
-}
-
-func TestFlyQUICConfig(t *testing.T) {
-	config := &quic.Config{InitialPacketSize: 1400}
-	flyConfig := flyQUICConfig(config)
-	if flyConfig.InitialPacketSize != compatibleQUICPacketSize {
-		t.Errorf("initial packet size = %d; want %d", flyConfig.InitialPacketSize, compatibleQUICPacketSize)
-	}
-	if !flyConfig.DisablePathMTUDiscovery {
-		t.Error("path MTU discovery remains enabled")
-	}
-	if config.InitialPacketSize != 1400 || config.DisablePathMTUDiscovery {
-		t.Fatal("caller QUIC config was modified")
-	}
-}
-
 func TestQUICConnectorConfig(t *testing.T) {
 	if got := quicConnectorConfig(nil).InitialPacketSize; got != compatibleQUICPacketSize {
 		t.Errorf("default initial packet size = %d; want %d", got, compatibleQUICPacketSize)
@@ -264,19 +234,40 @@ func TestQUICConnectorConfig(t *testing.T) {
 	}
 }
 
-func TestBasicQUICPacketConn(t *testing.T) {
+func TestQUICListenerSocketModes(t *testing.T) {
+	for _, basic := range []bool{false, true} {
+		t.Run(fmt.Sprintf("basic=%t", basic), func(t *testing.T) {
+			config := QUICConfig{Config: &quic.Config{EnableDatagrams: true}}
+			if basic {
+				config.UDPNetwork = "udp4"
+				config.BasicPacketConn = true
+				config.Config.InitialPacketSize = 1200
+				config.Config.DisablePathMTUDiscovery = true
+			}
+			testQUICListenerSocketMode(t, config)
+		})
+	}
+}
+
+func testQUICListenerSocketMode(t *testing.T, config QUICConfig) {
+	t.Helper()
 	serverTLS, clientTLS := testTLSConfigs(t)
-	serverTLS, err := transportTLSConfig(serverTLS, "", true)
+	wrapped, err := ListenQUIC("127.0.0.1:0", serverTLS, config)
 	if err != nil {
-		t.Fatalf("configure server TLS: %v", err)
+		t.Fatalf("listen QUIC: %v", err)
 	}
-	listener, transport, packetConn, err := listenBasicQUIC("127.0.0.1:0", serverTLS, quicConfig(nil))
-	if err != nil {
-		t.Fatalf("listen basic QUIC: %v", err)
-	}
-	address := packetConn.LocalAddr().String()
-	wrapped := &QUICListener{listener: listener, transport: transport, packetConn: packetConn}
 	t.Cleanup(func() { _ = wrapped.Close() })
+	address := wrapped.Addr().String()
+	_, ordinaryUDP := wrapped.transport.Conn.(*net.UDPConn)
+	if ordinaryUDP == config.BasicPacketConn {
+		t.Fatalf("ordinary UDP capabilities = %t; basic packet connection = %t", ordinaryUDP, config.BasicPacketConn)
+	}
+	if wrapped.packetConn.LocalAddr().(*net.UDPAddr).IP.To4() == nil {
+		t.Fatal("listener did not bind IPv4")
+	}
+	if config.Config.Allow0RTT || config.Config.MaxIncomingStreams != 0 {
+		t.Fatal("caller QUIC config was modified")
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 	type acceptResult struct {
@@ -297,23 +288,39 @@ func TestBasicQUICPacketConn(t *testing.T) {
 			<-ctx.Done()
 		}
 	}()
-	client, err := (QUICConnector{TLSConfig: clientTLS}).Connect(ctx, Endpoint{
+	client, err := (QUICConnector{TLSConfig: clientTLS, Config: QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}).Connect(ctx, Endpoint{
 		Address: address, ServerName: "relay.test",
 	})
 	if err != nil {
-		t.Fatalf("connect basic QUIC: %v", err)
+		t.Fatalf("connect QUIC: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	// Dial can return before the server has accepted the connection. keep both
+	// dialing can return before the server has accepted the connection. keep both
 	// sessions alive until acceptance is observed before testing closure.
 	server := muxAwait(t, accepted)
 	if server.err != nil {
-		t.Fatalf("accept basic QUIC: %v", server.err)
+		t.Fatalf("accept QUIC: %v", server.err)
+	}
+	state := client.(AcceptedPeer).TLSConnectionState()
+	if len(state.VerifiedChains) == 0 || state.ServerName != "relay.test" || state.NegotiatedProtocol != ALPN || state.Version != tls.VersionTLS13 {
+		t.Fatal("client lost verified relay TLS identity or ALPN")
+	}
+	for _, pair := range [][2]Session{{client, server.session}, {server.session, client}} {
+		sender, receiver := pair[0].(DatagramSession), pair[1].(DatagramSession)
+		if !sender.SupportsDatagrams() {
+			t.Fatal("QUIC DATAGRAMs were not negotiated")
+		}
+		if err := sender.SendDatagram(ctx, []byte("packet")); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := receiver.ReceiveDatagram(ctx); err != nil || string(got) != "packet" {
+			t.Fatalf("receive datagram = %q, %v", got, err)
+		}
 	}
 	if err := wrapped.StopAccepting(); err != nil {
 		t.Fatal(err)
 	}
-	assertRoundTrip(t, client, server.session, "drain basic QUIC")
+	assertRoundTrip(t, client, server.session, "drain QUIC")
 	if err := client.Close(); err != nil {
 		t.Fatalf("close client: %v", err)
 	}
@@ -323,7 +330,7 @@ func TestBasicQUICPacketConn(t *testing.T) {
 	cancel()
 	muxAwait(t, joined)
 	if err := wrapped.Close(); err != nil {
-		t.Fatalf("close basic listener: %v", err)
+		t.Fatalf("close QUIC listener: %v", err)
 	}
 	reopened, err := net.ListenPacket("udp4", address)
 	if err != nil {
@@ -332,6 +339,14 @@ func TestBasicQUICPacketConn(t *testing.T) {
 	t.Cleanup(func() { _ = reopened.Close() })
 	if err := reopened.Close(); err != nil {
 		t.Fatalf("close reopened UDP socket: %v", err)
+	}
+}
+
+func TestQUICListenerUDPNetwork(t *testing.T) {
+	serverTLS, _ := testTLSConfigs(t)
+	if listener, err := ListenQUIC("[::1]:0", serverTLS, QUICConfig{UDPNetwork: "udp4"}); err == nil {
+		_ = listener.Close()
+		t.Fatal("IPv4 listener accepted an IPv6 listen address")
 	}
 }
 
