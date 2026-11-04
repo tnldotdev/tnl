@@ -14,6 +14,14 @@ let directory: string;
 beforeEach(async () => {
   vi.resetModules();
   vi.stubGlobal("__tnlConnectorContextV1", undefined);
+  for (const name of [
+    "TNL_CONNECTION_HANDLE",
+    "TNL_WORKLOAD",
+    "VERCEL",
+    "FLY_APP_NAME",
+    "GITHUB_ACTIONS",
+  ])
+    vi.stubEnv(name, undefined);
   directory = await mkdtemp(path.join(tmpdir(), "tnl-provider-"));
 });
 afterEach(async () => {
