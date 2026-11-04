@@ -1,17 +1,17 @@
 # local publisher api
 
-SDKs use this loopback HTTP API to tell `tnl` where an app is listening. the same
-API gives the CLI status, events, and readiness checks. one local publisher
+SDKs use this loopback HTTP API to tell `tnl` where an app is listening. The same
+API gives the CLI status, events, and readiness checks. One local publisher
 process serves each canonical project directory and client-state root.
 
 ## registering an app
 
-the SDK runs `tnl runtime endpoint --directory <project> --service <name>` to
-discover or start that process. the response includes its address and a token
-limited to the selected app service. then:
+The SDK runs `tnl runtime endpoint --directory <project> --service <name>` to
+discover or start that process. The response includes its address and a token
+limited to the selected app service. Then:
 
 ```text
-sdk                              local publisher
+SDK                              local publisher
  |-- prepare -------------------------->|
  |<-- registration + public URL --------|
  |                                      |
@@ -23,12 +23,12 @@ sdk                              local publisher
  |<-- stopped and worker exited --------|
 ```
 
-register a new target when the app replaces its listener. the publisher stops
-and joins the old worker before starting its replacement. renewals keep the
-20-second registration lease alive. after a `401` or
+Register a new target when the app replaces its listener. The publisher stops
+and joins the old worker before starting its replacement. Renewals keep the
+20-second registration lease alive. After a `401` or
 `runtime.registration_stale`, discover the endpoint, prepare, and register again.
 
-the process keeps one evaluated configuration. if reuse returns
+The process keeps one evaluated configuration. If reuse returns
 `TNL_CLIENT_APP_CONFIGURATION_CONFLICT`, stop and restart the project's apps and
 named local publishers so they all use the new configuration.
 
@@ -39,8 +39,8 @@ named local publishers so they all use the new configuration.
   authentication, and loopback-only requests; browser `Origin` headers are rejected.
 - [local/runtime.go](../local/runtime.go) owns process startup and shutdown.
   [app/manager.go](../app/manager.go) owns registrations and their leases.
-- [the OpenAPI contract](../../../api/publisher/local/v1/openapi.yaml) defines
-  request and response fields. edit it rather than the generated Go types, then
+- [The OpenAPI contract](../../../api/publisher/local/v1/openapi.yaml) defines
+  request and response fields. Edit it rather than the generated Go types, then
   regenerate from the repository root:
 
 ```sh
