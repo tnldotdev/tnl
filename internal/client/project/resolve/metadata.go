@@ -247,6 +247,10 @@ func ConfiguredService(
 	effective clientproject.ResolvedService,
 	current team.Context,
 ) (meta.Service, error) {
+	protocol := config.ServiceProtocol(effective.Publish)
+	if protocol != "http" {
+		return meta.Service{}, failure.Wrap("resolve public URL metadata", failure.ProjectConfigInvalid, errors.New("public URL metadata requires protocol http"))
+	}
 	publicURL, name, selectedDomain := "", "", ""
 	ephemeral := false
 	if effective.Tunnel != nil {
@@ -268,9 +272,8 @@ func ConfiguredService(
 	if err != nil {
 		return meta.Service{}, err
 	}
-	protocol := config.ServiceProtocol(effective.Publish)
 	namespace, _ := current.Namespace(domain)
-	return meta.NewService(namespace, hostname, protocol, nil)
+	return meta.NewEndpoint(namespace, hostname, protocol, 443, true)
 }
 
 func (r *MetadataResolver) Context(

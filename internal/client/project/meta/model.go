@@ -85,35 +85,20 @@ func (service *Service) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// NewService builds browser-safe endpoint metadata. target addresses, trust,
-// and credentials never enter this type. private protocols need an assigned port.
-func NewService(namespace, hostname, protocol string, port *int) (Service, error) {
-	service := Service{Namespace: namespace, Hostname: hostname, Protocol: protocol, Public: protocol == "http"}
-	if port != nil {
-		service.Port = *port
-	} else if protocol == "http" {
-		service.Port = 443
-	}
+// NewEndpoint builds browser-safe metadata from the current endpoint facts.
+// port and public are independent of protocol. target addresses, trust, and
+// credentials never enter this type.
+func NewEndpoint(namespace, hostname, protocol string, port int, public bool) (Service, error) {
+	service := Service{Namespace: namespace, Hostname: hostname, Protocol: protocol, Port: port, Public: public}
 	if protocol == "http" || protocol == "kubernetes" {
 		service.URL = "https://" + hostname
-		if service.Port != 443 {
-			service.URL = "https://" + net.JoinHostPort(hostname, strconv.Itoa(service.Port))
+		if port != 443 {
+			service.URL = "https://" + net.JoinHostPort(hostname, strconv.Itoa(port))
 		}
 	}
 	if err := validateServiceAddress(service); err != nil {
 		return Service{}, err
 	}
-	return service, nil
-}
-
-// NewEndpoint requires the runtime's current exposure fact, independent of
-// protocol. native database and Kubernetes endpoints may be directly exposed.
-func NewEndpoint(namespace, hostname, protocol string, port int, public bool) (Service, error) {
-	service, err := NewService(namespace, hostname, protocol, &port)
-	if err != nil {
-		return Service{}, err
-	}
-	service.Public = public
 	return service, nil
 }
 

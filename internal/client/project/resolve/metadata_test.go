@@ -34,6 +34,7 @@ func TestProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t *test
 	requests := 0
 	hostname := "review.tnl.dev"
 	protocol, public := "http", false
+	port := 20001
 	status := http.StatusOK
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -52,7 +53,7 @@ func TestProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t *test
 			_ = json.NewEncoder(w).Encode(map[string]string{"code": code, "message": "service unavailable"})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": "svc_web", "team_id": "team_1", "name": "web", "protocol": protocol, "enabled": true, "endpoint": map[string]any{"hostname": hostname, "port": 20001, "public": public}, "target_tls": map[string]any{"hostname": "private.internal", "pem": "private-target-trust-must-not-leak"}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "svc_web", "team_id": "team_1", "name": "web", "protocol": protocol, "enabled": true, "endpoint": map[string]any{"hostname": hostname, "port": port, "public": public}, "target_tls": map[string]any{"hostname": "private.internal", "pem": "private-target-trust-must-not-leak"}})
 	}))
 	defer server.Close()
 	project.Config.Server = &server.URL
@@ -68,7 +69,7 @@ func TestProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t *test
 		t.Fatal(err)
 	}
 	encoded, err := json.Marshal(metadata)
-	if err != nil || requests != 1 || len(metadata.Services) != 1 || metadata.Services["web"].URL != "https://review.tnl.dev:20001" || metadata.Services["web"].Public || strings.Contains(string(encoded), "production.internal") || strings.Contains(string(encoded), "private-target-trust") || strings.Contains(string(encoded), `"api"`) || strings.Contains(string(encoded), "visitor-session") {
+	if err != nil || requests != 1 || len(metadata.Services) != 1 || metadata.Services["web"].URL != "https://review.tnl.dev:20001" || metadata.Services["web"].Port != port || metadata.Services["web"].Public || strings.Contains(string(encoded), "production.internal") || strings.Contains(string(encoded), "private-target-trust") || strings.Contains(string(encoded), `"api"`) || strings.Contains(string(encoded), "visitor-session") {
 		t.Fatalf("unsafe or incomplete visitor metadata: %s, requests=%d, error=%v", encoded, requests, err)
 	}
 	protocol, public = "postgres", true
@@ -78,8 +79,17 @@ func TestProjectMetadataUsesVisitorProjectionWithoutManagerConfiguration(t *test
 	service.Target.Address = testTarget("db.internal:5432")
 	resolver.project.Config.Services["web"] = service
 	metadata, err = resolver.Generate(t.Context())
-	if err != nil || metadata.Services["web"].Protocol != "postgres" || !metadata.Services["web"].Public || metadata.Services["web"].URL != "" {
+	if err != nil || metadata.Services["web"].Protocol != "postgres" || metadata.Services["web"].Port != port || !metadata.Services["web"].Public || metadata.Services["web"].URL != "" {
 		t.Fatalf("native metadata lost actual exposure: %+v %v", metadata, err)
+	}
+	protocol, public, port = "kubernetes", false, 10443
+	service.Protocol = &protocol
+	service.Target.Address = testTarget("https://private.internal:6443")
+	service.Target.TLS = &config.TargetTLS{}
+	resolver.project.Config.Services["web"] = service
+	metadata, err = resolver.Generate(t.Context())
+	if err != nil || metadata.Services["web"].Protocol != "kubernetes" || metadata.Services["web"].Port != port || metadata.Services["web"].Public || metadata.Services["web"].URL != "https://review.tnl.dev:10443" {
+		t.Fatalf("kubernetes metadata lost its assigned endpoint: %+v %v", metadata, err)
 	}
 	hostname = "INVALID.tnl.dev"
 	_, err = resolver.Generate(t.Context())
