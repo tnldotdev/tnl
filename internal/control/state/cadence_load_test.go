@@ -553,8 +553,12 @@ waiting:
 			}
 		}
 		for index, session := range sessions {
-			entry, ok := controller.Lookup(session.request.CertificateIdentifiers[0], now())
-			if !ok || entry.PublishRunId != session.setup.PublishRunID || entry.PublishRunNumber != int64(session.setup.PublishRunNumber) || len(entry.PublisherConnections) != 2 {
+			entries, reason := controller.Lookup(session.request.CertificateIdentifiers[0], now())
+			if reason != ingress.LookupCurrent || len(entries) != 1 {
+				t.Fatalf("final routing lost live route=%d: entries=%+v reason=%s", index, entries, reason)
+			}
+			entry := entries[0]
+			if entry.PublishRunId != session.setup.PublishRunID || entry.PublishRunNumber != int64(session.setup.PublishRunNumber) || len(entry.PublisherConnections) != 2 {
 				t.Fatalf("final routing lost live route=%d", index)
 			}
 			for _, connection := range entry.PublisherConnections {

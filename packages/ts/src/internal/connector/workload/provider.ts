@@ -6,31 +6,39 @@ import * as z from "zod";
 import { privateTnlError, TnlError } from "../../../errors.js";
 import type { WorkloadOptions } from "../../../workload.js";
 import { manifestSchema, parseWorkload, type Workload, type WorkloadManifest } from "./contract.js";
-import { validServiceName } from "../../project/runtime.js";
 import { cancellable } from "../cancellation.js";
+import { isServiceName, pathTextSchema, serviceNameSchema } from "../../values.js";
 
-let configuration: WorkloadOptions | undefined;
+const workloadOptionsSchema = z
+  .union([
+    z.strictObject({
+      name: serviceNameSchema,
+      token: z.custom<NonNullable<WorkloadOptions["token"]>>(
+        (value) => typeof value === "function",
+      ),
+      tokenFile: z.undefined().optional(),
+    }),
+    z.strictObject({
+      name: serviceNameSchema,
+      tokenFile: pathTextSchema,
+      token: z.undefined().optional(),
+    }),
+  ])
+  .readonly();
+
+let configuration: z.output<typeof workloadOptionsSchema> | undefined;
 
 /** register a fixed request-scoped source, never a mutable current token. */
 export function configureWorkload(options: WorkloadOptions): void {
+  const selected = parseWorkload(workloadOptionsSchema, options, "sdk.workload_required");
   if (
-    typeof options !== "object" ||
-    options === null ||
-    !validServiceName(options.name) ||
-    (typeof options.token !== "function" && typeof options.tokenFile !== "string") ||
-    Object.keys(options).some((key) => key !== "name" && key !== "token" && key !== "tokenFile") ||
-    (options.token !== undefined && options.tokenFile !== undefined) ||
-    (options.tokenFile !== undefined &&
-      (options.tokenFile.length === 0 ||
-        options.tokenFile.length > 4096 ||
-        options.tokenFile.includes("\0"))) ||
-    (configuration !== undefined &&
-      (configuration.name !== options.name ||
-        configuration.token !== options.token ||
-        configuration.tokenFile !== options.tokenFile))
+    configuration !== undefined &&
+    (configuration.name !== selected.name ||
+      configuration.token !== selected.token ||
+      configuration.tokenFile !== selected.tokenFile)
   )
     throw new TnlError("sdk.workload_required");
-  configuration = Object.freeze({ ...options });
+  configuration = selected;
 }
 
 function runtimeProviders(): string[] {
@@ -111,7 +119,7 @@ export async function selectWorkload(): Promise<{
     name === undefined || !Object.hasOwn(manifest.workloads, name)
       ? undefined
       : manifest.workloads[name];
-  if (name === undefined || !validServiceName(name) || selected === undefined)
+  if (name === undefined || !isServiceName(name) || selected === undefined)
     throw new TnlError("sdk.workload_required");
   return { manifest, name, selected, directory };
 }
@@ -267,16 +275,10 @@ async function acquireCurrentAssertion(
         );
       }
       case "fly-machine-api":
-        if (selected.acquisition.audience === undefined)
-          throw new TnlError("sdk.workload_assertion_unavailable");
         return await flyAssertion(selected.acquisition.audience, signal);
       case "github-actions":
-        if (selected.acquisition.audience === undefined)
-          throw new TnlError("sdk.workload_assertion_unavailable");
         return await githubToken(selected.acquisition.audience, signal);
       case "token-file":
-        if (selected.acquisition.token_file === undefined)
-          throw new TnlError("sdk.workload_assertion_unavailable");
         return boundedAssertion(
           await boundedFile(path.resolve(directory, selected.acquisition.token_file), 32768),
         );

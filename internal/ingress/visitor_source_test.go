@@ -251,10 +251,12 @@ func TestVisitorSourceMissingSignerOrProofNeverOpensRelay(t *testing.T) {
 		backend := newTLSBackend(t)
 		config := publicURLConfig(backend)
 		lookup := config.Lookup
-		config.Lookup = func(host string) (PublicURL, LookupReason) {
-			route, reason := lookup(host)
-			route.AttestSource = signer
-			return route, reason
+		config.Lookup = func(host string) ([]PublicURL, LookupReason) {
+			candidates, reason := lookup(host)
+			for index := range candidates {
+				candidates[index].AttestSource = signer
+			}
+			return candidates, reason
 		}
 		_, address := startIngress(t, config)
 		if err := ingressClient(t, address, "route.example", "").Handshake(); err == nil {

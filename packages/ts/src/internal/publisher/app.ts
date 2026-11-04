@@ -1,6 +1,15 @@
 import { randomBytes } from "node:crypto";
 import * as path from "node:path";
 import { TnlError } from "../../errors.js";
+import * as z from "zod";
+import { parseValue } from "../validation.js";
+import {
+  hostnameSchema,
+  httpsOriginSchema,
+  pathTextSchema,
+  registrationIDSchema,
+  serviceNameSchema,
+} from "../values.js";
 import { operation, independent, scheduled, bound as observeBound } from "../tracing.js";
 import { canonicalLoopbackTarget, type CanonicalTarget } from "./target.js";
 import {
@@ -10,21 +19,17 @@ import {
   type EndpointSelection,
 } from "./local.js";
 import { listeningTarget, isBunServer, type LocalHTTPServer } from "./register.js";
-import {
-  exactKeys,
-  parseProjectRuntime,
-  record,
-  requiredHostname,
-  validServiceName,
-  type ProjectRuntime,
-} from "../project/runtime.js";
+import { projectRuntimeSchema, type ProjectRuntime } from "../project/runtime.js";
 export { startRuntime, runtimeRequest } from "./local.js";
 
-export interface PrepareOptions {
-  readonly service?: string;
-  readonly directory?: string;
-  readonly stateDir?: string;
-}
+const prepareOptionsSchema = z
+  .strictObject({
+    service: serviceNameSchema.exactOptional(),
+    directory: pathTextSchema.exactOptional(),
+    stateDir: pathTextSchema.exactOptional(),
+  })
+  .readonly();
+export type PrepareOptions = z.output<typeof prepareOptionsSchema>;
 
 export interface PreparedService extends ProjectRuntime {
   readonly service: string;
@@ -36,13 +41,35 @@ export interface PreparedService extends ProjectRuntime {
   close(): Promise<void>;
 }
 
-interface Assignment {
-  readonly registrationID: string;
-  readonly service: string;
-  readonly hostname: string | undefined;
-  readonly publicURL: `https://${string}` | undefined;
-  readonly project: ProjectRuntime;
-}
+const assignmentSchema = z
+  .strictObject({
+    version: z.literal(1),
+    registration_id: registrationIDSchema,
+    service: serviceNameSchema,
+    hostname: z.union([hostnameSchema, z.literal("")]),
+    public_url: z.union([httpsOriginSchema, z.literal("")]),
+    project: projectRuntimeSchema,
+  })
+  .refine(({ service, hostname, public_url, project }) => {
+    const metadata = project.services[service];
+    return (
+      project.dev &&
+      (hostname === "" && public_url === ""
+        ? metadata === undefined
+        : public_url === `https://${hostname}` &&
+          metadata?.hostname === hostname &&
+          metadata.protocol === "http")
+    );
+  })
+  .transform(({ registration_id, service, hostname, public_url, project }) => ({
+    registrationID: registration_id,
+    service,
+    hostname: hostname === "" ? undefined : hostname,
+    publicURL: public_url === "" ? undefined : public_url,
+    project,
+  }))
+  .readonly();
+type Assignment = z.output<typeof assignmentSchema>;
 interface Dependencies {
   start(
     directory: string,
@@ -132,7 +159,8 @@ async function createPreparedServiceUntraced(
   };
   let endpoint = await dependencies.start(directory, undefined, selection);
   let assignment = parseAssignment(await dependencies.request(endpoint, "prepare", prepareRequest));
-  if (assignment.service !== endpoint.service) throw new TnlError("sdk.response_invalid");
+  if (endpoint.scope !== "app" || assignment.service !== endpoint.service)
+    throw new TnlError("sdk.response_invalid");
   const initial = assignment;
   let target: CanonicalTarget | undefined;
   let server: LocalHTTPServer | undefined;
@@ -163,6 +191,7 @@ async function createPreparedServiceUntraced(
       if (
         replacement.publicURL !== initial.publicURL ||
         replacement.service !== initial.service ||
+        replacementEndpoint.scope !== "app" ||
         replacement.service !== replacementEndpoint.service
       ) {
         await dependencies.request(replacementEndpoint, "unregister", {
@@ -318,56 +347,8 @@ function recoverable(error: unknown): boolean {
   );
 }
 function validateOptions(options: PrepareOptions): void {
-  if (
-    options === null ||
-    typeof options !== "object" ||
-    Array.isArray(options) ||
-    Object.keys(options).some((key) => !["service", "directory", "stateDir"].includes(key)) ||
-    (options.service !== undefined && !validServiceName(options.service)) ||
-    [options.directory, options.stateDir].some(
-      (value) =>
-        value !== undefined &&
-        (typeof value !== "string" || value === "" || value.length > 4096 || value.includes("\0")),
-    )
-  )
-    throw new TnlError("sdk.configuration_invalid");
+  parseValue(prepareOptionsSchema, options, "sdk.configuration_invalid");
 }
 function parseAssignment(value: unknown): Assignment {
-  try {
-    const object = record(value, "app assignment");
-    exactKeys(
-      object,
-      ["version", "registration_id", "service", "hostname", "public_url", "project"],
-      "app assignment",
-    );
-    if (
-      object.version !== 1 ||
-      typeof object.registration_id !== "string" ||
-      !/^reg_[a-f0-9]{32}$/.test(object.registration_id) ||
-      !validServiceName(object.service)
-    )
-      throw new TnlError("sdk.response_invalid");
-    const project = parseProjectRuntime(object.project, "app project");
-    const service = object.hostname === "" && object.public_url === "";
-    const hostname = service ? undefined : requiredHostname(object.hostname, "app hostname");
-    const publicURL = hostname === undefined ? undefined : (`https://${hostname}` as const);
-    if (
-      !project.dev ||
-      (service
-        ? project.services[object.service] !== undefined
-        : object.public_url !== publicURL ||
-          project.services[object.service]?.hostname !== hostname ||
-          project.services[object.service]?.protocol !== "http")
-    )
-      throw new TnlError("sdk.response_invalid");
-    return {
-      registrationID: object.registration_id,
-      service: object.service,
-      hostname,
-      publicURL,
-      project,
-    };
-  } catch {
-    throw new TnlError("sdk.response_invalid");
-  }
+  return parseValue(assignmentSchema, value, "sdk.response_invalid");
 }

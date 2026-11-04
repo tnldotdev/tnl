@@ -78,7 +78,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		t.Fatal(err)
 	}
 	quic, tcp := fixture.connectors()
-	oauthConfig := fixture.identity.publisherConfig("http://127.0.0.1:1", quic, tcp)
+	oauthConfig := fixture.identity.publisherConfig("", quic, tcp)
 	oauthConfig.Purpose = controlv1.Oauth
 	oauthConfig.Handler = integrations.OAuthHandler(state, server, oauthHost)
 	oauthReady := startIntegrationURLWorker(t, integrations.Publisher{State: state, Store: store, Server: server, Hostname: oauthHost,

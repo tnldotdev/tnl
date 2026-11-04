@@ -20,6 +20,7 @@ func TestIntegrationPublicURLPurposeSurvivesReadAndIsNotRelabeledByRetry(t *test
 	database.Instrument(metrics)
 	request := oidcRouteRequest(t, database, now)
 	request.Purpose = PublicURLPurposeWebhooks
+	request.Target = ""
 	created, err := database.CreatePublicURL(t.Context(), request, now)
 	if err != nil || created.Purpose != PublicURLPurposeWebhooks {
 		t.Fatalf("created purpose = %q, error=%v", created.Purpose, err)

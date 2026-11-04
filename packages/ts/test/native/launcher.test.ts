@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -127,6 +128,11 @@ test("launcher emits one safe line for a manifest value containing control chara
   const packageName = nativePackageName(process.platform, process.arch);
   const nativeDirectory = path.join(directory, "node_modules", packageName);
   mkdirSync(nativeDirectory, { recursive: true });
+  symlinkSync(
+    new URL("../../node_modules/zod", import.meta.url),
+    path.join(directory, "node_modules", "zod"),
+    "dir",
+  );
   writeFileSync(
     path.join(nativeDirectory, "package.json"),
     JSON.stringify({ name: packageName, version: "2.0.0\ninjected output" }),

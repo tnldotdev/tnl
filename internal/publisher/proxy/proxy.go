@@ -1,4 +1,4 @@
-// Package localproxy forwards one public hostname to one HTTP or HTTPS target.
+// package proxy forwards one public hostname to local HTTP or HTTPS targets.
 package proxy
 
 import (
@@ -32,9 +32,7 @@ const maxHeaderFields = 100
 // readiness probes keep HTML responses streaming and observe headers only.
 const ReadinessProbeHeader = "X-Tnl-Readiness-Probe"
 
-// DefaultRequestLimit bounds active requests to one public URL's local service,
-// across all visitor connections and HTTP/2 streams.
-const DefaultRequestLimit = 64
+const defaultMaxConnsPerHost = 64
 
 // Preflight validates the target and verifies that it accepts a connection.
 func Preflight(ctx context.Context, target string) error {
@@ -141,12 +139,6 @@ func waitForTarget(ctx context.Context, target string, preflight func(context.Co
 	}
 }
 
-// NewWithMounts shares one hostname check and request limit across the base
-// service and all mounted local services.
-func NewWithMounts(target, hostname string, requestLimit int, mounts []Mount, onTargetFailure ...func()) (http.Handler, error) {
-	return NewWithMountsHooks(target, hostname, requestLimit, mounts, ResponseHooks{}, onTargetFailure...)
-}
-
 // ResponseHooks separates header observation from body modification. observing
 // a response must not disable upstream compression or consume its body.
 type ResponseHooks struct {
@@ -156,52 +148,46 @@ type ResponseHooks struct {
 	OnForwarded   func(*http.Request)
 }
 
-func NewWithMountsHooks(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, onTargetFailure ...func()) (http.Handler, error) {
-	return NewWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, TargetOptions{}, onTargetFailure...)
+// Config selects targets, target trust, response hooks, and transport sizing.
+// the publisher owns application admission for base, mounted, and inline handlers.
+type Config struct {
+	Target        string
+	Hostname      string
+	Mounts        []Mount
+	Hooks         ResponseHooks
+	TargetOptions TargetOptions
+	// ResolveTarget selects the base target before each request. its immutable
+	// identity retires pooled connections even when the address stays the same.
+	// nil uses Target; mounted paths retain their own target selection.
+	ResolveTarget func(*http.Request) (address, identity string, err error)
+	// MaxConnsPerHost sizes each target's transport, not application admission.
+	// zero uses 64; excess transport work waits for a connection or cancellation.
+	MaxConnsPerHost int
+	OnTargetFailure func()
 }
 
-func NewWithMountsHooksOptions(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, onTargetFailure ...func()) (http.Handler, error) {
-	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, true, nil, onTargetFailure)
-}
-
-// NewWithMountsHooksOptionsAdmitted forwards requests already admitted by the publisher.
-// the publisher owns the shared admission budget for proxied and inline handlers.
-func NewWithMountsHooksOptionsAdmitted(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, onTargetFailure ...func()) (http.Handler, error) {
-	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, false, nil, onTargetFailure)
-}
-
-// NewWithMountsHooksOptionsAdmittedDynamic resolves the base service before
-// each new request. an immutable identity fences pooled connections when a
-// container is replaced at the same address; mounted paths keep their own
-// independent target selection.
-func NewWithMountsHooksOptionsAdmittedDynamic(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, resolve func(*http.Request) (string, string, error), onTargetFailure ...func()) (http.Handler, error) {
-	if resolve == nil {
-		return nil, errors.New("localproxy: target resolver is required")
+// New forwards requests already admitted by the publisher.
+func New(config Config) (http.Handler, error) {
+	if config.MaxConnsPerHost < 0 {
+		return nil, errors.New("localproxy: transport connection limit cannot be negative")
 	}
-	return newWithMountsHooksOptions(target, hostname, requestLimit, mounts, hooks, options, false, resolve, onTargetFailure)
-}
-
-func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts []Mount, hooks ResponseHooks, options TargetOptions, admit bool, resolve func(*http.Request) (string, string, error), onTargetFailure []func()) (http.Handler, error) {
-	if requestLimit < 0 {
-		return nil, errors.New("localproxy: request limit cannot be negative")
+	if config.MaxConnsPerHost == 0 {
+		config.MaxConnsPerHost = defaultMaxConnsPerHost
 	}
-	if requestLimit == 0 {
-		requestLimit = DefaultRequestLimit
-	}
-	canonical, err := naming.CanonicalizeHostname(hostname)
-	if err != nil || canonical != hostname {
+	canonical, err := naming.CanonicalizeHostname(config.Hostname)
+	if err != nil || canonical != config.Hostname {
 		return nil, diagnostic.Wrap(diagnostic.PublicURLInvalid, errors.New("localproxy: hostname must be canonical"))
 	}
-	base, err := newReverseProxy(target, requestLimit, hooks, options, onTargetFailure)
+	base, err := newReverseProxy(config.Target, config.MaxConnsPerHost, config.Hooks, config.TargetOptions, config.OnTargetFailure)
 	if err != nil {
 		return nil, err
 	}
 	var baseHandler http.Handler = base
-	if resolve != nil {
+	if config.ResolveTarget != nil {
 		var mu sync.Mutex
 		var currentAddress, currentIdentity string
 		baseHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			address, identity, err := resolve(r)
+			address, identity, err := config.ResolveTarget(r)
 			if err != nil || address == "" || identity == "" {
 				diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
 				return
@@ -213,7 +199,7 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 			}
 			mu.Lock()
 			if currentAddress != canonical || currentIdentity != identity {
-				selected, err := newReverseProxy(canonical, requestLimit, hooks, options, onTargetFailure)
+				selected, err := newReverseProxy(canonical, config.MaxConnsPerHost, config.Hooks, config.TargetOptions, config.OnTargetFailure)
 				if err != nil {
 					mu.Unlock()
 					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
@@ -233,9 +219,9 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 		Mount
 		proxy http.Handler
 	}
-	routes := make([]mountedProxy, 0, len(mounts))
-	seen := make(map[string]bool, len(mounts))
-	for _, mount := range mounts {
+	routes := make([]mountedProxy, 0, len(config.Mounts))
+	seen := make(map[string]bool, len(config.Mounts))
+	for _, mount := range config.Mounts {
 		if !targetsyntax.ValidMountPrefix(mount.Prefix) || seen[mount.Prefix] {
 			return nil, errors.New("localproxy: mount prefixes must be distinct clean absolute paths outside /__tnl/")
 		}
@@ -259,7 +245,7 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 						}
 					}
 					var err error
-					upstream, err = newReverseProxy(target, requestLimit, hooks, mount.Options, onTargetFailure)
+					upstream, err = newReverseProxy(target, config.MaxConnsPerHost, config.Hooks, mount.Options, config.OnTargetFailure)
 					if err != nil {
 						mu.Unlock()
 						diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
@@ -272,7 +258,7 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 				selected.ServeHTTP(w, r)
 			})
 		} else {
-			proxy, err = newReverseProxy(mount.Target, requestLimit, hooks, mount.Options, onTargetFailure)
+			proxy, err = newReverseProxy(mount.Target, config.MaxConnsPerHost, config.Hooks, mount.Options, config.OnTargetFailure)
 			if err != nil {
 				return nil, fmt.Errorf("localproxy: mount %q: %w", mount.Prefix, err)
 			}
@@ -285,29 +271,10 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 		}
 		return strings.Compare(left.Prefix, right.Prefix)
 	})
-	var requests chan struct{}
-	if admit {
-		requests = make(chan struct{}, requestLimit)
-	}
 	return httpstream.Requests(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if code := ValidateRequest(request, hostname); code != "" {
+		if code := ValidateRequest(request, config.Hostname); code != "" {
 			diagnostic.WriteHTTP(response, request, code)
 			return
-		}
-		if admit {
-			// callers without a publisher keep the same per-URL admission boundary.
-			select {
-			case requests <- struct{}{}:
-				defer func() { <-requests }()
-			default:
-				if request.ProtoMajor == 1 {
-					// avoid draining an unread body before sending the rejection.
-					response.Header().Set("Connection", "close")
-				}
-				response.Header().Set("Retry-After", "1")
-				diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "saturated")
-				return
-			}
 		}
 		escapedPath := request.URL.EscapedPath()
 		for _, mount := range routes {
@@ -337,7 +304,7 @@ func newWithMountsHooksOptions(target, hostname string, requestLimit int, mounts
 	}), httpstream.RequestBodyTimeout), nil
 }
 
-func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, options TargetOptions, onTargetFailure []func()) (*httputil.ReverseProxy, error) {
+func newReverseProxy(target string, maxConnsPerHost int, hooks ResponseHooks, options TargetOptions, onTargetFailure func()) (*httputil.ReverseProxy, error) {
 	canonicalTarget, err := targetsyntax.NormalizeTarget(target)
 	if err != nil {
 		return nil, err
@@ -359,7 +326,7 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, optio
 		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: options.RootCAs, ServerName: options.ServerName},
 		MaxIdleConns:        16,
 		MaxIdleConnsPerHost: 16,
-		MaxConnsPerHost:     requestLimit,
+		MaxConnsPerHost:     maxConnsPerHost,
 		IdleConnTimeout:     90 * time.Second,
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			if network != "tcp" || address != targetAddress {
@@ -398,8 +365,8 @@ func newReverseProxy(target string, requestLimit int, hooks ResponseHooks, optio
 			if hooks.ObserveStatus != nil {
 				hooks.ObserveStatus(request, 0)
 			}
-			if failing.CompareAndSwap(false, true) && len(onTargetFailure) != 0 && onTargetFailure[0] != nil {
-				onTargetFailure[0]()
+			if failing.CompareAndSwap(false, true) && onTargetFailure != nil {
+				onTargetFailure()
 			}
 			caseID := ""
 			if errors.Is(targetErr, syscall.ECONNREFUSED) {

@@ -8,9 +8,12 @@ import {
   type PrepareOptions,
 } from "./internal/publisher/app.js";
 import { operation } from "./internal/tracing.js";
+import * as z from "zod";
+import { parseValue } from "./internal/validation.js";
 
 const developmentServerPhase = "phase-development-server";
 const runtimeEnvironmentName = "TNL_PROJECT_RUNTIME";
+const allowedDevOriginsSchema = z.array(z.string());
 
 export interface NextConfigContext {
   /** The default Next.js configuration. */
@@ -37,13 +40,11 @@ export function withTnl(
       return nextConfig;
     }
 
-    const allowedDevOrigins = nextConfig.allowedDevOrigins ?? [];
-    if (
-      !Array.isArray(allowedDevOrigins) ||
-      !allowedDevOrigins.every((origin) => typeof origin === "string")
-    ) {
-      throw new TnlError("sdk.configuration_invalid");
-    }
+    const allowedDevOrigins = parseValue(
+      allowedDevOriginsSchema,
+      nextConfig.allowedDevOrigins ?? [],
+      "sdk.configuration_invalid",
+    );
     const target = nextTarget(process.env);
     const assignment = await operation("next.register", async () => {
       const assignment = await prepareService(options, "next");
