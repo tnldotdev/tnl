@@ -1053,11 +1053,32 @@
       "action": "check the selected workload's token file or provider acquisition callback"
     },
     {
+      "code": "TNL_CLIENT_WORKLOAD_MANIFEST_INVALID",
+      "slug": "workload-manifest-invalid",
+      "class": "invalid",
+      "message": "the generated workload manifest is missing or invalid",
+      "action": "run tnl generate during the build and package .tnl/generated/workloads.json with the application"
+    },
+    {
       "code": "TNL_CLIENT_WORKLOAD_REPOSITORY_METADATA_UNAVAILABLE",
       "slug": "workload-repository-metadata-unavailable",
       "class": "invalid",
       "message": "workload repository metadata is unavailable for first setup",
       "action": "configure existing gh authentication with read access to this repository, then run tnl apply again"
+    },
+    {
+      "code": "TNL_CLIENT_WORKLOAD_REQUIRED",
+      "slug": "workload-required",
+      "class": "invalid",
+      "message": "select one saved workload",
+      "action": "set TNL_WORKLOAD or configure a workload source in the SDK"
+    },
+    {
+      "code": "TNL_CLIENT_WORKLOAD_SERVICE_DENIED",
+      "slug": "workload-service-denied",
+      "class": "forbidden",
+      "message": "the selected workload does not include this service",
+      "action": "check the selected workload and its saved service access"
     }
   ]
 }
