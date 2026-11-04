@@ -64,6 +64,8 @@ func Install(t *testing.T, d *controlstate.Database, prep controlstate.ServiceRu
 	work.State = "waiting_for_install"
 	work.NotBefore = &leaf.NotBefore
 	work.NotAfter = &leaf.NotAfter
+	renewAt := leaf.NotBefore.Add(leaf.NotAfter.Sub(leaf.NotBefore) * 2 / 3).UTC()
+	work.RenewAt = &renewAt
 	work.CertificatePEM = append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: root})...)
 	work.OrderURL, work.FinalizeURL, work.CertificateURL = "https://acme.example.test/order/"+issue.ID, "https://acme.example.test/finalize/"+issue.ID, "https://acme.example.test/certificate/"+issue.ID
 	for _, name := range prep.CertificatePlan.Identifiers {

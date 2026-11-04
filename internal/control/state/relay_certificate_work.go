@@ -345,6 +345,11 @@ func (d *Database) relayCertificateOrderWork(
 	if len(row.ChallengeDigest) == 32 {
 		copy(work.ChallengeDigest[:], row.ChallengeDigest)
 	}
+	if work.State == RelayCertificateCleaning || work.State == RelayCertificateComplete {
+		if _, err := work.IssuedCertificate(); err != nil {
+			return RelayCertificateOrderWork{}, err
+		}
+	}
 	return work, nil
 }
 
@@ -363,16 +368,24 @@ func validateRelayCertificateOrderWork(work RelayCertificateOrderWork) error {
 		hasChallenge && !challengeComplete {
 		return ErrRelayCertificateWorkInvalid
 	}
+	if work.State == RelayCertificateCleaning || work.State == RelayCertificateComplete {
+		if _, err := work.IssuedCertificate(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func validateRelayCertificateMaterial(work RelayCertificateOrderWork, now time.Time) error {
-	leaf, err := relayCertificateLeaf(work.CertificatePEM, work.PrivateKeyPEM)
+	certificate, err := work.IssuedCertificate()
+	if err != nil {
+		return err
+	}
+	leaf, err := relayCertificateLeaf(certificate.PEM, work.PrivateKeyPEM)
 	if err != nil || leaf.VerifyHostname(work.TLSServerName) != nil || !certificateidentity.DNSNamesOnly(leaf.Extensions, leaf.DNSNames) ||
 		len(leaf.DNSNames) != 1 || leaf.DNSNames[0] != work.TLSServerName || leaf.IsCA ||
-		work.NotBefore == nil || work.NotAfter == nil || work.RenewAt == nil ||
-		!leaf.NotBefore.Equal(*work.NotBefore) || !leaf.NotAfter.Equal(*work.NotAfter) || !leaf.NotAfter.After(now) ||
-		leaf.NotBefore.After(now) || !work.RenewAt.After(leaf.NotBefore) || !work.RenewAt.Before(leaf.NotAfter) {
+		!leaf.NotBefore.Equal(certificate.NotBefore) || !leaf.NotAfter.Equal(certificate.NotAfter) || !leaf.NotAfter.After(now) ||
+		leaf.NotBefore.After(now) {
 		return ErrRelayCertificateWorkInvalid
 	}
 	return nil

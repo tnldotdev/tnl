@@ -197,6 +197,9 @@ func (w *RelayWorker) advance(ctx context.Context, client acmeAPI, work *control
 	case "authorizing":
 		return w.authorize(ctx, client, work, now)
 	case "presenting":
+		if _, err := work.Challenge(); err != nil {
+			return terminalf("relay challenge payload is incomplete")
+		}
 		if err := w.config.DNSChallenges.Present(ctx, work.ID); err != nil {
 			return err
 		}
@@ -204,6 +207,10 @@ func (w *RelayWorker) advance(ctx context.Context, client acmeAPI, work *control
 		work.AvailableAt = now.Add(w.config.PollInterval)
 		return nil
 	case "presented":
+		challenge, err := work.Challenge()
+		if err != nil {
+			return terminalf("relay challenge payload is incomplete")
+		}
 		verified, err := w.config.DNSChallenges.Verify(ctx, work.ID)
 		if err != nil {
 			return err
@@ -212,7 +219,7 @@ func (w *RelayWorker) advance(ctx context.Context, client acmeAPI, work *control
 			work.AvailableAt = now.Add(w.config.PollInterval)
 			return nil
 		}
-		retryAfter, err := client.AcceptChallenge(ctx, work.ChallengeURL)
+		retryAfter, err := client.AcceptChallenge(ctx, challenge.ChallengeURL)
 		if err != nil {
 			return err
 		}
@@ -226,11 +233,15 @@ func (w *RelayWorker) advance(ctx context.Context, client acmeAPI, work *control
 	case "finalizing":
 		return w.collect(ctx, client, work, now)
 	case "cleaning":
+		certificate, err := work.IssuedCertificate()
+		if err != nil {
+			return terminalf("relay cleanup certificate payload is incomplete")
+		}
 		if err := w.config.DNSChallenges.Cleanup(ctx, work.ID); err != nil {
 			return err
 		}
 		work.State = "complete"
-		work.AvailableAt = *work.RenewAt
+		work.AvailableAt = certificate.RenewAt
 		return nil
 	case "failed_cleaning":
 		if err := w.config.DNSChallenges.Cleanup(ctx, work.ID); err != nil {
@@ -323,11 +334,15 @@ func (w *RelayWorker) validateAuthorization(
 	work *controlstate.RelayCertificateOrderWork,
 	now time.Time,
 ) error {
-	authorization, err := client.GetAuthorization(ctx, work.AuthorizationURL)
+	challenge, err := work.Challenge()
+	if err != nil {
+		return terminalf("relay challenge payload is incomplete")
+	}
+	authorization, err := client.GetAuthorization(ctx, challenge.AuthorizationURL)
 	if err != nil {
 		return err
 	}
-	if authorization.URL != work.AuthorizationURL || authorization.Identifier.Type != "dns" ||
+	if authorization.URL != challenge.AuthorizationURL || authorization.Identifier.Type != "dns" ||
 		authorization.Identifier.Value != work.TLSServerName || authorization.Wildcard {
 		return terminalf("ACME authorization identity changed")
 	}
@@ -359,7 +374,12 @@ func (w *RelayWorker) finalize(ctx context.Context, client acmeAPI, work *contro
 		work.AvailableAt = now
 		return nil
 	case "ready":
-		order, err = client.FinalizeOrder(ctx, work.OrderURL, order.Finalize, work.CSRDER)
+		work.FinalizeURL = order.Finalize
+		finalization, err := work.Finalization()
+		if err != nil {
+			return terminalf("relay finalization payload is incomplete")
+		}
+		order, err = client.FinalizeOrder(ctx, finalization.OrderURL, finalization.FinalizeURL, finalization.CSRDER)
 		if err != nil {
 			return err
 		}
@@ -398,22 +418,10 @@ func (w *RelayWorker) collect(ctx context.Context, client acmeAPI, work *control
 		if err != nil {
 			return err
 		}
-		notBefore, notAfter, err := validateRelayCertificate(certificatePEM, work.CSRDER, work.TLSServerName, now)
-		if err != nil {
+		if err := work.RecordIssuedCertificate(certificatePEM, now); err != nil {
 			return terminalf("issued certificate is invalid: %v", err)
 		}
 		work.CertificateURL = order.Certificate
-		work.CertificatePEM = certificatePEM
-		work.NotBefore, work.NotAfter = &notBefore, &notAfter
-		renewAt := notBefore.Add(notAfter.Sub(notBefore) * 2 / 3).UTC()
-		work.RenewAt = &renewAt
-		if work.ChallengeURL == "" {
-			work.State = "complete"
-			work.AvailableAt = renewAt
-		} else {
-			work.State = "cleaning"
-			work.AvailableAt = now
-		}
 	default:
 		return fmt.Errorf("certificates: unknown relay order status %q", order.Status)
 	}

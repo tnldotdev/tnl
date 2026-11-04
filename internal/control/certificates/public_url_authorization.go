@@ -96,6 +96,9 @@ func (w *PublicURLWorker) advanceAuthorizations(ctx context.Context, client acme
 }
 
 func (w *PublicURLWorker) presentDNSAuthorizationWork(ctx context.Context, work *controlstate.ACMEOrderWork, authorization *controlstate.ACMEAuthorizationWork, now time.Time) error {
+	if _, err := authorization.Challenge(); err != nil {
+		return terminalf("authorization challenge payload is incomplete")
+	}
 	if err := w.presentSubject(ctx, work, authorization.ID); err != nil {
 		return err
 	}
@@ -107,7 +110,11 @@ func (w *PublicURLWorker) presentDNSAuthorizationWork(ctx context.Context, work 
 }
 
 func (w *PublicURLWorker) acceptAuthorizationWork(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, authorization *controlstate.ACMEAuthorizationWork, now time.Time) error {
-	if authorization.ChallengeType == certificateidentity.ChallengeDNS01 {
+	challenge, err := authorization.Challenge()
+	if err != nil {
+		return terminalf("authorization challenge payload is incomplete")
+	}
+	if challenge.Method == certificateidentity.ChallengeDNS01 {
 		verified, err := w.verifySubject(ctx, work, authorization.ID)
 		if err != nil {
 			return err
@@ -117,7 +124,7 @@ func (w *PublicURLWorker) acceptAuthorizationWork(ctx context.Context, client ac
 			return nil
 		}
 	}
-	retryAfter, err := client.AcceptChallenge(ctx, authorization.ChallengeURL)
+	retryAfter, err := client.AcceptChallenge(ctx, challenge.ChallengeURL)
 	if err != nil {
 		return err
 	}
@@ -128,11 +135,15 @@ func (w *PublicURLWorker) acceptAuthorizationWork(ctx context.Context, client ac
 }
 
 func (w *PublicURLWorker) pollAuthorization(ctx context.Context, client acmeAPI, authorization *controlstate.ACMEAuthorizationWork, now time.Time) error {
-	remote, err := client.GetAuthorization(ctx, authorization.AuthorizationURL)
+	challenge, err := authorization.Challenge()
+	if err != nil {
+		return terminalf("authorization challenge payload is incomplete")
+	}
+	remote, err := client.GetAuthorization(ctx, challenge.AuthorizationURL)
 	if err != nil {
 		return err
 	}
-	if remote.URL != authorization.AuthorizationURL || remote.Identifier.Type != "dns" ||
+	if remote.URL != challenge.AuthorizationURL || remote.Identifier.Type != "dns" ||
 		authorizationIdentifier(remote) != authorization.Identifier {
 		return terminalf("authorization identity changed for %q", authorization.Identifier)
 	}
@@ -148,7 +159,7 @@ func (w *PublicURLWorker) pollAuthorization(ctx context.Context, client acmeAPI,
 		authorization.AvailableAt = now
 	case "invalid", "deactivated", "expired", "revoked":
 		authorization.State = controlstate.ACMEAuthorizationFailed
-		if problem := authorizationChallengeProblem(remote, authorization.ChallengeType, authorization.ChallengeURL); problem != "" {
+		if problem := authorizationChallengeProblem(remote, authorization.ChallengeType, challenge.ChallengeURL); problem != "" {
 			return terminalf("authorization for %q became %q: %s", authorization.Identifier, remote.Status, problem)
 		}
 		return terminalf("authorization for %q became %q", authorization.Identifier, remote.Status)

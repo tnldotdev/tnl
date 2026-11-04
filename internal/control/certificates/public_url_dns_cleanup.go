@@ -10,11 +10,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 )
 
-func certificateCleanupAvailableAt(work *controlstate.ACMEOrderWork, now time.Time) time.Time {
-	if hasPendingDNSCleanup(work.Authorizations) {
+func certificateCleanupAvailableAt(authorizations []controlstate.ACMEAuthorizationWork, certificate controlstate.IssuedCertificate, now time.Time) time.Time {
+	if hasPendingDNSCleanup(authorizations) {
 		return now
 	}
-	return *work.RenewAt
+	return certificate.RenewAt
 }
 
 func hasPendingDNSCleanup(authorizations []controlstate.ACMEAuthorizationWork) bool {

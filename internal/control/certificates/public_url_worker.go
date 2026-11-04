@@ -238,16 +238,17 @@ func (w *PublicURLWorker) advance(ctx context.Context, client acmeAPI, work *con
 	case "finalizing":
 		return w.collectCertificate(ctx, client, work, now)
 	case "waiting_for_install", "installed":
-		_, err := w.continueDNSCleanup(ctx, work, now)
+		certificate, err := work.IssuedCertificate()
+		if err != nil {
+			return terminalf("issued public URL certificate payload is incomplete")
+		}
+		_, err = w.continueDNSCleanup(ctx, work, now)
 		if err == nil && !hasPendingDNSCleanup(work.Authorizations) {
-			if work.RenewAt == nil {
-				return terminalf("issued public URL certificate has no renewal date")
-			}
-			work.AvailableAt = *work.RenewAt
+			work.AvailableAt = certificate.RenewAt
 		}
 		return err
 	case "failed", "canceled":
-		if work.FinalizationPossible && work.NotAfter == nil {
+		if work.NeedsFinalizationRecovery() {
 			// finalization may have reached the CA before a response was lost.
 			// retain its actual certificate lifetime before releasing names.
 			return w.collectCertificate(ctx, client, work, now)
@@ -339,7 +340,11 @@ func (w *PublicURLWorker) finalizeOrder(ctx context.Context, client acmeAPI, wor
 		work.AvailableAt = now
 		return nil
 	case "ready":
-		order, err = client.FinalizeOrder(ctx, work.OrderURL, work.FinalizeURL, work.CSRDER)
+		finalization, err := work.Finalization()
+		if err != nil {
+			return terminalf("public URL finalization payload is incomplete")
+		}
+		order, err = client.FinalizeOrder(ctx, finalization.OrderURL, finalization.FinalizeURL, finalization.CSRDER)
 		if err != nil {
 			return err
 		}
@@ -363,11 +368,12 @@ func (w *PublicURLWorker) finalizeOrder(ctx context.Context, client acmeAPI, wor
 
 func (w *PublicURLWorker) collectCertificate(ctx context.Context, client acmeAPI, work *controlstate.ACMEOrderWork, now time.Time) error {
 	if len(work.CertificatePEM) != 0 {
-		if work.RenewAt == nil {
-			return terminalf("issued public URL certificate has no renewal date")
+		certificate, err := work.IssuedCertificate()
+		if err != nil {
+			return terminalf("issued public URL certificate payload is incomplete")
 		}
 		work.State = "waiting_for_install"
-		work.AvailableAt = certificateCleanupAvailableAt(work, now)
+		work.AvailableAt = certificateCleanupAvailableAt(work.Authorizations, certificate, now)
 		return nil
 	}
 	order, err := client.GetOrder(ctx, work.OrderURL)
@@ -402,17 +408,11 @@ func (w *PublicURLWorker) collectCertificate(ctx context.Context, client acmeAPI
 		if err != nil {
 			return err
 		}
-		notBefore, notAfter, err := validatePublicURLCertificate(certificatePEM, work.CSRDER, work.CertificateIdentifiers, now)
+		certificate, err := work.RecordIssuedCertificate(certificatePEM, now)
 		if err != nil {
 			return terminalf("issued certificate is invalid: %v", err)
 		}
-		work.CertificatePEM = certificatePEM
-		work.NotBefore = &notBefore
-		work.NotAfter = &notAfter
-		renewAt := notBefore.Add(notAfter.Sub(notBefore) * 2 / 3).UTC()
-		work.RenewAt = &renewAt
-		work.State = "waiting_for_install"
-		work.AvailableAt = certificateCleanupAvailableAt(work, now)
+		work.AvailableAt = certificateCleanupAvailableAt(work.Authorizations, certificate, now)
 		return nil
 	default:
 		return fmt.Errorf("certificates: unknown public URL order status %q", order.Status)
@@ -497,12 +497,4 @@ func validateRouteOrder(order acme.Order, identifiers []string) error {
 		return terminalf("ACME order identifiers do not match the certificate plan")
 	}
 	return nil
-}
-
-func validatePublicURLCertificate(certificatePEM, csrDER []byte, identifiers []string, now time.Time) (time.Time, time.Time, error) {
-	leaf, err := certificateidentity.ValidateIssuedCertificate(certificatePEM, csrDER, identifiers, now)
-	if err != nil {
-		return time.Time{}, time.Time{}, err
-	}
-	return leaf.NotBefore.UTC(), leaf.NotAfter.UTC(), nil
 }

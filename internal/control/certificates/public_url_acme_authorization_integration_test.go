@@ -137,7 +137,10 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 					return acme.Authorization{
 						URL: requestURL, Status: "valid", Expires: &expires,
 						Identifier: acme.Identifier{Type: "dns", Value: identifiers[1]},
-						Challenges: []acme.Challenge{{Type: "http-01", URL: "https://acme.example.test/challenge/old", Status: "valid", Token: "old-token"}},
+						Challenges: []acme.Challenge{
+							{Type: "http-01", URL: "https://acme.example.test/challenge/old", Status: "valid", Token: "old-token"},
+							{Type: "tls-alpn-01", URL: "https://acme.example.test/challenge/old-tls", Status: "valid", Token: "old-tls-token"},
+						},
 					}, nil
 				case wildAuthorization:
 					wildcardFetches++

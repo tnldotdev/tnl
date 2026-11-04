@@ -39,7 +39,11 @@ func TestRelayWorkerDNSFailureDoesNotAdvance(t *testing.T) {
 				}
 				worker := &RelayWorker{config: RelayConfig{DNSChallenges: dns, PollInterval: time.Second}}
 				api := &acmeStub{}
-				work := controlstate.RelayCertificateOrderWork{ID: "relay_order_1", State: controlstate.RelayCertificateOrderState(phase), TLSServerName: "relay-a.example.test", ChallengeURL: "https://acme.example.test/challenge/1"}
+				work := controlstate.RelayCertificateOrderWork{
+					ID: "relay_order_1", State: controlstate.RelayCertificateOrderState(phase), TLSServerName: "relay-a.example.test",
+					AuthorizationURL: "https://acme.example.test/authorization/1", AuthorizationExpiresAt: timePointer(now.Add(time.Hour)),
+					ChallengeURL: "https://acme.example.test/challenge/1", ChallengeToken: "token-1", ChallengeDigest: [32]byte{1}, PresentationReference: "presentation_1",
+				}
 				err := worker.advance(t.Context(), api, &work, now)
 				if (err != nil) != unavailable || work.State != controlstate.RelayCertificateOrderState(phase) || api.acceptedChallenge != "" {
 					t.Fatalf("DNS failure: error %v, state %q, accepted %q", err, work.State, api.acceptedChallenge)

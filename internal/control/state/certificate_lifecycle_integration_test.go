@@ -150,12 +150,14 @@ func deliverLifecycleCertificate(t *testing.T, database *Database, cache *client
 	}
 	work.State, work.CertificatePEM = "waiting_for_install", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	work.NotBefore, work.NotAfter, work.AvailableAt = &leaf.NotBefore, &leaf.NotAfter, now
+	renewAt, expiresAt := now.Add(16*time.Hour), now.Add(time.Hour)
+	work.RenewAt = &renewAt
 	for index, identifier := range plan.Identifiers {
 		work.Authorizations = append(work.Authorizations, ACMEAuthorizationWork{
 			Identifier: identifier, AuthorizationURL: fmt.Sprintf("https://acme.example.test/authz/%s/%d", work.ID, index),
 			ChallengeType: plan.ChallengeMethod, ChallengeURL: fmt.Sprintf("https://acme.example.test/challenge/%s/%d", work.ID, index),
 			ChallengeToken: fmt.Sprintf("token-%d", index), ChallengeDigest: sha256.Sum256([]byte(identifier)),
-			State: "complete", AvailableAt: now, PresentedAt: &now, ValidatedAt: &now, CleanupCompletedAt: &now,
+			State: "complete", AvailableAt: now, PresentedAt: &now, ValidatedAt: &now, CleanupCompletedAt: &now, ExpiresAt: &expiresAt,
 		})
 	}
 	if _, err := database.SaveACMEOrderWork(t.Context(), work, now); err != nil {
