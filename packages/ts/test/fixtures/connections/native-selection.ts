@@ -12,15 +12,17 @@ import { configureWorkload } from "@tnldotdev/tnl/workload";
 const lines = createInterface({ input: process.stdin })[Symbol.asyncIterator]();
 const token = (await readFile("assertion", "utf8")).trim();
 let acquisitions = 0;
-configureWorkload({
-  name: "test",
-  token: async () => {
-    acquisitions++;
-    return token;
-  },
-});
+const nativeProvider = process.argv.includes("provider");
+if (!nativeProvider)
+  configureWorkload({
+    name: "test",
+    token: async () => {
+      acquisitions++;
+      return token;
+    },
+  });
 const handle = tnl.connect("api");
-const handles = [handle];
+const handles = nativeProvider ? Array.from({ length: 4 }, () => tnl.connect("api")) : [handle];
 let copy: string | undefined;
 let copiedWorkload: typeof import("@tnldotdev/tnl/workload") | undefined;
 const listeners = process.listenerCount("beforeExit");
@@ -56,14 +58,22 @@ if (process.argv.includes("copies")) {
 const [first] = await Promise.all(handles);
 assert.ok(first);
 assert.ok("fetch" in first);
-assert.equal(acquisitions, handles.length);
+assert.equal(acquisitions, nativeProvider ? 0 : handles.length);
 assert.equal(process.listenerCount("beforeExit"), listeners + 1);
 console.log("cold");
 assert.equal((await lines.next()).value, "warm");
+if (nativeProvider) process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN = "provider-warm";
 for (let i = 0; i < 10; i++) {
-  for (const handle of handles) assert.deepEqual(await handle, first);
+  for (const handle of nativeProvider ? handles.slice(0, 1) : handles)
+    assert.deepEqual(await handle, first);
 }
-assert.equal(acquisitions, handles.length * 11);
+assert.equal(acquisitions, nativeProvider ? 0 : handles.length * 11);
+if (nativeProvider) {
+  delete process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+  await assert.rejects(Promise.resolve(handle), { code: "sdk.workload_assertion_unavailable" });
+  process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN = "provider-warm";
+  assert.deepEqual(await handle, first);
+}
 console.log("warm");
 if (copiedWorkload !== undefined) {
   assert.equal((await lines.next()).value, "isolate");

@@ -568,7 +568,7 @@ func (b *connectorConnectionBackend) attach(ctx context.Context, assertion strin
 	}
 	if assertion == "" {
 		var err error
-		assertion, err = workload.Acquire(ctx, b.acquisition, nil)
+		assertion, err = workload.Acquire(ctx, b.acquisition, nil, os.Getenv)
 		if err != nil {
 			return err
 		}

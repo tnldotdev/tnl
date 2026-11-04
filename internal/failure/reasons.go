@@ -6,6 +6,9 @@ import (
 )
 
 const (
+	WorkloadRequired                      Reason = "TNL_CLIENT_WORKLOAD_REQUIRED"
+	WorkloadManifestInvalid               Reason = "TNL_CLIENT_WORKLOAD_MANIFEST_INVALID"
+	WorkloadServiceDenied                 Reason = "TNL_CLIENT_WORKLOAD_SERVICE_DENIED"
 	WorkloadAssertionUnavailable          Reason = "TNL_CLIENT_WORKLOAD_ASSERTION_UNAVAILABLE"
 	ConnectionTLSRejected                 Reason = "TNL_CLIENT_CONNECTION_TLS_REJECTED"
 	ConnectionCleanupFailed               Reason = "TNL_CLIENT_CONNECTION_CLEANUP_FAILED"
@@ -199,6 +202,9 @@ const (
 )
 
 var definitions = map[Reason]Definition{
+	WorkloadRequired:                   {Class: Invalid, Message: "select one saved workload", Action: "set TNL_WORKLOAD or configure a workload source in the SDK", Retry: RetryAfterChange},
+	WorkloadManifestInvalid:            {Class: Invalid, Message: "the generated workload manifest is missing or invalid", Action: "run tnl generate during the build and package .tnl/generated/workloads.json with the application", Retry: RetryAfterChange},
+	WorkloadServiceDenied:              {Class: Forbidden, Message: "the selected workload does not include this service", Action: "check the selected workload and its saved service access", Retry: RetryAfterChange},
 	WorkloadAssertionUnavailable:       {Class: Unauthenticated, Message: "the workload provider assertion is unavailable", Action: "check the selected workload's token file or provider acquisition callback", Retry: RetryAfterChange},
 	ConnectionTLSRejected:              {Class: Invalid, Message: "the native service TLS certificate could not be verified", Action: "check the service hostname and the client's server trust roots, then prepare connections again", Retry: RetryAfterChange},
 	ConnectionCleanupFailed:            {Class: Unavailable, Message: "the connector owner stopped with a cleanup failure", Action: "check the selected server's availability and revoke the workload session if it remains active", Retry: RetryAfterChange},

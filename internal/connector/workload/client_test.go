@@ -221,3 +221,46 @@ func TestSessionDecoderRejectsLegacyExecutionFields(t *testing.T) {
 		t.Fatal("legacy top-level GitHub field was accepted")
 	}
 }
+
+func TestSessionDecoderPreservesSDKWireAssertions(t *testing.T) {
+	check := func(t *testing.T, provider controlv1.WorkloadProvider, mutate func(map[string]any)) {
+		t.Helper()
+		original := sessionFixture(provider)
+		data, _ := json.Marshal(original)
+		var wire map[string]any
+		_ = json.Unmarshal(data, &wire)
+		mutate(wire)
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(wire)
+		}))
+		defer server.Close()
+		client, err := New(server.URL, server.Client())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = client.Exchange(t.Context(), original.TeamId, original.ProjectKey, strings.Repeat("a", 64), original.Workload, "assertion", nil); err == nil {
+			t.Fatal("invalid session wire accepted")
+		}
+	}
+	for _, provider := range []controlv1.WorkloadProvider{controlv1.WorkloadGitHub, controlv1.WorkloadVercel, controlv1.WorkloadFly, controlv1.WorkloadOIDC} {
+		t.Run(string(provider), func(t *testing.T) {
+			for _, field := range []string{"run_id", "run_attempt", "check_run_id", "unknown"} {
+				check(t, provider, func(w map[string]any) { w[field] = "" })
+			}
+			if provider != controlv1.WorkloadGitHub {
+				for _, value := range []any{nil, map[string]any{}, sessionFixture(controlv1.WorkloadGitHub).Github} {
+					check(t, provider, func(w map[string]any) { w["github"] = value })
+				}
+			}
+		})
+	}
+	for _, field := range []string{"repository_id", "repository_owner_id", "run_id", "run_attempt", "check_run_id"} {
+		for _, value := range []any{nil, "", "0", "job-name", strings.Repeat("1", 21), 123} {
+			check(t, controlv1.WorkloadGitHub, func(w map[string]any) { w["github"].(map[string]any)[field] = value })
+		}
+		check(t, controlv1.WorkloadGitHub, func(w map[string]any) { delete(w["github"].(map[string]any), field) })
+	}
+	check(t, controlv1.WorkloadGitHub, func(w map[string]any) { w["github"].(map[string]any)["unknown"] = "claim" })
+	check(t, controlv1.WorkloadGitHub, func(w map[string]any) { w["provider"] = "unknown" })
+}

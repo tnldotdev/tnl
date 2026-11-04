@@ -9,12 +9,15 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strings"
+	"unicode/utf8"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"golang.org/x/sys/unix"
 )
 
 const Filename = "workloads.json"
@@ -22,6 +25,7 @@ const MaxBytes = 128 << 10
 
 var ErrInvalid = errors.New("workload manifest is invalid; run tnl generate during the build")
 var fingerprint = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var flyAudience = regexp.MustCompile(`^https://fly\.io/[a-z0-9-]+$`)
 
 type Acquisition struct {
 	Method    string `json:"method"`
@@ -96,6 +100,11 @@ func (m Manifest) Validate() error {
 	if err != nil || server != m.Server || !config.WorkloadHTTPS(m.Server) || m.Schema != 1 || !config.ExactWorkloadValue(m.Team) || !config.ExactWorkloadValue(m.ProjectKey) || !fingerprint.MatchString(m.SourceFingerprint) || !naming.ValidAuthorityLabel(m.ProjectLabel) || len(m.Workloads) == 0 || len(m.Workloads) > 32 || len(m.Services) > 128 {
 		return ErrInvalid
 	}
+	for name, protocol := range m.Services {
+		if !naming.ValidServiceName(name) || !slices.Contains([]string{"http", "tcp", "mysql", "postgres", "kubernetes"}, protocol) {
+			return ErrInvalid
+		}
+	}
 	for name, w := range m.Workloads {
 		if !naming.ValidServiceName(name) || w.MaxDurationSeconds < 1 || w.MaxDurationSeconds > 21600 || len(w.Services) == 0 || len(w.Services) > 32 {
 			return ErrInvalid
@@ -117,11 +126,11 @@ func (m Manifest) Validate() error {
 				return ErrInvalid
 			}
 		case "fly":
-			if w.Acquisition.Method != "fly-machine-api" || !config.WorkloadHTTPS(w.Acquisition.Audience) || w.Acquisition.TokenFile != "" {
+			if w.Acquisition.Method != "fly-machine-api" || !flyAudience.MatchString(w.Acquisition.Audience) || w.Acquisition.TokenFile != "" {
 				return ErrInvalid
 			}
 		case "oidc":
-			if !config.ExactWorkloadValue(w.Acquisition.Audience) || w.Acquisition.Method != "callback" && w.Acquisition.Method != "token-file" || (w.Acquisition.Method == "token-file") != (w.Acquisition.TokenFile != "") {
+			if !config.ExactWorkloadValue(w.Acquisition.Audience) || w.Acquisition.Method != "callback" && w.Acquisition.Method != "token-file" || (w.Acquisition.Method == "token-file") != (w.Acquisition.TokenFile != "") || len(w.Acquisition.TokenFile) > 4096 || strings.ContainsRune(w.Acquisition.TokenFile, 0) {
 				return ErrInvalid
 			}
 		default:
@@ -132,16 +141,20 @@ func (m Manifest) Validate() error {
 }
 
 func Read(path string) (m Manifest, err error) {
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return m, err
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > MaxBytes {
+		return m, ErrInvalid
+	}
 	b, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
 	if err != nil {
 		return m, err
 	}
-	if len(b) > MaxBytes {
+	if len(b) > MaxBytes || !utf8.Valid(b) {
 		return m, ErrInvalid
 	}
 	d := json.NewDecoder(bytes.NewReader(b))

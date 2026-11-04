@@ -127,9 +127,9 @@ class OwnerIPC:
         assertion: str | None = None,
         *,
         sdk: bool = False,
-        workload: str | None = None,
-        manifest: str | None = None,
         requested_at: str | None = None,
+        selection: dict[str, object] | None = None,
+        preview: bool = False,
     ) -> object:
         if self.creator_pid != os.getpid():
             self.discard_inherited()
@@ -167,20 +167,20 @@ class OwnerIPC:
             watchdog.daemon = True
             watchdog.start()
             body: dict[str, object] = {**self.scope, "service": service}
-            if assertion == "":
-                body["acquire_assertion"] = True
-            elif assertion is not None:
+            if selection is not None:
+                body.update(selection)
+            if assertion is not None:
                 body["assertion"] = assertion
-            if workload is not None:
-                body["workload"] = workload
-            if manifest is not None:
-                body["manifest"] = manifest
             if requested_at is not None:
                 body["requested_at"] = requested_at
             encoded = json.dumps(body).encode()
             connection.request(
                 "POST",
-                "/v1/connections/sdk-prepare" if sdk else "/v1/connections/prepare",
+                "/v1/connections/sdk-workload"
+                if preview
+                else "/v1/connections/sdk-prepare"
+                if sdk
+                else "/v1/connections/prepare",
                 encoded,
                 {"Authorization": "Bearer " + self.key, "Content-Type": "application/json"},
             )

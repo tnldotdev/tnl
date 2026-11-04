@@ -61,7 +61,7 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 			if hints.TokenFile != "" && !filepath.IsAbs(hints.TokenFile) {
 				hints.TokenFile = filepath.Join(scope.Directory, hints.TokenFile)
 			}
-			request.Assertion, err = workload.Acquire(ctx, hints, nil)
+			request.Assertion, err = workload.Acquire(ctx, hints, nil, os.Getenv)
 			if err != nil {
 				return failure.Wrap("acquire workload assertion", failure.WorkloadAssertionUnavailable, err)
 			}

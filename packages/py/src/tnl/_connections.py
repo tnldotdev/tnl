@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 import weakref
 from collections.abc import Generator, Mapping
 from concurrent.futures import Future
@@ -80,6 +81,14 @@ def _native_error(
         return _error("invalid")
     if reason == "TNL_CLIENT_CONNECTION_EXPIRED":
         return _error("expired")
+    workload_errors = {
+        "TNL_CLIENT_WORKLOAD_REQUIRED": "sdk.workload_required",
+        "TNL_CLIENT_WORKLOAD_MANIFEST_INVALID": "sdk.workload_manifest_invalid",
+        "TNL_CLIENT_WORKLOAD_SERVICE_DENIED": "sdk.workload_denied",
+        "TNL_CLIENT_WORKLOAD_ASSERTION_UNAVAILABLE": "sdk.workload_assertion_unavailable",
+    }
+    if isinstance(reason, str) and reason in workload_errors:
+        return TnlError(workload_errors[reason], "native workload selection or acquisition failed")
     return _error("unavailable")
 
 
@@ -570,13 +579,9 @@ class _Scope:
             requested_at,
             "--retain-start-failure",
         ]
-        if selection is not None:
-            arguments.extend(
-                ["--workload", selection.name, "--workload-manifest", selection.manifest]
-            )
         private_input = {
             "schema": 1,
-            **({"assertion": selection.assertion} if selection is not None else {}),
+            **(selection.private_input() if selection is not None else {}),
         }
         selector = (
             "human"
@@ -586,6 +591,11 @@ class _Scope:
             ).hexdigest()
         )
         key = (selector, service)
+        if selection is not None and selection.assertion is None:
+            # native must acquire this request's current token before coalescing
+            # owner startup by verified identity. no SDK assertion cache applies.
+            selector = uuid.uuid4().hex
+            key = (selector, service)
         with self.lock:
             retained = self.failures.get(selector)
             if retained is not None:
@@ -694,8 +704,7 @@ class _Scope:
                     service,
                     selection.assertion if selection else None,
                     sdk=True,
-                    workload=selection.name if selection else None,
-                    manifest=selection.manifest if selection else None,
+                    selection=selection.private_input() if selection else None,
                     requested_at=requested_at,
                 )
             except TnlError as original:
@@ -732,6 +741,29 @@ class _Scope:
                 raw.get("sdk_failure_handle"),
                 raw.get("sdk_owner_handle"),
             )
+        return raw
+
+    def workload(self, service: str, request: dict[str, object]) -> object:
+        entry = self.entry
+        raw: object
+        try:
+            if entry is None:
+                raise _error("unavailable")
+            raw = entry[1].prepare(
+                service, sdk=True, preview=True, selection={"sdk_workload": request}
+            )
+        except TnlError:
+            raw = _command(
+                self.binary(),
+                "sdk-workload",
+                "--directory",
+                self.directory,
+                "--service",
+                service,
+                input_value={"schema": 1, "sdk_workload": request},
+            )
+        if isinstance(raw, dict) and "reason" in raw:
+            raise _native_error(raw["reason"])
         return raw
 
     @staticmethod
@@ -863,7 +895,7 @@ class ConnectionHandle[C: Connection]:
             raise _error("closed")
         selection = None
         if uses_workload():
-            selection = await select_workload(self._session.directory, self._service)
+            selection = await select_workload(self._service, self._session.scope.workload)
         with self._lifetime.changed:
             if self._lifetime.closed:
                 raise _error("closed")
