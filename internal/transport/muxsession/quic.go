@@ -20,6 +20,11 @@ const compatibleQUICPacketSize = 1200
 // DATAGRAMs with Config.EnableDatagrams; ordinary sessions keep the default off.
 type QUICConfig struct {
 	Config *quic.Config
+	// UDPNetwork selects udp (the default), udp4, or udp6 for listeners.
+	UDPNetwork string
+	// BasicPacketConn limits listeners to net.PacketConn operations, so replies
+	// follow the socket route instead of received packet interface metadata.
+	BasicPacketConn bool
 }
 
 // QUICConnector establishes QUIC multiplexed sessions.
@@ -97,27 +102,30 @@ func listenQUICWithALPN(address string, tlsConfig *tls.Config, config QUICConfig
 	if err != nil {
 		return nil, err
 	}
-	listener, transport, packetConn, err := listenQUIC(address, serverConfig, quicConfig(config.Config))
+	network := config.UDPNetwork
+	if network == "" {
+		network = "udp"
+	}
+	udpAddress, err := net.ResolveUDPAddr(network, address)
 	if err != nil {
+		return nil, fmt.Errorf("muxsession: resolve QUIC listen address: %w", err)
+	}
+	packetConn, err := net.ListenUDP(network, udpAddress)
+	if err != nil {
+		return nil, fmt.Errorf("muxsession: listen QUIC UDP: %w", err)
+	}
+	var connection net.PacketConn = packetConn
+	if config.BasicPacketConn {
+		connection = struct{ net.PacketConn }{packetConn}
+	}
+	transport := &quic.Transport{Conn: connection}
+	listener, err := transport.Listen(serverConfig, quicConfig(config.Config))
+	if err != nil {
+		_ = transport.Close()
+		_ = packetConn.Close()
 		return nil, fmt.Errorf("muxsession: listen QUIC: %w", err)
 	}
 	return &QUICListener{listener: listener, transport: transport, packetConn: packetConn, alpn: alpn}, nil
-}
-
-func listenQUIC(address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Listener, *quic.Transport, net.PacketConn, error) {
-	if !requiresBasicQUICPacketConn(address) {
-		return listenQUICPacket("udp", address, tlsConfig, config, false)
-	}
-	// Fly UDP replies must follow the socket route; quic-go's IP_PKTINFO
-	// interface pinning and larger datagrams fail on its forwarding path.
-	return listenBasicQUIC(address, tlsConfig, flyQUICConfig(config))
-}
-
-func flyQUICConfig(config *quic.Config) *quic.Config {
-	config = config.Clone()
-	config.InitialPacketSize = compatibleQUICPacketSize
-	config.DisablePathMTUDiscovery = true
-	return config
 }
 
 func quicConnectorConfig(config *quic.Config) *quic.Config {
@@ -126,38 +134,6 @@ func quicConnectorConfig(config *quic.Config) *quic.Config {
 		config.InitialPacketSize = compatibleQUICPacketSize
 	}
 	return config
-}
-
-func listenBasicQUIC(address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Listener, *quic.Transport, net.PacketConn, error) {
-	return listenQUICPacket("udp4", address, tlsConfig, config, true)
-}
-
-func listenQUICPacket(network, address string, tlsConfig *tls.Config, config *quic.Config, basic bool) (*quic.Listener, *quic.Transport, net.PacketConn, error) {
-	udpAddress, err := net.ResolveUDPAddr(network, address)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	packetConn, err := net.ListenUDP(network, udpAddress)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	var connection net.PacketConn = packetConn
-	if basic {
-		connection = struct{ net.PacketConn }{packetConn}
-	}
-	transport := &quic.Transport{Conn: connection}
-	listener, err := transport.Listen(tlsConfig, config)
-	if err != nil {
-		_ = transport.Close()
-		_ = packetConn.Close()
-		return nil, nil, nil, err
-	}
-	return listener, transport, packetConn, nil
-}
-
-func requiresBasicQUICPacketConn(address string) bool {
-	host, _, err := net.SplitHostPort(address)
-	return err == nil && host == "fly-global-services"
 }
 
 func (l *QUICListener) Accept(ctx context.Context) (Session, error) {
