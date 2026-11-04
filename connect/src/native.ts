@@ -102,7 +102,7 @@ export async function connectorJSON(
   });
   let value: unknown;
   try {
-    value = JSON.parse(result.output) as unknown;
+    value = JSON.parse(result.output);
   } catch (cause) {
     if (result.failure) throw result.failure;
     throw new ActionError("TNL_ACTION_JSON_INVALID", { cause });

@@ -52,11 +52,11 @@ func TestPublicReadinessJoinAndPublisherIsolation(t *testing.T) {
 	if !c.Ready(now) {
 		t.Fatal("starting runs blocked the existing ready run's health")
 	}
-	entries, reason := c.LookupAllWithReason("pool.example", now)
+	entries, reason := c.Lookup("pool.example", now)
 	if reason != LookupCurrent || len(entries) != 1 || entries[0].PublishRunId != first.Entry.PublishRunId {
 		t.Fatal("starting publisher blocked or joined its healthy sibling", entries, reason)
 	}
-	if _, reason := c.LookupAllWithReason("other.example", now); reason != LookupNoBackends {
+	if _, reason := c.Lookup("other.example", now); reason != LookupNoBackends {
 		t.Fatal(reason)
 	}
 	observations := c.publicRunObservations(lease, now)
@@ -64,7 +64,7 @@ func TestPublicReadinessJoinAndPublisherIsolation(t *testing.T) {
 		t.Fatal(observations)
 	}
 	installed[sibling.Entry.PublishRunId] = true
-	if entries, reason := c.LookupAllWithReason("pool.example", now); reason != LookupCurrent || len(entries) != 2 {
+	if entries, reason := c.Lookup("pool.example", now); reason != LookupCurrent || len(entries) != 2 {
 		t.Fatal(entries, reason)
 	}
 	observations = c.publicRunObservations(lease, now)
@@ -76,7 +76,7 @@ func TestPublicReadinessJoinAndPublisherIsolation(t *testing.T) {
 	if !c.Ready(until) {
 		t.Fatal("run expiry became a global health barrier")
 	}
-	if _, reason := c.LookupAllWithReason("pool.example", until); reason != LookupNoBackends {
+	if _, reason := c.Lookup("pool.example", until); reason != LookupNoBackends {
 		t.Fatal("expired policy selected", reason)
 	}
 	if observations := c.publicRunObservations(lease, until); len(observations) != 0 {

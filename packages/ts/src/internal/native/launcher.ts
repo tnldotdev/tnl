@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import { nativeTargets } from "./native-targets.js";
 import { TnlError } from "../../errors.js";
+import * as z from "zod";
 
 const require = createRequire(import.meta.url);
 const launcherManifest = new URL("../../../package.json", import.meta.url);
@@ -23,9 +24,10 @@ interface NativeBinaryOptions {
   readonly resolve?: (specifier: string) => string;
 }
 
-interface PackageManifest {
-  readonly version: string;
-}
+const packageManifestSchema = z
+  .object({ version: z.string().max(256).regex(packageVersionPattern) })
+  .readonly();
+type PackageManifest = z.output<typeof packageManifestSchema>;
 
 export function nativePackageName(
   platform: NodeJS.Platform,
@@ -79,28 +81,16 @@ function readManifest(file: string | URL, _packageName: string): PackageManifest
   }
   let value: unknown;
   try {
-    value = JSON.parse(serialized) as unknown;
+    value = JSON.parse(serialized);
   } catch (error) {
     throw new TnlError("sdk.native_invalid", { cause: error });
   }
-  try {
-    return parseManifest(value);
-  } catch (error) {
-    throw new TnlError("sdk.native_invalid", { cause: error });
+  const parsed = packageManifestSchema.safeParse(value);
+  if (!parsed.success) {
+    // package contents are untrusted; expose only the authored shape diagnostic.
+    throw new TnlError("sdk.native_invalid", {
+      cause: new TypeError("package manifest version must be a valid semantic version"),
+    });
   }
-}
-
-function parseManifest(value: unknown): PackageManifest {
-  if (
-    value === null ||
-    typeof value !== "object" ||
-    Array.isArray(value) ||
-    !("version" in value) ||
-    typeof value.version !== "string" ||
-    value.version.length > 256 ||
-    !packageVersionPattern.test(value.version)
-  ) {
-    throw new TypeError("package manifest version must be a valid semantic version");
-  }
-  return { version: value.version };
+  return parsed.data;
 }

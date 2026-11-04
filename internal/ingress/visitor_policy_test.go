@@ -115,11 +115,11 @@ func TestPublicPolicyInstallationDoesNotWaitForStartingSiblingsOrVisitorRequests
 		}
 		before := calls.Load()
 		for range 10 {
-			entries, reason := c.LookupAllWithReason("pool.example", time.Now())
+			entries, reason := c.Lookup("pool.example", time.Now())
 			if reason != LookupCurrent || len(entries) != 1 || entries[0].PublishRunId != first.Entry.PublishRunId {
 				t.Fatal("pending policy hid or joined its ready sibling", entries, reason)
 			}
-			if entries, reason := c.LookupAllWithReason("other.example", time.Now()); reason != LookupCurrent || len(entries) != 1 {
+			if entries, reason := c.Lookup("other.example", time.Now()); reason != LookupCurrent || len(entries) != 1 {
 				t.Fatal("pending policy hid an unrelated URL", entries, reason)
 			}
 		}
@@ -128,7 +128,7 @@ func TestPublicPolicyInstallationDoesNotWaitForStartingSiblingsOrVisitorRequests
 		}
 		close(release)
 		synctest.Wait()
-		if entries, reason := c.LookupAllWithReason("pool.example", time.Now()); reason != LookupCurrent || len(entries) != 2 {
+		if entries, reason := c.Lookup("pool.example", time.Now()); reason != LookupCurrent || len(entries) != 2 {
 			t.Fatal("completed installation was not visible before observation", entries, reason)
 		}
 		for _, mutate := range []func(*ingressv1.IngressRoutingTableEntry, *ingressv1.IngressLease){
@@ -394,19 +394,19 @@ func TestPublicPolicySurvivesControlRetryOnlyUntilInstalledDeadline(t *testing.T
 		defer stop()
 		time.Sleep(100 * time.Millisecond)
 		synctest.Wait()
-		if _, ok := c.Lookup("pool.example", time.Now()); !ok {
+		if entries, reason := c.Lookup("pool.example", time.Now()); reason != LookupCurrent || len(entries) != 1 {
 			t.Fatal("initial run did not install policy")
 		}
 		unavailable.Store(true)
 		close(outage)
 		time.Sleep(200 * time.Millisecond)
 		synctest.Wait()
-		if _, ok := c.Lookup("pool.example", time.Now()); !ok {
+		if entries, reason := c.Lookup("pool.example", time.Now()); reason != LookupCurrent || len(entries) != 1 {
 			t.Fatal("control retry discarded still-current installed permission")
 		}
 		time.Sleep(10 * time.Second)
 		synctest.Wait()
-		if _, ok := c.Lookup("pool.example", time.Now()); ok {
+		if entries, reason := c.Lookup("pool.example", time.Now()); reason != LookupNoBackends || len(entries) != 0 {
 			t.Fatal("control retry extended the installed policy deadline")
 		}
 	})

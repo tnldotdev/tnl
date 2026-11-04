@@ -146,16 +146,14 @@ export function captureSelection(document: Document): AnchorTarget | undefined {
     offset: endOffset,
   };
   const element = root instanceof Element ? root : first.parentElement;
-  const anchor: Anchor = {
+  const parsed = anchorSchema.safeParse({
     schema_version: 1,
     selectors: selectorAlternatives(element),
     x: 0,
     y: 0,
     selection: { start, end, text: quote },
-  };
-  return anchorSchema.safeParse(anchor).success
-    ? { anchor, element: captureElement(element) }
-    : undefined;
+  });
+  return parsed.success ? { anchor: parsed.data, element: captureElement(element) } : undefined;
 }
 
 export type ResolvedAnchor = { element: Element; range?: Range | undefined; textChanged: boolean };

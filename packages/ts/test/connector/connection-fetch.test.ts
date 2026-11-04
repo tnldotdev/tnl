@@ -1,7 +1,8 @@
 import { createServer } from "node:https";
 import { createSecureContext } from "node:tls";
 import { expect, test, vi } from "vitest";
-import { managedFetch, parseConnection } from "../../src/internal/connector/connection.js";
+import { managedFetch } from "../../src/internal/connector/connection.js";
+import { parseConnectionSnapshot } from "../../src/internal/connector/snapshot.js";
 
 test.each(["failed", "cancelled", "uncooperative"])(
   "upload ownership ends when preparation is %s",
@@ -86,7 +87,7 @@ test("HTTP keeps the managed origin, Host and SNI while dialing verified loopbac
       transport_id: "ctg_aaaaaaaaaaaaaaaaaaaaaa",
       ssl: { servername: "api.tnl.invalid", rejectUnauthorized: true, ca: cert },
     };
-    const fetch = managedFetch(origin, async () => parseConnection(value));
+    const fetch = managedFetch(origin, async () => parseConnectionSnapshot(value));
     const response = await fetch(
       new Request(`${origin}/echo`, {
         method: "POST",
@@ -114,7 +115,7 @@ test("HTTP keeps the managed origin, Host and SNI while dialing verified loopbac
     await redirect.body?.cancel();
     expect(visits).toHaveLength(2);
     const untrusted = managedFetch(origin, async () =>
-      parseConnection({
+      parseConnectionSnapshot({
         ...value,
         ssl: { servername: "api.tnl.invalid", rejectUnauthorized: true },
       }),
@@ -175,7 +176,7 @@ test("streamed response bodies can outlive 30 seconds without an SDK total abort
     if (address === null || typeof address === "string") throw new Error("missing listener");
     const origin = "https://api.tnl.invalid:8443";
     const fetch = managedFetch(origin, async () =>
-      parseConnection({
+      parseConnectionSnapshot({
         schema: 1,
         protocol: "http",
         host: "127.0.0.1",
@@ -228,7 +229,7 @@ test("session generation changes replace a same-address pool without replay or t
     const origin = "https://api.tnl.invalid:8443";
     let generation = "ctg_aaaaaaaaaaaaaaaaaaaaaa";
     const fetch = managedFetch(origin, async () =>
-      parseConnection({
+      parseConnectionSnapshot({
         schema: 1,
         protocol: "http",
         host: "127.0.0.1",

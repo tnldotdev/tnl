@@ -104,10 +104,12 @@ export async function verifyNpmConsumer(directory: string): Promise<void> {
     assert(
       Object.keys(browser.metafile.inputs).every(
         (input) =>
-          !/internal\/(?:connector\/(?!awaitable_connection\.)|native\/)|@vercel|zod|undici|index\.cjs$/.test(
+          // browser metadata uses Zod; credential acquisition and transport stay server-only.
+          !/internal\/(?:connector\/(?!awaitable_connection\.)|native\/)|@vercel|undici|index\.cjs$/.test(
             input,
           ),
       ),
+      "browser exports must not include native, provider, or transport modules",
     );
   }
   for (const contents of [

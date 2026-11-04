@@ -19,11 +19,12 @@ func TestPublicURLCreateTargetShape(t *testing.T) {
 	}
 	for _, purpose := range []PublicURLPurpose{PublicURLPurposeApp, PublicURLPurposeAlias, PublicURLPurposeDemo, PublicURLPurposeOAuth, PublicURLPurposeWebhooks, "", "unknown"} {
 		for _, ephemeral := range []bool{false, true} {
-			want := !ephemeral && (purpose == PublicURLPurposeApp || purpose == PublicURLPurposeAlias)
+			integration := purpose == PublicURLPurposeOAuth || purpose == PublicURLPurposeWebhooks
+			want := !ephemeral && (purpose == PublicURLPurposeApp || purpose == PublicURLPurposeAlias || integration)
 			if got := PublicURLServiceHTTP.ValidCreateTarget(purpose, "", ephemeral); got != want {
 				t.Errorf("targetless %q ephemeral=%t: got %t, want %t", purpose, ephemeral, got, want)
 			}
-			if got := PublicURLServiceHTTP.ValidCreateTarget(purpose, "http://127.0.0.1:3000", ephemeral); got != purpose.ValidForCreation() {
+			if got := PublicURLServiceHTTP.ValidCreateTarget(purpose, "http://127.0.0.1:3000", ephemeral); got != (purpose.ValidForCreation() && !integration) {
 				t.Errorf("HTTP target for %q ephemeral=%t: got %t", purpose, ephemeral, got)
 			}
 		}
