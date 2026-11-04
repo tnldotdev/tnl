@@ -195,7 +195,9 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
         if args[0] == "sdk-prepare":
             return {
                 "schema": 1,
-                "owner": status,
+                "owner": {
+                    key: status[key] for key in ("connection_handle", "executable", "expires_at")
+                },
                 "prepared": original_command(
                     binary,
                     "prepare",

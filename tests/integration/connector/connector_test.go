@@ -1,6 +1,7 @@
 package connector_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/ed25519"
@@ -31,6 +32,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -70,6 +72,14 @@ func TestIntegrationConnectionConnectorOwnerSDKSelectionBudget(t *testing.T) {
 	if !maps.Equal(baseline, selected) {
 		t.Fatalf("native SDK selection changed the baseline SDK RPC budget: baseline=%v selected=%v", baseline, selected)
 	}
+	for _, language := range []string{"javascript", "python"} {
+		t.Run(language, func(t *testing.T) {
+			actual := runConnectionNativeOwnerStartup(t, "http", true, language)
+			if !maps.Equal(baseline, actual) {
+				t.Fatalf("%s SDK changed cold RPC budget: baseline=%v actual=%v", language, baseline, actual)
+			}
+		})
+	}
 }
 
 type connectorConnectionFixture struct {
@@ -78,6 +88,39 @@ type connectorConnectionFixture struct {
 	WrongTLS *atomic.Bool
 	Canceled *atomic.Int32
 	Stop     func()
+}
+
+func readSDKSelection(t *testing.T, directory, service string) (connectorruntime.SDKOwner, connectorruntime.Connection) {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(directory, "tnl-sdk-*", "registry.json"))
+	if err != nil || len(files) != 1 {
+		t.Fatal("SDK did not create exactly one registry", files, err)
+	}
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var registry struct {
+		Owners map[string]struct {
+			Owner connectorruntime.SDKOwner `json:"owner"`
+		} `json:"owners"`
+	}
+	if err := json.Unmarshal(data, &registry); err != nil || len(registry.Owners) != 1 {
+		t.Fatal("SDK did not select exactly one owner", err)
+	}
+	for _, record := range registry.Owners {
+		handle, err := connectorruntime.ReadHandle(record.Owner.ConnectionHandle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var prepared connectorruntime.Prepared
+		if err := connectorruntime.Call(t.Context(), record.Owner.ConnectionHandle, "prepared", connectorruntime.Request{Schema: 1, Directory: handle.Directory, ConfigDigest: handle.ConfigDigest, Service: service}, &prepared); err != nil {
+			t.Fatal(err)
+		}
+		return record.Owner, prepared.Connection
+	}
+	t.Fatal("missing native SDK owner")
+	return connectorruntime.SDKOwner{}, connectorruntime.Connection{}
 }
 
 func runConnectionNativeOwner(t *testing.T, protocol string, public bool, qualify ...func(connectorConnectionFixture)) {
@@ -430,6 +473,81 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 		t.Fatal(err)
 	}
 	assertion := issuer.Sign(t, githubtest.Claims(server, time.Now()))
+	if startup == "javascript" || startup == "python" {
+		manifest := workloadmanifest.Manifest{Schema: 1, Server: scope.Server, Team: scope.TeamID, ProjectKey: scope.ProjectKey, SourceFingerprint: scope.SourceID, ProjectLabel: scope.ProjectLabel,
+			Workloads: map[string]workloadmanifest.Workload{"test": {Provider: "github", Services: []string{serviceName}, MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "github-actions", Audience: scope.Server}}}, Services: map[string]string{serviceName: protocol}}
+		if err := manifest.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		generated := filepath.Join(root, ".tnl", "generated")
+		if err := os.MkdirAll(generated, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := json.Marshal(manifest)
+		if err := os.WriteFile(filepath.Join(generated, "workloads.json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "assertion"), []byte(assertion), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fixture, _ := filepath.Abs("../../../packages/ts/test/fixtures/connections/native-selection.ts")
+		ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+		defer cancel()
+		child := exec.CommandContext(ctx, "node", fixture)
+		child.Env = append(slices.Clone(env), "TMPDIR="+root)
+		if startup == "python" {
+			python, _ := filepath.Abs("../../../packages/py/.venv/bin/python")
+			fixture, _ := filepath.Abs("../../../packages/py/tests/native_selection.py")
+			source, _ := filepath.Abs("../../../packages/py/src")
+			child = exec.CommandContext(ctx, python, fixture, binary)
+			child.Env = append(slices.Clone(env), "PYTHONPATH="+source, "TMPDIR="+root)
+		}
+		child.Dir = root
+		input, err := child.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		output, err := child.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var diagnostics bytes.Buffer
+		child.Stderr = &diagnostics
+		if err := child.Start(); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			input.Close()
+			if err := child.Wait(); err != nil {
+				t.Errorf("%s SDK: %v %s", startup, err, diagnostics.String())
+			}
+		}()
+		lines := bufio.NewScanner(output)
+		if !lines.Scan() || lines.Text() != "cold" {
+			t.Fatal("SDK did not complete cold selection")
+		}
+		owner, first := readSDKSelection(t, root, serviceName)
+		authorityMu.Lock()
+		cold := maps.Clone(controlCalls)
+		authorityMu.Unlock()
+		_, _ = io.WriteString(input, "warm\n")
+		if !lines.Scan() || lines.Text() != "warm" {
+			t.Fatal("SDK did not complete warm selection")
+		}
+		nextOwner, next := readSDKSelection(t, root, serviceName)
+		if owner != nextOwner || first.TransportID != next.TransportID || !first.ExpiresAt.Equal(next.ExpiresAt) || first.Port != next.Port {
+			t.Fatal("warm SDK selection replaced the owner, transport, port, or fixed expiry")
+		}
+		authorityMu.Lock()
+		warm := maps.Clone(controlCalls)
+		authorityMu.Unlock()
+		_, _ = io.WriteString(input, "stop\n")
+		if !maps.Equal(cold, warm) {
+			t.Fatalf("%s warm SDK preparation made control RPCs: cold=%v after=%v", startup, cold, warm)
+		}
+		t.Logf("%s SDK decoded cold and ten warm native responses with stable transport and expiry; cold=%v warm=0", startup, cold)
+		return cold
+	}
 	request, _ := json.Marshal(connectorruntime.StartRequest{Schema: 1, Context: scope, Assertion: assertion})
 	var state connectorruntime.Status
 	startArgs := []string{"start", "--directory", root, "--workload", "test", "--runner-temp", root}
@@ -478,7 +596,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 			if err := json.Unmarshal(call(input, "sdk-prepare", "--directory", root, "--workload", "test", "--registry", registry, "--parent-pid", strconv.Itoa(os.Getpid()), "--selected-service", serviceName), &prepared); err != nil {
 				t.Fatal(err)
 			}
-			state = prepared.Owner
+			state = connectorruntime.Status{ConnectionHandle: prepared.Owner.ConnectionHandle}
 			if err := connectorruntime.ValidatePrepared(prepared.Prepared, serviceName); err != nil {
 				t.Fatal(err)
 			}

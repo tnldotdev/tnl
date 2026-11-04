@@ -1,6 +1,12 @@
 version: "3"
 
 tasks:
+  sync:
+    dir: "{{.ROOT_DIR}}"
+    desc: Install the locked Python SDK environment
+    cmds:
+      - uv sync --frozen --project packages/py
+
   format:
     dir: "{{.ROOT_DIR}}"
     desc: Format the Python SDK

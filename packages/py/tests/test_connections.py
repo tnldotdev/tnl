@@ -360,13 +360,9 @@ def test_failed_initial_service_snapshot_retains_the_shared_native_owner(
 
 def ready(binary: Path, handle: Path, deadline: datetime) -> dict[str, object]:
     return {
-        "schema": 1,
-        "state": "ready",
-        "pid": 123,
         "expires_at": deadline.isoformat(),
         "connection_handle": str(handle),
         "executable": str(binary),
-        "project_runtime": {},
     }
 
 

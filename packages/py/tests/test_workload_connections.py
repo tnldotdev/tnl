@@ -160,13 +160,9 @@ class NativeFixture:
         return {
             "schema": 1,
             "owner": {
-                "schema": 1,
-                "state": "ready",
-                "pid": 1,
                 "expires_at": self.deadline,
                 "connection_handle": file,
                 "executable": str(Path(sys.executable).resolve()),
-                "project_runtime": {},
             },
             "prepared": prepared(name, self.deadline),
         }

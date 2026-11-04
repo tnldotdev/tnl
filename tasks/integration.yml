@@ -74,9 +74,9 @@ tasks:
   connections:
     dir: "{{.ROOT_DIR}}"
     desc: Check the built connector owner and SDK through prepared HTTP and Kubernetes connections
-    deps: [":js:build"]
+    deps: [":js:build", ":py:sync"]
     cmds:
-      - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwner(HTTP|Kubernetes)$' -count=1 -timeout=6m -args -tnl-test-tier=integration
+      - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwner(HTTP|Kubernetes|SDKSelectionBudget)$' -count=1 -timeout=6m -args -tnl-test-tier=integration
 
   kubernetes:
     dir: "{{.ROOT_DIR}}"
