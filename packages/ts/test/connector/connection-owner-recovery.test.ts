@@ -87,6 +87,7 @@ async function assertPortFree(port: number): Promise<void> {
 
 beforeEach(async () => {
   vi.resetModules();
+  vi.stubGlobal("__tnlConnectorContextV1", undefined);
   vi.stubEnv("TNL_CONNECTION_HANDLE", undefined);
   for (const name of ["TNL_WORKLOAD", "GITHUB_ACTIONS", "VERCEL", "FLY_APP_NAME"])
     vi.stubEnv(name, undefined);
@@ -132,7 +133,10 @@ beforeEach(async () => {
     await rm(root, { recursive: true, force: true });
   });
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 
 test("a timed-out prepared read retains the live owner and its fixed-port listener", async () => {
   const { connectionHandle } = await import("../../src/internal/connector/connection.js");
