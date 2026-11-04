@@ -169,23 +169,17 @@ func (s *Server) PromotePendingAdmission(ctx context.Context, h tunnelv1.Admissi
 	}
 	v.attempted = true
 	var current PublicURL
-	var reason LookupReason
-	if s.config.LookupPool != nil {
-		var candidates []PublicURL
-		candidates, reason = s.config.LookupPool(v.hostname)
-		if reason == LookupCurrent {
-			reason = LookupNotFound
-			for _, candidate := range candidates {
-				if candidate.PublishRunID == v.runID {
-					current, reason = candidate, LookupCurrent
-					break
-				}
+	candidates, reason := s.config.Lookup(v.hostname)
+	if reason == LookupCurrent {
+		reason = LookupNotFound
+		for _, candidate := range candidates {
+			if candidate.PublishRunID == v.runID && candidate.ID == v.key.url && candidate.PublishRunNumber == v.key.run {
+				current, reason = candidate, LookupCurrent
+				break
 			}
 		}
-	} else {
-		current, reason = s.config.Lookup(v.hostname)
 	}
-	if reason != LookupCurrent || current.ID != v.key.url || current.PublishRunNumber != v.key.run || current.PublishRunID != v.runID {
+	if reason != LookupCurrent {
 		return reject(tunnelv1.StalePublishRunNumber)
 	}
 	if !current.allowsIP(v.source) {

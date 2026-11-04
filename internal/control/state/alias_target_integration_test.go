@@ -27,7 +27,7 @@ func TestIntegrationSavedAliasTargetStaysLocalThroughPolicyUpdates(t *testing.T)
 		purpose   string
 		ephemeral bool
 	}{
-		{"app", true}, {"alias", true}, {"oauth", false}, {"webhooks", false}, {"demo", false}, {"unknown", false},
+		{"app", true}, {"alias", true}, {"demo", false}, {"unknown", false},
 	} {
 		t.Run(test.purpose, func(t *testing.T) {
 			const statement = `UPDATE control.public_urls SET purpose=$2,ephemeral=$3,expires_at=CASE WHEN $3 THEN created_at+interval '1 hour' ELSE NULL END,target=$4 WHERE id=$1`

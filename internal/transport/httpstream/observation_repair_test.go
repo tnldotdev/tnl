@@ -25,7 +25,7 @@ func observedProxyAddress(t *testing.T, kind, backend string, m *observability.M
 	ctx, cancel := context.WithCancel(observability.WithMetrics(t.Context(), m))
 	t.Cleanup(cancel)
 	if kind == "localproxy" {
-		handler, err := publisherproxy.NewWithMounts(backend, "proxy.example.test", 1, nil)
+		handler, err := publisherproxy.New(publisherproxy.Config{Target: backend, Hostname: "proxy.example.test", MaxConnsPerHost: 1})
 		if err != nil {
 			t.Fatal(err)
 		}

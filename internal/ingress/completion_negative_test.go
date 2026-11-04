@@ -147,10 +147,12 @@ func restrictedCompletionFixture(t *testing.T, prematureClose bool) restrictedCo
 	var failureCalls atomic.Int32
 	config := publicURLConfig(backend)
 	lookup := config.Lookup
-	config.Lookup = func(host string) (PublicURL, LookupReason) {
-		url, reason := lookup(host)
-		url.AccessMode = "restricted"
-		return url, reason
+	config.Lookup = func(host string) ([]PublicURL, LookupReason) {
+		candidates, reason := lookup(host)
+		for index := range candidates {
+			candidates[index].AccessMode = "restricted"
+		}
+		return candidates, reason
 	}
 	config.Metrics, config.Observer, config.OpenUsage = metrics, cleanup, usage.Open
 	config.OnError = func(err error) {

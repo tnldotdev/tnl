@@ -91,6 +91,9 @@ func validateRouteIdentity(publicURL controlv1.PublicURL, config Config) error {
 	if publicURL.ServiceProtocol != "" && publicURL.ServiceProtocol != controlv1.Http {
 		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL protocol is not HTTP"))
 	}
+	if (config.Purpose == controlv1.Oauth || config.Purpose == controlv1.Webhooks) && publicURL.Target != "" {
+		return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: integration URL must not have a target"))
+	}
 	if config.PublicURLScope == controlv1.Member {
 		if publicURL.MembershipId == nil || *publicURL.MembershipId != config.MembershipID {
 			return diagnostic.Wrap(diagnostic.PublicURLConflict, errors.New("publisher: existing public URL identity does not match the requested public URL"))
@@ -136,20 +139,21 @@ func reconcilePublicURL(ctx context.Context, config Config, publicURL controlv1.
 		currentPolicy = slices.Clone(config.AllowedIPPrefixes)
 		desiredPolicy = slices.Clone(currentPolicy)
 	}
+	desiredTarget := config.Target
+	if config.PreserveSavedPublicURLTarget && publicURL.Target == "" {
+		desiredTarget = ""
+	}
 	if !slices.Equal(currentPolicy, desiredPolicy) {
 		management, ok := config.Control.(PublicURLManagementClient)
 		if !ok {
 			return controlv1.PublicURL{}, failure.Wrap("edit saved public URL", failure.PublisherGrantMismatch, errors.New("publisher grant does not permit public URL management"))
 		}
 		updated, err := management.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{
-			Target: config.Target, AllowedIpPrefixes: slices.Clone(desiredPolicy),
+			Target: desiredTarget, AllowedIpPrefixes: append([]string{}, desiredPolicy...),
 		})
 		return updated, classifyPublicURLConflict(err)
 	}
-	if config.PreserveSavedPublicURLTarget && publicURL.Target == "" {
-		return publicURL, nil
-	}
-	if publicURL.Target == config.Target {
+	if publicURL.Target == desiredTarget {
 		return publicURL, nil
 	}
 	management, ok := config.Control.(PublicURLManagementClient)
@@ -157,7 +161,7 @@ func reconcilePublicURL(ctx context.Context, config Config, publicURL controlv1.
 		return controlv1.PublicURL{}, failure.Wrap("edit saved public URL", failure.PublisherGrantMismatch, errors.New("publisher grant does not permit public URL management"))
 	}
 	updated, err := management.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{
-		Target: config.Target, AllowedIpPrefixes: slices.Clone(desiredPolicy),
+		Target: desiredTarget, AllowedIpPrefixes: append([]string{}, desiredPolicy...),
 	})
 	return updated, classifyPublicURLConflict(err)
 }

@@ -68,7 +68,7 @@ func newOwner(role string, config Config) (_ *Metrics, err error) {
 	// SDK constructors parse ambient settings before applying explicit options.
 	// validate even overridden values before allowing those diagnostic paths.
 	if config.Metrics.Endpoint != "" || config.Traces.Endpoint != "" || config.Logs.Endpoint != "" {
-		if err := validateSDKEnvironment(os.Getenv); err != nil {
+		if _, err := exporterSettingsFromEnv(os.Getenv); err != nil {
 			return nil, err
 		}
 	}

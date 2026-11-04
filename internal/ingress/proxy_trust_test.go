@@ -13,9 +13,9 @@ import (
 
 func TestUntrustedPeerCannotSupplyOriginalDestination(t *testing.T) {
 	var lookups atomic.Int32
-	_, address := startIngress(t, Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("192.0.2.8/32")}, Lookup: func(string) (PublicURL, LookupReason) {
+	_, address := startIngress(t, Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("192.0.2.8/32")}, Lookup: func(string) ([]PublicURL, LookupReason) {
 		lookups.Add(1)
-		return PublicURL{}, LookupNotFound
+		return nil, LookupNotFound
 	}})
 	connection, err := net.DialTimeout("tcp", address, time.Second)
 	if err != nil {

@@ -69,7 +69,7 @@ function FeedbackLayer({
       });
       if (!response?.ok) throw new FeedbackError("unavailable");
       try {
-        return browserStatusSchema.parse((await response.json()) as unknown);
+        return browserStatusSchema.parse(await response.json());
       } catch (cause) {
         throw new FeedbackError("response_invalid", { cause });
       }
