@@ -218,10 +218,15 @@ func exerciseWorkloadConnectorPeerPair(t *testing.T, d *controlstate.Database, j
 	if code, data := call(renew, "", "/"+pair.PairId+"/renew"); code != 200 {
 		t.Fatal("workload renewal", code, string(data))
 	}
-	if delivered, err := api.RenewWorkloadConnectorPeerPair(ctx, service, pair.PairId, credential, renew); err != nil || delivered.PairId != pair.PairId || delivered.Key != pair.Key {
+	if delivered, err := api.RenewWorkloadConnectorPeerPair(ctx, service, pair.PairId, credential, renew); err != nil || delivered.Pair.PairId != pair.PairId || delivered.Pair.Key != pair.Key {
 		t.Fatal("workload client renewal lost delivery", err)
+	} else if delivered.VisitorPermission.VisitorToken == "" || delivered.VisitorPermission.Resource.Kind != controlv1.VisitorResourceScopeKindService || delivered.VisitorPermission.Resource.Id != service ||
+		delivered.VisitorPermission.ExpiresAt.After(delivered.Pair.ExpiresAt) || !delivered.RunValidUntil.After(delivered.Pair.ObservedAt) ||
+		delivered.TrustRevision != selected.TrustRevision || delivered.Protocol != selected.Protocol ||
+		delivered.VisitorPermission.ServiceTrustRevision == nil || *delivered.VisitorPermission.ServiceTrustRevision != delivered.TrustRevision {
+		t.Fatal("workload client renewal lost coherent run validity or visitor permission")
 	}
-	if delivered, err := job.PrepareConnectorPeerPair(ctx, service, renew); err != nil || delivered.PairId != pair.PairId || delivered.Key != pair.Key {
+	if delivered, err := job.RenewConnectorPeerPair(ctx, service, renew); err != nil || delivered.Pair.PairId != pair.PairId || delivered.Pair.Key != pair.Key {
 		t.Fatal("credential-owning workload adapter lost renewal", err)
 	}
 	replace := renew

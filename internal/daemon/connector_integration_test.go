@@ -72,6 +72,13 @@ func (c *heldConnectorControl) VisitorPermission(ctx context.Context, service st
 	return c.Control.VisitorPermission(ctx, service)
 }
 
+func (c *heldConnectorControl) RenewConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+	if err := c.wait(ctx); err != nil {
+		return controlv1.ConnectorPeerPairRenewal{}, err
+	}
+	return c.Control.RenewConnectorPeerPair(ctx, service, body)
+}
+
 func (c *heldConnectorControl) CloseContext(ctx context.Context) error {
 	return c.Control.(interface{ CloseContext(context.Context) error }).CloseContext(ctx)
 }

@@ -49,6 +49,7 @@ type Control interface {
 	ConnectorSigner(context.Context, string) (Signer, error)
 	ResolveService(context.Context, string) (Run, error)
 	PrepareConnectorPeerPair(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error)
+	RenewConnectorPeerPair(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error)
 	VisitorPermission(context.Context, string) (controlv1.VisitorTokenResponse, error)
 }
 

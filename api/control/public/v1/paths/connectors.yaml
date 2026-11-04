@@ -116,7 +116,7 @@ paths:
     post:
       operationId: renewConnectorPeerPair
       security: [{}, { bearerAuth: [] }]
-      description: Signed renewal of the exact pair and generation, subject to current permission and both relay leases.
+      description: Renew the pinned pair and generation in one transaction checking the current device or workload source, visitor permission, exact run, publisher and both relay leases. Returns the run validity, pair lease and canonical signed visitor permission from that decision; no separate selection or permission exchange is needed.
       parameters:
         - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
         - {
@@ -132,8 +132,8 @@ paths:
             schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRequest" }
       responses:
         "200":
-          description: Renewed exact pair delivered only to its signed source; never cache
+          description: Coherent renewal delivered only to its signed source; never cache
           content:
             application/json:
-              schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPair" }
+              schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRenewal" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
