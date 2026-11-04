@@ -1,30 +1,30 @@
 # connect from github actions
 
-run migrations or deploy commands against your services from GitHub Actions.
+Run migrations or deploy commands against your services from GitHub Actions.
 `tnldotdev/tnl/connect` opens the connections once and keeps them available to
 later steps in the same job.
 
 ## run a migration
 
-this example uses a pnpm project with a PostgreSQL service named `database` and a
-GitHub workload named `deploy`. before running it:
+This example uses a pnpm project with a PostgreSQL service named `database` and a
+GitHub workload named `deploy`. Before running it:
 
-- declare `services.database` in this project's configuration, assign it to a
+- Declare `services.database` in this project's configuration, assign it to a
   named publisher group, and have a publisher in that group serving it.
-- declare `workloads.deploy` with `provider: github`, `services: [database]`, and
+- Declare `workloads.deploy` with `provider: github`, `services: [database]`, and
   GitHub rules matching `.github/workflows/deploy.yml`, `refs/heads/main`, and the
-  `push` event. save that policy with `pnpm exec tnl apply` from your signed-in
-  checkout. for a private repository, the first apply also needs `gh` authenticated
-  with read access to that repository. the action uses the saved policy.
-- pin pnpm 11 or newer in `package.json`, for example
+  `push` event. Save that policy with `pnpm exec tnl apply` from your signed-in
+  checkout. For a private repository, the first apply also needs `gh` authenticated
+  with read access to that repository. The action uses the saved policy.
+- Pin pnpm 11 or newer in `package.json`, for example
   `"packageManager": "pnpm@11.28.7"`, with a matching committed `pnpm-lock.yaml`.
-- use an existing PostgreSQL Drizzle migration setup with `@tnldotdev/tnl`,
+- Use an existing PostgreSQL Drizzle migration setup with `@tnldotdev/tnl`,
   `drizzle-kit`, `drizzle-orm`, and `pg` in the committed manifest and lockfile.
-  keep the native platform optional dependency enabled.
-- add `DB_USER`, `DB_PASSWORD`, and `DB_NAME` as repository secrets. tnl grants
+  Keep the native platform optional dependency enabled.
+- Add `DB_USER`, `DB_PASSWORD`, and `DB_NAME` as repository secrets. tnl grants
   access to the service; PostgreSQL still checks the database account.
 
-save this as `.github/workflows/deploy.yml`:
+Save this as `.github/workflows/deploy.yml`:
 
 ```yaml
 name: migrate
@@ -62,9 +62,9 @@ jobs:
 
 `contents: read` lets checkout read the repository. `id-token: write` lets the
 action request a GitHub OIDC assertion, which control checks against the saved
-workload policy. use a Linux GitHub-hosted runner on x64 or arm64.
+workload policy. Use a Linux GitHub-hosted runner on x64 or arm64.
 
-in your existing Drizzle configuration, read the prepared connection settings:
+In your existing Drizzle configuration, read the prepared connection settings:
 
 ```ts
 import { tnl } from "@tnldotdev/tnl";
@@ -81,45 +81,45 @@ export default defineConfig({
 });
 ```
 
-run `pnpm exec tnl generate` locally for service-specific TypeScript declarations.
-keep your existing migration directory and schema settings in the Drizzle config.
+Run `pnpm exec tnl generate` locally for service-specific TypeScript declarations.
+Keep your existing migration directory and schema settings in the Drizzle config.
 
 ## inputs
 
-| input               | purpose                                                                                         |
+| Input               | Purpose                                                                                         |
 | ------------------- | ----------------------------------------------------------------------------------------------- |
-| `workload`          | required key under `workloads`, with `provider: github`                                         |
-| `working-directory` | project directory relative to the workspace; default `.`                                        |
-| `services`          | optional newline-separated service keys; narrows the workload's service list                    |
-| `timeout`           | seconds allowed for each of OIDC acquisition and native startup; default `90`, range `1`-`300`  |
-| `version`           | exact npm version to install instead of using the project package; no `v` prefix or ranges      |
-| `cli-path`          | native executable path, absolute or relative to `working-directory`; for locally built binaries |
+| `workload`          | Required key under `workloads`, with `provider: github`                                         |
+| `working-directory` | Project directory relative to the workspace; default `.`                                        |
+| `services`          | Optional newline-separated service keys; narrows the workload's service list                    |
+| `timeout`           | Seconds allowed for each of OIDC acquisition and native startup; default `90`, range `1`-`300`  |
+| `version`           | Exact npm version to install instead of using the project package; no `v` prefix or ranges      |
+| `cli-path`          | Native executable path, absolute or relative to `working-directory`; for locally built binaries |
 
-choose at most one of `version` and `cli-path`. by default, the action uses the
+Choose at most one of `version` and `cli-path`. By default, the action uses the
 installed `@tnldotdev/tnl` package in the selected project and checks its native
-binary's version and digest. install dependencies before this step. `timeout`
+binary's version and digest. Install dependencies before this step. `timeout`
 does not extend the workload's fixed deadline.
 
 ## later steps and cleanup
 
-the action exports these environment variables to later steps:
+The action exports these environment variables to later steps:
 
-| variable                | use                                                       |
+| Variable                | Use                                                       |
 | ----------------------- | --------------------------------------------------------- |
-| `TNL_CONNECTION_HANDLE` | private connection handle read by `tnl.connect(...)`      |
-| `TNL_PROJECT_RUNTIME`   | service metadata used by `tnl.services`                   |
-| `KUBECONFIG`            | session kubeconfig, when the workload includes Kubernetes |
+| `TNL_CONNECTION_HANDLE` | Private connection handle read by `tnl.connect(...)`      |
+| `TNL_PROJECT_RUNTIME`   | Service metadata used by `tnl.services`                   |
+| `KUBECONFIG`            | Session kubeconfig, when the workload includes Kubernetes |
 
-connections belong to this job. its steps run as the same user and can read the
-private handle. the action's post step stops its connector process and removes
-its temporary directory after cleanup succeeds. it uses a saved copy of the
-binary, so later installs or checkout changes do not break cleanup. a cleanup
+Connections belong to this job. Its steps run as the same user and can read the
+private handle. The action's post step stops its connector process and removes
+its temporary directory after cleanup succeeds. It uses a saved copy of the
+binary, so later installs or checkout changes do not break cleanup. A cleanup
 failure is reported and retains the temporary files.
 
 ## work on the action
 
-edit [src/](src/); [scripts/build.ts](scripts/build.ts) generates the committed
-`dist/` bundles. from the repository root:
+Edit [src/](src/); [scripts/build.ts](scripts/build.ts) generates the committed
+`dist/` bundles. From the repository root:
 
 ```sh
 mise exec -- task connect:check

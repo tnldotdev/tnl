@@ -15,14 +15,16 @@ qualify claims:
 - Write “By default, visitors need a current sign-in, share link, or token,”
   not “Your app is completely private.”
 
-Keep the voice lowercase, spare, concrete, practical, and understated. Avoid
+Keep the voice spare, concrete, practical, and understated. Avoid
 hype and unnecessary jargon. Start public guides with what the reader can do;
 in maintainer docs, explain the relevant boundary. In diagnostics, say what
 failed and what to do next. Follow the CLI output rules below for presentation.
 
-Use lowercase documentation filenames and headings. Write `url` in lowercase
-in branded headings and page titles; use the canonical `public URL` in prose.
-Write code-comment prose in lowercase too, preserving the exact case of
+Use lowercase documentation filenames and Markdown headings. Use normal sentence
+capitalization in body text, bullets, and tables, with standard casing for proper
+names and acronyms. Write `url` in lowercase in branded headings and page titles;
+use the canonical `public URL` in prose.
+Write code-comment prose in lowercase, preserving the exact case of
 identifiers and literal values. Keep `AGENTS.md` and `SKILL.md` uppercase for
 agent discovery.
 
