@@ -43,7 +43,8 @@ func streamingProxy(t *testing.T, kind string, h2 bool, backend string) (*http.C
 	transport := &http.Transport{ForceAttemptHTTP2: h2}
 	address := ""
 	if kind == "localproxy" {
-		handler, err := publisherproxy.NewWithMounts(backend, "proxy.example.test", 4, []publisherproxy.Mount{{Prefix: "/mounted", StripPrefix: true, Target: backend}})
+		handler, err := publisherproxy.New(publisherproxy.Config{Target: backend, Hostname: "proxy.example.test", MaxConnsPerHost: 4,
+			Mounts: []publisherproxy.Mount{{Prefix: "/mounted", StripPrefix: true, Target: backend}}})
 		if err != nil {
 			t.Fatal(err)
 		}

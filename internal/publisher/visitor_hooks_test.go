@@ -179,7 +179,7 @@ func TestReadinessProofForHTTPSTargetIsSingleUseAndPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy, err := publisherproxy.NewWithMountsHooksOptions(upstream.URL, run.Hostname, 1, nil, publisherproxy.ResponseHooks{}, options)
+	proxy, err := publisherproxy.New(publisherproxy.Config{Target: upstream.URL, Hostname: run.Hostname, MaxConnsPerHost: 1, TargetOptions: options})
 	if err != nil {
 		t.Fatal(err)
 	}

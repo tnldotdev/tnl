@@ -251,13 +251,13 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 		t.Fatal(err)
 	}
 	server, err := ingress.New(listener, ingress.Config{MaxConnections: 20, AuditSink: sink,
-		Lookup: func(host string) (ingress.PublicURL, ingress.LookupReason) {
+		Lookup: func(host string) ([]ingress.PublicURL, ingress.LookupReason) {
 			if host != publicHostname {
-				return ingress.PublicURL{}, ingress.LookupNotFound
+				return nil, ingress.LookupNotFound
 			}
-			return ingress.PublicURL{ID: publicID, PublishRunID: publicRun, PublishRunNumber: 1, AllowAll: true, AccessMode: "anonymous", Backends: []ingressbackend.Backend{target},
+			return []ingress.PublicURL{{ID: publicID, PublishRunID: publicRun, PublishRunNumber: 1, AllowAll: true, AccessMode: "anonymous", Backends: []ingressbackend.Backend{target},
 				AttestSource: func(string, netip.AddrPort, netip.AddrPort) (string, error) { return "audit-fixture-source-proof", nil },
-			}, ingress.LookupCurrent
+			}}, ingress.LookupCurrent
 		}})
 	if err != nil {
 		_ = listener.Close()

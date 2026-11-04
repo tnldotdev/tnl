@@ -44,7 +44,13 @@ func TestEnsureOwnerPublishesExactCompanionURLsAndReusesIdentity(t *testing.T) {
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
 	defer local.Close()
 	for _, purpose := range []controlv1.PublicURLPurpose{controlv1.Oauth, controlv1.Webhooks, controlv1.Alias} {
-		publicURL, err := f.SavedPublicURL(t.Context(), purpose, local.URL)
+		target := local.URL
+		var handler http.Handler
+		if purpose == controlv1.Oauth || purpose == controlv1.Webhooks {
+			target = ""
+			handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
+		}
+		publicURL, err := f.SavedPublicURL(t.Context(), purpose, target)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -61,7 +67,7 @@ func TestEnsureOwnerPublishesExactCompanionURLsAndReusesIdentity(t *testing.T) {
 		ready := make(chan publisher.Event, 1)
 		done := make(chan error, 1)
 		go func() {
-			done <- publisher.Run(ctx, publisher.Config{Control: reused, ControlURL: f.URL, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, MembershipID: *publicURL.MembershipId, PublicURLScope: publicURL.PublicUrlScope, Purpose: purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, Target: publicURL.Target, ServiceProtocol: controlv1.Http, QUICConnector: muxsession.QUICConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}, Observe: func(event publisher.Event) error {
+			done <- publisher.Run(ctx, publisher.Config{Control: reused, ControlURL: f.URL, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, MembershipID: *publicURL.MembershipId, PublicURLScope: publicURL.PublicUrlScope, Purpose: purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, Target: publicURL.Target, Handler: handler, ServiceProtocol: controlv1.Http, QUICConnector: muxsession.QUICConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}, Observe: func(event publisher.Event) error {
 				if event.Type == publisher.EventReady {
 					ready <- event
 				}

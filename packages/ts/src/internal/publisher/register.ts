@@ -1,8 +1,11 @@
 import { Server as HTTPSServer } from "node:https";
 import { TnlError } from "../../errors.js";
 import { canonicalListenerTarget } from "./target.js";
+import * as z from "zod";
+import { parseValue } from "../validation.js";
 
 const registrationTimeoutMilliseconds = 10 * 60 * 1000;
+const listenerAddressSchema = z.object({ address: z.string(), port: z.number() });
 
 export interface BunHTTPServer {
   readonly hostname?: string | undefined;
@@ -90,17 +93,7 @@ export async function listeningTarget(
       }, registrationTimeoutMilliseconds);
     });
   }
-  const address = server.address();
-  if (
-    address === null ||
-    typeof address !== "object" ||
-    !("address" in address) ||
-    !("port" in address) ||
-    typeof address.address !== "string" ||
-    typeof address.port !== "number"
-  ) {
-    throw new TnlError("sdk.target_invalid");
-  }
+  const address = parseValue(listenerAddressSchema, server.address(), "sdk.target_invalid");
   return canonicalListenerTarget(
     options.targetHostname ?? address.address,
     address.port,

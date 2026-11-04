@@ -64,14 +64,14 @@ func startSeparatedIngress(t *testing.T, f *admissionTransportFixture, port uint
 	}
 	f.entry.AccessMode = ingressv1.Anonymous
 	hashedRoutingPolicyForTest(t, &f.entry, "203.0.113.0/24")
-	lookup := func() (PublicURL, LookupReason) {
-		route, err := f.forwarder.PublicURL(f.entry)
+	lookup := func(string) ([]PublicURL, LookupReason) {
+		candidates, err := f.forwarder.PublicURLs([]ingressv1.IngressRoutingTableEntry{f.entry})
 		if err != nil {
-			return PublicURL{}, LookupInvalidProjection
+			return nil, LookupInvalidProjection
 		}
-		return route, LookupCurrent
+		return candidates, LookupCurrent
 	}
-	s, address := startIngress(t, Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Lookup: func(string) (PublicURL, LookupReason) { return lookup() }})
+	s, address := startIngress(t, Config{RequireProxyHeader: true, TrustedProxyPeers: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Lookup: lookup})
 	f.forwarder.SetPromotionHandler(s.PromotePendingAdmission)
 	return s, address
 }

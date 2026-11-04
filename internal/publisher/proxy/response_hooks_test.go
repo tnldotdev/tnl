@@ -21,7 +21,7 @@ func TestResponseObserverPreservesCompressionAndRejectsBeforeSendingHeaders(t *t
 		response.WriteHeader(http.StatusFound)
 	}))
 	defer upstream.Close()
-	handler, err := NewWithMountsHooks(upstream.URL, "app.example", 1, nil, ResponseHooks{
+	handler, err := New(Config{Target: upstream.URL, Hostname: "app.example", MaxConnsPerHost: 1, Hooks: ResponseHooks{
 		Observe: func(response *http.Response) error {
 			observed = true
 			if response.Header.Get("Location") == "" {
@@ -29,7 +29,7 @@ func TestResponseObserverPreservesCompressionAndRejectsBeforeSendingHeaders(t *t
 			}
 			return diagnostic.Wrap(diagnostic.RequestRejected, errors.New("authorization redirect rejected"))
 		},
-	})
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
