@@ -2419,8 +2419,7 @@
                   "max_duration": {
                     "type": "string",
                     "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
-                    "description": "Fixed session window; defaults to 1h and must be positive and at most 6h.",
-                    "default": "1h0m0s"
+                    "description": "Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof."
                   },
                   "token": {
                     "oneOf": [
@@ -2624,8 +2623,7 @@
                   "max_duration": {
                     "type": "string",
                     "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
-                    "description": "Fixed session window; defaults to 1h and must be positive and at most 6h.",
-                    "default": "1h0m0s"
+                    "description": "Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof."
                   },
                   "token": {
                     "oneOf": [
@@ -2700,8 +2698,7 @@
                   "max_duration": {
                     "type": "string",
                     "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
-                    "description": "Fixed session window; defaults to 1h and must be positive and at most 6h.",
-                    "default": "1h0m0s"
+                    "description": "Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof."
                   },
                   "token": {
                     "oneOf": [
@@ -2774,8 +2771,7 @@
                   "max_duration": {
                     "type": "string",
                     "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
-                    "description": "Fixed session window; defaults to 1h and must be positive and at most 6h.",
-                    "default": "1h0m0s"
+                    "description": "Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof."
                   },
                   "token": {
                     "oneOf": [

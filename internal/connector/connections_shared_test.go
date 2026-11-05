@@ -145,7 +145,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 	serviceNames := []string{"api", "db"}
 	protocols := []string{"http", "postgres"}
 	trustRevision := int64(1)
-	session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: ids, ExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second)}
+	session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: ids, ExpiresAt: new(now.Add(time.Hour)), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second)}
 	session.IdentityExpiresAt = now.Add(2 * time.Hour)
 	natives := map[string]*connectorfixture.Connector{}
 	const serviceRun = "srun_rrrrrrrrrrrrrrrrrrrrrr"

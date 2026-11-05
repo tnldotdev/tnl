@@ -54,12 +54,19 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 	if err != nil {
 		return err
 	}
+	deadlineProvider, renewable := backend.(interface {
+		AuthorizationDeadline() (time.Time, <-chan struct{})
+	})
+	var deadlineChanged <-chan struct{}
+	if renewable {
+		expires, deadlineChanged = deadlineProvider.AuthorizationDeadline()
+	}
 	observed := time.Now()
-	if !expires.After(observed) || expires.After(observed.Add(6*time.Hour+time.Second)) {
+	if !expires.After(observed) || expires.After(observed.Add(12*time.Hour+time.Minute)) {
 		return ErrExpired
 	}
-	// attach the received fixed expiry to this process's monotonic clock once.
-	// renewals may shorten this deadline, never re-anchor it to a changed wall clock.
+	// attach the accepted horizon to this process's monotonic clock once. later
+	// updates shift it by the authority's delta, never a changed local wall clock.
 	localDeadline := observed.Add(expires.Sub(observed))
 	persistent := false
 	if provider, ok := backend.(interface{ Persistent() bool }); ok {
@@ -299,6 +306,25 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 	defer renew.Stop()
 	deadline := time.NewTimer(time.Until(localDeadline))
 	defer deadline.Stop()
+	updateDeadline := func(next time.Time) error {
+		stateMu.Lock()
+		defer stateMu.Unlock()
+		shifted, err := renewedOwnerDeadline(time.Now(), localDeadline, expires, next, renewable)
+		if err != nil {
+			return err
+		}
+		if !expires.Equal(next) {
+			nextHandle := handle
+			nextHandle.ExpiresAt = next
+			if err := updateHandle(path, handle, nextHandle); err != nil {
+				return err
+			}
+			handle = nextHandle
+		}
+		localDeadline, expires, state.ExpiresAt = shifted, next, next
+		deadline.Reset(time.Until(localDeadline))
+		return nil
+	}
 	for {
 		select {
 		case <-lifetime.Done():
@@ -309,6 +335,13 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			return errors.Join(ErrUnavailable, err)
 		case <-deadline.C:
 			return ErrExpired
+		case <-deadlineChanged:
+			if !persistent {
+				next, _ := deadlineProvider.AuthorizationDeadline()
+				if err := updateDeadline(next); err != nil {
+					return err
+				}
+			}
 		case <-renew.C:
 			until := time.Now().Add(10 * time.Second)
 			if !persistent && localDeadline.Before(until) {
@@ -328,26 +361,18 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			if err != nil {
 				return err
 			}
-			stateMu.Lock()
-			narrowed, err := renewedOwnerDeadline(time.Now(), localDeadline, expires, next)
-			if err != nil {
-				stateMu.Unlock()
+			if err := updateDeadline(next); err != nil {
 				return err
 			}
-			localDeadline = narrowed
-			expires = next
-			state.ExpiresAt = next
-			deadline.Reset(time.Until(localDeadline))
-			stateMu.Unlock()
 		}
 	}
 }
 
-func renewedOwnerDeadline(now, deadline, previous, next time.Time) (time.Time, error) {
-	if !now.Before(deadline) || !next.After(now) || next.After(previous) {
+func renewedOwnerDeadline(now, deadline, previous, next time.Time, renewable bool) (time.Time, error) {
+	if !now.Before(deadline) || !next.After(now) || !renewable && next.After(previous) || next.After(now.Add(12*time.Hour+time.Minute)) {
 		return time.Time{}, ErrExpired
 	}
-	// subtract only the authority's reduction. rebuilding from next-now would
+	// shift only by the authority's change. rebuilding from next-now would
 	// extend the running owner after a backward wall-clock adjustment.
 	deadline = deadline.Add(next.Sub(previous))
 	if !now.Before(deadline) {

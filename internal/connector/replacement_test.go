@@ -47,7 +47,7 @@ func TestConnectionReplacementCheckedTransitions(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(retry.scope.Services, []string{"db"}) || retry.assertion != "rotated" {
 		t.Fatal("retry changed the fixed selection or lost its assertion", err)
 	}
-	session := authorityv1.WorkloadSession{Id: "wls_" + strings.Repeat("s", 22), Binding: r.binding, TeamId: "tm_" + strings.Repeat("t", 22), ExpiresAt: time.Now().Add(time.Hour), LeaseExpiresAt: time.Now().Add(time.Minute)}
+	session := authorityv1.WorkloadSession{Id: "wls_" + strings.Repeat("s", 22), Binding: r.binding, TeamId: "tm_" + strings.Repeat("t", 22), ExpiresAt: new(time.Now().Add(time.Hour)), LeaseExpiresAt: time.Now().Add(time.Minute), IdentityExpiresAt: time.Now().Add(2 * time.Hour)}
 	if _, err := r.confirmExchange(pending, session); !errors.Is(err, connectorruntime.ErrInvalid) || r.progress != retry {
 		t.Fatal("stale response advanced another exchange", err)
 	}
@@ -88,7 +88,7 @@ func TestConnectionReplacementCheckedTransitions(t *testing.T) {
 	if err := b.promoteReplacement(r, validated, "latest", identity); err != nil {
 		t.Fatal(err)
 	}
-	if b.workload != client || b.replacement != nil || b.metadata.Services["db"].Hostname != inventory.Services[0].Endpoint.Hostname || b.deadline != session.ExpiresAt {
+	if b.workload != client || b.replacement != nil || b.metadata.Services["db"].Hostname != inventory.Services[0].Endpoint.Hostname || !b.deadline.Equal(*session.ExpiresAt) {
 		t.Fatal("promotion did not install identity, deadline, and metadata together")
 	}
 	if err := b.promoteReplacement(r, validated, "latest", identity); !errors.Is(err, connectorruntime.ErrInvalid) {
@@ -125,9 +125,9 @@ func TestConnectionReplacementCannotPromoteExpiredInventory(t *testing.T) {
 	for _, leaseExpired := range []bool{false, true} {
 		t.Run(map[bool]string{false: "fixed window", true: "lease"}[leaseExpired], func(t *testing.T) {
 			previous, client := &workload.Client{}, &workload.Client{}
-			session := authorityv1.WorkloadSession{ExpiresAt: time.Now().Add(-time.Minute), LeaseExpiresAt: time.Now().Add(time.Minute)}
+			session := authorityv1.WorkloadSession{ExpiresAt: new(time.Now().Add(-time.Minute)), LeaseExpiresAt: time.Now().Add(time.Minute), IdentityExpiresAt: time.Now().Add(2 * time.Hour)}
 			if leaseExpired {
-				session.ExpiresAt, session.LeaseExpiresAt = session.LeaseExpiresAt, session.ExpiresAt
+				session.ExpiresAt, session.LeaseExpiresAt = new(session.LeaseExpiresAt), *session.ExpiresAt
 			}
 			validated := &replacementValidated{replacementExchanged: replacementExchanged{session: session}}
 			r := &workloadReplacement{previous: previous, client: client, progress: validated}
@@ -154,7 +154,7 @@ func TestConnectionReplacementRequiresNonGitHubConfirmedExpiry(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			id, team := "wls_"+strings.Repeat("s", 22), "tm_"+strings.Repeat("t", 22)
-			session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: test.provider, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: []string{}, ExpiresAt: time.Now().Add(time.Hour), LeaseExpiresAt: time.Now().Add(time.Minute)}
+			session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: test.provider, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: []string{}, ExpiresAt: new(time.Now().Add(time.Hour)), LeaseExpiresAt: time.Now().Add(time.Minute)}
 			if test.provider == controlv1.WorkloadGitHub {
 				session.Github = &authorityv1.WorkloadGitHubExecution{RepositoryId: "1", RepositoryOwnerId: "2", RunId: "3", RunAttempt: "4", CheckRunId: "5"}
 			}

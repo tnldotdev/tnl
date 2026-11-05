@@ -36,7 +36,7 @@ type WorkloadSession struct {
 	Subject            VisitorSubject           `json:"subject"`
 	LeaseExpiresAt     time.Time                `json:"lease_expires_at"`
 	IdentityExpiresAt  time.Time                `json:"identity_expires_at"`
-	ExpiresAt          time.Time                `json:"expires_at"`
+	ExpiresAt          *time.Time               `json:"expires_at,omitempty"`
 	RenewAfter         time.Time                `json:"renew_after"`
 	ServiceIDs         []string                 `json:"service_ids"`
 	Binding            string                   `json:"binding"`
@@ -146,9 +146,13 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 			return result, err
 		}
 		claims, _ := json.Marshal(c)
-		deadline := now.Add(time.Duration(p.MaxDurationSeconds) * time.Second)
 		identityExpiry := time.Unix(c.ExpiresAt, 0)
-		lease := minTime(minTime(now.Add(WorkloadLease), deadline), identityExpiry)
+		var deadline *time.Time
+		lease := minTime(now.Add(WorkloadLease), identityExpiry)
+		if p.MaxDurationSeconds > 0 {
+			deadline = new(now.Add(time.Duration(p.MaxDurationSeconds) * time.Second))
+			lease = minTime(lease, *deadline)
+		}
 		_, err = tx.Exec(ctx, `INSERT INTO control.workload_sessions(id,team_id,project_key,workload_name,repository_id,run_id,run_attempt,check_run_id,public_key,request_digest,claims,credential_digest,credential_ciphertext,storage_key_id,created_at,renewed_at,lease_expires_at,expires_at,provider,session_nonce,binding,identity_expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,convert_from($11::bytea,'UTF8')::jsonb,$12,$13,$14,$15,$15,$16,$17,$18,$19,$20,$21)`, id, r.TeamID, r.ProjectKey, r.Workload, nullableText(repository), nullableText(run), nullableText(attempt), nullableText(check), []byte(r.PublicKey), requestDigest[:], claims, digestValue[:], sealed, d.storageKey.CurrentID(), now, lease, deadline, c.Provider, r.Nonce, workloadBinding(r.TeamID, r.ProjectKey, r.Workload, r.SourceFingerprint, c), identityExpiry)
 		if err != nil {
 			return result, err
@@ -199,7 +203,11 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 	if err != nil {
 		return r, publisherLookupError(err, ErrWorkloadDenied)
 	}
-	r = WorkloadSession{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, Workload: row.WorkloadName, Provider: row.Provider, LeaseExpiresAt: row.LeaseExpiresAt.Time, ExpiresAt: row.ExpiresAt.Time, RenewAfter: minTime(row.RenewedAt.Time.Add(WorkloadRenewAfter), row.ExpiresAt.Time), RenewalSequence: row.RenewalSequence}
+	r = WorkloadSession{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, Workload: row.WorkloadName, Provider: row.Provider, LeaseExpiresAt: row.LeaseExpiresAt.Time, RenewAfter: row.RenewedAt.Time.Add(WorkloadRenewAfter), RenewalSequence: row.RenewalSequence}
+	if row.ExpiresAt.Valid {
+		r.ExpiresAt = new(row.ExpiresAt.Time)
+		r.RenewAfter = minTime(r.RenewAfter, *r.ExpiresAt)
+	}
 	r.Binding = row.Binding
 	r.IdentityExpiresAt = row.IdentityExpiresAt.Time
 	if row.Provider == "github" {
@@ -216,7 +224,7 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 	if row.RevokedAt.Valid {
 		return r, ErrWorkloadDenied
 	}
-	if now.Before(row.CreatedAt.Time) || now.Before(row.RenewedAt.Time) || !r.LeaseExpiresAt.After(now) || !r.ExpiresAt.After(now) || !r.IdentityExpiresAt.After(now) {
+	if now.Before(row.CreatedAt.Time) || now.Before(row.RenewedAt.Time) || !r.LeaseExpiresAt.After(now) || r.ExpiresAt != nil && !r.ExpiresAt.After(now) || !r.IdentityExpiresAt.After(now) {
 		return r, ErrWorkloadExpired
 	}
 	secret, _, err := d.storageKey.Open(row.StorageKeyID, workloadCredentialContext(id), row.CredentialCiphertext)
@@ -347,7 +355,7 @@ func VisitorSubjectAccess(ctx context.Context, tx pgx.Tx, service string, subjec
 	var until time.Time
 	var revision int64
 	var run, attempt, check string
-	err := tx.QueryRow(ctx, `SELECT LEAST(w.lease_expires_at,w.expires_at,$3::timestamptz+interval '90 seconds'),p.revision,COALESCE(w.run_id,''),COALESCE(w.run_attempt,''),COALESCE(w.check_run_id,'') FROM control.workload_sessions w JOIN control.workload_session_services rights ON rights.workload_session_id=w.id AND rights.service_id=$2 JOIN control.services s ON s.id=rights.service_id AND s.team_id=w.team_id AND s.enabled AND s.deleted_at IS NULL JOIN control.teams t ON t.id=w.team_id AND t.deleted_at IS NULL JOIN control.applied_projects p ON p.team_id=w.team_id AND p.project_key=w.project_key WHERE w.id=$1 AND w.revoked_at IS NULL AND w.lease_expires_at>$3 AND w.expires_at>$3`, subject.WorkloadSessionID, service, now).Scan(&until, &revision, &run, &attempt, &check)
+	err := tx.QueryRow(ctx, `SELECT LEAST(w.lease_expires_at,w.expires_at,w.identity_expires_at,$3::timestamptz+interval '90 seconds'),p.revision,COALESCE(w.run_id,''),COALESCE(w.run_attempt,''),COALESCE(w.check_run_id,'') FROM control.workload_sessions w JOIN control.workload_session_services rights ON rights.workload_session_id=w.id AND rights.service_id=$2 JOIN control.services s ON s.id=rights.service_id AND s.team_id=w.team_id AND s.enabled AND s.deleted_at IS NULL JOIN control.teams t ON t.id=w.team_id AND t.deleted_at IS NULL JOIN control.applied_projects p ON p.team_id=w.team_id AND p.project_key=w.project_key WHERE w.id=$1 AND w.revoked_at IS NULL AND w.lease_expires_at>$3 AND w.identity_expires_at>$3 AND (w.expires_at IS NULL OR w.expires_at>$3)`, subject.WorkloadSessionID, service, now).Scan(&until, &revision, &run, &attempt, &check)
 	if err == nil {
 		observability.WorkloadExecution(ctx, subject.WorkloadSessionID, run, attempt, check)
 	}

@@ -44,7 +44,7 @@ func TestIntegrationWorkloadIdentityExpiryAndRefresh(t *testing.T) {
 		return d.AttachWorkloadAssertion(ctx, session.ID, session.Credential, request.Execution, ed25519.Sign(key, workloadproof.Attach(session.ID, request.Execution.AssertionDigest)), at)
 	}
 	refreshed, err := attach(fresh, now.Add(35*time.Second))
-	if err != nil || !refreshed.IdentityExpiresAt.Equal(now.Add(335*time.Second)) || !refreshed.LeaseExpiresAt.Equal(now.Add(121*time.Second)) || !refreshed.ExpiresAt.Equal(session.ExpiresAt) || refreshed.ID != session.ID || refreshed.Subject != session.Subject || refreshed.Credential != session.Credential || refreshed.RenewalSequence != renewed.RenewalSequence {
+	if err != nil || !refreshed.IdentityExpiresAt.Equal(now.Add(335*time.Second)) || !refreshed.LeaseExpiresAt.Equal(now.Add(121*time.Second)) || !refreshed.ExpiresAt.Equal(*session.ExpiresAt) || refreshed.ID != session.ID || refreshed.Subject != session.Subject || refreshed.Credential != session.Credential || refreshed.RenewalSequence != renewed.RenewalSequence {
 		t.Fatal("same-identity refresh changed the session or moved the renewal budget", err)
 	}
 	if older, err := attach(exchange, now.Add(36*time.Second)); err != nil || !reflect.DeepEqual(older, refreshed) {
@@ -143,7 +143,7 @@ func TestIntegrationWorkloadIdentityExpiryMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	recovered, err := d.ExchangeWorkload(t.Context(), exchange, now)
-	if err != nil || recovered.ID != session.ID || recovered.Credential != session.Credential || recovered.RenewalSequence != 1 || !recovered.ExpiresAt.Equal(session.ExpiresAt) || !recovered.IdentityExpiresAt.Equal(now.Add(45*time.Second)) || !recovered.LeaseExpiresAt.Equal(recovered.IdentityExpiresAt) || !reflect.DeepEqual(recovered.ServiceIDs, session.ServiceIDs) {
+	if err != nil || recovered.ID != session.ID || recovered.Credential != session.Credential || recovered.RenewalSequence != 1 || !recovered.ExpiresAt.Equal(*session.ExpiresAt) || !recovered.IdentityExpiresAt.Equal(now.Add(45*time.Second)) || !recovered.LeaseExpiresAt.Equal(recovered.IdentityExpiresAt) || !reflect.DeepEqual(recovered.ServiceIDs, session.ServiceIDs) {
 		t.Fatal("repeat migration changed identity expiry or session authority", err)
 	}
 }

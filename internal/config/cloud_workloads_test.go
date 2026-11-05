@@ -15,15 +15,15 @@ func TestCloudSelectorsAndWorkloadReferences(t *testing.T) {
 	if err := ValidateTNL(configuration); err != nil {
 		t.Fatal(err)
 	}
-	if configuration.Workloads["deploy"].DurationLimit() != time.Hour || configuration.Workloads["deploy"].MaxDuration != nil {
-		t.Fatal("workload default must be 1h without changing the declaration")
+	if configuration.Workloads["deploy"].DurationLimit() != 0 || configuration.Workloads["deploy"].MaxDuration != nil {
+		t.Fatal("omitted maxDuration must not add a hard session limit")
 	}
 	policy := configuration.Workloads["deploy"]
-	limit := Duration(6 * time.Hour)
+	limit := Duration(24 * time.Hour)
 	policy.MaxDuration = &limit
 	configuration.Workloads["deploy"] = policy
 	if err := ValidateTNL(configuration); err != nil {
-		t.Fatal("6h must be allowed", err)
+		t.Fatal("an explicit day-long hard limit must be allowed", err)
 	}
 	for _, invalid := range []struct {
 		name   string
@@ -49,6 +49,16 @@ func TestCloudSelectorsAndWorkloadReferences(t *testing.T) {
 			p := c.Workloads["deploy"]
 			duration := Duration(6*time.Hour + time.Nanosecond)
 			p.MaxDuration = &duration
+			c.Workloads["deploy"] = p
+		}},
+		{"explicit zero duration", func(c *TNL) {
+			p := c.Workloads["deploy"]
+			p.MaxDuration = new(Duration(0))
+			c.Workloads["deploy"] = p
+		}},
+		{"negative duration", func(c *TNL) {
+			p := c.Workloads["deploy"]
+			p.MaxDuration = new(Duration(-time.Second))
 			c.Workloads["deploy"] = p
 		}},
 	} {

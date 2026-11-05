@@ -99,9 +99,6 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 			}
 			for _, key := range []string{"services", "max_duration", "token", provider} {
 				if property, ok := base.Properties.Get(key); ok {
-					if key == "max_duration" {
-						property.Default = config.DefaultWorkloadMaxDuration.String()
-					}
 					props.Set(key, property)
 				}
 			}

@@ -232,7 +232,9 @@ type Status struct {
 
 // Backend is implemented by the native CLI's human/workload adapters. Start
 // establishes identity and the authorized snapshot; Connect prepares only its
-// requested service. Renew may narrow a workload's fixed session deadline.
+// requested service. Renew returns its current finite authorization deadline.
+// a backend exposing AuthorizationDeadline may advance that proof horizon after
+// verified refresh, while preserving any absolute hard limit in its session.
 type Backend interface {
 	Start(context.Context) (meta.PublicMetadata, time.Time, error)
 	Connect(context.Context, string) (Connection, error)

@@ -15,6 +15,7 @@ import (
 	controlvisitor "github.com/tnldotdev/tnl/internal/control/certificates/visitor"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitorcert"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -102,7 +103,12 @@ func (d *Database) IssueWorkloadServiceClientCertificate(ctx context.Context, cr
 	if err != nil {
 		return result, err
 	}
-	public, until := source.PublicKey, source.ExpiresAt
+	// a certificate binds the existing key, not a startup proof's authority.
+	// each admission and active visitor still needs the current proof-bound lease.
+	public, until := source.PublicKey, now.Add(visitorcert.MaxWorkloadLifetime)
+	if source.ExpiresAt != nil {
+		until = minTime(until, *source.ExpiresAt)
+	}
 	key, ok := csr.PublicKey.(ed25519.PublicKey)
 	if !ok || !bytes.Equal(key, public) {
 		return result, ErrWorkloadDenied
