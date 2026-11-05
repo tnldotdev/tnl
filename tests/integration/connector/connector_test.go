@@ -333,6 +333,9 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 				return
 			}
 			current.AssertionExpiresAt = new(time.Unix(claims.ExpiresAt, 0))
+			if current.AssertionExpiresAt.After(current.IdentityExpiresAt) {
+				current.IdentityExpiresAt = *current.AssertionExpiresAt
+			}
 			_ = json.NewEncoder(w).Encode(current)
 		case strings.HasSuffix(r.URL.Path, "/authorization"):
 			if current.Id == "" || current.revoked {
@@ -351,7 +354,8 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 				w.WriteHeader(400)
 				return
 			}
-			if _, err := verifier.Verify(r.Context(), exchange.Assertion); err != nil {
+			claims, err := verifier.Verify(r.Context(), exchange.Assertion)
+			if err != nil {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
@@ -385,7 +389,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 					w.WriteHeader(500)
 					return
 				}
-				current = &workloadSession{public: ed25519.PublicKey(public), WorkloadSession: authorityv1.WorkloadSession{Id: id, TeamId: team, ProjectKey: exchange.ProjectKey, Workload: exchange.Workload, Provider: controlv1.WorkloadGitHub, Github: &authorityv1.WorkloadGitHubExecution{RepositoryId: "12345", RepositoryOwnerId: "6789", RunId: "111", RunAttempt: "1", CheckRunId: "222"}, Credential: "wlc_" + base64.RawURLEncoding.EncodeToString(credential), ExpiresAt: time.Now().Add(time.Hour), LeaseExpiresAt: time.Now().Add(90 * time.Second), RenewAfter: time.Now().Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, Binding: strings.Repeat("b", 64)}}
+				current = &workloadSession{public: ed25519.PublicKey(public), WorkloadSession: authorityv1.WorkloadSession{Id: id, TeamId: team, ProjectKey: exchange.ProjectKey, Workload: exchange.Workload, Provider: controlv1.WorkloadGitHub, Github: &authorityv1.WorkloadGitHubExecution{RepositoryId: "12345", RepositoryOwnerId: "6789", RunId: "111", RunAttempt: "1", CheckRunId: "222"}, Credential: "wlc_" + base64.RawURLEncoding.EncodeToString(credential), ExpiresAt: time.Now().Add(time.Hour), IdentityExpiresAt: time.Unix(claims.ExpiresAt, 0), LeaseExpiresAt: time.Now().Add(90 * time.Second), RenewAfter: time.Now().Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, Binding: strings.Repeat("b", 64)}}
 				ownerKeys[exchange.PublicKey] = current
 				sessions[current.Credential] = current
 			}

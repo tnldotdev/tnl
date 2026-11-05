@@ -264,6 +264,20 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 		t.Fatal("same JWT/key could not resume after policy addition", err)
 	}
 	for at := now.Add(90 * time.Second); at.Before(original.ExpiresAt); at = at.Add(30 * time.Second) {
+		if !renewed.IdentityExpiresAt.After(at.Add(WorkloadLease)) {
+			fresh := exchange.Execution
+			fresh.GitHub = new(*fresh.GitHub)
+			fresh.IssuedAt, fresh.NotBefore, fresh.ExpiresAt = at.Unix(), at.Unix(), at.Add(5*time.Minute).Unix()
+			fresh.GitHub.IssuedAt, fresh.GitHub.NotBefore, fresh.GitHub.ExpiresAt = fresh.IssuedAt, fresh.NotBefore, fresh.ExpiresAt
+			fresh.GitHub.JTI = fmt.Sprint("refresh-", at.Unix())
+			data, _ := json.Marshal(fresh)
+			fresh.AssertionDigest = sha256.Sum256(data)
+			var err error
+			renewed, err = d.AttachWorkloadAssertion(ctx, original.ID, original.Credential, fresh, ed25519.Sign(key, workloadproof.Attach(original.ID, fresh.AssertionDigest)), at)
+			if err != nil {
+				t.Fatal("fresh same-identity proof could not renew the fixed session", err)
+			}
+		}
 		if renewed, err = d.RenewWorkloadSession(ctx, original.ID, original.Credential, signWorkloadRenewal(renewed, key), at); err != nil {
 			t.Fatal(err)
 		}

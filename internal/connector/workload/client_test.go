@@ -27,6 +27,10 @@ func TestSessionUpdatesShareImmutableAndNarrowingBoundary(t *testing.T) {
 			accept bool
 		}{
 			{"unchanged", func(*authorityv1.WorkloadSession) {}, true},
+			{"fresh identity proof", func(s *authorityv1.WorkloadSession) { s.IdentityExpiresAt = s.IdentityExpiresAt.Add(time.Minute) }, true},
+			{"identity expiry rollback", func(s *authorityv1.WorkloadSession) { s.IdentityExpiresAt = s.IdentityExpiresAt.Add(-time.Minute) }, false},
+			{"lease beyond proof", func(s *authorityv1.WorkloadSession) { s.IdentityExpiresAt = time.Now().Add(time.Second) }, false},
+			{"supplied proof beyond saved identity", func(s *authorityv1.WorkloadSession) { s.AssertionExpiresAt = new(s.IdentityExpiresAt.Add(time.Minute)) }, false},
 			{"negative sequence", func(s *authorityv1.WorkloadSession) { s.RenewalSequence = -1 }, false},
 			{"sequence rollback", func(s *authorityv1.WorkloadSession) { s.RenewalSequence = 1 }, false},
 			{"sequence jump", func(s *authorityv1.WorkloadSession) { s.RenewalSequence += 2 }, false},
@@ -283,6 +287,7 @@ func sessionFixture(provider controlv1.WorkloadProvider) authorityv1.WorkloadSes
 	now := time.Now()
 	s := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: "tm_" + strings.Repeat("t", 22), ProjectKey: "store", Workload: "storefront", Provider: provider, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, LeaseExpiresAt: now.Add(90 * time.Second), ExpiresAt: now.Add(time.Hour), RenewAfter: now.Add(30 * time.Second), ServiceIds: []string{"svc_" + strings.Repeat("p", 22)}}
 	s.Binding = strings.Repeat("b", 64)
+	s.IdentityExpiresAt = now.Add(5 * time.Minute)
 	if provider == controlv1.WorkloadGitHub {
 		s.Github = &authorityv1.WorkloadGitHubExecution{RepositoryId: "12345", RepositoryOwnerId: "6789", RunId: "111", RunAttempt: "1", CheckRunId: "222"}
 	}
@@ -439,6 +444,8 @@ func TestSessionDecoderPreservesSDKWireAssertions(t *testing.T) {
 	check(t, controlv1.WorkloadGitHub, func(w map[string]any) { w["github"].(map[string]any)["unknown"] = "claim" })
 	check(t, controlv1.WorkloadGitHub, func(w map[string]any) { w["provider"] = "unknown" })
 	check(t, controlv1.WorkloadGitHub, func(w map[string]any) { delete(w, "renewal_sequence") })
+	check(t, controlv1.WorkloadGitHub, func(w map[string]any) { delete(w, "identity_expires_at") })
+	check(t, controlv1.WorkloadGitHub, func(w map[string]any) { w["identity_expires_at"] = nil })
 	for _, value := range []any{nil, -1, "0", 0.5, json.Number("9223372036854775808")} {
 		check(t, controlv1.WorkloadGitHub, func(w map[string]any) { w["renewal_sequence"] = value })
 	}

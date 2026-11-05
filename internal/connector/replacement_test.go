@@ -158,6 +158,7 @@ func TestConnectionReplacementRequiresNonGitHubConfirmedExpiry(t *testing.T) {
 			if test.provider == controlv1.WorkloadGitHub {
 				session.Github = &authorityv1.WorkloadGitHubExecution{RepositoryId: "1", RepositoryOwnerId: "2", RunId: "3", RunAttempt: "4", CheckRunId: "5"}
 			}
+			session.IdentityExpiresAt = time.Now().Add(5 * time.Minute)
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {

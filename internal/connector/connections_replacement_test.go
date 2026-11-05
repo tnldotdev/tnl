@@ -57,7 +57,7 @@ func runConnectionReplacement(t *testing.T, options replacementTestOptions) {
 	oldID, newID := "wls_"+strings.Repeat("s", 22), "wls_"+strings.Repeat("n", 22)
 	makeSession := func(id string) authorityv1.WorkloadSession {
 		now := time.Now()
-		return authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat(string(id[len(id)-1]), 43), Binding: binding, TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: []string{service}, ExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second)}
+		return authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat(string(id[len(id)-1]), 43), Binding: binding, TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: []string{service}, ExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second), IdentityExpiresAt: now.Add(2 * time.Hour)}
 	}
 	oldSession, newSession := makeSession(oldID), makeSession(newID)
 	var mu sync.Mutex
