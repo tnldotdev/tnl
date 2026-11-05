@@ -944,3 +944,31 @@ def test_callback_failures_do_not_expose_private_cause(
         asyncio.run(_workload.select_workload("db", native.preview))
     assert "private-assertion" not in str(caught.value)
     assert caught.value.__cause__ is None and caught.value.__context__ is None
+
+
+def test_selected_environment_source_is_current_and_private(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_workload, "_configuration", None)
+
+    def preview(service: str, request: dict[str, object]) -> object:
+        assert service == "db"
+        assert "private.jwt" not in json.dumps(request)
+        return {
+            "schema": 1,
+            "name": "worker",
+            "directory": "/app",
+            "manifest": "/app/.tnl/generated/workloads.json",
+            "policy": "a" * 64,
+            "source": "native",
+            "token_env": "JOB_ID_TOKEN",
+        }
+
+    monkeypatch.setenv("UNRELATED_SECRET", "unrelated.private.secret")
+    for token in ("first.private.jwt", "second.private.jwt", ""):
+        monkeypatch.setenv("JOB_ID_TOKEN", token)
+        selected = asyncio.run(_workload.select_workload("db", preview))
+        assert selected.assertion is None
+        assert selected.environment["token_env"] == "JOB_ID_TOKEN"
+        assert selected.environment["token_value"] == token
+        assert "unrelated.private.secret" not in json.dumps(selected.private_input())

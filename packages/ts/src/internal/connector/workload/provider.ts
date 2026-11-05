@@ -96,6 +96,9 @@ export async function selectWorkload(
       github_request_token: process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN ?? "",
       vercel_token_file: process.env.VERCEL_OIDC_TOKEN_FILE ?? "",
       vercel_token: process.env.VERCEL_OIDC_TOKEN ?? "",
+      ...(selection.token_env === undefined
+        ? {}
+        : { token_env: selection.token_env, token_value: process.env[selection.token_env] ?? "" }),
     },
     ...(assertion === undefined ? {} : { assertion }),
   };

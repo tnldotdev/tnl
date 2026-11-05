@@ -55,9 +55,18 @@ func Declarations(configuration config.TNL, configPath, outputDir string) ([]byt
 		shape["publisherGroups"] = publishers
 		policies := map[string]any{}
 		for name, policy := range configuration.Workloads {
-			value := map[string]any{"provider": policy.Provider, "services": policy.Services}
+			value := map[string]any{"services": policy.Services}
 			if policy.GitHub != nil {
-				github := map[string]any{"workflow": policy.GitHub.Workflow, "ref": policy.GitHub.Ref, "events": policy.GitHub.Events}
+				github := map[string]any{"workflow": policy.GitHub.Workflow}
+				if policy.GitHub.Branch != nil {
+					github["branch"] = *policy.GitHub.Branch
+				}
+				if policy.GitHub.Tag != nil {
+					github["tag"] = *policy.GitHub.Tag
+				}
+				if policy.GitHub.Events != nil {
+					github["events"] = policy.GitHub.Events
+				}
 				if policy.GitHub.Repository != nil {
 					github["repository"] = *policy.GitHub.Repository
 				}
@@ -69,13 +78,48 @@ func Declarations(configuration config.TNL, configPath, outputDir string) ([]byt
 				}
 				value["github"] = github
 			}
-			for k, v := range map[string]string{"teamId": policy.TeamID, "projectId": policy.ProjectID, "environment": policy.Environment, "teamSlug": policy.TeamSlug, "issuerMode": policy.IssuerMode, "org": policy.Org, "orgId": policy.OrgID, "app": policy.App, "appId": policy.AppID, "machineId": policy.MachineID, "issuer": policy.Issuer, "jwksUrl": policy.JWKSURL, "audience": policy.Audience, "tokenFile": policy.TokenFile} {
-				if v != "" {
-					value[k] = v
+			if v := policy.Vercel; v != nil {
+				block := map[string]any{"environment": v.Environment}
+				if v.Project != "" {
+					block["project"] = v.Project
 				}
+				if v.Team != "" {
+					block["team"] = v.Team
+				}
+				value["vercel"] = block
 			}
-			if len(policy.Claims) > 0 {
-				value["claims"] = policy.Claims
+			if f := policy.Fly; f != nil {
+				block := map[string]any{}
+				if f.App != "" {
+					block["app"] = f.App
+				}
+				if f.Org != "" {
+					block["org"] = f.Org
+				}
+				if f.MachineID != "" {
+					block["machineId"] = f.MachineID
+				}
+				value["fly"] = block
+			}
+			if o := policy.OIDC; o != nil {
+				block := map[string]any{"issuer": o.Issuer, "claims": o.Claims}
+				if o.Audience != "" {
+					block["audience"] = o.Audience
+				}
+				if o.JWKSURL != "" {
+					block["jwksUrl"] = o.JWKSURL
+				}
+				value["oidc"] = block
+			}
+			if t := policy.Token; t != nil {
+				block := map[string]any{}
+				if t.File != nil {
+					block["file"] = *t.File
+				}
+				if t.Env != nil {
+					block["env"] = *t.Env
+				}
+				value["token"] = block
 			}
 			if policy.MaxDuration != nil {
 				value["maxDuration"] = policy.MaxDuration.Value().String()

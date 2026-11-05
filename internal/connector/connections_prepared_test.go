@@ -87,7 +87,7 @@ func TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	configuration := config.TNL{Services: config.Services{}, Workloads: map[string]config.Workload{"worker": {Provider: "vercel", Services: names}}}
+	configuration := config.TNL{Services: config.Services{}, Workloads: map[string]config.Workload{"worker": {Vercel: &config.WorkloadVercel{Environment: "production"}, Services: names}}}
 	for _, name := range names {
 		configuration.Services[name] = config.Service{Protocol: new("postgres")}
 	}

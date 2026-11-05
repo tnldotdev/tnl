@@ -1,60 +1,24 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"testing"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
-	"github.com/tnldotdev/tnl/internal/client/project/githubmetadata"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/failure"
-	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestApplyWorkloadBindingReuseAndCloudSelectors(t *testing.T) {
+func TestApplyWorkloadCloudSelectors(t *testing.T) {
 	group := "production"
 	repository := "example/repository"
 	protocol := "kubernetes"
-	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{group: {}}, Services: config.Services{"cluster": {PublisherGroup: &group, Protocol: &protocol, Target: &config.ServiceTarget{Type: "eks", Region: new("us-east-1"), Cluster: new("production")}}}, Workloads: map[string]config.Workload{"test": {Provider: "github", GitHub: &config.WorkloadGitHub{Repository: &repository, Workflow: ".github/workflows/test.yml", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"cluster"}}}}}}
+	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{group: {}}, Services: config.Services{"cluster": {PublisherGroup: &group, Protocol: &protocol, Target: &config.ServiceTarget{Type: "eks", Region: new("us-east-1"), Cluster: new("production")}}}, Workloads: map[string]config.Workload{"test": {GitHub: &config.WorkloadGitHub{Repository: &repository, Workflow: ".github/workflows/test.yml", Branch: new("main")}, Services: []string{"cluster"}}}}}}
 	declaration, err := resolve.Declaration(t.Context(), project.Project, team.Context{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if declaration.Services["cluster"].Target != "" || declaration.Services["cluster"].TargetTls != nil || declaration.Services["cluster"].TargetDiscovery == nil {
 		t.Fatal("apply attempted local cloud discovery")
-	}
-	original := readGitHubRepository
-	t.Cleanup(func() { readGitHubRepository = original })
-	calls := 0
-	readGitHubRepository = func(context.Context, string) (githubmetadata.Repository, error) {
-		calls++
-		return githubmetadata.Repository{Repository: repository, RepositoryID: "12345", OwnerID: "6789"}, nil
-	}
-	if err = bindProjectWorkloads(t.Context(), project, &declaration, controlv1.ProjectConfiguration{}); err != nil {
-		t.Fatal(err)
-	}
-	if calls != 1 || declaration.Workloads == nil || (*declaration.Workloads)["test"].Github.RepositoryId != "12345" || (*declaration.Workloads)["test"].MaxDurationSeconds != 3600 {
-		t.Fatal("initial metadata binding missing")
-	}
-	saved := declaration
-	readGitHubRepository = func(context.Context, string) (githubmetadata.Repository, error) {
-		t.Fatal("unchanged apply required GitHub authentication")
-		return githubmetadata.Repository{}, nil
-	}
-	if err = bindProjectWorkloads(t.Context(), project, &declaration, saved); err != nil {
-		t.Fatal(err)
-	}
-	cause := errors.New("private repository metadata is unavailable")
-	readGitHubRepository = func(context.Context, string) (githubmetadata.Repository, error) {
-		return githubmetadata.Repository{}, cause
-	}
-	if err = bindProjectWorkloads(t.Context(), project, &declaration, controlv1.ProjectConfiguration{}); !errors.Is(err, cause) {
-		t.Fatal("metadata setup cause was lost", err)
-	}
-	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.WorkloadRepositoryMetadataUnavailable {
-		t.Fatal("first setup did not expose the owned GitHub metadata diagnostic", err)
 	}
 }

@@ -101,6 +101,14 @@ func Acquire(ctx context.Context, hints workloadmanifest.Acquisition, callback f
 			return "", ErrAssertionSource
 		}
 		source.TokenFile = hints.TokenFile
+	case "token-env":
+		if callback != nil {
+			return "", ErrAssertionSource
+		}
+		source.Assertion = getenv(hints.TokenEnv)
+		if source.Assertion == "" {
+			return "", ErrAssertionUnavailable
+		}
 	case "vercel-oidc":
 		if callback == nil {
 			source.TokenFile = getenv("VERCEL_OIDC_TOKEN_FILE")

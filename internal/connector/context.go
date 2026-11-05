@@ -194,7 +194,7 @@ func connectionManifest(options ContextOptions) (projectConfiguration, connector
 	}
 	b, _ := json.Marshal(m)
 	digest := sha256.Sum256(b)
-	configuration := config.TNL{Server: &m.Server, Team: &m.Team, Services: config.Services{}, Workloads: map[string]config.Workload{options.Workload: {Provider: w.Provider, Services: w.Services, MaxDuration: new(config.Duration(time.Duration(w.MaxDurationSeconds) * time.Second))}}}
+	configuration := config.TNL{Server: &m.Server, Team: &m.Team, Services: config.Services{}, Workloads: map[string]config.Workload{options.Workload: {Services: w.Services, MaxDuration: new(config.Duration(time.Duration(w.MaxDurationSeconds) * time.Second))}}}
 	for _, s := range services {
 		configuration.Services[s] = config.Service{Protocol: new(m.Services[s])}
 	}
