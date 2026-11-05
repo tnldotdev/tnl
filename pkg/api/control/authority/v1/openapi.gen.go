@@ -1079,14 +1079,17 @@ type WorkloadSessionFields struct {
 	ExpiresAt          time.Time  `json:"expires_at"`
 
 	// Github Immutable GitHub execution metadata verified from the signed provider assertion. Present only for the github provider and unchanged during renewal.
-	Github          *WorkloadGitHubExecution      `json:"github,omitempty"`
-	Id              string                        `json:"id"`
-	LeaseExpiresAt  time.Time                     `json:"lease_expires_at"`
-	ProjectKey      string                        `json:"project_key"`
-	Provider        externalRef0.WorkloadProvider `json:"provider"`
-	RenewAfter      time.Time                     `json:"renew_after"`
-	RenewalSequence int64                         `json:"renewal_sequence"`
-	ServiceIds      []string                      `json:"service_ids"`
+	Github *WorkloadGitHubExecution `json:"github,omitempty"`
+	Id     string                   `json:"id"`
+
+	// IdentityExpiresAt Latest verified platform-proof expiry for this identity. Every permission lease is capped here; a signed same-identity assertion may advance this deadline while the session is live.
+	IdentityExpiresAt time.Time                     `json:"identity_expires_at"`
+	LeaseExpiresAt    time.Time                     `json:"lease_expires_at"`
+	ProjectKey        string                        `json:"project_key"`
+	Provider          externalRef0.WorkloadProvider `json:"provider"`
+	RenewAfter        time.Time                     `json:"renew_after"`
+	RenewalSequence   int64                         `json:"renewal_sequence"`
+	ServiceIds        []string                      `json:"service_ids"`
 
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
 	Subject  externalRef0.VisitorSubject `json:"subject"`

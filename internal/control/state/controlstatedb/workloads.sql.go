@@ -12,7 +12,7 @@ import (
 )
 
 const getWorkloadSession = `-- name: GetWorkloadSession :one
-SELECT id, team_id, project_key, workload_name, provider, session_nonce, repository_id, run_id, run_attempt, check_run_id, public_key, request_digest, claims, binding, credential_digest, credential_ciphertext, storage_key_id, created_at, renewed_at, lease_expires_at, expires_at, revoked_at, renewal_sequence FROM control.workload_sessions WHERE id = $1
+SELECT id, team_id, project_key, workload_name, provider, session_nonce, repository_id, run_id, run_attempt, check_run_id, public_key, request_digest, claims, binding, credential_digest, credential_ciphertext, storage_key_id, created_at, renewed_at, lease_expires_at, expires_at, revoked_at, renewal_sequence, identity_expires_at FROM control.workload_sessions WHERE id = $1
 `
 
 func (q *Queries) GetWorkloadSession(ctx context.Context, id string) (ControlWorkloadSession, error) {
@@ -42,6 +42,7 @@ func (q *Queries) GetWorkloadSession(ctx context.Context, id string) (ControlWor
 		&i.ExpiresAt,
 		&i.RevokedAt,
 		&i.RenewalSequence,
+		&i.IdentityExpiresAt,
 	)
 	return i, err
 }
