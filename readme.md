@@ -19,25 +19,31 @@
 `tnl` gives every Git worktree its own unique HTTPS URL. Traffic stays encrypted from the browser to your laptop. Here's how it looks:
 
 ```text
-           your browser
-                |
-   https://*.calm-otter.tnl.dev
-                v
-           tnl ingress -----------------> tnl relay
-      (hosted/self-hosted)          (hosted/self-hosted)
-                                              |
-                                      encrypted traffic
-                                              |
-+---------------------------------------------v---------------+
-|                         your laptop                         |
-|                                                             |
-|  tnl (main repo)               tnl (perf worktree)          |
-|  app.calm-otter.tnl.dev       app-perf.calm-otter.tnl.dev   |
-|            |                              |                 |
-|            v                              v                 |
-|      localhost:5173                  localhost:5174         |
-|                                                             |
-+-------------------------------------------------------------+
+                             your browser
+                                   |
+                     https://*.calm-otter.tnl.dev
+                                   v
+                              tnl ingress
+                         (hosted/self-hosted)
+                                   |
+                +------------------+------------------+
+                |                                     |
+           direct UDP                             tnl relay
+        (when available)                         (fallback)
+                |                                     |
+                +------------------+------------------+
+                                   |
++----------------------------------v----------------------------------+
+|                             your laptop                             |
+|                                  |                                  |
+|                +-----------------+----------------+                 |
+|                v                                  v                 |
+|       tnl (main checkout)                tnl (perf worktree)        |
+|     app.calm-otter.tnl.dev           app-perf.calm-otter.tnl.dev    |
+|                |                                  |                 |
+|                v                                  v                 |
+|         localhost:5173                     localhost:5174           |
++---------------------------------------------------------------------+
 ```
 
 The Next.js and Vite plugins automatically handle port conflicts. And OAuth and webhooks get one consistent URL that works across all worktrees.
@@ -46,29 +52,29 @@ The Next.js and Vite plugins automatically handle port conflicts. And OAuth and 
 
 Connect to private services from anywhere (laptop, CI, etc.).
 
-For instance, a `tnl` publisher runs inside your VPC and connects outbound to relays, so your database and Kubernetes API aren't publicly exposed:
+For instance, a `tnl` publisher runs inside your VPC. Traffic is end-to-end encrypted between your client and the publisher and uses direct hole-punched UDP when available. Your db or Kubernetes API aren't publicly exposed:
 
 ```text
-  tnl (your laptop)  tnl (github actions)    tnl (vercel fn)
-          |                    |                    |
-          +--------------------+--------------------+
-                               |
-                               v
-                           tnl relay
-                     (hosted/self-hosted)
-                               |
-                       encrypted tunnel
-                               |
-+------------------------------v------------------------------+
-|                      aws / private vpc                      |
-|                              |                              |
-|                        tnl publisher                        |
-|                              |                              |
-|                +-------------+-------------+                |
-|                v                           v                |
-|       postgres (e.g. RDS)          kubernetes (e.g. EKS)    |
-|                                                             |
-+-------------------------------------------------------------+
+    tnl (your laptop)    tnl (GitHub Actions)      tnl (Vercel fn)
+            |                      |                      |
+            +----------------------+----------------------+
+                                   |
+                +------------------+------------------+
+                |                                     |
+           direct UDP                             tnl relay
+        (when available)                         (fallback)
+                |                                     |
+                +------------------+------------------+
+                                   |
++----------------------------------v----------------------------------+
+|                          aws / private vpc                          |
+|                                  |                                  |
+|                            tnl publisher                            |
+|                                  |                                  |
+|                 +----------------+-----------------+                |
+|                 v                                  v                |
+|        postgres (e.g. RDS)               kubernetes (e.g. EKS)      |
++---------------------------------------------------------------------+
 ```
 
 Read below for more details.
@@ -90,7 +96,9 @@ For example, with Vite, `tnl init` adds `tnl()` alongside your existing plugins:
 import { defineConfig } from "vite";
 import tnl from "@tnldotdev/tnl/vite";
 
-export default defineConfig({ plugins: [tnl()] });
+export default defineConfig({
+  plugins: [tnl()],
+});
 ```
 
 It also creates a project configuration:
@@ -102,7 +110,10 @@ import { defineConfig } from "@tnldotdev/tnl/config";
 export default defineConfig({
   feedback: true,
   services: {
-    app: { publicURL: {}, target: { type: "app" } },
+    app: {
+      publicURL: {},
+      target: { type: "app" },
+    },
   },
 });
 ```
@@ -166,7 +177,11 @@ export default defineConfig({
   oauth: true,
   // and/or
   webhooks: {
-    payments: { service: "app", path: "/webhooks/stripe", provider: "stripe" },
+    payments: {
+      service: "app",
+      path: "/webhooks/stripe",
+      provider: "stripe",
+    },
   },
 });
 ```
@@ -309,7 +324,7 @@ export default defineConfig({
 
 See [GitHub Actions setup](https://tnl.dev/docs/workloads#connect-a-github-actions-job).
 
-## your domain, your server
+## custom domains or self-hosting
 
 You can also add a subdomain you own, for URLs like `https://app.alex.dev.example.com`.
 
