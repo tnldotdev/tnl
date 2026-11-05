@@ -120,6 +120,13 @@ func (r *PublicURLServer) validateIncomingPublicURL(
 func (r *PublicURLServer) handleVisitor(parent context.Context, admission *publicVisitorAdmission, streamHeader tunnelv1.VisitorStreamHeader, promoteStream func(context.Context) error, endStream func(context.Context) error) {
 	defer admission.retire()
 	connection := admission.connection
+	guard, err := r.policy.BindConnection(func() { _ = connection.Close() })
+	if err != nil {
+		return
+	}
+	if guard != nil {
+		defer guard.Close()
+	}
 	denied := streamHeader.AccessPending
 	parent = observability.NarrowIdentity(parent, observability.Identity{PublicURLID: r.run.PublicURLID})
 	parent = observability.WithFields(parent, observability.Fields{Component: "publisher", ServiceProtocol: observability.ProtocolHTTP, AccessPath: "public_endpoint", Exposure: "public"})

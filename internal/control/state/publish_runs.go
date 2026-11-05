@@ -335,7 +335,14 @@ func (d *Database) createPublishRun(
 	if err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: insert session: %w", err)
 	}
-	if _, err := queries.GuestForPublicURL(ctx, request.PublicURLID); err == nil {
+	if guestID, err := queries.GuestForPublicURL(ctx, request.PublicURLID); err == nil {
+		guest, err := queries.LockGuestTrialByID(ctx, guestID)
+		if err != nil {
+			return PublishRunSetup{}, err
+		}
+		if guest.ActivePublishRunID.Valid || guest.ServingUntil.Valid && guest.ServingUntil.Time.After(now) {
+			return PublishRunSetup{}, ErrPublishRunOpen
+		}
 		reserved, err := queries.BeginGuestPublishRun(ctx, controlstatedb.BeginGuestPublishRunParams{
 			PublishRunID: text(publishRunID), StartedAt: timestamptz(now), PublicURLID: request.PublicURLID,
 		})
@@ -346,6 +353,10 @@ func (d *Database) createPublishRun(
 			return PublishRunSetup{}, ErrGuestTrialSpent
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return PublishRunSetup{}, err
+	}
+	session, err = boundGuestServingAuthority(ctx, queries, session, now)
+	if err != nil {
 		return PublishRunSetup{}, err
 	}
 

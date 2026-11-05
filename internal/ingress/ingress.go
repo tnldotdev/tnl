@@ -34,6 +34,7 @@ const alternateAttemptTimeout = 250 * time.Millisecond
 const visitorConnectionIDPrefix = opaqueid.VisitorConnectionPrefix
 
 type PublicURL struct {
+	BindConnection    func(func()) (func(), error)
 	AttestSource      func(string, netip.AddrPort, netip.AddrPort) (string, error)
 	ID                string
 	PublishRunNumber  uint64

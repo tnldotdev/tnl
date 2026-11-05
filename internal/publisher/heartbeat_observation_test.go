@@ -7,6 +7,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -66,4 +67,25 @@ func TestHeartbeatLeaseOnlyAdvancesAfterFullAcceptedState(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestHeartbeatShortPreparationRenewsAndOutageStopsAtConfirmedExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		until := start.Add(4 * time.Second)
+		calls := 0
+		control := &publisherControlStub{heartbeat: func(ctx context.Context, _ string, _ uint64, _ credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
+			calls++
+			if calls == 1 {
+				until = time.Now().Add(4 * time.Second)
+				return controlv1.PublishRunHeartbeat{PublishRun: controlv1.PublishRun{Id: "run", PublishRunNumber: 1, ExpiresAt: until}}, nil
+			}
+			<-ctx.Done()
+			return controlv1.PublishRunHeartbeat{}, ctx.Err()
+		}}
+		err := heartbeatSessionAfterUpdate(t.Context(), heartbeatTestAuthority(control, "run", "token"), until, nil, nil, 0)
+		if !errors.Is(err, clientcontrol.ErrStatusConflict) || calls != 2 || !time.Now().Equal(until) || until.Sub(start) != 6*time.Second {
+			t.Fatalf("short preparation/expiry: calls=%d elapsed=%s err=%v", calls, time.Since(start), err)
+		}
+	})
 }

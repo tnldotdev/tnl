@@ -189,7 +189,8 @@ func TestIntegrationGuestTrialMetersReadyTimeAndBothByteDirections(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.guest_trials SET active_ready_at = $2 WHERE id = $1`, guest.ID, now.Add(time.Second)); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.guest_trials SET active_ready_at=$2,
+		ready_deadline=$2::timestamptz+interval '20 minutes', serving_until=$3 WHERE id=$1`, guest.ID, now.Add(time.Second), setup.ExpiresAt); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.public_url_usage_buckets
@@ -213,7 +214,7 @@ func TestIntegrationGuestTrialMetersReadyTimeAndBothByteDirections(t *testing.T)
 		t.Fatal(err)
 	}
 	stored, err := database.GuestTrialByAccessToken(t.Context(), guest.Token)
-	if err != nil || stored.UsedBytes != 3<<20 || stored.UsedReady != 59*time.Second {
+	if err != nil || stored.UsedBytes != 3<<20 || stored.UsedReady != 29*time.Second {
 		t.Fatalf("cumulative guest usage = %+v, error = %v", stored, err)
 	}
 	if count, err := database.FinalizePublicURLUsageBuckets(t.Context(), now.Add(time.Minute), now.Add(time.Minute)); err != nil || count != 0 {
@@ -336,7 +337,7 @@ func TestIntegrationGuestExpiryClosesRunWithoutHeartbeat(t *testing.T) {
 				t.Fatal(err)
 			}
 			if test.ready {
-				if _, err := database.pool.Exec(t.Context(), `UPDATE control.guest_trials SET active_ready_at=$2 WHERE id=$1`, guest.ID, now); err != nil {
+				if _, err := database.pool.Exec(t.Context(), `UPDATE control.guest_trials SET active_ready_at=$2, ready_deadline=$3, serving_until=$3 WHERE id=$1`, guest.ID, now, now.Add(GuestReadyAllowance)); err != nil {
 					t.Fatal(err)
 				}
 			}

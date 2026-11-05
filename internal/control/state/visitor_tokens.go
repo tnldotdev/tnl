@@ -77,8 +77,9 @@ type visitorResource struct {
 	ExpiresAt        time.Time
 }
 
-// resource admission holds the existing team/resource guards. permission is
-// independent of a selected run, routing snapshot, or per-connection database row.
+// resource admission holds the existing team/resource guards. ordinary permission
+// is independent of a selected run; guest permission also spends its run's fixed
+// serving deadline. neither needs a per-connection database row.
 func lockVisitorResource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scope, now time.Time) (visitorResource, error) {
 	resource := visitorResource{Scope: scope}
 	if !scope.Valid() {
@@ -97,6 +98,18 @@ func lockVisitorResource(ctx context.Context, tx pgx.Tx, scope visitorscope.Scop
 		resource.TeamID, resource.Hostname, resource.Port, resource.Anonymous = row.TeamID, row.CanonicalHostname, 443, row.AccessMode == "anonymous"
 		if row.ExpiresAt.Valid {
 			resource.ExpiresAt = row.ExpiresAt.Time
+		}
+		deadline, err := q.GuestPublicURLServingDeadline(ctx, controlstatedb.GuestPublicURLServingDeadlineParams{PublicURLID: scope.ID, Now: timestamptz(now)})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return resource, err
+		}
+		if err == nil {
+			if !deadline.Valid || !deadline.Time.After(now) {
+				return resource, ErrVisitorPermission
+			}
+			if resource.ExpiresAt.IsZero() || deadline.Time.Before(resource.ExpiresAt) {
+				resource.ExpiresAt = deadline.Time
+			}
 		}
 	case visitorscope.Service:
 		if err := lockServiceAdmission(ctx, tx, scope.ID); err != nil {

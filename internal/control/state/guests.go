@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	GuestReadyAllowance = 15 * time.Minute
+	GuestReadyAllowance = 20 * time.Minute
 	GuestByteAllowance  = 5 << 20
 	GuestLifetime       = 72 * time.Hour
 )
@@ -43,6 +43,8 @@ type GuestTrial struct {
 	SourceIPKeyID         string
 	ExpiresAt             time.Time
 	UsedReady             time.Duration
+	ReadyDeadline         time.Time
+	ServingUntil          time.Time
 	UsedBytes             int64
 	LastDemoNumber        int64
 }
@@ -193,6 +195,7 @@ func (d *Database) GuestTrialByAccessToken(ctx context.Context, token credential
 		MembershipID: row.MembershipID, DomainID: row.DomainID, DNSAuthorityReference: row.DnsAuthorityReference,
 		UsedReady: time.Duration(row.UsedReadyNs), UsedBytes: row.UsedBytes, LastDemoNumber: row.LastDemoNumber,
 		ExpiresAt: row.ExpiresAt.Time, SourceIPDigest: row.SourceIpDigest.String, SourceIPKeyID: row.SourceIpKeyID.String,
+		ReadyDeadline: row.ReadyDeadline.Time, ServingUntil: row.ServingUntil.Time,
 	}
 	return guest, nil
 }
@@ -252,7 +255,7 @@ func (d *Database) AllocateGuestDemoNumber(ctx context.Context, guestID string, 
 	if err != nil {
 		return 0, err
 	}
-	if count != 0 || guest.ActivePublishRunID.Valid {
+	if count != 0 || guest.ActivePublishRunID.Valid || guest.ServingUntil.Valid && guest.ServingUntil.Time.After(at) {
 		return 0, ErrPublishRunOpen
 	}
 	number, err = queries.AdvanceGuestDemoNumber(ctx, controlstatedb.AdvanceGuestDemoNumberParams{
@@ -268,4 +271,24 @@ func (d *Database) AllocateGuestDemoNumber(ctx context.Context, guestID string, 
 		return 0, err
 	}
 	return number, nil
+}
+
+// callers hold the public URL and run locks through commit. no authority is
+// returned until its ready horizon and the bounded publisher lease commit too.
+func boundGuestServingAuthority(ctx context.Context, queries *controlstatedb.Queries, run controlstatedb.ControlPublishRun, now time.Time) (controlstatedb.ControlPublishRun, error) {
+	deadline, err := queries.UpdateGuestServingAuthority(ctx, controlstatedb.UpdateGuestServingAuthorityParams{
+		PublishRunID: run.ID, Now: timestamptz(now),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return run, nil
+	}
+	if err != nil {
+		return run, fmt.Errorf("record guest serving authority: %w", err)
+	}
+	if !deadline.Valid || !deadline.Time.After(now) {
+		return run, ErrGuestTrialSpent
+	}
+	return queries.LimitGuestPublishRunExpiry(ctx, controlstatedb.LimitGuestPublishRunExpiryParams{
+		PublishRunID: run.ID, Deadline: deadline,
+	})
 }

@@ -53,8 +53,16 @@ type publicRunSequence struct {
 }
 
 type publicRunSource struct {
-	key       [32]byte
-	authority tunnelv1.VisitorSourceAuthority
+	key           [32]byte
+	authority     tunnelv1.VisitorSourceAuthority
+	requiresReady bool
+}
+
+// guest preparation installs policy for the private readiness acknowledgment,
+// but only control's ready projection authorizes forwarding visitor bytes.
+func (r *publicRunPolicy) preparationOnly(entry ingressv1.IngressRoutingTableEntry) bool {
+	source := r.source.Load()
+	return source != nil && source.requiresReady && entry.PublishRunReadyAt == nil
 }
 
 func (r *publicRunPolicy) matches(entry ingressv1.IngressRoutingTableEntry, process ingressv1.IngressLease) bool {
@@ -147,7 +155,7 @@ func (c *Controller) preparePublicPolicy(ctx context.Context, entry ingressv1.In
 			authority.VisitorPolicyRevision != response.Policy.VisitorPolicyRevision || authority.ValidUntil > response.Policy.ValidUntil.Unix() || authority.ValidUntil <= response.Policy.ObservedAt.Unix() {
 			return visitortoken.ErrVisitorSource
 		}
-		source := &publicRunSource{key: [32]byte(*response.VisitorSourceKey), authority: authority}
+		source := &publicRunSource{key: [32]byte(*response.VisitorSourceKey), authority: authority, requiresReady: response.Policy.ConnectionDeadline != nil}
 		if source.key == ([32]byte{}) {
 			return visitortoken.ErrVisitorSource
 		}
@@ -218,7 +226,7 @@ func (c *Controller) SignVisitorSource(entry ingressv1.IngressRoutingTableEntry,
 	c.mu.RLock()
 	run := c.publicPolicies[entry.PublishRunId]
 	c.mu.RUnlock()
-	if run == nil || !run.matches(entry, owner) {
+	if run == nil || !run.matches(entry, owner) || run.preparationOnly(entry) {
 		return "", visitortoken.ErrVisitorSource
 	}
 	state := run.source.Load()
@@ -235,6 +243,24 @@ func (c *Controller) SignVisitorSource(entry ingressv1.IngressRoutingTableEntry,
 	}
 	wire, err := proof.MarshalBinary()
 	return string(wire), err
+}
+
+func (c *Controller) BindPublicConnection(entry ingressv1.IngressRoutingTableEntry, stop func()) (func(), error) {
+	owner := c.Lease()
+	if _, ok := c.installedPublicPolicy(entry, owner, c.now()); !ok {
+		return nil, visitortoken.ErrPolicy
+	}
+	c.mu.RLock()
+	run := c.publicPolicies[entry.PublishRunId]
+	c.mu.RUnlock()
+	if run == nil || !run.matches(entry, owner) || run.preparationOnly(entry) {
+		return nil, visitortoken.ErrPolicy
+	}
+	guard, err := run.policy.BindConnection(stop)
+	if err != nil || guard == nil {
+		return nil, err
+	}
+	return guard.Close, nil
 }
 
 func (r *publicRunPolicy) close() {

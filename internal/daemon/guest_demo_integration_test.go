@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -11,13 +12,17 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,6 +47,8 @@ type integrationGuestPublisherControl struct {
 	native       *publisheridentity.Native
 	assigned     controlv1.PublicURL
 	shareRedeems chan error
+	markReady    func(context.Context, string, uint64, credentials.PublishRunToken) error
+	heartbeats   *atomic.Int64
 }
 
 func (c integrationGuestPublisherControl) PublisherIdentityID() string {
@@ -59,6 +66,21 @@ func (c integrationGuestPublisherControl) CreatePublishRun(ctx context.Context, 
 	return c.native.CreatePublishRun(ctx, id, retry)
 }
 
+func (c integrationGuestPublisherControl) MarkPublishRunReady(ctx context.Context, run string, number uint64, token credentials.PublishRunToken) error {
+	if c.markReady != nil {
+		return c.markReady(ctx, run, number, token)
+	}
+	return c.Client.MarkPublishRunReady(ctx, run, number, token)
+}
+
+func (c integrationGuestPublisherControl) HeartbeatPublishRun(ctx context.Context, run string, number uint64, token credentials.PublishRunToken) (controlv1.PublishRunHeartbeat, error) {
+	response, err := c.Client.HeartbeatPublishRun(ctx, run, number, token)
+	if err == nil && c.heartbeats != nil {
+		c.heartbeats.Add(1)
+	}
+	return response, err
+}
+
 func (c integrationGuestPublisherControl) RedeemPublishRunShare(ctx context.Context, runID string, body controlv1.RedeemShareRequest, token credentials.PublishRunToken) (controlv1.ShareRedemption, error) {
 	redemption, err := c.Client.RedeemPublishRunShare(ctx, runID, body, token)
 	select {
@@ -66,6 +88,44 @@ func (c integrationGuestPublisherControl) RedeemPublishRunShare(ctx context.Cont
 	default:
 	}
 	return redemption, err
+}
+
+func redeemIntegrationGuestShare(t *testing.T, client *http.Client, address string) *http.Response {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	for {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+		if err != nil {
+			t.Fatal("construct guest share request")
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			return response
+		}
+		var requestError *url.Error
+		if errors.As(err, &requestError) {
+			// the request URL contains the share secret; report only the cause.
+			err = requestError.Err
+		}
+		if response != nil {
+			response.Body.Close()
+			t.Fatalf("guest share redemption after response: %v", err)
+		}
+		if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("guest share redemption: %v", err)
+		}
+		// a newly created share can reach ingress before publisher policy refresh.
+		// retry only this reusable GET's pre-response EOF, never an HTTP result or
+		// a one-use handoff. a permanent failure still fails within five seconds.
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			t.Fatalf("guest share redemption never reached a response: %v", err)
+		case <-timer.C:
+		}
+	}
 }
 
 func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testing.T) {
@@ -220,6 +280,15 @@ func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testin
 }
 
 func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
+	testIntegrationGuestDemo(t, false)
+}
+
+func TestIntegrationGuestDemoDeadlineClosesConnectionsWithoutControl(t *testing.T) {
+	testIntegrationGuestDemo(t, true)
+}
+
+func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
+	t.Helper()
 	databaseURL, inspect := standaloneTestDatabase(t)
 	publicListener := serviceRuntimeListener(t)
 	relayUDP := integrationPacketListener(t)
@@ -228,6 +297,11 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	pebble := startIntegrationPebble(t, integrationPort(t, publicAddress), dns.address)
 	cfg, listeners := standalonePublishConfig(t, databaseURL, publicListener, relayUDP, pebble.directoryURL)
 	cfg.GuestDemoEnabled = true
+	if deadlineProof {
+		// keep process leases longer than guest authority, so their expiry cannot
+		// conceal a missing guest connection fence.
+		cfg.IngressLeaseDuration, cfg.RelayLeaseDuration = time.Minute, time.Minute
+	}
 	owner := newRuntimeTopology(t)
 	ca := newIntegrationTestCA(t)
 	controlCertificate := ca.issueServer(t, cfg.ServerHostname())
@@ -244,18 +318,47 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	}
 	publicControl := unusedTCPAddress(t)
 	startIntegrationControlProxy(t, owner, publicControl, cfg.ControlListen, controlTLS)
+	var offline atomic.Bool
+	var rejected atomic.Int64
+	closing := make(chan struct{})
+	noteClosing := sync.OnceFunc(func() { close(closing) })
+	withOutage := func(client *http.Client) *http.Client {
+		base := client.Transport
+		if base == nil {
+			base = http.DefaultTransport
+		}
+		client.Transport = splitACMERoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if offline.Load() {
+				rejected.Add(1)
+				if request.Method == http.MethodDelete && strings.HasPrefix(request.URL.Path, "/v1/publish-runs/") {
+					noteClosing()
+				}
+				return nil, clientcontrol.ErrUnavailable
+			}
+			return base.RoundTrip(request)
+		})
+		return client
+	}
 	process := startIntegrationProcessWithOptions(t, cfg, integrationProcessOptions{
 		dns: dns, listeners: listeners,
-		acmeHTTPClient: pebble.httpClient,
-		relayClientTLS: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}, owner: owner,
+		acmeHTTPClient:    pebble.httpClient,
+		serviceHTTPClient: withOutage(&http.Client{Timeout: 2 * time.Second}),
+		relayClientTLS:    &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}, owner: owner,
 	})
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Log(integrationPublisherDiagnostics(inspect, pebble.logPath))
+			var authority string
+			err := inspect.QueryRow(`SELECT json_build_object('ready_at',active_ready_at,'ready_deadline',ready_deadline,
+				'serving_until',serving_until,'used_ready_ns',used_ready_ns,'ended_at',ended_at,'end_reason',end_reason,
+				'publisher_expires_at',(SELECT publisher_expires_at FROM control.publish_runs ORDER BY created_at DESC LIMIT 1),
+				'closed_at',(SELECT closed_at FROM control.publish_runs ORDER BY created_at DESC LIMIT 1))::text FROM control.guest_trials LIMIT 1`).Scan(&authority)
+			t.Logf("guest authority at failure: %s; read error %v", authority, err)
 		}
 	})
 	waitForProcessReady(t, process)
 	controlHTTP, _ := newIntegrationHTTPSClient(t, ca.roots, publicControl, false, owner)
+	withOutage(controlHTTP)
 	serverURL := "https://" + cfg.ServerHostname()
 	control, err := clientcontrol.New(serverURL, controlHTTP, "")
 	if err != nil {
@@ -264,6 +367,11 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	issued, err := control.CreateGuestDemo(t.Context())
 	if err != nil {
 		t.Fatalf("guest credential without sign-in: %v", err)
+	}
+	if deadlineProof {
+		if _, err := inspect.Exec(`UPDATE control.guest_trials SET used_ready_ns=$2 WHERE id=$1`, issued.GuestId, int64(controlstate.GuestReadyAllowance-8*time.Second)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	clientstate, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
@@ -343,9 +451,44 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	if err := native.SelectPublicURL(publicURL); err != nil {
 		t.Fatal(err)
 	}
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := sha256.Sum256(secret)
+	createShare := func() controlv1.Share {
+		t.Helper()
+		share, err := authenticated.Control.CreateURLShare(t.Context(), "guest-reviewer-share", controlv1.CreateShareRequest{
+			PublicUrlIds: []string{publicURL.Id}, ExpiresAt: issued.ExpiresAt, SecretFingerprint: hex.EncodeToString(fingerprint[:]),
+		})
+		if err != nil || share.Scope != controlv1.ShareScopeGuest {
+			t.Fatalf("guest trial share = %+v, %v", share, err)
+		}
+		return share
+	}
+	var share controlv1.Share
 	shareRedeems := make(chan error, 1)
+	var heartbeats atomic.Int64
+	controlAdapter := integrationGuestPublisherControl{Client: authenticated.Control, native: native, assigned: publicURL, shareRedeems: shareRedeems, heartbeats: &heartbeats}
+	preparing, allowReady := make(chan error, 1), make(chan struct{})
+	if deadlineProof {
+		// only the short-budget fixture pre-creates its share. withhold the final
+		// ready mutation while the real publisher renews and ingress prepares.
+		share = createShare()
+		var first sync.Once
+		controlAdapter.markReady = func(ctx context.Context, run string, number uint64, token credentials.PublishRunToken) error {
+			select {
+			case <-allowReady:
+				return authenticated.Control.MarkPublishRunReady(ctx, run, number, token)
+			default:
+				first.Do(func() { preparing <- authenticated.Control.MarkPublishRunReady(ctx, run, number, token) })
+				return clientcontrol.ErrUnavailable
+			}
+		}
+	}
+	visitor := newIntegrationVisitor(t, pebble.roots, publicAddress, owner)
 	handle := startOwnedIntegrationPublisher(t, owner, publisher.Config{
-		Control: integrationGuestPublisherControl{Client: authenticated.Control, native: native, assigned: publicURL, shareRedeems: shareRedeems}, TeamID: issued.TeamId, MembershipID: issued.MembershipId,
+		Control: controlAdapter, TeamID: issued.TeamId, MembershipID: issued.MembershipId,
 		ControlURL: serverURL,
 		DomainID:   issued.DomainId, Hostname: hostname, PublicURLScope: controlv1.Member, Purpose: controlv1.Demo,
 		PolicyRevision: 1, Target: localDemo.Target(),
@@ -355,7 +498,65 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 		Logf:          t.Logf,
 		QUICConnector: quic, TCPConnector: tcp,
 	}, func() string { return integrationPublisherDiagnostics(inspect, pebble.logPath) })
+	if deadlineProof {
+		select {
+		case err := <-preparing:
+			if !errors.Is(err, clientcontrol.ErrUnavailable) && !errors.Is(err, clientcontrol.ErrStatusConflict) {
+				t.Fatalf("first preparation mutation = %v", err)
+			}
+		case <-handle.done:
+			t.Fatalf("publisher stopped before preparation: %v", handle.result())
+		case <-time.After(30 * time.Second):
+			t.Fatal("publisher did not reach preparation")
+		}
+		waitForIntegrationCondition(t, 5*time.Second, func(ctx context.Context) (bool, error) {
+			var prepared bool
+			err := inspect.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM control.ingress_public_run_observations AS installed
+				JOIN control.guest_trials AS guest ON guest.active_publish_run_id=installed.publish_run_id
+				WHERE guest.id=$1 AND installed.valid_until>now() AND guest.active_ready_at IS NULL)`, issued.GuestId).Scan(&prepared)
+			return prepared, err
+		})
+		before := heartbeats.Load()
+		for renewal := range 3 {
+			waitForIntegrationCondition(t, 10*time.Second, func(context.Context) (bool, error) {
+				return heartbeats.Load() >= before+int64(renewal), nil
+			})
+			for _, path := range []string{"/state", "/__tnl/share/" + share.Id + "." + base64.RawURLEncoding.EncodeToString(secret)} {
+				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+				request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+hostname+path, nil)
+				if err != nil {
+					cancel()
+					t.Fatal("construct preparation visitor request")
+				}
+				response, err := visitor.client.Do(request)
+				cancel()
+				if response != nil {
+					response.Body.Close()
+					t.Fatalf("starting guest carried an HTTP response: %d", response.StatusCode)
+				}
+				if err == nil || errors.Is(err, context.DeadlineExceeded) {
+					t.Fatal("starting guest did not reject the visitor connection promptly")
+				}
+			}
+			var uncharged bool
+			if err := inspect.QueryRow(`SELECT used_ready_ns=$2 AND active_ready_at IS NULL AND ready_deadline IS NULL AND serving_until IS NULL
+				FROM control.guest_trials WHERE id=$1`, issued.GuestId, int64(controlstate.GuestReadyAllowance-8*time.Second)).Scan(&uncharged); err != nil || !uncharged {
+				t.Fatalf("preparation spent ready authority: %t, %v", uncharged, err)
+			}
+		}
+		select {
+		case err := <-shareRedeems:
+			t.Fatalf("starting guest reached publisher share redemption: %v", err)
+		default:
+		}
+		t.Logf("guest preparation rejected regular and share visitors across %d successful heartbeats", heartbeats.Load()-before)
+		close(allowReady)
+	}
 	ready := waitForPublisherReady(t, handle)
+	if !deadlineProof {
+		// retain the normal guest workflow: a newly ready demo creates its share.
+		share = createShare()
+	}
 	var firstReadyAt time.Time
 	if err := inspect.QueryRow(`SELECT first_ready_at FROM control.guest_trials WHERE id = $1`, issued.GuestId).Scan(&firstReadyAt); err != nil || firstReadyAt.IsZero() {
 		t.Fatalf("guest trial did not record its first ready run: %v", err)
@@ -363,18 +564,6 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	waitForReadyPublisherConnections(t, inspect, ready.PublicURLID, ready.PublishRunNumber, 2)
 	waitForIngressRoutingCurrent(t, inspect, 1)
 	localDemo.SetPublicURL(ready.PublicURL)
-	visitor := newIntegrationVisitor(t, pebble.roots, publicAddress, owner)
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		t.Fatal(err)
-	}
-	fingerprint := sha256.Sum256(secret)
-	share, err := authenticated.Control.CreateURLShare(t.Context(), "guest-reviewer-share", controlv1.CreateShareRequest{
-		PublicUrlIds: []string{ready.PublicURLID}, ExpiresAt: issued.ExpiresAt, SecretFingerprint: hex.EncodeToString(fingerprint[:]),
-	})
-	if err != nil || share.Scope != controlv1.ShareScopeGuest {
-		t.Fatalf("guest trial share = %+v, %v", share, err)
-	}
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -382,15 +571,7 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	visitor.client.Jar = jar
 	shareClient := *visitor.client
 	shareClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	entry, err := shareClient.Get(ready.PublicURL + "/__tnl/share/" + share.Id + "." + base64.RawURLEncoding.EncodeToString(secret))
-	if err != nil {
-		var requestError *url.Error
-		if errors.As(err, &requestError) {
-			// the request URL contains the share secret; report only the cause.
-			err = requestError.Err
-		}
-		t.Fatalf("guest share redemption: %v", err)
-	}
+	entry := redeemIntegrationGuestShare(t, &shareClient, ready.PublicURL+"/__tnl/share/"+share.Id+"."+base64.RawURLEncoding.EncodeToString(secret))
 	if entry.StatusCode != http.StatusSeeOther || entry.Header.Get("Location") != ready.PublicURL+"/" {
 		entry.Body.Close()
 		select {
@@ -428,6 +609,78 @@ func TestIntegrationGuestDemoPublishesWithoutSignIn(t *testing.T) {
 	ping.Body.Close()
 	if decodeErr != nil || pong.RequestCount != 1 || pong.GeneratedAt == "" {
 		t.Fatalf("guest pong = %d, %+v, %v", ping.StatusCode, pong, decodeErr)
+	}
+	if deadlineProof {
+		var deadline, servingUntil time.Time
+		if err := inspect.QueryRow(`SELECT ready_deadline,serving_until FROM control.guest_trials WHERE id=$1`, issued.GuestId).Scan(&deadline, &servingUntil); err != nil {
+			t.Fatal(err)
+		}
+		held, err := tls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second}, "tcp", publicAddress, &tls.Config{RootCAs: pebble.roots, ServerName: hostname, MinVersion: tls.VersionTLS13})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer held.Close()
+		if err := held.SetDeadline(deadline.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		origin, err := url.Parse(ready.PublicURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request, err := http.NewRequest(http.MethodGet, ready.PublicURL+"/state", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, cookie := range jar.Cookies(origin) {
+			request.AddCookie(cookie)
+		}
+		if err := request.Write(held); err != nil {
+			t.Fatal(err)
+		}
+		reader := bufio.NewReader(held)
+		response, err := http.ReadResponse(reader, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, readErr := io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		if readErr != nil || response.StatusCode != http.StatusOK || !time.Now().Before(servingUntil) {
+			t.Fatalf("held connection before outage: status=%d error=%v", response.StatusCode, readErr)
+		}
+		offline.Store(true)
+		defer offline.Store(false)
+		if _, err := reader.ReadByte(); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("idle guest connection survived its offline deadline: %v", err)
+		}
+		closedAt := time.Now()
+		// include any heartbeat committed while the held connection was being
+		// established. settlement retains this horizon even if cleanup has run.
+		if err := inspect.QueryRow(`SELECT serving_until FROM control.guest_trials WHERE id=$1`, issued.GuestId).Scan(&servingUntil); err != nil {
+			t.Fatal(err)
+		}
+		if closedAt.After(servingUntil.Add(time.Second)) || closedAt.After(deadline.Add(time.Second)) || rejected.Load() == 0 {
+			t.Fatal("connection did not close locally during control outage")
+		}
+		t.Logf("guest connection closed at %s; issued horizon %s; ready deadline %s; rejected control requests %d", closedAt, servingUntil, deadline, rejected.Load())
+		if err := waitForDoneWithin(closing, max(0, time.Until(deadline))+10*time.Second); err != nil {
+			t.Fatal("publisher did not stop at its own confirmed deadline", err)
+		}
+		// local expiry has already closed the transport and begun cleanup. stop
+		// Run's replacement loop so its result remains the original lease failure.
+		handle.cancel()
+		offline.Store(false)
+		if err := waitForDoneWithin(handle.done, 10*time.Second); err != nil {
+			t.Fatal("publisher cleanup did not join", err)
+		}
+		if err := handle.result(); !errors.Is(err, clientcontrol.ErrStatusConflict) {
+			t.Fatalf("publisher expiry result = %v", err)
+		}
+		// acknowledge only the asserted terminal cutoff; the topology still joins
+		// the owner and treats unrelated cleanup failures as failures.
+		handle.mu.Lock()
+		handle.err = nil
+		handle.mu.Unlock()
+		return
 	}
 	page, err := visitor.client.Get(ready.PublicURL + "/")
 	if err != nil {

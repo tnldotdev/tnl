@@ -89,6 +89,21 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		}
 		return nil
 	}
+	if route.BindConnection != nil {
+		// cancel both setup and the eventual bidirectional copy. a visitor may
+		// already have half-closed, leaving only the upstream read blocked.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		connection := public
+		release, err := route.BindConnection(func() { cancel(); _ = connection.Close() })
+		if err != nil {
+			return err
+		}
+		if release != nil {
+			defer release()
+		}
+	}
 	visitorOutcome = observability.VisitorOpenFailed
 	var usage UsageConnection
 	if s.config.OpenUsage != nil {
@@ -178,7 +193,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		defer remove()
 	}
 	if admission != nil {
-		if err := admission.beforeWrite(s.openContext, true, len(hello.Prefix)); err != nil {
+		if err := admission.beforeWrite(ctx, true, len(hello.Prefix)); err != nil {
 			visitorOutcome = observability.VisitorCapacityDenied
 			return err
 		}
@@ -218,6 +233,16 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		return openErr
 	}
 	defer s.releaseBackend(opened.connection)
+	upstreamClosed := make(chan struct{})
+	stopUpstream := context.AfterFunc(ctx, func() {
+		defer close(upstreamClosed)
+		_ = opened.connection.Close()
+	})
+	defer func() {
+		if !stopUpstream() {
+			<-upstreamClosed
+		}
+	}()
 	if admission != nil {
 		admission.mu.Lock()
 		admission.upstream = opened.connection
@@ -233,7 +258,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	}
 	upstream := opened.connection
 	if admission != nil {
-		ctx, cancel := context.WithCancel(s.openContext)
+		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		public = &budgetConn{Conn: public, beforeWrite: func(n int) error { return admission.beforeWrite(ctx, false, n) }}
 		upstream = &budgetConn{Conn: upstream, beforeWrite: func(n int) error { return admission.beforeWrite(ctx, true, n) }}

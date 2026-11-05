@@ -449,7 +449,7 @@ func TestIntegrationGuestPublisherScopeSourceAndExpiry(t *testing.T) {
 	if owns, err := d.PublisherMayStartRun(t.Context(), p, "some-other-demo"); err != nil || owns {
 		t.Fatal("guest can publish an unassigned URL")
 	}
-	for _, reason := range []string{"expires_at=$2", "used_ready_ns=900000000000", "used_bytes=5242880"} {
+	for _, reason := range []string{"expires_at=$2", "used_ready_ns=1200000000000", "used_bytes=5242880"} {
 		query := fmt.Sprintf(`UPDATE control.guest_trials SET %s WHERE id=$1`, reason)
 		args := []any{guest.ID}
 		if strings.Contains(reason, "$2") {
