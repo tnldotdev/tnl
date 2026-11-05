@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,6 +62,13 @@ type privateSeparatedFixture struct {
 	processContext              func(string) context.Context
 	publisherConnections        chan<- *publisherservice.Claimed
 	publisherTCPOnly            bool
+	relayProcesses              map[string]*privateRelayFixture
+}
+
+type privateRelayFixture struct {
+	process  *daemon
+	settings relayProcessSettings
+	stop     func() error
 }
 
 // the topology has one real control database/API and two relay runtimes. tests
@@ -240,38 +248,61 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		return f
 	}
 	for index := 0; index < 2; index++ {
-		id := fmt.Sprintf("private-relay-%d", index)
-		name := id + ".private.integration.test"
-		lifetime, stop := context.WithCancel(context.Background())
-		relayMetrics := observability.New("relay")
-		if processContext != nil {
-			lifetime = observability.WithMetrics(lifetime, observability.FromContext(processContext("relay")))
-			relayMetrics = observability.FromContext(lifetime)
-		}
-		relay := &daemon{serviceHTTP: serviceHTTP, clusterSecret: serviceRuntimeClusterSecret, clusterSecrets: secrets, cancel: stop, componentDone: make(chan error, 1), startedAt: time.Now()}
-		internalListener := serviceRuntimeListener(t)
-		internal := internalListener.Addr().String()
-		publisherListener := serviceRuntimeListener(t)
-		publisherPacket := integrationPacketListener(t)
-		relayAddress := publisherListener.Addr().String()
-		if err := relay.startRelay(lifetime, relayProcessSettings{controlEndpoint: config.PrivateControlEndpoint(), controlAddress: config.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
-			relayServiceID: id, relayID: id, relayAddress: relayAddress, tlsServerName: name, transportTLS: serviceRuntimeTLS(t, ca, name), internalListener: internalListener, internalAddress: internal,
-			tcpListener: publisherListener, udpPacket: publisherPacket, udpListen: publisherPacket.LocalAddr().String(), quic: config.RelayQUICConfig(), runtime: relaySettingsFrom(config)}, relayMetrics); err != nil {
-			stop()
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			if err := relay.shutdown(time.Second); err != nil && !errors.Is(err, context.DeadlineExceeded) {
-				t.Errorf("private relay shutdown: %v", err)
-			}
-		})
-		privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
-			return relay.readyRelays(daemonconfig.RoleRelay, time.Now()) == nil, nil
-		})
-		f.tcpAddresses[relayAddress] = relay.relays[0].tcpListener.Addr().String()
-		f.quicAddresses[relayAddress] = relay.relays[0].udpListener.Addr().String()
+		f.startFixtureRelay(t, fmt.Sprintf("private-relay-%d", index))
 	}
 	return f
+}
+
+func (f *privateSeparatedFixture) startFixtureRelay(t *testing.T, id string) *privateRelayFixture {
+	t.Helper()
+	name := id + ".private.integration.test"
+	internal := serviceRuntimeListener(t)
+	publisher := serviceRuntimeListener(t)
+	packet := integrationPacketListener(t)
+	settings := relayProcessSettings{controlEndpoint: f.controlConfig.PrivateControlEndpoint(), controlAddress: f.controlConfig.PrivateControlListen, clusterSecret: serviceRuntimeClusterSecret,
+		relayServiceID: id, relayID: id, relayAddress: publisher.Addr().String(), tlsServerName: name, transportTLS: serviceRuntimeTLS(t, f.certificateAuthority, name), internalListener: internal, internalAddress: internal.Addr().String(),
+		tcpListener: publisher, udpPacket: packet, udpListen: packet.LocalAddr().String(), quic: f.controlConfig.RelayQUICConfig(), runtime: relaySettingsFrom(f.controlConfig)}
+	return f.runFixtureRelay(t, settings)
+}
+
+func (f *privateSeparatedFixture) runFixtureRelay(t *testing.T, settings relayProcessSettings) *privateRelayFixture {
+	t.Helper()
+	lifetime, cancel := context.WithCancel(context.Background())
+	metrics := observability.New("relay")
+	if f.processContext != nil {
+		lifetime = observability.WithMetrics(lifetime, observability.FromContext(f.processContext("relay")))
+		metrics = observability.FromContext(lifetime)
+	}
+	secrets, err := serviceapi.NewBearerSecrets(serviceRuntimeClusterSecret, "")
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	relay := &daemon{serviceHTTP: f.serviceHTTP, clusterSecret: serviceRuntimeClusterSecret, clusterSecrets: secrets, cancel: cancel, componentDone: make(chan error, 1), startedAt: time.Now()}
+	if err := relay.startRelay(lifetime, settings, metrics); err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	fixture := &privateRelayFixture{process: relay, settings: settings, stop: sync.OnceValue(func() error { return relay.shutdown(time.Second) })}
+	t.Cleanup(func() {
+		if err := fixture.stop(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("private relay shutdown: %v", err)
+		}
+	})
+	privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+		return relay.readyRelays(daemonconfig.RoleRelay, time.Now()) == nil, nil
+	})
+	if f.relayProcesses == nil {
+		f.relayProcesses = make(map[string]*privateRelayFixture)
+	}
+	f.relayProcesses[settings.relayID] = fixture
+	// address maps are immutable once publisher workers begin. process restarts
+	// retain their listeners' addresses and do not race those workers with writes.
+	if _, exists := f.tcpAddresses[settings.relayAddress]; !exists {
+		f.tcpAddresses[settings.relayAddress] = relay.relays[0].tcpListener.Addr().String()
+		f.quicAddresses[settings.relayAddress] = relay.relays[0].udpListener.Addr().String()
+	}
+	return fixture
 }
 
 func (f *privateSeparatedFixture) connectors() (muxsession.Connector, muxsession.Connector) {

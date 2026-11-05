@@ -188,6 +188,25 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/api/public ./internal/control/state ./internal/relay -run='^TestIntegration(PrivatePublisherRecoversCommittedLostResponses|ConnectorPeerPairPublicDevice|WorkloadHTTPAndNativeAdapter|ConnectorPeerPairExactAuthority|ConnectorPeerPairWorkloadCredentialAndSelectedService|ConnectorPeerPairRelayClaimHTTPDirect)$' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
+  connector-rebinding:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check retained connector sessions, binding authority, and relay replacements with disposable PostgreSQL
+    vars:
+      RUN: '{{default "^TestIntegrationConnector.*Rebind" .RUN}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/control/api/public ./internal/relay ./internal/daemon -run='{{.RUN}}' -count=1 -timeout=10m -args -tnl-test-tier=integration
+
+  connector-rebinding:network:
+    dir: "{{.ROOT_DIR}}"
+    desc: Prove retained target sockets across real connector source-IP changes on Linux
+    preconditions:
+      - sh: test "$(uname -s)" = Linux
+        msg: Source-IP rebinding qualification requires Linux multi-source loopback sockets
+    cmds:
+      - task: :go:test:integration:connector-rebinding
+        vars:
+          RUN: ^TestIntegrationConnectorSourceRebindingRetainsApplicationAndTarget$
+
   service-claims:
     desc: Check committed private claims, mixed process capacity, and certificate deadlines in disposable PostgreSQL
     cmds:
