@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -166,7 +167,8 @@ func New(parent context.Context, config Config) (*Endpoint, error) {
 	ctx, cancel := context.WithCancel(parent)
 	if config.Binding == (BindingRevision{}) {
 		config.Binding.Generation = 1
-	} else if !config.Binding.valid() {
+	} else if config.Binding.Generation < 1 || !opaqueid.Valid(config.Binding.PairID, "cpp_") ||
+		(config.Binding.OperationID != "" || config.Binding.Challenge != "") && !config.Binding.valid() {
 		cancel()
 		return nil, ErrConfiguration
 	}

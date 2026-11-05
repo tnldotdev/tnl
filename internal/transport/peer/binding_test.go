@@ -17,7 +17,7 @@ import (
 )
 
 func testBinding(generation int64) BindingRevision {
-	return BindingRevision{PairID: "cpp_session", Generation: generation, OperationID: "operation", Challenge: "control-challenge"}
+	return BindingRevision{PairID: "cpp_1234567890123456789012", Generation: generation, OperationID: "operation", Challenge: "control-challenge"}
 }
 
 func awaitBindingProofs(t *testing.T, ctx context.Context, e *Endpoint, binding BindingRevision) [pathCount]BindingPathProof {
@@ -251,6 +251,41 @@ func TestPeerBindingActivationRequiresFreshProofs(t *testing.T) {
 	endpoint.paths[1].ack, endpoint.paths[1].alive = time.Now(), false
 	if _, ok := endpoint.BindingProofs(binding); ok {
 		t.Fatal("unhealthy path proof remained usable")
+	}
+}
+
+func TestPeerBindingInitialIdentityDoesNotRequireRebindOperation(t *testing.T) {
+	initial := testBinding(17)
+	initial.OperationID, initial.Challenge = "", ""
+	for _, test := range []struct {
+		name    string
+		binding BindingRevision
+		valid   bool
+	}{
+		{"initial", initial, true},
+		{"invalid pair", BindingRevision{PairID: "unvalidated", Generation: 17}, false},
+		{"missing challenge", BindingRevision{PairID: initial.PairID, Generation: 17, OperationID: testBinding(17).OperationID}, false},
+		{"missing operation", BindingRevision{PairID: initial.PairID, Generation: 17, Challenge: testBinding(17).Challenge}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			left, right := memoryPair()
+			defer right.Close()
+			second, remote := memoryPair()
+			defer remote.Close()
+			endpoint, err := New(t.Context(), Config{Key: [32]byte{7}, Binding: test.binding, Paths: [pathCount]Carrier{left, second}})
+			if endpoint != nil {
+				defer endpoint.Close()
+			}
+			if (err == nil) != test.valid {
+				t.Fatal("unexpected initial binding validation", err)
+			}
+			if err != nil {
+				_ = left.Close()
+				_ = second.Close()
+			} else if endpoint.binding != initial || !endpoint.bindingActive || endpoint.bindingPending {
+				t.Fatal("initial binding lost its control-assigned generation or became pending")
+			}
+		})
 	}
 }
 
