@@ -79,7 +79,9 @@ func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error)
 			a.Audience = p.TokenAudience(m.Server)
 		}
 		if p.Token != nil {
-			if (p.Token.File == nil) == (p.Token.Env == nil) { return nil, ErrInvalid }
+			if (p.Token.File == nil) == (p.Token.Env == nil) {
+				return nil, ErrInvalid
+			}
 			if p.Token.File != nil {
 				a = Acquisition{Method: "token-file", Audience: a.Audience, TokenFile: *p.Token.File}
 			}
