@@ -30,10 +30,11 @@ type connectorOuter struct {
 }
 type recordedConnectorConnector struct {
 	muxsession.Connector
-	opened    chan connectorOuter
-	blocked   atomic.Bool
-	loseReply atomic.Int32
-	lost      atomic.Int32
+	opened              chan connectorOuter
+	blocked             atomic.Bool
+	loseReply           atomic.Int32
+	loseAfterGeneration atomic.Int64
+	lost                atomic.Int32
 }
 
 func (c *recordedConnectorConnector) Connect(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
@@ -42,7 +43,12 @@ func (c *recordedConnectorConnector) Connect(ctx context.Context, endpoint muxse
 	}
 	session, err := c.Connector.Connect(ctx, endpoint)
 	if err == nil {
-		observed := &observedConnectorOuter{Session: session, ready: make(chan struct{}), loseReply: c.loseReply.Swap(0), lost: &c.lost}
+		floor := c.loseAfterGeneration.Load()
+		loss := c.loseReply.Load()
+		if floor == 0 {
+			loss = c.loseReply.Swap(0)
+		}
+		observed := &observedConnectorOuter{Session: session, ready: make(chan struct{}), loseReply: loss, loseAfterGeneration: floor, lossOwner: c, lost: &c.lost}
 		session = observed
 		if datagrams, ok := observed.Session.(muxsession.DatagramSession); ok {
 			session = &observedConnectorDatagrams{observedConnectorOuter: observed, DatagramSession: datagrams}
@@ -61,11 +67,13 @@ func (c *recordedConnectorConnector) Connect(ctx context.Context, endpoint muxse
 // handshake. the production receiver still authenticates the actual frame.
 type observedConnectorOuter struct {
 	muxsession.Session
-	opened    atomic.Int32
-	ready     chan struct{}
-	once      sync.Once
-	loseReply int32
-	lost      *atomic.Int32
+	opened              atomic.Int32
+	ready               chan struct{}
+	once                sync.Once
+	loseReply           int32
+	loseAfterGeneration int64
+	lossOwner           *recordedConnectorConnector
+	lost                *atomic.Int32
 }
 
 func (s *observedConnectorOuter) observe(wire []byte) {
@@ -90,8 +98,9 @@ func (s *observedConnectorOuter) OpenStream(ctx context.Context) (muxsession.Str
 
 type lostConnectorReply struct {
 	muxsession.Stream
-	owner   *observedConnectorOuter
-	pending []byte
+	owner      *observedConnectorOuter
+	pending    []byte
+	generation int64
 }
 
 func (s *lostConnectorReply) Read(b []byte) (int, error) {
@@ -108,7 +117,13 @@ func (s *lostConnectorReply) Read(b []byte) (int, error) {
 		var message tunnelv1.Message
 		decodeErr := json.Unmarshal(s.pending[4:4+size], &message)
 		s.pending = s.pending[4+size:]
+		if decodeErr == nil && message.Type == tunnelv1.HelloAccepted && message.ConnectorPairLegAccepted != nil {
+			s.generation = message.ConnectorPairLegAccepted.DeliveryGeneration
+		}
 		if decodeErr == nil && (s.owner.loseReply == 1 && message.Type == tunnelv1.HelloAccepted || s.owner.loseReply == 2 && message.Type == tunnelv1.ConnectorLegActivated) {
+			if s.owner.loseAfterGeneration != 0 && (s.generation <= s.owner.loseAfterGeneration || !s.owner.lossOwner.loseReply.CompareAndSwap(s.owner.loseReply, 0)) {
+				continue
+			}
 			s.owner.lost.Add(1)
 			_ = s.owner.Session.Close()
 			return 0, io.ErrUnexpectedEOF

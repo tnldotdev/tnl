@@ -180,8 +180,8 @@ func TestIntegrationConnectorRebindingRetainsApplicationAndTarget(t *testing.T) 
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	for _, standalone := range []bool{false, true} {
 		for _, tcp := range []bool{false, true} {
-			for _, fault := range []string{"publisher-connection", "both-connectors", "relay-process", "relay-assignment"} {
-				if standalone && (fault == "relay-process" || fault == "relay-assignment") {
+			for _, fault := range []string{"publisher-connection", "both-connectors", "relay-process", "relay-assignment", "publisher-lost-hello", "publisher-lost-activation"} {
+				if standalone && fault != "publisher-connection" && fault != "both-connectors" {
 					continue
 				}
 				t.Run(fmt.Sprintf("standalone=%t/tcp=%t/%s", standalone, tcp, fault), func(t *testing.T) {
@@ -212,6 +212,7 @@ type rebindingConnectionFixture struct {
 	stop      func()
 	control   *rebindingControl
 	transport *rebindingTransport
+	recorded  *recordedConnectorConnector
 }
 
 func startRebindingConnector(t *testing.T, f *privateSeparatedFixture, tcp bool, target string) rebindingConnectionFixture {
@@ -235,12 +236,13 @@ func startRebindingConnector(t *testing.T, f *privateSeparatedFixture, tcp bool,
 	}
 	control := &rebindingControl{Control: production}
 	transport := newRebindingTransport(t, f, tcp)
-	config := connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: transport, RelayTCP: privateDisabledConnector()}
+	recorded := &recordedConnectorConnector{Connector: transport, opened: make(chan connectorOuter, 64)}
+	config := connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: recorded, RelayTCP: privateDisabledConnector()}
 	if tcp {
-		config.RelayQUIC, config.RelayTCP = privateDisabledConnector(), transport
+		config.RelayQUIC, config.RelayTCP = privateDisabledConnector(), recorded
 	}
 	listener, stop := startRuntimeConnector(t, f, service, config)
-	return rebindingConnectionFixture{service: service, listener: listener, stop: stop, control: control, transport: transport}
+	return rebindingConnectionFixture{service: service, listener: listener, stop: stop, control: control, transport: transport, recorded: recorded}
 }
 
 func qualifyConnectorRebinding(t *testing.T, standalone, tcp bool, fault string) {
@@ -274,6 +276,17 @@ func qualifyConnectorRebinding(t *testing.T, standalone, tcp bool, fault string)
 	}
 	exchange("before-rebind\n")
 	before := readRebindingObservation(t, f, service.Id)
+	var lostReply int32
+	switch fault {
+	case "publisher-lost-hello":
+		lostReply, fault = 1, "publisher-connection"
+	case "publisher-lost-activation":
+		lostReply, fault = 2, "publisher-connection"
+	}
+	if lostReply != 0 {
+		prepared.recorded.loseAfterGeneration.Store(before.generation)
+	}
+	prepared.recorded.loseReply.Store(lostReply)
 	switch fault {
 	case "source":
 		transport.source.Store(2)
@@ -309,6 +322,9 @@ func qualifyConnectorRebinding(t *testing.T, standalone, tcp bool, fault string)
 	after := readRebindingObservation(t, f, service.Id)
 	if after.pairID != before.pairID || after.runID != before.runID || after.number != before.number || control.selections.Load() != 1 {
 		t.Fatal("recovery replaced the owner or selected another run", before.pairID, after.pairID, control.selections.Load())
+	}
+	if lostReply != 0 && (prepared.recorded.lost.Load() != 1 || after.generation != before.generation+1) {
+		t.Fatal("lost initial binding reply did not resume the same operation", prepared.recorded.lost.Load(), before.generation, after.generation)
 	}
 	if fault == "relay-process" && after.relayRunID == before.relayRunID {
 		t.Fatal("relay restart did not replace the process identity")
