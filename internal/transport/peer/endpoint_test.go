@@ -74,7 +74,7 @@ func TestPeerConnectorFrameMACGolden(t *testing.T) {
 	// fixed v1 frames use key 01 followed by 31 zero bytes. the MAC input is
 	// the connector_peer domain, NUL, then canonical packet bytes, independent of
 	// the production domain constant and test packet-signing helpers.
-	connector, err := hex.DecodeString("0101000100000000000000002a00030003616263d1475c7153bdd3e6f0b4bf86d5c3d142368d3a697b196273d7514a424636c06d")
+	connector, err := hex.DecodeString("0101000100000000000000002a00030003000000000000000161626317688440b2e785142c233483e62f4f0fc89d767072cac773b31cb07de2b52376")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestPeerConnectorFrameMACGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := [32]byte{1}
-	endpoint := &Endpoint{config: Config{Key: key}}
+	endpoint := &Endpoint{config: Config{Key: key}, binding: BindingRevision{Generation: 1}, bindingActive: true}
 	endpoint.paths[RelayB] = &path{queue: make(chan queuedFrame, 1)}
 	endpoint.enqueue(RelayB, tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: 42, Total: 3, Payload: []byte("abc")}, carrierRevision{})
 	select {
@@ -98,7 +98,7 @@ func TestPeerConnectorFrameMACGolden(t *testing.T) {
 	if _, ok := authenticatePacket(connector, key, 1, RelayB); !ok || !binding.valid() || !binding.authentic(connector, 0) {
 		t.Fatal("connector endpoint or binding rejected the connector MAC domain")
 	}
-	if _, ok := authenticatePacket(retired, key, 1, RelayB); ok || binding.authentic(retired, 0) {
+	if _, ok := authenticatePacket(retired, key, 1, RelayB); ok {
 		t.Fatal("endpoint or binding accepted a retired-domain frame")
 	}
 	legacy, err := hex.DecodeString("0101000100000000000000002a0003000361626359c3e91ef5a75ff587ec6eebecaba1bdde4fcd6adeb517f4e835be5f0574c62b")
@@ -121,7 +121,7 @@ func TestPeerRejectsWrongKeyDirectionPathAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = e.Close() })
-	valid := tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: 42, Total: 3, Payload: []byte("abc")}
+	valid := tunnelv1.PeerPacket{BindingGeneration: 1, Kind: tunnelv1.PeerData, Sequence: 42, Total: 3, Payload: []byte("abc")}
 	encode := func(p tunnelv1.PeerPacket, key [32]byte, domain string) []byte {
 		unsigned, err := p.AuthenticatedBytes()
 		if err != nil {

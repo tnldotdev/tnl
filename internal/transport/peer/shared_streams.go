@@ -228,7 +228,7 @@ func (s *SharedStreams) acceptIntroduction(ctx context.Context, stream muxsessio
 }
 
 // Open writes the generation header before any framed peer packet. the receiver
-// accepts the stream only after the first correctly MACed packet arrives.
+// accepts the stream only after the first authenticated delivery frame arrives.
 func (p *StreamPair) Open(ctx context.Context) (*SharedStreamCarrier, error) {
 	s := p.owner
 	s.mu.Lock()
@@ -318,8 +318,9 @@ func (s *SharedStreams) Close() error {
 	return nil
 }
 
-// SharedStreamCarrier validates direction, path, and MAC before sending and
-// receiving. closing it removes only the pair's stream, not the outer session.
+// SharedStreamCarrier validates direction, path, revision, and envelope MAC
+// before sending and receiving. only endpoints verify the inner session MAC.
+// closing it removes only the pair's stream, not the outer session.
 type SharedStreamCarrier struct {
 	*StreamCarrier
 	pair          *StreamPair

@@ -170,7 +170,7 @@ func TestPeerServiceDispatcherOnAuthenticatedTLSYamux(t *testing.T) {
 		t.Fatal(err)
 	}
 	badFrame := signedFrame(t, a)
-	badFrame[len(badFrame)-1]++
+	badFrame[2] = 1 - a.Role // inner authentication belongs to the endpoint.
 	badWire, err := a.Delivery.Seal(tunnelv1.PeerDeliveryStream, a.Key, badFrame)
 	if err != nil {
 		t.Fatal(err)

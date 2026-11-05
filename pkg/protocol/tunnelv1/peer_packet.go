@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 )
@@ -14,7 +15,7 @@ const (
 	// a 1200-byte inner packet takes at most two bounded fragments.
 	MaxPeerPacketBytes = 1200
 	PeerFragmentBytes  = 1000
-	PeerPacketOverhead = 17 + 32
+	PeerPacketOverhead = 25 + 32
 	MaxPeerFrameBytes  = PeerFragmentBytes + PeerPacketOverhead
 	// the shared outer delivery header binds a frame or stream to one exact
 	// introduction and its current delivery generation. it does not authorize a target.
@@ -96,8 +97,8 @@ func (d PeerDelivery) Seal(mode PeerDeliveryMode, key [32]byte, frame []byte) ([
 	if err != nil || !mode.valid() || key == [32]byte{} {
 		return nil, ErrPeerPacket
 	}
-	if _, err := ParsePeerPacket(frame); err != nil {
-		return nil, err
+	if p, err := ParsePeerPacket(frame); err != nil || p.BindingGeneration != d.Generation {
+		return nil, ErrPeerPacket
 	}
 	b := make([]byte, 0, len(header)+len(frame)+PeerDeliveryTagBytes)
 	b = append(b, header[:]...)
@@ -127,8 +128,8 @@ func OpenPeerDelivery(b []byte, mode PeerDeliveryMode, key [32]byte) (PeerDelive
 		return PeerDelivery{}, nil, err
 	}
 	frameEnd := len(b) - PeerDeliveryTagBytes
-	if _, err := ParsePeerPacket(b[PeerDeliveryHeaderBytes:frameEnd]); err != nil {
-		return PeerDelivery{}, nil, err
+	if p, err := ParsePeerPacket(b[PeerDeliveryHeaderBytes:frameEnd]); err != nil || p.BindingGeneration != d.Generation {
+		return PeerDelivery{}, nil, ErrPeerPacket
 	}
 	tag := peerDeliveryTag(mode, key, b[:frameEnd])
 	if !hmac.Equal(tag[:], b[frameEnd:]) {
@@ -180,21 +181,23 @@ const (
 )
 
 // PeerPacket carries encrypted inner QUIC bytes or a path challenge. the MAC
-// binds the pair's introduction key, direction, path, sequence, and fragments.
+// binds the stable session key, binding revision, direction, path, sequence,
+// and fragments. relays authenticate only the separate delivery envelope.
 // receiving this shape alone grants neither target access nor a direct path.
 type PeerPacket struct {
-	Kind     PeerPacketKind
-	Sender   uint8
-	Path     uint8
-	Sequence uint64
-	Fragment uint8
-	Total    uint16
-	Payload  []byte
-	MAC      [32]byte
+	BindingGeneration uint64
+	Kind              PeerPacketKind
+	Sender            uint8
+	Path              uint8
+	Sequence          uint64
+	Fragment          uint8
+	Total             uint16
+	Payload           []byte
+	MAC               [32]byte
 }
 
 func (p PeerPacket) Validate() error {
-	if p.Sender > 1 || p.Path > 2 || p.Sequence == 0 || len(p.Payload) == 0 || len(p.Payload) > PeerFragmentBytes {
+	if p.BindingGeneration == 0 || p.Sender > 1 || p.Path > 2 || p.Sequence == 0 || len(p.Payload) == 0 || len(p.Payload) > PeerFragmentBytes {
 		return ErrPeerPacket
 	}
 	switch p.Kind {
@@ -217,12 +220,13 @@ func (p PeerPacket) AuthenticatedBytes() ([]byte, error) {
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
-	b := make([]byte, 17+len(p.Payload))
+	b := make([]byte, 25+len(p.Payload))
 	b[0], b[1], b[2], b[3], b[4] = Version, byte(p.Kind), p.Sender, p.Path, p.Fragment
 	binary.BigEndian.PutUint64(b[5:13], p.Sequence)
 	binary.BigEndian.PutUint16(b[13:15], p.Total)
 	binary.BigEndian.PutUint16(b[15:17], uint16(len(p.Payload)))
-	copy(b[17:], p.Payload)
+	binary.BigEndian.PutUint64(b[17:25], p.BindingGeneration)
+	copy(b[25:], p.Payload)
 	return b, nil
 }
 
@@ -238,12 +242,59 @@ func ParsePeerPacket(b []byte) (PeerPacket, error) {
 	if len(b) <= PeerPacketOverhead || len(b) > MaxPeerFrameBytes || b[0] != Version || int(binary.BigEndian.Uint16(b[15:17])) != len(b)-PeerPacketOverhead {
 		return PeerPacket{}, ErrPeerPacket
 	}
-	p := PeerPacket{Kind: PeerPacketKind(b[1]), Sender: b[2], Path: b[3], Fragment: b[4], Sequence: binary.BigEndian.Uint64(b[5:13]), Total: binary.BigEndian.Uint16(b[13:15]), Payload: b[17 : len(b)-32]}
+	p := PeerPacket{Kind: PeerPacketKind(b[1]), Sender: b[2], Path: b[3], Fragment: b[4], Sequence: binary.BigEndian.Uint64(b[5:13]), Total: binary.BigEndian.Uint16(b[13:15]), BindingGeneration: binary.BigEndian.Uint64(b[17:25]), Payload: b[25 : len(b)-32]}
 	copy(p.MAC[:], b[len(b)-32:])
 	if err := p.Validate(); err != nil {
 		return PeerPacket{}, err
 	}
 	return p, nil
+}
+
+// SignPeerPacketFrame authenticates an endpoint frame with the stable session
+// key. relay envelope keys must never be used for this MAC.
+func SignPeerPacketFrame(packet PeerPacket, key [32]byte) ([]byte, error) {
+	if key == [32]byte{} {
+		return nil, ErrPeerPacket
+	}
+	unsigned, err := packet.AuthenticatedBytes()
+	if err != nil {
+		return nil, err
+	}
+	mac := hmac.New(sha256.New, key[:])
+	_, _ = mac.Write([]byte("connector_peer\x00"))
+	_, _ = mac.Write(unsigned)
+	copy(packet.MAC[:], mac.Sum(nil))
+	return packet.MarshalBinary()
+}
+
+func VerifyPeerPacketFrame(frame []byte, key [32]byte) (PeerPacket, error) {
+	packet, err := ParsePeerPacket(frame)
+	if err != nil || key == [32]byte{} {
+		return PeerPacket{}, ErrPeerPacket
+	}
+	signed, err := SignPeerPacketFrame(packet, key)
+	if err != nil || !hmac.Equal(signed[len(signed)-32:], packet.MAC[:]) {
+		return PeerPacket{}, ErrPeerPacket
+	}
+	return packet, nil
+}
+
+// ConnectorPeerBindingProbe binds one role-initiated round trip to the exact
+// control operation and physical path nonce. the canonical tuple is shared by
+// endpoints and control; relays cannot mint its authenticated reply frame.
+func ConnectorPeerBindingProbe(pairID, operationID string, generation int64, challenge string, role, path uint8, nonce []byte) ([16]byte, error) {
+	var probe [16]byte
+	if pairID == "" || len(pairID) > 256 || operationID == "" || len(operationID) > 256 || generation < 1 ||
+		challenge == "" || len(challenge) > 256 || role > 1 || path > 1 || len(nonce) != 16 {
+		return probe, ErrPeerPacket
+	}
+	tuple, err := json.Marshal([]any{pairID, operationID, generation, challenge, role, path, base64.RawURLEncoding.EncodeToString(nonce)})
+	if err != nil {
+		return probe, ErrPeerPacket
+	}
+	digest := sha256.Sum256(append([]byte("tnl connector peer binding probe v1\x00"), tuple...))
+	copy(probe[:], digest[:16])
+	return probe, nil
 }
 
 // WritePeerFrame and ReadPeerFrame preserve packet boundaries on a reliable

@@ -167,6 +167,7 @@ func signedFrame(t *testing.T, binding PairBinding) []byte {
 
 func signedPacket(t *testing.T, binding PairBinding, p tunnelv1.PeerPacket) []byte {
 	t.Helper()
+	p.BindingGeneration = max(1, binding.Delivery.Generation)
 	unsigned, err := p.AuthenticatedBytes()
 	if err != nil {
 		t.Fatal(err)
@@ -272,6 +273,9 @@ func TestPeerSharedDatagramsFenceUnknownStaleAndBackpressure(t *testing.T) {
 		mutate(&d, f)
 		wire, err := d.Seal(tunnelv1.PeerDeliveryDatagram, a.Key, f)
 		if err != nil {
+			if d.Generation != a.Delivery.Generation && errors.Is(err, tunnelv1.ErrPeerPacket) {
+				continue // envelope revision cannot disagree with its frame.
+			}
 			t.Fatal(err)
 		}
 		if err := left.SendDatagram(ctx, wire); err != nil {
@@ -363,6 +367,7 @@ func TestPeerSharedDatagramsFenceUnknownStaleAndBackpressure(t *testing.T) {
 	if _, err := newCB.Receive(staleRead); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("late generation delivered", err)
 	}
+	frame = signedFrame(t, newA)
 	if err := newCA.Send(ctx, frame); err != nil {
 		t.Fatal(err)
 	}
@@ -748,7 +753,9 @@ func TestPeerSharedStreamsRejectUnboundAndPreserveOuterSession(t *testing.T) {
 		if _, err := stream.Write(h[:]); err != nil {
 			t.Fatal(err)
 		}
-		wire, err := bad.Seal(tunnelv1.PeerDeliveryStream, a.Key, signedFrame(t, a))
+		badBinding := a
+		badBinding.Delivery = bad
+		wire, err := bad.Seal(tunnelv1.PeerDeliveryStream, a.Key, signedFrame(t, badBinding))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -766,7 +773,7 @@ func TestPeerSharedStreamsRejectUnboundAndPreserveOuterSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	wrongMAC := signedFrame(t, a)
-	wrongMAC[len(wrongMAC)-1]++
+	wrongMAC[2] = 1 - a.Role // relays reject direction, not endpoint-only MACs.
 	wire, err := a.Delivery.Seal(tunnelv1.PeerDeliveryStream, a.Key, wrongMAC)
 	if err != nil {
 		t.Fatal(err)
