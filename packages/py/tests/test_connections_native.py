@@ -147,6 +147,14 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
         if args[0] == "sdk-prepare":
             return selected(binary, args)
         calls.append(args[0])
+        if args[0] == "sdk-close":
+            # this fixture supplies selection replies, so join its selected real
+            # owner directly. production registry routing has separate coverage.
+            result = command(binary, "stop", "--handle", args[-1])
+            assert not Path(args[-1]).exists()
+            if current is not None and current["connection_handle"] == args[-1]:
+                assert_port_reusable(port)
+            return result
         if args[0] != "start":
             result = command(binary, *args)
             if args[0] == "stop":
@@ -191,9 +199,12 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
 
     monkeypatch.setattr(_connections, "_command", native)
     handle = tnl.connect("database", directory=tmp_path)
+    replacements: list[tnl.ConnectionHandle[tnl.Connection]] = []
 
     async def one() -> tnl.Connection:
-        return await tnl.connect("database", directory=tmp_path)
+        replacement = tnl.connect("database", directory=tmp_path)
+        replacements.append(replacement)
+        return await replacement
 
     async def scenario() -> None:
         first = await handle
@@ -221,6 +232,8 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
         assert first.expires_at == original_expiry < current.expires_at
         assert first.ca != current.ca
         await handle.aclose()
+        assert_tls_echo(current)
+        await replacements[0].aclose()
         assert_port_reusable(port)
 
     try:
@@ -229,6 +242,8 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
         try:
             handle.close()
         finally:
+            for replacement in replacements:
+                replacement.close()
             for process in processes:
                 if process.poll() is None:
                     process.terminate()

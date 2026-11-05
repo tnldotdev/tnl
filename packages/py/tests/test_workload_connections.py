@@ -127,13 +127,13 @@ class NativeFixture:
             assertion = input_value.get("assertion") if isinstance(input_value, dict) else None
             assert isinstance(assertion, str)
             return self.select(args[args.index("--selected-service") + 1], assertion)
-        if args[0] == "sdk-close-failure":
+        if args[0] == "sdk-close" and "--failure-handle" in args:
             if self.fail_close:
                 raise tnl.TnlError("sdk.connection_unavailable", "native close did not join")
             handle = args[args.index("--failure-handle") + 1]
             self.retained = {key: value for key, value in self.retained.items() if value != handle}
             return {"schema": 1, "state": "stopped"}
-        if args[0] == "stop":
+        if args[0] == "sdk-close":
             if self.fail_close:
                 raise tnl.TnlError("sdk.connection_unavailable", "native close did not join")
             self.closed.append(args[args.index("--handle") + 1])
@@ -266,7 +266,7 @@ def test_inactive_manifest_policies_do_not_exhaust_the_process_lifetime_limit(
             await handle.aclose()
         assert len(_connections._sessions) == 1
         scope = next(iter(_connections._sessions.values()))
-        assert not scope.handles and not scope.failures and not scope.requests
+        assert not scope.handles and not scope.failure_handles and not scope.requests
 
     asyncio.run(scenario())
 
@@ -345,12 +345,12 @@ def test_closing_failed_identity_releases_only_its_native_observation(
             native.fail_close = True
             with pytest.raises(tnl.TnlError):
                 await failed.aclose()
-            assert peer._session.scope.failures and not native.closed
+            assert peer._session.scope.failure_handles and not native.closed
             await peer
             native.fail_close = False
         await failed.aclose()
         assert "sdk-stop" not in native.calls and not native.closed
-        assert not peer._session.scope.failures
+        assert not peer._session.scope.failure_handles
         current = "first"
         retry = tnl.connect("db", directory=tmp_path)
         await retry

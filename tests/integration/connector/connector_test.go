@@ -105,6 +105,11 @@ func TestIntegrationConnectionConnectorOwnerSDKProcessContext(t *testing.T) {
 	runConnectionNativeOwnerStartup(t, "http", true, "javascript-copies")
 }
 
+func TestIntegrationConnectionConnectorOwnerSDKPythonLifecycle(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	runConnectionNativeOwnerStartup(t, "http", true, "python-lifecycle")
+}
+
 type connectorConnectionFixture struct {
 	Handle   string
 	Env      []string
@@ -257,6 +262,9 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 	sessions := map[string]*workloadSession{}
 	var exchangeAttempts atomic.Int32
 	var isolatedSDKContexts atomic.Bool
+	var denySDKExchange, blockSDKExchange atomic.Bool
+	var deniedSDKExchanges atomic.Int32
+	startupEntered, startupRelease := make(chan struct{}, 1), make(chan struct{})
 	ownerKeys := map[string]*workloadSession{}
 	var authorityMu sync.Mutex
 	controlCalls := map[string]int{}
@@ -265,6 +273,17 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 	var providerAssertion, providerAudience string
 	var providerCalls atomic.Int32
 	authority := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/workload-sessions/exchange" && blockSDKExchange.Load() {
+			select {
+			case startupEntered <- struct{}{}:
+			default:
+			}
+			select {
+			case <-startupRelease:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		authorityMu.Lock()
 		defer authorityMu.Unlock()
 		if r.URL.Path == "/sdk-provider-token" {
@@ -322,6 +341,11 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 			}
 			_ = json.NewEncoder(w).Encode(controlv1.WorkloadServiceAuthorization{Subject: current.Subject, ServiceId: service, ValidUntil: current.LeaseExpiresAt, PolicyRevision: 1})
 		case r.URL.Path == "/v1/workload-sessions/exchange":
+			if denySDKExchange.Load() {
+				deniedSDKExchanges.Add(1)
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
 			var exchange authorityv1.WorkloadExchange
 			if json.NewDecoder(r.Body).Decode(&exchange) != nil {
 				w.WriteHeader(400)
@@ -443,7 +467,14 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 	}))
 	authority.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}
 	authority.StartTLS()
-	defer authority.Close()
+	defer func() {
+		select {
+		case <-startupRelease:
+		default:
+			close(startupRelease)
+		}
+		authority.Close()
+	}()
 	server := strings.Replace(authority.URL, "127.0.0.1", "localhost", 1)
 	verifier, err = oidc.NewGitHubWorkloadVerifier(server, issuer.Client)
 	if err != nil {
@@ -595,6 +626,9 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 			if startup == "python-provider" {
 				child.Args = append(child.Args, "provider")
 			}
+			if startup == "python-lifecycle" {
+				child.Args = append(child.Args, "lifecycle")
+			}
 		}
 		if strings.HasSuffix(startup, "-provider") {
 			authorityMu.Lock()
@@ -675,6 +709,39 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 			if keys != 4 || exchangeAttempts.Load() != 5 {
 				t.Fatalf("isolated contexts reused owner keys or repeated exchange: keys=%d exchanges=%d", keys, exchangeAttempts.Load())
 			}
+		}
+		if startup == "python-lifecycle" {
+			isolatedSDKContexts.Store(true)
+			phase := func(send, want string) {
+				t.Helper()
+				_, _ = io.WriteString(input, send+"\n")
+				if !lines.Scan() || lines.Text() != want {
+					t.Fatalf("Python lifecycle: expected %s, got %s", want, lines.Text())
+				}
+			}
+			phase("lifecycle", "joined")
+			blockSDKExchange.Store(true)
+			phase("startup", "starting")
+			select {
+			case <-startupEntered:
+			case <-ctx.Done():
+				t.Fatal("startup did not reach native exchange")
+			}
+			phase("close", "closing")
+			blockSDKExchange.Store(false)
+			close(startupRelease)
+			if !lines.Scan() || lines.Text() != "startup-joined" {
+				t.Fatal("close did not join native startup")
+			}
+			denySDKExchange.Store(true)
+			phase("failure", "denied")
+			denySDKExchange.Store(false)
+			phase("retained", "retained")
+			if deniedSDKExchanges.Load() != 1 {
+				t.Fatal("retained failure retried native authentication", deniedSDKExchanges.Load())
+			}
+			phase("retry", "recovered")
+			t.Log("real Python lifecycle: borrowed close, concurrent joined close, stale alias, cleanup retry, close during startup, retained denial identity, and explicit retry passed")
 		}
 		_, _ = io.WriteString(input, "stop\n")
 		t.Logf("%s SDK decoded cold and ten warm native responses with stable transport and expiry; cold=%v warm=0", startup, cold)

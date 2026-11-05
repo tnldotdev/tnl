@@ -411,6 +411,14 @@ class _Session:
         if self.creator_pid != os.getpid() or self.closed:
             raise _error("closed")
         selected = self
+        if not uses_workload():
+            # human reads may use the latest already-prepared owner. cleanup
+            # still holds this handle's exact observed owner, never that alias.
+            with self.scope.lock:
+                selected = self.scope.selected
+            if self.handle is None and self.attached is None and selected.handle is not None:
+                with self.changed:
+                    self.attached = selected
         if selected.handle is None:
             raise _error("not_prepared")
         if selected.closed:
@@ -441,18 +449,6 @@ class _Session:
             if self.joined:
                 return
             self.closed = True
-            stop_scope = (
-                self.scope.mounted is None
-                and self.handle is None
-                and self.failure_handle is None
-                and self.attached is None
-                and not self.failed
-                and not self.scope.failure_handles
-                and not self.scope.handles
-                and self.scope.pending == self.pending
-            )
-        if stop_scope:
-            self.scope.stop()
         with self.changed:
             while self.pending:
                 remaining = deadline - time.monotonic()
@@ -468,37 +464,27 @@ class _Session:
             session.close()
         if selected is not self:
             selected.close()
-        elif not stop_scope:
-            if self.failure_handle is not None:
+        elif self.scope.mounted is None:
+            reference = (
+                ["--failure-handle", self.failure_handle]
+                if self.failure_handle is not None
+                else ["--handle", self.handle]
+                if self.handle is not None
+                else []
+            )
+            if reference:
                 assert self.scope.registry is not None
-                stopped = _command(
-                    self.scope.binary(),
-                    "sdk-close-failure",
-                    "--registry",
-                    self.scope.registry,
-                    "--parent-pid",
-                    str(os.getpid()),
-                    "--failure-handle",
-                    self.failure_handle,
+                self.scope.check_stopped(
+                    _command(
+                        self.scope.binary(),
+                        "sdk-close",
+                        "--registry",
+                        self.scope.registry,
+                        "--parent-pid",
+                        str(os.getpid()),
+                        *reference,
+                    )
                 )
-                self.scope.check_stopped(stopped)
-                with self.scope.lock:
-                    self.scope.failures = {
-                        key: failure
-                        for key, failure in self.scope.failures.items()
-                        if failure.session is not self
-                    }
-            elif self.scope.mounted is None and self.handle is not None:
-                stopped = _object(
-                    _command(self.scope.binary(), "stop", "--handle", self.handle),
-                    {"schema", "state"},
-                )
-                if (
-                    type(stopped.get("schema")) is not int
-                    or stopped["schema"] != 1
-                    or stopped.get("state") != "stopped"
-                ):
-                    raise _error("invalid")
         with self.changed:
             if self.ipc is not None:
                 self.ipc.close()
@@ -531,7 +517,6 @@ class _Scope:
         self.entry: tuple[str, OwnerIPC] | None = None
         self.pending = 0
         self.requests: dict[tuple[str, str], Future[object]] = {}
-        self.failures: dict[str, _FailureObservation] = {}
         self.failure_handles: dict[str, _FailureObservation] = {}
         self.lock = threading.Lock()
         self.handles: dict[str, _Session] = {}
@@ -597,12 +582,6 @@ class _Scope:
             selector = uuid.uuid4().hex
             key = (selector, service)
         with self.lock:
-            retained = self.failures.get(selector)
-            if retained is not None:
-                if requester is not None:
-                    with requester.changed:
-                        requester.failed.add(retained.session)
-                raise retained.error()
             future = self.requests.get(key)
             leading = future is None
             if future is None:
@@ -622,9 +601,6 @@ class _Scope:
                         if observation is None:
                             observation = _FailureObservation(self, error)
                             self.failure_handles[error.handle] = observation
-                        if len(self.failures) >= 32:
-                            self.failures.pop(next(iter(self.failures)))
-                        self.failures[selector] = observation
                         error = observation.error()
                     self.requests.pop(key, None)
                 future.set_exception(error)
@@ -667,9 +643,8 @@ class _Scope:
         ):
             raise _error("invalid")
         expiry = _expiry(owner.get("expires_at"))
-        connection = _prepared(value.get("prepared"), service)
         with self.lock:
-            session = self.selected if selection is None else self.handles.get(file)
+            session = self.handles.get(file)
             if session is None:
                 session = _Session(self, file)
             session.handle = file
@@ -680,10 +655,16 @@ class _Scope:
                 if held is not session or old == file
             }
             self.handles[file] = session
+            if selection is None:
+                self.selected = session
+            if requester is not None and requester is not session and requester.handle is None:
+                with requester.changed:
+                    requester.attached = session
             if self.entry is None:
                 self.entry = (file, OwnerIPC(file))
         if session.closed:
             raise _error("closed")
+        connection = _prepared(value.get("prepared"), service)
         return connection, session
 
     def _request(
@@ -793,7 +774,6 @@ class _Scope:
                     if not failure.session.joined
                 }
             if not self.pending and not self.handles and not self.failure_handles:
-                self.failures.clear()
                 atexit.unregister(self._cleanup)
                 self.registry = None
 
@@ -820,7 +800,6 @@ class _Scope:
                 self.entry[1].close()
                 self.entry = None
             with self.lock:
-                self.failures.clear()
                 self.failure_handles.clear()
 
     def _cleanup(self) -> None:

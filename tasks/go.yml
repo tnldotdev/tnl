@@ -138,6 +138,12 @@ tasks:
     cmds:
       - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwnerSDKNativeWorkloadAcquisition$' -count=1 -timeout=1m -args -tnl-test-tier=integration
 
+  test:connections:lifecycle:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check Python close and retained failures through the production native registry
+    cmds:
+      - task: :go:test:integration:sdk-python-lifecycle
+
   test:owner-lifecycle:
     dir: "{{.ROOT_DIR}}"
     desc: Check connection owner isolation, replacement, bounded cleanup and issued login cancellation
