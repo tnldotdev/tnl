@@ -129,9 +129,17 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				defer cancel()
 				var bindings string
-				err := f.inspect.QueryRowContext(ctx, `SELECT COALESCE(jsonb_agg(jsonb_build_object(
-					'service_id',service_id,'expires_at',expires_at,'publisher_prepared_until',publisher_prepared_until))::text,'[]')
-					FROM control.connector_peer_pairs WHERE subject_kind='workload_session' AND subject_id=$1`, session.Id).Scan(&bindings)
+				var authority string
+				err := f.inspect.QueryRowContext(ctx, `SELECT jsonb_build_object(
+					'lease_expires_at',lease_expires_at,'identity_expires_at',identity_expires_at,
+					'expires_at',expires_at,'renewed_at',renewed_at,'renewal_sequence',renewal_sequence)::text
+					FROM control.workload_sessions WHERE id=$1`, session.Id).Scan(&authority)
+				t.Logf("workload current authority: %s: %v", authority, err)
+				err = f.inspect.QueryRowContext(ctx, `SELECT COALESCE(jsonb_agg(jsonb_build_object(
+					'service_id',service_id,'expires_at',expires_at,'publisher_prepared_until',publisher_prepared_until,
+					'claims',(SELECT jsonb_agg(jsonb_build_object('slot',connection_slot,'checked_at',checked_at,'confirmed_until',confirmed_until))
+					FROM control.connector_peer_pair_leg_claims WHERE pair_id=pair.id)))::text,'[]')
+					FROM control.connector_peer_pairs pair WHERE subject_kind='workload_session' AND subject_id=$1`, session.Id).Scan(&bindings)
 				t.Logf("workload retained bindings: %s: %v", bindings, err)
 			})
 			paths.step(t, 0)
@@ -523,14 +531,15 @@ func waitRuntimeTime(t *testing.T, at time.Time) {
 }
 
 type workloadRuntimePaths struct {
-	stops       []func()
-	connections []net.Conn
-	clients     []*http.Client
-	urls        []string
-	streams     []io.ReadCloser
-	streamDone  []<-chan error
-	streamNames []string
-	database    *pgx.Conn
+	stops           []func()
+	connections     []net.Conn
+	connectionNames []string
+	clients         []*http.Client
+	urls            []string
+	streams         []io.ReadCloser
+	streamDone      []<-chan error
+	streamNames     []string
+	database        *pgx.Conn
 }
 
 func (p *workloadRuntimePaths) stop() {
@@ -618,6 +627,7 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 				t.Fatal(err)
 			}
 			p.connections = append(p.connections, conn)
+			p.connectionNames = append(p.connectionNames, name)
 			t.Cleanup(func() { _ = conn.Close() })
 		} else {
 			// step probes cross a 95-second gap, beyond the server's one-minute
@@ -662,15 +672,15 @@ func workloadNativeRuntimeBinding(t *testing.T, f *privateSeparatedFixture, sess
 
 func (p *workloadRuntimePaths) step(t *testing.T, step int) {
 	t.Helper()
-	for _, conn := range p.connections {
+	for i, conn := range p.connections {
 		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 		line := fmt.Sprintf("step-%d\n", step)
 		if _, err := io.WriteString(conn, line); err != nil {
-			t.Fatal("active workload TCP", err)
+			t.Fatal("active workload TCP", p.connectionNames[i], err)
 		}
 		got := make([]byte, len(line))
 		if _, err := io.ReadFull(conn, got); err != nil || string(got) != line {
-			t.Fatal("workload TCP step", err)
+			t.Fatal("workload TCP step", p.connectionNames[i], err)
 		}
 		_ = conn.SetDeadline(time.Time{})
 	}
