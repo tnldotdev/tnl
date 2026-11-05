@@ -281,6 +281,7 @@ var typeScriptKeyMappings = map[string]string{
 	"org_id":               "orgId",
 	"app_id":               "appId",
 	"machine_id":           "machineId",
+	"service_account":      "serviceAccount",
 	"jwks_url":             "jwksUrl",
 	"token_file":           "tokenFile",
 	"reusable_workflow":    "reusableWorkflow",

@@ -37,6 +37,10 @@ func ValidateRefreshSource(source workloadmanifest.Acquisition) error {
 		if source.TokenFile != "" || !config.ExactWorkloadValue(source.Audience) {
 			return ErrAssertionSource
 		}
+	case "google-metadata":
+		if source.TokenFile != "" || !config.ExactWorkloadValue(source.Audience) {
+			return ErrAssertionSource
+		}
 	default:
 		return ErrAssertionSource
 	}

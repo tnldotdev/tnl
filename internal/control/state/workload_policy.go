@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 var (
@@ -28,9 +29,11 @@ type ProjectWorkload struct {
 	Provider           string                 `json:"provider"`
 	Trust              oidc.WorkloadTrust     `json:"trust"`
 	GitHub             *ProjectWorkloadGitHub `json:"github,omitempty"`
+	Google             *ProjectWorkloadGoogle `json:"google,omitempty"`
 	Services           []string               `json:"services"`
 	MaxDurationSeconds int                    `json:"max_duration_seconds"`
 }
+type ProjectWorkloadGoogle = controlv1.ProjectWorkloadGoogle
 type ProjectWorkloadGitHub struct {
 	Repository        string   `json:"repository"`
 	RepositoryID      string   `json:"repository_id"`
@@ -52,6 +55,9 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 		return ErrProjectConfigurationInvalid
 	}
 	for name, p := range c.Workloads {
+		if (p.Provider == "google") != (p.Google != nil) {
+			return ErrProjectConfigurationInvalid
+		}
 		if p.Provider != "github" {
 			if p.GitHub != nil {
 				return ErrProjectConfigurationInvalid
@@ -199,6 +205,10 @@ func (p ProjectWorkload) validateTrust() error {
 		return true
 	}
 	switch p.Provider {
+	case "google":
+		if p.Google == nil || !config.ValidGoogleServiceAccount(p.Google.ServiceAccount) || config.ValidWorkloadNumericID(p.Google.ServiceAccount) && p.Google.ServiceAccount != t.Claims["sub"] || t.Issuer != config.GoogleWorkloadIssuer || t.JWKSURL != config.GoogleWorkloadJWKS || len(t.Claims) != 1 || !config.ValidWorkloadNumericID(t.Claims["sub"]) {
+			return ErrProjectConfigurationInvalid
+		}
 	case "vercel":
 		if !naming.ValidAuthorityLabel(t.Claims["owner"]) {
 			return ErrProjectConfigurationInvalid

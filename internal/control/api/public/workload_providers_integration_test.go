@@ -9,6 +9,7 @@ import (
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
@@ -22,7 +23,7 @@ import (
 
 func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	for _, provider := range []string{"vercel", "fly", "oidc"} {
+	for _, provider := range []string{"vercel", "fly", "oidc", "google"} {
 		t.Run(provider, func(t *testing.T) {
 			ctx := t.Context()
 			dbURL := testutil.NewDisposablePostgresDatabaseURL(t, "workload_"+provider)
@@ -55,8 +56,13 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				claims = map[string]any{"iss": trust.Issuer, "aud": trust.Audience, "sub": "service:store", "tenant": "acme"}
 			}
 			trust.JWKSURL = trust.Issuer + "/.well-known/jwks"
+			if provider == "google" {
+				trust.Issuer, trust.JWKSURL, trust.Audience = config.GoogleWorkloadIssuer, config.GoogleWorkloadJWKS, "https://control.example"
+				trust.Claims = map[string]string{"sub": "112010400000000710080"}
+				claims = map[string]any{"iss": trust.Issuer, "aud": trust.Audience, "sub": trust.Claims["sub"]}
+			}
 			claims["iat"], claims["nbf"], claims["exp"] = now.Unix(), now.Unix(), now.Add(10*time.Minute).Unix()
-			issuer := githubtest.NewProvider(t, trust.Issuer)
+			issuer := githubtest.NewKeySet(t, trust.JWKSURL)
 			mux := http.NewServeMux()
 			server := httptest.NewTLSServer(mux)
 			t.Cleanup(server.Close)
@@ -73,6 +79,11 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				t.Fatal(err)
 			}
 			configuration := controlstate.ProjectConfiguration{PublisherGroups: map[string]controlstate.ProjectPublisherGroup{"production": {}}, Services: map[string]controlstate.ProjectServiceConfiguration{"inventory": {PublisherGroup: "production", Target: "inventory.internal:3000"}, "models": {PublisherGroup: "production", Protocol: "postgres", Target: "models.internal:5432"}}, Workloads: map[string]controlstate.ProjectWorkload{"storefront": {Provider: provider, Trust: trust, Services: []string{"inventory", "models"}, MaxDurationSeconds: 3600}}}
+			if provider == "google" {
+				p := configuration.Workloads["storefront"]
+				p.Google = &controlstate.ProjectWorkloadGoogle{ServiceAccount: "orders@project.iam.gserviceaccount.com"}
+				configuration.Workloads["storefront"] = p
+			}
 			data, _ := json.Marshal(configuration)
 			var wire controlv1.ProjectConfiguration
 			if err = json.Unmarshal(data, &wire); err != nil {

@@ -12,6 +12,7 @@
   "rate_per": "ratePer",
   "reusable_workflow": "reusableWorkflow",
   "server_name": "serverName",
+  "service_account": "serviceAccount",
   "source_ips": "sourceIPs",
   "strip_prefix": "stripPrefix",
   "total_connections": "totalConnections",

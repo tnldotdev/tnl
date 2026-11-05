@@ -23,9 +23,30 @@ beforeEach(async () => {
     "VERCEL",
     "FLY_APP_NAME",
     "GITHUB_ACTIONS",
+    "K_SERVICE",
   ])
     vi.stubEnv(name, undefined);
   directory = await mkdtemp(path.join(tmpdir(), "tnl-provider-"));
+});
+
+test("Cloud Run forwards only native selection hints, not SDK metadata acquisition", async () => {
+  const { usesWorkload, selectWorkload } =
+    await import("../../src/internal/connector/workload/provider.js");
+  expect(usesWorkload()).toBe(false);
+  vi.stubEnv("K_SERVICE", "orders");
+  expect(usesWorkload()).toBe(true);
+  const preview = vi.fn(async () => ({
+    schema: 1,
+    name: "app",
+    directory,
+    manifest: path.join(directory, ".tnl/generated/workloads.json"),
+    source: "native",
+    policy: "a".repeat(64),
+  }));
+  const selected = await selectWorkload(preview);
+  expect(selected.sdk_workload?.runtime.cloud_run_service).toBe("orders");
+  expect(selected.assertion).toBeUndefined();
+  expect(vercel.token).not.toHaveBeenCalled();
 });
 
 test("native selection receives hints and current private provider inputs without SDK acquisition", async () => {

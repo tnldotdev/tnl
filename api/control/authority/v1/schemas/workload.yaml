@@ -78,8 +78,14 @@ schemas:
             properties:
               provider:
                 type: string
-                enum: [vercel, fly, oidc]
-                x-enum-varnames: [WorkloadSessionVercel, WorkloadSessionFly, WorkloadSessionOIDC]
+                enum: [vercel, fly, oidc, google]
+                x-enum-varnames:
+                  [
+                    WorkloadSessionVercel,
+                    WorkloadSessionFly,
+                    WorkloadSessionOIDC,
+                    WorkloadSessionGoogle,
+                  ]
   WorkloadSessionFields:
     type: object
     additionalProperties: false

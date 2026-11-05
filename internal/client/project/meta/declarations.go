@@ -56,6 +56,13 @@ func Declarations(configuration config.TNL, configPath, outputDir string) ([]byt
 		policies := map[string]any{}
 		for name, policy := range configuration.Workloads {
 			value := map[string]any{"services": policy.Services}
+			if g := policy.Google; g != nil {
+				block := map[string]any{"serviceAccount": g.ServiceAccount}
+				if g.Audience != "" {
+					block["audience"] = g.Audience
+				}
+				value["google"] = block
+			}
 			if policy.GitHub != nil {
 				github := map[string]any{"workflow": policy.GitHub.Workflow}
 				if policy.GitHub.Branch != nil {

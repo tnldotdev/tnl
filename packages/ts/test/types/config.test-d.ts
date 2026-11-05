@@ -669,6 +669,10 @@ test("configuration enforces service ownership and references for literals and f
         token: { file: "/run/provider/token" },
         services: ["models"],
       },
+      cloud: {
+        google: { serviceAccount: "orders@project.iam.gserviceaccount.com" },
+        services: ["models"],
+      },
     },
   });
   defineConfig({
