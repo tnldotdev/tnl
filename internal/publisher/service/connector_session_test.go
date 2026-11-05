@@ -356,6 +356,26 @@ func TestConnectorPeerRenewalCannotTransferOrReviveOwnership(t *testing.T) {
 	}
 }
 
+func TestConnectorPeerDeliveryKeepsSessionAndEnvelopeKeysDistinctAndCanonical(t *testing.T) {
+	for _, boundary := range []string{"shared key", "session newline", "envelope newline"} {
+		t.Run(boundary, func(t *testing.T) {
+			_, p, _, _, control := connectorPeerFixture(t, "127.0.0.1:1")
+			switch boundary {
+			case "shared key":
+				control.delivery.SessionKey = control.delivery.Key
+			case "session newline":
+				control.delivery.SessionKey += "\n"
+			case "envelope newline":
+				control.delivery.Key += "\n"
+			}
+			binding := p.bindingSnapshot()
+			if _, err := PreparePeerBinding(t.Context(), control, binding.serviceID, binding.runID, binding.pairID, binding.generation, "run-token"); err == nil {
+				t.Fatal("delivery accepted a shared or noncanonical key")
+			}
+		})
+	}
+}
+
 type heldConnectorInner struct {
 	muxsession.Session
 	accepting, entered, release chan struct{}

@@ -70,7 +70,7 @@ func nextPublisherBinding(binding PeerBinding) PeerBinding {
 	binding.generation++
 	binding.key[0]++
 	binding.state = controlv1.ConnectorPeerPairBindingPrepared
-	binding.operation = "idem_" + strings.Repeat("R", 22)
+	binding.operation = "ik_" + strings.Repeat("R", 22)
 	binding.challenge = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
 	binding.until, binding.observedAt = time.Now().Add(10*time.Second), time.Now()
 	binding.authorityUntil = binding.until
@@ -275,7 +275,7 @@ func TestConnectorPeerPendingExpiryAndFailedStageRetireOnlyThatRevision(t *testi
 			case <-timer.C:
 			}
 			newer := nextPublisherBinding(pending)
-			newer.operation = "idem_" + strings.Repeat("N", 22)
+			newer.operation = "ik_" + strings.Repeat("N", 22)
 			_, _ = connectorRebindPacketPaths(t, ctx, b, newer)
 			if err := p.stageBinding(newer); err != nil {
 				t.Fatal("new authorized revision could not follow retired delivery", err)

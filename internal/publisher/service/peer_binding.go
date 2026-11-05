@@ -92,7 +92,7 @@ func PreparePeerBinding(ctx context.Context, control peerDeliveryControl, servic
 			return PeerBinding{}, ErrPrivateStream
 		}
 	}
-	if b.key == [32]byte{} || b.sessionKey == [32]byte{} || b.relays[0].PublisherConnectionId == b.relays[1].PublisherConnectionId || b.relays[0].RelayLease.RelayServiceId == b.relays[1].RelayLease.RelayServiceId {
+	if b.key == [32]byte{} || b.sessionKey == [32]byte{} || b.key == b.sessionKey || base64.RawURLEncoding.EncodeToString(b.key[:]) != d.Key || base64.RawURLEncoding.EncodeToString(b.sessionKey[:]) != d.SessionKey || b.relays[0].PublisherConnectionId == b.relays[1].PublisherConnectionId || b.relays[0].RelayLease.RelayServiceId == b.relays[1].RelayLease.RelayServiceId {
 		return PeerBinding{}, ErrPrivateStream
 	}
 	for slot, relay := range b.relays {

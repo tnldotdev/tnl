@@ -56,3 +56,12 @@ func TestConnectorPairPinsEndpointSecretTrustAndInitialBinding(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectorPairSecretRequiresCanonicalNonzeroKey(t *testing.T) {
+	valid := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	for _, encoded := range []string{"", base64.RawURLEncoding.EncodeToString(make([]byte, 32)), valid + "=", valid + "\n", "\n" + valid} {
+		if _, err := connectorPairSecret(encoded); err == nil {
+			t.Fatal("accepted a noncanonical or zero connector secret")
+		}
+	}
+}
