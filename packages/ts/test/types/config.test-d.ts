@@ -677,6 +677,10 @@ test("configuration enforces service ownership and references for literals and f
         kubernetes: { serviceAccount: "orders", namespace: "production" },
         services: ["models"],
       },
+      gitlab: {
+        gitlab: { project: "shop/storefront", pipelineSource: "push" },
+        services: ["models"],
+      },
     },
   });
   defineConfig({
@@ -769,6 +773,22 @@ test("configuration enforces service ownership and references for literals and f
         },
         services: ["db"],
       },
+      gitlabRefs: {
+        gitlab: {
+          branch: "main",
+          // @ts-expect-error GitLab branch and tag are mutually exclusive.
+          tag: "v1",
+        },
+        services: ["db"],
+      },
+      gitlabSource: {
+        gitlab: {
+          // @ts-expect-error GitLab pipeline sources are exact known values.
+          pipelineSource: "*",
+        },
+        services: ["db"],
+      },
+      gitlabDefaults: { gitlab: {}, services: ["db"] },
       sources: {
         fly: { app: "worker" },
         token: {

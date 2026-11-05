@@ -104,7 +104,7 @@ func (m Manifest) Validate() error {
 			}
 			seen[s] = true
 		}
-		if !slices.Contains([]string{"github", "vercel", "fly", "oidc", "google", "kubernetes"}, w.Provider) {
+		if !slices.Contains([]string{"github", "vercel", "fly", "oidc", "google", "kubernetes", "gitlab"}, w.Provider) {
 			return ErrInvalid
 		}
 		if a := w.Acquisition; a.Method == "token-file" || a.Method == "token-env" {
