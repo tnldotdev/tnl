@@ -150,6 +150,99 @@ func (e CertificateIssuanceState) Valid() bool {
 	}
 }
 
+// Defines values for ConnectorPeerPairBindingState.
+const (
+	ConnectorPeerPairBindingActive    ConnectorPeerPairBindingState = "active"
+	ConnectorPeerPairBindingInstalled ConnectorPeerPairBindingState = "installed"
+	ConnectorPeerPairBindingPrepared  ConnectorPeerPairBindingState = "prepared"
+	ConnectorPeerPairBindingProved    ConnectorPeerPairBindingState = "proved"
+	ConnectorPeerPairBindingSuspended ConnectorPeerPairBindingState = "suspended"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorPeerPairBindingState enum.
+func (e ConnectorPeerPairBindingState) Valid() bool {
+	switch e {
+	case ConnectorPeerPairBindingActive:
+		return true
+	case ConnectorPeerPairBindingInstalled:
+		return true
+	case ConnectorPeerPairBindingPrepared:
+		return true
+	case ConnectorPeerPairBindingProved:
+		return true
+	case ConnectorPeerPairBindingSuspended:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConnectorPeerPairPreparedPhase.
+const (
+	ConnectorPeerPairPreparedInstalled ConnectorPeerPairPreparedPhase = "installed"
+	ConnectorPeerPairPreparedProved    ConnectorPeerPairPreparedPhase = "proved"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorPeerPairPreparedPhase enum.
+func (e ConnectorPeerPairPreparedPhase) Valid() bool {
+	switch e {
+	case ConnectorPeerPairPreparedInstalled:
+		return true
+	case ConnectorPeerPairPreparedProved:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConnectorPeerPairRebindOperationStatus.
+const (
+	ConnectorPeerPairOperationAborted ConnectorPeerPairRebindOperationStatus = "aborted"
+	ConnectorPeerPairOperationActive  ConnectorPeerPairRebindOperationStatus = "active"
+	ConnectorPeerPairOperationExpired ConnectorPeerPairRebindOperationStatus = "expired"
+	ConnectorPeerPairOperationPending ConnectorPeerPairRebindOperationStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorPeerPairRebindOperationStatus enum.
+func (e ConnectorPeerPairRebindOperationStatus) Valid() bool {
+	switch e {
+	case ConnectorPeerPairOperationAborted:
+		return true
+	case ConnectorPeerPairOperationActive:
+		return true
+	case ConnectorPeerPairOperationExpired:
+		return true
+	case ConnectorPeerPairOperationPending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConnectorPeerPairRebindPhase.
+const (
+	ConnectorPeerPairAbort    ConnectorPeerPairRebindPhase = "abort"
+	ConnectorPeerPairActivate ConnectorPeerPairRebindPhase = "activate"
+	ConnectorPeerPairInspect  ConnectorPeerPairRebindPhase = "inspect"
+	ConnectorPeerPairPrepare  ConnectorPeerPairRebindPhase = "prepare"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorPeerPairRebindPhase enum.
+func (e ConnectorPeerPairRebindPhase) Valid() bool {
+	switch e {
+	case ConnectorPeerPairAbort:
+		return true
+	case ConnectorPeerPairActivate:
+		return true
+	case ConnectorPeerPairInspect:
+		return true
+	case ConnectorPeerPairPrepare:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectorPeerPairRequestAction.
 const (
 	Create  ConnectorPeerPairRequestAction = "create"
@@ -470,6 +563,7 @@ const (
 	ProjectManaged              ProblemCode = "project_managed"
 	PublishRunOpen              ProblemCode = "publish_run_open"
 	RateLimited                 ProblemCode = "rate_limited"
+	StaleNetworkBinding         ProblemCode = "stale_network_binding"
 	TrafficSelectionInvalid     ProblemCode = "traffic_selection_invalid"
 	Unauthenticated             ProblemCode = "unauthenticated"
 	Unavailable                 ProblemCode = "unavailable"
@@ -513,6 +607,8 @@ func (e ProblemCode) Valid() bool {
 	case PublishRunOpen:
 		return true
 	case RateLimited:
+		return true
+	case StaleNetworkBinding:
 		return true
 	case TrafficSelectionInvalid:
 		return true
@@ -1864,30 +1960,46 @@ type ConnectionAssignment struct {
 
 // ConnectorPeerPair defines model for ConnectorPeerPair.
 type ConnectorPeerPair struct {
+	BindingChallenge string                        `json:"binding_challenge,omitempty"`
+	BindingState     ConnectorPeerPairBindingState `json:"binding_state,omitempty"`
+
+	// DeliveryGeneration Current network binding revision; aborted revisions are never reused.
 	DeliveryGeneration int64 `json:"delivery_generation"`
 
 	// DeliveryId Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.
 	DeliveryId string    `json:"delivery_id"`
 	ExpiresAt  time.Time `json:"expires_at"`
 
-	// Key Secret returned only to the authorized signed source.
+	// Key Per-binding delivery credential; never use it as the retained endpoint frame key.
 	Key string `json:"key"`
 
 	// ObservedAt Control's authority observation time; subtract request transit when installing local deadlines.
-	ObservedAt          time.Time `json:"observed_at"`
-	PairId              string    `json:"pair_id"`
-	PublisherIdentityId string    `json:"publisher_identity_id"`
+	ObservedAt time.Time `json:"observed_at"`
+
+	// OperationId Rebind operation that issued this revision; absent for a legacy initial binding.
+	OperationId         string `json:"operation_id,omitempty"`
+	PairId              string `json:"pair_id"`
+	PublisherIdentityId string `json:"publisher_identity_id"`
 
 	// PublisherPreparedUntil The publisher reported its exact packet registration and inner listener installed through this bound. This startup barrier is not visitor permission or a guarantee of continued process liveness.
 	PublisherPreparedUntil *time.Time               `json:"publisher_prepared_until,omitempty"`
+	PublisherProvedUntil   *time.Time               `json:"publisher_proved_until,omitempty"`
 	Relays                 []ConnectorPeerPairRelay `json:"relays"`
 	RunNumber              int64                    `json:"run_number"`
 	ServiceId              ServiceID                `json:"service_id"`
 	ServiceRunId           ServiceRunID             `json:"service_run_id"`
 
+	// SessionKey Stable endpoint frame key, returned only to the authorized connector and publisher, never a relay.
+	SessionKey string  `json:"session_key,omitempty"`
+	SourceIp   *string `json:"source_ip,omitempty"`
+
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject VisitorSubject `json:"subject"`
+	Subject       VisitorSubject `json:"subject"`
+	TrustRevision int64          `json:"trust_revision,omitempty"`
 }
+
+// ConnectorPeerPairBindingState defines model for ConnectorPeerPairBindingState.
+type ConnectorPeerPairBindingState string
 
 // ConnectorPeerPairCandidate A pair to reconcile, not delivery authority or permission to open an application stream.
 type ConnectorPeerPairCandidate struct {
@@ -1905,15 +2017,18 @@ type ConnectorPeerPairCandidates struct {
 
 // ConnectorPeerPairDelivery Existing pair delivery for the authenticated publisher run only; never grants an application stream.
 type ConnectorPeerPairDelivery struct {
-	DeliveryGeneration int64     `json:"delivery_generation"`
-	DeliveryId         string    `json:"delivery_id"`
-	ExpiresAt          time.Time `json:"expires_at"`
+	BindingChallenge   string                        `json:"binding_challenge,omitempty"`
+	BindingState       ConnectorPeerPairBindingState `json:"binding_state,omitempty"`
+	DeliveryGeneration int64                         `json:"delivery_generation"`
+	DeliveryId         string                        `json:"delivery_id"`
+	ExpiresAt          time.Time                     `json:"expires_at"`
 
-	// Key Secret for this delivery; do not log or persist.
+	// Key Per-binding delivery credential; do not log or persist.
 	Key string `json:"key"`
 
 	// ObservedAt Control time for this authority observation; the publisher subtracts request delay when installing its local deadline.
 	ObservedAt          time.Time                `json:"observed_at"`
+	OperationId         string                   `json:"operation_id,omitempty"`
 	PairId              string                   `json:"pair_id"`
 	PublisherIdentityId string                   `json:"publisher_identity_id"`
 	Relays              []ConnectorPeerPairRelay `json:"relays"`
@@ -1921,25 +2036,103 @@ type ConnectorPeerPairDelivery struct {
 	ServiceId           ServiceID                `json:"service_id"`
 	ServiceRunId        ServiceRunID             `json:"service_run_id"`
 
+	// SessionKey Stable retained endpoint frame key; never returned by the private relay claim API.
+	SessionKey string `json:"session_key,omitempty"`
+
 	// SourceIp Canonical source observed by both relays.
 	SourceIp string `json:"source_ip"`
 
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
-	Subject VisitorSubject `json:"subject"`
+	Subject       VisitorSubject `json:"subject"`
+	TrustRevision int64          `json:"trust_revision,omitempty"`
+}
+
+// ConnectorPeerPairPathProof A revision-bound probe reply from the opposite endpoint, not an application permission. Runtime also checks that its physical carrier is still current.
+type ConnectorPeerPairPathProof struct {
+	ConnectionSlot int    `json:"connection_slot"`
+	ProbeNonce     string `json:"probe_nonce"`
+
+	// ReplyFrame Canonical unpadded base64url of a bounded binary PeerProbeReply authenticated with SessionKey.
+	ReplyFrame string `json:"reply_frame"`
 }
 
 // ConnectorPeerPairPrepared Report installation of the exact independently prepared binding; this does not renew pair or application authority.
 type ConnectorPeerPairPrepared struct {
+	BindingChallenge string `json:"binding_challenge,omitempty"`
+
 	// BindingExpiresAt The original control-clock expires_at from the installed delivery response, not a new local deadline.
 	BindingExpiresAt   time.Time `json:"binding_expires_at"`
 	DeliveryGeneration int64     `json:"delivery_generation"`
 	DeliveryId         string    `json:"delivery_id"`
+	OperationId        string    `json:"operation_id,omitempty"`
+
+	// PathProofs Empty for installed; two ordered publisher-initiated proofs for proved. A duplicate proof cannot extend its freshness bound.
+	PathProofs []ConnectorPeerPairPathProof `json:"path_proofs,omitempty"`
+
+	// Phase An absent phase is the legacy installation report; it is never a rebind path proof.
+	Phase ConnectorPeerPairPreparedPhase `json:"phase,omitempty"`
 }
+
+// ConnectorPeerPairPreparedPhase An absent phase is the legacy installation report; it is never a rebind path proof.
+type ConnectorPeerPairPreparedPhase string
 
 // ConnectorPeerPairReady A short-lived, credential-free snapshot for signing an exact pair request. It never grants a relay claim.
 type ConnectorPeerPairReady struct {
 	PublisherIdentityId string                   `json:"publisher_identity_id"`
 	Relays              []ConnectorPeerPairRelay `json:"relays"`
+}
+
+// ConnectorPeerPairRebindOperation defines model for ConnectorPeerPairRebindOperation.
+type ConnectorPeerPairRebindOperation struct {
+	DeliveryGeneration int64                                  `json:"delivery_generation"`
+	OperationId        string                                 `json:"operation_id"`
+	Status             ConnectorPeerPairRebindOperationStatus `json:"status"`
+}
+
+// ConnectorPeerPairRebindOperationStatus defines model for ConnectorPeerPairRebindOperationStatus.
+type ConnectorPeerPairRebindOperationStatus string
+
+// ConnectorPeerPairRebindPhase defines model for ConnectorPeerPairRebindPhase.
+type ConnectorPeerPairRebindPhase string
+
+// ConnectorPeerPairRebindRequest One signed lifecycle operation for an existing owner and exact run. Inspect never selects a run or renews authority. Retain each phase's exact signed request after an uncertain response. Empty phase-specific strings and arrays are explicit; source credentials are not signed.
+type ConnectorPeerPairRebindRequest struct {
+	// BindingChallenge The pending binding's canonical 32-byte base64url challenge for activate; empty otherwise.
+	BindingChallenge string `json:"binding_challenge"`
+
+	// ExpectedGeneration Known high-water for inspect, exact high-water CAS for prepare, exact pending revision for activate or abort.
+	ExpectedGeneration int64 `json:"expected_generation"`
+
+	// ExpectedRelays Exactly two ordered relay slots for prepare; empty for every other phase.
+	ExpectedRelays []ConnectorPeerPairRelay `json:"expected_relays"`
+	IdempotencyKey IdempotencyKey           `json:"idempotency_key"`
+
+	// OperationId Empty for inspect; otherwise an ik_ opaque id retained across all phases of one operation.
+	OperationId string `json:"operation_id"`
+
+	// PathProofs Exactly two ordered connector-initiated proofs for activate; empty otherwise.
+	PathProofs          []ConnectorPeerPairPathProof `json:"path_proofs"`
+	Phase               ConnectorPeerPairRebindPhase `json:"phase"`
+	PublisherIdentityId string                       `json:"publisher_identity_id"`
+	RequestedAt         time.Time                    `json:"requested_at"`
+	RunNumber           int64                        `json:"run_number"`
+	ServiceRunId        ServiceRunID                 `json:"service_run_id"`
+	Signature           string                       `json:"signature"`
+	Source              json.RawMessage              `json:"source"`
+
+	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
+	Subject       VisitorSubject `json:"subject"`
+	TrustRevision int64          `json:"trust_revision"`
+}
+
+// ConnectorPeerPairRebindState At most one active and one pending binding for the same retained owner. High-water and the last operation survive abort or expiry; observations never extend authority. Snapshot observed_at values agree. Ready relays are a credential-free hint for this saved run, never a new selection.
+type ConnectorPeerPairRebindState struct {
+	Active              *ConnectorPeerPair                `json:"active,omitempty"`
+	HighWaterGeneration int64                             `json:"high_water_generation"`
+	Operation           *ConnectorPeerPairRebindOperation `json:"operation,omitempty"`
+	Pending             *ConnectorPeerPair                `json:"pending,omitempty"`
+	PendingUntil        *time.Time                        `json:"pending_until,omitempty"`
+	ReadyRelays         []ConnectorPeerPairRelay          `json:"ready_relays"`
 }
 
 // ConnectorPeerPairRelay defines model for ConnectorPeerPairRelay.
@@ -4349,6 +4542,9 @@ type IssueServiceClientCertificateJSONRequestBody = IssueServiceClientCertificat
 // PrepareConnectorPeerPairJSONRequestBody defines body for PrepareConnectorPeerPair for application/json ContentType.
 type PrepareConnectorPeerPairJSONRequestBody = ConnectorPeerPairRequest
 
+// RebindConnectorPeerPairJSONRequestBody defines body for RebindConnectorPeerPair for application/json ContentType.
+type RebindConnectorPeerPairJSONRequestBody = ConnectorPeerPairRebindRequest
+
 // RenewConnectorPeerPairJSONRequestBody defines body for RenewConnectorPeerPair for application/json ContentType.
 type RenewConnectorPeerPairJSONRequestBody = ConnectorPeerPairRequest
 
@@ -5351,6 +5547,18 @@ type ClientInterface interface {
 	//
 	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
 	PrepareConnectorPeerPair(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RebindConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	RebindConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RebindConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	RebindConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RebindConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RenewConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
 	// with any type of body and a specified content type.
@@ -7871,6 +8079,38 @@ func (c *Client) PrepareConnectorPeerPairWithBody(ctx context.Context, serviceId
 // Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
 func (c *Client) PrepareConnectorPeerPair(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPrepareConnectorPeerPairRequest(c.Server, serviceId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RebindConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request,
+// with any type of body and a specified content type.
+//
+// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+func (c *Client) RebindConnectorPeerPairWithBody(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRebindConnectorPeerPairRequestWithBody(c.Server, serviceId, pairId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RebindConnectorPeerPair performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+func (c *Client) RebindConnectorPeerPair(ctx context.Context, serviceId ServiceID, pairId string, body RebindConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRebindConnectorPeerPairRequest(c.Server, serviceId, pairId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -13223,6 +13463,60 @@ func NewPrepareConnectorPeerPairRequestWithBody(server string, serviceId Service
 	return req, nil
 }
 
+// NewRebindConnectorPeerPairRequest calls the generic RebindConnectorPeerPair builder with application/json body
+func NewRebindConnectorPeerPairRequest(server string, serviceId ServiceID, pairId string, body RebindConnectorPeerPairJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRebindConnectorPeerPairRequestWithBody(server, serviceId, pairId, "application/json", bodyReader)
+}
+
+// NewRebindConnectorPeerPairRequestWithBody constructs an http.Request for the RebindConnectorPeerPair method, with any body, and a specified content type
+func NewRebindConnectorPeerPairRequestWithBody(server string, serviceId ServiceID, pairId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "service_id", serviceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "pair_id", pairId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/services/%s/connector-peer-pairs/%s/rebind", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewRenewConnectorPeerPairRequest calls the generic RenewConnectorPeerPair builder with application/json body
 func NewRenewConnectorPeerPairRequest(server string, serviceId ServiceID, pairId string, body RenewConnectorPeerPairJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -16355,6 +16649,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// Signed create or replace for one exact ready service run. The selection snapshot is not a grant; current permission and both relay leases are checked again.
 	PrepareConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, body PrepareConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareConnectorPeerPairResponse, error)
+
+	// RebindConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RebindConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RebindConnectorPeerPairResponse, error)
+
+	// RebindConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+	RebindConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RebindConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RebindConnectorPeerPairResponse, error)
 
 	// RenewConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
 	// with any type of body and a specified content type.
@@ -21041,6 +21349,54 @@ func (r PrepareConnectorPeerPairResponse) ContentType() string {
 	return ""
 }
 
+type RebindConnectorPeerPairResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectorPeerPairRebindState
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RebindConnectorPeerPairResponse) GetJSON200() *ConnectorPeerPairRebindState {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RebindConnectorPeerPairResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RebindConnectorPeerPairResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RebindConnectorPeerPairResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RebindConnectorPeerPairResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RebindConnectorPeerPairResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type RenewConnectorPeerPairResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -24826,6 +25182,32 @@ func (c *ClientWithResponses) PrepareConnectorPeerPairWithResponse(ctx context.C
 	return ParsePrepareConnectorPeerPairResponse(rsp)
 }
 
+// RebindConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request,
+// with any type of body and a specified content type.
+//
+// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RebindConnectorPeerPairWithBodyWithResponse(ctx context.Context, serviceId ServiceID, pairId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RebindConnectorPeerPairResponse, error) {
+	rsp, err := c.RebindConnectorPeerPairWithBody(ctx, serviceId, pairId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRebindConnectorPeerPairResponse(rsp)
+}
+
+// RebindConnectorPeerPairWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind (the `RebindConnectorPeerPair` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+func (c *ClientWithResponses) RebindConnectorPeerPairWithResponse(ctx context.Context, serviceId ServiceID, pairId string, body RebindConnectorPeerPairJSONRequestBody, reqEditors ...RequestEditorFn) (*RebindConnectorPeerPairResponse, error) {
+	rsp, err := c.RebindConnectorPeerPair(ctx, serviceId, pairId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRebindConnectorPeerPairResponse(rsp)
+}
+
 // RenewConnectorPeerPairWithBodyWithResponse performs a POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew (the `RenewConnectorPeerPair` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -28586,6 +28968,39 @@ func ParsePrepareConnectorPeerPairResponse(rsp *http.Response) (*PrepareConnecto
 	return response, nil
 }
 
+// ParseRebindConnectorPeerPairResponse parses an HTTP response from a RebindConnectorPeerPairWithResponse call
+func ParseRebindConnectorPeerPairResponse(rsp *http.Response) (*RebindConnectorPeerPairResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RebindConnectorPeerPairResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectorPeerPairRebindState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRenewConnectorPeerPairResponse parses an HTTP response from a RenewConnectorPeerPairWithResponse call
 func ParseRenewConnectorPeerPairResponse(rsp *http.Response) (*RenewConnectorPeerPairResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -30278,6 +30693,9 @@ type ServerInterface interface {
 
 	// (POST /v1/services/{service_id}/connector-peer-pairs)
 	PrepareConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID)
+
+	// (POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind)
+	RebindConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, pairId string)
 
 	// (POST /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew)
 	RenewConnectorPeerPair(w http.ResponseWriter, r *http.Request, serviceId ServiceID, pairId string)
@@ -33404,6 +33822,41 @@ func (siw *ServerInterfaceWrapper) PrepareConnectorPeerPair(w http.ResponseWrite
 	handler.ServeHTTP(w, r)
 }
 
+// RebindConnectorPeerPair operation middleware
+func (siw *ServerInterfaceWrapper) RebindConnectorPeerPair(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "service_id" -------------
+	var serviceId ServiceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "service_id", r.PathValue("service_id"), &serviceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "service_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "pair_id" -------------
+	var pairId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "pair_id", r.PathValue("pair_id"), &pairId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pair_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RebindConnectorPeerPair(w, r, serviceId, pairId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RenewConnectorPeerPair operation middleware
 func (siw *ServerInterfaceWrapper) RenewConnectorPeerPair(w http.ResponseWriter, r *http.Request) {
 
@@ -35125,6 +35578,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/select-run", wrapper.SelectServiceRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/connector-peer-pairs", wrapper.PrepareConnectorPeerPair)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew", wrapper.RenewConnectorPeerPair)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind", wrapper.RebindConnectorPeerPair)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs", wrapper.PrepareServiceRun)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}", wrapper.CloseServiceRun)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}", wrapper.HeartbeatServiceRun)

@@ -107,8 +107,38 @@ schemas:
           pattern: "^[A-Za-z0-9_-]{21}[AQgw]$",
           description: Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.,
         }
-      delivery_generation: { type: integer, format: int64, minimum: 1 }
-      key: { type: string, description: Secret returned only to the authorized signed source. }
+      delivery_generation:
+        type: integer
+        format: int64
+        minimum: 1
+        description: Current network binding revision; aborted revisions are never reused.
+      key:
+        {
+          type: string,
+          description: Per-binding delivery credential; never use it as the retained endpoint frame key.,
+        }
+      session_key:
+        type: string
+        x-go-type-skip-optional-pointer: true
+        description: Stable endpoint frame key, returned only to the authorized connector and publisher, never a relay.
+      trust_revision:
+        type: integer
+        format: int64
+        minimum: 1
+        x-go-type-skip-optional-pointer: true
+      operation_id:
+        type: string
+        x-go-type-skip-optional-pointer: true
+        description: Rebind operation that issued this revision; absent for a legacy initial binding.
+      binding_challenge:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+        x-go-type-skip-optional-pointer: true
+      binding_state:
+        $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairBindingState"
+        x-go-type-skip-optional-pointer: true
+      source_ip: { type: string, maxLength: 45 }
+      publisher_proved_until: { type: string, format: date-time }
       observed_at:
         type: string
         format: date-time
@@ -135,6 +165,134 @@ schemas:
       trust_revision: { type: integer, format: int64, minimum: 1 }
       endpoint: { $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint" }
       visitor_permission: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenResponse" }
+  ConnectorPeerPairRebindPhase:
+    type: string
+    enum: [inspect, prepare, activate, abort]
+    x-enum-varnames:
+      [
+        ConnectorPeerPairInspect,
+        ConnectorPeerPairPrepare,
+        ConnectorPeerPairActivate,
+        ConnectorPeerPairAbort,
+      ]
+  ConnectorPeerPairBindingState:
+    type: string
+    enum: [active, suspended, prepared, installed, proved]
+    x-enum-varnames:
+      [
+        ConnectorPeerPairBindingActive,
+        ConnectorPeerPairBindingSuspended,
+        ConnectorPeerPairBindingPrepared,
+        ConnectorPeerPairBindingInstalled,
+        ConnectorPeerPairBindingProved,
+      ]
+  ConnectorPeerPairRebindOperationStatus:
+    type: string
+    enum: [pending, active, aborted, expired]
+    x-enum-varnames:
+      [
+        ConnectorPeerPairOperationPending,
+        ConnectorPeerPairOperationActive,
+        ConnectorPeerPairOperationAborted,
+        ConnectorPeerPairOperationExpired,
+      ]
+  ConnectorPeerPairPathProof:
+    type: object
+    additionalProperties: false
+    description: A revision-bound probe reply from the opposite endpoint, not an application permission. Runtime also checks that its physical carrier is still current.
+    required: [connection_slot, probe_nonce, reply_frame]
+    properties:
+      connection_slot: { type: integer, minimum: 0, maximum: 1 }
+      probe_nonce: { type: string, pattern: "^[A-Za-z0-9_-]{21}[AQgw]$" }
+      reply_frame:
+        type: string
+        minLength: 1
+        maxLength: 342
+        pattern: "^[A-Za-z0-9_-]+$"
+        description: Canonical unpadded base64url of a bounded binary PeerProbeReply authenticated with SessionKey.
+  ConnectorPeerPairRebindRequest:
+    type: object
+    additionalProperties: false
+    description: One signed lifecycle operation for an existing owner and exact run. Inspect never selects a run or renews authority. Retain each phase's exact signed request after an uncertain response. Empty phase-specific strings and arrays are explicit; source credentials are not signed.
+    required:
+      [
+        phase,
+        idempotency_key,
+        operation_id,
+        expected_generation,
+        requested_at,
+        service_run_id,
+        run_number,
+        publisher_identity_id,
+        trust_revision,
+        subject,
+        source,
+        expected_relays,
+        binding_challenge,
+        path_proofs,
+        signature,
+      ]
+    properties:
+      phase: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRebindPhase" }
+      idempotency_key: { $ref: "../openapi.yaml#/components/schemas/IdempotencyKey" }
+      operation_id:
+        type: string
+        maxLength: 25
+        description: Empty for inspect; otherwise an ik_ opaque id retained across all phases of one operation.
+      expected_generation:
+        type: integer
+        format: int64
+        minimum: 1
+        description: Known high-water for inspect, exact high-water CAS for prepare, exact pending revision for activate or abort.
+      requested_at: { type: string, format: date-time }
+      service_run_id: { $ref: "../openapi.yaml#/components/schemas/ServiceRunID" }
+      run_number: { type: integer, format: int64, minimum: 1 }
+      publisher_identity_id: { type: string, pattern: "^pub_[A-Za-z0-9]{22}$" }
+      trust_revision: { type: integer, format: int64, minimum: 1 }
+      subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
+      source:
+        x-go-type: json.RawMessage
+        oneOf:
+          - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenDeviceSource" }
+          - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenWorkloadSource" }
+      expected_relays:
+        type: array
+        maxItems: 2
+        description: Exactly two ordered relay slots for prepare; empty for every other phase.
+        items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRelay" }
+      binding_challenge:
+        type: string
+        maxLength: 43
+        description: The pending binding's canonical 32-byte base64url challenge for activate; empty otherwise.
+      path_proofs:
+        type: array
+        maxItems: 2
+        description: Exactly two ordered connector-initiated proofs for activate; empty otherwise.
+        items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairPathProof" }
+      signature: { type: string, minLength: 86, maxLength: 86 }
+  ConnectorPeerPairRebindOperation:
+    type: object
+    additionalProperties: false
+    required: [operation_id, delivery_generation, status]
+    properties:
+      operation_id: { type: string, pattern: "^ik_[A-Za-z0-9]{22}$" }
+      delivery_generation: { type: integer, format: int64, minimum: 1 }
+      status: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRebindOperationStatus" }
+  ConnectorPeerPairRebindState:
+    type: object
+    additionalProperties: false
+    description: At most one active and one pending binding for the same retained owner. High-water and the last operation survive abort or expiry; observations never extend authority. Snapshot observed_at values agree. Ready relays are a credential-free hint for this saved run, never a new selection.
+    required: [high_water_generation, ready_relays]
+    properties:
+      active: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPair" }
+      pending: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPair" }
+      high_water_generation: { type: integer, format: int64, minimum: 1 }
+      pending_until: { type: string, format: date-time }
+      ready_relays:
+        type: array
+        maxItems: 2
+        items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRelay" }
+      operation: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRebindOperation" }
   VisitorDevice:
     type: object
     additionalProperties: false

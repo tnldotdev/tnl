@@ -2,7 +2,7 @@ paths:
   /internal/v1/connector-peer-pairs/{pair_id}/legs/{connection_slot}/claim:
     post:
       operationId: claimConnectorPeerPairLeg
-      description: release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+      description: release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. prepared permits probes only; a current claim renewal can report active after control activation. stale_network_binding never overrides an authorization denial and does not grant delivery credentials. does not admit a visitor stream.
       parameters:
         - name: pair_id
           in: path

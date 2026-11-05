@@ -111,6 +111,8 @@ paths:
     $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1connector-peer-pairs"
   /v1/services/{service_id}/connector-peer-pairs/{pair_id}/renew:
     $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1connector-peer-pairs~1{pair_id}~1renew"
+  /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind:
+    $ref: "./paths/connectors.yaml#/paths/~1v1~1services~1{service_id}~1connector-peer-pairs~1{pair_id}~1rebind"
   /v1/services/{service_id}/runs:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs"
   /v1/services/{service_id}/runs/{service_run_id}:
@@ -300,6 +302,8 @@ components:
       $ref: "./schemas/service-runs.yaml#/schemas/ConnectorPeerPairDelivery"
     ConnectorPeerPairPrepared:
       $ref: "./schemas/service-runs.yaml#/schemas/ConnectorPeerPairPrepared"
+    ConnectorPeerPairPreparedPhase:
+      $ref: "./schemas/service-runs.yaml#/schemas/ConnectorPeerPairPreparedPhase"
     KubernetesAuth:
       $ref: "./schemas/common.yaml#/schemas/KubernetesAuth"
     VisitorSubject:
@@ -466,6 +470,20 @@ components:
       $ref: "./schemas/connectors.yaml#/schemas/ConnectorPeerPair"
     ConnectorPeerPairRenewal:
       $ref: "./schemas/connectors.yaml#/schemas/ConnectorPeerPairRenewal"
+    ConnectorPeerPairRebindPhase:
+      $ref: "./schemas/connectors.yaml#/schemas/ConnectorPeerPairRebindPhase"
+    ConnectorPeerPairBindingState:
+      $ref: "./schemas/connectors.yaml#/schemas/ConnectorPeerPairBindingState"
+    ConnectorPeerPairRebindOperationStatus:
+      $ref: "./schemas/connectors.yaml#/schemas/ConnectorPeerPairRebindOperationStatus"
+    ConnectorPeerPairPathProof:
+      $ref: "./schemas/connectors.yaml#/schemas/ConnectorPeerPairPathProof"
+    ConnectorPeerPairRebindRequest:
+      $ref: "./schemas/connectors.yaml#/schemas/ConnectorPeerPairRebindRequest"
+    ConnectorPeerPairRebindOperation:
+      $ref: "./schemas/connectors.yaml#/schemas/ConnectorPeerPairRebindOperation"
+    ConnectorPeerPairRebindState:
+      $ref: "./schemas/connectors.yaml#/schemas/ConnectorPeerPairRebindState"
     ServiceID:
       $ref: "./schemas/services.yaml#/schemas/ServiceID"
     VisitorConnectionID:

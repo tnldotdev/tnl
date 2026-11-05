@@ -137,3 +137,26 @@ paths:
             application/json:
               schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRenewal" }
         default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/services/{service_id}/connector-peer-pairs/{pair_id}/rebind:
+    post:
+      operationId: rebindConnectorPeerPair
+      security: [{}, { bearerAuth: [] }]
+      description: Inspect, prepare, activate, or abort one signed network-binding operation on a retained owner. Never selects another run or revives an expired owner. Generic authorization denial remains terminal; stale_network_binding only asks the background owner to inspect current binding state.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/ServiceID" }
+        - name: pair_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRebindRequest" }
+      responses:
+        "200":
+          description: Authenticated active and pending binding state; never cache
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRebindState" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

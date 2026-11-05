@@ -48,6 +48,7 @@ schemas:
       - relay_lease_stale
       - certificate_unavailable
       - stale_connection_assignment
+      - stale_network_binding
       - publisher_connection_already_claimed
       - invalid_publisher_connection_credential
       - relay_draining

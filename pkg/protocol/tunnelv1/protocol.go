@@ -56,6 +56,7 @@ const (
 	Unauthenticated              ErrorCode = "unauthenticated"
 	StalePublishRunNumber        ErrorCode = "stale_publish_run_number"
 	StaleConnectionAssignment    ErrorCode = "stale_connection_assignment"
+	StaleNetworkBinding          ErrorCode = "stale_network_binding"
 	DuplicatePublisherConnection ErrorCode = "duplicate_publisher_connection"
 	DrainingPublisherConnection  ErrorCode = "draining"
 	CapacityExceeded             ErrorCode = "capacity_exceeded"
@@ -430,7 +431,7 @@ func validIdentifier(value string) bool {
 
 func validErrorCode(code ErrorCode) bool {
 	switch code {
-	case InvalidMessage, Unauthenticated, StalePublishRunNumber, StaleConnectionAssignment,
+	case InvalidMessage, Unauthenticated, StalePublishRunNumber, StaleConnectionAssignment, StaleNetworkBinding,
 		DuplicatePublisherConnection, DrainingPublisherConnection, CapacityExceeded, HandoffRevisionExhausted, Unavailable, Internal:
 		return true
 	default:

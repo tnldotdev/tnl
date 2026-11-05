@@ -1,4 +1,8 @@
 schemas:
+  ConnectorPeerLegBindingState:
+    type: string
+    enum: [active, prepared]
+    x-enum-varnames: [ConnectorPeerLegBindingActive, ConnectorPeerLegBindingPrepared]
   ConnectorPeerPairLegClaimRequest:
     type: object
     additionalProperties: false
@@ -41,9 +45,21 @@ schemas:
           pattern: "^[A-Za-z0-9_-]{21}[AQgw]$",
           description: Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.,
         }
-      delivery_generation: { type: integer, format: int64, minimum: 1 }
+      delivery_generation:
+        type: integer
+        format: int64
+        minimum: 1
+        description: Exact network binding revision, including a pending revision that can carry only probes.
+      binding_state:
+        $ref: "../openapi.yaml#/components/schemas/ConnectorPeerLegBindingState"
+        x-go-type-skip-optional-pointer: true
       connection_slot: { type: integer, minimum: 0, maximum: 1 }
-      key: { type: string, minLength: 1, description: secret pair key; never log. }
+      key:
+        {
+          type: string,
+          minLength: 1,
+          description: Per-binding delivery credential only. The stable endpoint SessionKey is never returned to a relay.,
+        }
       source_ip:
         type: string
         description: canonical socket-observed source IP bound to the relay signature.
