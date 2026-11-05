@@ -192,6 +192,8 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
     original_command = _connections._command
 
     def command(binary: Path, *args: str, input_value: object = None) -> object:
+        if args[0] == "sdk-close":
+            return original_command(binary, "stop", "--handle", args[-1])
         if args[0] == "sdk-prepare":
             return {
                 "schema": 1,
