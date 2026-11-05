@@ -58,10 +58,13 @@ but still include background work and capture overhead, not exact per-query CPU.
 For a dedicated PostgreSQL diagnostic run, `LATE_DIAGNOSTICS=sample` with
 `TIMING=true` adds full-phase visitor/connector counters and one retained direct
 verified-TLS target observer. `LATE_DIAGNOSTICS=trace` also marks exact query
-slots and retained session PIDs in the visitor trace, and snapshots visitor and
-publisher flight recorders through one second after the first qualifying
-outlier. Use `DIAGNOSTICS=metrics`, not `DIAGNOSTICS=trace`, with that mode;
-inspect receipts and actual trace coverage rather than assuming retention.
+slots, retained session PIDs and numeric client ports. The fixture builds its
+native `tnl` and test binary with `tnl_benchtrace` to record per-connection byte
+counts and permission waits, without recording payloads or changing TLS. Visitor,
+native connector and publisher flight recorders keep a bounded tail after the
+first qualifying outlier. This build tag and private pipe control are not part of
+normal release binaries. Use `DIAGNOSTICS=metrics`, not `DIAGNOSTICS=trace`, with
+that mode; inspect receipts and actual trace coverage rather than assuming retention.
 Both modes add work and memory use, so compare matched observer-enabled
 controls rather than treating them as normal-path benchmarks.
 

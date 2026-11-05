@@ -473,6 +473,7 @@ func runSeparatedConnectVisitor(t *testing.T, ctx context.Context, component str
 	cohortByAddress := make(map[string]string)
 	var startup benchworkload.Histogram
 	var processes []*integrationBinaryProcess
+	var nativeTrace *postgresNativeTrace
 	for serviceIndex := index - 1; serviceIndex < len(services); serviceIndex += len(separatedConnectVisitors()) {
 		service := services[serviceIndex]
 		started := time.Now()
@@ -484,12 +485,22 @@ func runSeparatedConnectVisitor(t *testing.T, ctx context.Context, component str
 			"--state-dir="+state.Root(), "--listen="+address, "--output=json")
 		command.Dir, command.Env = t.TempDir(), connectLoadEnvironment(t)
 		command.Stdout, command.Stderr = &output, &process.output
+		if *runtimeLoadWorkload == "postgres" && *postgresLoadLateDiagnostics == "trace" {
+			var err error
+			nativeTrace, err = prepareNativeTrace(t, ctx, command, component)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		owner, err := startOwnedCommand(command, nil)
 		if err != nil {
+			nativeTrace.Close()
 			t.Fatal(err)
 		}
+		nativeTrace.AfterStart()
 		process.commandOwner = owner
-		t.Cleanup(func() { stopIntegrationBinaryProcess(t, process) })
+		traceForProcess := nativeTrace
+		t.Cleanup(func() { traceForProcess.Close(); stopIntegrationBinaryProcess(t, process) })
 		waitForIntegrationCondition(t, 35*time.Second, func(context.Context) (bool, error) {
 			select {
 			case <-process.done:
@@ -516,7 +527,7 @@ func runSeparatedConnectVisitor(t *testing.T, ctx context.Context, component str
 	}
 	separatedWrite(t, component+".connect-ready", startup)
 	if *runtimeLoadWorkload == "postgres" {
-		runSeparatedPostgresVisitor(t, ctx, component, services[0], local[0], processes[0].command.Process.Pid)
+		runSeparatedPostgresVisitor(t, ctx, component, services[0], local[0], processes[0].command.Process.Pid, nativeTrace)
 		for _, process := range processes {
 			stopIntegrationBinaryProcess(t, process)
 		}

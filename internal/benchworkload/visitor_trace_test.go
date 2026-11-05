@@ -3,6 +3,7 @@ package benchworkload
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -116,6 +117,7 @@ type visitorQueryTrace struct {
 
 func (q *visitorQueryTrace) TraceQueryStart(ctx context.Context, conn *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
 	if q.active.Load() {
+		trace.Log(ctx, "benchworkload.test.client-port", strconv.Itoa(conn.PgConn().Conn().LocalAddr().(*net.TCPAddr).Port))
 		trace.Log(ctx, "benchworkload.test.query.begin", strconv.FormatUint(uint64(conn.PgConn().PID()), 10))
 		q.contexts <- ctx
 		call := q.calls.Add(1)
@@ -242,13 +244,14 @@ func assertVisitorTrace(t *testing.T, events []visitorTraceEvent, enabled bool, 
 	}
 	want := []string{"TaskBegin benchworkload.request", "Log benchworkload.slot", "RegionBegin benchworkload.request"}
 	if queried {
-		want = append(want, "Log benchworkload.postgres.query.begin", "RegionBegin benchworkload.postgres.query", "Log benchworkload.test.query.begin", "Log benchworkload.test.query.end", "RegionEnd benchworkload.postgres.query", "Log benchworkload.postgres.query.end", "RegionBegin benchworkload.postgres.cleanup", "RegionEnd benchworkload.postgres.cleanup")
+		want = append(want, "Log benchworkload.postgres.client-port", "Log benchworkload.postgres.query.begin", "RegionBegin benchworkload.postgres.query", "Log benchworkload.test.client-port", "Log benchworkload.test.query.begin", "Log benchworkload.test.query.end", "RegionEnd benchworkload.postgres.query", "Log benchworkload.postgres.query.end", "RegionBegin benchworkload.postgres.cleanup", "RegionEnd benchworkload.postgres.cleanup")
 	}
 	want = append(want, "Log benchworkload.result", "RegionEnd benchworkload.request", "TaskEnd benchworkload.request")
 	slots, goroutines, backends := make(map[int]bool), make(map[string]bool), make(map[string]bool)
+	ports := make(map[string]string)
 	for _, task := range tasks {
 		var got []string
-		goid, pid := task[0].goid, ""
+		goid, pid, port := task[0].goid, "", ""
 		for _, event := range task {
 			if event.goid != goid {
 				t.Fatalf("request markers crossed worker goroutines: %+v", task)
@@ -261,6 +264,16 @@ func assertVisitorTrace(t *testing.T, events []visitorTraceEvent, enabled bool, 
 					t.Fatalf("lost or duplicated offered slot: %+v", event)
 				}
 				slots[slot] = true
+			case "benchworkload.postgres.client-port":
+				port = event.message
+				value, err := strconv.Atoi(port)
+				if err != nil || value < 1 || value > 65535 {
+					t.Fatalf("client port is not a numeric TCP port: %+v", event)
+				}
+			case "benchworkload.test.client-port":
+				if event.message != port {
+					t.Fatalf("request port differs from pgx's actual query connection: %+v", task)
+				}
 			case "benchworkload.postgres.query.begin":
 				pid = event.message
 				value, err := strconv.ParseUint(pid, 10, 32)
@@ -268,6 +281,10 @@ func assertVisitorTrace(t *testing.T, events []visitorTraceEvent, enabled bool, 
 					t.Fatalf("request identified a non-retained session: %+v", event)
 				}
 				backends[pid] = true
+				if previous, ok := ports[port]; ok && previous != pid {
+					t.Fatalf("retained sessions share a client port: port=%s PIDs=%s,%s", port, previous, pid)
+				}
+				ports[port] = pid
 			case "benchworkload.postgres.query.end", "benchworkload.test.query.begin", "benchworkload.test.query.end":
 				if event.message != pid {
 					t.Fatalf("request PID differs from pgx's actual query connection: %+v", task)
@@ -283,8 +300,8 @@ func assertVisitorTrace(t *testing.T, events []visitorTraceEvent, enabled bool, 
 		}
 		goroutines[goid] = true
 	}
-	if len(slots) != count || len(goroutines) != workers || queried && len(backends) != workers {
-		t.Fatalf("missing slot/worker/session identities: slots=%v goroutines=%v backends=%v", slots, goroutines, backends)
+	if len(slots) != count || len(goroutines) != workers || queried && (len(backends) != workers || len(ports) != workers) {
+		t.Fatalf("missing slot/worker/session identities: slots=%v goroutines=%v backends=%v ports=%v", slots, goroutines, backends, ports)
 	}
 }
 

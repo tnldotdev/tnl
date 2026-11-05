@@ -161,7 +161,8 @@ func captureSeparatedPostgresTarget(t *testing.T) separatedResources {
 	})
 }
 
-func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component string, service connectLoadService, local string, connectorPID int) {
+func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component string, service connectLoadService, local string, connectorPID int, nativeTrace *postgresNativeTrace) {
+	defer nativeTrace.Close()
 	for sequence := range 2 {
 		var phase connectLoadPhase
 		if !separatedRead(t, ctx, fmt.Sprintf("connect.prepare-%d", sequence), &phase) {
@@ -196,6 +197,7 @@ func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component st
 			metadata := postgresRecordingMetadata{Mode: *postgresLoadRecording, SchedulerClock: "monotonic_rebased_once", SampleLimit: samples, PreparationStarted: time.Now(), TimingEnabled: *postgresLoadTiming, LateDiagnostics: *postgresLoadLateDiagnostics, Notes: postgresRecordingNotes}
 			metadata.RequestTracing = *postgresLoadLateDiagnostics == "trace"
 			metadata.PublisherLateTracing = metadata.RequestTracing && !phase.Direct
+			metadata.NativeTracing = metadata.PublisherLateTracing
 			recording, err := newPostgresRecording(*postgresLoadRecording, samples, requestFile)
 			if err != nil {
 				t.Fatal(err)
@@ -243,12 +245,20 @@ func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component st
 				now := time.Now()
 				phase.Start = now.Add(phase.Start.Sub(now))
 			}
+			if metadata.NativeTracing {
+				if nativeTrace == nil {
+					t.Fatal("native trace owner missing for the connector trace phase")
+				}
+				if err := nativeTrace.Arm(ctx, phase); err != nil {
+					t.Fatal(err)
+				}
+			}
 			lateConfig := postgresLateConfig{Phase: phase.Name, Start: phase.Start, Duration: phase.Duration, ConnectorPID: connectorPID}
 			publisherTrace := *postgresLoadLateDiagnostics == "trace" && !phase.Direct
 			if publisherTrace {
 				coordination := separatedCoordination(t)
 				lateConfig.Notify = func(notify context.Context, event postgresLateTrigger) error {
-					return coordination.Put(notify, phase.Name+".late-trigger", event)
+					return errors.Join(nativeTrace.Trigger(notify, event), coordination.Put(notify, phase.Name+".late-trigger", event))
 				}
 			}
 			late := startPostgresLateDiagnostic(ctx, lateConfig)
@@ -295,6 +305,14 @@ func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component st
 			metadata.ExportAuthorized = time.Now()
 			finishTarget()
 			finishLate()
+			if metadata.NativeTracing {
+				metadata.NativeFinishStarted = time.Since(phase.Start)
+				if err := nativeTrace.Finish(ctx); err != nil {
+					t.Error(err)
+				}
+				metadata.NativeFinishCompleted = time.Since(phase.Start)
+				metadata.NativeReceipt = nativeTrace.Receipt()
+			}
 			// publish only metadata, and only once the complete artifact is visible.
 			metadata.FlushStarted = time.Now()
 			if err := errors.Join(err, recording.Flush(), requestFile.Close()); err != nil {

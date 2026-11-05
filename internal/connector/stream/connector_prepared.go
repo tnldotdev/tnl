@@ -133,6 +133,9 @@ func prepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 	setupStopped = true
 	p := &PreparedConnector{ctx: ctx, conn: connection, callbackDone: make(chan struct{})}
 	p.stop = context.AfterFunc(ctx, func() { defer close(p.callbackDone); _ = p.closePhysical() })
+	if connectorBenchTraceEnabled {
+		connectorBenchTracePrepared(p, entry.VisitorConnectionID)
+	}
 	owned = true
 	return p, nil
 }
@@ -152,6 +155,10 @@ func (p *PreparedConnector) finish() {
 		}
 		if p.permissionCancel != nil {
 			p.permissionCancel()
+		}
+		if connectorBenchTraceEnabled && !p.taken {
+			// consumed streams unregister only after Forward joins its copies.
+			connectorBenchTraceUnregister(p)
 		}
 		p.mu.Unlock()
 		p.closeErr = p.closePhysical()
@@ -249,7 +256,15 @@ func (p *PreparedConnector) renewPermission(ctx context.Context, renew func() er
 	return err
 }
 
-func (p *PreparedConnector) waitPermission(ctx context.Context) error {
+func (p *PreparedConnector) waitPermission(ctx context.Context) (result error) {
+	var tracedWait bool
+	if connectorBenchTraceEnabled {
+		defer func() {
+			if tracedWait {
+				connectorBenchTraceLog(p, "connector.stream.permission-wait.end", 0, result != nil)
+			}
+		}()
+	}
 	for {
 		p.mu.Lock()
 		pending := p.permissionPending
@@ -260,6 +275,9 @@ func (p *PreparedConnector) waitPermission(ctx context.Context) error {
 		}
 		if pending == nil {
 			return nil
+		}
+		if connectorBenchTraceEnabled && !tracedWait {
+			tracedWait = connectorBenchTraceLog(p, "connector.stream.permission-wait.begin", 0, false)
 		}
 		select {
 		case <-pending:
@@ -287,6 +305,10 @@ func (p *PreparedConnector) Forward(ctx context.Context, local net.Conn) (result
 	p.work.Add(1)
 	p.mu.Unlock()
 	defer p.work.Done()
+	if connectorBenchTraceEnabled {
+		connectorBenchTraceRegister(p, local)
+		defer connectorBenchTraceUnregister(p)
+	}
 	life, cancel := context.WithCancel(ctx)
 	ownerDone := make(chan struct{})
 	stopOwner := context.AfterFunc(p.ctx, func() { defer close(ownerDone); cancel() })
@@ -326,11 +348,15 @@ func (c *preparedConnectorUse) current() error {
 	}
 	return nil
 }
-func (c *preparedConnectorUse) Read(p []byte) (int, error) {
+func (c *preparedConnectorUse) Read(p []byte) (n int, err error) {
+	if connectorBenchTraceEnabled {
+		connectorBenchTraceLog(c.owner, "connector.stream.read.begin", len(p), false)
+		defer func() { connectorBenchTraceLog(c.owner, "connector.stream.read.end", n, err != nil) }()
+	}
 	if err := c.current(); err != nil {
 		return 0, err
 	}
-	n, err := c.owner.conn.Read(p)
+	n, err = c.owner.conn.Read(p)
 	if n > 0 {
 		if current := c.current(); current != nil {
 			return 0, current
@@ -339,10 +365,21 @@ func (c *preparedConnectorUse) Read(p []byte) (int, error) {
 	return n, err
 }
 func (c *preparedConnectorUse) Write(p []byte) (int, error) {
-	if err := c.owner.waitPermission(c.ctx); err != nil {
+	if connectorBenchTraceEnabled {
+		connectorBenchTraceLog(c.owner, "connector.stream.write.begin", len(p), false)
+	}
+	err := c.owner.waitPermission(c.ctx)
+	if connectorBenchTraceEnabled {
+		connectorBenchTraceLog(c.owner, "connector.stream.write.after-wait", 0, err != nil)
+	}
+	if err != nil {
 		return 0, err
 	}
-	return c.owner.conn.Write(p)
+	n, err := c.owner.conn.Write(p)
+	if connectorBenchTraceEnabled {
+		connectorBenchTraceLog(c.owner, "connector.stream.write.end", n, err != nil)
+	}
+	return n, err
 }
 func (c *preparedConnectorUse) CloseWrite() error {
 	if err := c.owner.waitPermission(c.ctx); err != nil {

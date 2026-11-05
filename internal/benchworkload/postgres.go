@@ -139,6 +139,9 @@ func (v *PostgresVisitor) request(parent context.Context, address string, schedu
 	var backendPID string
 	if traced {
 		backendPID = strconv.FormatUint(uint64(conn.PgConn().PID()), 10)
+		if local, ok := conn.PgConn().Conn().LocalAddr().(*net.TCPAddr); ok {
+			trace.Log(ctx, "benchworkload.postgres.client-port", strconv.Itoa(local.Port))
+		}
 		trace.Log(ctx, "benchworkload.postgres.query.begin", backendPID)
 		query = trace.StartRegion(ctx, "benchworkload.postgres.query")
 	}

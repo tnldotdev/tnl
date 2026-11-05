@@ -392,7 +392,8 @@ func (s ServiceStream) Forward(ctx context.Context, visitor net.Conn) (result er
 	}()
 	defer func() { cancel(); <-guardDone }()
 	observed, streamDone := observability.PublisherStream(live, backend)
-	_, err = streamcopy.Copy(client, observed)
+	copyClient, copyTarget := serviceBenchTraceCopy(connector, client, observed)
+	_, err = streamcopy.Copy(copyClient, copyTarget)
 	err = errors.Join(err, context.Cause(ctx))
 	streamDone(err)
 	return err

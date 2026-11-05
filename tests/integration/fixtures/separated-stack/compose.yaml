@@ -86,6 +86,7 @@ services:
       RACE: "${RACE:-0}"
       RUNTIME_WORKLOAD: "${RUNTIME_WORKLOAD:-public-url}"
       POSTGRES_DIAGNOSTICS: "${POSTGRES_DIAGNOSTICS:-off}"
+      POSTGRES_LATE_DIAGNOSTICS: "${POSTGRES_LATE_DIAGNOSTICS:-off}"
     volumes:
       - ../../../..:/workspace:ro
       - artifacts:/artifacts
@@ -98,16 +99,20 @@ services:
       - |
         go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.1
         go build -buildvcs=false -o /artifacts/dnsdev ./internal/development/dns/cmd/dnsdev
+        fixture_tags=''
+        if [ "$${RUNTIME_WORKLOAD}" = postgres ] && [ "$${POSTGRES_LATE_DIAGNOSTICS}" = trace ]; then
+          fixture_tags='tnl_benchtrace'
+        fi
         if [ "$${RACE}" = 1 ]; then
-          go test -buildvcs=false -race -c -o /artifacts/runtime.test ./internal/daemon
+          go test -buildvcs=false -tags="$${fixture_tags}" -race -c -o /artifacts/runtime.test ./internal/daemon
         else
-          go test -buildvcs=false -c -o /artifacts/runtime.test ./internal/daemon
+          go test -buildvcs=false -tags="$${fixture_tags}" -c -o /artifacts/runtime.test ./internal/daemon
         fi
         if [ "$${RUNTIME_WORKLOAD}" = connect ] || [ "$${RUNTIME_WORKLOAD}" = postgres ]; then
           if [ "$${RACE}" = 1 ]; then
-            go build -buildvcs=false -race -o /artifacts/tnl ./cmd/tnl
+            go build -buildvcs=false -tags="$${fixture_tags}" -race -o /artifacts/tnl ./cmd/tnl
           else
-            go build -buildvcs=false -o /artifacts/tnl ./cmd/tnl
+            go build -buildvcs=false -tags="$${fixture_tags}" -o /artifacts/tnl ./cmd/tnl
           fi
         fi
         if [ "$${RUNTIME_WORKLOAD}" = postgres ] && [ "$${POSTGRES_DIAGNOSTICS}" != off ]; then
