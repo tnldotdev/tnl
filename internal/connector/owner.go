@@ -42,6 +42,7 @@ type connectorConnectionBackend struct {
 	httpClient                                             *http.Client
 	acquisition                                            workloadmanifest.Acquisition
 	refreshAssertion                                       func(context.Context) (string, error)
+	deadlineChanged                                        chan struct{}
 	listeners                                              map[string]*ownedServiceListener
 	initialServices                                        []string
 	services                                               map[string]controlv1.Service
@@ -136,6 +137,12 @@ func (b *connectorConnectionBackend) publishLocked() {
 		s.connections[name] = c
 	}
 	b.snapshot.Store(s)
+	if b.deadlineChanged != nil {
+		select {
+		case b.deadlineChanged <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func minTime(a, b time.Time) time.Time {
@@ -215,12 +222,13 @@ func (b *connectorConnectionBackend) Start(ctx context.Context) (meta.PublicMeta
 		if err != nil {
 			return meta.PublicMetadata{}, time.Time{}, err
 		}
-		b.deadline = session.ExpiresAt
+		b.deadline = workload.SessionDeadline(session)
 		if session.Binding != identity.Binding {
 			return meta.PublicMetadata{}, time.Time{}, connectorruntime.ErrUnauthorized
 		}
 		b.rememberAssertion(assertion, identity.AssertionExpiresAt, session)
-		if session.ExpiresAt.After(time.Now().Add(b.project.Config.Workloads[b.scope.Workload].DurationLimit())) || session.LeaseExpiresAt.After(time.Now().Add(91*time.Second)) {
+		limit := b.project.Config.Workloads[b.scope.Workload].DurationLimit()
+		if limit > 0 && (session.ExpiresAt == nil || session.ExpiresAt.After(time.Now().Add(limit))) || session.LeaseExpiresAt.After(time.Now().Add(91*time.Second)) {
 			return meta.PublicMetadata{}, time.Time{}, connectorruntime.ErrExpired
 		}
 		inventory, err := client.ListServices(ctx)
@@ -487,6 +495,18 @@ func (b *connectorConnectionBackend) healthy() (time.Time, error) {
 	}
 	return b.deadline, nil
 }
+
+// authorizationDeadline publishes only accepted native session authority. its
+// proof horizon may advance, but the workload client fences any fixed hard cap.
+func (b *connectorConnectionBackend) AuthorizationDeadline() (time.Time, <-chan struct{}) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.deadlineChanged == nil {
+		b.deadlineChanged = make(chan struct{}, 1)
+	}
+	return b.deadline, b.deadlineChanged
+}
+
 func (b *connectorConnectionBackend) Renew(ctx context.Context) (time.Time, error) {
 	ctx, finish, err := b.begin(ctx)
 	if err != nil {
@@ -504,19 +524,23 @@ func (b *connectorConnectionBackend) Renew(ctx context.Context) (time.Time, erro
 	}
 	b.mu.Lock()
 	client := b.workload
-	currentDeadline := b.deadline
 	b.mu.Unlock()
 	if client != nil {
 		session, err := client.Renew(ctx)
 		if err != nil {
 			return time.Time{}, err
 		}
-		if session.ExpiresAt.After(currentDeadline) || !session.LeaseExpiresAt.After(time.Now()) || session.LeaseExpiresAt.After(time.Now().Add(91*time.Second)) {
+		if !session.LeaseExpiresAt.After(time.Now()) || session.LeaseExpiresAt.After(time.Now().Add(91*time.Second)) {
 			return time.Time{}, connectorruntime.ErrExpired
 		}
 		b.mu.Lock()
-		if b.workload == client && session.ExpiresAt.Before(b.deadline) {
-			b.deadline = session.ExpiresAt
+		if b.workload == client {
+			latest, readErr := client.Session()
+			if readErr != nil {
+				b.mu.Unlock()
+				return time.Time{}, readErr
+			}
+			b.deadline = workload.SessionDeadline(latest)
 		}
 		deadline := b.deadline
 		b.publishLocked()
@@ -625,7 +649,7 @@ func (b *connectorConnectionBackend) reuseAssertion(assertion string) bool {
 	}
 	digest := sha256.Sum256([]byte(assertion))
 	entry, known := b.assertions[hex.EncodeToString(digest[:])]
-	if !known || !entry.checkedUntil.After(time.Now()) || !entry.proof.ExpiresAt.After(time.Now()) || b.verifiedSession != session.Id || !session.LeaseExpiresAt.After(time.Now()) || !session.ExpiresAt.After(time.Now()) {
+	if !known || !entry.checkedUntil.After(time.Now()) || !entry.proof.ExpiresAt.After(time.Now()) || b.verifiedSession != session.Id || !session.LeaseExpiresAt.After(time.Now()) || !workload.SessionDeadline(session).After(time.Now()) {
 		return false
 	}
 	proof := entry.proof

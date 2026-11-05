@@ -14,7 +14,7 @@ func (c *Client) VisitorPermission(ctx context.Context, service string) (control
 	if err != nil {
 		return controlv1.VisitorTokenResponse{}, err
 	}
-	if !r.ExpiresAt.After(time.Now()) || !r.LeaseExpiresAt.After(time.Now()) || !slices.Contains(r.ServiceIds, service) {
+	if !SessionDeadline(r).After(time.Now()) || !r.LeaseExpiresAt.After(time.Now()) || !slices.Contains(r.ServiceIds, service) {
 		return controlv1.VisitorTokenResponse{}, ErrSessionExpired
 	}
 	source, err := json.Marshal(controlv1.VisitorTokenWorkloadSource{Kind: controlv1.VisitorTokenWorkload, Credential: r.Credential})

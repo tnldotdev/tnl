@@ -97,7 +97,7 @@ func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential s
 		return result, ErrWorkloadDenied
 	}
 	current := clock.current()
-	if current.Before(row.CreatedAt.Time) || current.Before(row.RenewedAt.Time) || !row.LeaseExpiresAt.Time.After(current) || !row.ExpiresAt.Time.After(current) || !row.IdentityExpiresAt.Time.After(current) {
+	if current.Before(row.CreatedAt.Time) || current.Before(row.RenewedAt.Time) || !row.LeaseExpiresAt.Time.After(current) || row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(current) || !row.IdentityExpiresAt.Time.After(current) {
 		return result, ErrWorkloadExpired
 	}
 	if c.Validate(current) != nil {

@@ -84,7 +84,7 @@ func TestIntegrationWorkloadAuthorizationAfterLockWait(t *testing.T) {
 						}
 						pairRequest.Signature = ed25519.Sign(key, message)
 						renewed, err := d.RenewConnectorPeerPair(ctx, testVisitorIssuer, pairRequest, at)
-						if err == nil && (renewed.ExpiresAt.After(at.Add(WorkloadLease)) || renewed.ExpiresAt.After(session.ExpiresAt) ||
+						if err == nil && (renewed.ExpiresAt.After(at.Add(WorkloadLease)) || renewed.ExpiresAt.After(*session.ExpiresAt) ||
 							renewed.VisitorPermission.Permission.ExpiresAt.After(renewed.ExpiresAt)) {
 							return errors.New("coherent renewal extended the original lifetime budget")
 						}
@@ -97,7 +97,7 @@ func TestIntegrationWorkloadAuthorizationAfterLockWait(t *testing.T) {
 					}
 					defer tx.Rollback(ctx)
 					authority, err := d.visitorAuthorityForSource(ctx, tx, visitorscope.Scope{Kind: visitorscope.Service, ID: applied.Services[0].ServiceID}, WorkloadTokenSource{Credential: session.Credential}, clock)
-					if err == nil && (authority.Permission.ExpiresAt.After(at.Add(visitortoken.RenewableLifetime)) || authority.Permission.ExpiresAt.After(session.ExpiresAt)) {
+					if err == nil && (authority.Permission.ExpiresAt.After(at.Add(visitortoken.RenewableLifetime)) || authority.Permission.ExpiresAt.After(*session.ExpiresAt)) {
 						return errors.New("authorization wait extended the original lifetime budget")
 					}
 					return err
@@ -216,7 +216,7 @@ func TestIntegrationWorkloadRenewalProofAndIdempotence(t *testing.T) {
 	workers.Wait()
 	close(results)
 	for result := range results {
-		if result.RenewalSequence != 1 || !result.LeaseExpiresAt.Equal(now.Add(121*time.Second)) || !result.ExpiresAt.Equal(session.ExpiresAt) {
+		if result.RenewalSequence != 1 || !result.LeaseExpiresAt.Equal(now.Add(121*time.Second)) || !result.ExpiresAt.Equal(*session.ExpiresAt) {
 			t.Fatal("concurrent proof changed lease or fixed window")
 		}
 		session = result
@@ -442,7 +442,7 @@ func TestIntegrationWorkloadRenewalOverlapsObservation(t *testing.T) {
 	t.Run("source clock and lifetime fences", func(t *testing.T) {
 		// a rollback stays behind the source even after the authorization work;
 		// a millisecond-wide gap can legitimately elapse during database reads.
-		for _, at := range []time.Time{now.Add(-time.Second), observed.Add(-time.Second), renewed.LeaseExpiresAt, session.ExpiresAt} {
+		for _, at := range []time.Time{now.Add(-time.Second), observed.Add(-time.Second), renewed.LeaseExpiresAt, *session.ExpiresAt} {
 			if _, err := d.ListWorkloadServices(ctx, session.Credential, at); !errors.Is(err, ErrWorkloadDenied) {
 				t.Error("invalid lifetime accepted a workload credential", err)
 			}

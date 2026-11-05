@@ -38,7 +38,7 @@ func TestIntegrationWorkloadAssertionAttachment(t *testing.T) {
 	for range 8 {
 		wg.Go(func() {
 			next, err := d.AttachWorkloadAssertion(t.Context(), session.ID, session.Credential, rotated.Execution, signature, now)
-			if err != nil || next.ID != session.ID || next.Binding != session.Binding || !next.ExpiresAt.Equal(session.ExpiresAt) || len(next.ServiceIDs) != 2 {
+			if err != nil || next.ID != session.ID || next.Binding != session.Binding || !next.ExpiresAt.Equal(*session.ExpiresAt) || len(next.ServiceIDs) != 2 {
 				t.Error("retry-stable attachment changed session rights/window", err)
 			}
 		})

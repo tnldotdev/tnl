@@ -34,6 +34,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorworkload "github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
@@ -461,7 +462,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			current.AssertionExpiresAt = new(time.Unix(claims.ExpiresAt, 0))
 			if current.AssertionExpiresAt.After(current.IdentityExpiresAt) {
 				current.IdentityExpiresAt = *current.AssertionExpiresAt
-				current.LeaseExpiresAt = minTimeForFixture(current.RenewAfter.Add(time.Minute), current.IdentityExpiresAt, current.ExpiresAt)
+				current.LeaseExpiresAt = minTimeForFixture(current.RenewAfter.Add(time.Minute), connectorworkload.SessionDeadline(current.WorkloadSession))
 				select {
 				case refreshedProof <- struct{}{}:
 				default:
@@ -520,9 +521,12 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 					w.WriteHeader(500)
 					return
 				}
-				current = &workloadSession{public: ed25519.PublicKey(public), WorkloadSession: authorityv1.WorkloadSession{Id: id, TeamId: team, ProjectKey: exchange.ProjectKey, Workload: exchange.Workload, Provider: controlv1.WorkloadGitHub, Github: &authorityv1.WorkloadGitHubExecution{RepositoryId: claims.RepositoryID, RepositoryOwnerId: claims.RepositoryOwnerID, RunId: claims.RunID, RunAttempt: claims.RunAttempt, CheckRunId: claims.CheckRunID}, Credential: "wlc_" + base64.RawURLEncoding.EncodeToString(credential), ExpiresAt: time.Now().Add(time.Hour), IdentityExpiresAt: time.Unix(claims.ExpiresAt, 0), LeaseExpiresAt: time.Now().Add(90 * time.Second), RenewAfter: time.Now().Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, Binding: bindingFor(exchange.Assertion)}}
+				current = &workloadSession{public: ed25519.PublicKey(public), WorkloadSession: authorityv1.WorkloadSession{Id: id, TeamId: team, ProjectKey: exchange.ProjectKey, Workload: exchange.Workload, Provider: controlv1.WorkloadGitHub, Github: &authorityv1.WorkloadGitHubExecution{RepositoryId: claims.RepositoryID, RepositoryOwnerId: claims.RepositoryOwnerID, RunId: claims.RunID, RunAttempt: claims.RunAttempt, CheckRunId: claims.CheckRunID}, Credential: "wlc_" + base64.RawURLEncoding.EncodeToString(credential), ExpiresAt: new(time.Now().Add(time.Hour)), IdentityExpiresAt: time.Unix(claims.ExpiresAt, 0), LeaseExpiresAt: time.Now().Add(90 * time.Second), RenewAfter: time.Now().Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, Binding: bindingFor(exchange.Assertion)}}
 				ownerKeys[exchange.PublicKey] = current
-				current.LeaseExpiresAt = minTimeForFixture(current.LeaseExpiresAt, current.IdentityExpiresAt, current.ExpiresAt)
+				if strings.HasSuffix(startup, "-refresh") {
+					current.ExpiresAt = nil
+				}
+				current.LeaseExpiresAt = minTimeForFixture(current.LeaseExpiresAt, connectorworkload.SessionDeadline(current.WorkloadSession))
 				sessions[current.Credential] = current
 			}
 			if exchangeAttempts.Add(1) == 1 {
@@ -552,7 +556,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			}
 			if renewal.Sequence != current.RenewalSequence {
 				current.RenewalSequence = renewal.Sequence
-				current.LeaseExpiresAt = minTimeForFixture(time.Now().Add(90*time.Second), current.IdentityExpiresAt, current.ExpiresAt)
+				current.LeaseExpiresAt = minTimeForFixture(time.Now().Add(90*time.Second), connectorworkload.SessionDeadline(current.WorkloadSession))
 				current.RenewAfter = time.Now().Add(30 * time.Second)
 			}
 			_ = json.NewEncoder(w).Encode(current)
@@ -781,6 +785,11 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	if strings.HasPrefix(startup, "javascript") || strings.HasPrefix(startup, "python") {
 		manifest := workloadmanifest.Manifest{Schema: 1, Server: scope.Server, Team: scope.TeamID, ProjectKey: scope.ProjectKey, SourceFingerprint: scope.SourceID, ProjectLabel: scope.ProjectLabel,
 			Workloads: map[string]workloadmanifest.Workload{"test": {Provider: "github", Services: []string{serviceName}, MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "github-actions", Audience: scope.Server}}}, Services: map[string]string{serviceName: protocol}}
+		if strings.HasSuffix(startup, "-refresh") {
+			policy := manifest.Workloads["test"]
+			policy.MaxDurationSeconds = 0
+			manifest.Workloads["test"] = policy
+		}
 		if err := manifest.Validate(); err != nil {
 			t.Fatal(err)
 		}
