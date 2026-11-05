@@ -88,7 +88,6 @@ func TestIntegrationStandalonePublishAndVisit(t *testing.T) {
 	fixture.visitor.transport.CloseIdleConnections()
 	stopIntegrationPublisher(t, handle)
 	stopIntegrationProcess(t, fixture.process)
-	assertStandaloneUsage(t, fixture.databaseURL, fixture.inspect, ready.PublicURLID, ready.PublishRunNumber)
 }
 
 func TestIntegrationURLPublisherTerminatesVisitorTLSLocally(t *testing.T) {

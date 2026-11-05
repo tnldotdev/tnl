@@ -144,14 +144,18 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 	if scope.Kind == visitorscope.PublicURL {
 		var guest bool
 		var deadline time.Time
-		err := tx.QueryRow(ctx, `SELECT control.guest_share_live(id,$2),LEAST(expires_at,
-		    COALESCE(active_ready_at + (GREATEST(0,900000000000-used_ready_ns)::double precision/1000000000)*interval '1 second',expires_at))
+		err := tx.QueryRow(ctx, `SELECT control.guest_share_live(id,$2),control.guest_serving_deadline(id,$2)
 		    FROM control.guest_trials WHERE team_id=$1`, team, now).Scan(&guest, &deadline)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return result, err
 		}
 		activeTeam = activeTeam || guest
-		if guest && deadline.After(now) && deadline.Before(policy.ValidUntil) {
+		if err == nil {
+			policy.ConnectionDeadline = &deadline
+		}
+		if err == nil && !deadline.After(now) {
+			policy.Enabled = false
+		} else if guest && deadline.Before(policy.ValidUntil) {
 			policy.ValidUntil = deadline
 		}
 	}

@@ -25,25 +25,27 @@ const relaySessionSetupTimeout = 10 * time.Second
 type VisitorSourceSigner func(ingressv1.IngressRoutingTableEntry, string, netip.AddrPort, netip.AddrPort) (string, error)
 
 type ForwarderConfig struct {
-	SignVisitorSource VisitorSourceSigner
-	Context           context.Context
-	TLSConfig         *tls.Config
-	ClusterSecret     string
-	TransportConfig   muxsession.TLSYamuxConfig
-	Observer          OperationObserver
-	OnSessionClosed   func(relayServiceID, relayID, origin string, cause error)
-	PromoteVisitor    func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult
+	BindPublicConnection func(ingressv1.IngressRoutingTableEntry, func()) (func(), error)
+	SignVisitorSource    VisitorSourceSigner
+	Context              context.Context
+	TLSConfig            *tls.Config
+	ClusterSecret        string
+	TransportConfig      muxsession.TLSYamuxConfig
+	Observer             OperationObserver
+	OnSessionClosed      func(relayServiceID, relayID, origin string, cause error)
+	PromoteVisitor       func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult
 }
 
 // Forwarder pools authenticated sessions to exact relay processes and opens
 // pipelined internal-forwarding streams for visitor connections.
 type Forwarder struct {
-	signVisitorSource VisitorSourceSigner
-	connector         relayConnector
-	observer          OperationObserver
-	context           context.Context
-	cancel            context.CancelFunc
-	onSessionClosed   func(relayServiceID, relayID, origin string, cause error)
+	bindPublicConnection func(ingressv1.IngressRoutingTableEntry, func()) (func(), error)
+	signVisitorSource    VisitorSourceSigner
+	connector            relayConnector
+	observer             OperationObserver
+	context              context.Context
+	cancel               context.CancelFunc
+	onSessionClosed      func(relayServiceID, relayID, origin string, cause error)
 
 	mu        sync.Mutex
 	sessions  map[relaySessionKey]*relaySession
@@ -63,6 +65,7 @@ func NewForwarder(config ForwarderConfig) (*Forwarder, error) {
 	}
 	f := newForwarderContext(config.Context, connector)
 	f.signVisitorSource = config.SignVisitorSource
+	f.bindPublicConnection = config.BindPublicConnection
 	f.observer = config.Observer
 	f.onSessionClosed = config.OnSessionClosed
 	f.promote = config.PromoteVisitor
@@ -170,6 +173,9 @@ func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicU
 		PublishRunID:   entry.PublishRunId,
 		HashedIPPolicy: hashed, AllowAll: entry.IpPolicy == ingressv1.AllowAll, Backends: backends,
 		assignments: assignments,
+	}
+	if f.bindPublicConnection != nil {
+		route.BindConnection = func(stop func()) (func(), error) { return f.bindPublicConnection(entry, stop) }
 	}
 	if entry.ServiceProtocol != nil {
 		route.ServiceProtocol = string(*entry.ServiceProtocol)

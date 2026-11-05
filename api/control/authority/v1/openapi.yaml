@@ -9,8 +9,6 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example
 paths:
-  /v1/service/teams/{team_id}/usage-authorization:
-    $ref: "./paths/service.yaml#/paths/~1v1~1service~1teams~1{team_id}~1usage-authorization"
   /v1/service/teams/{team_id}/services:
     $ref: "./paths/service.yaml#/paths/~1v1~1service~1teams~1{team_id}~1services"
   /v1/service/services/{service_id}:

@@ -103,9 +103,16 @@ func Run(ctx context.Context, config Config) (result error) {
 	if err := observe(config, Event{Type: EventPublicURLAssigned, PublicURLID: publicURLID, Hostname: publicURL.CanonicalHostname}); err != nil {
 		return err
 	}
+	var previousRunErr error
 	for {
 		setup, err := createPublishRun(ctx, config, publicURL)
 		if err != nil {
+			if previousRunErr != nil && ctx.Err() != nil &&
+				(errors.Is(err, ctx.Err()) || errors.Is(err, context.Cause(ctx))) {
+				// cancellation before a replacement starts must retain the failure
+				// that ended the previous run, not just the interrupted request.
+				return errors.Join(previousRunErr, context.Cause(ctx), err)
+			}
 			return err
 		}
 		err = runPublishRun(ctx, config, setup, func() error {
@@ -121,6 +128,7 @@ func Run(ctx context.Context, config Config) (result error) {
 		if !errors.Is(err, clientcontrol.ErrStatusConflict) {
 			return err
 		}
+		previousRunErr = err
 		publicURL.NextPublishRunNumber = setup.PublishRun.PublishRunNumber + 1
 	}
 }

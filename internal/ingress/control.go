@@ -21,7 +21,7 @@ import (
 
 const routingTablePageSize = 1000
 
-// ErrIngressLeaseLost ends this process run. its accounting identity cannot be
+// ErrIngressLeaseLost ends this process run. its lease identity cannot be
 // reused after expiry; the process supervisor must start a new run.
 var ErrIngressLeaseLost = errors.New("ingress: lease lost; restart the process with a new run ID")
 
@@ -32,7 +32,6 @@ type ControlClient interface {
 	DrainIngress(context.Context, ingressv1.IngressID, ingressv1.IngressDrainRequest) (ingressv1.IngressLease, error)
 	GetIngressRoutingTableSnapshot(context.Context, ingressv1.IngressID, ingressv1.GetIngressRoutingTableSnapshotParams) (ingressv1.IngressRoutingTableSnapshot, error)
 	GetIngressRoutingTableEvents(context.Context, ingressv1.IngressID, ingressv1.GetIngressRoutingTableEventsParams) (ingressv1.IngressRoutingTablePage, error)
-	ReportIngressUsage(context.Context, ingressv1.IngressID, ingressv1.IngressUsageReportBatch) error
 	ObservePublicURLRecovery(context.Context, ingressv1.IngressID, int64, ingressv1.PublicURLRecoveryObservationRequest) (ingressv1.PublicURLRecoveryObservation, error)
 }
 
@@ -44,7 +43,7 @@ type OperationObserver interface {
 
 type ControllerConfig struct {
 	// lease established runs before the first lease becomes visible to visitors.
-	// renewal never replaces a process run's accounting or audit identity.
+	// renewal never replaces a process run's lease or audit identity.
 	LeaseEstablished func(ingressv1.IngressLease) error
 	Client           ControlClient
 	RoutingTable     *RoutingTable
@@ -123,7 +122,7 @@ func NewController(config ControllerConfig) (*Controller, error) {
 }
 
 func (c *Controller) Run(ctx context.Context) error {
-	// policy work stops at drain; lease renewal and accounting live until shutdown.
+	// policy work stops at drain; lease renewal and audit live until shutdown.
 	policyCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	c.mu.Lock()
@@ -436,6 +435,12 @@ func (c *Controller) Lookup(host string, now time.Time) ([]ingressv1.IngressRout
 	process := c.Lease()
 	prepared := entries[:0]
 	for _, entry := range entries {
+		c.mu.RLock()
+		policy := c.publicPolicies[entry.PublishRunId]
+		c.mu.RUnlock()
+		if policy != nil && policy.preparationOnly(entry) {
+			continue
+		}
 		if _, ok := c.publicRunInstalled(entry, process, now); ok {
 			prepared = append(prepared, entry)
 		}
@@ -450,17 +455,6 @@ func (c *Controller) Lease() ingressv1.IngressLease {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return cloneIngressLease(c.lease)
-}
-
-func (c *Controller) VisitorNetworkHashKey(at time.Time) ([32]byte, bool) {
-	day := at.UTC().Truncate(24 * time.Hour)
-	lease := c.Lease()
-	for _, candidate := range lease.VisitorNetworkHashKeys {
-		if candidate.UtcDate.Time.Equal(day) && len(candidate.Key) == 32 {
-			return [32]byte(candidate.Key), true
-		}
-	}
-	return [32]byte{}, false
 }
 
 func (c *Controller) Drain(ctx context.Context, deadline time.Time) error {
@@ -488,22 +482,6 @@ func (c *Controller) Drain(ctx context.Context, deadline time.Time) error {
 		return c.responseError("drain ingress", err)
 	}
 	return c.setLease(updated)
-}
-
-func (c *Controller) ReportUsage(ctx context.Context, batch usageReportBatch) error {
-	lease := c.Lease()
-	if lease.IngressLeaseRevision <= 0 || !lease.LeaseExpiresAt.After(c.now()) {
-		return errors.New("ingress: control lease is unavailable")
-	}
-	err := c.client.ReportIngressUsage(ctx, c.registration.IngressId, ingressv1.IngressUsageReportBatch{
-		IngressId: c.registration.IngressId, IngressRunId: c.registration.IngressRunId,
-		IngressLeaseRevision: lease.IngressLeaseRevision, Reports: batch.reports,
-		ObservedThrough: batch.observedThrough, Complete: batch.complete,
-	})
-	if err != nil {
-		return ingressControlError("report ingress usage", err)
-	}
-	return nil
 }
 
 func (c *Controller) ObserveRecovery(
@@ -678,14 +656,8 @@ func validateIngressLease(
 	}
 	if lease.IngressLeaseRevision <= 0 || lease.RoutingTableRevision < 0 || lease.RegisteredAt.IsZero() ||
 		lease.RenewedAt.Before(lease.RegisteredAt) || !lease.LeaseExpiresAt.After(now) ||
-		lease.Draining != (lease.DrainDeadline != nil) || len(lease.VisitorNetworkHashKeys) != 2 {
+		lease.Draining != (lease.DrainDeadline != nil) {
 		return errors.New("ingress: control returned an invalid ingress lease")
-	}
-	day := now.UTC().Truncate(24 * time.Hour)
-	for index, key := range lease.VisitorNetworkHashKeys {
-		if len(key.Key) != 32 || !key.UtcDate.Time.Equal(day.AddDate(0, 0, index)) {
-			return errors.New("ingress: control returned invalid visitor network hash keys")
-		}
 	}
 	return nil
 }
@@ -695,11 +667,6 @@ func cloneIngressLease(source ingressv1.IngressLease) ingressv1.IngressLease {
 	if source.DrainDeadline != nil {
 		value := *source.DrainDeadline
 		result.DrainDeadline = &value
-	}
-	result.VisitorNetworkHashKeys = make([]ingressv1.VisitorNetworkHashKey, len(source.VisitorNetworkHashKeys))
-	for index, key := range source.VisitorNetworkHashKeys {
-		result.VisitorNetworkHashKeys[index] = key
-		result.VisitorNetworkHashKeys[index].Key = slices.Clone(key.Key)
 	}
 	return result
 }

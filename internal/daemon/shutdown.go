@@ -28,8 +28,7 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 			runtime.publicServices.StopAccepting()
 		}
 	}
-	// drain ingress visitors before closing usage and recovery reporters so a
-	// successful final report includes usage-tracked public URL visitor activity.
+	// drain ingress visitors before closing recovery and audit reporters.
 	for _, runtime := range d.ingresses {
 		if runtime.controller != nil && runtime.controller.Ready(time.Now()) {
 			result = errors.Join(result, shutdownStep("ingress_lease", func() error { return runtime.controller.Drain(drainCtx, deadline) }))
@@ -40,9 +39,6 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 		if runtime.publicServices != nil {
 			result = errors.Join(result, shutdownStep("public_service_streams", func() error { return runtime.publicServices.Drain(drainCtx) }))
 		}
-		if runtime.usage != nil {
-			result = errors.Join(result, shutdownStep("ingress_usage", func() error { return runtime.usage.Close(drainCtx) }))
-		}
 		if runtime.recovery != nil {
 			result = errors.Join(result, runtime.recovery.Close(drainCtx))
 		}
@@ -51,7 +47,7 @@ func (d *daemon) shutdown(timeout time.Duration) error {
 		}
 	}
 	// relay publisher connections stay available until ingress has stopped
-	// forwarding and reported its final usage checkpoint.
+	// forwarding.
 	for _, runtime := range d.relays {
 		if runtime.controller != nil && runtime.controller.Ready(time.Now()) {
 			result = errors.Join(result, shutdownStep("relay_lease", func() error { return runtime.controller.Drain(drainCtx, deadline) }))

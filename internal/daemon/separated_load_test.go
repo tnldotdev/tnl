@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 )
 
 type separatedSnapshot struct {
@@ -25,7 +26,7 @@ type separatedSnapshot struct {
 }
 
 var (
-	runtimeLoadWorkload           = flag.String("tnl-runtime-load-workload", "public-url", "public-url or connect workload")
+	runtimeLoadWorkload           = flag.String("tnl-runtime-load-workload", "public-url", "public-url, connect, or postgres workload")
 	connectLoadPayloadBytes       = flag.Int("tnl-connect-load-payload-bytes", 256, "opaque connect request payload bytes (8-1048576)")
 	runtimeLoadPublicURLs         = flag.Int("tnl-runtime-load-public-urls", 4, "runtime load public URL count")
 	runtimeLoadStartParallel      = flag.Int("tnl-runtime-load-start-parallel", 4, "maximum concurrently activating publishers (1-1000)")
@@ -102,7 +103,7 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 	for _, component := range separatedActiveComponents() {
 		separatedWait(t, component+".resources-ready", 30*time.Second, nil)
 	}
-	if *runtimeLoadWorkload == "connect" {
+	if *runtimeLoadWorkload == "connect" || *runtimeLoadWorkload == "postgres" {
 		runSeparatedConnect(t, database, routes, rate, duration)
 		return
 	}
@@ -174,6 +175,19 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 
 func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	t.Helper()
+	if *runtimeLoadWorkload == "postgres" {
+		if !slices.Contains([]string{"off", "metrics", "cpu", "contention", "trace"}, *postgresLoadDiagnostics) || *postgresLoadDiagnostics != "off" && *runtimeLoadDuration <= publisherDiagnosticGuard {
+			t.Fatal("invalid PostgreSQL diagnostics mode or duration")
+		}
+		if !*runtimeLoadHATopology || !*runtimeLoadCapacityOnly || *runtimeLoadPublicURLs != 1 || *runtimeLoadWorkers < 1 || *runtimeLoadWorkers > tunnel.MaxConnectorApplicationStreams || *runtimeLoadQueue != *runtimeLoadWorkers || *runtimeLoadRPS < 1 || *runtimeLoadRPS > 10000 || *runtimeLoadDuration < time.Second || *runtimeLoadDuration > 5*time.Minute || *runtimeLoadScenario != "relay-restart" || *runtimeLoadHeldStreams != 0 {
+			t.Fatalf("postgres load requires HA, capacity-only, one service, 1-%d workers, queue equal to workers, 1-10000 requests/second, 1s-5m duration, no held streams, and the baseline scenario", tunnel.MaxConnectorApplicationStreams)
+		}
+		if samples := (int64(*runtimeLoadRPS)*int64(*runtimeLoadDuration) + int64(time.Second) - 1) / int64(time.Second); samples > postgresLoadMaxSamples {
+			t.Fatalf("postgres load allows at most %d offered queries per phase; reduce RPS or duration", postgresLoadMaxSamples)
+		}
+		separatedConfig(t, "ingress-a")
+		return *runtimeLoadPublicURLs, *runtimeLoadRPS, *runtimeLoadDuration
+	}
 	if *runtimeLoadWorkload != "public-url" && *runtimeLoadWorkload != "connect" {
 		t.Fatal("invalid runtime workload")
 	}
@@ -358,6 +372,9 @@ func assertSeparatedNoMemoryLimitEvents(t *testing.T, phase string, before, afte
 	components := append(append(separatedIngresses(), "relay-a", "relay-b"), separatedAppComponents()...)
 	components = append(components, separatedPublisherComponents()...)
 	components = append(components, "visitor-1", "visitor-2", "visitor-3", "visitor-4")
+	if *runtimeLoadWorkload == "postgres" {
+		components = append(components, "postgres-target")
+	}
 	for _, component := range components {
 		a, b := before.Resources[component], after.Resources[component]
 		if b.MemoryMaxEvents > a.MemoryMaxEvents || b.OOMKills > a.OOMKills {

@@ -8,6 +8,7 @@ x-runtime: &runtime
   volumes:
     - artifacts:/artifacts:ro
     - coordination:/load
+    - ${RUNTIME_DATABASE_TLS_DIR:-.}:/database-fixture:ro
     - ${RESULTS:?results directory required}:/results
   environment: &environment
     PATH: /artifacts:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -29,6 +30,7 @@ x-runtime: &runtime
         -tnl-separated-component="$${SEPARATED_COMPONENT}" \
         -tnl-runtime-load-workload='${RUNTIME_WORKLOAD:-public-url}' \
         -tnl-connect-load-payload-bytes='${CONNECT_PAYLOAD_BYTES:-256}' \
+        -tnl-postgres-load-diagnostics='${POSTGRES_DIAGNOSTICS:-off}' \
         -tnl-runtime-load-public-urls='${PUBLIC_URLS:-4}' \
         -tnl-runtime-load-start-parallel='${START_PARALLEL:-4}' \
         -tnl-runtime-load-ready-timeout='${READY_TIMEOUT:-30s}' \
@@ -77,9 +79,11 @@ services:
       GOBIN: /artifacts
       RACE: "${RACE:-0}"
       RUNTIME_WORKLOAD: "${RUNTIME_WORKLOAD:-public-url}"
+      POSTGRES_DIAGNOSTICS: "${POSTGRES_DIAGNOSTICS:-off}"
     volumes:
       - ../../../..:/workspace:ro
       - artifacts:/artifacts
+      - ${RESULTS:?results directory required}:/results
       - go-cache:/root/.cache/go-build
       - go-modules:/go/pkg/mod
     command:
@@ -93,12 +97,15 @@ services:
         else
           go test -buildvcs=false -c -o /artifacts/runtime.test ./internal/daemon
         fi
-        if [ "$${RUNTIME_WORKLOAD}" = connect ]; then
+        if [ "$${RUNTIME_WORKLOAD}" = connect ] || [ "$${RUNTIME_WORKLOAD}" = postgres ]; then
           if [ "$${RACE}" = 1 ]; then
             go build -buildvcs=false -race -o /artifacts/tnl ./cmd/tnl
           else
             go build -buildvcs=false -o /artifacts/tnl ./cmd/tnl
           fi
+        fi
+        if [ "$${RUNTIME_WORKLOAD}" = postgres ] && [ "$${POSTGRES_DIAGNOSTICS}" != off ]; then
+          cp /artifacts/runtime.test /results/runtime.test
         fi
 
   postgres:
@@ -112,6 +119,34 @@ services:
       POSTGRES_USER: postgres
     healthcheck:
       test: [CMD-SHELL, pg_isready --username postgres --dbname postgres]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  postgres-target:
+    profiles: [postgres-load]
+    image: docker.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    cpus: "${APP_CPUS:-1}"
+    mem_limit: "${APP_MEMORY:-512m}"
+    memswap_limit: "${APP_MEMORY:-512m}"
+    environment:
+      POSTGRES_DB: tnl_fixture
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_USER: tnl_client
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    volumes:
+      - ${RUNTIME_DATABASE_TLS_DIR:-.}:/database-fixture:ro
+    entrypoint: [sh, -ec]
+    command:
+      - |
+        mkdir -p /tnl-fixture
+        cp /database-fixture/* /tnl-fixture/
+        printf 'local all all trust\nhostnossl all all all reject\nhostssl all all all scram-sha-256\n' > /tnl-fixture/pg_hba.conf
+        chown -R postgres:postgres /tnl-fixture
+        chmod 600 /tnl-fixture/server.key
+        exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tnl-fixture/server.pem -c ssl_key_file=/tnl-fixture/server.key -c ssl_ca_file=/tnl-fixture/ca.pem -c hba_file=/tnl-fixture/pg_hba.conf -c password_encryption=scram-sha-256 -c max_connections=300
+    healthcheck:
+      test: [CMD-SHELL, pg_isready --username tnl_client --dbname tnl_fixture]
       interval: 2s
       timeout: 5s
       retries: 10
@@ -375,6 +410,7 @@ services:
     volumes:
       - artifacts:/artifacts:ro
       - coordination:/load
+      - ${RUNTIME_DATABASE_TLS_DIR:-.}:/database-fixture:ro
       - ${RESULTS:?results directory required}:/results
 
 volumes:

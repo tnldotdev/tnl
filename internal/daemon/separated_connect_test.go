@@ -42,10 +42,12 @@ type connectLoadPhase struct {
 }
 
 type connectLoadResult struct {
-	Summary  benchworkload.VisitorResult
-	Setup    benchworkload.Histogram
-	Requests []benchworkload.RequestResult
-	Cohorts  map[string]benchworkload.VisitorResult
+	Summary                       benchworkload.VisitorResult
+	Setup                         benchworkload.Histogram
+	Requests                      []benchworkload.RequestResult `json:",omitempty"`
+	RequestsFile                  string                        `json:"requests_file,omitempty"`
+	Cohorts                       map[string]benchworkload.VisitorResult
+	SessionsBefore, SessionsAfter *benchworkload.PostgresSessions `json:",omitempty"`
 }
 
 func runSeparatedConnectTarget(t *testing.T, ctx context.Context, component string) {
@@ -86,6 +88,11 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 	if !separatedRead(t, ctx, "publish.start", nil) {
 		return
 	}
+	var diagnostics *separatedPublisherDiagnostics
+	if *runtimeLoadWorkload == "postgres" {
+		ctx, diagnostics = setupSeparatedPublisherDiagnostics(t, ctx)
+		defer diagnostics.Close(t)
+	}
 	state, authenticated := connectLoadClient(t, ctx)
 	profile, err := state.Server(ctx, authenticated.ServerEndpoint)
 	if err != nil {
@@ -104,7 +111,13 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 		if err != nil {
 			t.Fatal(err)
 		}
-		service, err := authenticated.Control.CreateService(ctx, person.PersonalTeamId, fmt.Sprintf("connect-%d", index), key)
+		var metadata []controlv1.ServiceMetadata
+		target := "127.0.0.1:8080"
+		if *runtimeLoadWorkload == "postgres" {
+			metadata = append(metadata, postgresLoadMetadata(t))
+			target = postgresLoadTarget
+		}
+		service, err := authenticated.Control.CreateService(ctx, person.PersonalTeamId, fmt.Sprintf("connect-%d", index), key, metadata...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -129,7 +142,7 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 		publishers.Go(func() {
 			err := publisherservice.Publish(publishCtx, publisherservice.RunConfig{
 				Control: authenticated.Control, State: profile, Access: native.Access, Identity: identity,
-				ServiceID: service.Id, Target: "127.0.0.1:8080", StreamCapacity: 256,
+				ServiceID: service.Id, Target: target, StreamCapacity: 256,
 				Metadata:  controlv1.ServiceMetadata{Protocol: service.Protocol, TargetTls: service.TargetTls, TrustRevision: service.TrustRevision, PublisherPool: service.PublisherPool},
 				Ready:     func() error { close(ready); return nil },
 				RelayQUIC: quicConnector, RelayTCP: tcp,
@@ -153,8 +166,19 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 			t.Fatal("connect publisher readiness deadline")
 		}
 		services[index] = connectLoadService{Service: service, Target: separatedPublisherComponents()[shard] + ":8080", Transport: transport}
+		if *runtimeLoadWorkload == "postgres" {
+			services[index].Target = target
+		}
 	}
 	separatedWrite(t, separatedPublisherShardKey(shard, "connect-ready"), services)
+	if diagnostics != nil {
+		var phase connectLoadPhase
+		if !separatedRead(t, ctx, "connect.phase-1", &phase) {
+			return
+		}
+		diagnostics.Capture(t, ctx, phase.Name, phase.Start, phase.Duration)
+		separatedWrite(t, phase.Name+".publisher-diagnostics-done", true)
+	}
 	if !separatedRead(t, ctx, "connect.publishers.stop", nil) {
 		return
 	}
@@ -183,9 +207,9 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 	}
 	separatedWrite(t, "connect.services", services)
 	var startup benchworkload.Histogram
-	for index := 1; index <= 4; index++ {
+	for _, component := range separatedConnectVisitors() {
 		var result benchworkload.Histogram
-		separatedWait(t, fmt.Sprintf("visitor-%d.connect-ready", index), time.Duration(count)*35*time.Second, &result)
+		separatedWait(t, component+".connect-ready", time.Duration(count)*35*time.Second, &result)
 		if err := startup.Merge(result); err != nil {
 			t.Fatal(err)
 		}
@@ -201,28 +225,44 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 	if err := database.QueryRowContext(t.Context(), `SELECT count(*), count(DISTINCT relay_service_id) FROM control.service_connection_slots WHERE state='ready' AND session_open`).Scan(&readyPublisherConnections, &relays); err != nil || readyPublisherConnections != count*2 || relays != 2 {
 		t.Fatalf("publisher connections=%d relays=%d: %v", readyPublisherConnections, relays, err)
 	}
-	separatedResult(t, "connect-configuration", struct {
-		Services, RequestsPerSecond, Workers, Queue, PayloadBytes int
-		Duration                                                  time.Duration
-	}{count, rate, *runtimeLoadWorkers, *runtimeLoadQueue, *connectLoadPayloadBytes, duration})
-	for sequence, name := range []string{"direct-fresh", "connect-fresh", "direct-reused", "connect-reused"} {
+	if *runtimeLoadWorkload != "postgres" {
+		separatedResult(t, "connect-configuration", struct {
+			Services, RequestsPerSecond, Workers, Queue, PayloadBytes int
+			Duration                                                  time.Duration
+		}{count, rate, *runtimeLoadWorkers, *runtimeLoadQueue, *connectLoadPayloadBytes, duration})
+	}
+	names := []string{"direct-fresh", "connect-fresh", "direct-reused", "connect-reused"}
+	if *runtimeLoadWorkload == "postgres" {
+		names = []string{"direct-postgres-warm", "connect-postgres-warm"}
+		var runs int
+		var runID, publisherID string
+		if err := database.QueryRowContext(t.Context(), `SELECT count(*),min(id),min(publisher_identity_id) FROM control.service_runs WHERE closed_at IS NULL`).Scan(&runs, &runID, &publisherID); err != nil || runs != 1 {
+			t.Fatalf("PostgreSQL workload needs one shared service run: runs=%d error=%v", runs, err)
+		}
+		separatedResult(t, "postgres-configuration", map[string]any{"query": "SELECT 1", "protocol": "postgres", "query_execution_mode": "simple", "channel_binding": "disable", "visitor_tls": "verify-full", "target_tls": "verify-full", "services": count, "service_id": services[0].Service.Id, "service_run_id": runID, "publisher_identity_id": publisherID, "publisher_processes": 1, "connector_processes": 1, "connections": *runtimeLoadWorkers, "rps": rate, "duration": duration, "queue": *runtimeLoadQueue, "target_tls_hostname": postgresLoadHostname, "transport": services[0].Transport, "diagnostics": *postgresLoadDiagnostics, "metrics_owner_attached": *postgresLoadDiagnostics != "off"})
+	}
+	for sequence, name := range names {
 		phase := connectLoadPhase{Name: name, Start: time.Now().Add(time.Second), Duration: duration, Direct: strings.HasPrefix(name, "direct"), Reuse: strings.HasSuffix(name, "reused")}
+		phase.Reuse = phase.Reuse || *runtimeLoadWorkload == "postgres"
 		// reused sockets are prepared before the timestamp is chosen, keeping setup
 		// and offered scheduling delay out of the steady-state measurement.
 		if phase.Reuse {
 			separatedWrite(t, fmt.Sprintf("connect.prepare-%d", sequence), phase)
-			for index := 1; index <= 4; index++ {
-				separatedWait(t, fmt.Sprintf("%s.visitor-%d.prepared", name, index), 2*time.Minute, nil)
+			for _, component := range separatedConnectVisitors() {
+				separatedWait(t, name+"."+component+".prepared", 2*time.Minute, nil)
 			}
-			phase.Start = time.Now().Add(time.Second)
 		}
 		before := separatedCapture(t, database, name+"-before")
+		phase.Start = time.Now().Add(time.Second)
 		separatedWrite(t, fmt.Sprintf("connect.phase-%d", sequence), phase)
 		var results []connectLoadResult
-		for index := 1; index <= 4; index++ {
+		for _, component := range separatedConnectVisitors() {
 			var result connectLoadResult
-			separatedWait(t, fmt.Sprintf("%s.visitor-%d", name, index), duration+15*time.Second, &result)
+			separatedWait(t, name+"."+component, duration+15*time.Second, &result)
 			results = append(results, result)
+		}
+		if *runtimeLoadWorkload == "postgres" && *postgresLoadDiagnostics != "off" && !phase.Direct {
+			separatedWait(t, name+".publisher-diagnostics-done", 15*time.Second, nil)
 		}
 		after := separatedCapture(t, database, name+"-after")
 		separatedReportResources(t, name, before, after)
@@ -230,12 +270,12 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 		assertSeparatedNoRejections(t, name, before, after)
 		reportConnectLoad(t, name, results)
 	}
-	separatedWrite(t, "connect.phase-4", connectLoadPhase{Done: true})
-	for index := 1; index <= 4; index++ {
+	separatedWrite(t, fmt.Sprintf("connect.phase-%d", len(names)), connectLoadPhase{Done: true})
+	for _, component := range separatedConnectVisitors() {
 		var clean bool
-		separatedWait(t, fmt.Sprintf("visitor-%d.connect-stopped", index), 30*time.Second, &clean)
+		separatedWait(t, component+".connect-stopped", 30*time.Second, &clean)
 		if !clean {
-			t.Errorf("visitor-%d failed connector shutdown", index)
+			t.Errorf("%s failed connector shutdown", component)
 		}
 	}
 	separatedWrite(t, "connect.publishers.stop", true)
@@ -271,7 +311,7 @@ func reportConnectLoad(t *testing.T, name string, results []connectLoadResult) {
 	var summary benchworkload.VisitorResult
 	var setup benchworkload.Histogram
 	cohorts := make(map[string]benchworkload.VisitorResult)
-	var actual, first, scheduled []time.Duration
+	var actual, first, scheduled, queue []time.Duration
 	for _, result := range results {
 		if err := summary.Merge(result.Summary); err != nil {
 			t.Fatal(err)
@@ -286,13 +326,26 @@ func reportConnectLoad(t *testing.T, name string, results []connectLoadResult) {
 			}
 			cohorts[transport] = cohort
 		}
-		for _, row := range result.Requests {
+		if result.RequestsFile != "" && actual == nil {
+			actual = make([]time.Duration, 0, result.Summary.Successes)
+			scheduled = make([]time.Duration, 0, result.Summary.Successes)
+			queue = make([]time.Duration, 0, result.Summary.Completed+result.Summary.QueueExpired)
+		}
+		if err := forEachConnectLoadRequest("/results", result, func(row benchworkload.RequestResult) {
+			queue = append(queue, row.QueueDelay)
 			if row.Error != "" {
-				continue
+				return
 			}
 			actual = append(actual, row.Duration-row.QueueDelay)
 			scheduled = append(scheduled, row.Duration)
-			first = append(first, row.FirstByte.Sub(row.Started))
+			if !row.FirstByte.IsZero() {
+				first = append(first, row.FirstByte.Sub(row.Started))
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if *runtimeLoadWorkload == "postgres" && (result.SessionsBefore == nil || result.SessionsAfter == nil || !slices.Equal(result.SessionsBefore.BackendPIDs, result.SessionsAfter.BackendPIDs) || len(result.SessionsAfter.BackendPIDs) != *runtimeLoadWorkers || result.SessionsBefore.DialCalls != int64(*runtimeLoadWorkers) || result.SessionsAfter.DialCalls != int64(*runtimeLoadWorkers)) {
+			t.Error("warm PostgreSQL sessions changed or reconnected")
 		}
 	}
 	separatedResult(t, name+"-summary", summary)
@@ -315,17 +368,52 @@ func reportConnectLoad(t *testing.T, name string, results []connectLoadResult) {
 		}
 		return values
 	}
-	separatedResult(t, name+"-latency", map[string]any{"samples": len(actual), "request": exact(actual), "first_response_byte": exact(first), "scheduled": exact(scheduled)})
+	separatedResult(t, name+"-latency", map[string]any{"samples": len(actual), "request": exact(actual), "first_response_byte": exact(first), "scheduled": exact(scheduled), "queue": exact(queue), "successful_requests_per_second": float64(summary.Successes) / (summary.OfferDuration + summary.DrainDuration).Seconds()})
 	t.Logf("connect_load phase=%s success=%d failure=%d missed=%d queue_expired=%d request=%v first_response_byte=%v", name, summary.Successes, summary.Failures, summary.Missed, summary.QueueExpired, exact(actual), exact(first))
 	var expected int
-	for index := range 4 {
-		rate := benchworkload.Assignment(*runtimeLoadRPS, 4, index)
+	for index := range separatedConnectVisitors() {
+		rate := benchworkload.Assignment(*runtimeLoadRPS, len(separatedConnectVisitors()), index)
 		expected += int((time.Duration(rate)**runtimeLoadDuration + time.Second - 1) / time.Second)
 	}
 	if err := summary.Err(); err != nil || summary.Scheduled != expected || len(actual) != summary.Successes {
 		t.Errorf("%s: %v; failures=%+v", name, err, summary.FailuresSample)
 		t.Errorf("scheduled=%d expected=%d latency samples=%d successes=%d", summary.Scheduled, expected, len(actual), summary.Successes)
 	}
+}
+
+func forEachConnectLoadRequest(directory string, result connectLoadResult, observe func(benchworkload.RequestResult)) error {
+	if result.RequestsFile == "" {
+		for _, row := range result.Requests {
+			observe(row)
+		}
+		return nil
+	}
+	if len(result.Requests) != 0 {
+		return fmt.Errorf("request artifact must not include inline rows")
+	}
+	path := filepath.Join(directory, result.RequestsFile)
+	var successes, failures, expired int
+	rows, err := streamSeparatedRequestFile(path, func(row benchworkload.RequestResult) {
+		switch {
+		case row.QueueExpired:
+			expired++
+		case row.Error != "":
+			failures++
+		default:
+			successes++
+		}
+		observe(row)
+	})
+	if err != nil {
+		return err
+	}
+	if want := result.Summary.Completed + result.Summary.QueueExpired; rows != want {
+		return fmt.Errorf("%s request artifact: got %d rows, want %d", path, rows, want)
+	}
+	if successes != result.Summary.Successes || failures != result.Summary.Failures || expired != result.Summary.QueueExpired {
+		return fmt.Errorf("%s request artifact outcomes differ from summary: success=%d failures=%d queue_expired=%d", path, successes, failures, expired)
+	}
+	return nil
 }
 
 func runSeparatedConnectVisitor(t *testing.T, ctx context.Context, component string, rate int) {
@@ -339,7 +427,7 @@ func runSeparatedConnectVisitor(t *testing.T, ctx context.Context, component str
 	cohortByAddress := make(map[string]string)
 	var startup benchworkload.Histogram
 	var processes []*integrationBinaryProcess
-	for serviceIndex := index - 1; serviceIndex < len(services); serviceIndex += 4 {
+	for serviceIndex := index - 1; serviceIndex < len(services); serviceIndex += len(separatedConnectVisitors()) {
 		service := services[serviceIndex]
 		started := time.Now()
 		address := unusedTCPAddress(t)
@@ -381,6 +469,15 @@ func runSeparatedConnectVisitor(t *testing.T, ctx context.Context, component str
 		cohortByAddress[address], cohortByAddress[service.Target] = service.Transport, service.Transport
 	}
 	separatedWrite(t, component+".connect-ready", startup)
+	if *runtimeLoadWorkload == "postgres" {
+		runSeparatedPostgresVisitor(t, ctx, component, services[0], local[0])
+		for _, process := range processes {
+			stopIntegrationBinaryProcess(t, process)
+		}
+		separatedWrite(t, component+".connect-stopped", !t.Failed())
+		<-ctx.Done()
+		return
+	}
 	for sequence := 0; ; sequence++ {
 		var phase connectLoadPhase
 		visitor := &benchworkload.TCPVisitor{PayloadBytes: *connectLoadPayloadBytes}

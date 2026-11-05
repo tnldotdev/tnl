@@ -22,6 +22,7 @@ type Update struct {
 	View               visitortoken.View
 	KeyRevision        int64
 	Enabled, Anonymous bool
+	BoundConnections   bool
 	IP                 *ippolicy.Policy
 	AfterRevision      int64
 	Events             []int64
@@ -160,6 +161,7 @@ type Guard struct {
 	once           sync.Once
 	timer          *time.Timer
 	anonymous      bool
+	connection     bool
 	renewable      bool
 	confirmedUntil time.Time
 	connector      *connectorPermission
@@ -169,6 +171,9 @@ func (g *Guard) allowedLocked(now time.Time) bool {
 	l := g.lease
 	if g.connector != nil && g.connector.metadata != l.update.View.MetadataRevision {
 		return false
+	}
+	if g.connection {
+		return l.current && l.update.Enabled && l.update.BoundConnections && now.Before(l.update.View.ValidUntil)
 	}
 	if g.anonymous {
 		return l.current && l.update.Enabled && l.update.Anonymous && now.Before(l.update.View.ValidUntil) && (l.update.IP == nil || l.update.IP.Allows(g.source))
@@ -195,6 +200,30 @@ func (l *Lease) BindAnonymous(source netip.Addr, stop func()) (*Guard, error) {
 	return l.bind(visitortoken.VerifiedPermission{}, true, source, stop)
 }
 
+// BindConnection fences time-limited serving authority, including idle TLS and
+// setup connections. it grants no visitor permission. ordinary policies retain
+// their request-level guards and return no connection guard.
+func (l *Lease) BindConnection(stop func()) (*Guard, error) {
+	if stop == nil {
+		return nil, ErrUpdate
+	}
+	l.mu.Lock()
+	now := l.now()
+	stopped := l.expireLocked(now)
+	var guard *Guard
+	var err error
+	if !l.current || !l.update.Enabled {
+		err = visitortoken.ErrPolicy
+	} else if l.update.BoundConnections {
+		guard = &Guard{lease: l, connection: true, stop: stop}
+		l.guards[guard] = struct{}{}
+		guard.resetLocked()
+	}
+	l.mu.Unlock()
+	stopGuards(stopped)
+	return guard, err
+}
+
 func (l *Lease) bind(permission visitortoken.VerifiedPermission, anonymous bool, source netip.Addr, stop func()) (*Guard, error) {
 	if stop == nil {
 		return nil, ErrUpdate
@@ -219,7 +248,7 @@ func (g *Guard) resetLocked() {
 	view := g.lease.update.View
 	facts := g.permission.Facts()
 	until := view.ValidUntil
-	if !g.anonymous {
+	if !g.anonymous && !g.connection {
 		until = view.LocalDeadline(facts.ExpiresAt)
 		if g.renewable && facts.VisitorPolicyRevision != view.VisitorPolicyRevision {
 			until = earlier(until, g.confirmedUntil)

@@ -428,18 +428,42 @@ func (w *publisherHTTPWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if w.status == 0 {
 		w.status, w.headers = 101, time.Now()
 	}
-	return &publisherConn{Conn: c, ctx: w.ctx, readDirection: "visitor_to_target", writeDirection: "target_to_visitor"}, rw, nil
+	return newPublisherConn(w.ctx, c, "visitor_to_target", "target_to_visitor"), rw, nil
 }
 
 type publisherConn struct {
 	net.Conn
 	ctx                           context.Context
 	readDirection, writeDirection string
+	metrics                       *Metrics
+	readOptions, writeOptions     [1]metric.AddOption
+}
+
+func newPublisherConn(ctx context.Context, conn net.Conn, readDirection, writeDirection string) *publisherConn {
+	c := &publisherConn{Conn: conn, ctx: ctx, readDirection: readDirection, writeDirection: writeDirection, metrics: FromContext(ctx)}
+	if c.metrics != nil {
+		attrs := publisherDataAttributes(ctx)
+		// WithAttributes copies and freezes each direction's set once. retain
+		// the option arrays too, rather than allocating a variadic slice per copy.
+		c.readOptions[0] = metric.WithAttributes(append(attrs, Direction.String(readDirection))...)
+		c.writeOptions[0] = metric.WithAttributes(append(attrs, Direction.String(writeDirection))...)
+	}
+	return c
+}
+
+// http forwarding/origin and recovery remain live on the original context.
+func (c *publisherConn) recordBytes(direction string, n int, options []metric.AddOption) {
+	if c.metrics != nil && n > 0 && publisherApplicationBytes(c.ctx, direction) {
+		c.metrics.publisherData.bytes.Add(c.ctx, int64(n), options...)
+		if direction == "target_to_visitor" {
+			publisherResponseObserved(c.ctx)
+		}
+	}
 }
 
 func (c *publisherConn) Read(p []byte) (int, error) {
 	n, e := c.Conn.Read(p)
-	publisherBytes(c.ctx, c.readDirection, n)
+	c.recordBytes(c.readDirection, n, c.readOptions[:])
 	if e != nil && !errors.Is(e, io.EOF) {
 		PublisherHTTPWriteError(c.ctx, e)
 	}
@@ -447,7 +471,7 @@ func (c *publisherConn) Read(p []byte) (int, error) {
 }
 func (c *publisherConn) Write(p []byte) (int, error) {
 	n, e := c.Conn.Write(p)
-	publisherBytes(c.ctx, c.writeDirection, n)
+	c.recordBytes(c.writeDirection, n, c.writeOptions[:])
 	PublisherHTTPWriteError(c.ctx, e)
 	return n, e
 }
@@ -470,7 +494,7 @@ func PublisherStream(ctx context.Context, target net.Conn) (net.Conn, func(error
 		m.publisherData.streamsActive.Add(ctx, 1, metric.WithAttributes(attrs...))
 	}
 	var once sync.Once
-	return &publisherConn{Conn: target, ctx: ctx, readDirection: "target_to_visitor", writeDirection: "visitor_to_target"}, func(err error) {
+	return newPublisherConn(ctx, target, "target_to_visitor", "visitor_to_target"), func(err error) {
 		once.Do(func() {
 			if ctx.Err() != nil {
 				err = context.Cause(ctx)

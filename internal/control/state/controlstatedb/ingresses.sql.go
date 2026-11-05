@@ -61,6 +61,28 @@ func (q *Queries) BeginIngressDrain(ctx context.Context, arg BeginIngressDrainPa
 	return i, err
 }
 
+const fenceIngressRun = `-- name: FenceIngressRun :one
+INSERT INTO control.ingress_run_fences (ingress_id, ingress_run_id, ingress_lease_revision)
+VALUES ($1, $2, $3)
+ON CONFLICT (ingress_id, ingress_run_id) DO UPDATE
+SET ingress_lease_revision = EXCLUDED.ingress_lease_revision
+WHERE control.ingress_run_fences.ingress_lease_revision = EXCLUDED.ingress_lease_revision
+RETURNING ingress_lease_revision
+`
+
+type FenceIngressRunParams struct {
+	IngressID            string
+	IngressRunID         string
+	IngressLeaseRevision int64
+}
+
+func (q *Queries) FenceIngressRun(ctx context.Context, arg FenceIngressRunParams) (int64, error) {
+	row := q.db.QueryRow(ctx, fenceIngressRun, arg.IngressID, arg.IngressRunID, arg.IngressLeaseRevision)
+	var ingress_lease_revision int64
+	err := row.Scan(&ingress_lease_revision)
+	return ingress_lease_revision, err
+}
+
 const getIngressLease = `-- name: GetIngressLease :one
 SELECT id, ingress_id, ingress_run_id, ingress_lease_revision, protocol_version, connection_capacity, ingress_pool_id, service_ports, reported_connections, routing_table_revision, draining, drain_deadline, registered_at, renewed_at, lease_expires_at
 FROM control.ingress_leases
@@ -165,7 +187,7 @@ INSERT INTO control.ingress_leases (
 ) VALUES (
     $1,
     $2,
-    1,
+    COALESCE((SELECT max(ingress_lease_revision) FROM control.ingress_run_fences WHERE ingress_id = $1), 0) + 1,
     $3,
     $4,
     $5,

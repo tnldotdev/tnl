@@ -30,6 +30,7 @@ tasks:
     env:
       RUNTIME_WORKLOAD: '{{default "public-url" .WORKLOAD}}'
       CONNECT_PAYLOAD_BYTES: '{{default "256" .PAYLOAD_BYTES}}'
+      POSTGRES_DIAGNOSTICS: '{{default "off" .DIAGNOSTICS}}'
       VISITOR_MEMORY: '{{default "128m" .VISITOR_MEMORY}}'
       PUBLIC_URLS: "{{.PUBLIC_URLS}}"
       START_PARALLEL: '{{default "" .START_PARALLEL}}'
@@ -71,17 +72,21 @@ tasks:
 
   go:test:load:connect:
     dir: "{{.ROOT_DIR}}"
-    desc: Measure built tnl connect startup, fresh sockets, and reused sockets in the separated local topology
+    desc: Measure built tnl connect in the separated topology (MODE=postgres for warm SELECT 1; WORKERS=connections, RPS, DURATION, RESULTS)
+    vars:
+      MODE: '{{default "connect" .MODE}}'
+      CONNECTIONS: '{{default "16" .WORKERS}}'
     cmds:
       - task: go:test:load:runtime
         vars:
-          WORKLOAD: connect
-          PUBLIC_URLS: '{{default "4" .SERVICES}}'
+          WORKLOAD: "{{.MODE}}"
+          PUBLIC_URLS: '{{if eq .MODE "postgres"}}1{{else}}{{default "4" .SERVICES}}{{end}}'
           RPS: '{{default "4" .RPS}}'
-          WORKERS: '{{default "16" .WORKERS}}'
-          QUEUE: '{{default "8" .QUEUE}}'
+          WORKERS: "{{.CONNECTIONS}}"
+          QUEUE: '{{if eq .MODE "postgres"}}{{.CONNECTIONS}}{{else}}{{default "8" .QUEUE}}{{end}}'
           DURATION: '{{default "10s" .DURATION}}'
           PAYLOAD_BYTES: '{{default "256" .PAYLOAD_BYTES}}'
+          DIAGNOSTICS: '{{default "off" .DIAGNOSTICS}}'
           HA_TOPOLOGY: "1"
           CAPACITY_ONLY: "1"
           HELD_STREAMS: "0"
@@ -93,3 +98,15 @@ tasks:
           RACE: '{{default "0" .RACE}}'
           VISITOR_MEMORY: '{{default "512m" .VISITOR_MEMORY}}'
           RESULTS: '{{default (printf "bench-results/connect-%s" (now | date "20060102-150405")) .RESULTS}}'
+
+  go:test:load:postgres:
+    dir: "{{.ROOT_DIR}}"
+    desc: Measure warm SELECT 1 on one service run (WORKERS=connections, RPS, DURATION, RESULTS; DIAGNOSTICS=off by default)
+    cmds:
+      - task: go:test:load:connect
+        vars:
+          MODE: postgres
+          WORKERS: '{{default "4" .WORKERS}}'
+          RPS: '{{default "256" .RPS}}'
+          DURATION: '{{default "10s" .DURATION}}'
+          RESULTS: '{{default (printf "bench-results/postgres-%s" (now | date "20060102-150405")) .RESULTS}}'

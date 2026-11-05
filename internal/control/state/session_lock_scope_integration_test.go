@@ -48,22 +48,67 @@ func TestIntegrationSessionStartsOnDifferentRoutesShareTeamGuard(t *testing.T) {
 	}
 }
 
-func TestIntegrationHeartbeatProgressesWithUsageRouteReference(t *testing.T) {
+func TestIntegrationHeartbeatProgressesWithPublicURLReference(t *testing.T) {
 	f := newPublishRunFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	usage, err := f.database.pool.Begin(ctx)
+	reference, err := f.database.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rollbackTestTransaction(t, usage)
-	if _, err := controlstatedb.New(usage).LockPublicURLForUsage(ctx, f.setup.PublicURLID); err != nil {
+	defer rollbackTestTransaction(t, reference)
+	if _, err := reference.Exec(ctx, `SELECT id FROM control.public_urls WHERE id=$1 FOR KEY SHARE`, f.setup.PublicURLID); err != nil {
 		t.Fatal(err)
 	}
-	// usage retains this reference until its page commits. a heartbeat may
-	// serialize on the publish run, but must not wait for a public URL identity reference.
+	// a heartbeat may serialize on the publish run, but must not wait for a
+	// transaction retaining a public URL identity reference.
 	if _, err := f.database.HeartbeatPublishRun(ctx, f.authentication(), f.now.Add(time.Second), time.Hour, time.Hour); err != nil {
-		t.Fatalf("heartbeat blocked behind usage's route reference: %v", err)
+		t.Fatalf("heartbeat blocked behind a public URL reference: %v", err)
+	}
+}
+
+func TestIntegrationHeartbeatWaitsOnFinalRoutingTableEvent(t *testing.T) {
+	f := newPublishRunFixture(t)
+	readyTestSession(t, f)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	heartbeat := func(at time.Time) error {
+		setup, err := f.database.HeartbeatPublishRun(ctx, f.authentication(), at, time.Hour, time.Minute)
+		if err == nil && (setup.State != "ready" || setup.PublisherConnections[0].State != PublisherConnectionReady || setup.PublisherConnections[1].State != PublisherConnectionReady) {
+			return errors.New("heartbeat lost ready connections")
+		}
+		return err
+	}
+	if err := heartbeat(f.now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	clock, err := f.database.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, clock)
+	if _, err := controlstatedb.New(clock).LockIngressRoutingTableClock(ctx); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
+	workers.Go(func() { done <- heartbeat(f.now.Add(2 * time.Second)) })
+	// ready heartbeats wait on the routing clock while publishing their final
+	// lease-extension event, not during an earlier state query.
+	waitForPostgresBlock(t, ctx, f.database, int32(clock.Conn().PgConn().PID()), done)
+	operations, truncated := f.database.activity.snapshot(time.Now())
+	if truncated || len(operations) != 1 || operations[0].Operation != "InsertFinalIngressRoutingTableEvent" {
+		t.Fatalf("heartbeat clock wait = %+v", operations)
+	}
+	if err := clock.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaitIntegrationResult(t, ctx, done); err != nil {
+		t.Fatal(err)
+	}
+	if operations, truncated := f.database.activity.snapshot(time.Now()); len(operations) != 0 || truncated {
+		t.Fatalf("finished heartbeat retained: %+v", operations)
 	}
 }
 
