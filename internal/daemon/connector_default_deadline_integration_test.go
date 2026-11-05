@@ -226,6 +226,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 		t.Fatal(err)
 	}
 	// cross more than two full production 30-second lease cycles on this socket.
+	lastExchange := 0
 	for n := 1; n <= 14; n++ {
 		select {
 		case <-time.After(5 * time.Second):
@@ -233,6 +234,37 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 			t.Fatal(t.Context().Err())
 		}
 		exchange(n)
+		lastExchange = n
+	}
+	// choose an actual renewal phase where installation expires before both
+	// endpoint owners and application permission. otherwise a permission expiry
+	// could close the target first and make the packet-pause assertion vacuous.
+	var checks int
+	var latest, publisherUntil, publisherOwnerUntil, runUntil, permissionUntil, tokenUntil time.Time
+	var changed bool
+	phaseDeadline := time.Now().Add(20 * time.Second)
+	for {
+		faults.mu.Lock()
+		checks, latest, publisherUntil, publisherOwnerUntil = faults.renewals, faults.connectorUntil, faults.publisherUntil, faults.publisherOwnerUntil
+		runUntil, permissionUntil, tokenUntil = faults.runUntil, faults.permissionUntil, faults.tokenUntil
+		changed = faults.changedPair
+		remaining := minTime(latest, minTime(runUntil, minTime(permissionUntil, minTime(tokenUntil, publisherOwnerUntil))))
+		if publisherUntil.After(time.Now().Add(10*time.Second)) && remaining.After(publisherUntil.Add(2*time.Second)) {
+			faults.outage = true
+			faults.mu.Unlock()
+			break
+		}
+		faults.mu.Unlock()
+		if !time.Now().Before(phaseDeadline) {
+			t.Fatal("default renewal did not leave a retained-owner interval after installation expiry")
+		}
+		select {
+		case <-time.After(time.Second):
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+		lastExchange++
+		exchange(lastExchange)
 	}
 	var binding string
 	var count int
@@ -240,9 +272,9 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 		t.Fatal("default renewal replaced the exact connector owner", count, err)
 	}
 	target.mu.Lock()
-	first, last := target.receivedOn["same-stream-0\n"], target.receivedOn["same-stream-14\n"]
+	first, last := target.receivedOn["same-stream-0\n"], target.receivedOn[fmt.Sprintf("same-stream-%d\n", lastExchange)]
 	targetClosed := target.closedOn[first]
-	for n := range 15 {
+	for n := range lastExchange + 1 {
 		if target.received[fmt.Sprintf("same-stream-%d\n", n)] != 1 {
 			t.Error("default renewal replayed application bytes")
 		}
@@ -251,12 +283,6 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	if first == nil || first != last || targetClosed == nil {
 		t.Fatal("default renewal reopened the target")
 	}
-	faults.mu.Lock()
-	checks, latest, publisherUntil, publisherOwnerUntil := faults.renewals, faults.connectorUntil, faults.publisherUntil, faults.publisherOwnerUntil
-	runUntil, permissionUntil, tokenUntil := faults.runUntil, faults.permissionUntil, faults.tokenUntil
-	changed := faults.changedPair
-	faults.outage = true
-	faults.mu.Unlock()
 	t.Logf("outage at=%s connector=%s run=%s permission=%s token=%s publisher delivery=%s publisher owner=%s", time.Now().Format(time.RFC3339Nano), latest.Format(time.RFC3339Nano), runUntil.Format(time.RFC3339Nano), permissionUntil.Format(time.RFC3339Nano), tokenUntil.Format(time.RFC3339Nano), publisherUntil.Format(time.RFC3339Nano), publisherOwnerUntil.Format(time.RFC3339Nano))
 	if checks < 2 || changed || !latest.After(initial.Add(30*time.Second)) || publisherUntil.IsZero() || publisherOwnerUntil.IsZero() || runUntil.IsZero() || permissionUntil.IsZero() || tokenUntil.IsZero() {
 		t.Fatalf("default authority did not renew in place: checks=%d changed=%t", checks, changed)
@@ -322,16 +348,23 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 		}
 	}
 	const fenced = "must-not-flow-after-installation-expiry\n"
-	if publisherUntil.Before(latest) {
-		wait := time.NewTimer(time.Until(publisherUntil))
-		defer wait.Stop()
-		select {
-		case <-wait.C:
-		case <-t.Context().Done():
-			t.Fatal(t.Context().Err())
-		}
-		_ = conn.SetWriteDeadline(latest.Add(2 * time.Second))
-		_, _ = io.WriteString(conn, fenced)
+	wait := time.NewTimer(time.Until(publisherUntil))
+	defer wait.Stop()
+	select {
+	case <-wait.C:
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	}
+	select {
+	case <-targetClosed:
+		t.Fatal("installation expiry retired the still-authorized target socket")
+	case <-localClosed:
+		t.Fatal("installation expiry retired the still-authorized loopback socket")
+	default:
+	}
+	_ = conn.SetWriteDeadline(latest.Add(2 * time.Second))
+	if _, err := io.WriteString(conn, fenced); err != nil {
+		t.Fatal("retained loopback socket closed before its authority expired", err)
 	}
 	targetDeadline := time.NewTimer(time.Until(publisherDeadline.Add(2 * time.Second)))
 	defer targetDeadline.Stop()
