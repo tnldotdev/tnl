@@ -37,6 +37,7 @@ def uses_workload() -> bool:
         or bool(os.environ.get("FLY_APP_NAME"))
         or bool(os.environ.get("K_SERVICE"))
         or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
+        or os.environ.get("GITLAB_CI") == "true"
         or os.environ.get("GITHUB_ACTIONS") == "true"
     )
 
@@ -70,6 +71,7 @@ async def select_workload(
             "github_actions": os.environ.get("GITHUB_ACTIONS", ""),
             "cloud_run_service": os.environ.get("K_SERVICE", ""),
             "kubernetes_service_host": os.environ.get("KUBERNETES_SERVICE_HOST", ""),
+            "gitlab_ci": os.environ.get("GITLAB_CI", ""),
         }
     }
     if configuration is not None:

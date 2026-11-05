@@ -282,6 +282,7 @@ var typeScriptKeyMappings = map[string]string{
 	"app_id":               "appId",
 	"machine_id":           "machineId",
 	"service_account":      "serviceAccount",
+	"pipeline_source":      "pipelineSource",
 	"jwks_url":             "jwksUrl",
 	"token_file":           "tokenFile",
 	"reusable_workflow":    "reusableWorkflow",

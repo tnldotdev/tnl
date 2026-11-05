@@ -5,6 +5,7 @@
   "machine_id": "machineId",
   "max_bytes": "maxBytes",
   "max_duration": "maxDuration",
+  "pipeline_source": "pipelineSource",
   "public_url": "publicURL",
   "publisher_group": "publisherGroup",
   "publisher_groups": "publisherGroups",

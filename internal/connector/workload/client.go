@@ -139,7 +139,7 @@ func validateSession(r authorityv1.WorkloadSession) error {
 	} else if r.Github != nil {
 		return invalidSession()
 	}
-	if !bindingID.MatchString(r.Binding) || !naming.ValidServiceName(r.Workload) || !slices.Contains([]string{"github", "vercel", "fly", "oidc", "google", "kubernetes"}, string(r.Provider)) || r.LeaseExpiresAt.After(time.Now().Add(91*time.Second)) {
+	if !bindingID.MatchString(r.Binding) || !naming.ValidServiceName(r.Workload) || !slices.Contains([]string{"github", "vercel", "fly", "oidc", "google", "kubernetes", "gitlab"}, string(r.Provider)) || r.LeaseExpiresAt.After(time.Now().Add(91*time.Second)) {
 		return invalidSession()
 	}
 	if r.ExpiresAt != nil && (!r.ExpiresAt.After(time.Now()) || r.LeaseExpiresAt.After(*r.ExpiresAt)) {

@@ -25,6 +25,7 @@ beforeEach(async () => {
     "GITHUB_ACTIONS",
     "K_SERVICE",
     "KUBERNETES_SERVICE_HOST",
+    "GITLAB_CI",
   ])
     vi.stubEnv(name, undefined);
   directory = await mkdtemp(path.join(tmpdir(), "tnl-provider-"));
@@ -33,6 +34,7 @@ beforeEach(async () => {
 test.each([
   ["K_SERVICE", "cloud_run_service", "orders"],
   ["KUBERNETES_SERVICE_HOST", "kubernetes_service_host", "10.0.0.1"],
+  ["GITLAB_CI", "gitlab_ci", "true"],
 ] as const)(
   "%s forwards only native selection hints, not SDK acquisition",
   async (environment, key, hint) => {

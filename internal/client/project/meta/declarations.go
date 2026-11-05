@@ -56,6 +56,31 @@ func Declarations(configuration config.TNL, configPath, outputDir string) ([]byt
 		policies := map[string]any{}
 		for name, policy := range configuration.Workloads {
 			value := map[string]any{"services": policy.Services}
+			if g := policy.GitLab; g != nil {
+				block := map[string]any{}
+				if g.Project != "" {
+					block["project"] = g.Project
+				}
+				if g.Server != "" {
+					block["server"] = g.Server
+				}
+				if g.Branch != nil {
+					block["branch"] = *g.Branch
+				}
+				if g.Tag != nil {
+					block["tag"] = *g.Tag
+				}
+				if g.PipelineSource != "" {
+					block["pipelineSource"] = g.PipelineSource
+				}
+				if g.Environment != "" {
+					block["environment"] = g.Environment
+				}
+				if g.Audience != "" {
+					block["audience"] = g.Audience
+				}
+				value["gitlab"] = block
+			}
 			if k := policy.Kubernetes; k != nil {
 				block := map[string]any{"serviceAccount": k.ServiceAccount}
 				if k.Context != "" {

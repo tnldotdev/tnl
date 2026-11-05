@@ -2400,6 +2400,7 @@
                   "oidc": false,
                   "google": false,
                   "kubernetes": false,
+                  "gitlab": false,
                   "services": {
                     "items": {
                       "type": "string"
@@ -2606,6 +2607,7 @@
                   "oidc": false,
                   "google": false,
                   "kubernetes": false,
+                  "gitlab": false,
                   "services": {
                     "items": {
                       "type": "string"
@@ -2683,6 +2685,7 @@
                   "oidc": false,
                   "google": false,
                   "kubernetes": false,
+                  "gitlab": false,
                   "services": {
                     "items": {
                       "type": "string"
@@ -2758,6 +2761,7 @@
                   "fly": false,
                   "google": false,
                   "kubernetes": false,
+                  "gitlab": false,
                   "services": {
                     "items": {
                       "type": "string"
@@ -2840,6 +2844,7 @@
                   "fly": false,
                   "oidc": false,
                   "kubernetes": false,
+                  "gitlab": false,
                   "services": {
                     "items": {
                       "type": "string"
@@ -2913,6 +2918,7 @@
                   "fly": false,
                   "oidc": false,
                   "google": false,
+                  "gitlab": false,
                   "services": {
                     "items": {
                       "type": "string"
@@ -2985,6 +2991,209 @@
                 "additionalProperties": false,
                 "type": "object",
                 "required": ["kubernetes", "services"]
+              },
+              {
+                "properties": {
+                  "github": false,
+                  "vercel": false,
+                  "fly": false,
+                  "oidc": false,
+                  "google": false,
+                  "kubernetes": false,
+                  "services": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                  },
+                  "max_duration": {
+                    "type": "string",
+                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
+                    "description": "Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof."
+                  },
+                  "token": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "file": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "minLength": 1
+                          },
+                          "env": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["file"]
+                      },
+                      {
+                        "properties": {
+                          "file": false,
+                          "env": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["env"]
+                      }
+                    ]
+                  },
+                  "gitlab": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "project": {
+                            "type": "string",
+                            "description": "GitLab project path; defaults to the Git origin on the selected server."
+                          },
+                          "server": {
+                            "type": "string",
+                            "description": "GitLab HTTPS origin; defaults to https://gitlab.com."
+                          },
+                          "pipeline_source": {
+                            "type": "string",
+                            "enum": [
+                              "push",
+                              "web",
+                              "schedule",
+                              "api",
+                              "trigger",
+                              "pipeline",
+                              "parent_pipeline",
+                              "merge_request_event",
+                              "external",
+                              "external_pull_request_event",
+                              "chat",
+                              "webide",
+                              "ondemand_dast_scan",
+                              "ondemand_dast_validation",
+                              "security_orchestration_policy"
+                            ],
+                            "default": "push"
+                          },
+                          "environment": {
+                            "type": "string"
+                          },
+                          "audience": {
+                            "type": "string",
+                            "description": "Intended token recipient; defaults to the control URL."
+                          },
+                          "branch": false,
+                          "tag": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object"
+                      },
+                      {
+                        "properties": {
+                          "project": {
+                            "type": "string",
+                            "description": "GitLab project path; defaults to the Git origin on the selected server."
+                          },
+                          "server": {
+                            "type": "string",
+                            "description": "GitLab HTTPS origin; defaults to https://gitlab.com."
+                          },
+                          "pipeline_source": {
+                            "type": "string",
+                            "enum": [
+                              "push",
+                              "web",
+                              "schedule",
+                              "api",
+                              "trigger",
+                              "pipeline",
+                              "parent_pipeline",
+                              "merge_request_event",
+                              "external",
+                              "external_pull_request_event",
+                              "chat",
+                              "webide",
+                              "ondemand_dast_scan",
+                              "ondemand_dast_validation",
+                              "security_orchestration_policy"
+                            ],
+                            "default": "push"
+                          },
+                          "environment": {
+                            "type": "string"
+                          },
+                          "audience": {
+                            "type": "string",
+                            "description": "Intended token recipient; defaults to the control URL."
+                          },
+                          "branch": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "tag": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["branch"]
+                      },
+                      {
+                        "properties": {
+                          "project": {
+                            "type": "string",
+                            "description": "GitLab project path; defaults to the Git origin on the selected server."
+                          },
+                          "server": {
+                            "type": "string",
+                            "description": "GitLab HTTPS origin; defaults to https://gitlab.com."
+                          },
+                          "pipeline_source": {
+                            "type": "string",
+                            "enum": [
+                              "push",
+                              "web",
+                              "schedule",
+                              "api",
+                              "trigger",
+                              "pipeline",
+                              "parent_pipeline",
+                              "merge_request_event",
+                              "external",
+                              "external_pull_request_event",
+                              "chat",
+                              "webide",
+                              "ondemand_dast_scan",
+                              "ondemand_dast_validation",
+                              "security_orchestration_policy"
+                            ],
+                            "default": "push"
+                          },
+                          "environment": {
+                            "type": "string"
+                          },
+                          "audience": {
+                            "type": "string",
+                            "description": "Intended token recipient; defaults to the control URL."
+                          },
+                          "branch": false,
+                          "tag": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["tag"]
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["gitlab", "services"]
               }
             ]
           },
