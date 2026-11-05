@@ -160,6 +160,8 @@ type VisitorConfig struct {
 	Duration                  time.Duration
 	// OnResult is serialized and is intended for scenario-specific observations.
 	OnResult func(RequestResult)
+	// timing storage must cover every offered slot, including missed offers.
+	Timing *VisitorTimings
 }
 
 func (v Visitor) Run(ctx context.Context, config VisitorConfig, urls []string) (VisitorResult, error) {
@@ -171,17 +173,28 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 	if config.Workers <= 0 || config.QueueSlots < 0 || config.Rate < 0 || config.Rate > 10_000 || config.Duration <= 0 || len(urls) == 0 {
 		return result, errors.New("invalid visitor configuration")
 	}
+	if config.Timing != nil {
+		seconds, remainder := config.Duration/time.Second, config.Duration%time.Second
+		slots := int64(seconds)*int64(config.Rate) + (int64(remainder)*int64(config.Rate)+int64(time.Second)-1)/int64(time.Second)
+		if int64(len(config.Timing.Requests)) != slots {
+			return result, errors.New("visitor timing storage must match the offered slot count")
+		}
+	}
 	if config.Start.IsZero() {
 		config.Start = time.Now()
 	}
 	// coordination serializes UTC timestamps without a monotonic component.
 	// rebase once; subsequent wall-clock adjustments must not move the slots.
 	config.Start = localSchedule(time.Now(), config.Start)
+	if config.Timing != nil {
+		config.Timing.Start = config.Start
+	}
 	result.StartedAt, result.OfferDuration = config.Start, config.Duration
 	end := config.Start.Add(config.Duration)
 	type job struct {
-		at  time.Time
-		url string
+		at     time.Time
+		url    string
+		timing *VisitorRequestTiming
 	}
 	jobs := make(chan job, config.QueueSlots)
 	var workers sync.WaitGroup
@@ -193,12 +206,38 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 			ready.Done()
 			for job := range jobs {
 				row := request(ctx, job.url, job.at)
+				timing := job.timing
+				if timing != nil {
+					timing.RequestReturned = time.Since(config.Start)
+					timing.Started = row.Started.Sub(config.Start)
+					timing.QueueExpired = row.QueueExpired
+					if !row.QueueExpired {
+						// duration was measured before request cleanup. retain that
+						// exact monotonic endpoint, not the later worker return.
+						timing.Completed = row.Scheduled.Sub(config.Start) + row.Duration
+					}
+					timing.CollectorWaitStarted = time.Since(config.Start)
+				}
 				mu.Lock()
+				if timing != nil {
+					timing.CollectorAcquired = time.Since(config.Start)
+				}
 				result.Observe(row)
+				if timing != nil {
+					timing.ResultIndex = result.Completed + result.QueueExpired
+					timing.CallbackStarted = time.Since(config.Start)
+				}
 				if config.OnResult != nil {
 					config.OnResult(row)
 				}
+				if timing != nil {
+					timing.CallbackCompleted = time.Since(config.Start)
+					timing.CollectorUnlockStarted = time.Since(config.Start)
+				}
 				mu.Unlock()
+				if timing != nil {
+					timing.CollectorReleased = time.Since(config.Start)
+				}
 			}
 		})
 	}
@@ -214,10 +253,18 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 			break
 		}
 		result.Scheduled++
+		var timing *VisitorRequestTiming
+		if config.Timing != nil {
+			timing = &config.Timing.Requests[index]
+			*timing = VisitorRequestTiming{Slot: index, Scheduled: at.Sub(config.Start), Offered: time.Since(config.Start)}
+		}
 		select {
-		case jobs <- job{at, urls[index%len(urls)]}:
+		case jobs <- job{at, urls[index%len(urls)], timing}:
 		default:
 			result.Missed++
+			if timing != nil {
+				timing.Missed = true
+			}
 		}
 	}
 	_ = WaitUntil(ctx, end)
@@ -228,6 +275,9 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 	result.OfferDuration = max(0, offerEnded.Sub(config.Start))
 	close(jobs)
 	workers.Wait()
+	if config.Timing != nil {
+		config.Timing.Requests = config.Timing.Requests[:result.Scheduled]
+	}
 	result.DrainDuration = max(0, time.Since(offerEnded))
 	return result, ctx.Err()
 }

@@ -31,6 +31,8 @@ x-runtime: &runtime
         -tnl-runtime-load-workload='${RUNTIME_WORKLOAD:-public-url}' \
         -tnl-connect-load-payload-bytes='${CONNECT_PAYLOAD_BYTES:-256}' \
         -tnl-postgres-load-diagnostics='${POSTGRES_DIAGNOSTICS:-off}' \
+        -tnl-postgres-load-recording='${POSTGRES_RECORDING:-live}' \
+        -tnl-postgres-load-timing='${POSTGRES_TIMING:-false}' \
         -tnl-runtime-load-public-urls='${PUBLIC_URLS:-4}' \
         -tnl-runtime-load-start-parallel='${START_PARALLEL:-4}' \
         -tnl-runtime-load-ready-timeout='${READY_TIMEOUT:-30s}' \
@@ -66,6 +68,9 @@ x-runtime: &runtime
 
 x-visitor: &visitor
   <<: *runtime
+  environment: &visitor-environment
+    <<: *environment
+    GOMAXPROCS: "${VISITOR_GOMAXPROCS:-}"
   cap_add: [NET_ADMIN]
   cpus: "${VISITOR_CPUS:-1}"
   mem_limit: "${VISITOR_MEMORY:-128m}"
@@ -321,22 +326,22 @@ services:
   visitor-1:
     <<: *visitor
     environment:
-      <<: *environment
+      <<: *visitor-environment
       SEPARATED_COMPONENT: visitor-1
   visitor-2:
     <<: *visitor
     environment:
-      <<: *environment
+      <<: *visitor-environment
       SEPARATED_COMPONENT: visitor-2
   visitor-3:
     <<: *visitor
     environment:
-      <<: *environment
+      <<: *visitor-environment
       SEPARATED_COMPONENT: visitor-3
   visitor-4:
     <<: *visitor
     environment:
-      <<: *environment
+      <<: *visitor-environment
       SEPARATED_COMPONENT: visitor-4
 
   app:

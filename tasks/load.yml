@@ -31,6 +31,10 @@ tasks:
       RUNTIME_WORKLOAD: '{{default "public-url" .WORKLOAD}}'
       CONNECT_PAYLOAD_BYTES: '{{default "256" .PAYLOAD_BYTES}}'
       POSTGRES_DIAGNOSTICS: '{{default "off" .DIAGNOSTICS}}'
+      POSTGRES_RECORDING: '{{default "live" .RESULT_RECORDING}}'
+      POSTGRES_TIMING: '{{default "false" .TIMING}}'
+      VISITOR_CPUS: '{{default "1" .VISITOR_CPUS}}'
+      VISITOR_GOMAXPROCS: '{{default "" .VISITOR_GOMAXPROCS}}'
       VISITOR_MEMORY: '{{default "128m" .VISITOR_MEMORY}}'
       PUBLIC_URLS: "{{.PUBLIC_URLS}}"
       START_PARALLEL: '{{default "" .START_PARALLEL}}'
@@ -87,6 +91,10 @@ tasks:
           DURATION: '{{default "10s" .DURATION}}'
           PAYLOAD_BYTES: '{{default "256" .PAYLOAD_BYTES}}'
           DIAGNOSTICS: '{{default "off" .DIAGNOSTICS}}'
+          RESULT_RECORDING: '{{default "live" .RESULT_RECORDING}}'
+          TIMING: '{{default "false" .TIMING}}'
+          VISITOR_CPUS: '{{default "1" .VISITOR_CPUS}}'
+          VISITOR_GOMAXPROCS: '{{if eq .MODE "postgres"}}{{default "2" .VISITOR_GOMAXPROCS}}{{else}}{{default "" .VISITOR_GOMAXPROCS}}{{end}}'
           HA_TOPOLOGY: "1"
           CAPACITY_ONLY: "1"
           HELD_STREAMS: "0"
@@ -101,11 +109,16 @@ tasks:
 
   go:test:load:postgres:
     dir: "{{.ROOT_DIR}}"
-    desc: Measure warm SELECT 1 on one service run (WORKERS=connections, RPS, DURATION, RESULTS; DIAGNOSTICS=off by default)
+    desc: Measure warm SELECT 1 (WORKERS, RPS, DURATION, RESULTS; RESULT_RECORDING=live|buffered, TIMING=false, VISITOR_CPUS=1, VISITOR_GOMAXPROCS=2)
     cmds:
       - task: go:test:load:connect
         vars:
           MODE: postgres
+          DIAGNOSTICS: '{{default "off" .DIAGNOSTICS}}'
+          RESULT_RECORDING: '{{default "live" .RESULT_RECORDING}}'
+          TIMING: '{{default "false" .TIMING}}'
+          VISITOR_CPUS: '{{default "1" .VISITOR_CPUS}}'
+          VISITOR_GOMAXPROCS: '{{default "2" .VISITOR_GOMAXPROCS}}'
           WORKERS: '{{default "4" .WORKERS}}'
           RPS: '{{default "256" .RPS}}'
           DURATION: '{{default "10s" .DURATION}}'

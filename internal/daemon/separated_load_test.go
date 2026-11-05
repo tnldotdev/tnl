@@ -182,8 +182,8 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 		if !*runtimeLoadHATopology || !*runtimeLoadCapacityOnly || *runtimeLoadPublicURLs != 1 || *runtimeLoadWorkers < 1 || *runtimeLoadWorkers > tunnel.MaxConnectorApplicationStreams || *runtimeLoadQueue != *runtimeLoadWorkers || *runtimeLoadRPS < 1 || *runtimeLoadRPS > 10000 || *runtimeLoadDuration < time.Second || *runtimeLoadDuration > 5*time.Minute || *runtimeLoadScenario != "relay-restart" || *runtimeLoadHeldStreams != 0 {
 			t.Fatalf("postgres load requires HA, capacity-only, one service, 1-%d workers, queue equal to workers, 1-10000 requests/second, 1s-5m duration, no held streams, and the baseline scenario", tunnel.MaxConnectorApplicationStreams)
 		}
-		if samples := (int64(*runtimeLoadRPS)*int64(*runtimeLoadDuration) + int64(time.Second) - 1) / int64(time.Second); samples > postgresLoadMaxSamples {
-			t.Fatalf("postgres load allows at most %d offered queries per phase; reduce RPS or duration", postgresLoadMaxSamples)
+		if _, err := postgresRecordingSamples(*postgresLoadRecording, *runtimeLoadRPS, *runtimeLoadDuration); err != nil {
+			t.Fatal(err)
 		}
 		separatedConfig(t, "ingress-a")
 		return *runtimeLoadPublicURLs, *runtimeLoadRPS, *runtimeLoadDuration

@@ -1,11 +1,9 @@
 package daemon
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -123,22 +121,47 @@ func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component st
 				t.Fatal(err)
 			}
 			defer requestFile.Close()
-			requestWriter := bufio.NewWriter(requestFile)
-			requestEncoder := json.NewEncoder(requestWriter)
-			var requestError error
+			samples, err := postgresRecordingSamples(*postgresLoadRecording, *runtimeLoadRPS, phase.Duration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			metadata := postgresRecordingMetadata{Mode: *postgresLoadRecording, SchedulerClock: "monotonic_rebased_once", SampleLimit: samples, PreparationStarted: time.Now(), TimingEnabled: *postgresLoadTiming, Notes: postgresRecordingNotes}
+			recording, err := newPostgresRecording(*postgresLoadRecording, samples, requestFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			metadata.RetainedResultCapacity = cap(recording.rows)
+			metadata.RetainedResultStorageBytes = recording.storageBytes()
+			var timing *benchworkload.VisitorTimings
+			if *postgresLoadTiming {
+				recording.enableTiming(samples, requestFile)
+				timing = &recording.timing.Visitor
+				metadata.TimingStorageBytes = recording.timingStorageBytes()
+			}
+			resources, err := readSeparatedResources()
+			if err != nil {
+				t.Fatal(err)
+			}
+			metadata.MemoryLimit, metadata.CPUQuota, metadata.GOMAXPROCS = resources.MemoryLimit, resources.CPUQuota, resources.GOMAXPROCS
+			metadata.PreparationCompleted = time.Now()
 			separatedWrite(t, phase.Name+"."+component+".prepared", true)
 			if !separatedRead(t, ctx, fmt.Sprintf("connect.phase-%d", sequence), &phase) {
 				return
 			}
-			result.Summary, err = visitor.Run(ctx, benchworkload.VisitorConfig{Rate: *runtimeLoadRPS, Workers: *runtimeLoadWorkers, QueueSlots: *runtimeLoadQueue, Start: phase.Start, Duration: phase.Duration, OnResult: func(row benchworkload.RequestResult) {
-				if requestError == nil {
-					requestError = requestEncoder.Encode(row)
-				}
-			}})
+			result.Summary, err = visitor.Run(ctx, benchworkload.VisitorConfig{Rate: *runtimeLoadRPS, Workers: *runtimeLoadWorkers, QueueSlots: *runtimeLoadQueue, Start: phase.Start, Duration: phase.Duration, OnResult: recording.Record, Timing: timing})
 			// publish only metadata, and only once the complete artifact is visible.
-			if err := errors.Join(err, requestError, requestWriter.Flush(), requestFile.Close()); err != nil {
+			metadata.FlushStarted = time.Now()
+			if err := errors.Join(err, recording.Flush(), requestFile.Close()); err != nil {
 				t.Error(err)
 			}
+			metadata.FlushCompleted = time.Now()
+			if recording.timing != nil {
+				metadata.TimingWriteStarted = time.Now()
+				separatedResult(t, phase.Name+"-"+component+"-timing", recording.timing)
+				metadata.TimingWriteCompleted = time.Now()
+			}
+			metadata.MetadataWriteStarted = time.Now()
+			separatedResult(t, phase.Name+"-"+component+"-recording", metadata)
 			after, err := visitor.Verify(ctx)
 			result.SessionsAfter = &after
 			if err != nil {

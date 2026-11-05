@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -51,6 +52,9 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 	workload := os.Getenv("RUNTIME_WORKLOAD")
 	if workload != "" && workload != "public-url" && workload != "connect" && workload != "postgres" {
 		return errors.New("RUNTIME_WORKLOAD must be public-url, connect, or postgres")
+	}
+	if err := validateRuntimeRecording(workload, os.Getenv("POSTGRES_RECORDING"), os.Getenv("POSTGRES_TIMING"), os.Getenv("VISITOR_CPUS"), os.Getenv("VISITOR_GOMAXPROCS")); err != nil {
+		return err
 	}
 	if workload == "postgres" {
 		directory, err := os.MkdirTemp("", "tnl-runtime-postgres-tls-")
@@ -97,7 +101,7 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 		if err != nil {
 			return fmt.Errorf("read workload source status: %w", err)
 		}
-		data, err := json.Marshal(map[string]any{"revision": strings.TrimSpace(string(commit)), "working_tree_dirty": len(changes) != 0})
+		data, err := json.Marshal(map[string]any{"revision": strings.TrimSpace(string(commit)), "working_tree_dirty": len(changes) != 0, "result_recording": os.Getenv("POSTGRES_RECORDING"), "visitor_timing": os.Getenv("POSTGRES_TIMING"), "visitor_cpus": os.Getenv("VISITOR_CPUS"), "visitor_gomaxprocs": os.Getenv("VISITOR_GOMAXPROCS"), "visitor_memory": os.Getenv("VISITOR_MEMORY")})
 		if err != nil {
 			return err
 		}
@@ -230,6 +234,36 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 		return errors.New("runtime coordinator token is missing")
 	}
 	return h.observe(ctx)
+}
+
+func validateRuntimeRecording(workload, mode, timing, cpus, gomaxprocs string) error {
+	if mode != "" && mode != "live" && mode != "buffered" {
+		return errors.New("POSTGRES_RECORDING must be live or buffered")
+	}
+	var enabled bool
+	if timing != "" {
+		var err error
+		enabled, err = strconv.ParseBool(timing)
+		if err != nil {
+			return errors.New("POSTGRES_TIMING must be a boolean")
+		}
+	}
+	if workload != "postgres" && (mode == "buffered" || enabled) {
+		return errors.New("PostgreSQL result recording and timing require the postgres workload")
+	}
+	if cpus != "" {
+		value, err := strconv.ParseFloat(cpus, 64)
+		if err != nil || value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return errors.New("VISITOR_CPUS must be finite and positive")
+		}
+	}
+	if gomaxprocs != "" {
+		value, err := strconv.Atoi(gomaxprocs)
+		if err != nil || value < 1 {
+			return errors.New("VISITOR_GOMAXPROCS must be a positive integer")
+		}
+	}
+	return nil
 }
 
 func (h *runtimeHarness) observe(ctx context.Context) error {
