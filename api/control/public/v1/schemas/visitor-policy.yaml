@@ -63,6 +63,10 @@ schemas:
       key_revision: { type: integer, format: int64, minimum: 1 }
       observed_at: { type: string, format: date-time }
       valid_until: { type: string, format: date-time }
+      connection_deadline:
+        type: string
+        format: date-time
+        description: Guest observation bound, including idle connections after readiness. When present, ingress requires the run's ready routing projection before forwarding visitors, and ingress and publisher bind connections to this policy's locally confirmed lifetime. Enabled policy valid_until must not exceed this deadline. Preparation policy can be installed and acknowledged without granting visitor permission.
       enabled: { type: boolean }
       anonymous: { type: boolean }
       verification_keys:

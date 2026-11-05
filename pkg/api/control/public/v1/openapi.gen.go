@@ -3685,12 +3685,15 @@ type VisitorPolicyIP struct {
 
 // VisitorPolicySnapshot defines model for VisitorPolicySnapshot.
 type VisitorPolicySnapshot struct {
-	Anonymous   bool             `json:"anonymous"`
-	Enabled     bool             `json:"enabled"`
-	Hostname    string           `json:"hostname"`
-	Ip          *VisitorPolicyIP `json:"ip,omitempty"`
-	Issuer      string           `json:"issuer"`
-	KeyRevision int64            `json:"key_revision"`
+	Anonymous bool `json:"anonymous"`
+
+	// ConnectionDeadline Guest observation bound, including idle connections after readiness. When present, ingress requires the run's ready routing projection before forwarding visitors, and ingress and publisher bind connections to this policy's locally confirmed lifetime. Enabled policy valid_until must not exceed this deadline. Preparation policy can be installed and acknowledged without granting visitor permission.
+	ConnectionDeadline *time.Time       `json:"connection_deadline,omitempty"`
+	Enabled            bool             `json:"enabled"`
+	Hostname           string           `json:"hostname"`
+	Ip                 *VisitorPolicyIP `json:"ip,omitempty"`
+	Issuer             string           `json:"issuer"`
+	KeyRevision        int64            `json:"key_revision"`
 
 	// MetadataRevision current service trust revision; zero for public URLs.
 	MetadataRevision int64     `json:"metadata_revision"`

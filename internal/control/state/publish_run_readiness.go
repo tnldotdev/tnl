@@ -65,6 +65,8 @@ func (d *Database) MarkPublishRunReady(
 	}
 	// expose preparation only after the publisher has installed its serving
 	// state. ingress installs this run independently of its healthy siblings.
+	// guest preparation permits only the private installation acknowledgment;
+	// ingress forwarding waits for the ready projection committed with its budget.
 	routing, err := queries.ReadPublishRunPreparationRouting(ctx, controlstatedb.ReadPublishRunPreparationRoutingParams{
 		PublicURLID: route.ID, PublishRunNumber: session.PublishRunNumber,
 	})
@@ -113,6 +115,10 @@ func (d *Database) MarkPublishRunReady(
 			PublishRunID: text(session.ID), ReadyAt: timestamptz(now),
 		}); err != nil {
 			return PublishRunLifecycle{}, fmt.Errorf("controlstate: mark guest run ready: %w", err)
+		}
+		session, err = boundGuestServingAuthority(ctx, queries, session, now)
+		if err != nil {
+			return PublishRunLifecycle{}, err
 		}
 		publishedEvent, err = pendingEvents.addRouteEvent(
 			ctx, queries, route, session, connections, "public_url_upsert", now,

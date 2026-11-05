@@ -24,13 +24,20 @@ func heartbeatSessionAfterUpdate(
 	if interval == 0 {
 		interval = heartbeatInterval
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 	for {
+		remaining := time.Until(expiresAt)
+		if remaining <= 0 {
+			return clientcontrol.ErrStatusConflict
+		}
+		// a short preparation lease must renew before the usual cadence. waiting
+		// or a failed call can never move the last confirmed expiration.
+		timer.Reset(min(interval, max(time.Millisecond, remaining/2), remaining))
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
+		case <-timer.C:
 		}
 		response, observedHeartbeat, err := heartbeatResponseOnce(ctx, authority, expiresAt)
 		if err != nil || ctx.Err() != nil {
@@ -56,10 +63,20 @@ func heartbeatResponseOnce(
 	authority publicRunAuthority,
 	expiresAt time.Time,
 ) (controlv1.PublishRunHeartbeat, bool, error) {
-	callCtx, cancel := context.WithTimeout(ctx, heartbeatCallTimeout)
+	if !time.Now().Before(expiresAt) {
+		return heartbeatFallback(expiresAt), false, clientcontrol.ErrStatusConflict
+	}
+	deadline := time.Now().Add(heartbeatCallTimeout)
+	if expiresAt.Before(deadline) {
+		deadline = expiresAt
+	}
+	callCtx, cancel := context.WithDeadline(ctx, deadline)
 	callCtx, finish := observability.PublisherOperation(callCtx, "heartbeat")
 	publishRunID := authority.identity.PublishRunID
 	response, err := authority.client.HeartbeatPublishRun(callCtx, publishRunID, authority.identity.Number, authority.token)
+	if err == nil && (callCtx.Err() != nil || !time.Now().Before(expiresAt)) {
+		err = context.DeadlineExceeded
+	}
 	if err == nil {
 		err = authority.validateHeartbeat(response)
 	}

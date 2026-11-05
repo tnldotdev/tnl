@@ -254,6 +254,8 @@ type Querier interface {
 	GuestForPublicURL(ctx context.Context, publicUrlID string) (string, error)
 	GuestNamespaceReserved(ctx context.Context, label string) (bool, error)
 	GuestOwnsPublicURL(ctx context.Context, arg GuestOwnsPublicURLParams) (bool, error)
+	// preparation observations do not grant visitor permission or spend ready time.
+	GuestPublicURLServingDeadline(ctx context.Context, arg GuestPublicURLServingDeadlineParams) (pgtype.Timestamptz, error)
 	GuestRunAllowanceSpent(ctx context.Context, arg GuestRunAllowanceSpentParams) (string, error)
 	HasTeamMembershipHistory(ctx context.Context, arg HasTeamMembershipHistoryParams) (bool, error)
 	HasVisitorIPSet(ctx context.Context, publicUrlID string) (bool, error)
@@ -309,6 +311,7 @@ type Querier interface {
 	LimitConnectorPeerPair(ctx context.Context, arg LimitConnectorPeerPairParams) (ControlConnectorPeerPair, error)
 	// a fresh claim may shorten a prior installation, never silently grow it.
 	LimitConnectorPeerPreparedForClaim(ctx context.Context, arg LimitConnectorPeerPreparedForClaimParams) error
+	LimitGuestPublishRunExpiry(ctx context.Context, arg LimitGuestPublishRunExpiryParams) (ControlPublishRun, error)
 	ListACMEOrderAuthorizations(ctx context.Context, issuanceID string) ([]ControlAcmeAuthorization, error)
 	ListAdminRelayLeases(ctx context.Context, arg ListAdminRelayLeasesParams) ([]ListAdminRelayLeasesRow, error)
 	ListAppliedProjectServices(ctx context.Context, arg ListAppliedProjectServicesParams) ([]ControlAppliedProjectService, error)
@@ -611,6 +614,9 @@ type Querier interface {
 	UpdateACMEAccountRegistration(ctx context.Context, arg UpdateACMEAccountRegistrationParams) (ControlAcmeAccount, error)
 	UpdateDeviceLogin(ctx context.Context, arg UpdateDeviceLoginParams) error
 	UpdateFeedbackThreadState(ctx context.Context, arg UpdateFeedbackThreadStateParams) (ControlFeedbackThread, error)
+	// retain issued ready authority after closure so an offline owner cannot overlap
+	// its replacement. the run lock serializes readiness, heartbeat and settlement.
+	UpdateGuestServingAuthority(ctx context.Context, arg UpdateGuestServingAuthorityParams) (pgtype.Timestamptz, error)
 	UpdateLocalDomainForDNSAuthority(ctx context.Context, arg UpdateLocalDomainForDNSAuthorityParams) (UpdateLocalDomainForDNSAuthorityRow, error)
 	UpdateMembershipRole(ctx context.Context, arg UpdateMembershipRoleParams) (int64, error)
 	UpdateOIDCIdentity(ctx context.Context, arg UpdateOIDCIdentityParams) (ControlIdentity, error)

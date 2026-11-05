@@ -189,43 +189,32 @@ func TestIntegrationGuestTrialTracksReadyTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.guest_trials SET active_ready_at = $2 WHERE id = $1`, guest.ID, now.Add(time.Second)); err != nil {
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.guest_trials SET active_ready_at=$2,
+		ready_deadline=$2::timestamptz+interval '20 minutes', serving_until=$3 WHERE id=$1`, guest.ID, now.Add(time.Second), setup.ExpiresAt); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.ClosePublishRun(t.Context(), setup.PublishRunID, setup.PublishRunToken, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := database.GuestTrialByAccessToken(t.Context(), guest.Token)
-	if err != nil || stored.UsedReady != 59*time.Second {
+	if err != nil || stored.UsedReady != 29*time.Second {
 		t.Fatalf("guest ready time = %+v, error = %v", stored, err)
 	}
 }
 
-func TestIntegrationGuestHeartbeatClosesExhaustedTrial(t *testing.T) {
-	database, now, request, _ := newPublishRunPrerequisites(t)
-	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
-	if err != nil {
+func TestIntegrationGuestHeartbeatRejectsExhaustedTrialAndCleanupRecordsOutcome(t *testing.T) {
+	f, guest := guestAuthorityFixture(t, false)
+	database, now := f.database, f.now
+	if _, err := database.pool.Exec(t.Context(), `UPDATE control.guest_trials SET used_ready_ns=$2 WHERE id=$1`, guest.ID, int64(GuestReadyAllowance-2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.CreateGuestTrial(t.Context(), guest, "routes.example.test", now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.pool.Exec(t.Context(), `INSERT INTO control.guest_public_urls (public_url_id, guest_id, created_at) VALUES ($1, $2, $3)`, request.PublicURLID, guest.ID, now); err != nil {
-		t.Fatal(err)
-	}
-	setup, err := database.CreatePublishRun(t.Context(), request, now, 30*time.Second, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.pool.Exec(t.Context(), `UPDATE control.guest_trials SET used_ready_ns=$2 WHERE id=$1`, guest.ID, int64(GuestReadyAllowance)); err != nil {
-		t.Fatal(err)
-	}
-	_, err = database.HeartbeatPublishRun(t.Context(), PublishRunAuthentication{
-		PublishRunID: setup.PublishRunID, PublicURLID: setup.PublicURLID,
-		PublishRunNumber: setup.PublishRunNumber, PublishRunToken: setup.PublishRunToken,
-	}, now.Add(2*time.Second), 30*time.Second, time.Minute)
-	if !errors.Is(err, ErrGuestTrialSpent) {
+	readyTestSession(t, f)
+	_, err := database.HeartbeatPublishRun(t.Context(), f.authentication(), now.Add(2*time.Second), 30*time.Second, time.Minute)
+	if !errors.Is(err, ErrPublishRunStale) {
 		t.Fatalf("exhausted guest heartbeat = %v", err)
+	}
+	if closed, err := database.ExpireSavedPublishRuns(t.Context(), now.Add(2*time.Second)); err != nil || closed != 1 {
+		t.Fatalf("exhausted guest cleanup closed %d runs: %v", closed, err)
 	}
 	var activeRunID *string
 	if err := database.pool.QueryRow(t.Context(), `SELECT active_publish_run_id FROM control.guest_trials WHERE id = $1`, guest.ID).Scan(&activeRunID); err != nil || activeRunID != nil {
@@ -302,7 +291,7 @@ func TestIntegrationGuestExpiryClosesRunWithoutHeartbeat(t *testing.T) {
 				t.Fatal(err)
 			}
 			if test.ready {
-				if _, err := database.pool.Exec(t.Context(), `UPDATE control.guest_trials SET active_ready_at=$2 WHERE id=$1`, guest.ID, now); err != nil {
+				if _, err := database.pool.Exec(t.Context(), `UPDATE control.guest_trials SET active_ready_at=$2, ready_deadline=$3, serving_until=$3 WHERE id=$1`, guest.ID, now, now.Add(GuestReadyAllowance)); err != nil {
 					t.Fatal(err)
 				}
 			}

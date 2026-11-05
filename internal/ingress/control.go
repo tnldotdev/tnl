@@ -435,6 +435,12 @@ func (c *Controller) Lookup(host string, now time.Time) ([]ingressv1.IngressRout
 	process := c.Lease()
 	prepared := entries[:0]
 	for _, entry := range entries {
+		c.mu.RLock()
+		policy := c.publicPolicies[entry.PublishRunId]
+		c.mu.RUnlock()
+		if policy != nil && policy.preparationOnly(entry) {
+			continue
+		}
 		if _, ok := c.publicRunInstalled(entry, process, now); ok {
 			prepared = append(prepared, entry)
 		}
