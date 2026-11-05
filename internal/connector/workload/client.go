@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -104,6 +105,11 @@ func (c *Client) Exchange(ctx context.Context, team, project, source, workload, 
 	if opaqueid.Valid(team, opaqueid.TeamPrefix) && r.TeamId != team || r.ProjectKey != project || r.Workload != workload {
 		return authorityv1.WorkloadSession{}, invalidSession()
 	}
+	if current, err := c.Session(); err == nil {
+		if err := validateSessionUpdate(current, r); err != nil {
+			return authorityv1.WorkloadSession{}, err
+		}
+	}
 	c.mu.Lock()
 	c.session = cloneSession(r)
 	c.mu.Unlock()
@@ -111,6 +117,9 @@ func (c *Client) Exchange(ctx context.Context, team, project, source, workload, 
 }
 
 func validateSession(r authorityv1.WorkloadSession) error {
+	if r.RenewalSequence < 0 {
+		return invalidSession()
+	}
 	if r.AssertionExpiresAt != nil && (!r.AssertionExpiresAt.After(time.Now()) || r.AssertionExpiresAt.After(time.Now().Add(12*time.Hour+time.Minute))) {
 		return invalidSession()
 	}
@@ -162,12 +171,20 @@ func (c *Client) Renew(ctx context.Context) (authorityv1.WorkloadSession, error)
 	if err != nil {
 		return r, err
 	}
-	next, err := c.authority.RenewWorkloadSession(ctx, r.Id, r.Credential)
+	if r.RenewalSequence == math.MaxInt64 {
+		return authorityv1.WorkloadSession{}, invalidSession()
+	}
+	sequence := r.RenewalSequence + 1
+	body := authorityv1.WorkloadRenewal{Sequence: sequence, Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(c.key, workloadproof.Renew(r.Id, sequence)))}
+	next, err := c.authority.RenewWorkloadSession(ctx, r.Id, r.Credential, body)
 	if err != nil {
 		return next, err
 	}
 	if err = validateSessionUpdate(r, next); err != nil {
 		return authorityv1.WorkloadSession{}, err
+	}
+	if next.RenewalSequence != sequence {
+		return authorityv1.WorkloadSession{}, invalidSession()
 	}
 	c.mu.Lock()
 	c.session = cloneSession(next)
@@ -235,9 +252,14 @@ func validateSessionUpdate(current, next authorityv1.WorkloadSession) error {
 	if err := validateSession(next); err != nil {
 		return err
 	}
-	if next.Binding != current.Binding || next.Id != current.Id || next.Credential != current.Credential ||
+	if next.RenewalSequence < current.RenewalSequence || next.Binding != current.Binding || next.Id != current.Id || next.Credential != current.Credential ||
 		next.ExpiresAt.After(current.ExpiresAt) || next.TeamId != current.TeamId || next.ProjectKey != current.ProjectKey ||
 		next.Workload != current.Workload || next.Provider != current.Provider || !reflect.DeepEqual(next.Github, current.Github) {
+		return invalidSession()
+	}
+	// an attachment or exchange retry may observe one renewal whose reply was
+	// lost. serialized operations can never have more than one outstanding step.
+	if next.RenewalSequence > current.RenewalSequence && (current.RenewalSequence == math.MaxInt64 || next.RenewalSequence != current.RenewalSequence+1) {
 		return invalidSession()
 	}
 	for _, id := range next.ServiceIds {

@@ -158,6 +158,8 @@ components:
       $ref: "./schemas/workload.yaml#/schemas/WorkloadIdentity"
     WorkloadAssertion:
       $ref: "./schemas/workload.yaml#/schemas/WorkloadAssertion"
+    WorkloadRenewal:
+      $ref: "./schemas/workload.yaml#/schemas/WorkloadRenewal"
     WorkloadExchange:
       $ref: "./schemas/workload.yaml#/schemas/WorkloadExchange"
     WorkloadSession:

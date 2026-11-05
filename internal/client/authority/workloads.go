@@ -19,6 +19,10 @@ func validateWorkloadSessionWire(payload []byte, session authorityv1.WorkloadSes
 	if _, present := fields["github"]; present && session.Provider != "github" {
 		return errors.New("unexpected workload execution metadata")
 	}
+	sequence, present := fields["renewal_sequence"]
+	if !present || string(sequence) == "null" || session.RenewalSequence < 0 {
+		return errors.New("invalid workload renewal sequence")
+	}
 	return nil
 }
 
@@ -39,9 +43,9 @@ func (c *Client) ExchangeWorkload(ctx context.Context, body authorityv1.Workload
 		return c.api.ExchangeWorkload(ctx, body, editors...)
 	})
 }
-func (c *Client) RenewWorkloadSession(ctx context.Context, id, credential string) (authorityv1.WorkloadSession, error) {
+func (c *Client) RenewWorkloadSession(ctx context.Context, id, credential string, body authorityv1.WorkloadRenewal) (authorityv1.WorkloadSession, error) {
 	return requestWithToken[authorityv1.WorkloadSession](ctx, c, credential, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
-		return c.api.RenewWorkloadSession(ctx, id, editors...)
+		return c.api.RenewWorkloadSession(ctx, id, body, editors...)
 	})
 }
 func (c *Client) RevokeWorkloadSession(ctx context.Context, id, credential string) error {

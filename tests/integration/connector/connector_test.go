@@ -432,8 +432,21 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			current.LeaseExpiresAt = time.Now().Add(90 * time.Second)
-			current.RenewAfter = time.Now().Add(30 * time.Second)
+			var renewal authorityv1.WorkloadRenewal
+			if json.NewDecoder(r.Body).Decode(&renewal) != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			signature, err := base64.RawURLEncoding.DecodeString(renewal.Signature)
+			if err != nil || !ed25519.Verify(current.public, workloadproof.Renew(current.Id, renewal.Sequence), signature) || renewal.Sequence < 1 || renewal.Sequence < current.RenewalSequence || renewal.Sequence > current.RenewalSequence+1 {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			if renewal.Sequence != current.RenewalSequence {
+				current.RenewalSequence = renewal.Sequence
+				current.LeaseExpiresAt = time.Now().Add(90 * time.Second)
+				current.RenewAfter = time.Now().Add(30 * time.Second)
+			}
 			_ = json.NewEncoder(w).Encode(current)
 		case r.URL.Path == "/v1/workload/services":
 			_ = json.NewEncoder(w).Encode(map[string]any{"services": []any{map[string]any{"id": service, "service": serviceName, "protocol": protocol, "endpoint": map[string]any{"hostname": managedHostname, "port": port, "public": public}}}})
