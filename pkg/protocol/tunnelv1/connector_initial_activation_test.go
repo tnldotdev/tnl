@@ -29,6 +29,24 @@ func TestConnectorInitialBindingActivationKeepsStableOperationAndFreshHelloDisti
 		if err != nil || parsed != activation {
 			t.Fatal("stable initial operation did not round-trip", err)
 		}
+		for _, kind := range []MessageType{ConnectorLegActivate, ConnectorLegActivated} {
+			message := Message{Type: kind, ProtocolVersion: Version, RequestID: "initial-binding", ConnectorLegBinding: &wire}
+			if kind == ConnectorLegActivate {
+				message.Role = Connector
+			}
+			var framed bytes.Buffer
+			if err := WriteControl(&framed, message); err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := ReadControl(&framed)
+			if err != nil || decoded.ConnectorLegBinding == nil {
+				t.Fatal("closed control parser rejected initial binding", err)
+			}
+			decodedActivation, err := decoded.ConnectorLegBinding.Activation()
+			if err != nil || decodedActivation != activation {
+				t.Fatal("control parser changed initial operation", err)
+			}
+		}
 		binding.InitialHandoffID[0]++
 		if got, ok := activation.InitialOperation(); !ok || got != operation {
 			t.Fatal("initial operation aliased mutable wire bytes")

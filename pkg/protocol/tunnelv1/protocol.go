@@ -235,7 +235,7 @@ func ReadControl(reader io.Reader) (Message, error) {
 			return Message{}, ErrConnectorLegBinding
 		}
 		for name := range selection {
-			if name != "nonce" && name != "previous_nonce" && name != "replacement_nonce" && name != "handoff_revision" {
+			if name != "nonce" && name != "initial_handoff_id" && name != "previous_nonce" && name != "replacement_nonce" && name != "handoff_revision" {
 				return Message{}, ErrConnectorLegBinding
 			}
 			if name == "handoff_revision" {
@@ -244,7 +244,7 @@ func ReadControl(reader io.Reader) (Message, error) {
 					return Message{}, ErrConnectorLegBinding
 				}
 			}
-			if name == "previous_nonce" || name == "replacement_nonce" {
+			if name == "previous_nonce" || name == "replacement_nonce" || name == "initial_handoff_id" {
 				var nonce []byte
 				if json.Unmarshal(selection[name], &nonce) != nil || len(nonce) != 32 {
 					return Message{}, ErrConnectorLegBinding
