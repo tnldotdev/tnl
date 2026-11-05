@@ -23,11 +23,7 @@ func (b BindingRevision) valid() bool {
 
 // BindingPathProof carries the exact role-initiated reply observed on a physical
 // carrier. strings use canonical unpadded base64url for the control API.
-type BindingPathProof struct {
-	ConnectionSlot int
-	ProbeNonce     string
-	ReplyFrame     string
-}
+type BindingPathProof = tunnelv1.ConnectorPeerPairPathProof
 
 // SuspendBinding cuts packet input and output without closing inner QUIC or
 // changing the revision high-water mark. only a newer staged revision can resume.

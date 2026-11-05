@@ -31,7 +31,7 @@ func connectorRebindFixture(t *testing.T, phase string) ConnectorPeerPairRebindP
 	if phase == "activate" {
 		p.BindingChallenge = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
 		for slot := range 2 {
-			frame, err := (PeerPacket{Kind: PeerProbeReply, Sender: 1, Path: uint8(slot), Sequence: uint64(slot + 1), Total: 16,
+			frame, err := (PeerPacket{BindingGeneration: uint64(p.ExpectedGeneration), Kind: PeerProbeReply, Sender: 1, Path: uint8(slot), Sequence: uint64(slot + 1), Total: 16,
 				Payload: bytes.Repeat([]byte{2}, 16)}).MarshalBinary()
 			if err != nil {
 				t.Fatal(err)
