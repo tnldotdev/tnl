@@ -3,7 +3,6 @@ package peer
 import (
 	"bytes"
 	"context"
-	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -41,8 +40,11 @@ func TestPeerAdmissionRejectsDataBeforeSharedDatagramQueues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := carrier.Send(ctx, signedFrame(t, b)); !errors.Is(err, tunnelv1.ErrPeerPacket) {
+	if err := carrier.Send(ctx, signedFrame(t, b)); err != nil {
 		t.Fatal("prepared data entered the egress queue", err)
+	}
+	if queued, _, _ := owner.QueueStats(); queued != 0 || len(transport.sent) != 0 {
+		t.Fatal("prepared data entered the egress queue")
 	}
 	frame := func(sequence uint64, probe bool) []byte {
 		packet := tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sender: a.Role, Path: a.Path, Sequence: sequence, Total: 1, Payload: []byte{7}}
@@ -74,6 +76,63 @@ func TestPeerAdmissionRejectsDataBeforeSharedDatagramQueues(t *testing.T) {
 	if err := carrier.Send(ctx, signedFrame(t, b)); err != nil {
 		t.Fatal("active output stayed fenced", err)
 	}
+}
+
+func TestPeerStreamAuthorityPauseDropsPacketsWithoutRetiringFraming(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	serverTLS, clientTLS := peerTLS(t)
+	left, right := sharedTLSPair(t, ctx, serverTLS, clientTLS)
+	sender, err := NewSharedStreams(ctx, left)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	receiver, err := NewSharedStreams(ctx, right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	a, b := sharedBinding(t, 1, RelayA)
+	var active atomic.Bool
+	b.AdmitPacket = func(packet tunnelv1.PeerPacket) bool { return active.Load() || packet.Kind != tunnelv1.PeerData }
+	aPair, err := sender.Register(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bPair, err := receiver.Register(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, in := aPair.Carrier(true), bPair.Carrier(false)
+	frame := func(binding PairBinding, sequence uint64, probe bool) []byte {
+		packet := tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sender: binding.Role, Path: binding.Path, Sequence: sequence, Total: 1, Payload: []byte{7}}
+		if probe {
+			packet.Kind, packet.Total, packet.Payload = tunnelv1.PeerProbe, 16, make([]byte, 16)
+		}
+		return signedPacket(t, binding, packet)
+	}
+	check := func(source, destination Carrier, payload []byte) {
+		t.Helper()
+		if err := source.Send(ctx, payload); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := destination.Receive(ctx); err != nil || !bytes.Equal(got, payload) {
+			t.Fatal("retained packet stream lost framing or released paused data", err)
+		}
+	}
+	check(out, in, frame(a, 1, true))
+	if err := out.Send(ctx, frame(a, 2, false)); err != nil {
+		t.Fatal(err)
+	}
+	check(out, in, frame(a, 3, true))
+	if err := in.Send(ctx, frame(b, 1, false)); err != nil {
+		t.Fatal("paused egress retired its stream", err)
+	}
+	check(in, out, frame(b, 2, true))
+	active.Store(true)
+	check(out, in, frame(a, 4, false))
+	check(in, out, frame(b, 3, false))
 }
 
 func TestPeerAdmissionRejectsPreparedStreamIntroductionBeforeQueue(t *testing.T) {

@@ -37,10 +37,15 @@ func (b PairBinding) valid() bool {
 }
 
 func (b PairBinding) authentic(frame []byte, sender uint8) bool {
+	p, valid := b.packet(frame, sender)
+	return valid && (b.AdmitPacket == nil || b.AdmitPacket(p))
+}
+
+func (b PairBinding) packet(frame []byte, sender uint8) (tunnelv1.PeerPacket, bool) {
 	p, err := tunnelv1.ParsePeerPacket(frame)
 	// only endpoints possess the session key. relays check the authenticated
 	// envelope, shape, direction, revision, and replay, never the inner MAC.
-	return err == nil && p.Sender == sender && p.Path == b.Path && p.BindingGeneration == b.Delivery.Generation && (b.AdmitPacket == nil || b.AdmitPacket(p))
+	return p, err == nil && p.Sender == sender && p.Path == b.Path && p.BindingGeneration == b.Delivery.Generation
 }
 
 type sharedPeer struct {
@@ -307,8 +312,12 @@ func (c *SharedDatagramCarrier) Send(ctx context.Context, frame []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if !c.peer.binding.authentic(frame, c.peer.binding.Role) {
+	packet, valid := c.peer.binding.packet(frame, c.peer.binding.Role)
+	if !valid {
 		return tunnelv1.ErrPeerPacket
+	}
+	if admit := c.peer.binding.AdmitPacket; admit != nil && !admit(packet) {
+		return nil // packet authority can pause without retiring this registration.
 	}
 	b, err := c.peer.binding.Delivery.Seal(tunnelv1.PeerDeliveryDatagram, c.peer.binding.Key, frame)
 	if err != nil {
