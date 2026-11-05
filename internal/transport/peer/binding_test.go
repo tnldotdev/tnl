@@ -225,6 +225,35 @@ func TestPeerBindingProofRequiresBothCurrentPhysicalCarriers(t *testing.T) {
 	}
 }
 
+func TestPeerBindingActivationRequiresFreshProofs(t *testing.T) {
+	binding := testBinding(2)
+	endpoint := &Endpoint{ctx: t.Context(), config: Config{PathTimeout: time.Second}, binding: binding, bindingPending: true}
+	for index := range pathCount {
+		slot := NewCarrierSlot()
+		defer slot.Close()
+		frame, err := tunnelv1.SignPeerPacketFrame(tunnelv1.PeerPacket{BindingGeneration: 2, Kind: tunnelv1.PeerProbeReply,
+			Sender: 1, Path: uint8(index), Sequence: uint64(index + 1), Total: 16, Payload: make([]byte, 16)}, [32]byte{7})
+		if err != nil {
+			t.Fatal(err)
+		}
+		endpoint.paths[index] = &path{carrier: slot, revision: slot.Generation(), alive: true, ack: time.Now(), proof: bindingProof(index, [16]byte{1}, frame)}
+	}
+	if _, ok := endpoint.BindingProofs(binding); !ok {
+		t.Fatal("fresh physical-carrier proofs were not available")
+	}
+	endpoint.paths[1].ack = time.Now().Add(-2 * time.Second)
+	if _, ok := endpoint.BindingProofs(binding); ok {
+		t.Fatal("expired path proof remained usable")
+	}
+	if err := endpoint.ActivateBinding(binding); !errors.Is(err, ErrConfiguration) {
+		t.Fatal("expired path proof activated delivery", err)
+	}
+	endpoint.paths[1].ack, endpoint.paths[1].alive = time.Now(), false
+	if _, ok := endpoint.BindingProofs(binding); ok {
+		t.Fatal("unhealthy path proof remained usable")
+	}
+}
+
 func TestPeerBindingRetainsInnerQUICAndOpenStreams(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()

@@ -3,6 +3,7 @@ package peer
 import (
 	"encoding/base64"
 	"net"
+	"time"
 
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -113,9 +114,10 @@ func (e *Endpoint) bindingProofsLocked(binding BindingRevision) ([pathCount]Bind
 	if e.ctx.Err() != nil || binding != e.binding || !binding.valid() || !e.bindingActive && !e.bindingPending {
 		return proofs, false
 	}
+	now := time.Now()
 	for index, p := range e.paths {
 		p.refreshRevisionLocked()
-		if p.failed || p.proof.ReplyFrame == "" {
+		if p.failed || !p.alive || now.Sub(p.ack) > e.config.PathTimeout || p.proof.ReplyFrame == "" {
 			return [pathCount]BindingPathProof{}, false
 		}
 		proofs[index] = p.proof
