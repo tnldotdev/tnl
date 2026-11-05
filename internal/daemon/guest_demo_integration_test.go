@@ -47,6 +47,7 @@ type integrationGuestPublisherControl struct {
 	native       *publisheridentity.Native
 	assigned     controlv1.PublicURL
 	shareRedeems chan error
+	createRun    func(context.Context, string, string) (controlv1.PublishRunSetup, error)
 	markReady    func(context.Context, string, uint64, credentials.PublishRunToken) error
 	heartbeats   *atomic.Int64
 }
@@ -63,6 +64,9 @@ func (c integrationGuestPublisherControl) CreatePublicURL(_ context.Context, bod
 }
 
 func (c integrationGuestPublisherControl) CreatePublishRun(ctx context.Context, id, retry string) (controlv1.PublishRunSetup, error) {
+	if c.createRun != nil {
+		return c.createRun(ctx, id, retry)
+	}
 	return c.native.CreatePublishRun(ctx, id, retry)
 }
 
@@ -471,7 +475,21 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	var heartbeats atomic.Int64
 	controlAdapter := integrationGuestPublisherControl{Client: authenticated.Control, native: native, assigned: publicURL, shareRedeems: shareRedeems, heartbeats: &heartbeats}
 	preparing, allowReady := make(chan error, 1), make(chan struct{})
+	replacing := make(chan struct{})
 	if deadlineProof {
+		started := false
+		controlAdapter.createRun = func(ctx context.Context, id, retry string) (controlv1.PublishRunSetup, error) {
+			if !started {
+				setup, err := native.CreatePublishRun(ctx, id, retry)
+				started = err == nil
+				return setup, err
+			}
+			// force cancellation after expiry cleanup, while Run is trying to
+			// replace the expired run, rather than racing its replacement loop.
+			close(replacing)
+			<-ctx.Done()
+			return controlv1.PublishRunSetup{}, ctx.Err()
+		}
 		// only the short-budget fixture pre-creates its share. withhold the final
 		// ready mutation while the real publisher renews and ingress prepares.
 		share = createShare()
@@ -662,11 +680,16 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 			t.Fatal("connection did not close locally during control outage")
 		}
 		t.Logf("guest connection closed at %s; issued horizon %s; ready deadline %s; rejected control requests %d", closedAt, servingUntil, deadline, rejected.Load())
-		if err := waitForDoneWithin(closing, max(0, time.Until(deadline))+10*time.Second); err != nil {
-			t.Fatal("publisher did not stop at its own confirmed deadline", err)
+		if err := waitForDoneWithin(replacing, max(0, time.Until(deadline))+10*time.Second); err != nil {
+			t.Fatal("publisher did not retire its expired run and begin replacement", err)
 		}
-		// local expiry has already closed the transport and begun cleanup. stop
-		// Run's replacement loop so its result remains the original lease failure.
+		select {
+		case <-closing:
+		default:
+			t.Fatal("publisher replaced its expired run without attempting to close it")
+		}
+		// local expiry has closed the transport and completed cleanup. stopping
+		// replacement must preserve the original confirmed lease failure.
 		handle.cancel()
 		offline.Store(false)
 		if err := waitForDoneWithin(handle.done, 10*time.Second); err != nil {
