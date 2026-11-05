@@ -14,14 +14,15 @@ import (
 
 // workload declares provider identity constraints and exact service rights.
 type Workload struct {
-	GitHub      *WorkloadGitHub `json:"github,omitempty" yaml:"github,omitempty"`
-	Vercel      *WorkloadVercel `json:"vercel,omitempty" yaml:"vercel,omitempty"`
-	Fly         *WorkloadFly    `json:"fly,omitempty" yaml:"fly,omitempty"`
-	Google      *WorkloadGoogle `json:"google,omitempty" yaml:"google,omitempty"`
-	OIDC        *WorkloadOIDC   `json:"oidc,omitempty" yaml:"oidc,omitempty"`
-	Token       *WorkloadToken  `json:"token,omitempty" yaml:"token,omitempty"`
-	Services    []string        `json:"services" yaml:"services" jsonschema:"required,minItems=1,maxItems=32,uniqueItems=true" jsonschema_description:"exact configured service keys assigned to named publisher groups; local services cannot be workload targets."`
-	MaxDuration *Duration       `json:"max_duration,omitempty" yaml:"max_duration,omitempty" jsonschema_description:"Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof."`
+	GitHub      *WorkloadGitHub     `json:"github,omitempty" yaml:"github,omitempty"`
+	Vercel      *WorkloadVercel     `json:"vercel,omitempty" yaml:"vercel,omitempty"`
+	Fly         *WorkloadFly        `json:"fly,omitempty" yaml:"fly,omitempty"`
+	Google      *WorkloadGoogle     `json:"google,omitempty" yaml:"google,omitempty"`
+	Kubernetes  *WorkloadKubernetes `json:"kubernetes,omitempty" yaml:"kubernetes,omitempty"`
+	OIDC        *WorkloadOIDC       `json:"oidc,omitempty" yaml:"oidc,omitempty"`
+	Token       *WorkloadToken      `json:"token,omitempty" yaml:"token,omitempty"`
+	Services    []string            `json:"services" yaml:"services" jsonschema:"required,minItems=1,maxItems=32,uniqueItems=true" jsonschema_description:"exact configured service keys assigned to named publisher groups; local services cannot be workload targets."`
+	MaxDuration *Duration           `json:"max_duration,omitempty" yaml:"max_duration,omitempty" jsonschema_description:"Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof."`
 }
 
 type WorkloadGitHub struct {
@@ -58,6 +59,28 @@ type WorkloadGoogle struct {
 	Audience       string `json:"audience,omitempty" yaml:"audience,omitempty" jsonschema_description:"Intended token recipient; defaults to the control URL."`
 }
 
+type WorkloadKubernetes struct {
+	Context        string `json:"context,omitempty" yaml:"context,omitempty" jsonschema_description:"Trusted setup context; defaults to the current kubectl context. Runtime acquisition never reads kubeconfig."`
+	Namespace      string `json:"namespace,omitempty" yaml:"namespace,omitempty" jsonschema_description:"Namespace; defaults to the selected context's namespace, then default."`
+	ServiceAccount string `json:"service_account" yaml:"service_account" jsonschema:"required"`
+	Audience       string `json:"audience,omitempty" yaml:"audience,omitempty" jsonschema_description:"Projected token audience; defaults to the control URL."`
+}
+
+var kubernetesUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+func ValidKubernetesUID(value string) bool { return kubernetesUID.MatchString(value) }
+func ValidKubernetesName(value string) bool {
+	if value == "" || len(value) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(value, ".") {
+		if !naming.ValidAuthorityLabel(label) {
+			return false
+		}
+	}
+	return true
+}
+
 const GoogleWorkloadIssuer = "https://accounts.google.com"
 const GoogleWorkloadJWKS = "https://www.googleapis.com/oauth2/v3/certs"
 
@@ -84,6 +107,7 @@ func (p Workload) Provider() string {
 		{"github", p.GitHub != nil}, {"vercel", p.Vercel != nil},
 		{"fly", p.Fly != nil}, {"oidc", p.OIDC != nil},
 		{"google", p.Google != nil},
+		{"kubernetes", p.Kubernetes != nil},
 	} {
 		if candidate.set {
 			provider, count = candidate.name, count+1
@@ -116,6 +140,9 @@ func (g WorkloadGitHub) AllowedEvents() []string {
 }
 
 func (p Workload) TokenAudience(server string) string {
+	if p.Kubernetes != nil && p.Kubernetes.Audience != "" {
+		return p.Kubernetes.Audience
+	}
 	if p.Google != nil && p.Google.Audience != "" {
 		return p.Google.Audience
 	}
@@ -229,6 +256,11 @@ func ValidateWorkloads(c TNL) error {
 		case "google":
 			g := p.Google
 			if !ValidGoogleServiceAccount(g.ServiceAccount) || g.Audience != "" && !ExactWorkloadValue(g.Audience) {
+				return bad()
+			}
+		case "kubernetes":
+			k := p.Kubernetes
+			if !ValidKubernetesName(k.ServiceAccount) || k.Namespace != "" && !naming.ValidAuthorityLabel(k.Namespace) || k.Context != "" && !ExactWorkloadValue(k.Context) || k.Audience != "" && !ExactWorkloadValue(k.Audience) {
 				return bad()
 			}
 		default:

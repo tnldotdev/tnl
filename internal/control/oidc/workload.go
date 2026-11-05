@@ -14,6 +14,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/httpclient"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 // workload trust is supplied by saved manager policy, never assertion claims.
@@ -41,20 +42,34 @@ type FlyExecution struct {
 	MachineID string `json:"machine_id"`
 }
 
+type KubernetesObjectIdentity struct {
+	Name string `json:"name"`
+	UID  string `json:"uid"`
+}
+
+// KubernetesExecution retains only immutable service-account and pod identity,
+// not rotating token timestamps, kubeconfig, or optional node metadata.
+type KubernetesExecution struct {
+	Namespace      string                   `json:"namespace"`
+	ServiceAccount KubernetesObjectIdentity `json:"serviceaccount"`
+	Pod            KubernetesObjectIdentity `json:"pod"`
+}
+
 type WorkloadExecution struct {
-	Provider        string            `json:"provider"`
-	Issuer          string            `json:"issuer"`
-	Subject         string            `json:"subject"`
-	Audience        string            `json:"audience"`
-	TrustDigest     string            `json:"trust_digest"`
-	IssuedAt        int64             `json:"iat"`
-	NotBefore       int64             `json:"nbf"`
-	ExpiresAt       int64             `json:"exp"`
-	GitHub          *GitHubExecution  `json:"github,omitempty"`
-	Vercel          *VercelExecution  `json:"vercel,omitempty"`
-	Fly             *FlyExecution     `json:"fly,omitempty"`
-	Claims          map[string]string `json:"claims,omitempty"`
-	AssertionDigest [32]byte          `json:"-"`
+	Provider        string               `json:"provider"`
+	Issuer          string               `json:"issuer"`
+	Subject         string               `json:"subject"`
+	Audience        string               `json:"audience"`
+	TrustDigest     string               `json:"trust_digest"`
+	IssuedAt        int64                `json:"iat"`
+	NotBefore       int64                `json:"nbf"`
+	ExpiresAt       int64                `json:"exp"`
+	GitHub          *GitHubExecution     `json:"github,omitempty"`
+	Vercel          *VercelExecution     `json:"vercel,omitempty"`
+	Fly             *FlyExecution        `json:"fly,omitempty"`
+	Kubernetes      *KubernetesExecution `json:"kubernetes,omitempty"`
+	Claims          map[string]string    `json:"claims,omitempty"`
+	AssertionDigest [32]byte             `json:"-"`
 }
 
 func (c WorkloadExecution) Validate(now time.Time) error {
@@ -62,7 +77,7 @@ func (c WorkloadExecution) Validate(now time.Time) error {
 		return ErrUnauthenticated
 	}
 	if c.Provider == "github" {
-		if c.GitHub == nil || c.Vercel != nil || c.Fly != nil || len(c.Claims) > 0 || c.Issuer != GitHubIssuer || c.Subject != c.GitHub.Subject {
+		if c.GitHub == nil || c.Vercel != nil || c.Fly != nil || c.Kubernetes != nil || len(c.Claims) > 0 || c.Issuer != GitHubIssuer || c.Subject != c.GitHub.Subject {
 			return ErrUnauthenticated
 		}
 		if c.IssuedAt != c.GitHub.IssuedAt || c.NotBefore != c.GitHub.NotBefore || c.ExpiresAt != c.GitHub.ExpiresAt {
@@ -74,7 +89,15 @@ func (c WorkloadExecution) Validate(now time.Time) error {
 		return ErrUnauthenticated
 	}
 	var fields []string
+	if c.Provider != "kubernetes" && c.Kubernetes != nil {
+		return ErrUnauthenticated
+	}
 	switch c.Provider {
+	case "kubernetes":
+		k := c.Kubernetes
+		if k == nil || c.Vercel != nil || c.Fly != nil || len(c.Claims) != 0 || !naming.ValidAuthorityLabel(k.Namespace) || !config.ValidKubernetesName(k.ServiceAccount.Name) || !config.ValidKubernetesUID(k.ServiceAccount.UID) || !config.ValidKubernetesName(k.Pod.Name) || !config.ValidKubernetesUID(k.Pod.UID) || c.Subject != "system:serviceaccount:"+k.Namespace+":"+k.ServiceAccount.Name {
+			return ErrUnauthenticated
+		}
 	case "vercel":
 		if c.Vercel == nil || c.Fly != nil || len(c.Claims) > 0 {
 			return ErrUnauthenticated
@@ -123,6 +146,9 @@ func (c WorkloadExecution) Matches(p WorkloadTrust) bool {
 	if c.Fly != nil {
 		f := c.Fly
 		claims = map[string]string{"org_name": f.Org, "org_id": f.OrgID, "app_name": f.App, "app_id": f.AppID, "machine_id": f.MachineID}
+	}
+	if c.Kubernetes != nil {
+		claims = map[string]string{"service_account_uid": c.Kubernetes.ServiceAccount.UID}
 	}
 	for k, v := range p.Claims {
 		if k == "sub" {
@@ -184,7 +210,7 @@ func (v *WorkloadVerifier) Verify(ctx context.Context, p WorkloadTrust, raw stri
 	v.mu.Unlock()
 	observed := &observedKeySet{KeySet: keys}
 	algs := []string{"RS256"}
-	if p.Provider == "oidc" {
+	if p.Provider == "oidc" || p.Provider == "kubernetes" {
 		algs = []string{"RS256", "ES256", "EdDSA"}
 	}
 	t, e := oidc.NewVerifier(p.Issuer, observed, &oidc.Config{ClientID: p.Audience, SupportedSigningAlgs: algs}).Verify(oidc.ClientContext(ctx, v.client), raw)
@@ -209,13 +235,19 @@ func (v *WorkloadVerifier) Verify(ctx context.Context, p WorkloadTrust, raw stri
 	// nbf is optional in generic OIDC. retain an effective start time in the
 	// verified execution, but reject present null, malformed, or zero values.
 	notBefore := times.IssuedAt
-	if len(times.NotBefore) != 0 || p.Provider != "oidc" && p.Provider != "google" {
+	if len(times.NotBefore) != 0 || p.Provider != "oidc" && p.Provider != "google" && p.Provider != "kubernetes" {
 		if json.Unmarshal(times.NotBefore, &notBefore) != nil || string(times.NotBefore) == "null" || notBefore <= 0 {
 			return c, ErrUnauthenticated
 		}
 	}
 	c = WorkloadExecution{Provider: p.Provider, Issuer: t.Issuer, Subject: t.Subject, Audience: p.Audience, TrustDigest: p.Digest(), IssuedAt: times.IssuedAt, NotBefore: notBefore, ExpiresAt: times.ExpiresAt, AssertionDigest: sha256.Sum256([]byte(raw))}
 	switch p.Provider {
+	case "kubernetes":
+		var claims struct {
+			Kubernetes KubernetesExecution `json:"kubernetes.io"`
+		}
+		err = t.Claims(&claims)
+		c.Kubernetes = &claims.Kubernetes
 	case "vercel":
 		c.Vercel = &VercelExecution{}
 		err = t.Claims(c.Vercel)
