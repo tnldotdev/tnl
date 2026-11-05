@@ -28,12 +28,13 @@ import (
 // hold the same lock across actual HTTP decisions and the outage transition.
 // an already-entered success cannot extend the captured bound after the fault.
 type nativeDefaultFaults struct {
-	mu                                      sync.Mutex
-	pair                                    string
-	outage                                  bool
-	renewals                                int
-	initial, connectorUntil, publisherUntil time.Time
-	changedPair                             bool
+	mu                                                           sync.Mutex
+	pair                                                         string
+	outage                                                       bool
+	renewals                                                     int
+	initial, connectorUntil, publisherUntil, publisherOwnerUntil time.Time
+	runUntil, permissionUntil, tokenUntil                        time.Time
+	changedPair                                                  bool
 }
 
 type defaultConnectorOwnerControl struct {
@@ -71,14 +72,48 @@ func (c defaultConnectorOwnerControl) RenewConnectorPeerPair(ctx context.Context
 	if err == nil {
 		c.faults.changedPair = c.faults.changedPair || c.faults.pair != renewal.Pair.PairId
 		c.faults.connectorUntil = started.Add(renewal.Pair.ExpiresAt.Sub(renewal.Pair.ObservedAt))
+		c.faults.runUntil = started.Add(renewal.RunValidUntil.Sub(renewal.Pair.ObservedAt))
+		c.faults.permissionUntil = started.Add(renewal.VisitorPermission.ExpiresAt.Sub(renewal.Pair.ObservedAt))
+		// signed visitor tokens carry whole-second expiry, independently of the
+		// API interval. account for that exact fence rather than widening tolerance.
+		c.faults.tokenUntil = started.Add(renewal.VisitorPermission.ExpiresAt.Truncate(time.Second).Sub(renewal.Pair.ObservedAt))
 		c.faults.renewals++
 	}
 	return renewal, err
 }
 
+func (c defaultConnectorOwnerControl) RebindConnectorPeerPair(ctx context.Context, service, pair string, body controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+	c.faults.mu.Lock()
+	defer c.faults.mu.Unlock()
+	if c.faults.outage {
+		return controlv1.ConnectorPeerPairRebindState{}, clientcontrol.ErrUnavailable
+	}
+	return c.Control.RebindConnectorPeerPair(ctx, service, pair, body)
+}
+
 type defaultConnectorPublisherControl struct {
 	publisherservice.RunControl
 	faults *nativeDefaultFaults
+}
+
+func (c defaultConnectorPublisherControl) ListConnectorPeerPairs(ctx context.Context, service, run, after string, token credentials.ServiceRunToken) (controlv1.ConnectorPeerPairCandidates, error) {
+	c.faults.mu.Lock()
+	defer c.faults.mu.Unlock()
+	started := time.Now()
+	page, err := c.RunControl.ListConnectorPeerPairs(ctx, service, run, after, token)
+	for index := range page.Items {
+		candidate := &page.Items[index]
+		if candidate.PairId != c.faults.pair || candidate.OwnerAuthority == nil {
+			continue
+		}
+		if c.faults.outage {
+			candidate.OwnerAuthority = nil // the sibling may still observe its own authority.
+			continue
+		}
+		observation := candidate.OwnerAuthority
+		c.faults.publisherOwnerUntil = started.Add(observation.ExpiresAt.Sub(observation.ObservedAt))
+	}
+	return page, err
 }
 
 func (c defaultConnectorPublisherControl) DeliverConnectorPeerPair(ctx context.Context, service, run, pair string, generation int64, token credentials.ServiceRunToken) (controlv1.ConnectorPeerPairDelivery, error) {
@@ -206,24 +241,47 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	}
 	target.mu.Lock()
 	first, last := target.receivedOn["same-stream-0\n"], target.receivedOn["same-stream-14\n"]
+	targetClosed := target.closedOn[first]
 	for n := range 15 {
 		if target.received[fmt.Sprintf("same-stream-%d\n", n)] != 1 {
 			t.Error("default renewal replayed application bytes")
 		}
 	}
 	target.mu.Unlock()
-	if first == nil || first != last {
+	if first == nil || first != last || targetClosed == nil {
 		t.Fatal("default renewal reopened the target")
 	}
 	faults.mu.Lock()
-	checks, latest, publisherUntil := faults.renewals, faults.connectorUntil, faults.publisherUntil
+	checks, latest, publisherUntil, publisherOwnerUntil := faults.renewals, faults.connectorUntil, faults.publisherUntil, faults.publisherOwnerUntil
+	runUntil, permissionUntil, tokenUntil := faults.runUntil, faults.permissionUntil, faults.tokenUntil
 	changed := faults.changedPair
 	faults.outage = true
 	faults.mu.Unlock()
-	if checks < 2 || changed || !latest.After(initial.Add(30*time.Second)) || publisherUntil.IsZero() {
+	t.Logf("outage at=%s connector=%s run=%s permission=%s token=%s publisher delivery=%s publisher owner=%s", time.Now().Format(time.RFC3339Nano), latest.Format(time.RFC3339Nano), runUntil.Format(time.RFC3339Nano), permissionUntil.Format(time.RFC3339Nano), tokenUntil.Format(time.RFC3339Nano), publisherUntil.Format(time.RFC3339Nano), publisherOwnerUntil.Format(time.RFC3339Nano))
+	if checks < 2 || changed || !latest.After(initial.Add(30*time.Second)) || publisherUntil.IsZero() || publisherOwnerUntil.IsZero() || runUntil.IsZero() || permissionUntil.IsZero() || tokenUntil.IsZero() {
 		t.Fatalf("default authority did not renew in place: checks=%d changed=%t", checks, changed)
 	}
-	latest = minTime(latest, publisherUntil)
+	// installation expiry pauses packets. each endpoint must close its local
+	// sockets by its own owner or application deadline: the paused path cannot
+	// carry a remote close. the outage blocks both forms of owner observation.
+	latest = minTime(latest, minTime(runUntil, permissionUntil))
+	publisherDeadline := minTime(publisherOwnerUntil, tokenUntil)
+	earliestExpiry := minTime(latest, publisherDeadline)
+	type closure struct {
+		at  time.Time
+		err error
+	}
+	readClosure := func(c net.Conn, deadline time.Time) closure {
+		_ = c.SetReadDeadline(deadline.Add(2 * time.Second))
+		_, err := c.Read(make([]byte, 1))
+		return closure{at: time.Now(), err: err}
+	}
+	// observe EOF immediately, even while the sibling is starting or the target
+	// deadline is pending, so those waits cannot hide premature loopback closure.
+	localClosed := make(chan closure, 1)
+	localReadDone := make(chan struct{})
+	go func() { defer close(localReadDone); localClosed <- readClosure(conn, latest) }()
+	defer func() { _ = conn.Close(); <-localReadDone }()
 	// native policy is run-owned, not selectively fetched per stream. use an
 	// independently enrolled sibling device: its current revocation must close
 	// that owner without extending or prematurely closing the unavailable owner.
@@ -255,18 +313,45 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	if _, err := io.ReadFull(other, make([]byte, len("revoked\n"))); err != nil {
 		t.Fatal(err)
 	}
-	assertClosed := func(c net.Conn, deadline time.Time) {
+	assertClosed := func(result closure) {
 		t.Helper()
-		_ = c.SetReadDeadline(deadline.Add(2 * time.Second))
-		if _, err := c.Read(make([]byte, 1)); err == nil {
+		if result.err == nil {
 			t.Fatal("visitor remained open")
-		} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+		} else if timeout, ok := result.err.(net.Error); ok && timeout.Timeout() {
 			t.Fatal("visitor exceeded authorization deadline")
 		}
 	}
-	assertClosed(conn, latest)
-	if time.Now().Before(latest.Add(-100 * time.Millisecond)) {
-		t.Fatalf("outage ended %v before the captured binding deadline", time.Until(latest))
+	const fenced = "must-not-flow-after-installation-expiry\n"
+	if publisherUntil.Before(latest) {
+		wait := time.NewTimer(time.Until(publisherUntil))
+		defer wait.Stop()
+		select {
+		case <-wait.C:
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+		_ = conn.SetWriteDeadline(latest.Add(2 * time.Second))
+		_, _ = io.WriteString(conn, fenced)
+	}
+	targetDeadline := time.NewTimer(time.Until(publisherDeadline.Add(2 * time.Second)))
+	defer targetDeadline.Stop()
+	select {
+	case <-targetClosed:
+	case <-targetDeadline.C:
+		t.Fatal("target socket exceeded publisher owner or application permission deadline")
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	}
+	closed := <-localClosed
+	assertClosed(closed)
+	target.mu.Lock()
+	fencedArrivals := target.received[fenced]
+	target.mu.Unlock()
+	if fencedArrivals != 0 {
+		t.Fatal("expired publisher installation carried new application bytes")
+	}
+	if closed.at.Before(earliestExpiry.Add(-100 * time.Millisecond)) {
+		t.Fatalf("outage ended %v before the captured owner and permission deadlines", earliestExpiry.Sub(closed.at))
 	}
 	joinOutage(func(err error) bool { return errors.Is(err, connectorstream.ErrServiceConnection) })
 	// revocation publishes shared run policy, so test it after the isolated
@@ -284,7 +369,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	if _, err := f.identity.routes.SelectServiceRun(t.Context(), service.Id, device.Subject.DeviceID); !defaultConnectorRevocationDenied(err) {
 		t.Fatalf("control did not deny the revoked sibling: %v", err)
 	}
-	assertClosed(other, time.Now().Add(30*time.Second))
+	assertClosed(readClosure(other, time.Now().Add(30*time.Second)))
 	// the relay may close both legs before the owner receives a typed denial.
 	// control above must independently deny this exact device in either case.
 	joinRevoked(func(err error) bool {

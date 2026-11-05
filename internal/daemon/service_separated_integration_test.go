@@ -105,6 +105,7 @@ type privateEchoTarget struct {
 	mu         sync.Mutex
 	received   map[string]int
 	receivedOn map[string]net.Conn
+	closedOn   map[net.Conn]<-chan struct{}
 }
 
 func startPrivateEchoTarget(t *testing.T) *privateEchoTarget {
@@ -114,7 +115,7 @@ func startPrivateEchoTarget(t *testing.T) *privateEchoTarget {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	target := &privateEchoTarget{address: listener.Addr().String(), received: make(map[string]int), receivedOn: make(map[string]net.Conn)}
+	target := &privateEchoTarget{address: listener.Addr().String(), received: make(map[string]int), receivedOn: make(map[string]net.Conn), closedOn: make(map[net.Conn]<-chan struct{})}
 	var workers sync.WaitGroup
 	workers.Go(func() {
 		for {
@@ -122,7 +123,12 @@ func startPrivateEchoTarget(t *testing.T) *privateEchoTarget {
 			if err != nil {
 				return
 			}
+			closed := make(chan struct{})
+			target.mu.Lock()
+			target.closedOn[connection] = closed
+			target.mu.Unlock()
 			workers.Go(func() {
+				defer close(closed)
 				defer connection.Close()
 				stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
 				defer stop()
