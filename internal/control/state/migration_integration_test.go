@@ -3,13 +3,89 @@ package state
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
 )
+
+func TestIntegrationWorkloadRenewalMigration(t *testing.T) {
+	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "workload_renewal_migration")
+	ctx := t.Context()
+	r := appliedProjectRequest(t, d, now)
+	r.Configuration = workloadConfiguration()
+	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	exchange, key := workloadExchange(t, r, now)
+	session, err := d.ExchangeWorkload(ctx, exchange, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := parseDirectConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := stdlib.OpenDB(*config)
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	migrations, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations, goose.WithTableName(versionTable), goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// restore the baseline's exact shape while keeping a real session. the
+	// production migrator must upgrade existing rows without replacing authority.
+	if _, err := provider.DownTo(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Readiness(ctx); err == nil {
+		t.Fatal("serving accepted the old schema")
+	}
+	if opened, err := Open(ctx, url, testStorageKey, ""); err == nil {
+		opened.Close()
+		t.Fatal("open accepted the old schema")
+	}
+	row := func() string {
+		t.Helper()
+		var value string
+		if err := d.pool.QueryRow(ctx, `SELECT (to_jsonb(w)-'renewal_sequence')::text FROM control.workload_sessions w WHERE id=$1`, session.ID).Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	before := row()
+	if err := Migrate(ctx, url); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Readiness(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if row() != before {
+		t.Fatal("migration changed existing session authority")
+	}
+	recovered, err := d.ExchangeWorkload(ctx, exchange, now)
+	if err != nil || recovered.RenewalSequence != 0 || recovered.ID != session.ID || recovered.Credential != session.Credential || !recovered.LeaseExpiresAt.Equal(session.LeaseExpiresAt) {
+		t.Fatal("migration lost committed session or initial counter", err)
+	}
+	if next, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, signWorkloadRenewal(recovered, key), now.Add(31*time.Second)); err != nil || next.RenewalSequence != 1 {
+		t.Fatal("upgraded session could not renew with its original key", err)
+	}
+	if err := Migrate(ctx, url); err != nil {
+		t.Fatal("repeat migration failed", err)
+	}
+}
 
 func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	databaseURL := newDisposableControlStateDatabaseURL(t, "migration")

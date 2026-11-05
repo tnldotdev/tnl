@@ -42,6 +42,11 @@ func signWorkloadRequest(r *ExchangeWorkloadRequest, key ed25519.PrivateKey) {
 	r.Signature = ed25519.Sign(key, workloadproof.Exchange(r.TeamID, r.ProjectKey, r.Workload, r.SourceFingerprint, r.Nonce, r.Execution.AssertionDigest, r.Services))
 }
 
+func signWorkloadRenewal(session WorkloadSession, key ed25519.PrivateKey) WorkloadRenewal {
+	sequence := session.RenewalSequence + 1
+	return WorkloadRenewal{Sequence: sequence, Signature: ed25519.Sign(key, workloadproof.Renew(session.ID, sequence))}
+}
+
 func TestIntegrationWorkloadReusableProviderFixedWindow(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_reusable")
 	r := appliedProjectRequest(t, d, now)
@@ -60,10 +65,11 @@ func TestIntegrationWorkloadReusableProviderFixedWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	for at := now.Add(30 * time.Second); at.Before(session.ExpiresAt); at = at.Add(30 * time.Second) {
-		renewed, e := d.RenewWorkloadSession(t.Context(), session.ID, session.Credential, at)
+		renewed, e := d.RenewWorkloadSession(t.Context(), session.ID, session.Credential, signWorkloadRenewal(session, key), at)
 		if e != nil || !renewed.ExpiresAt.Equal(session.ExpiresAt) {
 			t.Fatal("renew changed fixed window", e)
 		}
+		session = renewed
 	}
 	if _, err = d.ExchangeWorkload(t.Context(), request, session.ExpiresAt.Add(time.Second)); !errors.Is(err, ErrWorkloadDenied) {
 		t.Fatal("nonce retry resurrected expired window", err)
@@ -95,13 +101,13 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exchange, _ := workloadExchange(t, r, now)
+	exchange, firstKey := workloadExchange(t, r, now)
 	first, err := d.ExchangeWorkload(ctx, exchange, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	service := applied.Services[0].ServiceID
-	renewed, err := d.RenewWorkloadSession(ctx, first.ID, first.Credential, now.Add(31*time.Second))
+	renewed, err := d.RenewWorkloadSession(ctx, first.ID, first.Credential, signWorkloadRenewal(first, firstKey), now.Add(31*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +228,7 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 	if _, err = d.ExchangeWorkload(ctx, replay, now); !errors.Is(err, ErrWorkloadConflict) {
 		t.Fatal("jti moved to another execution", err)
 	}
-	renewed, err := d.RenewWorkloadSession(ctx, original.ID, original.Credential, now.Add(30*time.Second))
+	renewed, err := d.RenewWorkloadSession(ctx, original.ID, original.Credential, signWorkloadRenewal(original, key), now.Add(30*time.Second))
 	if err != nil || !renewed.ExpiresAt.Equal(original.ExpiresAt) || !renewed.LeaseExpiresAt.Equal(now.Add(120*time.Second)) {
 		t.Fatal("renew changed absolute window", err)
 	}
@@ -258,11 +264,14 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 		t.Fatal("same JWT/key could not resume after policy addition", err)
 	}
 	for at := now.Add(90 * time.Second); at.Before(original.ExpiresAt); at = at.Add(30 * time.Second) {
-		if _, err = d.RenewWorkloadSession(ctx, original.ID, original.Credential, at); err != nil {
+		if renewed, err = d.RenewWorkloadSession(ctx, original.ID, original.Credential, signWorkloadRenewal(renewed, key), at); err != nil {
 			t.Fatal(err)
 		}
+		if len(renewed.ServiceIDs) != 1 || renewed.ServiceIDs[0] != services[0].ID {
+			t.Fatal("renewal restored narrowed rights")
+		}
 	}
-	if _, err = d.RenewWorkloadSession(ctx, original.ID, original.Credential, original.ExpiresAt); !errors.Is(err, ErrWorkloadDenied) {
+	if _, err = d.RenewWorkloadSession(ctx, original.ID, original.Credential, signWorkloadRenewal(renewed, key), original.ExpiresAt); !errors.Is(err, ErrWorkloadDenied) {
 		t.Fatal("renew crossed absolute deadline", err)
 	}
 	if _, err = d.CheckWorkloadService(ctx, original.Credential, services[0].ID, original.ExpiresAt); !errors.Is(err, ErrWorkloadDenied) {
