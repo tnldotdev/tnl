@@ -122,7 +122,7 @@ var operationalNames = func() map[failure.Operation]operationName {
 		"clean up routing history", "clean up guest private state", "expire publish runs",
 		"renew relay lease", "serve relay publisher", "forward through relay",
 		"serve relay QUIC session", "clean up service audit", "renew ingress lease",
-		"report ingress usage", "report ingress recovery", "close ingress relay session",
+		"report ingress recovery", "close ingress relay session",
 		"read ingress public URL", "serve ingress connection", "refresh service port capacity",
 		"serve standalone relay publisher", "clean up ephemeral public URLs",
 		"read feedback thread", "encode feedback thread", "list feedback threads",

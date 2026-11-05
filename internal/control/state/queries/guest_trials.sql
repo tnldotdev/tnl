@@ -143,8 +143,7 @@ WHERE guest.id = (
   AND (guest.serving_until IS NULL OR guest.serving_until <= sqlc.arg(started_at))
   AND guest.ended_at IS NULL
   AND guest.expires_at > sqlc.arg(started_at)
-  AND guest.used_ready_ns < 1200000000000
-  AND guest.used_bytes < 5242880;
+  AND guest.used_ready_ns < 1200000000000;
 
 -- name: MarkGuestRunReady :execrows
 UPDATE control.guest_trials
@@ -155,7 +154,7 @@ SET active_ready_at = sqlc.arg(ready_at), updated_at = sqlc.arg(ready_at),
 WHERE active_publish_run_id = sqlc.arg(publish_run_id)
   AND active_ready_at IS NULL
   AND expires_at > sqlc.arg(ready_at)
-  AND ended_at IS NULL AND used_bytes < 5242880
+  AND ended_at IS NULL
   AND used_ready_ns < 1200000000000;
 
 -- name: UpdateGuestServingAuthority :one
@@ -182,12 +181,10 @@ SET used_ready_ns = LEAST(1200000000000, used_ready_ns + CASE
     END),
     end_reason = COALESCE(end_reason, CASE
         WHEN sqlc.arg(close_reason)::text = 'guest_expired' OR expires_at <= sqlc.arg(closed_at)::timestamptz OR expires_at <= serving_until THEN 'expired'
-        WHEN sqlc.arg(close_reason)::text = 'guest_transfer_limit' OR used_bytes >= 5242880 THEN 'transfer_limit'
         WHEN ready_deadline <= serving_until THEN 'ready_limit'
     END),
     ended_at = COALESCE(ended_at, CASE
         WHEN sqlc.arg(close_reason)::text = 'guest_expired' OR expires_at <= sqlc.arg(closed_at)::timestamptz OR expires_at <= serving_until THEN expires_at
-        WHEN sqlc.arg(close_reason)::text = 'guest_transfer_limit' OR used_bytes >= 5242880 THEN sqlc.arg(closed_at)::timestamptz
         WHEN ready_deadline <= serving_until THEN ready_deadline
     END),
     active_ready_at = NULL,
@@ -196,33 +193,9 @@ SET used_ready_ns = LEAST(1200000000000, used_ready_ns + CASE
     updated_at = sqlc.arg(closed_at)
 WHERE active_publish_run_id = sqlc.arg(publish_run_id);
 
--- name: UpdateGuestTransferredBytes :execrows
-WITH observed AS (
-    SELECT routes.guest_id, COALESCE(SUM(buckets.ingress_bytes + buckets.egress_bytes), 0)::bigint AS bytes
-    FROM control.guest_public_urls AS routes
-    LEFT JOIN control.public_url_usage_buckets AS buckets ON buckets.public_url_id = routes.public_url_id
-    WHERE routes.guest_id = (
-        SELECT owned.guest_id FROM control.guest_public_urls AS owned WHERE owned.public_url_id = sqlc.arg(guest_route_id)
-    )
-    GROUP BY routes.guest_id
-)
-UPDATE control.guest_trials AS guest
-SET used_bytes = GREATEST(guest.used_bytes, observed.bytes),
-    end_reason = COALESCE(guest.end_reason, CASE
-        WHEN guest.expires_at <= sqlc.arg(observed_at)::timestamptz THEN 'expired'
-        WHEN GREATEST(guest.used_bytes, observed.bytes) >= 5242880 THEN 'transfer_limit'
-    END),
-    ended_at = COALESCE(guest.ended_at, CASE
-        WHEN guest.expires_at <= sqlc.arg(observed_at)::timestamptz THEN guest.expires_at
-        WHEN GREATEST(guest.used_bytes, observed.bytes) >= 5242880 THEN sqlc.arg(observed_at)::timestamptz
-    END),
-    updated_at = GREATEST(guest.updated_at, sqlc.arg(observed_at))
-FROM observed WHERE guest.id = observed.guest_id;
-
 -- name: GuestRunAllowanceSpent :one
 SELECT CASE
     WHEN expires_at <= sqlc.arg(now)::timestamptz THEN 'guest_expired'
-    WHEN used_bytes >= 5242880 THEN 'guest_transfer_limit'
     WHEN used_ready_ns >= 1200000000000 OR ready_deadline <= sqlc.arg(now)::timestamptz THEN 'guest_ready_limit'
     ELSE ''
 END::text AS reason
@@ -235,6 +208,5 @@ SELECT
     count(*) FILTER (WHERE first_demo_allocated_at >= sqlc.arg(since))::bigint AS allocated,
     count(*) FILTER (WHERE first_ready_at >= sqlc.arg(since))::bigint AS ready,
     count(*) FILTER (WHERE end_reason = 'expired' AND ended_at >= sqlc.arg(since))::bigint AS expired,
-    count(*) FILTER (WHERE end_reason = 'ready_limit' AND ended_at >= sqlc.arg(since))::bigint AS ready_limit,
-    count(*) FILTER (WHERE end_reason = 'transfer_limit' AND ended_at >= sqlc.arg(since))::bigint AS transfer_limit
+    count(*) FILTER (WHERE end_reason = 'ready_limit' AND ended_at >= sqlc.arg(since))::bigint AS ready_limit
 FROM control.guest_trials;

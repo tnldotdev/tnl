@@ -42,13 +42,13 @@ func maximumOpeningClientHello() []byte {
 	return records
 }
 
-func TestPublicOpeningMaximumClientHelloAndUsage(t *testing.T) {
+func TestPublicOpeningMaximumClientHelloAndForwardedBytes(t *testing.T) {
 	f := newAdmissionTransportFixture(t)
 	backends, err := f.forwarder.Backends(f.entry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	usage := newUsageRecorder()
+	metrics := &testMetrics{visitorOutcomes: make(chan string, 2)}
 	config := publicURLConfig(backends...)
 	lookup := config.Lookup
 	config.Lookup = func(host string) ([]PublicURL, LookupReason) {
@@ -58,7 +58,7 @@ func TestPublicOpeningMaximumClientHelloAndUsage(t *testing.T) {
 		}
 		return candidates, reason
 	}
-	config.OpenUsage = usage.Open
+	config.Metrics = metrics
 	_, address := startIngress(t, config)
 	hello := maximumOpeningClientHello()
 	if len(hello) != clienthello.MaxClientHelloBytes {
@@ -100,7 +100,7 @@ func TestPublicOpeningMaximumClientHelloAndUsage(t *testing.T) {
 		}
 		return nil
 	})
-	for range 2 {
+	for index := range 2 {
 		connection, err := net.DialTimeout("tcp", address, fixtureTimeout)
 		if err != nil {
 			t.Fatal(err)
@@ -117,10 +117,14 @@ func TestPublicOpeningMaximumClientHelloAndUsage(t *testing.T) {
 		if err != nil || string(response) != "ok" {
 			t.Fatalf("maximum ClientHello response: %q, %v", response, err)
 		}
-		u := ingressAwait(t, usage.opened)
-		ingressAwait(t, u.closed)
-		if u.streams != 1 || u.publisherFailures != 0 || u.ingressBytes != int64(len(hello)) || u.egressBytes != 2 {
-			t.Fatalf("opening usage lost or duplicated prefix: %+v", u)
+		if outcome := ingressAwait(t, metrics.visitorOutcomes); outcome != "forwarded" {
+			t.Fatal("maximum ClientHello forwarding failed", outcome)
+		}
+		metrics.forwardedMu.Lock()
+		upload, download := metrics.forwardedBytes["visitor_to_publisher"], metrics.forwardedBytes["publisher_to_visitor"]
+		metrics.forwardedMu.Unlock()
+		if upload != int64((index+1)*len(hello)) || download != int64((index+1)*2) {
+			t.Fatalf("forwarding lost or duplicated prefix: upload=%d download=%d", upload, download)
 		}
 	}
 	if err := ingressAwait(t, worker); err != nil {

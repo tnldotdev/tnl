@@ -236,7 +236,7 @@ func TestHeartbeatFallbackSkipsPolicyDenialObservation(t *testing.T) {
 	response, observed, err := heartbeatResponseOnce(
 		t.Context(), heartbeatTestAuthority(control, "session_1", "session-token"), time.Now().Add(time.Minute),
 	)
-	if err != nil || observed || response.PolicyDenials != 0 {
+	if err != nil || observed {
 		t.Fatalf("fallback = %#v, observed = %t, error = %v", response, observed, err)
 	}
 }
@@ -361,7 +361,7 @@ func TestHeartbeatIgnoresUpdateFailureAfterCancellation(t *testing.T) {
 					close(updateStarted)
 					<-releaseUpdate
 					return errors.New("connection manager is draining")
-				}, nil, 0,
+				}, 0,
 			)
 		}()
 		t.Cleanup(func() { cancel(); release(); awaitPublisherTest(t, joined) })
@@ -456,32 +456,6 @@ func TestObserveProvisioningStallFiresOnceAndCancels(t *testing.T) {
 	}
 	if len(events) != 1 {
 		t.Fatalf("canceled warning emitted events = %#v", events)
-	}
-}
-
-func TestObserveHeartbeatPolicyDenialsReportsCumulativeIncreases(t *testing.T) {
-	var events []Event
-	config := Config{Observe: func(event Event) error {
-		events = append(events, event)
-		return nil
-	}}
-	setup := controlv1.PublishRunSetup{
-		PublicUrl:  controlv1.PublicURL{Id: "public_url_1", CanonicalHostname: "demo.example"},
-		PublishRun: controlv1.PublishRun{PublishRunNumber: 3},
-	}
-	var previous uint64
-	for _, count := range []int64{0, 2, 2, 5} {
-		if err := observeHeartbeatPolicyDenials(config, setup, count, &previous); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(events) != 2 || events[0].PolicyDenials != 2 || events[1].PolicyDenials != 5 ||
-		events[1].Type != EventIPPolicyDenials || events[1].PublishRunNumber != 3 {
-		t.Fatalf("policy denial events = %#v", events)
-	}
-	decreased := int64(4)
-	if err := observeHeartbeatPolicyDenials(config, setup, decreased, &previous); err == nil {
-		t.Fatal("decreased policy denial count was accepted")
 	}
 }
 

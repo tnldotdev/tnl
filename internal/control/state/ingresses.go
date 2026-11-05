@@ -2,9 +2,6 @@ package state
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"time"
@@ -54,22 +51,15 @@ type IngressPublicRunObservation struct {
 // IngressLease is the control-issued lease for one ingress process.
 type IngressLease struct {
 	IngressLeaseIdentity
-	ProtocolVersion        uint64
-	ConnectionCapacity     uint64
-	ReportedConnections    uint64
-	RoutingTableRevision   uint64
-	VisitorNetworkHashKeys [2]VisitorNetworkHashKey
-	Draining               bool
-	DrainDeadline          *time.Time
-	RegisteredAt           time.Time
-	RenewedAt              time.Time
-	LeaseExpiresAt         time.Time
-}
-
-// VisitorNetworkHashKey limits visitor-network pseudonyms to one UTC date.
-type VisitorNetworkHashKey struct {
-	UTCDate time.Time
-	Key     [32]byte
+	ProtocolVersion      uint64
+	ConnectionCapacity   uint64
+	ReportedConnections  uint64
+	RoutingTableRevision uint64
+	Draining             bool
+	DrainDeadline        *time.Time
+	RegisteredAt         time.Time
+	RenewedAt            time.Time
+	LeaseExpiresAt       time.Time
 }
 
 // RegisterIngress creates or renews one ingress process lease.
@@ -109,17 +99,18 @@ func (d *Database) RegisterIngress(
 	if err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: register ingress: %w", err)
 	}
-	if err := ensureIngressUsageRun(ctx, queries, row); err != nil {
-		return IngressLease{}, fmt.Errorf("controlstate: register ingress usage run: %w", err)
-	}
-	visitorNetworkHashMasterKey, err := d.ensurePublicURLUsageConfiguration(ctx, queries, now)
-	if err != nil {
-		return IngressLease{}, fmt.Errorf("controlstate: register ingress usage configuration: %w", err)
+	// retain the process fence even after its runtime lease row is removed.
+	if _, err := queries.FenceIngressRun(ctx, controlstatedb.FenceIngressRunParams{
+		IngressID: row.IngressID, IngressRunID: row.IngressRunID, IngressLeaseRevision: row.IngressLeaseRevision,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return IngressLease{}, ErrIngressLeaseStale
+	} else if err != nil {
+		return IngressLease{}, fmt.Errorf("retain ingress process fence: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: register ingress: commit: %w", err)
 	}
-	return ingressLease(row, visitorNetworkHashKeys(visitorNetworkHashMasterKey, now))
+	return ingressLease(row)
 }
 
 // RenewIngress extends one exact, unexpired ingress lease.
@@ -175,9 +166,6 @@ func (d *Database) RenewIngress(
 	if err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: renew ingress: %w", err)
 	}
-	if err := ensureIngressUsageRun(ctx, queries, row); err != nil {
-		return IngressLease{}, fmt.Errorf("controlstate: renew ingress usage run: %w", err)
-	}
 	if !row.Draining {
 		if err := queries.DeleteExpiredIngressPublicRunObservations(ctx, controlstatedb.DeleteExpiredIngressPublicRunObservationsParams{
 			IngressID: row.IngressID, Now: timestamptz(now),
@@ -198,14 +186,10 @@ func (d *Database) RenewIngress(
 			}
 		}
 	}
-	visitorNetworkHashMasterKey, err := d.ensurePublicURLUsageConfiguration(ctx, queries, now)
-	if err != nil {
-		return IngressLease{}, fmt.Errorf("controlstate: renew ingress usage configuration: %w", err)
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: renew ingress: commit: %w", err)
 	}
-	return ingressLease(row, visitorNetworkHashKeys(visitorNetworkHashMasterKey, now))
+	return ingressLease(row)
 }
 
 // BeginIngressDrain removes one exact ingress process from readiness and keeps
@@ -243,75 +227,10 @@ func (d *Database) BeginIngressDrain(
 	if err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: begin ingress drain: %w", err)
 	}
-	if err := ensureIngressUsageRun(ctx, queries, row); err != nil {
-		return IngressLease{}, fmt.Errorf("controlstate: begin ingress drain usage run: %w", err)
-	}
-	visitorNetworkHashMasterKey, err := d.ensurePublicURLUsageConfiguration(ctx, queries, now)
-	if err != nil {
-		return IngressLease{}, fmt.Errorf("controlstate: begin ingress drain usage configuration: %w", err)
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return IngressLease{}, fmt.Errorf("controlstate: begin ingress drain: commit: %w", err)
 	}
-	return ingressLease(row, visitorNetworkHashKeys(visitorNetworkHashMasterKey, now))
-}
-
-func (d *Database) ensurePublicURLUsageConfiguration(
-	ctx context.Context,
-	queries *controlstatedb.Queries,
-	createdAt time.Time,
-) ([32]byte, error) {
-	var candidate [32]byte
-	if _, err := rand.Read(candidate[:]); err != nil {
-		return [32]byte{}, err
-	}
-	ciphertext, err := d.sealSecret(visitorNetworkHashMasterKeyContext(), candidate[:])
-	if err != nil {
-		return [32]byte{}, err
-	}
-	configuration, err := queries.EnsurePublicURLUsageConfiguration(ctx, controlstatedb.EnsurePublicURLUsageConfigurationParams{
-		VisitorNetworkHashMasterKeyCiphertext: ciphertext, VisitorNetworkHashMasterKeyStorageKeyID: d.storageKey.CurrentID(),
-		CreatedAt: timestamptz(createdAt),
-	})
-	if err != nil {
-		return [32]byte{}, err
-	}
-	key, _, err := d.openSecret(
-		configuration.VisitorNetworkHashMasterKeyStorageKeyID,
-		visitorNetworkHashMasterKeyContext(), configuration.VisitorNetworkHashMasterKeyCiphertext,
-	)
-	if err != nil || len(key) != len(candidate) {
-		return [32]byte{}, errors.New("controlstate: invalid visitor network hash key")
-	}
-	return [32]byte(key), nil
-}
-
-func visitorNetworkHashKeys(masterKey [32]byte, now time.Time) [2]VisitorNetworkHashKey {
-	day := now.UTC().Truncate(24 * time.Hour)
-	var result [2]VisitorNetworkHashKey
-	for index := range result {
-		utcDate := day.AddDate(0, 0, index)
-		mac := hmac.New(sha256.New, masterKey[:])
-		_, _ = mac.Write([]byte("tnl/public-url-usage/visitor-day/v1\x00" + utcDate.Format(time.DateOnly)))
-		result[index] = VisitorNetworkHashKey{UTCDate: utcDate, Key: [32]byte(mac.Sum(nil))}
-	}
-	return result
-}
-
-func ensureIngressUsageRun(
-	ctx context.Context,
-	queries *controlstatedb.Queries,
-	lease controlstatedb.ControlIngressLease,
-) error {
-	_, err := queries.EnsureIngressUsageRun(ctx, controlstatedb.EnsureIngressUsageRunParams{
-		IngressID: lease.IngressID, IngressRunID: lease.IngressRunID,
-		IngressLeaseRevision: lease.IngressLeaseRevision, StartedAt: lease.RegisteredAt,
-		LeaseExpiresAt: lease.LeaseExpiresAt, ObservedThrough: lease.RegisteredAt,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrIngressLeaseStale
-	}
-	return err
+	return ingressLease(row)
 }
 
 func validateIngressRegistration(registration IngressRegistration, leaseDuration time.Duration) error {
@@ -392,7 +311,7 @@ func lockCurrentIngressLease(
 	return lease, nil
 }
 
-func ingressLease(row controlstatedb.ControlIngressLease, visitorNetworkHashKeys [2]VisitorNetworkHashKey) (IngressLease, error) {
+func ingressLease(row controlstatedb.ControlIngressLease) (IngressLease, error) {
 	if row.IngressLeaseRevision <= 0 || row.ProtocolVersion <= 0 || row.ConnectionCapacity < 0 ||
 		row.ReportedConnections < 0 || row.RoutingTableRevision < 0 || !row.RegisteredAt.Valid ||
 		!row.RenewedAt.Valid || !row.LeaseExpiresAt.Valid {
@@ -410,8 +329,7 @@ func ingressLease(row controlstatedb.ControlIngressLease, visitorNetworkHashKeys
 		},
 		ProtocolVersion: uint64(row.ProtocolVersion), ConnectionCapacity: uint64(row.ConnectionCapacity),
 		ReportedConnections: uint64(row.ReportedConnections), RoutingTableRevision: uint64(row.RoutingTableRevision),
-		VisitorNetworkHashKeys: visitorNetworkHashKeys,
-		Draining:               row.Draining, DrainDeadline: drainDeadline, RegisteredAt: row.RegisteredAt.Time,
+		Draining: row.Draining, DrainDeadline: drainDeadline, RegisteredAt: row.RegisteredAt.Time,
 		RenewedAt: row.RenewedAt.Time, LeaseExpiresAt: row.LeaseExpiresAt.Time,
 	}, nil
 }

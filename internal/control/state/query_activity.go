@@ -106,7 +106,7 @@ func (q *queryActivity) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data 
 	// driver completion excludes the acquiring query's own wait; it cannot
 	// identify the exact instant PostgreSQL acquired or released a lock.
 	switch query.operation {
-	case "LockLocalTeamForSession", "LockRelayServicesForPlacement", "GetRelayLeaseForClaim", "GetRelayLeaseForReady", "LockIngressRoutingTableClock", "InsertFinalIngressRoutingTableEvent", "LockPublishRunForUsage", "LockIngressLease":
+	case "LockLocalTeamForSession", "LockRelayServicesForPlacement", "GetRelayLeaseForClaim", "GetRelayLeaseForReady", "LockIngressRoutingTableClock", "InsertFinalIngressRoutingTableEvent", "LockIngressLease":
 		if err == nil && data.CommandTag.RowsAffected() > 0 && conn.PgConn().TxStatus() != 'I' {
 			if q.guards == nil {
 				q.guards = make(map[*pgx.Conn]*transactionGuards)

@@ -14,7 +14,7 @@ import (
 )
 
 func TestHeartbeatLeaseOnlyAdvancesAfterFullAcceptedState(t *testing.T) {
-	for _, rejected := range []string{"connections", "policy", "accepted"} {
+	for _, rejected := range []string{"connections", "accepted"} {
 		t.Run(rejected, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				m := observability.New("publisher")
@@ -35,11 +35,6 @@ func TestHeartbeatLeaseOnlyAdvancesAfterFullAcceptedState(t *testing.T) {
 				}}
 				err := heartbeatSessionAfterUpdate(ctx, heartbeatTestAuthority(control, "run", "token"), old, func([]controlv1.ConnectionAssignment) error {
 					if rejected == "connections" {
-						return invalid
-					}
-					return nil
-				}, func(int64) error {
-					if rejected == "policy" {
 						return invalid
 					}
 					return nil
@@ -83,7 +78,7 @@ func TestHeartbeatShortPreparationRenewsAndOutageStopsAtConfirmedExpiry(t *testi
 			<-ctx.Done()
 			return controlv1.PublishRunHeartbeat{}, ctx.Err()
 		}}
-		err := heartbeatSessionAfterUpdate(t.Context(), heartbeatTestAuthority(control, "run", "token"), until, nil, nil, 0)
+		err := heartbeatSessionAfterUpdate(t.Context(), heartbeatTestAuthority(control, "run", "token"), until, nil, 0)
 		if !errors.Is(err, clientcontrol.ErrStatusConflict) || calls != 2 || !time.Now().Equal(until) || until.Sub(start) != 6*time.Second {
 			t.Fatalf("short preparation/expiry: calls=%d elapsed=%s err=%v", calls, time.Since(start), err)
 		}

@@ -116,7 +116,7 @@ func TestGuestAuthorizationLimitsPublicURLsToOneLocalDemo(t *testing.T) {
 	if _, err := authorizer.Authorize(t.Context(), create); !errors.Is(err, authorization.ErrForbidden) {
 		t.Fatalf("foreign public URL accepted: %v", err)
 	}
-	guest.UsedBytes = controlstate.GuestByteAllowance
+	guest.UsedReady = controlstate.GuestReadyAllowance
 	authorizer.store = guestStoreStub{guest: guest, owned: true}
 	if _, err := authorizer.Authorize(t.Context(), create); !errors.Is(err, controlstate.ErrGuestTrialSpent) {
 		t.Fatalf("exhausted guest accepted: %v", err)

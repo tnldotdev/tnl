@@ -3,7 +3,7 @@
 Guest demos have 20 cumulative minutes of ready authority, including idle time,
 one active demo, and a 72-hour credential. Control starts charging at readiness
 and persists `ready_deadline` from the remaining budget and credential expiry.
-Heartbeat cannot move that deadline. The cumulative byte cap remains independent.
+Heartbeat cannot move that deadline. Guest traffic has no cumulative byte cap.
 
 [`guest_serving_deadline`](../../../internal/control/state/migrations/00001_baseline.sql)
 bounds publisher leases, preparation, policy, and signed visitor permissions.
@@ -23,6 +23,6 @@ closing a control record cannot fence an offline process. A normal stop can char
 a short unused tail; late cleanup cannot charge past the last issued horizon.
 A failed closure transaction settles nothing.
 
-The fresh PostgreSQL baseline is `tnl-control-fresh-v1-guest-ready-deadlines`.
+The fresh PostgreSQL baseline is `tnl-control-fresh-v1-guest-ready-without-usage-accounting`.
 Migration repeat, serving startup, and readiness require its exact version and
 identity. This requires a fresh database and coordinated server stop/start.

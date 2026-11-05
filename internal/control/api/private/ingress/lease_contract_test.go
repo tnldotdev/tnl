@@ -1,7 +1,6 @@
 package ingress
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -9,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	openapi_types "github.com/oapi-codegen/runtime/types"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -18,26 +16,16 @@ import (
 func TestIngressLeaseMutationContracts(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	deadline := now.Add(20 * time.Second)
-	date := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
-	var currentKey, nextKey [32]byte
-	for i := range currentKey {
-		currentKey[i], nextKey[i] = 1, 2
-	}
 	wantIdentity := controlstate.IngressLeaseIdentity{IngressID: "ingress-1", IngressRunID: "run-1", IngressLeaseRevision: 7}
 	lease := controlstate.IngressLease{
 		IngressLeaseIdentity: controlstate.IngressLeaseIdentity{IngressID: "ingress-result", IngressRunID: "run-result", IngressLeaseRevision: 9},
 		ProtocolVersion:      1, ConnectionCapacity: 100, ReportedConnections: 11, RoutingTableRevision: 19,
 		RegisteredAt: now.Add(-time.Minute), RenewedAt: now, LeaseExpiresAt: now.Add(30 * time.Second), Draining: true, DrainDeadline: &deadline,
-		VisitorNetworkHashKeys: [2]controlstate.VisitorNetworkHashKey{{UTCDate: date, Key: currentKey}, {UTCDate: date.Add(24 * time.Hour), Key: nextKey}},
 	}
 	wantLease := ingressv1.IngressLease{
 		IngressId: "ingress-result", IngressRunId: "run-result", IngressLeaseRevision: 9, ProtocolVersion: 1,
 		ConnectionCapacity: 100, ReportedConnections: 11, RoutingTableRevision: 19,
 		RegisteredAt: now.Add(-time.Minute), RenewedAt: now, LeaseExpiresAt: now.Add(30 * time.Second), Draining: true, DrainDeadline: &deadline,
-		VisitorNetworkHashKeys: []ingressv1.VisitorNetworkHashKey{
-			{UtcDate: openapi_types.Date{Time: date}, Key: bytes.Repeat([]byte{1}, 32)},
-			{UtcDate: openapi_types.Date{Time: date.Add(24 * time.Hour)}, Key: bytes.Repeat([]byte{2}, 32)},
-		},
 	}
 	for _, operation := range []string{"renew", "drain"} {
 		for _, transport := range []string{"direct", "HTTP"} {

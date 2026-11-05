@@ -105,19 +105,9 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		}
 	}
 	visitorOutcome = observability.VisitorOpenFailed
-	var usage UsageConnection
-	if s.config.OpenUsage != nil {
-		usage = s.config.OpenUsage(route.ID, route.PublishRunNumber, source.Addr(), time.Now().UTC())
-		if usage != nil {
-			defer func() { usage.Close(time.Now().UTC()) }()
-		}
-	}
 	if !route.allowsIP(source.Addr()) {
 		auditReason = "ip_policy"
 		visitorOutcome = observability.VisitorPolicyDenied
-		if usage != nil {
-			usage.PolicyDenied(time.Now().UTC())
-		}
 		return nil
 	}
 	// ingress cannot inspect a visitor credential inside TLS. restricted
@@ -147,24 +137,10 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		if rejected == "draining" {
 			visitorOutcome = observability.VisitorDraining
 		}
-		if usage != nil {
-			usage.CapacityDenied(time.Now().UTC())
-		}
 		return nil
 	}
 	defer release()
 
-	if usage != nil {
-		usage.VisitorStreamOpening(time.Now().UTC())
-	}
-	streamCommitted := false
-	if usage != nil {
-		defer func() {
-			if !streamCommitted {
-				usage.VisitorStreamOpenFailed(time.Now().UTC())
-			}
-		}()
-	}
 	var err error
 	if visitorID == "" {
 		visitorID, err = opaqueid.New(visitorConnectionIDPrefix)
@@ -203,7 +179,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		openTimeout = min(openTimeout, 2*time.Second, time.Until(admission.deadline))
 	}
 	openCtx, cancel := context.WithTimeout(ctx, openTimeout)
-	opened, openErr := s.openVisitorStream(openCtx, backends, visitorID, kind, header, hello.Prefix, usage)
+	opened, openErr := s.openVisitorStream(openCtx, backends, visitorID, kind, header, hello.Prefix)
 	cancel()
 	if s.config.Metrics != nil {
 		s.config.Metrics.ObserveVisitorOpen(openErr == nil, time.Since(visitorStarted))
@@ -214,11 +190,6 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		var opening *tunnel.OpeningError
 		if errors.As(openErr, &opening) && opening.Committed {
 			visitorOutcome = observability.VisitorCommittedFailed
-			if usage != nil {
-				usage.StreamOpened(time.Now().UTC())
-				usage.AddIngress(opening.VisitorBytes, time.Now().UTC())
-				streamCommitted = true
-			}
 			if s.config.Metrics != nil {
 				s.config.Metrics.AddForwardedBytes("visitor_to_publisher", opening.VisitorBytes)
 			}
@@ -248,11 +219,6 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		admission.upstream = opened.connection
 		admission.mu.Unlock()
 	}
-	if usage != nil {
-		usage.StreamOpened(time.Now().UTC())
-		usage.AddIngress(opened.bytes, time.Now().UTC())
-		streamCommitted = true
-	}
 	if s.config.Metrics != nil {
 		s.config.Metrics.AddForwardedBytes("visitor_to_publisher", opened.bytes)
 	}
@@ -268,7 +234,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		serviceaudit.Emit(s.config.AuditSink, serviceaudit.Observation{ServiceID: route.ID, ServiceKind: "public_url", RunID: route.PublishRunID, RunNumber: int64(route.PublishRunNumber), VisitorConnectionID: visitorID, SourceIP: source.Addr().Unmap().String(), EventType: "connection.open", Outcome: "forwarded"})
 	}
 	_, finishForward := observability.Start(ctx, "ingress.forward_visitor")
-	err = s.copyVisitor(public, upstream, hello.Remainder, route, denied, usage)
+	err = s.copyVisitor(public, upstream, hello.Remainder, route, denied)
 	finishForward(err)
 	{
 		outcome, reason := "closed", "closed"
@@ -334,7 +300,7 @@ func (s *Server) selectPoolRun(candidates []PublicURL) (PublicURL, func(), Looku
 
 // openVisitorStream retries only before a visitor byte reaches a relay. the
 // backend owns failed openings; the caller owns each successful connection.
-func (s *Server) openVisitorStream(ctx context.Context, backends []ingressbackend.Backend, visitorID string, kind connectionKind, header, prefix []byte, usage UsageConnection) (result committedVisitorStream, retErr error) {
+func (s *Server) openVisitorStream(ctx context.Context, backends []ingressbackend.Backend, visitorID string, kind connectionKind, header, prefix []byte) (result committedVisitorStream, retErr error) {
 	ctx, finish := observability.Start(ctx, "ingress.open_visitor_stream")
 	observability.Visitor(ctx, visitorID)
 	defer func() { finish(retErr) }()
@@ -363,17 +329,11 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []ingressbacken
 			lastErr = fmt.Errorf("ingress: open public_url: %w", openErr)
 			var opening *tunnel.OpeningError
 			if errors.As(openErr, &opening) && opening.Committed {
-				if usage != nil {
-					usage.VisitorStreamOpened(time.Now().UTC())
-				}
 				s.observeRelayAttempt(backend, observability.RelayAttemptCommittedFailed)
 				return committedVisitorStream{}, lastErr
 			}
 			s.observeRelayAttempt(backend, observability.RelayAttemptOpenFailed)
 			continue
-		}
-		if usage != nil {
-			usage.VisitorStreamOpened(time.Now().UTC())
 		}
 		if !s.trackBackend(candidate) {
 			return committedVisitorStream{}, &tunnel.OpeningError{Committed: len(prefix) > 0, VisitorBytes: int64(len(prefix)), Err: errors.Join(errBackendTrackingClosed, candidate.Close())}
@@ -388,27 +348,18 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []ingressbacken
 	return committedVisitorStream{}, lastErr
 }
 
-func (s *Server) copyVisitor(public, upstream net.Conn, remainder io.Reader, route PublicURL, denied bool, usage UsageConnection) error {
+func (s *Server) copyVisitor(public, upstream net.Conn, remainder io.Reader, route PublicURL, denied bool) error {
 	replayed := &readerConn{Conn: public, reader: remainder}
-	var observeIngress, observeEgress func(int64)
-	if usage != nil {
-		observeIngress = func(bytes int64) { usage.AddIngress(bytes, time.Now().UTC()) }
-	}
-	if usage != nil || !denied && route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
+	var observeEgress func(int64)
+	if !denied && route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
 		var recoveryOnce sync.Once
-		observeEgress = func(bytes int64) {
-			now := time.Now().UTC()
-			if usage != nil {
-				usage.AddEgress(bytes, now)
-			}
-			if !denied && route.RecoveryEpisodeID != 0 && s.config.ObserveRecovery != nil {
-				recoveryOnce.Do(func() {
-					s.config.ObserveRecovery(route.ID, route.PublishRunNumber, route.RecoveryEpisodeID, now)
-				})
-			}
+		observeEgress = func(int64) {
+			recoveryOnce.Do(func() {
+				s.config.ObserveRecovery(route.ID, route.PublishRunNumber, route.RecoveryEpisodeID, time.Now().UTC())
+			})
 		}
 	}
-	result, err := streamcopy.CopyObserved(replayed, upstream, observeIngress, observeEgress)
+	result, err := streamcopy.CopyObserved(replayed, upstream, nil, observeEgress)
 	if s.config.Metrics != nil {
 		s.config.Metrics.AddForwardedBytes("visitor_to_publisher", result.LeftToRight)
 		s.config.Metrics.AddForwardedBytes("publisher_to_visitor", result.RightToLeft)

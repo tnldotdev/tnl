@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -409,6 +410,24 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		}
 	})
 	localDemo.SetGuest()
+	// exercise both directions beyond the former cumulative guest transfer cap.
+	transferTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/transfer" {
+			localDemo.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("guest transfer upload: %v", err)
+			http.Error(w, "upload failed", http.StatusBadRequest)
+			return
+		}
+		if _, err := w.Write(body); err != nil {
+			t.Errorf("guest transfer target: %v", err)
+		}
+	}))
+	t.Cleanup(transferTarget.Close)
 	clientIP, err := authenticated.Control.ClientIP(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -426,7 +445,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	publicURL, err := authenticated.Control.CreatePublicURL(t.Context(), controlv1.CreatePublicURLRequest{
 		TeamId: issued.TeamId, MembershipId: &issued.MembershipId, DomainId: issued.DomainId,
 		CanonicalHostname: hostname, Purpose: controlv1.Demo, PublicUrlScope: controlv1.Member,
-		ServiceProtocol: &protocol, Target: localDemo.Target(), AllowedIpPrefixes: &prefixes, Ephemeral: &ephemeral,
+		ServiceProtocol: &protocol, Target: transferTarget.URL, AllowedIpPrefixes: &prefixes, Ephemeral: &ephemeral,
 	}, "guest-demo-url")
 	if err != nil {
 		t.Fatal(err)
@@ -505,11 +524,12 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		}
 	}
 	visitor := newIntegrationVisitor(t, pebble.roots, publicAddress, owner)
+	visitor.transport.ExpectContinueTimeout = 5 * time.Second
 	handle := startOwnedIntegrationPublisher(t, owner, publisher.Config{
 		Control: controlAdapter, TeamID: issued.TeamId, MembershipID: issued.MembershipId,
 		ControlURL: serverURL,
 		DomainID:   issued.DomainId, Hostname: hostname, PublicURLScope: controlv1.Member, Purpose: controlv1.Demo,
-		PolicyRevision: 1, Target: localDemo.Target(),
+		PolicyRevision: 1, Target: transferTarget.URL,
 		AllowedIPPrefixes: prefixes,
 		Ephemeral:         true, State: store,
 		Demo: true, Feedback: true, Service: "demo",
@@ -607,6 +627,34 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	redirected.Body.Close()
 	if redirected.StatusCode != http.StatusOK {
 		t.Fatalf("guest share redirect = %d", redirected.StatusCode)
+	}
+	if !deadlineProof {
+		payload := bytes.Repeat([]byte("guest transfer\n"), (6<<20)/len("guest transfer\n")+1)
+		transferRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ready.PublicURL+"/transfer", bytes.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// wait for authorization before sending a body larger than ingress's pending
+		// visitor budget; that budget remains independent of cumulative transfer.
+		transferRequest.Header.Set("Expect", "100-continue")
+		transferRequest.Header.Set("Content-Type", "application/octet-stream")
+		transferred, err := visitor.client.Do(transferRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		echo, readErr := io.ReadAll(transferred.Body)
+		transferred.Body.Close()
+		if readErr != nil || transferred.StatusCode != http.StatusOK || !bytes.Equal(echo, payload) {
+			t.Fatalf("guest transfer = %d, %d bytes, %v", transferred.StatusCode, len(echo), readErr)
+		}
+		t.Logf("guest uploaded and downloaded %d bytes with no cumulative transfer cap", len(payload))
+		transferredAt := time.Now()
+		waitForIntegrationCondition(t, 20*time.Second, func(ctx context.Context) (bool, error) {
+			var renewed bool
+			err := inspect.QueryRowContext(ctx, `SELECT last_heartbeat_at > $3 AND closed_at IS NULL
+				FROM control.publish_runs WHERE public_url_id=$1 AND publish_run_number=$2`, ready.PublicURLID, ready.PublishRunNumber, transferredAt).Scan(&renewed)
+			return renewed, err
+		})
 	}
 	response, err := visitor.client.Get(ready.PublicURL + "/state")
 	if err != nil {

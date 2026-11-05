@@ -43,12 +43,11 @@ func (d *Database) ForgetGuestPrivateState(ctx context.Context, now time.Time) (
 }
 
 type GuestTrialStats struct {
-	Issued        int64
-	Allocated     int64
-	Ready         int64
-	Expired       int64
-	ReadyLimit    int64
-	TransferLimit int64
+	Issued     int64
+	Allocated  int64
+	Ready      int64
+	Expired    int64
+	ReadyLimit int64
 }
 
 // RecentGuestTrialStats returns service-wide counts from committed trial rows.
@@ -62,6 +61,6 @@ func (d *Database) RecentGuestTrialStats(ctx context.Context, now time.Time) (Gu
 	}
 	return GuestTrialStats{
 		Issued: row.Issued, Allocated: row.Allocated, Ready: row.Ready,
-		Expired: row.Expired, ReadyLimit: row.ReadyLimit, TransferLimit: row.TransferLimit,
+		Expired: row.Expired, ReadyLimit: row.ReadyLimit,
 	}, nil
 }

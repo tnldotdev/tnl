@@ -71,23 +71,6 @@ const (
 	CertificateSaveFailed CertificateWorkOutcome = "save_failed"
 )
 
-type UsageWorkOutcome string
-
-const (
-	UsageWorkSuccess UsageWorkOutcome = "success"
-	UsageWorkEmpty   UsageWorkOutcome = "empty"
-	UsageWorkError   UsageWorkOutcome = "error"
-)
-
-type UsageReceiverOutcome string
-
-const (
-	UsageReceiverSuccess         UsageReceiverOutcome = "success"
-	UsageReceiverHTTPError       UsageReceiverOutcome = "http_error"
-	UsageReceiverTransportError  UsageReceiverOutcome = "transport_error"
-	UsageReceiverInvalidResponse UsageReceiverOutcome = "invalid_response"
-)
-
 type APIRequestOutcome string
 
 const (

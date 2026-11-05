@@ -100,9 +100,6 @@ func (c Config) validateControl() error {
 	if err := c.validateACME(); err != nil {
 		return err
 	}
-	if err := c.validatePublicURLUsage(); err != nil {
-		return err
-	}
 	if err := c.validateDNSAutomation(); err != nil {
 		return err
 	}
@@ -147,26 +144,6 @@ func (c Config) validateACME() (retErr error) {
 	staticTLS := c.ControlTLSCertificateFile != "" || c.ControlTLSPrivateKeyFile != ""
 	if staticTLS && (c.ControlTLSCertificateFile == "" || c.ControlTLSPrivateKeyFile == "") {
 		return errors.New("control TLS certificate and private key must be configured together")
-	}
-	return nil
-}
-
-func (c Config) validatePublicURLUsage() (retErr error) {
-	defer func() {
-		if retErr != nil {
-			retErr = failure.Wrap("validate usage receiver settings", failure.ServerUsageConfigInvalid, retErr)
-		}
-	}()
-	if (c.PublicURLUsageURL == "") != (c.PublicURLUsageToken == "") {
-		return errors.New("public URL usage URL and token must be configured together")
-	}
-	if c.PublicURLUsageURL == "" {
-		return nil
-	}
-	endpoint, err := url.Parse(c.PublicURLUsageURL)
-	if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" ||
-		endpoint.Scheme != "https" && (endpoint.Scheme != "http" || !isLoopbackHost(endpoint.Hostname())) {
-		return errors.New("public URL usage URL must be an HTTPS base URL or an HTTP base URL on this computer")
 	}
 	return nil
 }
