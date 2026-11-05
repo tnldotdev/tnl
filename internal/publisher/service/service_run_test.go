@@ -30,7 +30,7 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func managedTestCertificate(t *testing.T, host string) (tls.Certificate, *tls.Config) {
+func managedTestCertificate(t testing.TB, host string) (tls.Certificate, *tls.Config) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -189,7 +189,7 @@ func TestPublicServiceTLSCloseEndsReturnStreamExactlyOnce(t *testing.T) {
 	}
 }
 
-func privateFixture(t *testing.T, target string) (*Prepared, *Bound, tunnelv1.ServicePublisherConnectionRef, *tls.Config) {
+func privateFixture(t testing.TB, target string) (*Prepared, *Bound, tunnelv1.ServicePublisherConnectionRef, *tls.Config) {
 	t.Helper()
 	id := func(prefix string) string {
 		v, err := opaqueid.New(prefix)

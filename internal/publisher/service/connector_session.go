@@ -96,7 +96,7 @@ func (p *PeerSession) Renew(binding PeerBinding) error {
 
 func (p *PeerSession) currentLocked() bool {
 	binding := p.bindingLocked()
-	return p.replayUntil.IsZero() && p.ctx.Err() == nil && p.bound.connectorPeers[p.identity.pairID] == p && p.bound.peerCurrentLocked(binding) && p.bound.peerRelaysCurrentLocked(binding)
+	return p.replayUntil.IsZero() && p.ctx.Err() == nil && p.bound.connectorPeers[p.identity.pairID] == p && p.bound.peerLiveCurrentLocked(binding) && p.bound.peerRelaysCurrentLocked(binding)
 }
 
 func (p *PeerSession) watch() {

@@ -91,7 +91,13 @@ func (b PeerBinding) expected() tunnelv1.ConnectorPeerSession {
 }
 
 func (b *Bound) peerCurrentLocked(binding PeerBinding) bool {
-	if b.closed || b.prepared.policy == nil || !binding.until.After(time.Now()) || binding.expected().Validate() != nil || binding.key == [32]byte{} ||
+	return b.peerLiveCurrentLocked(binding) && binding.expected().Validate() == nil
+}
+
+// retained peers may use this after BindPeer validates and copies their identity.
+// renewal replaces only lease evidence; incoming bindings still use peerCurrentLocked.
+func (b *Bound) peerLiveCurrentLocked(binding PeerBinding) bool {
+	if b.closed || b.prepared.policy == nil || !binding.until.After(time.Now()) || binding.key == [32]byte{} ||
 		binding.serviceID != b.prepared.Preparation.ServiceId || binding.runID != b.prepared.Preparation.ServiceRunId || binding.number != uint64(b.prepared.Preparation.RunNumber) || binding.publisherID != b.prepared.Preparation.PublisherIdentityId {
 		return false
 	}

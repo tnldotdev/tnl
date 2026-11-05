@@ -58,7 +58,7 @@ func (f *connectorDeliveryFixture) ReadPublisherVisitorPolicy(_ context.Context,
 	return controlv1.VisitorPolicyUpdate{Policy: policy, AfterRevision: body.AfterRevision, SnapshotRequired: body.AfterRevision == 0}, nil
 }
 
-func connectorPeerFixture(t *testing.T, target string, lifetime ...time.Duration) (*Bound, *PeerSession, *tls.Config, func(string) tunnelv1.ConnectorPeerVisitorEntry, *connectorDeliveryFixture) {
+func connectorPeerFixture(t testing.TB, target string, lifetime ...time.Duration) (*Bound, *PeerSession, *tls.Config, func(string) tunnelv1.ConnectorPeerVisitorEntry, *connectorDeliveryFixture) {
 	t.Helper()
 	p, b, _, verification := privateFixture(t, target)
 	// connector permission uses the signed opening, never a direct client certificate.
