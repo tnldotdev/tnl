@@ -200,8 +200,9 @@ func (p *PreparedConnector) renewPermissions(ctx context.Context, updates <-chan
 		case <-ctx.Done():
 			return
 		case renewal := <-updates:
-			until := earliestConnectorDeadline(renewal.until, time.Now().Add(10*time.Second))
-			call, cancel := context.WithDeadline(ctx, until)
+			// the writer owns the short exchange budget so a staged packet binding
+			// can pause delivery without resetting this authority ceiling.
+			call, cancel := context.WithDeadline(ctx, renewal.until)
 			err := p.renewPermission(call, func() error { return renewal.writer.Renew(call, renewal.update) })
 			cancel()
 			if err != nil {

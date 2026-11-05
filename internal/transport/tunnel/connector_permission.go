@@ -24,16 +24,17 @@ type pendingConnectorPermission struct {
 // sole ACK reader. pending requests are bounded by the application allowance;
 // one visitor's policy wait never owns the shared write gate.
 type ConnectorPermissionWriter struct {
-	stream  muxsession.Stream
-	gate    chan struct{}
-	ctx     context.Context
-	cancel  context.CancelCauseFunc
-	done    chan struct{}
-	mu      sync.Mutex
-	next    uint64
-	closed  bool
-	pending map[uint64]*pendingConnectorPermission
-	uses    sync.WaitGroup
+	stream     muxsession.Stream
+	gate       chan struct{}
+	ctx        context.Context
+	cancel     context.CancelCauseFunc
+	done       chan struct{}
+	mu         sync.Mutex
+	next       uint64
+	closed     bool
+	pending    map[uint64]*pendingConnectorPermission
+	uses       sync.WaitGroup
+	suspension ConnectorPermissionGate
 }
 
 func OpenConnectorPermissionControl(lifetime, setup context.Context, session muxsession.Session) (*ConnectorPermissionWriter, error) {
@@ -53,6 +54,11 @@ func OpenConnectorPermissionControl(lifetime, setup context.Context, session mux
 
 func (w *ConnectorPermissionWriter) Done() <-chan struct{} { return w.ctx.Done() }
 func (w *ConnectorPermissionWriter) Err() error            { return context.Cause(w.ctx) }
+
+func (w *ConnectorPermissionWriter) Suspend(until time.Time) error {
+	return w.suspension.Suspend(until)
+}
+func (w *ConnectorPermissionWriter) Resume() error { return w.suspension.Resume() }
 
 func (w *ConnectorPermissionWriter) Close() {
 	w.cancel(context.Canceled)
@@ -97,6 +103,10 @@ func (w *ConnectorPermissionWriter) receive() {
 }
 
 func (w *ConnectorPermissionWriter) Renew(ctx context.Context, update tunnelv1.ConnectorPermissionUpdate) error {
+	until, ok := ctx.Deadline()
+	if !ok || !until.After(time.Now()) || ctx.Err() != nil {
+		return errors.Join(context.DeadlineExceeded, context.Cause(ctx))
+	}
 	w.mu.Lock()
 	if w.closed || w.ctx.Err() != nil || len(w.pending) >= MaxConnectorApplicationStreams || w.next == math.MaxUint64 {
 		w.mu.Unlock()
@@ -116,34 +126,25 @@ func (w *ConnectorPermissionWriter) Renew(ctx context.Context, update tunnelv1.C
 	w.mu.Unlock()
 	defer w.uses.Done()
 	defer func() { w.mu.Lock(); delete(w.pending, update.UpdateNumber); w.mu.Unlock() }()
-	until, ok := ctx.Deadline()
-	if !ok {
-		return context.DeadlineExceeded
-	}
-	writeCtx, cancel := context.WithDeadline(ctx, minTime(until, time.Now().Add(2*time.Second)))
-	started := false
-	err := writeConnectorPermission(writeCtx, w.stream, w.gate, func(w io.Writer) error {
-		started = true
+	call, cancel := context.WithCancelCause(ctx)
+	stopped := make(chan struct{})
+	stop := context.AfterFunc(w.ctx, func() { defer close(stopped); cancel(context.Cause(w.ctx)) })
+	defer func() {
+		cancel(context.Canceled)
+		if !stop() {
+			<-stopped
+		}
+	}()
+	started, err := w.suspension.write(call, w.stream, w.gate, func(w io.Writer) error {
 		return tunnelv1.WriteConnectorPermissionUpdate(w, update)
 	})
-	cancel()
 	if err != nil {
 		if started || !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			w.cancel(err)
 		}
 		return err
 	}
-	select {
-	case accepted := <-pending.result:
-		if !accepted {
-			return ErrConnectorPermissionRejected
-		}
-		return errors.Join(context.Cause(ctx), context.Cause(w.ctx))
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	case <-w.ctx.Done():
-		return context.Cause(w.ctx)
-	}
+	return w.suspension.acknowledged(call, pending.result)
 }
 
 func minTime(a, b time.Time) time.Time {
@@ -240,10 +241,11 @@ func writeConnectorPermission(ctx context.Context, stream muxsession.Stream, gat
 // ConnectorPermissionResponder is shared only by the bounded per-admission
 // renewal workers. ACK writes never wait for application IO or policy work.
 type ConnectorPermissionResponder struct {
-	ctx    context.Context
-	stream muxsession.Stream
-	gate   chan struct{}
-	fail   func(error)
+	ctx        context.Context
+	stream     muxsession.Stream
+	gate       chan struct{}
+	fail       func(error)
+	suspension *ConnectorPermissionGate
 }
 
 func (r *ConnectorPermissionResponder) Respond(update tunnelv1.ConnectorPermissionUpdate, accepted bool) error {
@@ -251,9 +253,9 @@ func (r *ConnectorPermissionResponder) Respond(update tunnelv1.ConnectorPermissi
 	if accepted {
 		kind = tunnelv1.ConnectorPermissionAccepted
 	}
-	ctx, cancel := context.WithTimeout(r.ctx, 2*time.Second)
+	ctx, cancel := context.WithTimeout(r.ctx, connectorPermissionSuspensionLimit)
 	defer cancel()
-	err := writeConnectorPermission(ctx, r.stream, r.gate, func(w io.Writer) error {
+	_, err := r.suspension.write(ctx, r.stream, r.gate, func(w io.Writer) error {
 		return tunnelv1.WriteConnectorPermissionResult(w, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: update.VisitorConnectionID, UpdateNumber: update.UpdateNumber, Kind: kind})
 	})
 	if err != nil {
@@ -264,7 +266,7 @@ func (r *ConnectorPermissionResponder) Respond(update tunnelv1.ConnectorPermissi
 
 // dispatch must enqueue without policy or application IO. terminal wire failure
 // fences the owner through failed before physical interruption joins.
-func ServeConnectorPermissionControl(ctx context.Context, stream muxsession.Stream, dispatch func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder), failed func()) error {
+func ServeConnectorPermissionControl(ctx context.Context, stream muxsession.Stream, dispatch func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder), failed func(), suspension ...*ConnectorPermissionGate) error {
 	life, cancel := context.WithCancelCause(ctx)
 	joined := make(chan struct{})
 	stop := context.AfterFunc(life, func() { defer close(joined); _ = stream.Reset(0) })
@@ -279,7 +281,11 @@ func ServeConnectorPermissionControl(ctx context.Context, stream muxsession.Stre
 		cancel(err)
 		once.Do(failed)
 	}
-	responder := &ConnectorPermissionResponder{ctx: life, stream: stream, gate: make(chan struct{}, 1), fail: fail}
+	gate := &ConnectorPermissionGate{}
+	if len(suspension) > 0 && suspension[0] != nil {
+		gate = suspension[0]
+	}
+	responder := &ConnectorPermissionResponder{ctx: life, stream: stream, gate: make(chan struct{}, 1), fail: fail, suspension: gate}
 	for {
 		update, err := tunnelv1.ReadConnectorPermissionUpdate(stream)
 		if errors.Is(err, tunnelv1.ErrConnectorPermissionUpdate) {
