@@ -26,6 +26,10 @@ type PairBinding struct {
 	Key      [32]byte
 	Role     uint8
 	Path     uint8
+	// AdmitPacket is an optional role-owned admission fence. it runs before
+	// queueing, not just when a later consumer dequeues a packet. callbacks must
+	// be nonblocking, concurrency-safe, and never call back into this session.
+	AdmitPacket func(tunnelv1.PeerPacket) bool
 }
 
 func (b PairBinding) valid() bool {
@@ -36,7 +40,7 @@ func (b PairBinding) authentic(frame []byte, sender uint8) bool {
 	p, err := tunnelv1.ParsePeerPacket(frame)
 	// only endpoints possess the session key. relays check the authenticated
 	// envelope, shape, direction, revision, and replay, never the inner MAC.
-	return err == nil && p.Sender == sender && p.Path == b.Path && p.BindingGeneration == b.Delivery.Generation
+	return err == nil && p.Sender == sender && p.Path == b.Path && p.BindingGeneration == b.Delivery.Generation && (b.AdmitPacket == nil || b.AdmitPacket(p))
 }
 
 type sharedPeer struct {
