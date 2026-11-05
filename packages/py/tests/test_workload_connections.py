@@ -15,6 +15,38 @@ import tnl
 from tnl import _connections, _workload
 
 
+def test_cloud_run_selection_hints_stay_native(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_workload, "_configuration", None)
+    for name in (
+        "TNL_CONNECTION_HANDLE",
+        "TNL_WORKLOAD",
+        "VERCEL",
+        "FLY_APP_NAME",
+        "GITHUB_ACTIONS",
+        "K_SERVICE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert not _workload.uses_workload()
+    monkeypatch.setenv("K_SERVICE", "orders")
+    assert _workload.uses_workload()
+
+    def preview(service: str, request: dict[str, object]) -> object:
+        assert service == "db"
+        runtime = request["runtime"]
+        assert isinstance(runtime, dict) and runtime["cloud_run_service"] == "orders"
+        return {
+            "schema": 1,
+            "name": "app",
+            "directory": "/project",
+            "manifest": "/project/.tnl/generated/workloads.json",
+            "policy": "a" * 64,
+            "source": "native",
+        }
+
+    selected = asyncio.run(_workload.select_workload("db", preview))
+    assert selected.assertion is None
+
+
 def prepared(name: str, deadline: str) -> dict[str, object]:
     protocol = "postgres" if name == "db" else "mysql"
     return {

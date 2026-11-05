@@ -967,6 +967,7 @@ export interface TnlConfig {
           vercel?: never;
           fly?: never;
           oidc?: never;
+          google?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1104,6 +1105,7 @@ export interface TnlConfig {
           github?: never;
           fly?: never;
           oidc?: never;
+          google?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1140,6 +1142,7 @@ export interface TnlConfig {
           github?: never;
           vercel?: never;
           oidc?: never;
+          google?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1176,6 +1179,7 @@ export interface TnlConfig {
           github?: never;
           vercel?: never;
           fly?: never;
+          google?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1205,6 +1209,42 @@ export interface TnlConfig {
              * Signing-key endpoint; defaults to issuer discovery during apply.
              */
             jwksUrl?: string;
+          };
+          /**
+           * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
+           */
+          maxDuration?: TnlRatePeriod;
+        }
+      | {
+          github?: never;
+          vercel?: never;
+          fly?: never;
+          oidc?: never;
+          /**
+           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           *
+           * @minItems 1
+           * @maxItems 32
+           */
+          services: [string, ...string[]];
+          token?:
+            | {
+                file: string;
+                env?: never;
+              }
+            | {
+                file?: never;
+                env: string;
+              };
+          google: {
+            /**
+             * Intended token recipient; defaults to the control URL.
+             */
+            audience?: string;
+            /**
+             * Google service account email or immutable numeric ID. Trusted apply resolves an email with gcloud and saves the numeric identity.
+             */
+            serviceAccount: string;
           };
           /**
            * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.

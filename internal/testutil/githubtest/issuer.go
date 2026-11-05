@@ -29,16 +29,23 @@ func New(t *testing.T) *Issuer {
 // NewProvider keeps the production issuer and redirects only its key fetches.
 func NewProvider(t *testing.T, issuer string) *Issuer {
 	t.Helper()
-	trusted, err := url.Parse(issuer)
+	return NewKeySet(t, strings.TrimSuffix(issuer, "/")+"/.well-known/jwks")
+}
+
+// newKeySet preserves an exact production signing-key URL, including providers
+// whose keys are hosted separately from their issuer.
+func NewKeySet(t *testing.T, endpoint string) *Issuer {
+	t.Helper()
+	trusted, err := url.Parse(endpoint)
 	if err != nil || trusted.Scheme != "https" || trusted.Host == "" {
-		t.Fatal("invalid fixture issuer")
+		t.Fatal("invalid fixture signing-key URL")
 	}
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/.well-known/jwks") {
+		if r.URL.Path != trusted.Path {
 			http.NotFound(w, r)
 			return
 		}
@@ -48,18 +55,18 @@ func NewProvider(t *testing.T, issuer string) *Issuer {
 	t.Cleanup(server.Close)
 	target, _ := url.Parse(server.URL)
 	client := server.Client()
-	client.Transport = transport{base: client.Transport, target: target, issuer: trusted}
+	client.Transport = transport{base: client.Transport, target: target, keys: trusted}
 	return &Issuer{key: key, Client: client}
 }
 
 type transport struct {
 	base   http.RoundTripper
 	target *url.URL
-	issuer *url.URL
+	keys   *url.URL
 }
 
 func (t transport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if r.URL.Scheme != "https" || r.URL.Host != t.issuer.Host || r.URL.Path != strings.TrimSuffix(t.issuer.Path, "/")+"/.well-known/jwks" {
+	if r.URL.Scheme != "https" || r.URL.Host != t.keys.Host || r.URL.Path != t.keys.Path || r.URL.RawQuery != t.keys.RawQuery {
 		return nil, &url.Error{Op: "fixture", URL: "", Err: http.ErrNotSupported}
 	}
 	copy := r.Clone(r.Context())

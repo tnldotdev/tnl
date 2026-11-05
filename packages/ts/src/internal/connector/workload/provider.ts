@@ -55,6 +55,7 @@ export function usesWorkload(): boolean {
       context.workloads.has(contextKey()) ||
       process.env.VERCEL === "1" ||
       Boolean(process.env.FLY_APP_NAME) ||
+      Boolean(process.env.K_SERVICE) ||
       process.env.GITHUB_ACTIONS === "true")
   );
 }
@@ -78,6 +79,7 @@ export async function selectWorkload(
       vercel: process.env.VERCEL ?? "",
       fly_app_name: process.env.FLY_APP_NAME ?? "",
       github_actions: process.env.GITHUB_ACTIONS ?? "",
+      cloud_run_service: process.env.K_SERVICE ?? "",
     },
   };
   const selection = parseValue(

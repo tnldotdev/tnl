@@ -380,6 +380,8 @@ components:
       $ref: "./schemas/workloads.yaml#/schemas/WorkloadTrust"
     ProjectWorkloadGitHub:
       $ref: "./schemas/projects.yaml#/schemas/ProjectWorkloadGitHub"
+    ProjectWorkloadGoogle:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectWorkloadGoogle"
     ProjectTargetDiscovery:
       $ref: "./schemas/projects.yaml#/schemas/ProjectTargetDiscovery"
     RenamePublisherNamespaceRequest:
