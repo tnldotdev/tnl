@@ -137,7 +137,11 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 			return nil, result
 		}
 	}
-	p.endpoint, result = peer.New(life, peer.Config{Key: key, Role: 0, Paths: [2]peer.Carrier{p.paths[0].carrier, p.paths[1].carrier}})
+	frameKey, result := connectorPairSecret(p.pair.SessionKey)
+	if result != nil {
+		return nil, result
+	}
+	p.endpoint, result = peer.New(life, peer.Config{Key: frameKey, Role: 0, Binding: peer.BindingRevision{PairID: p.pair.PairId, Generation: p.pair.DeliveryGeneration}, Paths: [2]peer.Carrier{p.paths[0].carrier, p.paths[1].carrier}})
 	if result != nil {
 		return nil, result
 	}

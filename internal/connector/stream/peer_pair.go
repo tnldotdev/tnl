@@ -114,10 +114,11 @@ func validateConnectorPair(ctx context.Context, signer Signer, run Run, body con
 	var key [32]byte
 	secret, keyErr := base64.RawURLEncoding.Strict().DecodeString(pair.Key)
 	defer clear(secret)
+	frameKey, frameKeyErr := connectorPairSecret(pair.SessionKey)
 	_, idErr := tunnelv1.ParsePeerDeliveryIdentifier(pair.DeliveryId)
 	duration := pair.ExpiresAt.Sub(pair.ObservedAt)
 	until := started.Add(duration)
-	if keyErr != nil || len(secret) != 32 || idErr != nil || !opaqueid.Valid(pair.PairId, "cpp_") || pair.DeliveryGeneration < 1 || pair.ServiceId != run.ServiceID || pair.ServiceRunId != run.ServiceRunID || pair.RunNumber != int64(run.RunNumber) || pair.PublisherIdentityId != run.PairReady.PublisherIdentityId || !visitorsubject.Equal(pair.Subject, signer.Subject) ||
+	if keyErr != nil || len(secret) != 32 || frameKeyErr != nil || idErr != nil || !opaqueid.Valid(pair.PairId, "cpp_") || pair.DeliveryGeneration < 1 || pair.ServiceId != run.ServiceID || pair.ServiceRunId != run.ServiceRunID || pair.RunNumber != int64(run.RunNumber) || pair.TrustRevision != run.TrustRevision || pair.PublisherIdentityId != run.PairReady.PublisherIdentityId || !visitorsubject.Equal(pair.Subject, signer.Subject) ||
 		pair.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute || !until.After(time.Now()) || ctx.Err() != nil || len(pair.Relays) != 2 {
 		return key, time.Time{}, ErrServiceConnection
 	}
@@ -127,7 +128,8 @@ func validateConnectorPair(ctx context.Context, signer Signer, run Run, body con
 		}
 	}
 	copy(key[:], secret)
-	if key == [32]byte{} || previous != nil && (pair.PairId != previous.PairId || pair.DeliveryId != previous.DeliveryId || pair.DeliveryGeneration != previous.DeliveryGeneration || pair.Key != previous.Key) {
+	if key == [32]byte{} || key == frameKey || previous == nil && (pair.BindingState != controlv1.ConnectorPeerPairBindingActive || pair.OperationId != "" || pair.BindingChallenge != "") ||
+		previous != nil && (pair.PairId != previous.PairId || pair.DeliveryId != previous.DeliveryId || pair.DeliveryGeneration != previous.DeliveryGeneration || pair.Key != previous.Key || pair.SessionKey != previous.SessionKey || pair.TrustRevision != previous.TrustRevision || pair.OperationId != previous.OperationId || pair.BindingChallenge != previous.BindingChallenge) {
 		return [32]byte{}, time.Time{}, ErrServiceConnection
 	}
 	return key, until, nil
@@ -143,7 +145,7 @@ func awaitConnectorPublisher(ctx context.Context, control Control, service strin
 		started := time.Now()
 		pair, err := control.PrepareConnectorPeerPair(ctx, service, request)
 		if err == nil {
-			if pair.PairId != expected.PairId || pair.DeliveryId != expected.DeliveryId || pair.DeliveryGeneration != expected.DeliveryGeneration || pair.Key != expected.Key ||
+			if pair.PairId != expected.PairId || pair.DeliveryId != expected.DeliveryId || pair.DeliveryGeneration != expected.DeliveryGeneration || pair.Key != expected.Key || pair.SessionKey != expected.SessionKey || pair.TrustRevision != expected.TrustRevision || pair.OperationId != expected.OperationId || pair.BindingChallenge != expected.BindingChallenge || pair.BindingState != expected.BindingState ||
 				pair.ServiceId != expected.ServiceId || pair.ServiceRunId != expected.ServiceRunId || pair.RunNumber != expected.RunNumber || pair.PublisherIdentityId != expected.PublisherIdentityId ||
 				!visitorsubject.Same(pair.Subject, expected.Subject) || len(pair.Relays) != 2 || pair.Relays[0] != expected.Relays[0] || pair.Relays[1] != expected.Relays[1] ||
 				pair.ObservedAt.IsZero() || !pair.ExpiresAt.After(pair.ObservedAt) || pair.ExpiresAt.Sub(pair.ObservedAt) > 5*time.Minute {

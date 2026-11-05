@@ -345,7 +345,7 @@ func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Sess
 	}
 	defer packets.Close()
 	id, _ := tunnelv1.ParsePeerDeliveryIdentifier(native.pair.DeliveryId)
-	carrier, err := packets.Register(peer.PairBinding{Delivery: tunnelv1.PeerDelivery{Pair: id, Generation: 1}, Key: native.key, Role: 1, Path: slot}, false)
+	carrier, err := packets.Register(peer.PairBinding{Delivery: tunnelv1.PeerDelivery{Pair: id, Generation: uint64(native.pair.DeliveryGeneration)}, Key: native.key, Role: 1, Path: slot}, false)
 	if err != nil {
 		return
 	}

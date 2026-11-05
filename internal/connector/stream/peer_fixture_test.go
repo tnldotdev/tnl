@@ -27,6 +27,7 @@ type fixtureConnectorPeer struct {
 	owner           string
 	pair            controlv1.ConnectorPeerPair
 	key             [32]byte
+	sessionKey      [32]byte
 	paths           [2]*peer.CarrierSlot
 	nonces          [2][]byte
 	handoffs        [2]tunnelv1.ConnectorHandoff
@@ -80,7 +81,11 @@ func (f *connectorFixture) PrepareConnectorPeerPair(ctx context.Context, service
 	if _, err := rand.Read(p.key[:]); err != nil {
 		return controlv1.ConnectorPeerPair{}, err
 	}
-	p.pair = controlv1.ConnectorPeerPair{PairId: id, DeliveryId: base64.RawURLEncoding.EncodeToString(delivery[:]), Key: base64.RawURLEncoding.EncodeToString(p.key[:]), DeliveryGeneration: 1,
+	if _, err := rand.Read(p.sessionKey[:]); err != nil {
+		return controlv1.ConnectorPeerPair{}, err
+	}
+	p.pair = controlv1.ConnectorPeerPair{PairId: id, DeliveryId: base64.RawURLEncoding.EncodeToString(delivery[:]), Key: base64.RawURLEncoding.EncodeToString(p.key[:]), DeliveryGeneration: 17,
+		SessionKey: base64.RawURLEncoding.EncodeToString(p.sessionKey[:]), BindingState: controlv1.ConnectorPeerPairBindingActive, TrustRevision: f.run.TrustRevision,
 		ServiceId: service, ServiceRunId: body.ServiceRunId, RunNumber: body.RunNumber, PublisherIdentityId: body.PublisherIdentityId, Subject: body.Subject, Relays: body.ExpectedRelays, ObservedAt: time.Now(), ExpiresAt: f.expires}
 	for slot := range p.paths {
 		p.paths[slot] = peer.NewCarrierSlot()
@@ -122,7 +127,7 @@ func (f *connectorFixture) RenewConnectorPeerPair(ctx context.Context, service s
 func (f *connectorFixture) serveConnectorPeer(p *fixtureConnectorPeer, ready chan<- error) {
 	ready <- nil
 	paths := [2]peer.Carrier{p.paths[0], p.paths[1]}
-	packets, err := peer.New(f.ctx, peer.Config{Key: p.key, Role: 1, Paths: paths})
+	packets, err := peer.New(f.ctx, peer.Config{Key: p.sessionKey, Role: 1, Binding: peer.BindingRevision{PairID: p.pair.PairId, Generation: p.pair.DeliveryGeneration}, Paths: paths})
 	if err != nil {
 		return
 	}

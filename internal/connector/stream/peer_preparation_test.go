@@ -61,7 +61,7 @@ func TestConnectorPreparationWaitsForPublisherInstallationWithoutResigning(t *te
 			t.Fatal("installation wait reset the original setup budget")
 		}
 	})
-	for _, name := range []string{"installed", "different pair", "different relay", "different subject", "extended report"} {
+	for _, name := range []string{"installed", "different pair", "different relay", "different subject", "different session key", "different trust", "different operation", "different state", "extended report"} {
 		t.Run(name, func(t *testing.T) {
 			response := pair
 			response.Relays = append([]controlv1.ConnectorPeerPairRelay(nil), pair.Relays...)
@@ -73,6 +73,14 @@ func TestConnectorPreparationWaitsForPublisherInstallationWithoutResigning(t *te
 				response.Relays[0].AssignmentRevision++
 			case "different subject":
 				response.Subject.DeviceId = new("vdev_" + strings.Repeat("Z", 22))
+			case "different session key":
+				response.SessionKey = "another-secret"
+			case "different trust":
+				response.TrustRevision++
+			case "different operation":
+				response.OperationId = "another-operation"
+			case "different state":
+				response.BindingState = controlv1.ConnectorPeerPairBindingSuspended
 			case "extended report":
 				response.PublisherPreparedUntil = new(pair.ExpiresAt.Add(time.Second))
 			}
