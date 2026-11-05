@@ -172,6 +172,7 @@ func awaitConnectorPublisher(ctx context.Context, control Control, service strin
 
 type connectorRelayLeg struct {
 	selectedHandoff tunnelv1.ConnectorHandoffID
+	handoffRevision tunnelv1.ConnectorHandoffRevision
 	session         *tunnel.Session
 	packets         *peer.SharedSession
 	carrier         peer.Carrier
@@ -214,6 +215,22 @@ func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 type connectorLegReplacement struct {
 	previous *connectorRelayLeg
 	handoff  tunnelv1.ConnectorHandoff
+}
+
+func nextConnectorLegReplacement(previous *connectorRelayLeg) (*connectorLegReplacement, error) {
+	revision, err := previous.handoffRevision.Next()
+	if err != nil {
+		return nil, errors.Join(&tunnel.ProtocolError{Code: tunnelv1.HandoffRevisionExhausted}, err)
+	}
+	var nextID tunnelv1.ConnectorHandoffID
+	if _, err := rand.Read(nextID[:]); err != nil {
+		return nil, err
+	}
+	handoff, err := tunnelv1.NewConnectorHandoff(previous.selectedHandoff, nextID, revision)
+	if err != nil {
+		return nil, err
+	}
+	return &connectorLegReplacement{previous: previous, handoff: handoff}, nil
 }
 
 func prepareConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int, replacement *connectorLegReplacement) (*connectorRelayLeg, error) {
@@ -348,6 +365,7 @@ func prepareConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 			err = l.session.ActivateConnectorLeg(ctx, request)
 		} else {
 			l.selectedHandoff = replacement.handoff.Next()
+			l.handoffRevision = replacement.handoff.Revision()
 			err = l.session.ReplaceConnectorLeg(ctx, request, replacement.handoff)
 		}
 	}

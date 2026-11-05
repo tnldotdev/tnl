@@ -60,6 +60,9 @@ type connectorFixture struct {
 	activationConflict    [2]atomic.Bool
 	rejected              [2]atomic.Int64
 	helloNonces           [2][][]byte
+	dropHelloReply        [2]atomic.Bool
+	dropActivationReply   [2]atomic.Bool
+	handoffAttempts       [2][]tunnelv1.ConnectorHandoff
 	tlsGate               *fixtureTLSGate
 	drainRejections       bool
 	rejectionClosing      chan struct{}
@@ -264,9 +267,31 @@ func TestOpaquePreflightVerifiesTLSBeforeReadyWithoutApplicationBytes(t *testing
 // failure at the client. wait for that client to consume the reply and close.
 type fixtureRejectionDrain struct {
 	muxsession.Session
-	ctx      context.Context
-	rejected atomic.Bool
-	closing  chan struct{}
+	ctx                       context.Context
+	rejected                  atomic.Bool
+	closing                   chan struct{}
+	dropHello, dropActivation *atomic.Bool
+}
+
+func (s *fixtureRejectionDrain) AcceptStream(ctx context.Context) (muxsession.Stream, error) {
+	stream, err := s.Session.AcceptStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &fixtureReplyLossStream{Stream: stream, owner: s}, nil
+}
+
+type fixtureReplyLossStream struct {
+	muxsession.Stream
+	owner *fixtureRejectionDrain
+}
+
+func (s *fixtureReplyLossStream) Write(payload []byte) (int, error) {
+	if bytes.Contains(payload, []byte(`"type":"hello_accepted"`)) && s.owner.dropHello.CompareAndSwap(true, false) ||
+		bytes.Contains(payload, []byte(`"type":"connector_leg_activated"`)) && s.owner.dropActivation.CompareAndSwap(true, false) {
+		return 0, io.ErrClosedPipe
+	}
+	return s.Stream.Write(payload)
 }
 
 func (s *fixtureRejectionDrain) Close() error {
@@ -284,7 +309,7 @@ func (s *fixtureRejectionDrain) Close() error {
 }
 
 func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Session, slot uint8) {
-	drain := &fixtureRejectionDrain{Session: transport, ctx: ctx, closing: f.rejectionClosing}
+	drain := &fixtureRejectionDrain{Session: transport, ctx: ctx, closing: f.rejectionClosing, dropHello: &f.dropHelloReply[slot], dropActivation: &f.dropActivationReply[slot]}
 	defer drain.Close()
 	var native *fixtureConnectorPeer
 	session, hello, err := tunnel.AcceptWithResult(ctx, drain, func(_ context.Context, hello tunnelv1.Message) (*tunnelv1.ConnectorPairLegAccepted, error) {
@@ -332,14 +357,28 @@ func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Sess
 			return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		}
 		f.mu.Lock()
-		if !bytes.Equal(native.nonces[slot], selection.PreviousNonce) || !selection.Matches(*hello.ConnectorPairLegProof) {
+		activation, err := selection.Activation()
+		if err != nil || !activation.Matches(*hello.ConnectorPairLegProof) {
 			f.mu.Unlock()
 			return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		}
-		native.nonces[slot] = bytes.Clone(hello.ConnectorPairLegProof.Nonce)
-		if len(selection.ReplacementNonce) != 0 {
-			native.nonces[slot] = bytes.Clone(selection.ReplacementNonce)
+		handoff, replacement := activation.Replacement()
+		if replacement {
+			f.handoffAttempts[slot] = append(f.handoffAttempts[slot], handoff)
+			expected, revisionErr := native.handoffs[slot].Revision().Next()
+			retry := native.handoffs[slot] == handoff
+			advance := revisionErr == nil && handoff.Revision() == expected && bytes.Equal(native.nonces[slot], selection.PreviousNonce)
+			if !retry && !advance {
+				f.mu.Unlock()
+				return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+			}
+			native.handoffs[slot] = handoff
+		} else if native.nonces[slot] != nil {
+			f.mu.Unlock()
+			return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		}
+		selected := activation.SelectedHandoff()
+		native.nonces[slot] = append([]byte(nil), selected[:]...)
 		f.mu.Unlock()
 		return native.paths[slot].Install(carrier)
 	}, func(context.Context, tunnelv1.ConnectorPairLegProof) (tunnelv1.ConnectorPairLegAccepted, error) {

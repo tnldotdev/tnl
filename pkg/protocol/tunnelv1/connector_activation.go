@@ -3,6 +3,7 @@ package tunnelv1
 import (
 	"bytes"
 	"errors"
+	"math"
 )
 
 // ConnectorLegBinding selects one authenticated carrier candidate by the nonce in
@@ -11,7 +12,8 @@ type ConnectorLegBinding struct {
 	Nonce         []byte `json:"nonce"`
 	PreviousNonce []byte `json:"previous_nonce,omitempty"`
 	// replacement_nonce identifies one handoff across fresh hello attempts.
-	ReplacementNonce []byte `json:"replacement_nonce,omitempty"`
+	ReplacementNonce []byte                   `json:"replacement_nonce,omitempty"`
+	HandoffRevision  ConnectorHandoffRevision `json:"handoff_revision,omitempty"`
 }
 
 var ErrConnectorLegBinding = errors.New("connector carrier binding is invalid")
@@ -31,6 +33,19 @@ type ConnectorHelloNonce [32]byte
 // ConnectorHandoffID identifies the selected carrier across fresh hello attempts.
 type ConnectorHandoffID [32]byte
 
+// ConnectorHandoffRevision orders operations for one retained relay path.
+// zero selects the initial hello; replacements start at one and never wrap.
+type ConnectorHandoffRevision uint64
+
+var ErrConnectorHandoffRevisionExhausted = errors.New("connector handoff revision exhausted")
+
+func (r ConnectorHandoffRevision) Next() (ConnectorHandoffRevision, error) {
+	if r == math.MaxUint64 {
+		return 0, ErrConnectorHandoffRevisionExhausted
+	}
+	return r + 1, nil
+}
+
 func ParseConnectorHelloNonce(wire []byte) (ConnectorHelloNonce, error) {
 	if len(wire) != 32 {
 		return ConnectorHelloNonce{}, ErrConnectorLegBinding
@@ -42,18 +57,20 @@ func ParseConnectorHelloNonce(wire []byte) (ConnectorHelloNonce, error) {
 type ConnectorHandoff struct {
 	previous ConnectorHandoffID
 	next     ConnectorHandoffID
+	revision ConnectorHandoffRevision
 }
 
-func NewConnectorHandoff(previous, next ConnectorHandoffID) (ConnectorHandoff, error) {
-	if previous == next {
+func NewConnectorHandoff(previous, next ConnectorHandoffID, revision ConnectorHandoffRevision) (ConnectorHandoff, error) {
+	if previous == next || revision == 0 {
 		return ConnectorHandoff{}, ErrConnectorLegBinding
 	}
-	return ConnectorHandoff{previous: previous, next: next}, nil
+	return ConnectorHandoff{previous: previous, next: next, revision: revision}, nil
 }
 
-func (h ConnectorHandoff) Previous() ConnectorHandoffID { return h.previous }
-func (h ConnectorHandoff) Next() ConnectorHandoffID     { return h.next }
-func (h ConnectorHandoff) Valid() bool                  { return h.previous != h.next }
+func (h ConnectorHandoff) Previous() ConnectorHandoffID       { return h.previous }
+func (h ConnectorHandoff) Next() ConnectorHandoffID           { return h.next }
+func (h ConnectorHandoff) Revision() ConnectorHandoffRevision { return h.revision }
+func (h ConnectorHandoff) Valid() bool                        { return h.previous != h.next && h.revision != 0 }
 
 // ConnectorActivation is the validated initial-or-replacement wire selection.
 // its fixed-size identities are copied at the boundary, never aliased wire bytes.
@@ -91,6 +108,7 @@ func (a ConnectorActivation) Binding() ConnectorLegBinding {
 	if a.replace {
 		b.PreviousNonce = append([]byte(nil), a.handoff.previous[:]...)
 		b.ReplacementNonce = append([]byte(nil), a.handoff.next[:]...)
+		b.HandoffRevision = a.handoff.revision
 	}
 	return b
 }
@@ -101,12 +119,12 @@ func (b ConnectorLegBinding) Activation() (ConnectorActivation, error) {
 		return ConnectorActivation{}, err
 	}
 	a := InitialConnectorActivation(hello)
-	if len(b.PreviousNonce) == 0 && len(b.ReplacementNonce) == 0 {
+	if len(b.PreviousNonce) == 0 && len(b.ReplacementNonce) == 0 && b.HandoffRevision == 0 {
 		return a, nil
 	}
 	if len(b.PreviousNonce) != 32 || len(b.ReplacementNonce) != 32 {
 		return ConnectorActivation{}, ErrConnectorLegBinding
 	}
-	handoff, err := NewConnectorHandoff(ConnectorHandoffID(b.PreviousNonce), ConnectorHandoffID(b.ReplacementNonce))
+	handoff, err := NewConnectorHandoff(ConnectorHandoffID(b.PreviousNonce), ConnectorHandoffID(b.ReplacementNonce), b.HandoffRevision)
 	return a.Replacing(handoff), err
 }

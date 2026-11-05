@@ -3,7 +3,6 @@ package stream
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"io"
@@ -554,15 +553,10 @@ func (p *connectorConnection) reconnectLeg(slot int, previous *connectorRelayLeg
 	_ = previous.Close()
 	// retain this operation across lost hello or activation replies. each
 	// candidate still carries a fresh signed proof and socket-source claim.
-	var nextID tunnelv1.ConnectorHandoffID
-	if _, err := rand.Read(nextID[:]); err != nil {
-		return terminateConnection, err
-	}
-	handoff, err := tunnelv1.NewConnectorHandoff(previous.selectedHandoff, nextID)
+	replacement, err := nextConnectorLegReplacement(previous)
 	if err != nil {
 		return terminateConnection, err
 	}
-	replacement := &connectorLegReplacement{previous: previous, handoff: handoff}
 	for delay := 100 * time.Millisecond; ; delay = min(2*delay, time.Second) {
 		p.mu.Lock()
 		pair := p.pair

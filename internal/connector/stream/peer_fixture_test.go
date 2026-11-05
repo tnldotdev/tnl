@@ -29,6 +29,7 @@ type fixtureConnectorPeer struct {
 	key             [32]byte
 	paths           [2]*peer.CarrierSlot
 	nonces          [2][]byte
+	handoffs        [2]tunnelv1.ConnectorHandoff
 	seen            map[string]struct{}
 	session         muxsession.Session
 	updates         chan tunnelv1.ConnectorPermissionUpdate

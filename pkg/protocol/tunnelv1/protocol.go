@@ -59,6 +59,7 @@ const (
 	DuplicatePublisherConnection ErrorCode = "duplicate_publisher_connection"
 	DrainingPublisherConnection  ErrorCode = "draining"
 	CapacityExceeded             ErrorCode = "capacity_exceeded"
+	HandoffRevisionExhausted     ErrorCode = "handoff_revision_exhausted"
 	Unavailable                  ErrorCode = "unavailable"
 	Internal                     ErrorCode = "internal"
 )
@@ -233,8 +234,14 @@ func ReadControl(reader io.Reader) (Message, error) {
 			return Message{}, ErrConnectorLegBinding
 		}
 		for name := range selection {
-			if name != "nonce" && name != "previous_nonce" && name != "replacement_nonce" {
+			if name != "nonce" && name != "previous_nonce" && name != "replacement_nonce" && name != "handoff_revision" {
 				return Message{}, ErrConnectorLegBinding
+			}
+			if name == "handoff_revision" {
+				var revision ConnectorHandoffRevision
+				if json.Unmarshal(selection[name], &revision) != nil || revision == 0 {
+					return Message{}, ErrConnectorLegBinding
+				}
 			}
 			if name == "previous_nonce" || name == "replacement_nonce" {
 				var nonce []byte
@@ -424,7 +431,7 @@ func validIdentifier(value string) bool {
 func validErrorCode(code ErrorCode) bool {
 	switch code {
 	case InvalidMessage, Unauthenticated, StalePublishRunNumber, StaleConnectionAssignment,
-		DuplicatePublisherConnection, DrainingPublisherConnection, CapacityExceeded, Unavailable, Internal:
+		DuplicatePublisherConnection, DrainingPublisherConnection, CapacityExceeded, HandoffRevisionExhausted, Unavailable, Internal:
 		return true
 	default:
 		return false

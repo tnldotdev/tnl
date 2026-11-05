@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 func TestConnectorReconnectRetainsInnerSessionAndApplication(t *testing.T) {
@@ -73,6 +75,72 @@ func TestConnectorReconnectRetainsInnerSessionAndApplication(t *testing.T) {
 			case <-done:
 			case <-time.After(time.Second):
 				t.Fatal("forwarding did not join")
+			}
+		})
+	}
+}
+
+func TestConnectorReconnectRetainsOperationAcrossLostHelloAndActivationReplies(t *testing.T) {
+	for _, transport := range []string{"quic", "tls-tcp"} {
+		t.Run(transport, func(t *testing.T) {
+			f := newConnectorFixture(t, transport)
+			setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
+			p, err := prepareConnectorConnection(t.Context(), setup, f.config, f.device)
+			stop()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.Close()
+			inner, permissions, owner, opened := p.connection, p.permissions, p.owner, f.opened.Load()
+			waitForRepair := func(old *connectorRelayLeg) *connectorRelayLeg {
+				t.Helper()
+				deadline := time.Now().Add(6 * time.Second)
+				for {
+					p.mu.Lock()
+					current := p.paths[0].leg
+					p.mu.Unlock()
+					if current != old && p.endpoint.PathHealthy(0) {
+						return current
+					}
+					if p.ctx.Err() != nil || time.Now().After(deadline) {
+						t.Fatal("uncertain replies stranded retained connection", context.Cause(p.ctx))
+					}
+					time.Sleep(time.Millisecond)
+				}
+			}
+			p.mu.Lock()
+			old := p.paths[0].leg
+			p.mu.Unlock()
+			f.dropHelloReply[0].Store(true)
+			f.dropActivationReply[0].Store(true)
+			_ = old.session.Close()
+			repaired := waitForRepair(old)
+			if repaired.handoffRevision != 1 {
+				t.Fatal("uncertain retry advanced revision")
+			}
+			f.mu.Lock()
+			attempts := append([]tunnelv1.ConnectorHandoff(nil), f.handoffAttempts[0]...)
+			nonces := append([][]byte(nil), f.helloNonces[0]...)
+			f.mu.Unlock()
+			if len(attempts) < 2 || f.dropHelloReply[0].Load() || f.dropActivationReply[0].Load() {
+				t.Fatal("fixture did not lose both replies and retry activation")
+			}
+			for _, attempt := range attempts {
+				if attempt != attempts[0] || attempt.Next() != repaired.selectedHandoff {
+					t.Fatal("uncertain reply changed the planned operation")
+				}
+			}
+			for i, nonce := range nonces {
+				for _, previous := range nonces[:i] {
+					if bytes.Equal(nonce, previous) {
+						t.Fatal("retry reused a signed hello")
+					}
+				}
+			}
+			_ = repaired.session.Close()
+			next := waitForRepair(repaired)
+			if next.handoffRevision != 2 || next.selectedHandoff == repaired.selectedHandoff || p.connection != inner || p.permissions != permissions || p.owner != owner || f.opened.Load() != opened {
+				t.Fatal("next failure reset the chain or replaced inner ownership")
 			}
 		})
 	}

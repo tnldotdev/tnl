@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"math"
+	"strings"
 	"testing"
 )
 
@@ -62,14 +64,40 @@ func TestConnectorLegActivationClosedUnionAndExactNonce(t *testing.T) {
 	}
 }
 
+func TestConnectorHandoffRevisionWireBoundsAndNoWrap(t *testing.T) {
+	payload := string(readFixture(t, "control-connector-replace.json"))
+	for _, value := range []string{"null", "0", "-1", "1.5", `"1"`, "18446744073709551616"} {
+		if _, err := ReadControl(frame(strings.Replace(payload, `"handoff_revision":7`, `"handoff_revision":`+value, 1))); err == nil {
+			t.Fatal("invalid handoff revision accepted", value)
+		}
+	}
+	maximum, err := ReadControl(frame(strings.Replace(payload, `"handoff_revision":7`, `"handoff_revision":18446744073709551615`, 1)))
+	if err != nil || maximum.ConnectorLegBinding.HandoffRevision != math.MaxUint64 {
+		t.Fatal("maximum revision failed exact uint64 parsing", err)
+	}
+	if next, err := maximum.ConnectorLegBinding.HandoffRevision.Next(); err != ErrConnectorHandoffRevisionExhausted || next != 0 {
+		t.Fatal("revision overflow wrapped", next, err)
+	}
+	if next, err := ConnectorHandoffRevision(math.MaxUint64 - 1).Next(); err != nil || next != math.MaxUint64 {
+		t.Fatal("final revision was unavailable", next, err)
+	}
+	initial := string(readFixture(t, "control-connector-activate.json"))
+	for _, value := range []string{"null", "0", "1"} {
+		initialWithRevision := strings.Replace(initial, `"nonce":`, `"handoff_revision":`+value+`,"nonce":`, 1)
+		if _, err := ReadControl(frame(initialWithRevision)); err == nil {
+			t.Fatal("initial activation accepted replacement revision", value)
+		}
+	}
+}
+
 func TestConnectorLegReplacementBindingRoundTrip(t *testing.T) {
-	binding := ConnectorLegBinding{Nonce: bytes.Repeat([]byte{1}, 32), PreviousNonce: bytes.Repeat([]byte{2}, 32), ReplacementNonce: bytes.Repeat([]byte{3}, 32)}
+	binding := ConnectorLegBinding{Nonce: bytes.Repeat([]byte{1}, 32), PreviousNonce: bytes.Repeat([]byte{2}, 32), ReplacementNonce: bytes.Repeat([]byte{3}, 32), HandoffRevision: 7}
 	message := Message{Type: ConnectorLegActivate, ProtocolVersion: Version, RequestID: "repair", Role: Connector, ConnectorLegBinding: &binding}
 	var wire bytes.Buffer
 	if err := WriteControl(&wire, message); err != nil {
 		t.Fatal(err)
 	}
-	const golden = `{"type":"connector_leg_activate","protocol_version":1,"request_id":"repair","role":"connector","connector_leg_binding":{"nonce":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=","previous_nonce":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=","replacement_nonce":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM="}}`
+	const golden = `{"type":"connector_leg_activate","protocol_version":1,"request_id":"repair","role":"connector","connector_leg_binding":{"nonce":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=","previous_nonce":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=","replacement_nonce":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=","handoff_revision":7}}`
 	want, err := io.ReadAll(frame(golden))
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +106,7 @@ func TestConnectorLegReplacementBindingRoundTrip(t *testing.T) {
 		t.Fatalf("replacement wire changed: %s", wire.Bytes()[4:])
 	}
 	got, err := ReadControl(&wire)
-	if err != nil || !bytes.Equal(got.ConnectorLegBinding.PreviousNonce, binding.PreviousNonce) || !bytes.Equal(got.ConnectorLegBinding.ReplacementNonce, binding.ReplacementNonce) {
+	if err != nil || !bytes.Equal(got.ConnectorLegBinding.PreviousNonce, binding.PreviousNonce) || !bytes.Equal(got.ConnectorLegBinding.ReplacementNonce, binding.ReplacementNonce) || got.ConnectorLegBinding.HandoffRevision != 7 {
 		t.Fatal("replacement binding lost", err)
 	}
 	for _, mutate := range []func(*ConnectorLegBinding){
@@ -86,6 +114,7 @@ func TestConnectorLegReplacementBindingRoundTrip(t *testing.T) {
 		func(b *ConnectorLegBinding) { b.ReplacementNonce = nil },
 		func(b *ConnectorLegBinding) { b.ReplacementNonce = b.PreviousNonce },
 		func(b *ConnectorLegBinding) { b.PreviousNonce = b.PreviousNonce[:31] },
+		func(b *ConnectorLegBinding) { b.HandoffRevision = 0 },
 	} {
 		invalid := binding
 		mutate(&invalid)
@@ -96,7 +125,7 @@ func TestConnectorLegReplacementBindingRoundTrip(t *testing.T) {
 }
 
 func TestConnectorActivationCopiesAndDistinguishesIdentities(t *testing.T) {
-	binding := ConnectorLegBinding{Nonce: bytes.Repeat([]byte{1}, 32), PreviousNonce: bytes.Repeat([]byte{2}, 32), ReplacementNonce: bytes.Repeat([]byte{3}, 32)}
+	binding := ConnectorLegBinding{Nonce: bytes.Repeat([]byte{1}, 32), PreviousNonce: bytes.Repeat([]byte{2}, 32), ReplacementNonce: bytes.Repeat([]byte{3}, 32), HandoffRevision: 1}
 	activation, err := binding.Activation()
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +145,7 @@ func TestConnectorActivationCopiesAndDistinguishesIdentities(t *testing.T) {
 	if activation.Binding().Nonce[0] != 1 {
 		t.Fatal("wire serialization aliased validated identity")
 	}
-	if _, err := NewConnectorHandoff(handoff.Next(), handoff.Next()); err == nil || (ConnectorHandoff{}).Valid() {
+	if _, err := NewConnectorHandoff(handoff.Next(), handoff.Next(), 1); err == nil || (ConnectorHandoff{}).Valid() {
 		t.Fatal("self replacement accepted")
 	}
 }

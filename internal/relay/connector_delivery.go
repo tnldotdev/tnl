@@ -236,9 +236,13 @@ func (b *connectorBridge) replaceCarrier(ctx context.Context, d *connectorDelive
 		b.mu.Unlock()
 		return nil, denied
 	}
-	if b.handoff.record(selection, d.proof.RequestedAt) == handoffRejected {
+	switch b.handoff.record(selection, d.proof.RequestedAt) {
+	case handoffRejected:
 		b.mu.Unlock()
 		return nil, denied
+	case handoffExhausted:
+		b.mu.Unlock()
+		return nil, &tunnel.ProtocolError{Code: tunnelv1.HandoffRevisionExhausted}
 	}
 	old := b.active
 	// reconnection spends the previous deadline; only ordinary renewal can

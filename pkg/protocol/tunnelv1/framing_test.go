@@ -30,6 +30,8 @@ var frameReaders = []struct {
 	{"control-connector-renewed", MaxControlBytes, readControl},
 	{"control-connector-activate", MaxControlBytes, readControl},
 	{"control-connector-activated", MaxControlBytes, readControl},
+	{"control-connector-replace", MaxControlBytes, readControl},
+	{"control-connector-replaced", MaxControlBytes, readControl},
 	{"control-accepted", MaxControlBytes, readControl},
 	{"connector-peer-visitor-entry", MaxHeaderBytes, readConnectorPeerVisitor},
 	{"visitor-stream-header", MaxHeaderBytes, readVisitor},

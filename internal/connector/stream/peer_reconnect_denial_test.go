@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"testing"
 	"time"
 
@@ -55,11 +56,21 @@ func TestConnectorReconnectStopsOnAuthorizationDenial(t *testing.T) {
 	}
 }
 
+func TestConnectorReconnectRevisionExhaustionIsTerminalWithoutAuthenticationDenial(t *testing.T) {
+	previous := &connectorRelayLeg{selectedHandoff: tunnelv1.ConnectorHandoffID{1}, handoffRevision: math.MaxUint64}
+	next, err := nextConnectorLegReplacement(previous)
+	var exhausted *tunnel.ProtocolError
+	if next != nil || !errors.As(err, &exhausted) || exhausted.Code != tunnelv1.HandoffRevisionExhausted || !errors.Is(err, tunnelv1.ErrConnectorHandoffRevisionExhausted) || connectorReconnectError(err) != terminateConnection {
+		t.Fatal("exhausted revision wrapped or lost its terminal classification", next, err)
+	}
+}
+
 func TestConnectorReconnectRetryClassification(t *testing.T) {
 	unavailable := &tunnel.ProtocolError{Code: tunnelv1.Unavailable}
 	denied := &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
 	capacity := &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
 	stale := &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+	exhausted := &tunnel.ProtocolError{Code: tunnelv1.HandoffRevisionExhausted}
 	for _, test := range []struct {
 		err  error
 		want reconnectDisposition
@@ -73,6 +84,8 @@ func TestConnectorReconnectRetryClassification(t *testing.T) {
 		{errors.Join(ErrServiceConnection, errors.Join(io.EOF, stale), denied), terminateConnection},
 		{errors.Join(ErrServiceConnection, errors.Join(io.EOF, stale)), retirePath},
 		{errors.Join(ErrServiceConnection, errors.Join(errors.New("other"), unavailable)), retryAttempt},
+		{exhausted, terminateConnection},
+		{errors.Join(unavailable, stale, exhausted), terminateConnection},
 	} {
 		if got := connectorReconnectError(test.err); got != test.want {
 			t.Fatal("wrong reconnect retry decision", test.err, got, test.want)
