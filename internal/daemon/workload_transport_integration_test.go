@@ -96,7 +96,9 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			assertion := issuer.Sign(t, githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now()))
+			initialClaims := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
+			initialClaims["exp"] = time.Now().Add(135 * time.Second).Unix()
+			assertion := issuer.Sign(t, initialClaims)
 			session, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", assertion, keys)
 			if err != nil {
 				t.Fatal(err)
@@ -165,6 +167,17 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			revokedPaths.denied(t, 31*time.Second)
 			for i, at := range []time.Time{session.LeaseExpiresAt.Add(5 * time.Second), session.LeaseExpiresAt.Add(95 * time.Second)} {
 				waitRuntimeTime(t, at)
+				if i == 0 {
+					fresh := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
+					fresh["jti"] = "rotated-platform-proof"
+					assertion = issuer.Sign(t, fresh)
+					refreshed, err := job.Attach(t.Context(), assertion)
+					if err != nil || refreshed.Id != session.Id || !refreshed.IdentityExpiresAt.After(session.IdentityExpiresAt) || !refreshed.ExpiresAt.Equal(session.ExpiresAt) {
+						t.Fatal("fresh platform proof changed the original session or fixed window", err)
+					}
+				} else if !time.Now().After(session.IdentityExpiresAt) {
+					t.Fatal("retained streams did not cross the original platform proof deadline")
+				}
 				paths.step(t, int(time.Until(session.ExpiresAt).Seconds()))
 				if workloadNativeRuntimeBinding(t, f, session.Id, session.ExpiresAt) != nativeBinding {
 					t.Fatal("workload renewal replaced its connector owners or exact bindings")
