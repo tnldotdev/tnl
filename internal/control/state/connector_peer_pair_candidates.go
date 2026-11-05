@@ -76,7 +76,6 @@ func (d *Database) ListConnectorPeerPairs(ctx context.Context, serviceID, runID,
 			_, _, bound, err := d.connectorPeerSessionAuthority(ctx, tx, run, pair, clock.current())
 			if err == nil {
 				candidate.OwnerAuthority = &ConnectorPeerPairOwnerAuthority{ObservedAt: now, ExpiresAt: bound}
-				until = minTime(until, bound)
 			} else if !errors.Is(err, ErrServiceAccess) && !errors.Is(err, ErrVisitorPermission) && !errors.Is(err, ErrWorkloadDenied) {
 				return ConnectorPeerPairCandidates{}, err
 			}
@@ -96,6 +95,16 @@ func (d *Database) ListConnectorPeerPairs(ctx context.Context, serviceID, runID,
 	}
 	if !until.After(clock.current()) {
 		return ConnectorPeerPairCandidates{}, ErrServiceAccess
+	}
+	// an individual owner may expire while a later candidate waits for a row
+	// lock. drop only its optional observation, not the publisher's independently
+	// authorized listing or its healthy siblings. no observation renews authority.
+	observed := clock.current()
+	for index := range result.Items {
+		candidate := &result.Items[index]
+		if candidate.OwnerAuthority != nil && !candidate.OwnerAuthority.ExpiresAt.After(observed) {
+			candidate.OwnerAuthority = nil
+		}
 	}
 	return result, nil
 }
