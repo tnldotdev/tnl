@@ -12,11 +12,12 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 func TestIntegrationDatabaseMetricsDuringPoolExhaustion(t *testing.T) {
-	_, databaseURL, _ := newControlStateIntegrationDatabaseWithURL(t, "pool_diagnostics")
+	observer, databaseURL, _ := newControlStateIntegrationDatabaseWithURL(t, "pool_diagnostics")
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		t.Fatal(err)
@@ -31,15 +32,31 @@ func TestIntegrationDatabaseMetricsDuringPoolExhaustion(t *testing.T) {
 	}
 	defer pool.Close()
 	database := &Database{pool: pool, activity: activity, connections: connections}
-	held, err := pool.Acquire(t.Context())
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	blocker, err := observer.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer held.Release()
-	waitCtx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
-	defer cancel()
-	if _, err := pool.Acquire(waitCtx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("exhausted acquire: %v", err)
+	defer rollbackTestTransaction(t, blocker)
+	if _, err := controlstatedb.New(blocker).LockIngressRoutingTableClock(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// a named query holds the sole request connection while PostgreSQL waits on
+	// the routing clock. diagnostics must retain it even if their upstream fails.
+	done := make(chan error, 1)
+	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
+	workers.Go(func() {
+		_, err := controlstatedb.New(pool).LockIngressRoutingTableClock(ctx)
+		done <- err
+	})
+	waitForPostgresBlock(t, ctx, observer, int32(blocker.Conn().PgConn().PID()), done)
+	waitCtx, stopWait := context.WithTimeout(ctx, 25*time.Millisecond)
+	err = database.Health(waitCtx)
+	stopWait()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("request pool was not exhausted: %v", err)
 	}
 	metrics := observability.New("control")
 	metrics.RegisterDatabase(func(now time.Time) observability.DatabaseSnapshot {
@@ -77,10 +94,30 @@ func TestIntegrationDatabaseMetricsDuringPoolExhaustion(t *testing.T) {
 			t.Fatalf("metrics scrape opened %s connection: %+v", purpose, counts)
 		}
 	}
-	ctx, stop := context.WithTimeout(t.Context(), time.Second)
-	defer stop()
-	if _, err := database.Diagnostics(ctx); err != nil {
+	snapshot, err := database.Diagnostics(ctx)
+	if err != nil || snapshot.Error != "" {
 		t.Fatalf("snapshot was starved by local pool: %v", err)
+	}
+	unavailable, stopDiagnostics := context.WithCancel(ctx)
+	stopDiagnostics()
+	local, err := database.Diagnostics(unavailable)
+	if !errors.Is(err, context.Canceled) || local.Error == "" {
+		t.Fatalf("upstream failure missing diagnostic error: %+v, %v", local, err)
+	}
+	for _, result := range []DatabaseDiagnostics{snapshot, local} {
+		if result.OperationsTruncated || len(result.ActiveOperations) != 1 ||
+			result.ActiveOperations[0].Operation != "LockIngressRoutingTableClock" || result.ActiveOperations[0].ElapsedSeconds < 0 {
+			t.Fatalf("pool-exhausted diagnostic lost the waiting query: %+v", result)
+		}
+	}
+	if err := blocker.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaitIntegrationResult(t, ctx, done); err != nil {
+		t.Fatal(err)
+	}
+	if operations, truncated := activity.snapshot(time.Now()); len(operations) != 0 || truncated {
+		t.Fatalf("finished SQL retained: %+v", operations)
 	}
 }
 

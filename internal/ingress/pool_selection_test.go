@@ -52,12 +52,11 @@ func TestIngressPublisherPoolForwardsHealthySiblingsAndRejectsFullPool(t *testin
 		// an unavailable sibling must not hide either healthy run.
 		{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_2123456789ABCDEFGHIJKL", PublishRunNumber: 3},
 	}
-	usage := newUsageRecorder()
 	metrics := &testMetrics{visitorOutcomes: make(chan string, 3)}
 	events := make(chan serviceaudit.Observation, 5)
 	server, address := startIngress(t, Config{
 		Lookup:    func(string) ([]PublicURL, LookupReason) { return append([]PublicURL(nil), runs...), LookupCurrent },
-		OpenUsage: usage.Open, Metrics: metrics,
+		Metrics:   metrics,
 		AuditSink: auditSinkFunc(func(o serviceaudit.Observation) bool { events <- o; return true }),
 	})
 	// keep both visitors open so each run's only slot stays reserved.
@@ -83,8 +82,8 @@ func TestIngressPublisherPoolForwardsHealthySiblingsAndRejectsFullPool(t *testin
 	if event := ingressAwait(t, events); event.Validate() != nil || event.Outcome != "denied" || event.Reason != "unavailable" || event.RunID != "" || event.RunNumber != 0 {
 		t.Fatal("full pool invented a selected run", event)
 	}
-	if len(usage.opened) != 2 || first.opens.Load() != 1 || second.opens.Load() != 1 {
-		t.Fatal("full pool attributed usage or opened a backend without selecting a run")
+	if first.opens.Load() != 1 || second.opens.Load() != 1 {
+		t.Fatal("full pool opened a backend without selecting a run")
 	}
 	for _, visitor := range []*tls.Conn{a, b} {
 		exchangePing(t, visitor)
@@ -97,15 +96,20 @@ func TestIngressPublisherPoolForwardsHealthySiblingsAndRejectsFullPool(t *testin
 	}
 	seen := map[uint64]bool{}
 	for range 2 {
-		u := ingressAwait(t, usage.opened)
-		ingressAwait(t, u.closed)
-		if u.streams != 1 || u.capacityDenials != 0 || u.publisherFailures != 0 || u.ingressBytes == 0 || u.egressBytes == 0 {
-			t.Fatal("selected run lost usage", u)
+		event := ingressAwait(t, events)
+		// the fixture closes TLS peers after the exchange; copying may observe
+		// that close as a forwarding error after the stream opened successfully.
+		if event.Validate() != nil || event.EventType != "connection.close" ||
+			(event.Outcome != "closed" && (event.Outcome != "failed" || event.Reason != "forwarding")) {
+			t.Fatal("selected run lost its close observation", event)
 		}
-		seen[u.publishRunNumber] = true
+		seen[uint64(event.RunNumber)] = true
 	}
 	if len(seen) != 2 || !seen[1] || !seen[2] {
-		t.Fatal("usage did not follow the selected runs", seen)
+		t.Fatal("audit did not follow the selected runs", seen)
+	}
+	if metrics.visitorOpenSuccesses.Load() != 2 || metrics.visitorOpenFailures.Load() != 0 {
+		t.Fatal("selected runs did not open successfully")
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()

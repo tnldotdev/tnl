@@ -93,11 +93,6 @@ type Metrics struct {
 	certificateTransitions      *counter
 	dnsWork                     *histogram
 	dnsTransitions              *counter
-	usageWork                   *counter
-	usageItems                  *counter
-	usageReceiverDuration       *histogram
-	usageLastSuccess            *gauge
-	usageRetained               *gauge
 	cleanupRuns                 *counter
 	cleanupItems                *counter
 	cleanupLastSuccess          *gauge
@@ -186,11 +181,6 @@ func (metrics *Metrics) initInstruments(role Role) {
 	metrics.certificateTransitions = newCounter(m, "tnl_control_certificate_transitions_total", "Committed certificate work transitions by kind and resulting state.", CertificateKind, State)
 	metrics.dnsWork = newHistogram(m, "tnl_control_dns_work_duration_seconds", "DNS worker phase duration; count is the number of attempts.", DurationBucketsSeconds(), DNSKind, Operation, OutcomeKey)
 	metrics.dnsTransitions = newCounter(m, "tnl_control_dns_transitions_total", "Committed DNS work transitions by kind and resulting state.", DNSKind, State)
-	metrics.usageWork = newCounter(m, "tnl_control_public_url_usage_work_total", "Usage worker operations by fixed phase and outcome.", Operation, OutcomeKey)
-	metrics.usageItems = newCounter(m, "tnl_control_public_url_usage_items_total", "Usage runs, buckets or deliveries committed by result.", Event)
-	metrics.usageReceiverDuration = newHistogram(m, "tnl_control_public_url_usage_receiver_duration_seconds", "Usage receiver request duration by bounded outcome.", DurationBucketsSeconds(), OutcomeKey)
-	metrics.usageLastSuccess = newGauge(m, "tnl_control_public_url_usage_last_success_timestamp_seconds", "Unix time of the last successful finalization call or committed delivery; zero before success.", Operation)
-	metrics.usageRetained = newGauge(m, "tnl_ingress_usage_retained_buckets", "Ingress usage buckets retained in memory, including dirty and pending buckets.")
 	metrics.cleanupRuns = newCounter(m, "tnl_control_cleanup_runs_total", "Cleanup calls by fixed kind and outcome.", CleanupKind, OutcomeKey)
 	metrics.cleanupItems = newCounter(m, "tnl_control_cleanup_items_total", "Committed items removed by cleanup kind.", CleanupKind)
 	metrics.cleanupLastSuccess = newGauge(m, "tnl_control_cleanup_last_success_timestamp_seconds", "Unix time of last successful cleanup by kind; zero before success.", CleanupKind)
@@ -204,21 +194,17 @@ func (metrics *Metrics) initInstruments(role Role) {
 	if role == RoleControl || role == RoleStandalone {
 		metrics.routingHistorySkipped.Add(0)
 		metrics.gaugeFunc("tnl_control_routing_history_retained_after_revision", "Highest committed routing-history retention floor observed by this process.", func() float64 { return float64(metrics.routingHistoryFloor.Load()) })
-		for _, stage := range []string{"issued", "allocated", "ready", "expired", "ready_limit", "transfer_limit"} {
+		for _, stage := range []string{"issued", "allocated", "ready", "expired", "ready_limit"} {
 			metrics.guestTrialStats.With(eventDimension(stage)).Set(0)
 		}
 		for _, surface := range []string{"control", "authority", "private_ingress", "private_relay"} {
 			metrics.apiInFlight.With(Component.Dimension(surface)).Set(0)
-		}
-		for _, phase := range []operationName{"finalize", "deliver"} {
-			metrics.usageLastSuccess.With(Operation.Dimension(phase)).Set(0)
 		}
 	}
 	if role == RoleIngress || role == RoleStandalone {
 		metrics.ingressStreams.Set(0)
 		metrics.drainingRejections.Add(0)
 		metrics.recoveryPending.Set(0)
-		metrics.usageRetained.Set(0)
 		for _, class := range []string{"client_hello", "public", "denied", "control", "relay_tcp"} {
 			metrics.ingressConnections.With(connectionClass.Dimension(class)).Set(0)
 		}
@@ -285,10 +271,10 @@ func (m *Metrics) RegisterControlCertificate(source func() time.Time) {
 }
 
 // SetGuestTrialStats observes committed service-wide counts without identity labels.
-func (m *Metrics) SetGuestTrialStats(issued, allocated, ready, expired, readyLimit, transferLimit int64) {
+func (m *Metrics) SetGuestTrialStats(issued, allocated, ready, expired, readyLimit int64) {
 	for stage, count := range map[string]int64{
 		"issued": issued, "allocated": allocated, "ready": ready,
-		"expired": expired, "ready_limit": readyLimit, "transfer_limit": transferLimit,
+		"expired": expired, "ready_limit": readyLimit,
 	} {
 		if count >= 0 {
 			m.guestTrialStats.With(eventDimension(stage)).Set(float64(count))

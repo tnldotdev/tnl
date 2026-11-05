@@ -217,59 +217,6 @@ func (m *Metrics) ObserveDNSTransition(kind, state string) {
 	m.dnsTransitions.With(DNSKind.Dimension(kind), stateDimension(state)).Inc()
 }
 
-func (m *Metrics) ObserveUsageWork(phase string, outcome UsageWorkOutcome) {
-	if m == nil {
-		return
-	}
-	switch phase {
-	case "incomplete_runs", "finalize", "claim", "deliver", "complete", "retry", "reject":
-	default:
-		return
-	}
-	switch outcome {
-	case UsageWorkSuccess, UsageWorkEmpty, UsageWorkError:
-	default:
-		return
-	}
-	m.usageWork.With(Operation.Dimension(operationName(phase)), resultDimension(string(outcome))).Inc()
-	if phase == "finalize" && outcome == UsageWorkSuccess {
-		m.usageLastSuccess.With(Operation.Dimension("finalize")).SetToCurrentTime()
-	}
-}
-
-func (m *Metrics) AddUsageItems(result string, count int) {
-	if m == nil || count <= 0 {
-		return
-	}
-	switch result {
-	case "incomplete", "finalized", "accepted", "retried", "rejected":
-	default:
-		return
-	}
-	m.usageItems.With(eventDimension(result)).Add(float64(count))
-	if result == "accepted" {
-		m.usageLastSuccess.With(Operation.Dimension("deliver")).SetToCurrentTime()
-	}
-}
-
-func (m *Metrics) ObserveUsageReceiver(outcome UsageReceiverOutcome, elapsed time.Duration) {
-	if m == nil {
-		return
-	}
-	switch outcome {
-	case UsageReceiverSuccess, UsageReceiverHTTPError, UsageReceiverTransportError, UsageReceiverInvalidResponse:
-	default:
-		return
-	}
-	m.usageReceiverDuration.With(resultDimension(string(outcome))).Observe(elapsed.Seconds())
-}
-
-func (m *Metrics) SetUsageRetained(count int) {
-	if m != nil {
-		m.usageRetained.Set(float64(count))
-	}
-}
-
 func (m *Metrics) ObserveCleanup(kind string, count int, busy bool, err error) {
 	if m == nil {
 		return

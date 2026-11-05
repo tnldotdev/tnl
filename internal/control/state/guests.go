@@ -21,7 +21,6 @@ import (
 
 const (
 	GuestReadyAllowance = 15 * time.Minute
-	GuestByteAllowance  = 5 << 20
 	GuestLifetime       = 72 * time.Hour
 )
 
@@ -43,7 +42,6 @@ type GuestTrial struct {
 	SourceIPKeyID         string
 	ExpiresAt             time.Time
 	UsedReady             time.Duration
-	UsedBytes             int64
 	LastDemoNumber        int64
 }
 
@@ -191,7 +189,7 @@ func (d *Database) GuestTrialByAccessToken(ctx context.Context, token credential
 	guest := GuestTrial{
 		ID: row.ID, NamespaceLabel: row.NamespaceLabel, TeamID: row.TeamID,
 		MembershipID: row.MembershipID, DomainID: row.DomainID, DNSAuthorityReference: row.DnsAuthorityReference,
-		UsedReady: time.Duration(row.UsedReadyNs), UsedBytes: row.UsedBytes, LastDemoNumber: row.LastDemoNumber,
+		UsedReady: time.Duration(row.UsedReadyNs), LastDemoNumber: row.LastDemoNumber,
 		ExpiresAt: row.ExpiresAt.Time, SourceIPDigest: row.SourceIpDigest.String, SourceIPKeyID: row.SourceIpKeyID.String,
 	}
 	return guest, nil
@@ -245,7 +243,7 @@ func (d *Database) AllocateGuestDemoNumber(ctx context.Context, guestID string, 
 	if err != nil {
 		return 0, err
 	}
-	if !guest.ExpiresAt.Valid || !guest.ExpiresAt.Time.After(at) || guest.UsedBytes >= GuestByteAllowance || guest.UsedReadyNs >= int64(GuestReadyAllowance) {
+	if !guest.ExpiresAt.Valid || !guest.ExpiresAt.Time.After(at) || guest.UsedReadyNs >= int64(GuestReadyAllowance) {
 		return 0, ErrGuestTrialSpent
 	}
 	count, err := queries.CountGuestCurrentPublicURLs(ctx, guestID)

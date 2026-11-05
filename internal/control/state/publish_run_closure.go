@@ -148,9 +148,6 @@ func expireOpenPublishRun(ctx context.Context, queries *controlstatedb.Queries, 
 				closedAt, reason = deadline, "guest_ready_limit"
 			}
 		}
-		if guest.UsedBytes >= GuestByteAllowance && now.Before(closedAt) {
-			closedAt, reason = now, "guest_transfer_limit"
-		}
 	}
 	if closedAt.After(now) {
 		return true, false, nil

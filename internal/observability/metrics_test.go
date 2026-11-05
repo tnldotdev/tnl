@@ -75,7 +75,7 @@ func TestReadinessAndRelayMetricsKeepFixedLabels(t *testing.T) {
 	control.ObserveCertificateMilestone("public_url", "challenge_token_secret", time.Second)
 	control.ObserveCertificateMilestone("public_url", "ready", 30*time.Second)
 	control.ObserveCertificateMilestone("public_url", "cleanup", 45*time.Second)
-	control.SetGuestTrialStats(2, 1, 1, 0, 0, 1)
+	control.SetGuestTrialStats(2, 1, 1, 0, 0)
 	ingress := New("ingress")
 	ingress.ObserveRelayAttempt("relay_address_secret", "error_secret")
 	ingress.IncInspectionFailure("challenge_token_secret")

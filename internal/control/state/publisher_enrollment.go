@@ -204,7 +204,7 @@ func (d *Database) EnrollGuestPublisher(ctx context.Context, guestID, urlID, sou
 		return result, err
 	}
 	match, err := d.GuestSourceMatches(GuestTrial{ID: trial.ID, SourceIPDigest: trial.SourceIpDigest.String, SourceIPKeyID: trial.SourceIpKeyID.String}, sourceIP)
-	if err != nil || !match || !trial.ExpiresAt.Time.After(now) || trial.EndedAt.Valid || trial.UsedReadyNs >= int64(GuestReadyAllowance) || trial.UsedBytes >= GuestByteAllowance {
+	if err != nil || !match || !trial.ExpiresAt.Time.After(now) || trial.EndedAt.Valid || trial.UsedReadyNs >= int64(GuestReadyAllowance) {
 		return result, ErrPublisherIdentity
 	}
 	s := PublisherScope{TeamID: trial.TeamID, Kind: "saved_public_url", PublicURLID: urlID}
