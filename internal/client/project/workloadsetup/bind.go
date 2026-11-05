@@ -75,6 +75,8 @@ func (r resolver) resolve(ctx context.Context, o Options) (map[string]controlv1.
 		var err error
 		if p.GitHub != nil && p.Provider() == "github" {
 			bound.Github, err = r.bindGitHub(ctx, o, p.GitHub, previous, repositories)
+		} else if p.Google != nil && p.Provider() == "google" {
+			bound.Trust, bound.Google, err = r.google(ctx, o, p.Google, previous)
 		} else {
 			bound.Trust, err = r.bindProvider(ctx, o, p, previous)
 		}

@@ -5,7 +5,13 @@ export interface WorkloadRequest {
   name?: string;
   callback?: boolean;
   token_file?: string;
-  runtime: { workload?: string; vercel?: string; fly_app_name?: string; github_actions?: string };
+  runtime: {
+    workload?: string;
+    vercel?: string;
+    fly_app_name?: string;
+    github_actions?: string;
+    cloud_run_service?: string;
+  };
 }
 
 export interface SelectionOptions {

@@ -17,6 +17,7 @@ type Workload struct {
 	GitHub      *WorkloadGitHub `json:"github,omitempty" yaml:"github,omitempty"`
 	Vercel      *WorkloadVercel `json:"vercel,omitempty" yaml:"vercel,omitempty"`
 	Fly         *WorkloadFly    `json:"fly,omitempty" yaml:"fly,omitempty"`
+	Google      *WorkloadGoogle `json:"google,omitempty" yaml:"google,omitempty"`
 	OIDC        *WorkloadOIDC   `json:"oidc,omitempty" yaml:"oidc,omitempty"`
 	Token       *WorkloadToken  `json:"token,omitempty" yaml:"token,omitempty"`
 	Services    []string        `json:"services" yaml:"services" jsonschema:"required,minItems=1,maxItems=32,uniqueItems=true" jsonschema_description:"exact configured service keys assigned to named publisher groups; local services cannot be workload targets."`
@@ -52,6 +53,22 @@ type WorkloadOIDC struct {
 	Claims   map[string]string `json:"claims" yaml:"claims" jsonschema:"required,minProperties=1,maxProperties=32"`
 }
 
+type WorkloadGoogle struct {
+	ServiceAccount string `json:"service_account" yaml:"service_account" jsonschema:"required" jsonschema_description:"Google service account email or immutable numeric ID. Trusted apply resolves an email with gcloud and saves the numeric identity."`
+	Audience       string `json:"audience,omitempty" yaml:"audience,omitempty" jsonschema_description:"Intended token recipient; defaults to the control URL."`
+}
+
+const GoogleWorkloadIssuer = "https://accounts.google.com"
+const GoogleWorkloadJWKS = "https://www.googleapis.com/oauth2/v3/certs"
+
+var workloadNumericID = regexp.MustCompile(`^[1-9][0-9]{0,31}$`)
+var googleServiceAccount = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}@[a-z0-9][a-z0-9.-]{0,127}\.gserviceaccount\.com$`)
+
+func ValidWorkloadNumericID(value string) bool { return workloadNumericID.MatchString(value) }
+func ValidGoogleServiceAccount(value string) bool {
+	return ValidWorkloadNumericID(value) || googleServiceAccount.MatchString(value)
+}
+
 type WorkloadToken struct {
 	File *string `json:"file,omitempty" yaml:"file,omitempty"`
 	Env  *string `json:"env,omitempty" yaml:"env,omitempty"`
@@ -66,6 +83,7 @@ func (p Workload) Provider() string {
 	}{
 		{"github", p.GitHub != nil}, {"vercel", p.Vercel != nil},
 		{"fly", p.Fly != nil}, {"oidc", p.OIDC != nil},
+		{"google", p.Google != nil},
 	} {
 		if candidate.set {
 			provider, count = candidate.name, count+1
@@ -98,6 +116,9 @@ func (g WorkloadGitHub) AllowedEvents() []string {
 }
 
 func (p Workload) TokenAudience(server string) string {
+	if p.Google != nil && p.Google.Audience != "" {
+		return p.Google.Audience
+	}
 	if p.OIDC != nil && p.OIDC.Audience != "" {
 		return p.OIDC.Audience
 	}
@@ -204,6 +225,11 @@ func ValidateWorkloads(c TNL) error {
 				if !ExactWorkloadValue(k) || !ExactWorkloadValue(v) || slices.Contains([]string{"iss", "aud", "iat", "exp", "nbf"}, k) {
 					return bad()
 				}
+			}
+		case "google":
+			g := p.Google
+			if !ValidGoogleServiceAccount(g.ServiceAccount) || g.Audience != "" && !ExactWorkloadValue(g.Audience) {
+				return bad()
 			}
 		default:
 			return bad()
