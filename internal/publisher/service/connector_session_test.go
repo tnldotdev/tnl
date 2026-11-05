@@ -73,6 +73,8 @@ func connectorPeerFixture(t *testing.T, target string, lifetime ...time.Duration
 	now := time.Now()
 	t.Cleanup(b.Invalidate)
 	d := controlv1.ConnectorPeerPairDelivery{PairId: "cpp_" + strings.Repeat("C", 22), DeliveryId: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{3}, 16)), DeliveryGeneration: 1, Key: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32)), ServiceId: p.Preparation.ServiceId, ServiceRunId: p.Preparation.ServiceRunId, RunNumber: p.Preparation.RunNumber, PublisherIdentityId: p.Preparation.PublisherIdentityId, SourceIp: "192.0.2.1", Subject: controlv1.VisitorSubject{Kind: controlv1.VisitorSubjectKind(peerSubject.Kind), IdentityId: &identity, DeviceId: &device}, ObservedAt: now, ExpiresAt: now.Add(time.Minute)}
+	d.SessionKey = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))
+	d.TrustRevision, d.BindingState = p.metadataRevision, controlv1.ConnectorPeerPairBindingActive
 	if len(lifetime) != 0 {
 		d.ExpiresAt = now.Add(lifetime[0])
 	}
@@ -332,7 +334,7 @@ func TestConnectorPeerRenewalCannotTransferOrReviveOwnership(t *testing.T) {
 		{"relay address", func(_ *PeerSession, b *PeerBinding) { b.relays[0].RelayAddress = "other.example.test:443" }},
 		{"relay tls name", func(_ *PeerSession, b *PeerBinding) { b.relays[0].TlsServerName = "other.example.test" }},
 		{"expired delivery", func(_ *PeerSession, b *PeerBinding) { b.until = time.Now().Add(-time.Second) }},
-		{"expired owner", func(p *PeerSession, _ *PeerBinding) { p.lease.until = time.Now().Add(-time.Second) }},
+		{"expired owner", func(p *PeerSession, _ *PeerBinding) { p.owner.until = time.Now().Add(-time.Second) }},
 		{"retired owner", func(p *PeerSession, _ *PeerBinding) { p.replayUntil = time.Now().Add(time.Minute) }},
 		{"unregistered owner", func(p *PeerSession, _ *PeerBinding) { delete(p.bound.connectorPeers, p.identity.pairID) }},
 	} {
@@ -371,7 +373,7 @@ func (s *heldConnectorInner) Close() error {
 	return nil
 }
 
-func TestConnectorHeartbeatReplacementJoinsOldInnerSession(t *testing.T) {
+func TestConnectorHeartbeatRetainsInnerSessionUntilRunInvalidationJoins(t *testing.T) {
 	b, p, _, _, _ := connectorPeerFixture(t, "127.0.0.1:1")
 	inner := &heldConnectorInner{accepting: make(chan struct{}), entered: make(chan struct{}), release: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(inner.release) })
@@ -397,33 +399,49 @@ func TestConnectorHeartbeatReplacementJoinsOldInnerSession(t *testing.T) {
 			State: "ready", PublisherExpiresAt: time.Now().Add(time.Minute), PublisherConnections: connections})
 	}()
 	select {
-	case <-inner.entered:
-	case err := <-done:
-		t.Fatal("assignment replacement returned before closing its old peer", err)
-	case <-time.After(time.Second):
-		t.Fatal("assignment replacement did not close the old inner session")
-	}
-	if err := p.Renew(p.bindingSnapshot()); err == nil {
-		t.Fatal("old pair renewed while replacement cleanup was blocked")
-	}
-	select {
-	case err := <-done:
-		t.Fatal("assignment replacement did not join physical cleanup", err)
-	default:
-	}
-	release()
-	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatal(err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("assignment replacement did not join its peer serving operation")
+		t.Fatal("assignment replacement waited for retained inner work")
+	}
+	select {
+	case <-inner.entered:
+		t.Fatal("assignment replacement closed the retained inner session")
+	default:
+	}
+	b.mu.Lock()
+	current, delivery := p.currentLocked(), p.deliveryCurrentLocked()
+	b.mu.Unlock()
+	if !current || delivery {
+		t.Fatal("assignment replacement changed owner rather than packet authority")
+	}
+	if err := p.Renew(p.bindingSnapshot()); err == nil {
+		t.Fatal("old pair delivery renewed after its assignment changed")
+	}
+	invalidated := make(chan struct{})
+	go func() { b.Invalidate(); close(invalidated) }()
+	select {
+	case <-inner.entered:
+	case <-time.After(time.Second):
+		t.Fatal("run invalidation did not close retained inner work")
+	}
+	select {
+	case <-invalidated:
+		t.Fatal("run invalidation returned before physical cleanup joined")
+	default:
+	}
+	release()
+	select {
+	case <-invalidated:
+	case <-time.After(time.Second):
+		t.Fatal("run invalidation did not join its peer serving operation")
 	}
 	select {
 	case <-p.done:
 	default:
-		t.Fatal("assignment replacement returned with an old serving operation")
+		t.Fatal("run invalidation returned with an old serving operation")
 	}
 	if err := <-served; err != nil {
 		t.Fatal(err)

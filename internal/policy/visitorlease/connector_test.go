@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"net/netip"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -142,5 +144,86 @@ func TestPolicyConnectorCannotBorrowRequestGuard(t *testing.T) {
 	}
 	if g, err := l.BindConnector(permission, netip.MustParseAddr("192.0.2.1"), 5, func() {}); err == nil || g != nil {
 		t.Fatal("HTTP bearer minted connector stream permission")
+	}
+}
+
+func TestPolicyConnectorSourceRebindRetainsPermissionAndDeadline(t *testing.T) {
+	l, _, permission := connectorGuardFixture(t)
+	guard, err := l.BindConnector(permission, netip.MustParseAddr("192.0.2.1"), 5, func() { t.Error("source check invoked a callback") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Close()
+	before, err := guard.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.mu.Lock()
+	confirmed, timer, original := guard.guard.confirmedUntil, guard.guard.timer, guard.guard.permission
+	l.mu.Unlock()
+	if err := guard.RebindSource(netip.MustParseAddr("::ffff:192.0.2.2"), 5); err != nil {
+		t.Fatal(err)
+	}
+	after, err := guard.Current()
+	if err != nil || !after.Equal(before) {
+		t.Fatal("changing source extended the existing permission", err)
+	}
+	l.mu.Lock()
+	current := guard.guard.source == netip.MustParseAddr("192.0.2.2") && guard.guard.confirmedUntil.Equal(confirmed) && guard.guard.timer == timer && guard.guard.permission.SameIdentity(original) && guard.guard.permission.Facts().ExpiresAt.Equal(original.Facts().ExpiresAt)
+	l.mu.Unlock()
+	if !current {
+		t.Fatal("source rebind replaced the guard, identity, timer, or confirmation")
+	}
+	if err := guard.RebindSource(netip.MustParseAddr("192.0.2.3"), 6); !errors.Is(err, visitortoken.ErrPolicy) {
+		t.Fatal("source rebind accepted a changed trust revision", err)
+	}
+}
+
+func TestPolicyConnectorSourceRebindDenialDoesNotChangeOrReviveGuard(t *testing.T) {
+	for _, boundary := range []string{"ip", "permission", "expired", "closed"} {
+		t.Run(boundary, func(t *testing.T) {
+			l, _, permission := connectorGuardFixture(t)
+			old, next := netip.MustParseAddr("192.0.2.1"), netip.MustParseAddr("192.0.2.2")
+			guard, err := l.BindConnector(permission, old, 5, func() { t.Error("rebind ran an authority callback") })
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer guard.Close()
+			if boundary == "closed" {
+				guard.Close()
+			}
+			var filter *ippolicy.Policy
+			if boundary == "ip" {
+				key := [32]byte{7}
+				entry, err := ippolicy.Hash(key, netip.PrefixFrom(old, 32))
+				if err != nil {
+					t.Fatal(err)
+				}
+				value, err := ippolicy.New(key, []ippolicy.Entry{entry})
+				if err != nil {
+					t.Fatal(err)
+				}
+				filter = &value
+			}
+			l.mu.Lock()
+			switch boundary {
+			case "ip":
+				l.update.IP = filter
+			case "permission":
+				l.update.Enabled = false
+			case "expired":
+				l.update.View.ValidUntil = time.Now().Add(-time.Second)
+			}
+			l.mu.Unlock()
+			if err := guard.RebindSource(next, 5); !errors.Is(err, visitortoken.ErrPolicy) {
+				t.Fatal("source rebind revived invalid permission", err)
+			}
+			l.mu.Lock()
+			unchanged := guard.guard.source == old
+			l.mu.Unlock()
+			if !unchanged {
+				t.Fatal("denied source change mutated the guard")
+			}
+		})
 	}
 }

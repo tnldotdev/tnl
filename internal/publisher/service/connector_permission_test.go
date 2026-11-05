@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -102,6 +104,133 @@ func permissionAdmission(t *testing.T, b *Bound, p *PeerSession, id string) *con
 	}
 	t.Fatal("missing live application admission")
 	return nil
+}
+
+func TestConnectorPermissionStaleBindingDoesNotRenewOrCloseCurrentAdmission(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	b, p, trust, opening, _ := connectorPeerFixture(t, permissionEchoTarget(t))
+	client, server := connectorInnerPair(t, ctx, trust)
+	served := make(chan error, 1)
+	go func() { served <- serveConnectorInner(ctx, p, server) }()
+	defer func() { p.Close(); <-served }()
+	control := connectorControl(t, ctx, client)
+	entry := opening("S")
+	traffic := openPermissionVisitor(t, ctx, client, trust, entry)
+	a := permissionAdmission(t, b, p, entry.VisitorConnectionID)
+	old := signedPermissionUpdate(t, b, p, entry, 1, time.Now().Add(2*time.Minute))
+	before, err := a.CheckUse(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// activation is covered by packet tests. isolate the permission boundary:
+	// a delayed old proof arrives after the retained admission changes binding.
+	b.mu.Lock()
+	newSource := netip.MustParseAddr("192.0.2.2")
+	err = a.guard.RebindSource(newSource, p.identity.trustRevision)
+	if err == nil {
+		p.network.generation++
+		p.network.source = newSource
+		a.entry.DeliveryGeneration, a.entry.SourceIP = p.network.generation, newSource.String()
+	}
+	current := a.entry
+	b.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := control.Renew(ctx, old); !errors.Is(err, tunnel.ErrConnectorPermissionStale) {
+		t.Fatal("old binding proof was accepted or became a terminal rejection", err)
+	}
+	after, err := a.CheckUse(ctx)
+	if err != nil || !after.Equal(before) {
+		t.Fatal("stale binding proof renewed or retired the current admission", err)
+	}
+	message, err := tunnelv1.ConnectorPeerProofMessage(current, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Permission.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{2}, 32)), message))
+	fresh := signedPermissionUpdate(t, b, p, current, 1, time.Now().Add(2*time.Minute))
+	if err := control.Renew(ctx, fresh); err != nil {
+		t.Fatal("current binding could not follow a stale proof", err)
+	}
+	_ = traffic.SetDeadline(time.Now().Add(time.Second))
+	if _, err := traffic.Write([]byte("same")); err != nil {
+		t.Fatal(err)
+	}
+	var echoed [4]byte
+	if _, err := io.ReadFull(traffic, echoed[:]); err != nil || string(echoed[:]) != "same" {
+		t.Fatal("permission rebinding lost the retained application stream", err)
+	}
+}
+
+func TestConnectorPermissionPendingBindingWaitsForLocalActivation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+	defer cancel()
+	b, p, trust, opening, _ := connectorPeerFixture(t, permissionEchoTarget(t))
+	client, server := connectorInnerPair(t, ctx, trust)
+	served := make(chan error, 1)
+	go func() { served <- serveConnectorInner(ctx, p, server) }()
+	defer func() { p.Close(); <-served }()
+	connectorControl(t, ctx, client)
+	entry := opening("W")
+	_ = openPermissionVisitor(t, ctx, client, trust, entry)
+	a := permissionAdmission(t, b, p, entry.VisitorConnectionID)
+	pending := nextPublisherBinding(p.bindingSnapshot())
+	pending.source = netip.MustParseAddr("192.0.2.2")
+	entry.DeliveryGeneration, entry.SourceIP = pending.generation, pending.source.String()
+	message, err := tunnelv1.ConnectorPeerProofMessage(entry, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry.Permission.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{2}, 32)), message))
+	before, err := a.CheckUse(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.mu.Lock()
+	p.pending, p.pendingInstalled, p.highwater, p.deliveryActive = &pending, true, pending.generation, false
+	b.mu.Unlock()
+	old := a.entry
+	if err := a.renewPermission(old, a.permission); !errors.Is(err, tunnel.ErrConnectorPermissionStale) {
+		t.Fatal("old permission renewed while its successor was pending", err)
+	}
+	done := make(chan error, 1)
+	joined := make(chan struct{})
+	go func() { defer close(joined); done <- a.renewPermission(entry, a.permission) }()
+	defer func() { a.cancel(); <-joined }()
+	// the authenticated new proof may arrive before this publisher sees the
+	// active control observation. it must grant nothing, not retire the stream.
+	timer := time.NewTimer(20 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		t.Fatal("pending permission did not wait for local activation", err)
+	case <-timer.C:
+	}
+	if current, err := a.CheckUse(ctx); err != nil || !current.Equal(before) {
+		t.Fatal("pending permission changed its original guard deadline", err)
+	}
+	b.mu.Lock()
+	err = a.guard.RebindSource(pending.source, p.identity.trustRevision)
+	if err == nil {
+		p.network, p.pending, p.deliveryActive = pending.peerNetworkBinding, nil, true
+		p.network.state = controlv1.ConnectorPeerPairBindingActive
+		p.lease = pending.peerLease
+		a.entry = entry
+	}
+	b.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal("activated permission stayed fenced", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("activated proof did not finish", ctx.Err())
+	}
 }
 
 func openPermissionVisitor(t *testing.T, ctx context.Context, client muxsession.Session, trust *tls.Config, entry tunnelv1.ConnectorPeerVisitorEntry) *tls.Conn {

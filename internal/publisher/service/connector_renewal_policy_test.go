@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net"
 	"net/netip"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -88,7 +90,7 @@ func TestConnectorRenewalSupersededProofDoesNotRetireCurrentGuard(t *testing.T) 
 				}
 				invalid.Permission.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{2}, 32)), message))
 			}
-			if err := a.renewPermission(invalid, original); err == nil {
+			if err := a.renewPermission(invalid, original); err == nil || errors.Is(err, tunnel.ErrConnectorPermissionStale) {
 				t.Fatal("superseded proof bypassed binding verification")
 			}
 		})
@@ -96,21 +98,21 @@ func TestConnectorRenewalSupersededProofDoesNotRetireCurrentGuard(t *testing.T) 
 	// control minted this authentic same-subject proof before an independent
 	// policy snapshot advanced. ignoring it may retain, but never extend, the
 	// still-current guard while the connector obtains the next revision.
-	if err := a.renewPermission(entry, original); err != nil {
-		t.Fatal("superseded in-flight proof would close the live stream", err)
+	if err := a.renewPermission(entry, original); !errors.Is(err, tunnel.ErrConnectorPermissionStale) {
+		t.Fatal("superseded in-flight proof was accepted or became terminal", err)
 	}
 	if after, err := a.CheckUse(t.Context()); err != nil || after.After(before) || stopped.Load() {
 		t.Fatal("superseded proof changed the original guard fence", err)
 	}
 	apply(2, visitortoken.PolicyLifetime, true)
-	if err := a.renewPermission(entry, original); err != nil {
+	if err := a.renewPermission(entry, original); !errors.Is(err, tunnel.ErrConnectorPermissionStale) {
 		t.Fatal(err)
 	}
 	if after, err := a.CheckUse(t.Context()); err != nil || after.After(before) {
 		t.Fatal("repeated stale proof or policy refresh extended the original deadline", err)
 	}
 	<-time.After(time.Until(before.Add(time.Millisecond)))
-	if err := a.renewPermission(entry, original); err == nil {
+	if err := a.renewPermission(entry, original); err == nil || errors.Is(err, tunnel.ErrConnectorPermissionStale) {
 		t.Fatal("stale proof revived an expired guard")
 	}
 }
