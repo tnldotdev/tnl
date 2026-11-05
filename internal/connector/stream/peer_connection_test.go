@@ -5,14 +5,96 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/failure"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func TestConnectorPairDenialKeepsStartupAndRetirementBoundaries(t *testing.T) {
+	for _, transport := range []string{"quic", "tls-tcp"} {
+		for _, stage := range []string{"startup", "renewal"} {
+			t.Run(transport+"/"+stage, func(t *testing.T) {
+				problem := &clientcontrol.ProblemError{Status: http.StatusForbidden, Problem: controlv1.Problem{Code: controlv1.Forbidden, Title: "connector peer pair source or run is no longer authorized"}}
+				denied := failure.Wrap("request control API", failure.ServerDenied, problem)
+				var selections, preparations, renewals, closed atomic.Int32
+				f := newConfiguredConnectorFixture(t, transport, "", func(f *connectorFixture, config *Config) {
+					f.wantStartupError = stage == "startup"
+					control, err := NewControlWithConfig(ControlConfig{
+						Signer: f.ConnectorSigner,
+						Resolve: func(ctx context.Context, service string) (Run, error) {
+							selections.Add(1)
+							return f.ResolveService(ctx, service)
+						},
+						Pair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
+							preparations.Add(1)
+							if stage == "startup" {
+								return controlv1.ConnectorPeerPair{}, denied
+							}
+							return f.PrepareConnectorPeerPair(ctx, service, request)
+						},
+						RenewPair: func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+							renewals.Add(1)
+							return controlv1.ConnectorPeerPairRenewal{}, denied
+						},
+						Permission: f.VisitorPermission,
+						Close:      func() error { closed.Add(1); return nil },
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+					config.Control = control
+				})
+				if stage == "renewal" {
+					local := f.local(t)
+					if _, err := io.WriteString(local, "admitted"); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := io.ReadFull(local, make([]byte, len("admitted"))); err != nil {
+						t.Fatal(err)
+					}
+					before := preparations.Load()
+					f.denied.Store(true)
+					select {
+					case <-f.finished:
+					case <-time.After(3 * time.Second):
+						t.Fatal("denied renewal did not retire the connector")
+					}
+					_ = local.SetReadDeadline(time.Now().Add(time.Second))
+					if _, err := local.Read(make([]byte, 1)); err == nil {
+						t.Fatal("denied renewal retained its admitted stream")
+					} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+						t.Fatal("denied renewal did not close its admitted stream", err)
+					}
+					if conn, err := net.DialTimeout("tcp", f.localAddress, time.Second); err == nil {
+						_ = conn.Close()
+						t.Fatal("denied renewal retained its listener")
+					}
+					if renewals.Load() != 1 || preparations.Load() != before || f.opened.Load() != 1 || f.assignments[0].Load() != 1 || f.assignments[1].Load() != 1 {
+						t.Fatal("denied renewal retried or replaced its pair, carriers, or application stream")
+					}
+				} else if preparations.Load() != 1 || renewals.Load() != 0 {
+					t.Fatal("denied startup retried")
+				}
+				if errors.Is(f.serveErr, ErrServiceConnection) != (stage == "renewal") {
+					t.Fatal("denial lost its startup or retired-connection boundary", f.serveErr)
+				}
+				if reason, ok := failure.ReasonOf(f.serveErr); !ok || reason != failure.ServerDenied || !errors.Is(f.serveErr, problem) || IsMetadataReload(f.serveErr) {
+					t.Fatal("denial lost its cause or allowed metadata reload", f.serveErr)
+				}
+				if selections.Load() != 1 || closed.Load() != 1 {
+					t.Fatal("denial reselected a run or returned before joining control cleanup")
+				}
+			})
+		}
+	}
+}
 
 func TestConnectorRefreshBlockedWriterDoesNotSpendSiblingBudget(t *testing.T) {
 	f := newConnectorFixture(t, "quic")

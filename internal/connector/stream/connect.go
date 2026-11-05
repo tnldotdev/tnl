@@ -157,7 +157,9 @@ func serveConnections(ctx context.Context, config Config, consume connectionCons
 		return errors.Join(context.Cause(ctx), err)
 	}
 	if p.ctx.Err() != nil {
-		return errors.Join(context.Cause(p.ctx), err)
+		// retain the established connection's retirement boundary regardless of
+		// which authority or transport worker ends it first, plus its exact cause.
+		return errors.Join(ErrServiceConnection, context.Cause(p.ctx), err)
 	}
 	return err
 }
