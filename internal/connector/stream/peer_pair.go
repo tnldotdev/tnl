@@ -211,7 +211,37 @@ func connectorLegProof(signer Signer, pair controlv1.ConnectorPeerPair, slot int
 // are passive until activation, so a losing QUIC/TCP attempt cannot spend the
 // publisher's registration or replace a sibling's replay state.
 func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int) (*connectorRelayLeg, error) {
-	return prepareConnectorLeg(ctx, lifetime, config, signer, pair, key, slot, nil)
+	var operation tunnelv1.ConnectorHandoffID
+	if _, err := rand.Read(operation[:]); err != nil {
+		return nil, err
+	}
+	for {
+		attempt, stop := context.WithTimeout(ctx, 2*time.Second)
+		leg, err := prepareConnectorLeg(attempt, lifetime, config, signer, pair, key, slot, nil, operation)
+		if err == nil {
+			err = context.Cause(attempt)
+		}
+		stop()
+		if err == nil {
+			return leg, nil
+		}
+		if leg != nil {
+			_ = leg.Close()
+		}
+		if ctx.Err() != nil {
+			return nil, errors.Join(err, context.Cause(ctx))
+		}
+		if connectorReconnectError(err) != retryAttempt {
+			return nil, err
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, context.Cause(ctx)
+		case <-timer.C:
+		}
+	}
 }
 
 type connectorLegReplacement struct {
@@ -235,7 +265,10 @@ func nextConnectorLegReplacement(previous *connectorRelayLeg) (*connectorLegRepl
 	return &connectorLegReplacement{previous: previous, handoff: handoff}, nil
 }
 
-func prepareConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int, replacement *connectorLegReplacement) (*connectorRelayLeg, error) {
+func prepareConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int, replacement *connectorLegReplacement, initial tunnelv1.ConnectorHandoffID) (*connectorRelayLeg, error) {
+	if (replacement == nil) == (initial == (tunnelv1.ConnectorHandoffID{})) {
+		return nil, ErrServiceConnection
+	}
 	roots := config.TransportTLS
 	if roots == nil {
 		roots = &tls.Config{MinVersion: tls.VersionTLS13}
@@ -333,6 +366,9 @@ func prepareConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 		return nil, err
 	}
 	l.selectedHandoff = tunnelv1.InitialConnectorActivation(hello).SelectedHandoff()
+	if replacement == nil {
+		l.selectedHandoff = initial
+	}
 	owned := false
 	defer func() {
 		if !owned {
@@ -364,7 +400,7 @@ func prepareConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 	request, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 	if err == nil {
 		if replacement == nil {
-			err = l.session.ActivateConnectorLeg(ctx, request)
+			err = l.session.ActivateConnectorBinding(ctx, request, initial)
 		} else {
 			l.selectedHandoff = replacement.handoff.Next()
 			l.handoffRevision = replacement.handoff.Revision()

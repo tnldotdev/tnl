@@ -63,6 +63,7 @@ type connectorFixture struct {
 	dropHelloReply        [2]atomic.Bool
 	dropActivationReply   [2]atomic.Bool
 	handoffAttempts       [2][]tunnelv1.ConnectorHandoff
+	initialOperations     [2][]tunnelv1.ConnectorHandoffID
 	tlsGate               *fixtureTLSGate
 	drainRejections       bool
 	rejectionClosing      chan struct{}
@@ -373,9 +374,15 @@ func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Sess
 				return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 			}
 			native.handoffs[slot] = handoff
-		} else if native.nonces[slot] != nil {
-			f.mu.Unlock()
-			return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+		} else {
+			operation, stable := activation.InitialOperation()
+			if stable {
+				f.initialOperations[slot] = append(f.initialOperations[slot], operation)
+			}
+			if native.nonces[slot] != nil && (!stable || !bytes.Equal(native.nonces[slot], operation[:]) || native.handoffs[slot].Valid()) {
+				f.mu.Unlock()
+				return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+			}
 		}
 		selected := activation.SelectedHandoff()
 		native.nonces[slot] = append([]byte(nil), selected[:]...)

@@ -581,7 +581,7 @@ func (p *connectorConnection) reconnectLeg(slot int, previous *connectorRelayLeg
 		case <-timer.C:
 		}
 		attempt, finish := context.WithDeadline(call, minConnectorCall(until))
-		next, err := prepareConnectorLeg(attempt, p.ctx, p.config, p.signer, pair, p.key, slot, replacement)
+		next, err := prepareConnectorLeg(attempt, p.ctx, p.config, p.signer, pair, p.key, slot, replacement, tunnelv1.ConnectorHandoffID{})
 		if err == nil {
 			err = context.Cause(attempt)
 		}
