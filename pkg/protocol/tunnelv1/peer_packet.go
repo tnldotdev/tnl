@@ -112,7 +112,7 @@ func peerDeliveryTag(mode PeerDeliveryMode, key [32]byte, authenticated []byte) 
 	_, _ = mac.Write([]byte{byte(mode)})
 	_, _ = mac.Write(authenticated)
 	var tag [PeerDeliveryTagBytes]byte
-	copy(tag[:], mac.Sum(nil))
+	copy(tag[:], mac.Sum(tag[:0]))
 	return tag
 }
 
@@ -213,11 +213,12 @@ func (p PeerPacket) Validate() error {
 }
 
 // AuthenticatedBytes is the canonical MAC input, excluding the MAC itself.
+// the owned buffer has capacity for the trailing MAC.
 func (p PeerPacket) AuthenticatedBytes() ([]byte, error) {
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
-	b := make([]byte, 17+len(p.Payload))
+	b := make([]byte, 17+len(p.Payload), PeerPacketOverhead+len(p.Payload))
 	b[0], b[1], b[2], b[3], b[4] = Version, byte(p.Kind), p.Sender, p.Path, p.Fragment
 	binary.BigEndian.PutUint64(b[5:13], p.Sequence)
 	binary.BigEndian.PutUint16(b[13:15], p.Total)
@@ -235,15 +236,24 @@ func (p PeerPacket) MarshalBinary() ([]byte, error) {
 }
 
 func ParsePeerPacket(b []byte) (PeerPacket, error) {
+	p, _, err := ParsePeerPacketWithAuthenticatedBytes(b)
+	return p, err
+}
+
+// ParsePeerPacketWithAuthenticatedBytes validates the canonical wire shape and
+// returns its MAC input as a view of b. neither the packet nor the view proves
+// authentication. the caller must keep b unchanged while using either view.
+func ParsePeerPacketWithAuthenticatedBytes(b []byte) (PeerPacket, []byte, error) {
 	if len(b) <= PeerPacketOverhead || len(b) > MaxPeerFrameBytes || b[0] != Version || int(binary.BigEndian.Uint16(b[15:17])) != len(b)-PeerPacketOverhead {
-		return PeerPacket{}, ErrPeerPacket
+		return PeerPacket{}, nil, ErrPeerPacket
 	}
 	p := PeerPacket{Kind: PeerPacketKind(b[1]), Sender: b[2], Path: b[3], Fragment: b[4], Sequence: binary.BigEndian.Uint64(b[5:13]), Total: binary.BigEndian.Uint16(b[13:15]), Payload: b[17 : len(b)-32]}
 	copy(p.MAC[:], b[len(b)-32:])
 	if err := p.Validate(); err != nil {
-		return PeerPacket{}, err
+		return PeerPacket{}, nil, err
 	}
-	return p, nil
+	end := len(b) - len(p.MAC)
+	return p, b[:end:end], nil
 }
 
 // WritePeerFrame and ReadPeerFrame preserve packet boundaries on a reliable

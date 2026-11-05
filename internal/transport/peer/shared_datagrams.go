@@ -35,19 +35,16 @@ func (b PairBinding) valid() bool {
 }
 
 func (b PairBinding) authentic(frame []byte, sender uint8) bool {
-	p, err := tunnelv1.ParsePeerPacket(frame)
+	p, unsigned, err := tunnelv1.ParsePeerPacketWithAuthenticatedBytes(frame)
 	if err != nil || p.Sender != sender || p.Path != b.Path {
-		return false
-	}
-	unsigned, err := p.AuthenticatedBytes()
-	if err != nil {
 		return false
 	}
 	mac := hmac.New(sha256.New, b.Key[:])
 	_, _ = mac.Write([]byte(connectorPacketDomain))
 	_, _ = mac.Write([]byte{0})
 	_, _ = mac.Write(unsigned)
-	return hmac.Equal(p.MAC[:], mac.Sum(nil))
+	var tag [sha256.Size]byte
+	return hmac.Equal(p.MAC[:], mac.Sum(tag[:0]))
 }
 
 type sharedPeer struct {

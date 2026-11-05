@@ -235,8 +235,7 @@ func (e *Endpoint) enqueue(index int, packet tunnelv1.PeerPacket) {
 	_, _ = mac.Write([]byte(connectorPacketDomain))
 	_, _ = mac.Write([]byte{0})
 	_, _ = mac.Write(unsigned)
-	copy(packet.MAC[:], mac.Sum(nil))
-	frame, _ := packet.MarshalBinary()
+	frame := mac.Sum(unsigned)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	p := e.paths[index]
@@ -378,16 +377,16 @@ func (e *Endpoint) receiveLoop(index int, p *path) {
 }
 
 func authenticatePacket(frame []byte, key [32]byte, role uint8, index int) (tunnelv1.PeerPacket, bool) {
-	packet, err := tunnelv1.ParsePeerPacket(frame)
+	packet, unsigned, err := tunnelv1.ParsePeerPacketWithAuthenticatedBytes(frame)
 	if err != nil || packet.Sender == role || int(packet.Path) != index {
 		return packet, false
 	}
-	unsigned, _ := packet.AuthenticatedBytes()
 	mac := hmac.New(sha256.New, key[:])
 	_, _ = mac.Write([]byte(connectorPacketDomain))
 	_, _ = mac.Write([]byte{0})
 	_, _ = mac.Write(unsigned)
-	return packet, hmac.Equal(packet.MAC[:], mac.Sum(nil))
+	var tag [sha256.Size]byte
+	return packet, hmac.Equal(packet.MAC[:], mac.Sum(tag[:0]))
 }
 
 func (e *Endpoint) assemble(p *path, packet tunnelv1.PeerPacket) {

@@ -108,6 +108,17 @@ func TestPeerConnectorFrameMACGolden(t *testing.T) {
 	if _, ok := authenticatePacket(legacy, key, 1, RelayB); ok || binding.authentic(legacy, 0) {
 		t.Fatal("endpoint or binding accepted the retired native MAC domain")
 	}
+	for index := range connector {
+		changed := bytes.Clone(connector)
+		changed[index] ^= 1
+		original := bytes.Clone(changed)
+		if _, ok := authenticatePacket(changed, key, 1, RelayB); ok || binding.authentic(changed, 0) {
+			t.Fatal("tampered frame authenticated", index)
+		}
+		if !bytes.Equal(changed, original) {
+			t.Fatal("authentication changed the received frame", index)
+		}
+	}
 }
 
 func TestPeerRejectsWrongKeyDirectionPathAndReplay(t *testing.T) {
