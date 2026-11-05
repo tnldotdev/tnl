@@ -2007,8 +2007,11 @@ type ConnectorPeerPairBindingState string
 
 // ConnectorPeerPairCandidate A pair to reconcile, not delivery authority or permission to open an application stream.
 type ConnectorPeerPairCandidate struct {
-	DeliveryGeneration int64  `json:"delivery_generation"`
-	PairId             string `json:"pair_id"`
+	DeliveryGeneration int64 `json:"delivery_generation"`
+
+	// OwnerAuthority Current authority for an already installed retained owner in this exact publisher run. This observation contains no delivery key, does not authorize packets or application bytes, and does not renew a relay claim, installation, path proof, or application permission. It remains available during temporary relay loss; an expired local owner cannot be revived by a later observation.
+	OwnerAuthority *ConnectorPeerPairOwnerAuthority `json:"owner_authority,omitempty"`
+	PairId         string                           `json:"pair_id"`
 }
 
 // ConnectorPeerPairCandidates defines model for ConnectorPeerPairCandidates.
@@ -2049,6 +2052,12 @@ type ConnectorPeerPairDelivery struct {
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
 	Subject       VisitorSubject `json:"subject"`
 	TrustRevision int64          `json:"trust_revision,omitempty"`
+}
+
+// ConnectorPeerPairOwnerAuthority Current authority for an already installed retained owner in this exact publisher run. This observation contains no delivery key, does not authorize packets or application bytes, and does not renew a relay claim, installation, path proof, or application permission. It remains available during temporary relay loss; an expired local owner cannot be revived by a later observation.
+type ConnectorPeerPairOwnerAuthority struct {
+	ExpiresAt  time.Time `json:"expires_at"`
+	ObservedAt time.Time `json:"observed_at"`
 }
 
 // ConnectorPeerPairPathProof A revision-bound probe reply from the opposite endpoint, not an application permission. Runtime also checks that its physical carrier is still current.
@@ -5721,7 +5730,7 @@ type ClientInterface interface {
 
 	// ListConnectorPeerPairs performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
 	//
-	// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+	// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. An installed owner may include an independent authority observation during temporary relay loss. A candidate may still lack relay claims; prepare its delivery independently before serving it.
 	ListConnectorPeerPairs(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeliverConnectorPeerPairWithBody performs a POST /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery (the `DeliverConnectorPeerPair` operationId) request,
@@ -8602,7 +8611,7 @@ func (c *Client) GetServiceCertificateIssuance(ctx context.Context, serviceId Se
 
 // ListConnectorPeerPairs performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
 //
-// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. An installed owner may include an independent authority observation during temporary relay loss. A candidate may still lack relay claims; prepare its delivery independently before serving it.
 func (c *Client) ListConnectorPeerPairs(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListConnectorPeerPairsRequest(c.Server, serviceId, serviceRunId, params)
 	if err != nil {
@@ -16865,7 +16874,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListConnectorPeerPairsWithResponse performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
 	//
-	// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+	// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. An installed owner may include an independent authority observation during temporary relay loss. A candidate may still lack relay claims; prepare its delivery independently before serving it.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ListConnectorPeerPairsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*ListConnectorPeerPairsResponse, error)
@@ -25601,7 +25610,7 @@ func (c *ClientWithResponses) GetServiceCertificateIssuanceWithResponse(ctx cont
 
 // ListConnectorPeerPairsWithResponse performs a GET /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs (the `ListConnectorPeerPairs` operationId) request.
 //
-// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. A candidate may still lack relay claims; prepare its delivery independently before serving it.
+// Reconcile unexpired pair candidates for the exact publisher run, without keys, subjects, or source addresses. An installed owner may include an independent authority observation during temporary relay loss. A candidate may still lack relay claims; prepare its delivery independently before serving it.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ListConnectorPeerPairsWithResponse(ctx context.Context, serviceId ServiceID, serviceRunId ServiceRunID, params *ListConnectorPeerPairsParams, reqEditors ...RequestEditorFn) (*ListConnectorPeerPairsResponse, error) {

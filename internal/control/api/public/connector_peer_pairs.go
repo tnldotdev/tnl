@@ -191,7 +191,11 @@ func (h *handler) ListConnectorPeerPairs(w http.ResponseWriter, r *http.Request,
 	}
 	result := controlv1.ConnectorPeerPairCandidates{Items: make([]controlv1.ConnectorPeerPairCandidate, 0, len(page.Items))}
 	for _, item := range page.Items {
-		result.Items = append(result.Items, controlv1.ConnectorPeerPairCandidate{PairId: item.PairID, DeliveryGeneration: item.DeliveryGeneration})
+		candidate := controlv1.ConnectorPeerPairCandidate{PairId: item.PairID, DeliveryGeneration: item.DeliveryGeneration}
+		if item.OwnerAuthority != nil {
+			candidate.OwnerAuthority = &controlv1.ConnectorPeerPairOwnerAuthority{ObservedAt: item.OwnerAuthority.ObservedAt, ExpiresAt: item.OwnerAuthority.ExpiresAt}
+		}
+		result.Items = append(result.Items, candidate)
 	}
 	if page.NextAfter != "" {
 		result.NextAfter = &page.NextAfter

@@ -7,6 +7,16 @@ schemas:
     properties:
       pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
       delivery_generation: { type: integer, format: int64, minimum: 1 }
+      owner_authority:
+        $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairOwnerAuthority"
+  ConnectorPeerPairOwnerAuthority:
+    type: object
+    additionalProperties: false
+    description: Current authority for an already installed retained owner in this exact publisher run. This observation contains no delivery key, does not authorize packets or application bytes, and does not renew a relay claim, installation, path proof, or application permission. It remains available during temporary relay loss; an expired local owner cannot be revived by a later observation.
+    required: [observed_at, expires_at]
+    properties:
+      observed_at: { type: string, format: date-time }
+      expires_at: { type: string, format: date-time }
   ConnectorPeerPairCandidates:
     type: object
     additionalProperties: false

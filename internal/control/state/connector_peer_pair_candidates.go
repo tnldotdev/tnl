@@ -2,8 +2,10 @@ package state
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
@@ -13,6 +15,11 @@ import (
 type ConnectorPeerPairCandidate struct {
 	PairID             string
 	DeliveryGeneration int64
+	OwnerAuthority     *ConnectorPeerPairOwnerAuthority
+}
+
+type ConnectorPeerPairOwnerAuthority struct {
+	ObservedAt, ExpiresAt time.Time
 }
 
 type ConnectorPeerPairCandidates struct {
@@ -20,9 +27,12 @@ type ConnectorPeerPairCandidates struct {
 	NextAfter string
 }
 
-// ListConnectorPeerPairs bounds each reconciliation read and authenticates only
-// the exact run token. listing does not renew a pair or disclose its subject.
+// ListConnectorPeerPairs authenticates the exact run token and bounds each read.
+// an installed owner's optional authority observation rechecks its original
+// subject and parent independently of delivery. listing renews nothing and never
+// discloses a subject, key, or application permission.
 func (d *Database) ListConnectorPeerPairs(ctx context.Context, serviceID, runID, after, token string, now time.Time) (result ConnectorPeerPairCandidates, retErr error) {
+	clock := newAuthorizationClock(now)
 	if now.IsZero() || after != "" && !opaqueid.Valid(after, "cpp_") {
 		return result, ErrServiceAccess
 	}
@@ -35,7 +45,7 @@ func (d *Database) ListConnectorPeerPairs(ctx context.Context, serviceID, runID,
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	run, err := serviceRunAuthorization(ctx, tx, q, serviceID, runID, token, now)
+	run, err := serviceRunAuthorization(ctx, tx, q, serviceID, runID, token, clock.current())
 	if err != nil {
 		return result, err
 	}
@@ -43,7 +53,7 @@ func (d *Database) ListConnectorPeerPairs(ctx context.Context, serviceID, runID,
 	// independent delivery operation requires ready claims and a certificate.
 	if _, err = q.GetServiceRunPublisherIdentity(ctx, controlstatedb.GetServiceRunPublisherIdentityParams{
 		ID: run.ID, ServiceID: serviceID, RunNumber: run.RunNumber, PublisherIdentityID: run.PublisherIdentityID,
-		PublisherGrantID: run.PublisherGrantID, PublisherKeyID: run.PublisherKeyID, Now: timestamptz(now),
+		PublisherGrantID: run.PublisherGrantID, PublisherKeyID: run.PublisherKeyID, Now: timestamptz(clock.current()),
 	}); err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
@@ -55,14 +65,37 @@ func (d *Database) ListConnectorPeerPairs(ctx context.Context, serviceID, runID,
 		return result, err
 	}
 	result.Items = make([]ConnectorPeerPairCandidate, 0, min(len(rows), 64))
+	until := run.PublisherExpiresAt.Time
 	for _, row := range rows[:min(len(rows), 64)] {
-		result.Items = append(result.Items, ConnectorPeerPairCandidate{PairID: row.ID, DeliveryGeneration: row.DeliveryGeneration})
+		candidate := ConnectorPeerPairCandidate{PairID: row.ID, DeliveryGeneration: row.DeliveryGeneration}
+		pair, err := q.LockConnectorPeerPairForLegClaim(ctx, row.ID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return ConnectorPeerPairCandidates{}, err
+		}
+		if err == nil && pair.PublisherPreparedUntil.Valid {
+			_, _, bound, err := d.connectorPeerSessionAuthority(ctx, tx, run, pair, clock.current())
+			if err == nil {
+				candidate.OwnerAuthority = &ConnectorPeerPairOwnerAuthority{ObservedAt: now, ExpiresAt: bound}
+				until = minTime(until, bound)
+			} else if !errors.Is(err, ErrServiceAccess) && !errors.Is(err, ErrVisitorPermission) && !errors.Is(err, ErrWorkloadDenied) {
+				return ConnectorPeerPairCandidates{}, err
+			}
+		}
+		result.Items = append(result.Items, candidate)
 	}
 	if len(rows) > 64 {
 		result.NextAfter = result.Items[len(result.Items)-1].PairID
 	}
-	if err = tx.Commit(ctx); err != nil {
+	if !until.After(clock.current()) {
+		return ConnectorPeerPairCandidates{}, ErrServiceAccess
+	}
+	commit, stop := context.WithDeadline(ctx, clock.started.Add(until.Sub(now)))
+	defer stop()
+	if err = tx.Commit(commit); err != nil {
 		return ConnectorPeerPairCandidates{}, err
+	}
+	if !until.After(clock.current()) {
+		return ConnectorPeerPairCandidates{}, ErrServiceAccess
 	}
 	return result, nil
 }

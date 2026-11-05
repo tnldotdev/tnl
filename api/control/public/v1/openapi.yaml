@@ -296,6 +296,8 @@ components:
   schemas:
     ConnectorPeerPairCandidate:
       $ref: "./schemas/service-runs.yaml#/schemas/ConnectorPeerPairCandidate"
+    ConnectorPeerPairOwnerAuthority:
+      $ref: "./schemas/service-runs.yaml#/schemas/ConnectorPeerPairOwnerAuthority"
     ConnectorPeerPairCandidates:
       $ref: "./schemas/service-runs.yaml#/schemas/ConnectorPeerPairCandidates"
     ConnectorPeerPairDelivery:
