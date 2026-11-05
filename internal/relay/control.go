@@ -525,6 +525,8 @@ func ControlErrorCode(err error) tunnelv1.ErrorCode {
 		return tunnelv1.Unauthenticated
 	case relayv1.StaleConnectionAssignment, relayv1.RelayLeaseStale:
 		return tunnelv1.StaleConnectionAssignment
+	case relayv1.StaleNetworkBinding:
+		return tunnelv1.StaleNetworkBinding
 	case relayv1.PublisherConnectionAlreadyClaimed:
 		return tunnelv1.DuplicatePublisherConnection
 	case relayv1.RelayDraining:

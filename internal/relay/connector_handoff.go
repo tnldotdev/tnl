@@ -20,20 +20,33 @@ const (
 // only the last operation is retained: the revision fences all older operations,
 // and an exact retry still needs a fresh hello without advancing the revision.
 type handoffState struct {
-	selected   tunnelv1.ConnectorHandoffID
-	operation  tunnelv1.ConnectorHandoff
-	hello      tunnelv1.ConnectorHelloNonce
-	selectedAt time.Time
+	selected        tunnelv1.ConnectorHandoffID
+	operation       tunnelv1.ConnectorHandoff
+	hello           tunnelv1.ConnectorHelloNonce
+	selectedAt      time.Time
+	initialExplicit bool
 }
 
 func initialHandoff(selection tunnelv1.ConnectorActivation, at time.Time) handoffState {
 	id := selection.SelectedHandoff()
-	return handoffState{selected: id, hello: selection.Hello(), selectedAt: at}
+	_, explicit := selection.InitialOperation()
+	return handoffState{selected: id, hello: selection.Hello(), selectedAt: at, initialExplicit: explicit}
 }
 
 func (s *handoffState) record(selection tunnelv1.ConnectorActivation, at time.Time) handoffResult {
 	handoff, replacement := selection.Replacement()
-	if !replacement || !handoff.Valid() || !at.After(s.selectedAt) || selection.Hello() == s.hello {
+	if !at.After(s.selectedAt) || selection.Hello() == s.hello {
+		return handoffRejected
+	}
+	if !replacement {
+		initial, explicit := selection.InitialOperation()
+		if !s.initialExplicit || !explicit || s.operation.Revision() != 0 || initial != s.selected {
+			return handoffRejected
+		}
+		s.hello, s.selectedAt = selection.Hello(), at
+		return handoffRetried
+	}
+	if !handoff.Valid() {
 		return handoffRejected
 	}
 	result := handoffRejected

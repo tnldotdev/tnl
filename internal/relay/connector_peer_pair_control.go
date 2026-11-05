@@ -23,7 +23,7 @@ func (c *HTTPControlClient) ClaimConnectorPeerPairLegFromAcceptedSocket(ctx cont
 	}
 	response, err := c.client.ClaimConnectorPeerPairLegWithResponse(ctx, proof.PairID, proof.ConnectionSlot, body)
 	if err != nil {
-		return relayv1.ConnectorPeerPairLegClaim{}, err
+		return relayv1.ConnectorPeerPairLegClaim{}, retryableControlError("claim connector peer pair leg", err)
 	}
 	if response == nil {
 		return relayv1.ConnectorPeerPairLegClaim{}, relayHTTPProblem(0, nil)
