@@ -1,6 +1,7 @@
 import { tnl, type TnlProjectFromConfig, type TnlConnectionRegistry } from "@tnldotdev/tnl";
 import { defineConfig } from "@tnldotdev/tnl/config";
 import { assert, assertType, expectTypeOf, test } from "vitest";
+import { Pool } from "pg";
 
 const configuration = defineConfig(({ worktree }) => ({
   services: {
@@ -104,6 +105,39 @@ test("prepared connections expose protocol-owned readonly driver settings", asyn
     ssl: { ...privateTLS, verifyIdentity: true },
     stream: mysql.stream,
   }) satisfies TnlConnectionRegistry["mysql"];
+});
+
+test("client factories infer ordinary clients and exact protocol callback settings", async () => {
+  const getDb = tnl.client("db", {
+    create(connection) {
+      expectTypeOf(connection).toEqualTypeOf<TnlConnectionRegistry["postgres"]>();
+      return new Pool({
+        ...connection,
+        user: "app",
+        password: "application-owned",
+        database: "app",
+      });
+    },
+    close(client) {
+      expectTypeOf(client).toEqualTypeOf<Pool>();
+      return client.end();
+    },
+  });
+  expectTypeOf(getDb()).toEqualTypeOf<Promise<Pool>>();
+  expectTypeOf(await getDb()).toEqualTypeOf<Pool>();
+  expectTypeOf(getDb.close()).toEqualTypeOf<Promise<void>>();
+  const getAsync = tnl.client("db", {
+    async create(connection) {
+      return new Pool({ ...connection, user: "app", database: "app" });
+    },
+    close(client) {
+      expectTypeOf(client).toEqualTypeOf<Pool>();
+      return client.end();
+    },
+  });
+  expectTypeOf(getAsync()).toEqualTypeOf<Promise<Pool>>();
+  // @ts-expect-error factory service names come from the generated project.
+  tnl.client("missing", { create: () => ({}), close: () => {} });
 });
 
 type Union = TnlProjectFromConfig<{

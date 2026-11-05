@@ -1,6 +1,12 @@
 version: "3"
 
 tasks:
+  test:client-factories:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check ordinary Python client caching, cancellation and joined cleanup
+    cmds:
+      - uv run --frozen --project packages/py pytest -q packages/py/tests/test_client_factory.py
+
   sync:
     dir: "{{.ROOT_DIR}}"
     desc: Install the locked Python SDK environment

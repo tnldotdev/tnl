@@ -15,18 +15,21 @@ import threading
 import time
 import uuid
 import weakref
-from collections.abc import Generator, Mapping
+from collections.abc import Awaitable, Callable, Generator, Mapping
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import ClassVar, Literal, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
 from urllib.parse import urlsplit
 
 from ._connection_ipc import OwnerIPC, _InterruptedError
 from ._native import native_binary
 from ._protocol import TnlError, hostname, service_name
 from ._workload import Selection, select_workload, uses_workload
+
+if TYPE_CHECKING:
+    from ._client import ClientFactory
 
 _MAX_BYTES = 128 << 10
 _TIMEOUT = 65.0
@@ -97,6 +100,7 @@ class _ConnectionSettings:
     host: str
     port: int
     expires_at: datetime
+    _transport_id: str = field(default="", kw_only=True, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return "<tnl connection (private)>"
@@ -204,7 +208,7 @@ def _snapshot(value: object) -> Connection:
     if protocol == "tcp":
         if any(key in obj for key in ("ssl", "url", "kubeconfig", "context")):
             raise _error("invalid")
-        return TCPConnection(*plain)
+        return TCPConnection(*plain, _transport_id=transport)
     tls = _object(obj.get("ssl"), {"servername", "rejectUnauthorized", "ca"})
     if tls.get("rejectUnauthorized") is not True:
         raise _error("invalid")
@@ -221,8 +225,8 @@ def _snapshot(value: object) -> Connection:
         if any(key in obj for key in ("url", "kubeconfig", "context")):
             raise _error("invalid")
         if protocol == "postgres":
-            return PostgresConnection(*fields)
-        return MySQLConnection(*fields)
+            return PostgresConnection(*fields, _transport_id=transport)
+        return MySQLConnection(*fields, _transport_id=transport)
     url = _text(obj.get("url"))
     try:
         parsed = urlsplit(url)
@@ -240,10 +244,14 @@ def _snapshot(value: object) -> Connection:
     except ValueError:
         raise _error("invalid") from None
     if protocol == "http" and not any(key in obj for key in ("kubeconfig", "context")):
-        return HTTPConnection(*fields, url)
+        return HTTPConnection(*fields, url, _transport_id=transport)
     if protocol == "kubernetes":
         return KubernetesConnection(
-            *fields, url, _text(obj.get("kubeconfig")), _text(obj.get("context"))
+            *fields,
+            url,
+            _text(obj.get("kubeconfig")),
+            _text(obj.get("context")),
+            _transport_id=transport,
         )
     raise _error("invalid")
 
@@ -1189,3 +1197,21 @@ class Project:
                 raise _error("input")
             handle = handles[protocol](handle._session, protocol, service)
         return handle
+
+    def client[C: Connection, T](
+        self,
+        service: str,
+        *,
+        create: Callable[[C], T | Awaitable[T]],
+        close: Callable[[T], None | Awaitable[None]],
+        directory: str | os.PathLike[str] | None = None,
+    ) -> ClientFactory[T]:
+        from ._client import connection_client
+
+        self.connect(service, directory=directory)
+
+        def selected() -> ConnectionHandle[C]:
+            # generated names bind C to the project's validated protocol.
+            return cast(ConnectionHandle[C], self.connect(service, directory=directory))
+
+        return connection_client(selected, create=create, close=close)

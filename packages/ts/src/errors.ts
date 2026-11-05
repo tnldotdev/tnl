@@ -10,6 +10,8 @@ export type TnlErrorCode =
   | "sdk.connection_unavailable"
   | "sdk.connection_unprepared"
   | "sdk.connection_server_only"
+  | "sdk.client_closed"
+  | "sdk.client_capacity"
   | "sdk.workload_required"
   | "sdk.workload_manifest_invalid"
   | "sdk.workload_assertion_unavailable"
@@ -93,6 +95,16 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     class: "unavailable",
     retry: "after_change",
     message: "connector connections require Node.js or Bun; call tnl.connect from server code",
+  },
+  "sdk.client_closed": {
+    class: "invalid",
+    retry: "after_change",
+    message: "the client factory is closed; create a new factory",
+  },
+  "sdk.client_capacity": {
+    class: "unavailable",
+    retry: "after_change",
+    message: "the client factory has too many retained bindings; close it before creating another",
   },
   "sdk.workload_required": {
     class: "invalid",

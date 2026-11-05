@@ -82,7 +82,7 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: go node pnpm task ${{ matrix.suite == 'connections' && 'python uv' || '' }}
+          tools: go node pnpm task ${{ (matrix.suite == 'connections' || matrix.suite == 'tcp-clients') && 'python uv' || '' }}
           go-cache: race
           pnpm: true
 
