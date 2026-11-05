@@ -27,7 +27,28 @@ import (
 
 type rebindingControl struct {
 	connectorstream.Control
+	t          *testing.T
 	selections atomic.Int32
+	losePhase  atomic.Pointer[controlv1.ConnectorPeerPairRebindPhase]
+	lostPhase  atomic.Bool
+}
+
+func (c *rebindingControl) RebindConnectorPeerPair(ctx context.Context, service, pair string, request controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+	state, err := c.Control.RebindConnectorPeerPair(ctx, service, pair, request)
+	if phase := c.losePhase.Load(); err == nil && phase != nil && request.Phase == *phase && c.lostPhase.CompareAndSwap(false, true) {
+		<-ctx.Done()
+		return controlv1.ConnectorPeerPairRebindState{}, context.Cause(ctx)
+	}
+	if err != nil {
+		c.t.Logf("binding phase=%s expected=%d error=%v", request.Phase, request.ExpectedGeneration, err)
+	} else if request.Phase != controlv1.ConnectorPeerPairInspect {
+		status := "none"
+		if state.Operation != nil {
+			status = string(state.Operation.Status)
+		}
+		c.t.Logf("binding phase=%s expected=%d highwater=%d status=%s", request.Phase, request.ExpectedGeneration, state.HighWaterGeneration, status)
+	}
+	return state, err
 }
 
 func (c *rebindingControl) ResolveService(ctx context.Context, service string) (connectorstream.Run, error) {
@@ -40,6 +61,7 @@ func (c *rebindingControl) ResolveService(ctx context.Context, service string) (
 type rebindingTransport struct {
 	fixture *privateSeparatedFixture
 	tcp     bool
+	silent  bool
 	source  atomic.Uint32
 	mu      sync.Mutex
 	opened  []muxsession.Session
@@ -79,7 +101,12 @@ func (c *rebindingTransport) connectQUIC(ctx context.Context, endpoint muxsessio
 	if err != nil {
 		return nil, err
 	}
-	socket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: local})
+	var socket net.PacketConn
+	if c.silent {
+		socket, err = newRebindingPacketConn(&c.source)
+	} else {
+		socket, err = net.ListenUDP("udp4", &net.UDPAddr{IP: local})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +207,7 @@ func TestIntegrationConnectorRebindingRetainsApplicationAndTarget(t *testing.T) 
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	for _, standalone := range []bool{false, true} {
 		for _, tcp := range []bool{false, true} {
-			for _, fault := range []string{"publisher-connection", "both-connectors", "relay-process", "relay-assignment", "publisher-lost-hello", "publisher-lost-activation"} {
+			for _, fault := range []string{"publisher-connection", "both-connectors", "relay-process", "relay-assignment", "publisher-lost-hello", "publisher-lost-activation", "control-lost-prepare", "control-lost-activate"} {
 				if standalone && fault != "publisher-connection" && fault != "both-connectors" {
 					continue
 				}
@@ -199,9 +226,14 @@ func TestIntegrationConnectorSourceRebindingRetainsApplicationAndTarget(t *testi
 	}
 	for _, standalone := range []bool{false, true} {
 		for _, tcp := range []bool{false, true} {
-			t.Run(fmt.Sprintf("standalone=%t/tcp=%t", standalone, tcp), func(t *testing.T) {
-				qualifyConnectorRebinding(t, standalone, tcp, "source")
-			})
+			for _, fault := range []string{"source", "source-silent"} {
+				if tcp && fault == "source-silent" {
+					continue
+				}
+				t.Run(fmt.Sprintf("standalone=%t/tcp=%t/%s", standalone, tcp, fault), func(t *testing.T) {
+					qualifyConnectorRebinding(t, standalone, tcp, fault)
+				})
+			}
 		}
 	}
 }
@@ -215,7 +247,7 @@ type rebindingConnectionFixture struct {
 	recorded  *recordedConnectorConnector
 }
 
-func startRebindingConnector(t *testing.T, f *privateSeparatedFixture, tcp bool, target string) rebindingConnectionFixture {
+func startRebindingConnector(t *testing.T, f *privateSeparatedFixture, tcp, silent bool, target string) rebindingConnectionFixture {
 	t.Helper()
 	key, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 	if err != nil {
@@ -234,8 +266,9 @@ func startRebindingConnector(t *testing.T, f *privateSeparatedFixture, tcp bool,
 	if err != nil {
 		t.Fatal(err)
 	}
-	control := &rebindingControl{Control: production}
+	control := &rebindingControl{Control: production, t: t}
 	transport := newRebindingTransport(t, f, tcp)
+	transport.silent = silent
 	recorded := &recordedConnectorConnector{Connector: transport, opened: make(chan connectorOuter, 64)}
 	config := connectorstream.Config{Control: control, IdentityID: person.Identity.Id, RelayQUIC: recorded, RelayTCP: privateDisabledConnector()}
 	if tcp {
@@ -255,7 +288,7 @@ func qualifyConnectorRebinding(t *testing.T, standalone, tcp bool, fault string)
 	claimed := make(chan *publisherservice.Claimed, 16)
 	f.publisherConnections = claimed
 	target := startPrivateEchoTarget(t)
-	prepared := startRebindingConnector(t, f, tcp, target.address)
+	prepared := startRebindingConnector(t, f, tcp, fault == "source-silent", target.address)
 	defer prepared.stop()
 	service, listener, control, transport := prepared.service, prepared.listener, prepared.control, prepared.transport
 	connection, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
@@ -282,15 +315,24 @@ func qualifyConnectorRebinding(t *testing.T, standalone, tcp bool, fault string)
 		lostReply, fault = 1, "publisher-connection"
 	case "publisher-lost-activation":
 		lostReply, fault = 2, "publisher-connection"
+	case "control-lost-prepare":
+		control.losePhase.Store(new(controlv1.ConnectorPeerPairPrepare))
+		fault = "publisher-connection"
+	case "control-lost-activate":
+		control.losePhase.Store(new(controlv1.ConnectorPeerPairActivate))
+		fault = "publisher-connection"
 	}
 	if lostReply != 0 {
 		prepared.recorded.loseAfterGeneration.Store(before.generation)
 	}
 	prepared.recorded.loseReply.Store(lostReply)
+	faultStarted := time.Now()
 	switch fault {
-	case "source":
+	case "source", "source-silent":
 		transport.source.Store(2)
-		transport.disconnect()
+		if fault == "source" {
+			transport.disconnect()
+		}
 	case "publisher-connection":
 		select {
 		case current := <-claimed:
@@ -319,6 +361,9 @@ func qualifyConnectorRebinding(t *testing.T, standalone, tcp bool, fault string)
 		})
 	}
 	exchange("after-rebind\n")
+	if fault == "source-silent" && time.Since(faultStarted) >= 30*time.Second {
+		t.Fatal("source recovery waited for outer QUIC idle expiry")
+	}
 	after := readRebindingObservation(t, f, service.Id)
 	if after.pairID != before.pairID || after.runID != before.runID || after.number != before.number || control.selections.Load() != 1 {
 		t.Fatal("recovery replaced the owner or selected another run", before.pairID, after.pairID, control.selections.Load())
@@ -326,17 +371,22 @@ func qualifyConnectorRebinding(t *testing.T, standalone, tcp bool, fault string)
 	if lostReply != 0 && (prepared.recorded.lost.Load() != 1 || after.generation != before.generation+1) {
 		t.Fatal("lost initial binding reply did not resume the same operation", prepared.recorded.lost.Load(), before.generation, after.generation)
 	}
+	if control.losePhase.Load() != nil && (!control.lostPhase.Load() || after.generation != before.generation+1) {
+		t.Fatal("lost control phase reply did not retain its exact operation", before.generation, after.generation)
+	}
 	if fault == "relay-process" && after.relayRunID == before.relayRunID {
 		t.Fatal("relay restart did not replace the process identity")
 	}
 	if fault == "relay-assignment" && after.relayServiceID == before.relayServiceID {
 		t.Fatal("draining did not replace the relay service")
 	}
-	if fault == "source" {
+	if fault == "source" || fault == "source-silent" {
 		// a second handoff must retain this same session, not just replace its
 		// sockets once while leaving a one-use recovery path behind.
 		transport.source.Store(1)
-		transport.disconnect()
+		if fault == "source" {
+			transport.disconnect()
+		}
 		privateWait(t, 20*time.Second, func(ctx context.Context) (bool, error) {
 			var generation int64
 			err := f.inspect.QueryRowContext(ctx, `SELECT delivery_generation FROM control.connector_peer_pairs WHERE id=$1`, before.pairID).Scan(&generation)
@@ -351,7 +401,7 @@ func qualifyConnectorRebinding(t *testing.T, standalone, tcp bool, fault string)
 			t.Fatal("recovery replayed bytes or reopened the target", message)
 		}
 	}
-	if fault == "source" && (target.received["after-second-rebind\n"] != 1 || target.receivedOn["after-second-rebind\n"] != target.receivedOn["before-rebind\n"]) {
+	if (fault == "source" || fault == "source-silent") && (target.received["after-second-rebind\n"] != 1 || target.receivedOn["after-second-rebind\n"] != target.receivedOn["before-rebind\n"]) {
 		t.Fatal("second source handoff replayed bytes or reopened the target")
 	}
 }
@@ -372,7 +422,7 @@ func TestIntegrationConnectorRebindingRetainsPostgresTransaction(t *testing.T) {
 				t.Fatal(err)
 			}
 			target := net.JoinHostPort(database.Host, strconv.Itoa(int(database.Port)))
-			prepared := startRebindingConnector(t, f, tcp, target)
+			prepared := startRebindingConnector(t, f, tcp, false, target)
 			defer prepared.stop()
 			host, port, err := net.SplitHostPort(prepared.listener.Addr().String())
 			if err != nil {

@@ -17,7 +17,7 @@ func TestConnectorPairPinsEndpointSecretTrustAndInitialBinding(t *testing.T) {
 		return base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{value}, size))
 	}
 	for _, renewal := range []bool{false, true} {
-		for _, boundary := range []string{"valid", "missing session key", "shared secret", "changed trust", "changed session key", "operation", "challenge", "generation"} {
+		for _, boundary := range []string{"valid", "missing session key", "shared secret", "noncanonical envelope", "changed trust", "changed session key", "operation", "challenge", "generation"} {
 			t.Run(boundary+map[bool]string{false: "/initial", true: "/renewal"}[renewal], func(t *testing.T) {
 				now := time.Now()
 				signer := Signer{Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: "ident_" + strings.Repeat("I", 22), DeviceID: "vdev_" + strings.Repeat("D", 22)}}
@@ -36,6 +36,8 @@ func TestConnectorPairPinsEndpointSecretTrustAndInitialBinding(t *testing.T) {
 					pair.SessionKey = ""
 				case "shared secret":
 					pair.SessionKey = pair.Key
+				case "noncanonical envelope":
+					pair.Key += "\n"
 				case "changed trust":
 					pair.TrustRevision++
 				case "changed session key":

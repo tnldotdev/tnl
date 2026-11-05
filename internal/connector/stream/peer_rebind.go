@@ -58,7 +58,7 @@ func validateConnectorRebindState(ctx context.Context, signer Signer, run Run, o
 			!pair.ExpiresAt.After(pair.ObservedAt) || pair.ExpiresAt.Sub(pair.ObservedAt) > 5*time.Minute {
 			return false
 		}
-		if _, err := connectorPairSecret(pair.Key); err != nil {
+		if _, err := connectorPairSecret(pair.Key); err != nil || pair.Key == pair.SessionKey {
 			return false
 		}
 		if pair.SourceIp != nil {
@@ -77,7 +77,7 @@ func validateConnectorRebindState(ctx context.Context, signer Signer, run Run, o
 			}
 		} else {
 			challenge, err := base64.RawURLEncoding.Strict().DecodeString(pair.BindingChallenge)
-			if !opaqueid.Valid(pair.OperationId, opaqueid.IdempotencyPrefix) || err != nil || len(challenge) != 32 || pair.Key == original.Key {
+			if !opaqueid.Valid(pair.OperationId, opaqueid.IdempotencyPrefix) || err != nil || len(challenge) != 32 || base64.RawURLEncoding.EncodeToString(challenge) != pair.BindingChallenge || pair.Key == original.Key {
 				return false
 			}
 		}

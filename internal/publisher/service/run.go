@@ -170,7 +170,10 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 		return ErrPrivateStream
 	}
 	b.mu.Lock()
-	var obsolete []struct { p *PeerSession; network peerNetworkBinding }
+	var obsolete []struct {
+		p       *PeerSession
+		network peerNetworkBinding
+	}
 	defer func() {
 		b.mu.Unlock()
 		for _, old := range obsolete {
@@ -205,7 +208,10 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 		binding := p.deliveryBindingLocked()
 		if !b.peerRelaysCurrentLocked(binding) {
 			p.deliveryActive = false
-			obsolete = append(obsolete, struct { p *PeerSession; network peerNetworkBinding }{p, binding.peerNetworkBinding})
+			obsolete = append(obsolete, struct {
+				p       *PeerSession
+				network peerNetworkBinding
+			}{p, binding.peerNetworkBinding})
 		}
 	}
 	return nil
@@ -342,14 +348,20 @@ func (c *Claimed) Close() error {
 	}
 	c.closeOnce.Do(func() {
 		c.bound.mu.Lock()
-		var obsolete []struct { p *PeerSession; network peerNetworkBinding }
+		var obsolete []struct {
+			p       *PeerSession
+			network peerNetworkBinding
+		}
 		if c.bound.packetSlots[c.ref.ConnectionSlot] == c {
 			c.bound.packetSlots[c.ref.ConnectionSlot] = nil
 		}
 		for _, p := range c.bound.connectorPeers {
 			if p.deliverySlots[c.ref.ConnectionSlot] == c {
 				p.deliveryActive = false
-				obsolete = append(obsolete, struct { p *PeerSession; network peerNetworkBinding }{p, p.deliveryBindingLocked().peerNetworkBinding})
+				obsolete = append(obsolete, struct {
+					p       *PeerSession
+					network peerNetworkBinding
+				}{p, p.deliveryBindingLocked().peerNetworkBinding})
 			}
 		}
 		c.bound.mu.Unlock()

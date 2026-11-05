@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	quic "github.com/quic-go/quic-go"
@@ -233,4 +234,38 @@ func TestQUICSourcePinRejectsInvalidStartupBeforeTakingTraffic(t *testing.T) {
 		}
 		_ = reopened.Close()
 	}
+}
+
+func TestQUICSourcePinReclaimsFailedHandshakeBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		serverTLS, _ := testTLSConfigs(t)
+		packet := &scriptedQUICSocket{packets: make(chan sourceQUICPacket, 3), done: make(chan struct{})}
+		listener, err := ListenQUICPacket(packet, serverTLS, QUICConfig{PinnedRemoteIPLimit: 3})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listener.Close()
+		for round := range 2 {
+			for index := range 3 {
+				data := make([]byte, 1200)
+				data[0] = 0xc0
+				packet.packets <- sourceQUICPacket{data: data, address: net.UDPAddrFromAddrPort(netip.AddrPortFrom(netip.AddrFrom4([4]byte{192, 0, byte(round), byte(index + 1)}), 443))}
+			}
+			synctest.Wait()
+			listener.sources.mu.Lock()
+			count, pending := len(listener.sources.sources), listener.sources.pending
+			listener.sources.mu.Unlock()
+			if count != 3 || pending != 3 {
+				t.Fatal("failed handshakes did not consume their bounded source budget", count, pending)
+			}
+			time.Sleep(11 * time.Second)
+			synctest.Wait()
+			listener.sources.mu.Lock()
+			count, pending, queued := len(listener.sources.sources), listener.sources.pending, listener.sources.queuedBytes
+			listener.sources.mu.Unlock()
+			if count != 0 || pending != 0 || queued != 0 {
+				t.Fatal("failed handshakes retained source transports or packet buffers", count, pending, queued)
+			}
+		}
+	})
 }

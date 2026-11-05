@@ -55,7 +55,7 @@ func rebindFixture(t *testing.T) (Signer, Run, controlv1.ConnectorPeerPair, cont
 }
 
 func TestConnectorRebindSnapshotPinsOwnerRunTrustAndHighWater(t *testing.T) {
-	for _, boundary := range []string{"valid", "owner", "delivery", "run", "number", "publisher", "subject", "trust", "session key", "reused key", "revision rollback", "ready shape", "wrong operation", "mixed observation", "unbounded pending", "source", "legacy state", "missing operation"} {
+	for _, boundary := range []string{"valid", "owner", "delivery", "run", "number", "publisher", "subject", "trust", "session key", "shared key", "noncanonical challenge", "reused key", "revision rollback", "ready shape", "wrong operation", "mixed observation", "unbounded pending", "source", "legacy state", "missing operation"} {
 		t.Run(boundary, func(t *testing.T) {
 			signer, run, original, request, state := rebindFixture(t)
 			switch boundary {
@@ -75,6 +75,10 @@ func TestConnectorRebindSnapshotPinsOwnerRunTrustAndHighWater(t *testing.T) {
 				state.Pending.TrustRevision++
 			case "session key":
 				state.Pending.SessionKey = state.Pending.Key
+			case "shared key":
+				state.Pending.Key = original.SessionKey
+			case "noncanonical challenge":
+				state.Pending.BindingChallenge += "\n"
 			case "reused key":
 				state.Pending.Key = original.Key
 			case "revision rollback":

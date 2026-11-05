@@ -30,6 +30,7 @@ type connectorRebindOperation struct {
 	initial                  [2]tunnelv1.ConnectorHandoffID
 	legs                     [2]*connectorRelayLeg
 	installed                [2]bool
+	activated                [2]bool
 	staged, retired          bool
 }
 
@@ -44,7 +45,31 @@ func connectorTerminalProtocol(err error) bool {
 
 func connectorPhaseConflict(err error) bool {
 	var problem *clientcontrol.ProblemError
-	return errors.As(err, &problem) && problem.Status == http.StatusConflict && problem.Problem.Code == controlv1.Conflict
+	return errors.As(err, &problem) && problem.Status == http.StatusConflict && problem.Problem.Code == controlv1.Conflict && connectorBindingChanged(err)
+}
+
+func connectorBindingChanged(err error) bool {
+	changed, denied := false, false
+	var visit func(error)
+	visit = func(cause error) {
+		if problem, ok := cause.(*clientcontrol.ProblemError); ok {
+			changed = changed || problem.Status == http.StatusConflict && (problem.Problem.Code == controlv1.Conflict || problem.Problem.Code == controlv1.StaleNetworkBinding)
+			denied = denied || problem.Status == http.StatusUnauthorized || problem.Status == http.StatusForbidden
+		}
+		if protocol, ok := cause.(*tunnel.ProtocolError); ok {
+			denied = denied || connectorReconnectError(protocol) == terminateConnection
+		}
+		switch wrapped := cause.(type) {
+		case interface{ Unwrap() []error }:
+			for _, child := range wrapped.Unwrap() {
+				visit(child)
+			}
+		case interface{ Unwrap() error }:
+			visit(wrapped.Unwrap())
+		}
+	}
+	visit(err)
+	return changed && !denied
 }
 
 func connectorRecoveryWait(cause error) error {
@@ -53,8 +78,10 @@ func connectorRecoveryWait(cause error) error {
 
 func (p *connectorConnection) requestRecovery(rebind bool) {
 	p.mu.Lock()
+	changed := !p.inspectNeeded
 	p.inspectNeeded = true
 	fresh := rebind && !p.rebinding && !p.rebindNeeded
+	changed = changed || fresh
 	if fresh {
 		p.rebindNeeded = true
 		p.openings = nil
@@ -68,8 +95,13 @@ func (p *connectorConnection) requestRecovery(rebind bool) {
 			}
 		}
 	}
-	p.notifyLocked()
+	if changed {
+		p.notifyLocked()
+	}
 	p.mu.Unlock()
+	if !changed {
+		return
+	}
 	if fresh {
 		if stop != nil {
 			stop()
@@ -268,10 +300,13 @@ func (p *connectorConnection) recoverBinding() error {
 	if op.pair.PairId == "" {
 		state, until, err := p.callRebind(op.prepare)
 		if err != nil {
+			if connectorBindingChanged(err) {
+				return p.reconcileRebind(op)
+			}
 			return err
 		}
 		if state.Pending == nil || state.Operation == nil || state.Operation.Status != controlv1.ConnectorPeerPairOperationPending {
-			return ErrServiceConnection
+			return p.abandonPending(op)
 		}
 		op.pair, op.until = *state.Pending, until
 	}
@@ -317,9 +352,43 @@ func (p *connectorConnection) recoverBinding() error {
 	}
 	state, _, err := p.callRebind(op.activate)
 	if err != nil {
+		if connectorBindingChanged(err) {
+			return p.reconcileRebind(op)
+		}
 		return err
 	}
 	return p.installActiveBinding(op, state)
+}
+
+// a signed phase can lose its assignment race without losing owner authority.
+// inspect before choosing another operation; uncertain transport errors instead
+// keep retrying the exact phase so a late commit cannot be overtaken.
+func (p *connectorConnection) reconcileRebind(op *connectorRebindOperation) error {
+	state, until, err := p.inspectBinding()
+	if err != nil {
+		return err
+	}
+	if state.Operation == nil || state.Operation.OperationId != op.prepare.request.OperationId {
+		if state.Pending != nil || state.HighWaterGeneration != op.prepare.request.ExpectedGeneration || op.staged {
+			return ErrServiceConnection
+		}
+		p.mu.Lock()
+		p.rebind, p.rebinding = nil, false
+		p.notifyLocked()
+		p.mu.Unlock()
+		return connectorRecoveryWait(nil)
+	}
+	if state.Pending == nil {
+		return p.abandonPending(op)
+	}
+	if op.pair.PairId == "" {
+		op.pair = *state.Pending
+		op.until = earliestConnectorDeadline(until, op.prepare.started.Add(state.PendingUntil.Sub(state.Pending.ObservedAt)))
+	}
+	if !op.until.After(time.Now()) {
+		return p.abandonPending(op)
+	}
+	return connectorRecoveryWait(nil)
 }
 
 func (p *connectorConnection) connectPendingLegs(op *connectorRebindOperation) error {
@@ -332,7 +401,7 @@ func (p *connectorConnection) connectPendingLegs(op *connectorRebindOperation) e
 	for slot := range op.legs {
 		if leg := op.legs[slot]; leg != nil && leg.session.Err() != nil {
 			_ = leg.Close()
-			op.legs[slot], op.installed[slot] = nil, false
+			op.legs[slot], op.installed[slot], op.activated[slot] = nil, false, false
 		}
 		if op.legs[slot] != nil {
 			continue
@@ -340,7 +409,7 @@ func (p *connectorConnection) connectPendingLegs(op *connectorRebindOperation) e
 		starts.Go(func() {
 			call, stop := context.WithDeadline(p.ctx, minConnectorCall(op.until))
 			defer stop()
-			op.legs[slot], failures[slot] = prepareConnectorLeg(call, p.ctx, p.config, p.signer, op.pair, key, slot, nil, op.initial[slot])
+			op.legs[slot], failures[slot] = dialConnectorLeg(call, p.ctx, p.config, p.signer, op.pair, key, slot, nil, op.initial[slot])
 			if failures[slot] == nil {
 				failures[slot] = context.Cause(call)
 			}
@@ -361,6 +430,36 @@ func (p *connectorConnection) connectPendingLegs(op *connectorRebindOperation) e
 	if op.legs[0].receipt.SourceIP != op.legs[1].receipt.SourceIP {
 		p.retirePending(op)
 		return connectorRecoveryWait(nil)
+	}
+	if !op.activated[0] || !op.activated[1] {
+		state, _, err := p.inspectBinding()
+		if err != nil {
+			return err
+		}
+		if state.Pending == nil || state.Pending.OperationId != op.pair.OperationId {
+			return p.abandonPending(op)
+		}
+		if state.Pending.PublisherPreparedUntil == nil || !state.Pending.PublisherPreparedUntil.After(state.Pending.ObservedAt) {
+			return connectorRecoveryWait(nil)
+		}
+		for slot, leg := range op.legs {
+			if op.activated[slot] {
+				continue
+			}
+			call, stop := context.WithDeadline(p.ctx, minConnectorCall(op.until))
+			err := activateConnectorLeg(call, leg, nil, op.initial[slot])
+			stop()
+			if err != nil {
+				_ = leg.Close()
+				op.legs[slot], op.installed[slot] = nil, false
+				if disposition := connectorReconnectError(err); disposition == rebindConnection || disposition == retirePath {
+					p.retirePending(op)
+					return connectorRecoveryWait(err)
+				}
+				return err
+			}
+			op.activated[slot] = true
+		}
 	}
 	for slot, leg := range op.legs {
 		if op.installed[slot] {

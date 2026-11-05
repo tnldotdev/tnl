@@ -589,7 +589,7 @@ func newTLSYamuxPair(t *testing.T) (Session, Session) {
 	return client, server
 }
 
-func testTLSConfigs(t *testing.T) (*tls.Config, *tls.Config) {
+func testTLSConfigs(t testing.TB) (*tls.Config, *tls.Config) {
 	t.Helper()
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

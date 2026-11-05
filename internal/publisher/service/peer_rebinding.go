@@ -13,7 +13,7 @@ func (b PeerBinding) revision() peer.BindingRevision {
 
 func (b peerNetworkBinding) sameOperation(other peerNetworkBinding) bool {
 	b.state, other.state = "", ""
-	b.source, other.source = other.source, other.source
+	b.source = other.source
 	return b == other
 }
 

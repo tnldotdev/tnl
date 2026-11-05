@@ -35,7 +35,6 @@ type connectorUse struct {
 type connectorPath struct {
 	leg                        *connectorRelayLeg
 	carrier                    *peer.CarrierSlot
-	done                       bool
 	inspected, needsInspection bool
 	probeAfter                 time.Time
 }
@@ -409,7 +408,19 @@ func (p *connectorConnection) refresh() {
 		case <-ticker.C:
 		case <-p.recover:
 		}
-		if !nextAuthority.After(time.Now()) {
+		if err := p.recoverBinding(); err != nil {
+			if !connectorTemporary(err) && p.ctx.Err() == nil {
+				p.cancel(err)
+				return
+			}
+		}
+		p.mu.Lock()
+		activationUncertain := p.rebind != nil && p.rebind.activate != nil
+		p.mu.Unlock()
+		// an activation may have committed while its reply was lost. resolve
+		// that exact phase before renewing with the old delivery generation;
+		// the existing owner deadline remains fixed throughout this wait.
+		if !activationUncertain && !nextAuthority.After(time.Now()) {
 			nextAuthority = time.Now().Add(2 * time.Second)
 			if err := p.refreshAuthority(); err != nil {
 				p.mu.Lock()
@@ -419,12 +430,6 @@ func (p *connectorConnection) refresh() {
 					p.cancel(err)
 					return
 				}
-			}
-		}
-		if err := p.recoverBinding(); err != nil {
-			if !connectorTemporary(err) && p.ctx.Err() == nil {
-				p.cancel(err)
-				return
 			}
 		}
 	}
@@ -440,6 +445,9 @@ func (p *connectorConnection) refreshAuthority() error {
 	renewal, bound, err := renewConnectorPair(call, p.config.Control, p.signer, run, p.owner, previous)
 	pair, permission, next := renewal.Pair, renewal.VisitorPermission, run
 	if err == nil {
+		if !pair.ExpiresAt.After(previous.ExpiresAt) {
+			bound = earliestConnectorDeadline(bound, until)
+		}
 		// all returned intervals share one authority observation. anchor each
 		// at request start so RPC transit and background signing spend them.
 		next.ValidUntil = bound.Add(renewal.RunValidUntil.Sub(pair.ExpiresAt))
@@ -630,7 +638,11 @@ func (p *connectorConnection) maintainConnectorLeg(binding context.Context, slot
 		}
 	}
 	if err == nil && call.Err() == nil && leg.until.After(time.Now()) {
-		leg.receipt, leg.until = receipt, started.Add(receipt.ExpiresAt.Sub(receipt.ObservedAt))
+		nextUntil := started.Add(receipt.ExpiresAt.Sub(receipt.ObservedAt))
+		if !receipt.ExpiresAt.After(leg.receipt.ExpiresAt) {
+			nextUntil = earliestConnectorDeadline(nextUntil, leg.until)
+		}
+		leg.receipt, leg.until = receipt, nextUntil
 		return retryAttempt, nil
 	}
 	if !leg.until.After(time.Now()) || leg.session.Err() != nil {

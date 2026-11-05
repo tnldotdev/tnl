@@ -201,6 +201,16 @@ func TestPrivateLifecycleCloseAndForcedDrainInterruptPendingOpen(t *testing.T) {
 	}
 }
 
+func TestPrivateLifecycleDrainJoinsAlreadyClosedConnection(t *testing.T) {
+	c, _, registry, _ := privateLifecycleFixture(t)
+	if err := c.paths.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Drain(t.Context()); err != nil {
+		t.Fatal("drain rejected a connection already retired with its packet bridge", err)
+	}
+}
+
 func TestPrivateLifecycleDrainKeepsAdmittedStreamAndReleasesOnce(t *testing.T) {
 	c, publisher, registry, header := privateLifecycleFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
