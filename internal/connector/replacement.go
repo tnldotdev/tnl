@@ -229,6 +229,7 @@ func (b *connectorConnectionBackend) promoteReplacement(r *workloadReplacement, 
 	b.rememberAssertion(assertion, identity.AssertionExpiresAt, validated.session)
 	b.replacement = nil
 	b.publishLocked()
+	b.startWorkloadRefreshLocked()
 	return nil
 }
 

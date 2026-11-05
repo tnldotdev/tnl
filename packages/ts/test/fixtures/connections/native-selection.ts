@@ -13,7 +13,9 @@ const lines = createInterface({ input: process.stdin })[Symbol.asyncIterator]();
 const token = (await readFile("assertion", "utf8")).trim();
 let acquisitions = 0;
 const nativeProvider = process.argv.includes("provider");
-if (!nativeProvider)
+const rotatingFile = process.argv.includes("refresh");
+if (rotatingFile) configureWorkload({ name: "test", tokenFile: "assertion" });
+else if (!nativeProvider)
   configureWorkload({
     name: "test",
     token: async () => {
@@ -58,7 +60,7 @@ if (process.argv.includes("copies")) {
 const [first] = await Promise.all(handles);
 assert.ok(first);
 assert.ok("fetch" in first);
-assert.equal(acquisitions, nativeProvider ? 0 : handles.length);
+assert.equal(acquisitions, nativeProvider || rotatingFile ? 0 : handles.length);
 assert.equal(process.listenerCount("beforeExit"), listeners + 1);
 console.log("cold");
 assert.equal((await lines.next()).value, "warm");
@@ -67,7 +69,7 @@ for (let i = 0; i < 10; i++) {
   for (const handle of nativeProvider ? handles.slice(0, 1) : handles)
     assert.deepEqual(await handle, first);
 }
-assert.equal(acquisitions, nativeProvider ? 0 : handles.length * 11);
+assert.equal(acquisitions, nativeProvider || rotatingFile ? 0 : handles.length * 11);
 if (nativeProvider) {
   delete process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
   await assert.rejects(Promise.resolve(handle), { code: "sdk.workload_assertion_unavailable" });
@@ -75,6 +77,23 @@ if (nativeProvider) {
   assert.deepEqual(await handle, first);
 }
 console.log("warm");
+if (rotatingFile) {
+  const response = await first.fetch("/refresh-stream");
+  const reader = response.body?.getReader();
+  assert.ok(reader);
+  const before = await reader.read();
+  assert.equal(new TextDecoder().decode(before.value), "before-proof\n");
+  console.log("streaming");
+  assert.equal((await lines.next()).value, "refreshed");
+  let after = "";
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    after += new TextDecoder().decode(chunk.value);
+  }
+  assert.equal(after, "after-proof\n");
+  console.log("retained");
+}
 if (copiedWorkload !== undefined) {
   assert.equal((await lines.next()).value, "isolate");
   const directory = process.cwd();

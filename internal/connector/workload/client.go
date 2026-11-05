@@ -189,6 +189,9 @@ func (c *Client) Renew(ctx context.Context) (authorityv1.WorkloadSession, error)
 	if next.RenewalSequence != sequence {
 		return authorityv1.WorkloadSession{}, invalidSession()
 	}
+	if err := context.Cause(ctx); err != nil {
+		return authorityv1.WorkloadSession{}, err
+	}
 	c.mu.Lock()
 	c.session = cloneSession(next)
 	c.mu.Unlock()
@@ -241,6 +244,9 @@ func (c *Client) Attach(ctx context.Context, assertion string) (authorityv1.Work
 		return next, err
 	}
 	if err = validateSessionUpdate(r, next); err != nil {
+		return authorityv1.WorkloadSession{}, err
+	}
+	if err := context.Cause(ctx); err != nil {
 		return authorityv1.WorkloadSession{}, err
 	}
 	c.mu.Lock()

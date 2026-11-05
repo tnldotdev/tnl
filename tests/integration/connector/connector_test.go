@@ -110,6 +110,13 @@ func TestIntegrationConnectionConnectorOwnerSDKPythonLifecycle(t *testing.T) {
 	runConnectionNativeOwnerStartup(t, "http", true, "python-lifecycle")
 }
 
+func TestIntegrationConnectionConnectorOwnerSDKBackgroundRefresh(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	for _, language := range []string{"javascript-refresh", "python-refresh"} {
+		t.Run(language, func(t *testing.T) { runConnectionNativeOwnerStartup(t, "http", true, language) })
+	}
+}
+
 type connectorConnectionFixture struct {
 	Handle   string
 	Env      []string
@@ -180,6 +187,11 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 	if err != nil {
 		t.Fatal(err)
 	}
+	// use the issued root, including its generated subject key identifier.
+	ca, err = x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM(caPEM)
@@ -204,6 +216,8 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 	var wrongTLS atomic.Bool
 	var canceled atomic.Int32
 	var visits atomic.Int32
+	refreshAfter := make(chan struct{})
+	var refreshStreams atomic.Int32
 	application := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Traceparent") != "" || r.Header.Get("Tracestate") != "" || r.Header.Get("Baggage") != "" {
 			t.Error("native tracing injected application headers")
@@ -216,6 +230,20 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 			_, _ = io.Copy(io.Discard, r.Body)
 			<-r.Context().Done()
 			canceled.Add(1)
+			return
+		}
+		if r.URL.Path == "/refresh-stream" {
+			refreshStreams.Add(1)
+			_, _ = io.WriteString(w, "before-proof\n")
+			if err := http.NewResponseController(w).Flush(); err != nil {
+				return
+			}
+			select {
+			case <-r.Context().Done():
+				return
+			case <-refreshAfter:
+			}
+			_, _ = io.WriteString(w, "after-proof\n")
 			return
 		}
 		data, _ := io.ReadAll(r.Body)
@@ -272,6 +300,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 	var verifier *oidc.GitHubWorkloadVerifier
 	var providerAssertion, providerAudience string
 	var providerCalls atomic.Int32
+	refreshedProof := make(chan struct{}, 1)
 	authority := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/workload-sessions/exchange" && blockSDKExchange.Load() {
 			select {
@@ -335,6 +364,11 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 			current.AssertionExpiresAt = new(time.Unix(claims.ExpiresAt, 0))
 			if current.AssertionExpiresAt.After(current.IdentityExpiresAt) {
 				current.IdentityExpiresAt = *current.AssertionExpiresAt
+				current.LeaseExpiresAt = minTimeForFixture(current.RenewAfter.Add(time.Minute), current.IdentityExpiresAt, current.ExpiresAt)
+				select {
+				case refreshedProof <- struct{}{}:
+				default:
+				}
 			}
 			_ = json.NewEncoder(w).Encode(current)
 		case strings.HasSuffix(r.URL.Path, "/authorization"):
@@ -391,6 +425,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 				}
 				current = &workloadSession{public: ed25519.PublicKey(public), WorkloadSession: authorityv1.WorkloadSession{Id: id, TeamId: team, ProjectKey: exchange.ProjectKey, Workload: exchange.Workload, Provider: controlv1.WorkloadGitHub, Github: &authorityv1.WorkloadGitHubExecution{RepositoryId: "12345", RepositoryOwnerId: "6789", RunId: "111", RunAttempt: "1", CheckRunId: "222"}, Credential: "wlc_" + base64.RawURLEncoding.EncodeToString(credential), ExpiresAt: time.Now().Add(time.Hour), IdentityExpiresAt: time.Unix(claims.ExpiresAt, 0), LeaseExpiresAt: time.Now().Add(90 * time.Second), RenewAfter: time.Now().Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, Binding: strings.Repeat("b", 64)}}
 				ownerKeys[exchange.PublicKey] = current
+				current.LeaseExpiresAt = minTimeForFixture(current.LeaseExpiresAt, current.IdentityExpiresAt, current.ExpiresAt)
 				sessions[current.Credential] = current
 			}
 			if exchangeAttempts.Add(1) == 1 {
@@ -420,7 +455,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 			}
 			if renewal.Sequence != current.RenewalSequence {
 				current.RenewalSequence = renewal.Sequence
-				current.LeaseExpiresAt = time.Now().Add(90 * time.Second)
+				current.LeaseExpiresAt = minTimeForFixture(time.Now().Add(90*time.Second), current.IdentityExpiresAt, current.ExpiresAt)
 				current.RenewAfter = time.Now().Add(30 * time.Second)
 			}
 			_ = json.NewEncoder(w).Encode(current)
@@ -445,6 +480,10 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
+			pair.ExpiresAt = minTimeForFixture(pair.ExpiresAt, current.LeaseExpiresAt)
+			if pair.PublisherPreparedUntil != nil {
+				pair.PublisherPreparedUntil = new(minTimeForFixture(*pair.PublisherPreparedUntil, pair.ExpiresAt))
+			}
 			if requested.Action == "renew" {
 				_ = json.NewEncoder(w).Encode(controlv1.ConnectorPeerPairRenewal{Pair: pair, RunValidUntil: pair.ExpiresAt,
 					Protocol: controlv1.ServiceProtocol(protocol), TrustRevision: trustRevision,
@@ -467,7 +506,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: requested.Resource, Hostname: managedHostname, Port: port, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: time.Now().Add(time.Minute)})
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorTokenResponse{Resource: requested.Resource, Hostname: managedHostname, Port: port, ServiceTrustRevision: &trustRevision, VisitorPolicyRevision: 1, VisitorToken: "fixture-connector-visitor-token", ExpiresAt: minTimeForFixture(time.Now().Add(time.Minute), current.LeaseExpiresAt)})
 		case strings.HasSuffix(r.URL.Path, "/client-certificate"):
 			certificateRequests.Add(1)
 			w.WriteHeader(403)
@@ -605,7 +644,13 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 	if err := json.Unmarshal(call(nil, "context", "--directory", root, "--workload", "test"), &scope); err != nil {
 		t.Fatal(err)
 	}
-	assertion := issuer.Sign(t, githubtest.Claims(server, time.Now()))
+	initialClaims := githubtest.Claims(server, time.Now())
+	var initialProofExpiry time.Time
+	if strings.HasSuffix(startup, "-refresh") {
+		initialProofExpiry = time.Now().Add(35 * time.Second).Truncate(time.Second)
+		initialClaims["exp"] = initialProofExpiry.Unix()
+	}
+	assertion := issuer.Sign(t, initialClaims)
 	if strings.HasPrefix(startup, "javascript") || strings.HasPrefix(startup, "python") {
 		manifest := workloadmanifest.Manifest{Schema: 1, Server: scope.Server, Team: scope.TeamID, ProjectKey: scope.ProjectKey, SourceFingerprint: scope.SourceID, ProjectLabel: scope.ProjectLabel,
 			Workloads: map[string]workloadmanifest.Workload{"test": {Provider: "github", Services: []string{serviceName}, MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "github-actions", Audience: scope.Server}}}, Services: map[string]string{serviceName: protocol}}
@@ -625,6 +670,10 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 		}
 		fixture, _ := filepath.Abs("../../../packages/ts/test/fixtures/connections/native-selection.ts")
 		ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+		if strings.HasSuffix(startup, "-refresh") {
+			cancel()
+			ctx, cancel = context.WithTimeout(t.Context(), 90*time.Second)
+		}
 		defer cancel()
 		child := exec.CommandContext(ctx, "node", fixture)
 		if startup == "javascript-copies" {
@@ -633,6 +682,9 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 		child.Env = append(slices.Clone(env), "TMPDIR="+root)
 		if startup == "javascript-provider" {
 			child.Args = append(child.Args, "provider")
+		}
+		if startup == "javascript-refresh" {
+			child.Args = append(child.Args, "refresh")
 		}
 		if strings.HasPrefix(startup, "python") {
 			python, _ := filepath.Abs("../../../packages/py/.venv/bin/python")
@@ -645,6 +697,9 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 			}
 			if startup == "python-lifecycle" {
 				child.Args = append(child.Args, "lifecycle")
+			}
+			if startup == "python-refresh" {
+				child.Args = append(child.Args, "refresh")
 			}
 		}
 		if strings.HasSuffix(startup, "-provider") {
@@ -697,6 +752,42 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 		}
 		if strings.HasSuffix(startup, "-provider") && providerCalls.Load() != 15 {
 			t.Fatalf("native provider acquisition was coalesced or repeated: got %d, want four concurrent cold plus ten warm and one healthy retry", providerCalls.Load())
+		}
+		if strings.HasSuffix(startup, "-refresh") {
+			if !lines.Scan() || lines.Text() != "streaming" {
+				t.Fatal("SDK did not open the original stream")
+			}
+			freshClaims := githubtest.Claims(server, time.Now())
+			freshClaims["jti"] = "background-refreshed-proof"
+			file := filepath.Join(root, "assertion")
+			if err := os.WriteFile(file+".next", []byte(issuer.Sign(t, freshClaims)), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(file+".next", file); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-refreshedProof:
+			case <-ctx.Done():
+				t.Fatal("quiet native owner did not refresh its proof")
+			}
+			timer := time.NewTimer(time.Until(initialProofExpiry.Add(time.Second)))
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				t.Fatal("original proof deadline did not elapse")
+			}
+			close(refreshAfter)
+			_, _ = io.WriteString(input, "refreshed\n")
+			if !lines.Scan() || lines.Text() != "retained" {
+				t.Fatal("original SDK stream did not survive background refresh")
+			}
+			afterOwner, after := readSDKSelection(t, root, serviceName)
+			if owner != afterOwner || first.TransportID != after.TransportID || first.Port != after.Port || !after.ExpiresAt.After(first.ExpiresAt) || refreshStreams.Load() != 1 || exchangeAttempts.Load() != 2 {
+				t.Fatal("background refresh replaced the owner, stream or transport")
+			}
+			t.Log("quiet native owner reread a rotating file; original SDK stream crossed proof expiry without a request callback, owner replacement or replay")
 		}
 		if startup == "javascript-copies" {
 			isolatedSDKContexts.Store(true)
@@ -1042,4 +1133,14 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 	// cleanup is already joined; avoid a second stop with an expired handle.
 	state.ConnectionHandle = ""
 	return nil
+}
+
+func minTimeForFixture(values ...time.Time) time.Time {
+	until := values[0]
+	for _, value := range values[1:] {
+		if value.Before(until) {
+			until = value
+		}
+	}
+	return until
 }
