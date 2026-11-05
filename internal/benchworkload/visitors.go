@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"runtime/trace"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -165,6 +167,9 @@ type VisitorConfig struct {
 	// OnTiming receives value copies after request return and after collector
 	// unlock. calls may overlap across workers and must not block. requires Timing.
 	OnTiming func(VisitorRequestTiming)
+	// TraceRequests adds worker-local request tasks and PostgreSQL session markers.
+	// disabled by default; enabled diagnostics add allocations and change timing.
+	TraceRequests bool
 }
 
 func (v Visitor) Run(ctx context.Context, config VisitorConfig, urls []string) (VisitorResult, error) {
@@ -201,6 +206,7 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 		at     time.Time
 		url    string
 		timing *VisitorRequestTiming
+		slot   int
 	}
 	jobs := make(chan job, config.QueueSlots)
 	var workers sync.WaitGroup
@@ -211,7 +217,12 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 		workers.Go(func() {
 			ready.Done()
 			for job := range jobs {
-				row := request(ctx, job.url, job.at)
+				var row RequestResult
+				if config.TraceRequests {
+					row = traceVisitorRequest(ctx, job.slot, job.url, job.at, request)
+				} else {
+					row = request(ctx, job.url, job.at)
+				}
 				timing := job.timing
 				if timing != nil {
 					timing.RequestReturned = time.Since(config.Start)
@@ -271,7 +282,7 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 			*timing = VisitorRequestTiming{Slot: index, Scheduled: at.Sub(config.Start), Offered: time.Since(config.Start)}
 		}
 		select {
-		case jobs <- job{at, urls[index%len(urls)], timing}:
+		case jobs <- job{at, urls[index%len(urls)], timing, index}:
 		default:
 			result.Missed++
 			if timing != nil {
@@ -292,6 +303,30 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 	}
 	result.DrainDuration = max(0, time.Since(offerEnded))
 	return result, ctx.Err()
+}
+
+// the private tag reaches request directly, before it derives its deadline context.
+// task and region events are emitted by that worker, never an observer goroutine.
+type visitorRequestTraceContext struct{ context.Context }
+
+func traceVisitorRequest(ctx context.Context, slot int, url string, at time.Time, request func(context.Context, string, time.Time) RequestResult) RequestResult {
+	ctx, task := trace.NewTask(ctx, "benchworkload.request")
+	defer task.End()
+	trace.Log(ctx, "benchworkload.slot", strconv.Itoa(slot))
+	region := trace.StartRegion(ctx, "benchworkload.request")
+	defer region.End()
+	row := request(visitorRequestTraceContext{ctx}, url, at)
+	outcome := "ok"
+	switch {
+	case row.QueueExpired:
+		outcome = "queue_expired"
+	case row.Timeout:
+		outcome = "timeout"
+	case row.Error != "":
+		outcome = "error"
+	}
+	trace.Log(ctx, "benchworkload.result", outcome)
+	return row
 }
 
 func localSchedule(now, scheduled time.Time) time.Time {

@@ -56,6 +56,9 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 	if err := validateRuntimeRecording(workload, os.Getenv("POSTGRES_RECORDING"), os.Getenv("POSTGRES_TIMING"), os.Getenv("POSTGRES_LATE_DIAGNOSTICS"), os.Getenv("VISITOR_CPUS"), os.Getenv("VISITOR_GOMAXPROCS")); err != nil {
 		return err
 	}
+	if err := validateRuntimeTraceOwners(os.Getenv("POSTGRES_DIAGNOSTICS"), os.Getenv("POSTGRES_LATE_DIAGNOSTICS")); err != nil {
+		return err
+	}
 	if workload == "postgres" {
 		directory, err := os.MkdirTemp("", "tnl-runtime-postgres-tls-")
 		if err != nil {
@@ -234,6 +237,13 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 		return errors.New("runtime coordinator token is missing")
 	}
 	return h.observe(ctx)
+}
+
+func validateRuntimeTraceOwners(publisher, late string) error {
+	if publisher == "trace" && late == "trace" {
+		return errors.New("late PostgreSQL tracing cannot share the publisher runtime tracer with publisher diagnostics=trace; use metrics")
+	}
+	return nil
 }
 
 func validateRuntimeRecording(workload, mode, timing, late, cpus, gomaxprocs string) error {

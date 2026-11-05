@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"runtime/trace"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -111,15 +113,41 @@ func (v *PostgresVisitor) request(parent context.Context, address string, schedu
 		result.QueueExpired, result.Error = true, "request expired in queue"
 		return
 	}
+	_, traced := parent.(visitorRequestTraceContext)
+	var cleanup *trace.Region
+	if traced {
+		// registered before cancel and session return so the region covers both.
+		defer func() {
+			if cleanup != nil {
+				cleanup.End()
+			}
+		}()
+	}
 	ctx, cancel := context.WithDeadline(parent, scheduled.Add(RequestTimeout))
 	defer cancel()
 	conn := <-v.sessions
-	defer func() { v.sessions <- conn }()
+	defer func() {
+		if traced {
+			cleanup = trace.StartRegion(ctx, "benchworkload.postgres.cleanup")
+		}
+		v.sessions <- conn
+	}()
 	result.Started = time.Now()
 	result.QueueDelay = result.Started.Sub(scheduled)
 	var value int
+	var query *trace.Region
+	var backendPID string
+	if traced {
+		backendPID = strconv.FormatUint(uint64(conn.PgConn().PID()), 10)
+		trace.Log(ctx, "benchworkload.postgres.query.begin", backendPID)
+		query = trace.StartRegion(ctx, "benchworkload.postgres.query")
+	}
 	err := conn.QueryRow(ctx, "SELECT 1").Scan(&value)
 	result.Duration = time.Since(scheduled)
+	if traced {
+		query.End()
+		trace.Log(ctx, "benchworkload.postgres.query.end", backendPID)
+	}
 	if err == nil && value != 1 {
 		err = fmt.Errorf("unexpected PostgreSQL result: %d", value)
 	}

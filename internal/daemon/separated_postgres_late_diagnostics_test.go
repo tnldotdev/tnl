@@ -22,6 +22,8 @@ var postgresLoadLateDiagnostics = flag.String("tnl-postgres-load-late-diagnostic
 
 const postgresLateInterval = 100 * time.Millisecond
 const postgresLateTraceLimit = 16 << 20
+const postgresLatePostTrigger = time.Second
+const postgresLateNotifyTimeout = 2 * time.Second
 
 func validatePostgresLateDiagnostics(workload string, timing bool, mode string) error {
 	if mode != "off" && mode != "sample" && mode != "trace" {
@@ -39,6 +41,9 @@ type postgresLateConfig struct {
 	Duration     time.Duration
 	ConnectorPID int
 	Mode         string // empty selects the test flag
+
+	// Notify runs on the capture owner and must honor context cancellation.
+	Notify func(context.Context, postgresLateTrigger) error `json:"-"`
 }
 
 type postgresLateProcess struct {
@@ -58,10 +63,12 @@ type postgresLateSample struct {
 }
 
 type postgresLateTrigger struct {
-	Slot                         int
-	Kind                         string
-	Started, Completed, Observed time.Duration
-	TriggerLag                   time.Duration
+	Slot                           int
+	Kind                           string
+	Started, Completed, Observed   time.Duration
+	TriggerLag                     time.Duration
+	MarkerStarted, MarkerCompleted time.Duration
+	MarkerEmitted                  bool
 }
 
 type postgresLateReceipt struct {
@@ -73,6 +80,15 @@ type postgresLateReceipt struct {
 	TraceStatus, TraceFile, Coverage        string
 	SnapshotStarted, SnapshotCompleted      time.Duration
 	MarkerStarted, MarkerCompleted          time.Duration
+	MarkerStatus                            string
+	NotifyStarted, NotifyCompleted          time.Duration
+	NotifyTimeout, NotifyDeadline           time.Duration
+	NotifyStatus                            string
+	PostTriggerRequested, PostTriggerActual time.Duration
+	PostTriggerStarted, PostTriggerDeadline time.Duration
+	PostTriggerCompleted                    time.Duration
+	PostTriggerStatus                       string
+	TracePartial                            bool
 	Cancelled                               bool
 	Notes                                   []string
 	Issues                                  []string
@@ -92,6 +108,7 @@ type postgresLateDiagnostic struct {
 	mu                    sync.Mutex
 	err, finishErr        error
 	traceBytes            []byte
+	traceActive           bool // immutable after startup; Observe never calls the recorder
 }
 
 // start before Run; call Finish after every worker (including Observe) joins.
@@ -105,7 +122,7 @@ func startPostgresLateDiagnostic(ctx context.Context, cfg postgresLateConfig) *p
 	}
 	sampleCtx, cancel := context.WithCancel(ctx)
 	d := &postgresLateDiagnostic{cfg: cfg, parent: ctx, cancel: cancel, trigger: make(chan postgresLateTrigger, 1), sampleDone: make(chan struct{}), traceDone: make(chan struct{})}
-	d.receipt = postgresLateReceipt{Config: cfg, VisitorPID: os.Getpid(), SampleInterval: postgresLateInterval, TraceStatus: "not-requested", Coverage: "unverified; parse the trace externally to establish actual coverage", Notes: []string{
+	d.receipt = postgresLateReceipt{Config: cfg, VisitorPID: os.Getpid(), SampleInterval: postgresLateInterval, TraceStatus: "not-requested", MarkerStatus: "not-emitted", NotifyStatus: "not-requested", PostTriggerStatus: "not-requested", Coverage: "unverified; parse the trace externally to establish actual coverage", Notes: []string{
 		"offsets and durations are nanoseconds; process CPU counters are raw clock ticks; process start ticks identify PID reuse",
 		"cgroup CPU includes visitor, connector, sampler, and snapshot work; VM PSI describes the Linux VM, not the macOS host",
 		"100ms sampling cannot resolve a 25ms stall; sampling lateness includes pauses of the visitor runtime itself",
@@ -118,19 +135,28 @@ func startPostgresLateDiagnostic(ctx context.Context, cfg postgresLateConfig) *p
 		close(d.traceDone)
 		return d
 	}
-	// include the request deadline's drain allowance; never grow while serving load.
-	d.samples = make([]postgresLateSample, 0, int((cfg.Duration+5*time.Second)/postgresLateInterval)+2)
+	// include the request deadline's drain allowance, notification, and capture tail;
+	// notification overlaps the tail deadline. never grow while serving load.
+	tailAllowance := postgresLatePostTrigger
+	if cfg.Notify != nil {
+		tailAllowance = max(tailAllowance, postgresLateNotifyTimeout)
+		d.note("trigger notification runs before the tail wait on the capture owner; its callback must honor the parent context and 2s timeout; notification failures do not discard the local trace")
+	}
+	d.samples = make([]postgresLateSample, 0, int((cfg.Duration+5*time.Second+tailAllowance)/postgresLateInterval)+2)
 	d.receipt.SampleLimit = cap(d.samples)
 	var recorder *trace.FlightRecorder
 	if cfg.Mode == "trace" {
 		d.traceBytes = make([]byte, postgresLateTraceLimit)
 		d.note("flight recorder MinAge=5s and MaxBytes=8MiB are hints, not coverage or hard memory bounds; output is capped at 16MiB; snapshotting perturbs the runtime")
+		d.note("the winning Observe caller emits a log on its existing worker GoID, not a new task; marker call bounds and requested/actual tail offsets do not prove trace retention; parse the trace externally")
+		d.note("the tail deadline is 1s after observation, not after worker drain; cancellation shortens the tail but still requests a best-effort snapshot; runtime scheduling, WriteTo, and Stop can delay completion")
 		recorder = trace.NewFlightRecorder(trace.FlightRecorderConfig{MinAge: 5 * time.Second, MaxBytes: 8 << 20})
 		if err := recorder.Start(); err != nil {
 			d.fail(fmt.Errorf("start flight recorder: %w", err))
 			d.receipt.TraceStatus, recorder = "start-failed", nil
 		} else {
 			d.receipt.TraceStatus = "no-event"
+			d.traceActive = true
 		}
 	}
 	go d.sample(sampleCtx)
@@ -155,6 +181,12 @@ func (d *postgresLateDiagnostic) Observe(slot int, queryStarted, queryCompleted,
 	}
 	e.Observed = time.Since(d.cfg.Start)
 	e.TriggerLag = e.Observed - e.Completed
+	if d.traceActive {
+		e.MarkerStarted = time.Since(d.cfg.Start)
+		trace.Logf(context.Background(), "postgres-late-outlier", "phase=%s slot=%d kind=%s started_ns=%d completed_ns=%d observed_ns=%d marker_ns=%d", d.cfg.Phase, e.Slot, e.Kind, e.Started, e.Completed, e.Observed, e.MarkerStarted)
+		e.MarkerCompleted = time.Since(d.cfg.Start)
+		e.MarkerEmitted = true
+	}
 	select {
 	case d.trigger <- e:
 	default:
@@ -166,23 +198,59 @@ func (d *postgresLateDiagnostic) capture(ctx context.Context, recorder *trace.Fl
 	if recorder != nil {
 		defer recorder.Stop()
 	}
-	var e postgresLateTrigger
-	var ok bool
-	select {
-	case e, ok = <-d.trigger:
-	case <-ctx.Done():
-		return
-	}
+	// Finish closes trigger only after every Observe caller joins. even a cancelled
+	// context must not discard an event still being enqueued by the winning worker.
+	e, ok := <-d.trigger
 	if !ok {
 		return
 	}
 	d.receipt.Trigger = &e
+	d.receipt.MarkerStarted, d.receipt.MarkerCompleted = e.MarkerStarted, e.MarkerCompleted
+	if e.MarkerEmitted {
+		d.receipt.MarkerStatus = "emitted-on-observer-worker; retention-and-GoID-correlation-unverified"
+	}
+	if d.cfg.Notify != nil {
+		notifyCtx, cancel := context.WithTimeout(ctx, postgresLateNotifyTimeout)
+		deadline, _ := notifyCtx.Deadline()
+		d.receipt.NotifyTimeout, d.receipt.NotifyDeadline = postgresLateNotifyTimeout, deadline.Sub(d.cfg.Start)
+		d.receipt.NotifyStarted = time.Since(d.cfg.Start)
+		err := d.cfg.Notify(notifyCtx, e)
+		if err == nil {
+			err = notifyCtx.Err()
+		}
+		d.receipt.NotifyCompleted = time.Since(d.cfg.Start)
+		cancel()
+		d.receipt.NotifyStatus = "completed"
+		if err != nil {
+			d.receipt.NotifyStatus = "failed"
+			if errors.Is(err, context.Canceled) {
+				d.receipt.NotifyStatus = "cancelled"
+			} else if errors.Is(err, context.DeadlineExceeded) {
+				d.receipt.NotifyStatus = "deadline-exceeded"
+			}
+			d.fail(fmt.Errorf("notify late-diagnostic trigger: %w", err))
+		}
+	}
 	if recorder == nil {
 		return
 	}
-	d.receipt.MarkerStarted = time.Since(d.cfg.Start)
-	trace.Log(ctx, "postgres-late-snapshot", fmt.Sprintf("slot=%d phase_ns=%d", e.Slot, d.receipt.MarkerStarted))
-	d.receipt.MarkerCompleted = time.Since(d.cfg.Start)
+	d.receipt.PostTriggerRequested = postgresLatePostTrigger
+	d.receipt.PostTriggerStarted = e.Observed
+	d.receipt.PostTriggerDeadline = e.Observed + postgresLatePostTrigger
+	deadline := d.cfg.Start.Add(d.receipt.PostTriggerDeadline)
+	timer := time.NewTimer(max(0, time.Until(deadline)))
+	d.receipt.PostTriggerStatus = "completed"
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		if time.Now().Before(deadline) {
+			d.receipt.PostTriggerStatus = "cancelled"
+			d.receipt.TracePartial = true
+		}
+	}
+	timer.Stop()
+	d.receipt.PostTriggerCompleted = time.Since(d.cfg.Start)
+	d.receipt.PostTriggerActual = max(0, d.receipt.PostTriggerCompleted-e.Observed)
 	d.receipt.SnapshotStarted = time.Since(d.cfg.Start)
 	w := &postgresLateWriter{data: d.traceBytes}
 	_, err := recorder.WriteTo(w)
@@ -190,8 +258,12 @@ func (d *postgresLateDiagnostic) capture(ctx context.Context, recorder *trace.Fl
 	d.receipt.TraceBytes = w.used
 	d.traceBytes = d.traceBytes[:w.used]
 	d.receipt.TraceStatus, d.receipt.TraceFile = "captured", "visitor.trace"
+	if d.receipt.TracePartial {
+		d.receipt.TraceStatus, d.receipt.TraceFile = "captured-partial", "visitor.trace.partial"
+	}
 	if err != nil {
 		d.receipt.TraceStatus, d.receipt.TraceFile = "capture-failed", "visitor.trace.partial"
+		d.receipt.TracePartial = true
 		d.fail(fmt.Errorf("snapshot flight recorder: %w", err))
 	}
 }
@@ -372,18 +444,12 @@ func (d *postgresLateDiagnostic) Finish(directory string) error {
 	}
 	d.finish.Do(func() {
 		defer func() { d.samples, d.traceBytes = nil, nil }()
-		d.cancel()
 		close(d.trigger)
-		<-d.sampleDone
+		// normal workload completion is not capture cancellation. keep sampling
+		// through any remaining tail, then join both owners before exporting.
 		<-d.traceDone
-		if d.receipt.Trigger == nil {
-			if e, ok := <-d.trigger; ok {
-				d.receipt.Trigger = &e
-				if d.cfg.Mode == "trace" {
-					d.receipt.TraceStatus = "cancelled-before-snapshot"
-				}
-			}
-		}
+		d.cancel()
+		<-d.sampleDone
 		d.receipt.Cancelled = d.parent.Err() != nil
 		d.err = errors.Join(d.err, d.parent.Err())
 		if err := os.Mkdir(directory, 0o700); err != nil {

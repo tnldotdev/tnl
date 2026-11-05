@@ -21,6 +21,7 @@ const postgresRecordingNotes = "buffered retains the preallocated raw-result bac
 	"timing offsets use the visitor's monotonic phase epoch; completed_ns precedes deferred request cleanup, request_returned_ns follows it; result_index is 1-based JSONL order and slot is 0-based. " +
 	"collector_unlock_started_ns precedes unlock; collector_released_ns can include scheduling after unlock. file writes can contain bytes from several results. " +
 	"late sample and trace modes each add one direct verified-TLS target observer outside the measured sessions; its queries change the database workload, so compare matched observer controls. " +
+	"trace mode also adds per-request tasks/session markers and bounded visitor/publisher flight recorders; their allocations, CPU and snapshots perturb timing. requested post-trigger coverage is not verified retention. " +
 	"for successful phases with a completed resource-guard artifact, target_sampler_finish_started_ns follows measured worker and observer-hook joins, resource capture and export authorization; authorization alone also releases visitors after coordinator abort. target sampling may finish an in-flight query after that boundary. target cleanup/export precedes late cleanup/export, and neither is a measured query tail."
 
 type postgresRecording struct {
@@ -46,6 +47,8 @@ type postgresRecordingMetadata struct {
 	FlushCompleted               time.Time     `json:"flush_completed"`
 	TimingEnabled                bool          `json:"timing_enabled"`
 	LateDiagnostics              string        `json:"late_diagnostics"`
+	RequestTracing               bool          `json:"request_tracing"`
+	PublisherLateTracing         bool          `json:"publisher_late_tracing"`
 	TargetObserverConnections    int           `json:"target_observer_connections"`
 	TargetSamplerFinishStarted   time.Duration `json:"target_sampler_finish_started_ns,omitzero"`
 	TargetSamplerFinishCompleted time.Duration `json:"target_sampler_finish_completed_ns,omitzero"`

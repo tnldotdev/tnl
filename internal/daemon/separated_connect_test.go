@@ -171,12 +171,37 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 		}
 	}
 	separatedWrite(t, separatedPublisherShardKey(shard, "connect-ready"), services)
-	if diagnostics != nil {
+	lateTracing := *runtimeLoadWorkload == "postgres" && *postgresLoadLateDiagnostics == "trace"
+	if diagnostics != nil || lateTracing {
 		var phase connectLoadPhase
 		if !separatedRead(t, ctx, "connect.phase-1", &phase) {
 			return
 		}
+		var late *postgresPublisherLate
+		var cancelLate context.CancelFunc = func() {}
+		lateDirectory := filepath.Join("/results", "publisher-late-"+phase.Name+"-"+*separatedComponent)
+		if lateTracing {
+			var lateCtx context.Context
+			lateCtx, cancelLate = context.WithCancel(ctx)
+			var err error
+			late, err = startPostgresPublisherLate(lateCtx, separatedCoordination(t), phase, *separatedComponent)
+			if err != nil {
+				t.Error(err)
+				cancelLate()
+			}
+		}
+		defer func() {
+			// cancel only aborted/pending work; normal Finish below joins its tail.
+			cancelLate()
+			if err := late.Finish(lateDirectory); err != nil {
+				t.Error(err)
+			}
+		}()
 		diagnostics.Capture(t, ctx, phase.Name, phase.Start, phase.Duration)
+		if err := late.Finish(lateDirectory); err != nil {
+			t.Error(err)
+		}
+		late = nil
 		separatedWrite(t, phase.Name+".publisher-diagnostics-done", true)
 	}
 	if !separatedRead(t, ctx, "connect.publishers.stop", nil) {
@@ -280,7 +305,7 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 			separatedWait(t, name+"."+component, duration+15*time.Second, &result)
 			results = append(results, result)
 		}
-		if *runtimeLoadWorkload == "postgres" && *postgresLoadDiagnostics != "off" && !phase.Direct {
+		if *runtimeLoadWorkload == "postgres" && (*postgresLoadDiagnostics != "off" || *postgresLoadLateDiagnostics == "trace") && !phase.Direct {
 			separatedWait(t, name+".publisher-diagnostics-done", 15*time.Second, nil)
 		}
 		if *runtimeLoadWorkload != "postgres" {

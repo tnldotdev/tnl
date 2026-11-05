@@ -179,6 +179,9 @@ func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 		t.Fatal(err)
 	}
 	if *runtimeLoadWorkload == "postgres" {
+		if *postgresLoadLateDiagnostics == "trace" && *postgresLoadDiagnostics == "trace" {
+			t.Fatal("late PostgreSQL tracing cannot share the publisher runtime tracer with publisher diagnostics=trace; use metrics")
+		}
 		if !slices.Contains([]string{"off", "metrics", "cpu", "contention", "trace"}, *postgresLoadDiagnostics) || *postgresLoadDiagnostics != "off" && *runtimeLoadDuration <= publisherDiagnosticGuard {
 			t.Fatal("invalid PostgreSQL diagnostics mode or duration")
 		}

@@ -194,6 +194,8 @@ func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component st
 				t.Fatal(err)
 			}
 			metadata := postgresRecordingMetadata{Mode: *postgresLoadRecording, SchedulerClock: "monotonic_rebased_once", SampleLimit: samples, PreparationStarted: time.Now(), TimingEnabled: *postgresLoadTiming, LateDiagnostics: *postgresLoadLateDiagnostics, Notes: postgresRecordingNotes}
+			metadata.RequestTracing = *postgresLoadLateDiagnostics == "trace"
+			metadata.PublisherLateTracing = metadata.RequestTracing && !phase.Direct
 			recording, err := newPostgresRecording(*postgresLoadRecording, samples, requestFile)
 			if err != nil {
 				t.Fatal(err)
@@ -241,13 +243,36 @@ func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component st
 				now := time.Now()
 				phase.Start = now.Add(phase.Start.Sub(now))
 			}
-			late := startPostgresLateDiagnostic(ctx, postgresLateConfig{Phase: phase.Name, Start: phase.Start, Duration: phase.Duration, ConnectorPID: connectorPID})
+			lateConfig := postgresLateConfig{Phase: phase.Name, Start: phase.Start, Duration: phase.Duration, ConnectorPID: connectorPID}
+			publisherTrace := *postgresLoadLateDiagnostics == "trace" && !phase.Direct
+			if publisherTrace {
+				coordination := separatedCoordination(t)
+				lateConfig.Notify = func(notify context.Context, event postgresLateTrigger) error {
+					return coordination.Put(notify, phase.Name+".late-trigger", event)
+				}
+			}
+			late := startPostgresLateDiagnostic(ctx, lateConfig)
 			lateDirectory := filepath.Join("/results", "late-"+phase.Name+"-"+component)
-			defer func() {
-				finishTarget()
+			finishLate := func() {
+				if late == nil {
+					return
+				}
 				if err := late.Finish(lateDirectory); err != nil {
 					t.Error(err)
 				}
+				late = nil
+				if publisherTrace {
+					finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), benchworkload.RequestTimeout)
+					defer cancel()
+					// notification and capture have joined before no-event is visible.
+					if err := separatedCoordination(t).Put(finish, phase.Name+".late-finished", true); err != nil {
+						t.Error(err)
+					}
+				}
+			}
+			defer func() {
+				finishTarget()
+				finishLate()
 			}()
 			if target != nil {
 				if err := target.Start(ctx, phase.Start, phase.Duration); err != nil {
@@ -260,7 +285,7 @@ func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component st
 					late.Observe(row.Slot, row.Started, row.Completed, row.CallbackStarted, row.CallbackCompleted)
 				}
 			}
-			result.Summary, err = visitor.Run(ctx, benchworkload.VisitorConfig{Rate: *runtimeLoadRPS, Workers: *runtimeLoadWorkers, QueueSlots: *runtimeLoadQueue, Start: phase.Start, Duration: phase.Duration, OnResult: recording.Record, Timing: timing, OnTiming: observe})
+			result.Summary, err = visitor.Run(ctx, benchworkload.VisitorConfig{Rate: *runtimeLoadRPS, Workers: *runtimeLoadWorkers, QueueSlots: *runtimeLoadQueue, Start: phase.Start, Duration: phase.Duration, OnResult: recording.Record, Timing: timing, OnTiming: observe, TraceRequests: *postgresLoadLateDiagnostics == "trace"})
 			metadata.MeasurementCompleted = time.Now()
 			// keep diagnostic Finish/export calls after this guard; enabled samplers
 			// may continue while the coordinator captures resources.
@@ -269,10 +294,7 @@ func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component st
 			}
 			metadata.ExportAuthorized = time.Now()
 			finishTarget()
-			if finishErr := late.Finish(lateDirectory); finishErr != nil {
-				t.Error(finishErr)
-			}
-			late = nil
+			finishLate()
 			// publish only metadata, and only once the complete artifact is visible.
 			metadata.FlushStarted = time.Now()
 			if err := errors.Join(err, recording.Flush(), requestFile.Close()); err != nil {

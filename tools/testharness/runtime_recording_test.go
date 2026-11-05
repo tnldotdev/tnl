@@ -2,6 +2,23 @@ package main
 
 import "testing"
 
+func TestRuntimeTraceOwnerValidation(t *testing.T) {
+	for _, tc := range []struct {
+		publisher, late string
+		valid           bool
+	}{
+		{"trace", "trace", false},
+		{"trace", "sample", true},
+		{"trace", "off", true},
+		{"metrics", "trace", true},
+		{"off", "trace", true},
+	} {
+		if err := validateRuntimeTraceOwners(tc.publisher, tc.late); (err == nil) != tc.valid {
+			t.Fatalf("%+v: %v", tc, err)
+		}
+	}
+}
+
 func TestRuntimeRecordingValidation(t *testing.T) {
 	for _, tc := range []struct {
 		workload, mode, timing, late, cpus, gomaxprocs string

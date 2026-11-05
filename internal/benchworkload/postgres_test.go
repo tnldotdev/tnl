@@ -18,6 +18,34 @@ import (
 // the routine fixture checks pgx session ownership without external infrastructure.
 // the separated load test supplies real PostgreSQL, SCRAM, and verified TLS.
 func TestPostgresVisitorWarmSessions(t *testing.T) {
+	visitor, accepted := preparePostgresVisitor(t, 4, nil)
+	before, err := visitor.Verify(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := visitor.Run(t.Context(), VisitorConfig{Rate: 100, Workers: 4, QueueSlots: 4, Duration: 100 * time.Millisecond})
+	if err != nil || result.Err() != nil || result.Successes != 10 || result.FirstByte.Count != 0 || result.Connect.Count != 0 || result.TLS.Count != 0 {
+		t.Fatalf("warm result: %+v %v", result, err)
+	}
+	after, err := visitor.Verify(t.Context())
+	if err != nil || !slices.Equal(before.BackendPIDs, after.BackendPIDs) || after.DialCalls != 4 || accepted.Load() != 4 {
+		t.Fatalf("session identity changed: before=%+v after=%+v accepted=%d error=%v", before, after, accepted.Load(), err)
+	}
+	// a failed connection is reported, never silently replaced by a fresh session.
+	if err := visitor.owned[0].Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	result, err = visitor.Run(t.Context(), VisitorConfig{Rate: 100, Workers: 4, QueueSlots: 4, Duration: 100 * time.Millisecond})
+	if err != nil || result.Failures == 0 || result.Err() == nil || accepted.Load() != 4 {
+		t.Fatalf("broken session reconnected or hidden: %+v accepted=%d error=%v", result, accepted.Load(), err)
+	}
+	if _, err := visitor.Verify(t.Context()); err == nil {
+		t.Fatal("broken session passed verification")
+	}
+}
+
+func preparePostgresVisitor(t *testing.T, count int, tracer pgx.QueryTracer) (*PostgresVisitor, *atomic.Uint32) {
+	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -88,35 +116,14 @@ func TestPostgresVisitorWarmSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	config.Tracer = tracer
 	visitor := &PostgresVisitor{}
 	t.Cleanup(func() { _ = visitor.Close() })
-	setup, err := visitor.Prepare(t.Context(), config, 4)
-	if err != nil || setup.Count != 4 {
+	setup, err := visitor.Prepare(t.Context(), config, count)
+	if err != nil || setup.Count != uint64(count) {
 		t.Fatalf("prepare: %+v %v", setup, err)
 	}
-	before, err := visitor.Verify(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := visitor.Run(t.Context(), VisitorConfig{Rate: 100, Workers: 4, QueueSlots: 4, Duration: 100 * time.Millisecond})
-	if err != nil || result.Err() != nil || result.Successes != 10 || result.FirstByte.Count != 0 || result.Connect.Count != 0 || result.TLS.Count != 0 {
-		t.Fatalf("warm result: %+v %v", result, err)
-	}
-	after, err := visitor.Verify(t.Context())
-	if err != nil || !slices.Equal(before.BackendPIDs, after.BackendPIDs) || after.DialCalls != 4 || accepted.Load() != 4 {
-		t.Fatalf("session identity changed: before=%+v after=%+v accepted=%d error=%v", before, after, accepted.Load(), err)
-	}
-	// a failed connection is reported, never silently replaced by a fresh session.
-	if err := visitor.owned[0].Close(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	result, err = visitor.Run(t.Context(), VisitorConfig{Rate: 100, Workers: 4, QueueSlots: 4, Duration: 100 * time.Millisecond})
-	if err != nil || result.Failures == 0 || result.Err() == nil || accepted.Load() != 4 {
-		t.Fatalf("broken session reconnected or hidden: %+v accepted=%d error=%v", result, accepted.Load(), err)
-	}
-	if _, err := visitor.Verify(t.Context()); err == nil {
-		t.Fatal("broken session passed verification")
-	}
+	return visitor, &accepted
 }
 
 func TestPostgresVisitorRequiresPreparedSessions(t *testing.T) {
