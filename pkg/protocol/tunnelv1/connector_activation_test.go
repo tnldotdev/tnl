@@ -65,13 +65,28 @@ func TestConnectorLegActivationClosedUnionAndExactNonce(t *testing.T) {
 }
 
 func TestConnectorHandoffRevisionWireBoundsAndNoWrap(t *testing.T) {
-	payload := string(readFixture(t, "control-connector-replace.json"))
+	compactFixture := func(name string) string {
+		t.Helper()
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, readFixture(t, name)); err != nil {
+			t.Fatal(err)
+		}
+		return compact.String()
+	}
+	replaceField := func(payload, field, value string) string {
+		t.Helper()
+		if strings.Count(payload, field) != 1 {
+			t.Fatal("fixture mutation did not select exactly one field", field)
+		}
+		return strings.Replace(payload, field, value, 1)
+	}
+	payload := compactFixture("control-connector-replace.json")
 	for _, value := range []string{"null", "0", "-1", "1.5", `"1"`, "18446744073709551616"} {
-		if _, err := ReadControl(frame(strings.Replace(payload, `"handoff_revision":7`, `"handoff_revision":`+value, 1))); err == nil {
+		if _, err := ReadControl(frame(replaceField(payload, `"handoff_revision":7`, `"handoff_revision":`+value))); err == nil {
 			t.Fatal("invalid handoff revision accepted", value)
 		}
 	}
-	maximum, err := ReadControl(frame(strings.Replace(payload, `"handoff_revision":7`, `"handoff_revision":18446744073709551615`, 1)))
+	maximum, err := ReadControl(frame(replaceField(payload, `"handoff_revision":7`, `"handoff_revision":18446744073709551615`)))
 	if err != nil || maximum.ConnectorLegBinding.HandoffRevision != math.MaxUint64 {
 		t.Fatal("maximum revision failed exact uint64 parsing", err)
 	}
@@ -81,9 +96,9 @@ func TestConnectorHandoffRevisionWireBoundsAndNoWrap(t *testing.T) {
 	if next, err := ConnectorHandoffRevision(math.MaxUint64 - 1).Next(); err != nil || next != math.MaxUint64 {
 		t.Fatal("final revision was unavailable", next, err)
 	}
-	initial := string(readFixture(t, "control-connector-activate.json"))
+	initial := compactFixture("control-connector-activate.json")
 	for _, value := range []string{"null", "0", "1"} {
-		initialWithRevision := strings.Replace(initial, `"nonce":`, `"handoff_revision":`+value+`,"nonce":`, 1)
+		initialWithRevision := replaceField(initial, `"nonce":`, `"handoff_revision":`+value+`,"nonce":`)
 		if _, err := ReadControl(frame(initialWithRevision)); err == nil {
 			t.Fatal("initial activation accepted replacement revision", value)
 		}
