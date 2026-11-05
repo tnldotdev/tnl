@@ -87,20 +87,17 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		return servicesSchema()
 	case reflect.TypeOf(config.Workload{}):
 		type declaration config.Workload
-		base := (&jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, RequiredFromJSONSchemaTags: true, Mapper: schemaForType}).Reflect(declaration{})
+		base := (&jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, DoNotReference: true, RequiredFromJSONSchemaTags: true, Mapper: schemaForType}).Reflect(declaration{})
 		result := &jsonschema.Schema{}
-		for _, branch := range []struct {
-			provider         string
-			fields, required []string
-		}{
-			{"github", []string{"github"}, []string{"github"}},
-			{"vercel", []string{"team_id", "project_id", "environment", "team_slug", "issuer_mode"}, []string{"team_id", "project_id", "environment"}},
-			{"fly", []string{"org", "org_id", "app", "app_id", "machine_id"}, []string{"org", "org_id", "app", "app_id"}},
-			{"oidc", []string{"issuer", "jwks_url", "audience", "claims", "token_file"}, []string{"issuer", "jwks_url", "audience", "claims"}},
-		} {
+		providers := []string{"github", "vercel", "fly", "oidc"}
+		for _, provider := range providers {
 			props := jsonschema.NewProperties()
-			props.Set("provider", &jsonschema.Schema{Type: "string", Const: branch.provider})
-			for _, key := range append([]string{"services", "max_duration"}, branch.fields...) {
+			for _, other := range providers {
+				if other != provider {
+					props.Set(other, jsonschema.FalseSchema)
+				}
+			}
+			for _, key := range []string{"services", "max_duration", "token", provider} {
 				if property, ok := base.Properties.Get(key); ok {
 					if key == "max_duration" {
 						property.Default = config.DefaultWorkloadMaxDuration.String()
@@ -108,7 +105,7 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 					props.Set(key, property)
 				}
 			}
-			result.OneOf = append(result.OneOf, &jsonschema.Schema{Type: "object", Properties: props, Required: append([]string{"provider", "services"}, branch.required...), AdditionalProperties: jsonschema.FalseSchema})
+			result.OneOf = append(result.OneOf, &jsonschema.Schema{Type: "object", Properties: props, Required: []string{provider, "services"}, AdditionalProperties: jsonschema.FalseSchema})
 		}
 		return result
 	case reflect.TypeOf(config.WorkloadGitHub{}):
@@ -116,14 +113,47 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		properties.Set("repository", &jsonschema.Schema{Type: "string", Pattern: `^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`})
 		properties.Set("workflow", &jsonschema.Schema{Type: "string", Pattern: `^\.github/workflows/[^/*?\[\]]+\.ya?ml$`})
 		properties.Set("environment", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
-		properties.Set("ref", &jsonschema.Schema{Type: "string", Pattern: `^refs/(heads|tags)/[^*?\[\] ]+$`})
 		properties.Set("reusable_workflow", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)})
 		events := []any{}
 		for _, event := range config.WorkloadEvents {
 			events = append(events, event)
 		}
-		properties.Set("events", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), UniqueItems: true, Items: &jsonschema.Schema{Type: "string", Enum: events}})
-		return &jsonschema.Schema{Type: "object", Properties: properties, Required: []string{"workflow", "ref", "events"}, AdditionalProperties: jsonschema.FalseSchema}
+		properties.Set("events", &jsonschema.Schema{Type: "array", MinItems: integerPointer(1), UniqueItems: true, Items: &jsonschema.Schema{Type: "string", Enum: events}, Default: []string{"push"}})
+		result := &jsonschema.Schema{}
+		for _, selector := range []string{"", "branch", "tag"} {
+			props := jsonschema.NewProperties()
+			for pair := properties.Oldest(); pair != nil; pair = pair.Next() {
+				props.Set(pair.Key, pair.Value)
+			}
+			for _, key := range []string{"branch", "tag"} {
+				property := jsonschema.FalseSchema
+				if key == selector {
+					property = &jsonschema.Schema{Type: "string", MinLength: integerPointer(1)}
+				}
+				props.Set(key, property)
+			}
+			required := []string{"workflow"}
+			if selector != "" {
+				required = append(required, selector)
+			}
+			result.OneOf = append(result.OneOf, &jsonschema.Schema{Type: "object", Properties: props, Required: required, AdditionalProperties: jsonschema.FalseSchema})
+		}
+		return result
+	case reflect.TypeOf(config.WorkloadToken{}):
+		result := &jsonschema.Schema{}
+		for _, key := range []string{"file", "env"} {
+			props := jsonschema.NewProperties()
+			for _, other := range []string{"file", "env"} {
+				props.Set(other, jsonschema.FalseSchema)
+			}
+			property := &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(4096)}
+			if key == "env" {
+				property.Pattern = `^[A-Za-z_][A-Za-z0-9_]{0,127}$`
+			}
+			props.Set(key, property)
+			result.OneOf = append(result.OneOf, &jsonschema.Schema{Type: "object", Properties: props, Required: []string{key}, AdditionalProperties: jsonschema.FalseSchema})
+		}
+		return result
 	case reflect.TypeOf(map[string]config.PublisherGroup{}):
 		properties := jsonschema.NewProperties()
 		properties.Set("description", &jsonschema.Schema{Type: "string", MaxLength: integerPointer(1024)})

@@ -54,6 +54,24 @@ func TestAssertionSourceOneOfAndRotation(t *testing.T) {
 	}
 }
 
+func TestAssertionEnvironmentOverride(t *testing.T) {
+	hints := workloadmanifest.Acquisition{Method: "token-env", TokenEnv: "JOB_ID_TOKEN"}
+	for _, token := range []string{"first.private.jwt", "second.private.jwt"} {
+		t.Setenv("JOB_ID_TOKEN", token)
+		if actual, err := Acquire(t.Context(), hints, nil, os.Getenv); err != nil || actual != token {
+			t.Fatal("environment source did not use current value", err)
+		}
+	}
+	t.Setenv("JOB_ID_TOKEN", "")
+	t.Setenv("VERCEL_OIDC_TOKEN", "fallback.private.jwt")
+	if _, err := Acquire(t.Context(), hints, nil, os.Getenv); !errors.Is(err, ErrAssertionUnavailable) {
+		t.Fatal("missing selected environment fell back", err)
+	}
+	if _, err := Acquire(t.Context(), hints, func(context.Context) (string, error) { return "callback.private.jwt", nil }, os.Getenv); !errors.Is(err, ErrAssertionSource) {
+		t.Fatal("ambiguous callback and env accepted", err)
+	}
+}
+
 func TestFlyMachineTokenWire(t *testing.T) {
 	var mu sync.Mutex
 	reply, status, calls := "signed.machine.jwt\n", http.StatusOK, 0

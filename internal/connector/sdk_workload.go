@@ -59,7 +59,7 @@ func selectSDKWorkload(directory, service string, request connectorruntime.SDKWo
 }
 
 func sdkWorkloadContext(selected workloadmanifest.Selection, source string) connectorruntime.SDKWorkload {
-	return connectorruntime.SDKWorkload{Schema: 1, Name: selected.Name, Directory: selected.Directory, Manifest: selected.Path, Policy: selected.Policy, Source: source}
+	return connectorruntime.SDKWorkload{Schema: 1, Name: selected.Name, Directory: selected.Directory, Manifest: selected.Path, Policy: selected.Policy, Source: source, TokenEnv: selected.Workload.Acquisition.TokenEnv}
 }
 
 func acquireSDKWorkload(ctx context.Context, selected workloadmanifest.Selection, source string, request connectorruntime.SDKWorkloadRequest, environment connectorruntime.SDKEnvironment, assertion string) (string, error) {

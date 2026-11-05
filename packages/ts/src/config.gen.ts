@@ -960,7 +960,9 @@ export interface TnlConfig {
   workloads?: {
     [k: string]:
       | {
-          provider: "github";
+          vercel?: never;
+          fly?: never;
+          oidc?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -968,41 +970,162 @@ export interface TnlConfig {
            * @maxItems 32
            */
           services: [string, ...string[]];
-          github: {
-            repository?: string;
-            workflow: string;
-            environment?: string;
-            ref: string;
+          token?:
+            | {
+                file: string;
+                env?: never;
+              }
+            | {
+                file?: never;
+                env: string;
+              };
+          github:
+            | {
+                repository?: string;
+                workflow: string;
+                environment?: string;
+                /**
+                 * @minItems 1
+                 */
+                events?: [
+                  (
+                    | "push"
+                    | "pull_request"
+                    | "pull_request_target"
+                    | "workflow_dispatch"
+                    | "workflow_call"
+                    | "schedule"
+                    | "release"
+                    | "merge_group"
+                    | "repository_dispatch"
+                    | "workflow_run"
+                  ),
+                  ...(
+                    | "push"
+                    | "pull_request"
+                    | "pull_request_target"
+                    | "workflow_dispatch"
+                    | "workflow_call"
+                    | "schedule"
+                    | "release"
+                    | "merge_group"
+                    | "repository_dispatch"
+                    | "workflow_run"
+                  )[],
+                ];
+                branch?: never;
+                tag?: never;
+                reusableWorkflow?: string;
+              }
+            | {
+                repository?: string;
+                workflow: string;
+                environment?: string;
+                /**
+                 * @minItems 1
+                 */
+                events?: [
+                  (
+                    | "push"
+                    | "pull_request"
+                    | "pull_request_target"
+                    | "workflow_dispatch"
+                    | "workflow_call"
+                    | "schedule"
+                    | "release"
+                    | "merge_group"
+                    | "repository_dispatch"
+                    | "workflow_run"
+                  ),
+                  ...(
+                    | "push"
+                    | "pull_request"
+                    | "pull_request_target"
+                    | "workflow_dispatch"
+                    | "workflow_call"
+                    | "schedule"
+                    | "release"
+                    | "merge_group"
+                    | "repository_dispatch"
+                    | "workflow_run"
+                  )[],
+                ];
+                branch: string;
+                tag?: never;
+                reusableWorkflow?: string;
+              }
+            | {
+                repository?: string;
+                workflow: string;
+                environment?: string;
+                /**
+                 * @minItems 1
+                 */
+                events?: [
+                  (
+                    | "push"
+                    | "pull_request"
+                    | "pull_request_target"
+                    | "workflow_dispatch"
+                    | "workflow_call"
+                    | "schedule"
+                    | "release"
+                    | "merge_group"
+                    | "repository_dispatch"
+                    | "workflow_run"
+                  ),
+                  ...(
+                    | "push"
+                    | "pull_request"
+                    | "pull_request_target"
+                    | "workflow_dispatch"
+                    | "workflow_call"
+                    | "schedule"
+                    | "release"
+                    | "merge_group"
+                    | "repository_dispatch"
+                    | "workflow_run"
+                  )[],
+                ];
+                branch?: never;
+                tag: string;
+                reusableWorkflow?: string;
+              };
+          /**
+           * Fixed session window; defaults to 1h and must be positive and at most 6h.
+           */
+          maxDuration?: TnlRatePeriod;
+        }
+      | {
+          github?: never;
+          fly?: never;
+          oidc?: never;
+          /**
+           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           *
+           * @minItems 1
+           * @maxItems 32
+           */
+          services: [string, ...string[]];
+          token?:
+            | {
+                file: string;
+                env?: never;
+              }
+            | {
+                file?: never;
+                env: string;
+              };
+          vercel: {
             /**
-             * @minItems 1
+             * Project name; defaults to the linked Vercel project.
              */
-            events: [
-              (
-                | "push"
-                | "pull_request"
-                | "pull_request_target"
-                | "workflow_dispatch"
-                | "workflow_call"
-                | "schedule"
-                | "release"
-                | "merge_group"
-                | "repository_dispatch"
-                | "workflow_run"
-              ),
-              ...(
-                | "push"
-                | "pull_request"
-                | "pull_request_target"
-                | "workflow_dispatch"
-                | "workflow_call"
-                | "schedule"
-                | "release"
-                | "merge_group"
-                | "repository_dispatch"
-                | "workflow_run"
-              )[],
-            ];
-            reusableWorkflow?: string;
+            project?: string;
+            /**
+             * Team slug; defaults to the linked project's owner.
+             */
+            team?: string;
+            environment: "production" | "preview" | "development";
           };
           /**
            * Fixed session window; defaults to 1h and must be positive and at most 6h.
@@ -1010,7 +1133,9 @@ export interface TnlConfig {
           maxDuration?: TnlRatePeriod;
         }
       | {
-          provider: "vercel";
+          github?: never;
+          vercel?: never;
+          oidc?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1018,55 +1143,69 @@ export interface TnlConfig {
            * @maxItems 32
            */
           services: [string, ...string[]];
-          environment: string;
-          issuerMode?: "team" | "global";
-          /**
-           * Fixed session window; defaults to 1h and must be positive and at most 6h.
-           */
-          maxDuration?: TnlRatePeriod;
-          projectId: string;
-          teamId: string;
-          teamSlug?: string;
-        }
-      | {
-          provider: "fly";
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
-          org: string;
-          app: string;
-          appId: string;
-          machineId?: string;
-          /**
-           * Fixed session window; defaults to 1h and must be positive and at most 6h.
-           */
-          maxDuration?: TnlRatePeriod;
-          orgId: string;
-        }
-      | {
-          provider: "oidc";
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
-          issuer: string;
-          audience: string;
-          claims: {
-            [k: string]: string | undefined;
+          token?:
+            | {
+                file: string;
+                env?: never;
+              }
+            | {
+                file?: never;
+                env: string;
+              };
+          fly: {
+            /**
+             * Application name; defaults to fly.toml.
+             */
+            app?: string;
+            /**
+             * Organization slug; defaults to the application's owner.
+             */
+            org?: string;
+            machineId?: string;
           };
-          jwksUrl: string;
           /**
            * Fixed session window; defaults to 1h and must be positive and at most 6h.
            */
           maxDuration?: TnlRatePeriod;
-          tokenFile?: string;
+        }
+      | {
+          github?: never;
+          vercel?: never;
+          fly?: never;
+          /**
+           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           *
+           * @minItems 1
+           * @maxItems 32
+           */
+          services: [string, ...string[]];
+          token?:
+            | {
+                file: string;
+                env?: never;
+              }
+            | {
+                file?: never;
+                env: string;
+              };
+          oidc: {
+            issuer: string;
+            /**
+             * Intended token recipient; defaults to the control URL.
+             */
+            audience?: string;
+            claims: {
+              [k: string]: string | undefined;
+            };
+            /**
+             * Signing-key endpoint; defaults to issuer discovery during apply.
+             */
+            jwksUrl?: string;
+          };
+          /**
+           * Fixed session window; defaults to 1h and must be positive and at most 6h.
+           */
+          maxDuration?: TnlRatePeriod;
         }
       | undefined;
   };

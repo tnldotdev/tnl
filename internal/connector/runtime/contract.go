@@ -89,6 +89,7 @@ type SDKWorkload struct {
 	Manifest  string `json:"manifest"`
 	Policy    string `json:"policy"`
 	Source    string `json:"source"`
+	TokenEnv  string `json:"token_env,omitempty"`
 }
 
 // SDKEnvironment is request-private provider input from the application process.
@@ -99,12 +100,17 @@ type SDKEnvironment struct {
 	GitHubRequestToken string `json:"github_request_token,omitempty"`
 	VercelTokenFile    string `json:"vercel_token_file,omitempty"`
 	VercelToken        string `json:"vercel_token,omitempty"`
+	TokenEnv           string `json:"token_env,omitempty"`
+	TokenValue         string `json:"token_value,omitempty"`
 }
 
 func (SDKEnvironment) String() string   { return "private SDK provider environment" }
 func (SDKEnvironment) GoString() string { return "private SDK provider environment" }
 
 func (e SDKEnvironment) Getenv(name string) string {
+	if name != "" && name == e.TokenEnv {
+		return e.TokenValue
+	}
 	switch name {
 	case "GITHUB_ACTIONS":
 		return e.GitHubActions

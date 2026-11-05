@@ -19,6 +19,8 @@ export interface SelectionOptions {
     github_request_token: string;
     vercel_token_file: string;
     vercel_token: string;
+    token_env?: string;
+    token_value?: string;
   };
 }
 
@@ -29,5 +31,9 @@ export const workloadSelectionSchema = z.strictObject({
   manifest: pathTextSchema,
   policy: digestSchema,
   source: z.enum(["callback", "vercel", "native"]),
+  token_env: z
+    .string()
+    .regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/)
+    .optional(),
 });
 export type WorkloadSelection = z.output<typeof workloadSelectionSchema>;
