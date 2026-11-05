@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -163,26 +162,24 @@ func (d *connectorDelivery) renew(ctx context.Context, a *ConnectorAcceptor, out
 // connector carrier is absent. only an exact authenticated predecessor handoff
 // may replace that carrier, before the last confirmed deadline.
 type connectorBridge struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	done       chan struct{}
-	publisher  *peer.ForwardingRegistration
-	connector  *peer.CarrierSlot
-	replace    sync.Mutex
-	mu         sync.Mutex
-	active     *connectorDelivery
-	nonce      []byte
-	previous   []byte
-	selectedAt time.Time
-	used       map[[32]byte]bool
-	until      time.Time
-	claim      connectorClaim
-	proof      tunnelv1.ConnectorPairLegProof
+	ctx       context.Context
+	cancel    context.CancelFunc
+	done      chan struct{}
+	publisher *peer.ForwardingRegistration
+	connector *peer.CarrierSlot
+	replace   sync.Mutex
+	mu        sync.Mutex
+	active    *connectorDelivery
+	handoff   handoffState
+	until     time.Time
+	claim     connectorClaim
+	proof     tunnelv1.ConnectorPairLegProof
 }
 
 func (p *connectorPacketSession) selectBridge(ctx context.Context, a *ConnectorAcceptor, d *connectorDelivery, id [16]byte, selection tunnelv1.ConnectorLegBinding) (*connectorBridge, error) {
 	denied := &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
-	if !selection.Matches(d.proof) {
+	activation, err := selection.Activation()
+	if err != nil || !activation.Matches(d.proof) {
 		return nil, denied
 	}
 	lease, valid := a.currentLease(d.proof)
@@ -195,12 +192,12 @@ func (p *connectorPacketSession) selectBridge(ctx context.Context, a *ConnectorA
 		return nil, errors.Join(denied, net.ErrClosed)
 	}
 	b := p.bridges[id]
-	if len(selection.PreviousNonce) != 0 {
+	if _, replacement := activation.Replacement(); replacement {
 		p.mu.Unlock()
 		if b == nil {
 			return nil, denied
 		}
-		return b.replaceCarrier(ctx, d, selection)
+		return b.replaceCarrier(ctx, d, activation)
 	}
 	defer p.mu.Unlock()
 	if b != nil {
@@ -218,27 +215,28 @@ func (p *connectorPacketSession) selectBridge(ctx context.Context, a *ConnectorA
 	life, cancel := context.WithCancel(p.ctx)
 	b = &connectorBridge{ctx: life, cancel: cancel, done: make(chan struct{}), publisher: carrier,
 		connector: connector, active: d, until: d.until, claim: d.claim, proof: d.proof,
-		nonce: bytes.Clone(selection.Nonce), selectedAt: d.proof.RequestedAt, used: map[[32]byte]bool{[32]byte(selection.Nonce): true}}
+		handoff: initialHandoff(activation, d.proof.RequestedAt)}
 	_ = b.connector.Install(&connectorReadyCarrier{Carrier: d.carrier, cancel: d.cancel})
 	p.bridges[id] = b
 	go b.serve(p, a, d.connection, id)
 	return b, nil
 }
 
-func (b *connectorBridge) replaceCarrier(ctx context.Context, d *connectorDelivery, selection tunnelv1.ConnectorLegBinding) (*connectorBridge, error) {
+func (b *connectorBridge) replaceCarrier(ctx context.Context, d *connectorDelivery, selection tunnelv1.ConnectorActivation) (*connectorBridge, error) {
 	denied := &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
-	if !selection.Matches(d.proof) || len(selection.ReplacementNonce) != 32 {
+	if !selection.Matches(d.proof) {
 		return nil, denied
 	}
 	b.replace.Lock()
 	defer b.replace.Unlock()
 	b.mu.Lock()
-	nonce := [32]byte(selection.ReplacementNonce)
-	retry := bytes.Equal(b.nonce, selection.ReplacementNonce) && bytes.Equal(b.previous, selection.PreviousNonce)
-	advance := bytes.Equal(b.nonce, selection.PreviousNonce) && !b.used[nonce] && len(b.used) < 64
 	if ctx.Err() != nil || d.ctx.Err() != nil || b.ctx.Err() != nil || !b.until.After(time.Now()) || !d.until.After(time.Now()) ||
-		(!retry && !advance) || !d.proof.RequestedAt.After(b.selectedAt) || !b.proof.SameLeg(d.proof) ||
+		!b.proof.SameLeg(d.proof) ||
 		b.claim.key != d.claim.key || b.claim.ref != d.claim.ref || b.claim.receipt.SourceIP != d.claim.receipt.SourceIP {
+		b.mu.Unlock()
+		return nil, denied
+	}
+	if b.handoff.record(selection, d.proof.RequestedAt) == handoffRejected {
 		b.mu.Unlock()
 		return nil, denied
 	}
@@ -249,7 +247,7 @@ func (b *connectorBridge) replaceCarrier(ctx context.Context, d *connectorDelive
 		b.until = d.until
 	}
 	d.until = b.until
-	b.active, b.previous, b.nonce, b.used[nonce], b.selectedAt = d, bytes.Clone(selection.PreviousNonce), bytes.Clone(selection.ReplacementNonce), true, d.proof.RequestedAt
+	b.active = d
 	b.mu.Unlock()
 	err := b.connector.Install(&connectorReadyCarrier{Carrier: d.carrier, cancel: d.cancel})
 	if old != nil {

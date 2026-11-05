@@ -25,7 +25,7 @@ func TestConnectorReconnectStopsOnAuthorizationDenial(t *testing.T) {
 	defer p.Close()
 	f.denied.Store(true)
 	p.mu.Lock()
-	old := p.legs[0]
+	old := p.paths[0].leg
 	p.mu.Unlock()
 	opened := f.opened.Load()
 	claims := f.assignments[0].Load()
@@ -50,7 +50,7 @@ func TestConnectorReconnectStopsOnAuthorizationDenial(t *testing.T) {
 	if attempts := f.assignments[0].Load() - claims; attempts < 1 || attempts > 2 {
 		t.Fatal("delivered denial started another two-candidate attempt", attempts)
 	}
-	if p.legs[0] != old || f.opened.Load() != opened {
+	if p.paths[0].leg != old || f.opened.Load() != opened {
 		t.Fatal("denied reconnect replaced delivery or application")
 	}
 }
@@ -61,18 +61,21 @@ func TestConnectorReconnectRetryClassification(t *testing.T) {
 	capacity := &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
 	stale := &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 	for _, test := range []struct {
-		err              error
-		temporary, stale bool
+		err  error
+		want reconnectDisposition
 	}{
-		{io.EOF, true, false}, {unavailable, true, false}, {capacity, true, false}, {denied, false, false},
-		{errors.Join(unavailable, denied), false, false}, {errors.Join(capacity, denied), false, false},
-		{errors.Join(ErrServiceConnection, io.ErrUnexpectedEOF), true, false},
-		{ErrServiceConnection, false, false}, {stale, false, true},
-		{errors.Join(unavailable, stale), false, true}, {errors.Join(stale, unavailable), false, true},
-		{errors.Join(stale, denied), false, false}, {errors.Join(denied, stale), false, false},
+		{io.EOF, retryAttempt}, {unavailable, retryAttempt}, {capacity, retryAttempt}, {denied, terminateConnection},
+		{errors.Join(unavailable, denied), terminateConnection}, {errors.Join(capacity, denied), terminateConnection},
+		{errors.Join(ErrServiceConnection, io.ErrUnexpectedEOF), retryAttempt},
+		{ErrServiceConnection, terminateConnection}, {stale, retirePath},
+		{errors.Join(unavailable, stale), retirePath}, {errors.Join(stale, unavailable), retirePath},
+		{errors.Join(stale, denied), terminateConnection}, {errors.Join(denied, stale), terminateConnection},
+		{errors.Join(ErrServiceConnection, errors.Join(io.EOF, stale), denied), terminateConnection},
+		{errors.Join(ErrServiceConnection, errors.Join(io.EOF, stale)), retirePath},
+		{errors.Join(ErrServiceConnection, errors.Join(errors.New("other"), unavailable)), retryAttempt},
 	} {
-		if temporary, stale := connectorReconnectError(test.err); temporary != test.temporary || stale != test.stale {
-			t.Fatal("wrong reconnect retry decision", test.err, temporary, stale)
+		if got := connectorReconnectError(test.err); got != test.want {
+			t.Fatal("wrong reconnect retry decision", test.err, got, test.want)
 		}
 	}
 }

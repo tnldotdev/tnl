@@ -94,3 +94,29 @@ func TestConnectorLegReplacementBindingRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectorActivationCopiesAndDistinguishesIdentities(t *testing.T) {
+	binding := ConnectorLegBinding{Nonce: bytes.Repeat([]byte{1}, 32), PreviousNonce: bytes.Repeat([]byte{2}, 32), ReplacementNonce: bytes.Repeat([]byte{3}, 32)}
+	activation, err := binding.Activation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	handoff, replacement := activation.Replacement()
+	if !replacement || activation.Hello() != (ConnectorHelloNonce(bytes.Repeat([]byte{1}, 32))) || handoff.Previous() != (ConnectorHandoffID(bytes.Repeat([]byte{2}, 32))) || activation.SelectedHandoff() != handoff.Next() {
+		t.Fatal("identity roles changed")
+	}
+	binding.Nonce[0]++
+	binding.PreviousNonce[0]++
+	binding.ReplacementNonce[0]++
+	wire := activation.Binding()
+	if wire.Nonce[0] != 1 || wire.PreviousNonce[0] != 2 || wire.ReplacementNonce[0] != 3 {
+		t.Fatal("validated identities aliased wire bytes")
+	}
+	wire.Nonce[0]++
+	if activation.Binding().Nonce[0] != 1 {
+		t.Fatal("wire serialization aliased validated identity")
+	}
+	if _, err := NewConnectorHandoff(handoff.Next(), handoff.Next()); err == nil || (ConnectorHandoff{}).Valid() {
+		t.Fatal("self replacement accepted")
+	}
+}

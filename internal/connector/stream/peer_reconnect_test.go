@@ -42,7 +42,7 @@ func TestConnectorReconnectRetainsInnerSessionAndApplication(t *testing.T) {
 			opened := f.opened.Load()
 			for _, slots := range [][]int{{0}, {1}, {0, 1}} {
 				p.mu.Lock()
-				old := p.legs
+				old := [2]*connectorRelayLeg{p.paths[0].leg, p.paths[1].leg}
 				p.mu.Unlock()
 				for _, slot := range slots {
 					_ = old[slot].session.Close()
@@ -52,7 +52,7 @@ func TestConnectorReconnectRetainsInnerSessionAndApplication(t *testing.T) {
 					p.mu.Lock()
 					repaired := true
 					for _, slot := range slots {
-						repaired = repaired && p.legs[slot] != old[slot]
+						repaired = repaired && p.paths[slot].leg != old[slot]
 					}
 					p.mu.Unlock()
 					if repaired && p.endpoint.PathHealthy(0) && p.endpoint.PathHealthy(1) {
@@ -104,7 +104,7 @@ func TestConnectorReconnectCancellationAndAuthorityDeadline(t *testing.T) {
 			defer p.Close()
 			armed.Store(true)
 			p.mu.Lock()
-			old := p.legs[0]
+			old := p.paths[0].leg
 			if boundary == "expiry" {
 				p.preparedUntil = time.Now().Add(400 * time.Millisecond)
 				p.notifyLocked()
@@ -137,7 +137,7 @@ func TestConnectorReconnectCancellationAndAuthorityDeadline(t *testing.T) {
 				t.Fatal("reconnect did not cancel and join")
 			}
 			p.mu.Lock()
-			replaced := p.legs[0] != old
+			replaced := p.paths[0].leg != old
 			p.mu.Unlock()
 			if replaced {
 				t.Fatal("canceled reconnect installed carrier")

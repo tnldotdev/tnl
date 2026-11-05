@@ -31,6 +31,12 @@ type connectorUse struct {
 	prepared *PreparedConnector
 }
 
+type connectorPath struct {
+	leg     *connectorRelayLeg
+	carrier *peer.CarrierSlot
+	done    bool
+}
+
 // connectorConnection owns one selected run and retained inner QUIC connection.
 // background workers own authority renewal and proof generation;
 // local arrivals consume immutable signed openings and never call control.
@@ -53,10 +59,8 @@ type connectorConnection struct {
 	reportedUntil time.Time
 	source        string
 	permission    controlv1.VisitorTokenResponse
-	legs          [2]*connectorRelayLeg
-	carriers      [2]*peer.CarrierSlot
+	paths         [2]connectorPath
 	key           [32]byte
-	legDone       [2]bool
 	openings      []preparedOpening
 	active        map[*connectorUse]struct{}
 	warm          *connectorUse
@@ -111,28 +115,29 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	var starts sync.WaitGroup
 	for slot := range 2 {
 		starts.Go(func() {
-			p.legs[slot], results[slot] = connectConnectorLeg(setup, life, config, signer, p.pair, key, slot)
+			p.paths[slot].leg, results[slot] = connectConnectorLeg(setup, life, config, signer, p.pair, key, slot)
 		})
 	}
 	starts.Wait()
 	if result = errors.Join(results[:]...); result != nil {
 		return nil, result
 	}
-	if p.legs[0].receipt.SourceIP != p.legs[1].receipt.SourceIP {
+	if p.paths[0].leg.receipt.SourceIP != p.paths[1].leg.receipt.SourceIP {
 		return nil, ErrServiceConnection
 	}
-	p.source = p.legs[0].receipt.SourceIP
+	p.source = p.paths[0].leg.receipt.SourceIP
 	if p.preparedUntil, p.reportedUntil, result = awaitConnectorPublisher(setup, config.Control, p.run.ServiceID, create, p.pair); result != nil {
 		return nil, result
 	}
 	p.key = key
 	for slot := range 2 {
-		p.carriers[slot] = peer.NewCarrierSlot()
-		if result = p.carriers[slot].Install(connectorLegCarrier{p.legs[slot]}); result != nil {
+		path := &p.paths[slot]
+		path.carrier = peer.NewCarrierSlot()
+		if result = path.carrier.Install(connectorLegCarrier{path.leg}); result != nil {
 			return nil, result
 		}
 	}
-	p.endpoint, result = peer.New(life, peer.Config{Key: key, Role: 0, Paths: [2]peer.Carrier{p.carriers[0], p.carriers[1]}})
+	p.endpoint, result = peer.New(life, peer.Config{Key: key, Role: 0, Paths: [2]peer.Carrier{p.paths[0].carrier, p.paths[1].carrier}})
 	if result != nil {
 		return nil, result
 	}
@@ -463,8 +468,8 @@ func minConnectorCall(until time.Time) time.Time {
 func (p *connectorConnection) maintainLeg(slot int) {
 	defer func() {
 		p.mu.Lock()
-		p.legDone[slot] = true
-		ended := p.legDone[0] && p.legDone[1]
+		p.paths[slot].done = true
+		ended := p.paths[0].done && p.paths[1].done
 		p.mu.Unlock()
 		// both-path temporary loss retains inner QUIC. only exhausted authority
 		// or terminal rejection ends a leg worker; neither can revive a session.
@@ -474,10 +479,14 @@ func (p *connectorConnection) maintainLeg(slot int) {
 	}()
 	for {
 		p.mu.Lock()
-		leg, changed := p.legs[slot], p.changed
+		leg, changed := p.paths[slot].leg, p.changed
 		p.mu.Unlock()
 		if leg.session.Err() != nil {
-			if !p.reconnectLeg(slot, leg) {
+			disposition, err := p.reconnectLeg(slot, leg)
+			if disposition == terminateConnection {
+				p.cancel(err)
+			}
+			if disposition != retryAttempt {
 				return
 			}
 			continue
@@ -523,7 +532,11 @@ func (p *connectorConnection) maintainLeg(slot int) {
 			return
 		}
 		if !leg.until.After(time.Now()) || leg.session.Err() != nil {
-			if !p.reconnectLeg(slot, leg) {
+			disposition, err := p.reconnectLeg(slot, leg)
+			if disposition == terminateConnection {
+				p.cancel(err)
+			}
+			if disposition != retryAttempt {
 				return
 			}
 			continue
@@ -536,16 +549,20 @@ func (p *connectorConnection) maintainLeg(slot int) {
 	}
 }
 
-func (p *connectorConnection) reconnectLeg(slot int, previous *connectorRelayLeg) bool {
-	_ = p.carriers[slot].Install(nil)
+func (p *connectorConnection) reconnectLeg(slot int, previous *connectorRelayLeg) (reconnectDisposition, error) {
+	_ = p.paths[slot].carrier.Install(nil)
 	_ = previous.Close()
 	// retain this operation across lost hello or activation replies. each
 	// candidate still carries a fresh signed proof and socket-source claim.
-	replacement := make([]byte, 32)
-	if _, err := rand.Read(replacement); err != nil {
-		p.cancel(err)
-		return false
+	var nextID tunnelv1.ConnectorHandoffID
+	if _, err := rand.Read(nextID[:]); err != nil {
+		return terminateConnection, err
 	}
+	handoff, err := tunnelv1.NewConnectorHandoff(previous.selectedHandoff, nextID)
+	if err != nil {
+		return terminateConnection, err
+	}
+	replacement := &connectorLegReplacement{previous: previous, handoff: handoff}
 	for delay := 100 * time.Millisecond; ; delay = min(2*delay, time.Second) {
 		p.mu.Lock()
 		pair := p.pair
@@ -553,7 +570,7 @@ func (p *connectorConnection) reconnectLeg(slot int, previous *connectorRelayLeg
 		current := p.currentLocked() && pair.Relays[slot] == previous.relay
 		p.mu.Unlock()
 		if !current || !until.After(time.Now()) {
-			return false
+			return retirePath, ErrServiceConnection
 		}
 		call, stop := context.WithDeadline(p.ctx, until)
 		timer := time.NewTimer(delay)
@@ -561,11 +578,11 @@ func (p *connectorConnection) reconnectLeg(slot int, previous *connectorRelayLeg
 		case <-call.Done():
 			timer.Stop()
 			stop()
-			return false
+			return retirePath, context.Cause(call)
 		case <-timer.C:
 		}
 		attempt, finish := context.WithDeadline(call, minConnectorCall(until))
-		next, err := prepareConnectorLeg(attempt, p.ctx, p.config, p.signer, pair, p.key, slot, previous, replacement)
+		next, err := prepareConnectorLeg(attempt, p.ctx, p.config, p.signer, pair, p.key, slot, replacement)
 		if err == nil {
 			err = context.Cause(attempt)
 		}
@@ -575,15 +592,8 @@ func (p *connectorConnection) reconnectLeg(slot int, previous *connectorRelayLeg
 			if next != nil {
 				_ = next.Close()
 			}
-			temporary, stale := connectorReconnectError(err)
-			if stale {
-				// stop this leg without transferring its authority. the retained
-				// sibling remains bounded by the owner's independent renewal.
-				return false
-			}
-			if !temporary && p.ctx.Err() == nil {
-				p.cancel(err)
-				return false
+			if disposition := connectorReconnectError(err); disposition != retryAttempt {
+				return disposition, err
 			}
 			continue
 		}
@@ -592,39 +602,48 @@ func (p *connectorConnection) reconnectLeg(slot int, previous *connectorRelayLeg
 		p.mu.Unlock()
 		if !current {
 			_ = next.Close()
-			return false
+			return retirePath, ErrServiceConnection
 		}
 		// no authority lock spans physical cancellation or joined carrier work.
-		if err := p.carriers[slot].Install(connectorLegCarrier{next}); err != nil {
+		if err := p.paths[slot].carrier.Install(connectorLegCarrier{next}); err != nil {
 			_ = next.Close()
-			return false
+			return retirePath, err
 		}
 		p.mu.Lock()
 		current = p.currentLocked() && until.After(time.Now())
 		if current {
-			p.legs[slot] = next
+			p.paths[slot].leg = next
 		}
 		p.mu.Unlock()
 		if !current {
-			_ = p.carriers[slot].Install(nil)
+			_ = p.paths[slot].carrier.Install(nil)
 			_ = next.Close()
-			return false
+			return retirePath, ErrServiceConnection
 		}
-		return true
+		return retryAttempt, nil
 	}
 }
 
+type reconnectDisposition uint8
+
+const (
+	retryAttempt reconnectDisposition = iota
+	retirePath
+	terminateConnection
+)
+
 // a raced candidate's temporary error must not hide another candidate's
 // authorization rejection. capacity can clear as the old socket joins cleanup.
-func connectorReconnectError(err error) (temporary, stale bool) {
-	terminal, capacity := false, false
+func connectorReconnectError(err error) reconnectDisposition {
+	terminal, stale, retryable := false, false, false
 	var visit func(error)
 	visit = func(err error) {
 		if protocol, ok := err.(*tunnel.ProtocolError); ok {
-			capacity = capacity || protocol.Code == tunnelv1.CapacityExceeded
+			retryable = retryable || protocol.Code == tunnelv1.CapacityExceeded
 			stale = stale || protocol.Code == tunnelv1.StaleConnectionAssignment
 			terminal = terminal || protocol.Code != tunnelv1.Unavailable && protocol.Code != tunnelv1.CapacityExceeded && protocol.Code != tunnelv1.StaleConnectionAssignment
 		}
+		retryable = retryable || connectorTemporary(err)
 		switch wrapped := err.(type) {
 		case interface{ Unwrap() []error }:
 			for _, cause := range wrapped.Unwrap() {
@@ -635,7 +654,17 @@ func connectorReconnectError(err error) (temporary, stale bool) {
 		}
 	}
 	visit(err)
-	return !terminal && !stale && (capacity || connectorTemporary(err)), !terminal && stale
+	if terminal {
+		return terminateConnection
+	}
+	if stale {
+		// stop this path without transferring authority from its retained sibling.
+		return retirePath
+	}
+	if retryable {
+		return retryAttempt
+	}
+	return terminateConnection
 }
 
 func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) error {
@@ -715,14 +744,12 @@ func (p *connectorConnection) Close() {
 			_ = p.endpoint.Close()
 		}
 		p.workers.Wait()
-		for _, carrier := range p.carriers {
-			if carrier != nil {
-				_ = carrier.Close()
+		for _, path := range p.paths {
+			if path.carrier != nil {
+				_ = path.carrier.Close()
 			}
-		}
-		for _, leg := range p.legs {
-			if leg != nil {
-				_ = leg.Close()
+			if path.leg != nil {
+				_ = path.leg.Close()
 			}
 		}
 		if warm != nil {

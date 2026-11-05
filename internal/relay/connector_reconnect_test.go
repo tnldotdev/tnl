@@ -37,7 +37,11 @@ func reconnectBridgeFixture(t *testing.T) (*connectorBridge, func(byte) (*connec
 	nonce := bytes.Repeat([]byte{1}, 32)
 	proof := tunnelv1.ConnectorPairLegProof{PairID: "pair", ServiceRunID: "run", RequestedAt: time.Now(), Nonce: nonce}
 	claim := connectorClaim{key: [32]byte{1}, receipt: tunnelv1.ConnectorPairLegAccepted{SourceIP: "192.0.2.1"}}
-	b := &connectorBridge{ctx: ctx, cancel: cancel, connector: peer.NewCarrierSlot(), publisher: newReconnectCarrier(), proof: proof, claim: claim, nonce: nonce, selectedAt: proof.RequestedAt, used: map[[32]byte]bool{[32]byte(nonce): true}, until: time.Now().Add(time.Minute)}
+	activation, err := (tunnelv1.ConnectorLegBinding{Nonce: nonce}).Activation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &connectorBridge{ctx: ctx, cancel: cancel, connector: peer.NewCarrierSlot(), publisher: newReconnectCarrier(), proof: proof, claim: claim, handoff: initialHandoff(activation, proof.RequestedAt), until: time.Now().Add(time.Minute)}
 	t.Cleanup(func() { cancel(); _ = b.connector.Close(); _ = b.publisher.Close() })
 	return b, func(n byte) (*connectorDelivery, tunnelv1.ConnectorLegBinding) {
 		life, stop := context.WithCancel(ctx)
@@ -51,11 +55,19 @@ func reconnectBridgeFixture(t *testing.T) (*connectorBridge, func(byte) (*connec
 	}
 }
 
+func replaceBridgeBinding(ctx context.Context, b *connectorBridge, d *connectorDelivery, binding tunnelv1.ConnectorLegBinding) (*connectorBridge, error) {
+	activation, err := binding.Activation()
+	if err != nil {
+		return nil, err
+	}
+	return b.replaceCarrier(ctx, d, activation)
+}
+
 func TestConnectorBridgeReconnectRecoversLostActivationReply(t *testing.T) {
 	b, next := reconnectBridgeFixture(t)
 	until, publisher := b.until, b.publisher
 	d, selection := next(2)
-	if _, err := b.replaceCarrier(t.Context(), d, selection); err != nil {
+	if _, err := replaceBridgeBinding(t.Context(), b, d, selection); err != nil {
 		t.Fatal(err)
 	}
 	// the activation committed but its response was lost. a fresh authenticated
@@ -63,22 +75,22 @@ func TestConnectorBridgeReconnectRecoversLostActivationReply(t *testing.T) {
 	d.cancel()
 	b.detach(d)
 	retry, binding := next(3)
-	if _, err := b.replaceCarrier(t.Context(), retry, binding); err != nil {
+	if _, err := replaceBridgeBinding(t.Context(), b, retry, binding); err != nil {
 		t.Fatal("lost reply stranded slot", err)
 	}
-	if b.publisher != publisher || b.until != until || retry.until != until || len(b.used) != 2 {
+	if b.publisher != publisher || b.until != until || retry.until != until || len(b.handoff.used) != 2 {
 		t.Fatal("retry replaced publisher, extended authority or spent another handoff")
 	}
-	if _, err := b.replaceCarrier(t.Context(), d, selection); err == nil {
+	if _, err := replaceBridgeBinding(t.Context(), b, d, selection); err == nil {
 		t.Fatal("delayed activation replaced its successor")
 	}
 	newer, advance := next(4)
 	advance.PreviousNonce, advance.ReplacementNonce = selection.ReplacementNonce, bytes.Repeat([]byte{10}, 32)
-	if _, err := b.replaceCarrier(t.Context(), newer, advance); err != nil {
+	if _, err := replaceBridgeBinding(t.Context(), b, newer, advance); err != nil {
 		t.Fatal(err)
 	}
 	late, stale := next(5)
-	if _, err := b.replaceCarrier(t.Context(), late, stale); err == nil {
+	if _, err := replaceBridgeBinding(t.Context(), b, late, stale); err == nil {
 		t.Fatal("old handoff revived after a newer predecessor")
 	}
 	if b.active != newer || b.publisher != publisher || b.until != until {
@@ -113,14 +125,14 @@ func TestConnectorBridgeReconnectRejectsChangedAuthority(t *testing.T) {
 			case "canceled":
 				d.cancel()
 			case "stale hello":
-				d.proof.RequestedAt = b.selectedAt
+				d.proof.RequestedAt = b.handoff.selectedAt
 			case "budget":
 				for i := byte(0); i < 64; i++ {
-					b.used[[32]byte{i}] = true
+					b.handoff.used[tunnelv1.ConnectorHandoffID{i}] = true
 				}
 			}
 			generation := b.connector.Generation()
-			_, err := b.replaceCarrier(t.Context(), d, selection)
+			_, err := replaceBridgeBinding(t.Context(), b, d, selection)
 			var rejected *tunnel.ProtocolError
 			if !errors.As(err, &rejected) || rejected.Code != tunnelv1.Unauthenticated {
 				t.Fatal("rejection lost authority classification", err)
@@ -135,11 +147,11 @@ func TestConnectorBridgeReconnectRejectsChangedAuthority(t *testing.T) {
 func TestConnectorBridgeOldDetachCannotRemoveReplacement(t *testing.T) {
 	b, next := reconnectBridgeFixture(t)
 	old, selection := next(2)
-	if _, err := b.replaceCarrier(t.Context(), old, selection); err != nil {
+	if _, err := replaceBridgeBinding(t.Context(), b, old, selection); err != nil {
 		t.Fatal(err)
 	}
 	newer, binding := next(3)
-	if _, err := b.replaceCarrier(t.Context(), newer, binding); err != nil {
+	if _, err := replaceBridgeBinding(t.Context(), b, newer, binding); err != nil {
 		t.Fatal(err)
 	}
 	generation := b.connector.Generation()
@@ -174,7 +186,7 @@ func TestConnectorBridgeCanceledInstallRetainsHandoffForRetry(t *testing.T) {
 	}
 	d, selection := next(2)
 	done := make(chan error, 1)
-	go func() { _, err := b.replaceCarrier(t.Context(), d, selection); done <- err }()
+	go func() { _, err := replaceBridgeBinding(t.Context(), b, d, selection); done <- err }()
 	select {
 	case <-held.entered:
 	case <-time.After(time.Second):
@@ -195,7 +207,7 @@ func TestConnectorBridgeCanceledInstallRetainsHandoffForRetry(t *testing.T) {
 		t.Fatal("canceled candidate retired bridge")
 	}
 	retry, binding := next(3)
-	if _, err := b.replaceCarrier(t.Context(), retry, binding); err != nil {
+	if _, err := replaceBridgeBinding(t.Context(), b, retry, binding); err != nil {
 		t.Fatal("canceled committed install stranded chain", err)
 	}
 }
