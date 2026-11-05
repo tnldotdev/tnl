@@ -74,6 +74,7 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 			if err != nil {
 				return failure.Wrap("acquire workload assertion", failure.WorkloadAssertionUnavailable, err)
 			}
+			request.Refresh = workload.RefreshSource(scope.Directory, hints, os.Getenv)
 		}
 	}
 	return launchOwner(ctx, options, request, func(status connectorruntime.Status) error { return json.NewEncoder(output).Encode(status) })

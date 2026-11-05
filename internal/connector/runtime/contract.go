@@ -52,6 +52,9 @@ type StartRequest struct {
 	Context Context `json:"context"`
 	// Assertion is accepted on stdin/private IPC only. never persist this request.
 	Assertion string `json:"assertion,omitempty"`
+	// refresh carries only a selected native file or local platform source.
+	// callbacks, environment token values and provider request bearers stay out.
+	Refresh *workloadmanifest.Acquisition `json:"refresh,omitempty"`
 }
 
 func (StartRequest) String() string   { return "private connection startup request" }

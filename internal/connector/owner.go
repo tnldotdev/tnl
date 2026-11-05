@@ -41,6 +41,7 @@ type connectorConnectionBackend struct {
 	stateDir, assertion, directory, executable, runnerTemp string
 	httpClient                                             *http.Client
 	acquisition                                            workloadmanifest.Acquisition
+	refreshAssertion                                       func(context.Context) (string, error)
 	listeners                                              map[string]*ownedServiceListener
 	initialServices                                        []string
 	services                                               map[string]controlv1.Service
@@ -266,7 +267,11 @@ func (b *connectorConnectionBackend) Start(ctx context.Context) (meta.PublicMeta
 			return meta.PublicMetadata{}, time.Time{}, err
 		}
 	}
-	return b.metadata, b.deadline, nil
+	b.mu.Lock()
+	b.startWorkloadRefreshLocked()
+	metadata, deadline := b.metadata, b.deadline
+	b.mu.Unlock()
+	return metadata, deadline, nil
 }
 
 func (b *connectorConnectionBackend) Connect(ctx context.Context, name string) (connectorruntime.Connection, error) {
@@ -559,18 +564,11 @@ func (b *connectorConnectionBackend) attach(ctx context.Context, assertion strin
 	if reuse && assertion != "" && b.reuseAssertion(assertion) {
 		return nil
 	}
-	b.mu.Lock()
-	if b.sessionGate == nil {
-		b.sessionGate = make(chan struct{}, 1)
+	unlock, err := b.lockWorkloadSession(ctx)
+	if err != nil {
+		return err
 	}
-	gate := b.sessionGate
-	b.mu.Unlock()
-	select {
-	case gate <- struct{}{}:
-		defer func() { <-gate }()
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	defer unlock()
 	if assertion == "" {
 		var err error
 		assertion, err = workload.Acquire(ctx, b.acquisition, nil, os.Getenv)
@@ -593,19 +591,7 @@ func (b *connectorConnectionBackend) attach(ctx context.Context, assertion strin
 	}
 	session, err := client.Attach(ctx, assertion)
 	if err == nil {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		if b.closed {
-			return connectorruntime.ErrExpired
-		}
-		b.deadline = session.ExpiresAt
-		if session.AssertionExpiresAt != nil {
-			b.rememberAssertion(assertion, *session.AssertionExpiresAt, session)
-		} else {
-			b.verification = nil
-		}
-		b.publishLocked()
-		return nil
+		return b.publishWorkloadAssertion(client, assertion, session)
 	}
 	// a denied assertion does not stop other listeners. discard only their
 	// cached admission observations so subsequent preparation checks live access.
