@@ -31,6 +31,30 @@ type rebindingControl struct {
 	selections atomic.Int32
 	losePhase  atomic.Pointer[controlv1.ConnectorPeerPairRebindPhase]
 	lostPhase  atomic.Bool
+	mu         sync.Mutex
+	authority  []string
+}
+
+func (c *rebindingControl) RenewConnectorPeerPair(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+	started := time.Now()
+	renewal, err := c.Control.RenewConnectorPeerPair(ctx, service, request)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.authority) == 16 {
+		c.authority = c.authority[1:]
+	}
+	if err != nil {
+		generation := int64(0)
+		if request.PreviousGeneration != nil {
+			generation = *request.PreviousGeneration
+		}
+		c.authority = append(c.authority, fmt.Sprintf("at=%s generation=%d error=%v", started.Format(time.RFC3339Nano), generation, err))
+	} else {
+		observation := renewal.Pair.ObservedAt
+		c.authority = append(c.authority, fmt.Sprintf("at=%s generation=%d pair=%s run=%s permission=%s", started.Format(time.RFC3339Nano), renewal.Pair.DeliveryGeneration,
+			started.Add(renewal.Pair.ExpiresAt.Sub(observation)).Format(time.RFC3339Nano), started.Add(renewal.RunValidUntil.Sub(observation)).Format(time.RFC3339Nano), started.Add(renewal.VisitorPermission.ExpiresAt.Sub(observation)).Format(time.RFC3339Nano)))
+	}
+	return renewal, err
 }
 
 func (c *rebindingControl) RebindConnectorPeerPair(ctx context.Context, service, pair string, request controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
@@ -267,6 +291,21 @@ func startRebindingConnector(t *testing.T, f *privateSeparatedFixture, tcp, sile
 		t.Fatal(err)
 	}
 	control := &rebindingControl{Control: production, t: t}
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		control.mu.Lock()
+		defer control.mu.Unlock()
+		for _, observation := range control.authority {
+			t.Log("retained authority:", observation)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		var facts string
+		err := f.inspect.QueryRowContext(ctx, `SELECT COALESCE(jsonb_agg(jsonb_build_object('pair_id',id,'generation',delivery_generation,'expires_at',expires_at,'prepared_until',publisher_prepared_until,'rebind_status',rebind_status))::text,'[]') FROM control.connector_peer_pairs WHERE service_id=$1`, service.Id).Scan(&facts)
+		t.Logf("retained binding deadlines: %s: %v", facts, err)
+	})
 	transport := newRebindingTransport(t, f, tcp)
 	transport.silent = silent
 	recorded := &recordedConnectorConnector{Connector: transport, opened: make(chan connectorOuter, 64)}

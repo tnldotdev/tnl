@@ -330,7 +330,13 @@ func startRuntimeConnector(t *testing.T, f *privateSeparatedFixture, service con
 	config.ServiceID, config.Protocol, config.TrustRevision, config.Endpoint = service.Id, string(service.Protocol), service.TrustRevision, service.Endpoint
 	config.ServiceTLS, config.TransportTLS = f.visitorRoots, f.roots
 	config.Ready = func() error { close(ready); return nil }
-	go func() { done <- connectorstream.Serve(ctx, listener, config) }()
+	go func() {
+		err := connectorstream.Serve(ctx, listener, config)
+		if err != nil && ctx.Err() == nil {
+			t.Logf("connector owner ended before cleanup: %v", err)
+		}
+		done <- err
+	}()
 	// callers defer this join before testing cancels their publishers' contexts.
 	// cleanup remains a fallback for a failed startup, not the lifetime owner.
 	stop := sync.OnceFunc(func() {
