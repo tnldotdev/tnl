@@ -42,7 +42,6 @@ WHERE guest.id = (
   AND guest.active_publish_run_id IS NULL
   AND guest.expires_at > $2
   AND guest.used_ready_ns < 900000000000
-  AND guest.used_bytes < 5242880
 `
 
 type BeginGuestPublishRunParams struct {
@@ -101,7 +100,6 @@ SET used_ready_ns = used_ready_ns + CASE
     END,
     end_reason = COALESCE(end_reason, CASE
         WHEN $2::text = 'guest_expired' OR expires_at <= $1::timestamptz THEN 'expired'
-        WHEN $2::text = 'guest_transfer_limit' OR used_bytes >= 5242880 THEN 'transfer_limit'
         WHEN $2::text = 'guest_ready_limit' OR used_ready_ns + CASE
             WHEN active_ready_at IS NULL THEN 0
             ELSE GREATEST(0, (EXTRACT(EPOCH FROM ($1::timestamptz - active_ready_at)) * 1000000000)::bigint)
@@ -109,7 +107,7 @@ SET used_ready_ns = used_ready_ns + CASE
     END),
     ended_at = COALESCE(ended_at, CASE
         WHEN $2::text = 'guest_expired' OR expires_at <= $1::timestamptz THEN expires_at
-        WHEN $2::text IN ('guest_transfer_limit', 'guest_ready_limit') OR used_bytes >= 5242880
+        WHEN $2::text = 'guest_ready_limit'
             OR used_ready_ns + CASE WHEN active_ready_at IS NULL THEN 0 ELSE
                 GREATEST(0, (EXTRACT(EPOCH FROM ($1::timestamptz - active_ready_at)) * 1000000000)::bigint)
             END >= 900000000000 THEN $1::timestamptz
@@ -256,7 +254,7 @@ func (q *Queries) ForgetOldGuestIssuanceDigests(ctx context.Context, arg ForgetO
 }
 
 const getGuestTrialByCredentialID = `-- name: GetGuestTrialByCredentialID :one
-SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, used_bytes, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials
+SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials
 WHERE credential_id = $1
 `
 
@@ -277,7 +275,6 @@ func (q *Queries) GetGuestTrialByCredentialID(ctx context.Context, credentialID 
 		&i.IssuanceIpDigest,
 		&i.ExpiresAt,
 		&i.UsedReadyNs,
-		&i.UsedBytes,
 		&i.FirstDemoAllocatedAt,
 		&i.FirstReadyAt,
 		&i.EndReason,
@@ -292,7 +289,7 @@ func (q *Queries) GetGuestTrialByCredentialID(ctx context.Context, credentialID 
 }
 
 const getGuestTrialByID = `-- name: GetGuestTrialByID :one
-SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, used_bytes, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials
+SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials
 WHERE id = $1
 `
 
@@ -313,7 +310,6 @@ func (q *Queries) GetGuestTrialByID(ctx context.Context, id string) (ControlGues
 		&i.IssuanceIpDigest,
 		&i.ExpiresAt,
 		&i.UsedReadyNs,
-		&i.UsedBytes,
 		&i.FirstDemoAllocatedAt,
 		&i.FirstReadyAt,
 		&i.EndReason,
@@ -373,7 +369,6 @@ func (q *Queries) GuestOwnsPublicURL(ctx context.Context, arg GuestOwnsPublicURL
 const guestRunAllowanceSpent = `-- name: GuestRunAllowanceSpent :one
 SELECT CASE
     WHEN expires_at <= $1::timestamptz THEN 'guest_expired'
-    WHEN used_bytes >= 5242880 THEN 'guest_transfer_limit'
     WHEN used_ready_ns + CASE WHEN active_ready_at IS NULL THEN 0
         ELSE GREATEST(0, (EXTRACT(EPOCH FROM ($1::timestamptz - active_ready_at)) * 1000000000)::bigint)
     END >= 900000000000 THEN 'guest_ready_limit'
@@ -422,7 +417,7 @@ INSERT INTO control.guest_trials (
     $7, $8, $9, $10,
     $11, $12, $13, $13
 )
-RETURNING id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, used_bytes, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at
+RETURNING id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at
 `
 
 type InsertGuestTrialParams struct {
@@ -472,7 +467,6 @@ func (q *Queries) InsertGuestTrial(ctx context.Context, arg InsertGuestTrialPara
 		&i.IssuanceIpDigest,
 		&i.ExpiresAt,
 		&i.UsedReadyNs,
-		&i.UsedBytes,
 		&i.FirstDemoAllocatedAt,
 		&i.FirstReadyAt,
 		&i.EndReason,
@@ -487,7 +481,7 @@ func (q *Queries) InsertGuestTrial(ctx context.Context, arg InsertGuestTrialPara
 }
 
 const lockGuestTrialByID = `-- name: LockGuestTrialByID :one
-SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, used_bytes, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials WHERE id = $1 FOR UPDATE
+SELECT id, credential_id, credential_hash, namespace_label, team_id, membership_id, domain_id, dns_authority_reference, source_ip_digest, source_ip_key_id, issuance_ip_digest, expires_at, used_ready_ns, first_demo_allocated_at, first_ready_at, end_reason, ended_at, last_demo_number, active_publish_run_id, active_ready_at, created_at, updated_at FROM control.guest_trials WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockGuestTrialByID(ctx context.Context, id string) (ControlGuestTrial, error) {
@@ -507,7 +501,6 @@ func (q *Queries) LockGuestTrialByID(ctx context.Context, id string) (ControlGue
 		&i.IssuanceIpDigest,
 		&i.ExpiresAt,
 		&i.UsedReadyNs,
-		&i.UsedBytes,
 		&i.FirstDemoAllocatedAt,
 		&i.FirstReadyAt,
 		&i.EndReason,
@@ -549,18 +542,16 @@ SELECT
     count(*) FILTER (WHERE first_demo_allocated_at >= $1)::bigint AS allocated,
     count(*) FILTER (WHERE first_ready_at >= $1)::bigint AS ready,
     count(*) FILTER (WHERE end_reason = 'expired' AND ended_at >= $1)::bigint AS expired,
-    count(*) FILTER (WHERE end_reason = 'ready_limit' AND ended_at >= $1)::bigint AS ready_limit,
-    count(*) FILTER (WHERE end_reason = 'transfer_limit' AND ended_at >= $1)::bigint AS transfer_limit
+    count(*) FILTER (WHERE end_reason = 'ready_limit' AND ended_at >= $1)::bigint AS ready_limit
 FROM control.guest_trials
 `
 
 type RecentGuestTrialStatsRow struct {
-	Issued        int64
-	Allocated     int64
-	Ready         int64
-	Expired       int64
-	ReadyLimit    int64
-	TransferLimit int64
+	Issued     int64
+	Allocated  int64
+	Ready      int64
+	Expired    int64
+	ReadyLimit int64
 }
 
 func (q *Queries) RecentGuestTrialStats(ctx context.Context, since pgtype.Timestamptz) (RecentGuestTrialStatsRow, error) {
@@ -572,44 +563,6 @@ func (q *Queries) RecentGuestTrialStats(ctx context.Context, since pgtype.Timest
 		&i.Ready,
 		&i.Expired,
 		&i.ReadyLimit,
-		&i.TransferLimit,
 	)
 	return i, err
-}
-
-const updateGuestTransferredBytes = `-- name: UpdateGuestTransferredBytes :execrows
-WITH observed AS (
-    SELECT routes.guest_id, COALESCE(SUM(buckets.ingress_bytes + buckets.egress_bytes), 0)::bigint AS bytes
-    FROM control.guest_public_urls AS routes
-    LEFT JOIN control.public_url_usage_buckets AS buckets ON buckets.public_url_id = routes.public_url_id
-    WHERE routes.guest_id = (
-        SELECT owned.guest_id FROM control.guest_public_urls AS owned WHERE owned.public_url_id = $2
-    )
-    GROUP BY routes.guest_id
-)
-UPDATE control.guest_trials AS guest
-SET used_bytes = GREATEST(guest.used_bytes, observed.bytes),
-    end_reason = COALESCE(guest.end_reason, CASE
-        WHEN guest.expires_at <= $1::timestamptz THEN 'expired'
-        WHEN GREATEST(guest.used_bytes, observed.bytes) >= 5242880 THEN 'transfer_limit'
-    END),
-    ended_at = COALESCE(guest.ended_at, CASE
-        WHEN guest.expires_at <= $1::timestamptz THEN guest.expires_at
-        WHEN GREATEST(guest.used_bytes, observed.bytes) >= 5242880 THEN $1::timestamptz
-    END),
-    updated_at = GREATEST(guest.updated_at, $1)
-FROM observed WHERE guest.id = observed.guest_id
-`
-
-type UpdateGuestTransferredBytesParams struct {
-	ObservedAt   pgtype.Timestamptz
-	GuestRouteID string
-}
-
-func (q *Queries) UpdateGuestTransferredBytes(ctx context.Context, arg UpdateGuestTransferredBytesParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updateGuestTransferredBytes, arg.ObservedAt, arg.GuestRouteID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }

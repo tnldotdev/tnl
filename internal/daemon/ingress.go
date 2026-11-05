@@ -29,7 +29,6 @@ type ingressRuntime struct {
 	controller         *ingress.Controller
 	server             *ingress.Server
 	forwarder          *ingress.Forwarder
-	usage              *ingress.UsageReporter
 	recovery           *ingress.RecoveryReporter
 	publicServices     *ingress.PublicServices
 	audit              *ingressServiceAudit
@@ -208,13 +207,6 @@ func (d *daemon) startIngressRuntime(
 		return deadline
 	})
 	var recovery *ingress.RecoveryReporter
-	// every actual ingress lease participates in public URL usage coverage.
-	usage, err := ingress.NewUsageReporter(controller, 0, func(err error) { logOperationalError(ctx, "report ingress usage", failure.ServerWorkerFailed, err) })
-	if err != nil {
-		return err
-	}
-	usage.SetObserver(metrics)
-	runtime.usage = usage
 	recovery, err = ingress.NewRecoveryReporter(ctx, controller, settings.controlRetryInterval, func(err error) {
 		logOperationalError(ctx, "report ingress recovery", failure.ServerWorkerFailed, err)
 	})
@@ -275,9 +267,6 @@ func (d *daemon) startIngressRuntime(
 				publicURLID, version, visitorID, reason, attempts)
 		},
 	}
-	if usage != nil {
-		ingressConfig.OpenUsage = usage.Open
-	}
 	if recovery != nil {
 		ingressConfig.ObserveRecovery = recovery.Observe
 	}
@@ -328,7 +317,6 @@ func (d *daemon) startIngressRuntime(
 	d.publishIngressRuntime(runtime)
 	owned = true
 	d.start("run ingress control", func() error { return controller.Run(ctx) })
-	d.start("report ingress usage", func() error { return usage.Run(ctx) })
 	d.start("serve public ingress", server.Serve)
 	log.Printf("public ingress listening on %s", runtimeConfig.listener.Addr())
 	return nil

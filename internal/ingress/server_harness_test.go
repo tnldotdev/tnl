@@ -225,88 +225,33 @@ func testCertificate(t *testing.T, hostname string) tls.Certificate {
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
 
-type testUsageConnection struct {
-	mu                                                         sync.Mutex
-	publicURLID                                                string
-	publishRunNumber                                           uint64
-	source                                                     netip.Addr
-	openedAt, closedAt, publisherOpeningAt, publisherOpenedAt  time.Time
-	policyDenials, capacityDenials, publisherFailures, streams int
-	ingressBytes, egressBytes                                  int64
-	closed                                                     chan struct{}
-}
-type testUsageRecorder struct{ opened chan *testUsageConnection }
-
-func newUsageRecorder() *testUsageRecorder {
-	return &testUsageRecorder{opened: make(chan *testUsageConnection, 8)}
-}
-func (r *testUsageRecorder) Open(id string, version uint64, source netip.Addr, at time.Time) UsageConnection {
-	u := &testUsageConnection{publicURLID: id, publishRunNumber: version, source: source, openedAt: at, closed: make(chan struct{})}
-	r.opened <- u
-	return u
-}
-func (u *testUsageConnection) PolicyDenied(time.Time) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.policyDenials++
-}
-func (u *testUsageConnection) CapacityDenied(time.Time) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.capacityDenials++
-}
-func (u *testUsageConnection) VisitorStreamOpening(at time.Time) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.publisherOpeningAt = at
-}
-func (u *testUsageConnection) VisitorStreamOpened(at time.Time) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.publisherOpenedAt = at
-}
-func (u *testUsageConnection) VisitorStreamOpenFailed(time.Time) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.publisherFailures++
-}
-func (u *testUsageConnection) StreamOpened(time.Time) { u.mu.Lock(); defer u.mu.Unlock(); u.streams++ }
-func (u *testUsageConnection) AddIngress(n int64, _ time.Time) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.ingressBytes += n
-}
-func (u *testUsageConnection) AddEgress(n int64, _ time.Time) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.egressBytes += n
-}
-func (u *testUsageConnection) Close(at time.Time) {
-	u.mu.Lock()
-	u.closedAt = at
-	u.mu.Unlock()
-	close(u.closed)
-}
-
 type testMetrics struct {
-	ipAllowlistDenials atomic.Int32
-	visitorOutcomes    chan string
-	forwardedMu        sync.Mutex
-	forwardedBytes     map[string]int64
+	visitorOpenSuccesses atomic.Int32
+	visitorOpenFailures  atomic.Int32
+	ipAllowlistDenials   atomic.Int32
+	visitorOutcomes      chan string
+	forwardedMu          sync.Mutex
+	forwardedBytes       map[string]int64
 }
 
 func (*testMetrics) IncCapacityRejection(string) {}
 func (*testMetrics) IncInspectionFailure(string) {}
 func (m *testMetrics) ObserveVisitor(outcome observability.VisitorOutcome) {
-	if m.visitorOutcomes != nil {
-		m.visitorOutcomes <- string(outcome)
-	}
 	if outcome == "policy_denied" {
 		m.ipAllowlistDenials.Add(1)
 	}
+	if m.visitorOutcomes != nil {
+		m.visitorOutcomes <- string(outcome)
+	}
 }
-func (*testMetrics) ObserveVisitorOpen(bool, time.Duration) {}
-func (*testMetrics) SetIngressConnections(string, int)      {}
+func (m *testMetrics) ObserveVisitorOpen(success bool, _ time.Duration) {
+	if success {
+		m.visitorOpenSuccesses.Add(1)
+	} else {
+		m.visitorOpenFailures.Add(1)
+	}
+}
+func (*testMetrics) SetIngressConnections(string, int) {}
 func (m *testMetrics) AddForwardedBytes(direction string, n int64) {
 	m.forwardedMu.Lock()
 	defer m.forwardedMu.Unlock()

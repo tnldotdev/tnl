@@ -13,7 +13,7 @@ import (
 )
 
 func TestHeartbeatLeaseOnlyAdvancesAfterFullAcceptedState(t *testing.T) {
-	for _, rejected := range []string{"connections", "policy", "accepted"} {
+	for _, rejected := range []string{"connections", "accepted"} {
 		t.Run(rejected, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				m := observability.New("publisher")
@@ -34,11 +34,6 @@ func TestHeartbeatLeaseOnlyAdvancesAfterFullAcceptedState(t *testing.T) {
 				}}
 				err := heartbeatSessionAfterUpdate(ctx, heartbeatTestAuthority(control, "run", "token"), old, func([]controlv1.ConnectionAssignment) error {
 					if rejected == "connections" {
-						return invalid
-					}
-					return nil
-				}, func(int64) error {
-					if rejected == "policy" {
 						return invalid
 					}
 					return nil

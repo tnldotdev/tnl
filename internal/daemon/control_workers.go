@@ -14,7 +14,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/email"
 	"github.com/tnldotdev/tnl/internal/control/maintenance"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
-	"github.com/tnldotdev/tnl/internal/control/usage"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -174,20 +173,6 @@ func (d *daemon) startControlWorkers(
 		if err != nil {
 			return err
 		}
-	}
-	if cfg.PublicURLUsageURL != "" {
-		workerID, err := opaqueid.New(opaqueid.PublicURLUsageWorkerPrefix)
-		if err != nil {
-			return fmt.Errorf("create public URL usage worker identity: %w", err)
-		}
-		worker, err := usage.New(database, usage.Config{
-			WorkerID: workerID, Endpoint: cfg.PublicURLUsageURL, Token: cfg.PublicURLUsageToken,
-			Observer: metrics,
-		})
-		if err != nil {
-			return err
-		}
-		d.start("run public URL usage worker", func() error { return worker.Run(lifetime) })
 	}
 	if cfg.EmailURL != "" {
 		worker, err := email.New(database, cfg.EmailURL, cfg.WebhookSecret, nil)

@@ -18,7 +18,6 @@ const (
 	EventReady               EventType = "ready"
 	EventDraining            EventType = "draining"
 	EventTransportFallback   EventType = "transport_fallback"
-	EventIPPolicyDenials     EventType = "ip_policy_denials"
 	EventTargetUnavailable   EventType = "target_unavailable"
 )
 
@@ -30,7 +29,6 @@ type Event struct {
 	PublishRunNumber  uint64
 	ProvisioningStage string
 	Transport         tunnel.Transport
-	PolicyDenials     uint64
 }
 
 func observe(config Config, event Event) error {
