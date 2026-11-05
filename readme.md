@@ -5,10 +5,10 @@
   easy tunnels for dev and prod
   <br/>
   by <a href="https://github.com/0xcadams">@0xcadams</a>
+  <br/><br/>
+  <i><code>tnl</code> is not ready yet - first release is coming November 23.</i>
 </p>
 <br/>
-
-> `tnl` is not ready yet - first release is coming November 23.
 
 `tnl` allows you to take a shortcut through the internet. It's like if Tailscale
 and Cloudflare Tunnels had a baby. And that baby had great devex.
