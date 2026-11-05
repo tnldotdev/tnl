@@ -55,6 +55,13 @@ by the generator and native connector; keep `VISITOR_GOMAXPROCS` fixed when
 comparing quotas. Ending resource snapshots precede export and session teardown,
 but still include background work and capture overhead, not exact per-query CPU.
 
+For a dedicated PostgreSQL diagnostic run, `LATE_DIAGNOSTICS=sample` with
+`TIMING=true` adds full-phase visitor/connector counters and one retained direct
+verified-TLS target observer. `LATE_DIAGNOSTICS=trace` also snapshots a visitor
+flight recorder after the first qualifying outlier; inspect its receipt and
+actual trace coverage. Both modes add work and memory use, so compare matched
+observer-enabled controls rather than treating them as normal-path benchmarks.
+
 Docker Hub images use `docker.io` directly and stay pinned by digest. Docker,
 Compose, and the test harness use existing Docker credentials, including credential
 helpers. Use `docker login` if you need authenticated pulls locally. GitHub-hosted

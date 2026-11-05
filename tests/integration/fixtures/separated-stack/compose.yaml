@@ -33,6 +33,7 @@ x-runtime: &runtime
         -tnl-postgres-load-diagnostics='${POSTGRES_DIAGNOSTICS:-off}' \
         -tnl-postgres-load-recording='${POSTGRES_RECORDING:-live}' \
         -tnl-postgres-load-timing='${POSTGRES_TIMING:-false}' \
+        -tnl-postgres-load-late-diagnostics='${POSTGRES_LATE_DIAGNOSTICS:-off}' \
         -tnl-runtime-load-public-urls='${PUBLIC_URLS:-4}' \
         -tnl-runtime-load-start-parallel='${START_PARALLEL:-4}' \
         -tnl-runtime-load-ready-timeout='${READY_TIMEOUT:-30s}' \

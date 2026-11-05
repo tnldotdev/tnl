@@ -161,7 +161,7 @@ func captureSeparatedPostgresTarget(t *testing.T) separatedResources {
 	})
 }
 
-func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component string, service connectLoadService, local string) {
+func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component string, service connectLoadService, local string, connectorPID int) {
 	for sequence := range 2 {
 		var phase connectLoadPhase
 		if !separatedRead(t, ctx, fmt.Sprintf("connect.prepare-%d", sequence), &phase) {
@@ -193,7 +193,7 @@ func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component st
 			if err != nil {
 				t.Fatal(err)
 			}
-			metadata := postgresRecordingMetadata{Mode: *postgresLoadRecording, SchedulerClock: "monotonic_rebased_once", SampleLimit: samples, PreparationStarted: time.Now(), TimingEnabled: *postgresLoadTiming, Notes: postgresRecordingNotes}
+			metadata := postgresRecordingMetadata{Mode: *postgresLoadRecording, SchedulerClock: "monotonic_rebased_once", SampleLimit: samples, PreparationStarted: time.Now(), TimingEnabled: *postgresLoadTiming, LateDiagnostics: *postgresLoadLateDiagnostics, Notes: postgresRecordingNotes}
 			recording, err := newPostgresRecording(*postgresLoadRecording, samples, requestFile)
 			if err != nil {
 				t.Fatal(err)
@@ -206,6 +206,27 @@ func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component st
 				timing = &recording.timing.Visitor
 				metadata.TimingStorageBytes = recording.timingStorageBytes()
 			}
+			var target *postgresTargetSampler
+			targetDirectory := filepath.Join("/results", "target-"+phase.Name+"-"+component)
+			finishTarget := func() {
+				if target == nil {
+					return
+				}
+				metadata.TargetSamplerFinishStarted = time.Since(phase.Start)
+				if err := target.Finish(targetDirectory); err != nil {
+					t.Error(err)
+				}
+				metadata.TargetSamplerFinishCompleted = time.Since(phase.Start)
+				target = nil
+			}
+			defer finishTarget()
+			if *postgresLoadLateDiagnostics != "off" {
+				target, err = preparePostgresTargetSampler(ctx, postgresLoadConfig(t, service, local, true))
+				if err != nil {
+					t.Fatal(err)
+				}
+				metadata.TargetObserverConnections = 1
+			}
 			resources, err := readSeparatedResources()
 			if err != nil {
 				t.Fatal(err)
@@ -216,7 +237,30 @@ func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component st
 			if !separatedRead(t, ctx, fmt.Sprintf("connect.phase-%d", sequence), &phase) {
 				return
 			}
-			result.Summary, err = visitor.Run(ctx, benchworkload.VisitorConfig{Rate: *runtimeLoadRPS, Workers: *runtimeLoadWorkers, QueueSlots: *runtimeLoadQueue, Start: phase.Start, Duration: phase.Duration, OnResult: recording.Record, Timing: timing})
+			if *postgresLoadLateDiagnostics != "off" {
+				now := time.Now()
+				phase.Start = now.Add(phase.Start.Sub(now))
+			}
+			late := startPostgresLateDiagnostic(ctx, postgresLateConfig{Phase: phase.Name, Start: phase.Start, Duration: phase.Duration, ConnectorPID: connectorPID})
+			lateDirectory := filepath.Join("/results", "late-"+phase.Name+"-"+component)
+			defer func() {
+				finishTarget()
+				if err := late.Finish(lateDirectory); err != nil {
+					t.Error(err)
+				}
+			}()
+			if target != nil {
+				if err := target.Start(ctx, phase.Start, phase.Duration); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var observe func(benchworkload.VisitorRequestTiming)
+			if late != nil {
+				observe = func(row benchworkload.VisitorRequestTiming) {
+					late.Observe(row.Slot, row.Started, row.Completed, row.CallbackStarted, row.CallbackCompleted)
+				}
+			}
+			result.Summary, err = visitor.Run(ctx, benchworkload.VisitorConfig{Rate: *runtimeLoadRPS, Workers: *runtimeLoadWorkers, QueueSlots: *runtimeLoadQueue, Start: phase.Start, Duration: phase.Duration, OnResult: recording.Record, Timing: timing, OnTiming: observe})
 			metadata.MeasurementCompleted = time.Now()
 			// keep diagnostic Finish/export calls after this guard; enabled samplers
 			// may continue while the coordinator captures resources.
@@ -224,6 +268,11 @@ func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component st
 				t.Fatal(exportErr)
 			}
 			metadata.ExportAuthorized = time.Now()
+			finishTarget()
+			if finishErr := late.Finish(lateDirectory); finishErr != nil {
+				t.Error(finishErr)
+			}
+			late = nil
 			// publish only metadata, and only once the complete artifact is visible.
 			metadata.FlushStarted = time.Now()
 			if err := errors.Join(err, recording.Flush(), requestFile.Close()); err != nil {

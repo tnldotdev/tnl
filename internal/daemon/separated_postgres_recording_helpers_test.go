@@ -19,7 +19,9 @@ var postgresLoadTiming = flag.Bool("tnl-postgres-load-timing", false, "record bo
 const postgresRecordingNotes = "buffered retains the preallocated raw-result backing array through the phase and flush; storage bytes exclude referenced strings and are not measured RSS. no forced GC. " +
 	"publisher capture preparation and writes remain separate confounds; inspect its capture.json bounds. " + postgresResourceBracketNotes + " inspect the phase resource-guard artifact for coordinator capture bounds. metadata_write_started excludes this metadata write itself. " +
 	"timing offsets use the visitor's monotonic phase epoch; completed_ns precedes deferred request cleanup, request_returned_ns follows it; result_index is 1-based JSONL order and slot is 0-based. " +
-	"collector_unlock_started_ns precedes unlock; collector_released_ns can include scheduling after unlock. file writes can contain bytes from several results."
+	"collector_unlock_started_ns precedes unlock; collector_released_ns can include scheduling after unlock. file writes can contain bytes from several results. " +
+	"late sample and trace modes each add one direct verified-TLS target observer outside the measured sessions; its queries change the database workload, so compare matched observer controls. " +
+	"for successful phases with a completed resource-guard artifact, target_sampler_finish_started_ns follows measured worker and observer-hook joins, resource capture and export authorization; authorization alone also releases visitors after coordinator abort. target sampling may finish an in-flight query after that boundary. target cleanup/export precedes late cleanup/export, and neither is a measured query tail."
 
 type postgresRecording struct {
 	Record  func(benchworkload.RequestResult)
@@ -31,26 +33,30 @@ type postgresRecording struct {
 }
 
 type postgresRecordingMetadata struct {
-	Mode                       string    `json:"mode"`
-	SchedulerClock             string    `json:"scheduler_clock"`
-	SampleLimit                int       `json:"sample_limit"`
-	RetainedResultCapacity     int       `json:"retained_result_capacity"`
-	RetainedResultStorageBytes int64     `json:"retained_result_storage_bytes"`
-	PreparationStarted         time.Time `json:"preparation_started"`
-	PreparationCompleted       time.Time `json:"preparation_completed"`
-	MeasurementCompleted       time.Time `json:"measurement_completed"`
-	ExportAuthorized           time.Time `json:"export_authorized"`
-	FlushStarted               time.Time `json:"flush_started"`
-	FlushCompleted             time.Time `json:"flush_completed"`
-	TimingEnabled              bool      `json:"timing_enabled"`
-	TimingStorageBytes         int64     `json:"timing_storage_bytes"`
-	TimingWriteStarted         time.Time `json:"timing_write_started,omitzero"`
-	TimingWriteCompleted       time.Time `json:"timing_write_completed,omitzero"`
-	MetadataWriteStarted       time.Time `json:"metadata_write_started"`
-	MemoryLimit                string    `json:"memory_limit"`
-	CPUQuota                   string    `json:"cpu_quota"`
-	GOMAXPROCS                 int       `json:"gomaxprocs"`
-	Notes                      string    `json:"notes"`
+	Mode                         string        `json:"mode"`
+	SchedulerClock               string        `json:"scheduler_clock"`
+	SampleLimit                  int           `json:"sample_limit"`
+	RetainedResultCapacity       int           `json:"retained_result_capacity"`
+	RetainedResultStorageBytes   int64         `json:"retained_result_storage_bytes"`
+	PreparationStarted           time.Time     `json:"preparation_started"`
+	PreparationCompleted         time.Time     `json:"preparation_completed"`
+	MeasurementCompleted         time.Time     `json:"measurement_completed"`
+	ExportAuthorized             time.Time     `json:"export_authorized"`
+	FlushStarted                 time.Time     `json:"flush_started"`
+	FlushCompleted               time.Time     `json:"flush_completed"`
+	TimingEnabled                bool          `json:"timing_enabled"`
+	LateDiagnostics              string        `json:"late_diagnostics"`
+	TargetObserverConnections    int           `json:"target_observer_connections"`
+	TargetSamplerFinishStarted   time.Duration `json:"target_sampler_finish_started_ns,omitzero"`
+	TargetSamplerFinishCompleted time.Duration `json:"target_sampler_finish_completed_ns,omitzero"`
+	TimingStorageBytes           int64         `json:"timing_storage_bytes"`
+	TimingWriteStarted           time.Time     `json:"timing_write_started,omitzero"`
+	TimingWriteCompleted         time.Time     `json:"timing_write_completed,omitzero"`
+	MetadataWriteStarted         time.Time     `json:"metadata_write_started"`
+	MemoryLimit                  string        `json:"memory_limit"`
+	CPUQuota                     string        `json:"cpu_quota"`
+	GOMAXPROCS                   int           `json:"gomaxprocs"`
+	Notes                        string        `json:"notes"`
 }
 
 func postgresRecordingSamples(mode string, rate int, duration time.Duration) (int, error) {

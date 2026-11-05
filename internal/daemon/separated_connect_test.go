@@ -239,7 +239,11 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 		if err := database.QueryRowContext(t.Context(), `SELECT count(*),min(id),min(publisher_identity_id) FROM control.service_runs WHERE closed_at IS NULL`).Scan(&runs, &runID, &publisherID); err != nil || runs != 1 {
 			t.Fatalf("PostgreSQL workload needs one shared service run: runs=%d error=%v", runs, err)
 		}
-		separatedResult(t, "postgres-configuration", map[string]any{"query": "SELECT 1", "protocol": "postgres", "query_execution_mode": "simple", "channel_binding": "disable", "visitor_tls": "verify-full", "target_tls": "verify-full", "services": count, "service_id": services[0].Service.Id, "service_run_id": runID, "publisher_identity_id": publisherID, "publisher_processes": 1, "connector_processes": 1, "connections": *runtimeLoadWorkers, "rps": rate, "duration": duration, "queue": *runtimeLoadQueue, "target_tls_hostname": postgresLoadHostname, "transport": services[0].Transport, "diagnostics": *postgresLoadDiagnostics, "metrics_owner_attached": *postgresLoadDiagnostics != "off", "result_recording": *postgresLoadRecording, "visitor_timing": *postgresLoadTiming, "result_sample_limit": postgresLoadMaxSamples})
+		targetObserverConnections := 0
+		if *postgresLoadLateDiagnostics != "off" {
+			targetObserverConnections = 1
+		}
+		separatedResult(t, "postgres-configuration", map[string]any{"query": "SELECT 1", "protocol": "postgres", "query_execution_mode": "simple", "channel_binding": "disable", "visitor_tls": "verify-full", "target_tls": "verify-full", "services": count, "service_id": services[0].Service.Id, "service_run_id": runID, "publisher_identity_id": publisherID, "publisher_processes": 1, "connector_processes": 1, "connections": *runtimeLoadWorkers, "rps": rate, "duration": duration, "queue": *runtimeLoadQueue, "target_tls_hostname": postgresLoadHostname, "transport": services[0].Transport, "diagnostics": *postgresLoadDiagnostics, "metrics_owner_attached": *postgresLoadDiagnostics != "off", "result_recording": *postgresLoadRecording, "visitor_timing": *postgresLoadTiming, "late_diagnostics": *postgresLoadLateDiagnostics, "target_observer_connections": targetObserverConnections, "result_sample_limit": postgresLoadMaxSamples})
 	}
 	for sequence, name := range names {
 		phase := connectLoadPhase{Name: name, Start: time.Now().Add(time.Second), Duration: duration, Direct: strings.HasPrefix(name, "direct"), Reuse: strings.HasSuffix(name, "reused")}
@@ -487,7 +491,7 @@ func runSeparatedConnectVisitor(t *testing.T, ctx context.Context, component str
 	}
 	separatedWrite(t, component+".connect-ready", startup)
 	if *runtimeLoadWorkload == "postgres" {
-		runSeparatedPostgresVisitor(t, ctx, component, services[0], local[0])
+		runSeparatedPostgresVisitor(t, ctx, component, services[0], local[0], processes[0].command.Process.Pid)
 		for _, process := range processes {
 			stopIntegrationBinaryProcess(t, process)
 		}

@@ -53,7 +53,7 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 	if workload != "" && workload != "public-url" && workload != "connect" && workload != "postgres" {
 		return errors.New("RUNTIME_WORKLOAD must be public-url, connect, or postgres")
 	}
-	if err := validateRuntimeRecording(workload, os.Getenv("POSTGRES_RECORDING"), os.Getenv("POSTGRES_TIMING"), os.Getenv("VISITOR_CPUS"), os.Getenv("VISITOR_GOMAXPROCS")); err != nil {
+	if err := validateRuntimeRecording(workload, os.Getenv("POSTGRES_RECORDING"), os.Getenv("POSTGRES_TIMING"), os.Getenv("POSTGRES_LATE_DIAGNOSTICS"), os.Getenv("VISITOR_CPUS"), os.Getenv("VISITOR_GOMAXPROCS")); err != nil {
 		return err
 	}
 	if workload == "postgres" {
@@ -101,7 +101,7 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 		if err != nil {
 			return fmt.Errorf("read workload source status: %w", err)
 		}
-		data, err := json.Marshal(map[string]any{"revision": strings.TrimSpace(string(commit)), "working_tree_dirty": len(changes) != 0, "result_recording": os.Getenv("POSTGRES_RECORDING"), "visitor_timing": os.Getenv("POSTGRES_TIMING"), "visitor_cpus": os.Getenv("VISITOR_CPUS"), "visitor_gomaxprocs": os.Getenv("VISITOR_GOMAXPROCS"), "visitor_memory": os.Getenv("VISITOR_MEMORY")})
+		data, err := json.Marshal(map[string]any{"revision": strings.TrimSpace(string(commit)), "working_tree_dirty": len(changes) != 0, "result_recording": os.Getenv("POSTGRES_RECORDING"), "visitor_timing": os.Getenv("POSTGRES_TIMING"), "late_diagnostics": os.Getenv("POSTGRES_LATE_DIAGNOSTICS"), "visitor_cpus": os.Getenv("VISITOR_CPUS"), "visitor_gomaxprocs": os.Getenv("VISITOR_GOMAXPROCS"), "visitor_memory": os.Getenv("VISITOR_MEMORY")})
 		if err != nil {
 			return err
 		}
@@ -236,7 +236,7 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 	return h.observe(ctx)
 }
 
-func validateRuntimeRecording(workload, mode, timing, cpus, gomaxprocs string) error {
+func validateRuntimeRecording(workload, mode, timing, late, cpus, gomaxprocs string) error {
 	if mode != "" && mode != "live" && mode != "buffered" {
 		return errors.New("POSTGRES_RECORDING must be live or buffered")
 	}
@@ -250,6 +250,12 @@ func validateRuntimeRecording(workload, mode, timing, cpus, gomaxprocs string) e
 	}
 	if workload != "postgres" && (mode == "buffered" || enabled) {
 		return errors.New("PostgreSQL result recording and timing require the postgres workload")
+	}
+	if late != "" && late != "off" && late != "sample" && late != "trace" {
+		return errors.New("POSTGRES_LATE_DIAGNOSTICS must be off, sample, or trace")
+	}
+	if late != "" && late != "off" && (workload != "postgres" || !enabled) {
+		return errors.New("POSTGRES_LATE_DIAGNOSTICS requires the postgres workload and POSTGRES_TIMING=true")
 	}
 	if cpus != "" {
 		value, err := strconv.ParseFloat(cpus, 64)

@@ -162,6 +162,9 @@ type VisitorConfig struct {
 	OnResult func(RequestResult)
 	// timing storage must cover every offered slot, including missed offers.
 	Timing *VisitorTimings
+	// OnTiming receives value copies after request return and after collector
+	// unlock. calls may overlap across workers and must not block. requires Timing.
+	OnTiming func(VisitorRequestTiming)
 }
 
 func (v Visitor) Run(ctx context.Context, config VisitorConfig, urls []string) (VisitorResult, error) {
@@ -172,6 +175,9 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 	result := VisitorResult{Workers: config.Workers, QueueSlots: config.QueueSlots, Rate: config.Rate}
 	if config.Workers <= 0 || config.QueueSlots < 0 || config.Rate < 0 || config.Rate > 10_000 || config.Duration <= 0 || len(urls) == 0 {
 		return result, errors.New("invalid visitor configuration")
+	}
+	if config.OnTiming != nil && config.Timing == nil {
+		return result, errors.New("visitor timing observer requires preallocated timing storage")
 	}
 	if config.Timing != nil {
 		seconds, remainder := config.Duration/time.Second, config.Duration%time.Second
@@ -216,6 +222,9 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 						// exact monotonic endpoint, not the later worker return.
 						timing.Completed = row.Scheduled.Sub(config.Start) + row.Duration
 					}
+					if config.OnTiming != nil {
+						config.OnTiming(*timing)
+					}
 					timing.CollectorWaitStarted = time.Since(config.Start)
 				}
 				mu.Lock()
@@ -237,6 +246,9 @@ func runVisitors(ctx context.Context, config VisitorConfig, urls []string, reque
 				mu.Unlock()
 				if timing != nil {
 					timing.CollectorReleased = time.Since(config.Start)
+					if config.OnTiming != nil {
+						config.OnTiming(*timing)
+					}
 				}
 			}
 		})

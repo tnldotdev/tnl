@@ -33,6 +33,7 @@ tasks:
       POSTGRES_DIAGNOSTICS: '{{default "off" .DIAGNOSTICS}}'
       POSTGRES_RECORDING: '{{default "live" .RESULT_RECORDING}}'
       POSTGRES_TIMING: '{{default "false" .TIMING}}'
+      POSTGRES_LATE_DIAGNOSTICS: '{{default "off" .LATE_DIAGNOSTICS}}'
       VISITOR_CPUS: '{{default "1" .VISITOR_CPUS}}'
       VISITOR_GOMAXPROCS: '{{default "" .VISITOR_GOMAXPROCS}}'
       VISITOR_MEMORY: '{{default "128m" .VISITOR_MEMORY}}'
@@ -93,6 +94,7 @@ tasks:
           DIAGNOSTICS: '{{default "off" .DIAGNOSTICS}}'
           RESULT_RECORDING: '{{default "live" .RESULT_RECORDING}}'
           TIMING: '{{default "false" .TIMING}}'
+          LATE_DIAGNOSTICS: '{{default "off" .LATE_DIAGNOSTICS}}'
           VISITOR_CPUS: '{{default "1" .VISITOR_CPUS}}'
           VISITOR_GOMAXPROCS: '{{if eq .MODE "postgres"}}{{default "2" .VISITOR_GOMAXPROCS}}{{else}}{{default "" .VISITOR_GOMAXPROCS}}{{end}}'
           HA_TOPOLOGY: "1"
@@ -109,7 +111,7 @@ tasks:
 
   go:test:load:postgres:
     dir: "{{.ROOT_DIR}}"
-    desc: Measure warm SELECT 1 (WORKERS, RPS, DURATION, RESULTS; RESULT_RECORDING=live|buffered, TIMING=false, VISITOR_CPUS=1, VISITOR_GOMAXPROCS=2)
+    desc: Measure warm SELECT 1 (RESULT_RECORDING=live|buffered, TIMING=false, LATE_DIAGNOSTICS=off|sample|trace requires TIMING=true, VISITOR_CPUS=1)
     cmds:
       - task: go:test:load:connect
         vars:
@@ -117,6 +119,7 @@ tasks:
           DIAGNOSTICS: '{{default "off" .DIAGNOSTICS}}'
           RESULT_RECORDING: '{{default "live" .RESULT_RECORDING}}'
           TIMING: '{{default "false" .TIMING}}'
+          LATE_DIAGNOSTICS: '{{default "off" .LATE_DIAGNOSTICS}}'
           VISITOR_CPUS: '{{default "1" .VISITOR_CPUS}}'
           VISITOR_GOMAXPROCS: '{{default "2" .VISITOR_GOMAXPROCS}}'
           WORKERS: '{{default "4" .WORKERS}}'

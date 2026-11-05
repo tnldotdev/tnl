@@ -175,6 +175,9 @@ func TestLoadSeparatedRuntime(t *testing.T) {
 
 func separatedLoadParameters(t *testing.T) (int, int, time.Duration) {
 	t.Helper()
+	if err := validatePostgresLateDiagnostics(*runtimeLoadWorkload, *postgresLoadTiming, *postgresLoadLateDiagnostics); err != nil {
+		t.Fatal(err)
+	}
 	if *runtimeLoadWorkload == "postgres" {
 		if !slices.Contains([]string{"off", "metrics", "cpu", "contention", "trace"}, *postgresLoadDiagnostics) || *postgresLoadDiagnostics != "off" && *runtimeLoadDuration <= publisherDiagnosticGuard {
 			t.Fatal("invalid PostgreSQL diagnostics mode or duration")
