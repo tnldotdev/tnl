@@ -1672,6 +1672,7 @@ func (e WebhookProviderSourceResponseSource1Kind) Valid() bool {
 const (
 	WorkloadFly        WorkloadProvider = "fly"
 	WorkloadGitHub     WorkloadProvider = "github"
+	WorkloadGitLab     WorkloadProvider = "gitlab"
 	WorkloadGoogle     WorkloadProvider = "google"
 	WorkloadKubernetes WorkloadProvider = "kubernetes"
 	WorkloadOIDC       WorkloadProvider = "oidc"
@@ -1684,6 +1685,8 @@ func (e WorkloadProvider) Valid() bool {
 	case WorkloadFly:
 		return true
 	case WorkloadGitHub:
+		return true
+	case WorkloadGitLab:
 		return true
 	case WorkloadGoogle:
 		return true
@@ -2888,6 +2891,7 @@ type ProjectWebhook struct {
 type ProjectWorkload struct {
 	// Github Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
 	Github *ProjectWorkloadGitHub `json:"github,omitempty"`
+	Gitlab *ProjectWorkloadGitLab `json:"gitlab,omitempty"`
 
 	// Google Service account selector retained by trusted apply. The verified numeric identity is the trust sub claim; this selector is setup metadata, not an assertion claim.
 	Google *ProjectWorkloadGoogle `json:"google,omitempty"`
@@ -2914,6 +2918,15 @@ type ProjectWorkloadGitHub struct {
 	RepositoryId      string   `json:"repository_id"`
 	RepositoryOwnerId string   `json:"repository_owner_id"`
 	WorkflowRef       string   `json:"workflow_ref"`
+}
+
+// ProjectWorkloadGitLab defines model for ProjectWorkloadGitLab.
+type ProjectWorkloadGitLab struct {
+	DefaultBranch *string `json:"default_branch,omitempty"`
+	NamespaceId   string  `json:"namespace_id"`
+	Project       string  `json:"project"`
+	ProjectId     string  `json:"project_id"`
+	Server        string  `json:"server"`
 }
 
 // ProjectWorkloadGoogle Service account selector retained by trusted apply. The verified numeric identity is the trust sub claim; this selector is setup metadata, not an assertion claim.

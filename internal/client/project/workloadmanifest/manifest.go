@@ -79,6 +79,8 @@ func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error)
 			a.Method, a.Audience = "google-metadata", p.TokenAudience(m.Server)
 		case "kubernetes":
 			a.Method, a.Audience, a.TokenFile = "token-file", p.TokenAudience(m.Server), KubernetesTokenFile
+		case "gitlab":
+			a.Method, a.Audience, a.TokenEnv = "token-env", p.TokenAudience(m.Server), config.GitLabTokenEnv
 		case "oidc":
 			a.Method = "callback"
 			a.Audience = p.TokenAudience(m.Server)
@@ -129,7 +131,7 @@ func (m Manifest) Validate() error {
 			}
 			seen[s] = true
 		}
-		if !slices.Contains([]string{"github", "vercel", "fly", "oidc", "google", "kubernetes"}, w.Provider) {
+		if !slices.Contains([]string{"github", "vercel", "fly", "oidc", "google", "kubernetes", "gitlab"}, w.Provider) {
 			return ErrInvalid
 		}
 		if a := w.Acquisition; a.Method == "token-file" || a.Method == "token-env" {

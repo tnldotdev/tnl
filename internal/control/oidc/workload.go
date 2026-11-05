@@ -68,6 +68,7 @@ type WorkloadExecution struct {
 	Vercel          *VercelExecution     `json:"vercel,omitempty"`
 	Fly             *FlyExecution        `json:"fly,omitempty"`
 	Kubernetes      *KubernetesExecution `json:"kubernetes,omitempty"`
+	GitLab          *GitLabExecution     `json:"gitlab,omitempty"`
 	Claims          map[string]string    `json:"claims,omitempty"`
 	AssertionDigest [32]byte             `json:"-"`
 }
@@ -77,7 +78,7 @@ func (c WorkloadExecution) Validate(now time.Time) error {
 		return ErrUnauthenticated
 	}
 	if c.Provider == "github" {
-		if c.GitHub == nil || c.Vercel != nil || c.Fly != nil || c.Kubernetes != nil || len(c.Claims) > 0 || c.Issuer != GitHubIssuer || c.Subject != c.GitHub.Subject {
+		if c.GitHub == nil || c.Vercel != nil || c.Fly != nil || c.Kubernetes != nil || c.GitLab != nil || len(c.Claims) > 0 || c.Issuer != GitHubIssuer || c.Subject != c.GitHub.Subject {
 			return ErrUnauthenticated
 		}
 		if c.IssuedAt != c.GitHub.IssuedAt || c.NotBefore != c.GitHub.NotBefore || c.ExpiresAt != c.GitHub.ExpiresAt {
@@ -92,7 +93,14 @@ func (c WorkloadExecution) Validate(now time.Time) error {
 	if c.Provider != "kubernetes" && c.Kubernetes != nil {
 		return ErrUnauthenticated
 	}
+	if c.Provider != "gitlab" && c.GitLab != nil {
+		return ErrUnauthenticated
+	}
 	switch c.Provider {
+	case "gitlab":
+		if c.GitLab == nil || c.Vercel != nil || c.Fly != nil || len(c.Claims) != 0 || !c.GitLab.valid(c.Subject) {
+			return ErrUnauthenticated
+		}
 	case "kubernetes":
 		k := c.Kubernetes
 		if k == nil || c.Vercel != nil || c.Fly != nil || len(c.Claims) != 0 || !naming.ValidAuthorityLabel(k.Namespace) || !config.ValidKubernetesName(k.ServiceAccount.Name) || !config.ValidKubernetesUID(k.ServiceAccount.UID) || !config.ValidKubernetesName(k.Pod.Name) || !config.ValidKubernetesUID(k.Pod.UID) || c.Subject != "system:serviceaccount:"+k.Namespace+":"+k.ServiceAccount.Name {
@@ -149,6 +157,9 @@ func (c WorkloadExecution) Matches(p WorkloadTrust) bool {
 	}
 	if c.Kubernetes != nil {
 		claims = map[string]string{"service_account_uid": c.Kubernetes.ServiceAccount.UID}
+	}
+	if c.GitLab != nil {
+		claims = c.GitLab.claims()
 	}
 	for k, v := range p.Claims {
 		if k == "sub" {
@@ -242,6 +253,9 @@ func (v *WorkloadVerifier) Verify(ctx context.Context, p WorkloadTrust, raw stri
 	}
 	c = WorkloadExecution{Provider: p.Provider, Issuer: t.Issuer, Subject: t.Subject, Audience: p.Audience, TrustDigest: p.Digest(), IssuedAt: times.IssuedAt, NotBefore: notBefore, ExpiresAt: times.ExpiresAt, AssertionDigest: sha256.Sum256([]byte(raw))}
 	switch p.Provider {
+	case "gitlab":
+		c.GitLab = &GitLabExecution{}
+		err = t.Claims(c.GitLab)
 	case "kubernetes":
 		var claims struct {
 			Kubernetes KubernetesExecution `json:"kubernetes.io"`
