@@ -38,11 +38,24 @@ var separatedComponent = flag.String("tnl-separated-component", "", "separated r
 var separatedComponents = []string{"control-a", "ingress-a", "relay-a", "relay-b", "publishers", "publishers-2", "publishers-3", "publishers-4", "visitor-1", "visitor-2", "visitor-3", "visitor-4", "app", "app-2", "app-3", "app-4", "pebble"}
 
 func separatedPublisherComponents() []string {
+	if *runtimeLoadWorkload == "postgres" {
+		return []string{"publishers"}
+	}
 	return []string{"publishers", "publishers-2", "publishers-3", "publishers-4"}
 }
 
 func separatedAppComponents() []string {
+	if *runtimeLoadWorkload == "postgres" {
+		return nil
+	}
 	return []string{"app", "app-2", "app-3", "app-4"}
+}
+
+func separatedConnectVisitors() []string {
+	if *runtimeLoadWorkload == "postgres" {
+		return []string{"visitor-1"}
+	}
+	return []string{"visitor-1", "visitor-2", "visitor-3", "visitor-4"}
 }
 
 func separatedAppPublisher(component string) string {
@@ -77,6 +90,9 @@ func separatedServerRoles() []string {
 
 func separatedActiveComponents() []string {
 	components := slices.Clone(separatedComponents)
+	if *runtimeLoadWorkload == "postgres" {
+		components = []string{"control-a", "ingress-a", "relay-a", "relay-b", "publishers", "visitor-1", "pebble"}
+	}
 	if *runtimeLoadHATopology {
 		components = append(components, "control-b", "ingress-b")
 	}
@@ -243,7 +259,7 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 	cfg.PublicURLCertificateWorkers = *runtimeLoadCertificateWorkers
 	cfg.QUICIdleTimeout = 45 * time.Second
 	cfg.ClusterSecret = testClusterSecret
-	if *runtimeLoadWorkload == "connect" {
+	if *runtimeLoadWorkload == "connect" || *runtimeLoadWorkload == "postgres" {
 		// the echo target is private; these ports only allocate its managed TLS identity.
 		cfg.ServicePortRanges = []string{"20000-20127"}
 	}
@@ -273,8 +289,6 @@ func separatedConfig(t *testing.T, component string) daemonconfig.Config {
 	case daemonconfig.RoleIngress:
 		cfg.ControlHostname, cfg.IngressID = "control."+separatedDomain, component+"-separated"
 		cfg.IngressListen = "0.0.0.0:443"
-		if *runtimeLoadWorkload == "connect" {
-		}
 	case daemonconfig.RoleRelay:
 		cfg.ControlHostname = "control." + separatedDomain
 		serviceID := strings.TrimSuffix(component, "-2")

@@ -173,6 +173,12 @@ tasks:
     cmds:
       - task: workloads:go:test:load:connect
 
+  go:test:load:postgres:
+    dir: "{{.ROOT_DIR}}"
+    desc: Measure warm PostgreSQL SELECT 1 latency through one publisher service run
+    cmds:
+      - task: workloads:go:test:load:postgres
+
   package:
     dir: "{{.ROOT_DIR}}"
     desc: Build a local release snapshot

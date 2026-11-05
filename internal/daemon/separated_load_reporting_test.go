@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -42,30 +44,12 @@ func separatedCapture(t *testing.T, database *sql.DB, name string) separatedSnap
 	for _, component := range separatedActiveComponents() {
 		result.Resources[component] = separatedResource(t, component)
 	}
-	// read the PostgreSQL process's own cgroup/proc files through the disposable
-	// superuser connection, avoiding a metrics sidecar in its memory budget.
-	postgres, err := readSeparatedResourceFiles(func(path string) (string, error) {
-		var text string
-		err := database.QueryRowContext(integrationOperationContext(t), `SELECT pg_read_file($1, 0, 65536)`, path).Scan(&text)
-		return strings.TrimSpace(text), err
+	result.Resources["postgres"] = separatedPostgresResource(t, "postgres", func(query string, args ...any) pgx.Row {
+		return database.QueryRowContext(integrationOperationContext(t), query, args...)
 	})
-	if err != nil {
-		t.Fatal(err)
+	if *runtimeLoadWorkload == "postgres" {
+		result.Resources["postgres-target"] = captureSeparatedPostgresTarget(t)
 	}
-	postgres.Postgres = &separatedPostgresResources{}
-	if err := database.QueryRowContext(integrationOperationContext(t), `SELECT
-		(SELECT coalesce(sum(allocated_size), 0)::bigint FROM pg_shmem_allocations),
-		pg_size_bytes(current_setting('shared_buffers')),
-		numbackends, blks_read, blks_hit, temp_bytes
-		FROM pg_stat_database WHERE datname = current_database()`).Scan(
-		&postgres.Postgres.SharedMemoryBytes, &postgres.Postgres.SharedBuffersBytes,
-		&postgres.Postgres.Backends, &postgres.Postgres.BlocksRead,
-		&postgres.Postgres.BlocksHit, &postgres.Postgres.TempBytes,
-	); err != nil {
-		t.Fatal(err)
-	}
-	postgres.NetworkNamespace = "postgres"
-	result.Resources["postgres"] = postgres
 	for _, role := range separatedServerRoles() {
 		response, err := integrationGET(integrationOperationContext(t), &http.Client{Timeout: 2 * time.Second}, "http://"+role+":9090/metrics")
 		if err != nil {
@@ -95,9 +79,41 @@ func separatedCapture(t *testing.T, database *sql.DB, name string) separatedSnap
 	return result
 }
 
+// read each PostgreSQL process's own cgroup/proc files through its disposable
+// superuser connection, avoiding a metrics sidecar in its memory budget.
+func separatedPostgresResource(t *testing.T, component string, query func(string, ...any) pgx.Row) separatedResources {
+	t.Helper()
+	value, err := readSeparatedResourceFiles(func(path string) (string, error) {
+		var text string
+		err := query(`SELECT pg_read_file($1, 0, 65536)`, path).Scan(&text)
+		return strings.TrimSpace(text), err
+	})
+	if err != nil {
+		t.Fatalf("%s resources: %v", component, err)
+	}
+	value.Postgres = &separatedPostgresResources{}
+	if err := query(`SELECT pg_postmaster_start_time()::text,
+		(SELECT coalesce(sum(allocated_size), 0)::bigint FROM pg_shmem_allocations),
+		pg_size_bytes(current_setting('shared_buffers')),
+		numbackends, blks_read, blks_hit, temp_bytes
+		FROM pg_stat_database WHERE datname = current_database()`).Scan(
+		&value.ProcessRunID, &value.Postgres.SharedMemoryBytes, &value.Postgres.SharedBuffersBytes,
+		&value.Postgres.Backends, &value.Postgres.BlocksRead,
+		&value.Postgres.BlocksHit, &value.Postgres.TempBytes,
+	); err != nil {
+		t.Fatalf("%s PostgreSQL summary: %v", component, err)
+	}
+	value.NetworkNamespace = component
+	return value
+}
+
 func separatedReportResources(t *testing.T, phase string, before, after separatedSnapshot) {
 	t.Helper()
-	for _, component := range append(separatedActiveComponents(), "postgres", "coordinator") {
+	components := append(separatedActiveComponents(), "postgres", "coordinator")
+	if *runtimeLoadWorkload == "postgres" {
+		components = append(components, "postgres-target")
+	}
+	for _, component := range components {
 		a, b := before.Resources[component], after.Resources[component]
 		if a.ProcessRunID != b.ProcessRunID {
 			t.Logf("separated_resource phase=%s component=%s interval_reset=true before_run=%s after_run=%s memory=%d peak=%d fds=%d memory_anon=%d memory_file=%d memory_kernel=%d memory_kernel_stack=%d memory_pagetables=%d memory_sock=%d memory_slab=%d memory_shmem=%d memory_file_dirty=%d memory_file_writeback=%d memory_high_events=%d memory_max_events=%d oom_events=%d oom_kills=%d",
@@ -120,9 +136,9 @@ func separatedReportResources(t *testing.T, phase string, before, after separate
 		if b.OOMKills > a.OOMKills {
 			t.Errorf("%s OOM in %s", component, phase)
 		}
-		if component == "postgres" && a.Postgres != nil && b.Postgres != nil {
-			t.Logf("separated_postgres phase=%s shared_memory=%d shared_buffers=%d backends=%d blocks_read=%d blocks_hit=%d temp_bytes=%d",
-				phase, b.Postgres.SharedMemoryBytes, b.Postgres.SharedBuffersBytes, b.Postgres.Backends,
+		if a.Postgres != nil && b.Postgres != nil {
+			t.Logf("separated_postgres phase=%s component=%s shared_memory=%d shared_buffers=%d backends=%d blocks_read=%d blocks_hit=%d temp_bytes=%d",
+				phase, component, b.Postgres.SharedMemoryBytes, b.Postgres.SharedBuffersBytes, b.Postgres.Backends,
 				b.Postgres.BlocksRead-a.Postgres.BlocksRead, b.Postgres.BlocksHit-a.Postgres.BlocksHit, b.Postgres.TempBytes-a.Postgres.TempBytes)
 		}
 	}
@@ -192,22 +208,9 @@ func separatedCollectVisitors(t *testing.T, phase string, timeout time.Duration)
 		separatedWait(t, fmt.Sprintf("%s.visitor-%d", phase, i), timeout, &result)
 		if result.RequestsFile != "" {
 			path := filepath.Join("/results", result.RequestsFile)
-			file, err := os.Open(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			decoder := json.NewDecoder(file)
-			for {
-				var row benchworkload.RequestResult
-				if err := decoder.Decode(&row); err != nil {
-					if err == io.EOF {
-						break
-					}
-					t.Fatal(err)
-				}
+			if _, err := streamSeparatedRequestFile(path, func(row benchworkload.RequestResult) {
 				result.Requests = append(result.Requests, row)
-			}
-			if err := file.Close(); err != nil {
+			}); err != nil {
 				t.Fatal(err)
 			}
 			if len(result.Requests) != result.Completed+result.QueueExpired {
@@ -218,6 +221,26 @@ func separatedCollectVisitors(t *testing.T, phase string, timeout time.Duration)
 	}
 	separatedResult(t, phase+"-visitors", results)
 	return results
+}
+
+func streamSeparatedRequestFile(path string, observe func(benchworkload.RequestResult)) (rows int, err error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { err = errors.Join(err, file.Close()) }()
+	decoder := json.NewDecoder(file)
+	for {
+		var row benchworkload.RequestResult
+		if err := decoder.Decode(&row); err != nil {
+			if err == io.EOF {
+				return rows, nil
+			}
+			return rows, err
+		}
+		observe(row)
+		rows++
+	}
 }
 
 type separatedHeldSummary struct {

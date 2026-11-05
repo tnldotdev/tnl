@@ -37,6 +37,16 @@ Find integration, race, load, and packaging checks with
 integration tests need Linux. The full CI matrix lives in
 [the workflows](.github/workflows/).
 
+For warm PostgreSQL latency, run `mise exec -- task go:test:load:postgres`.
+It compares a direct database connection with the connector/publisher path using
+the same query and retained sessions. The task owns its disposable databases;
+it does not use a deployed server. Keep baseline runs unprofiled, then repeat
+with `DIAGNOSTICS=metrics`, `cpu`, `contention`, or `trace` to inspect the
+publisher. Profiling changes timing, so compare like-for-like runs.
+The default `off` mode omits the publisher's metrics owner; use `metrics` for
+a recording-enabled comparison. `trace` captures a short Go execution trace,
+not SQL text or per-query distributed spans.
+
 Docker Hub images use `docker.io` directly and stay pinned by digest. Docker,
 Compose, and the test harness use existing Docker credentials, including credential
 helpers. Use `docker login` if you need authenticated pulls locally. GitHub-hosted

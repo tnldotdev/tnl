@@ -50,13 +50,13 @@ func TestSeparatedRuntimeComponent(t *testing.T) {
 		}
 		runSeparatedApp(t, ctx, component)
 	case "publishers", "publishers-2", "publishers-3", "publishers-4":
-		if *runtimeLoadWorkload == "connect" {
+		if *runtimeLoadWorkload == "connect" || *runtimeLoadWorkload == "postgres" {
 			runSeparatedConnectPublishers(t, ctx, routes, slices.Index(separatedPublisherComponents(), component))
 			return
 		}
 		runSeparatedPublishers(t, ctx, routes, rate, slices.Index(separatedPublisherComponents(), component))
 	case "visitor-1", "visitor-2", "visitor-3", "visitor-4":
-		if *runtimeLoadWorkload == "connect" {
+		if *runtimeLoadWorkload == "connect" || *runtimeLoadWorkload == "postgres" {
 			runSeparatedConnectVisitor(t, ctx, component, rate)
 			return
 		}
