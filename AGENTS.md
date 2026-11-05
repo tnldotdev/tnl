@@ -16,9 +16,9 @@ qualify claims:
   not “Your app is completely private.”
 
 Keep the voice spare, concrete, practical, and understated. Avoid
-hype and unnecessary jargon. Start public guides with what the reader can do;
-in maintainer docs, explain the relevant boundary. In diagnostics, say what
-failed and what to do next. Follow the CLI output rules below for presentation.
+hype and unnecessary jargon. Start public guides with what the reader can do.
+In diagnostics, say what failed and what to do next. Follow the CLI output rules
+below for presentation.
 
 Use lowercase documentation filenames and Markdown headings. Use normal sentence
 capitalization in body text, bullets, and tables, with standard casing for proper
@@ -30,12 +30,11 @@ agent discovery.
 
 Public product, client, and operator docs live in the sibling `../tnl.dev`
 repository, under `apps/accounts/src/content/docs/`. The repository README and
-npm package README link there. Keep contributor, maintainer, and benchmark docs
-with this code. Update the relevant docs alongside behavior changes.
+npm package README link there. Update the relevant docs alongside behavior changes.
 
-Write maintainer docs only for reasons, rules, or setup that are hard to find in
-code or tests. Keep them short and plain, link to the source, and put work logs
-and check results in the PR.
+Keep contributor setup in [contributing.md](contributing.md). Explain implementation
+boundaries in source and tests rather than a separate documentation tree. Put work
+logs and check results in the PR.
 
 # canonical terms
 
