@@ -1,6 +1,8 @@
 package publisher_test
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -12,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -103,20 +106,13 @@ func TestIntegrationDatabaseSDKSmoke(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = reader.Close()
-			fixture, err := filepath.Abs("../../packages/ts/test/fixtures/connections/database-smoke.ts")
-			if err != nil {
-				t.Fatal(err)
-			}
-			command := exec.CommandContext(t.Context(), "node", fixture, string(setting.protocol))
-			command.Dir = root
-			for _, value := range os.Environ() {
-				if !strings.HasPrefix(value, "TNL_") && !strings.HasPrefix(value, "NODE_OPTIONS=") {
-					command.Env = append(command.Env, value)
+			for _, language := range []string{"javascript", "python"} {
+				if language == "python" && setting.protocol != config.ProtocolPostgres {
+					continue
 				}
-			}
-			command.Env = append(command.Env, "TNL_CONNECTION_HANDLE="+state.ConnectionHandle)
-			if err := command.Run(); err != nil {
-				t.Fatalf("database SDK smoke (%s): %v", setting.protocol, err)
+				t.Run(language, func(t *testing.T) {
+					runDatabaseSDKSmoke(t, root, binary, state, backend, string(setting.protocol), language)
+				})
 			}
 		})
 	}
@@ -126,6 +122,8 @@ func TestIntegrationDatabaseSDKSmoke(t *testing.T) {
 }
 
 type databaseSmokeBackend struct {
+	mu          sync.RWMutex
+	transport   string
 	deadline    time.Time
 	metadata    meta.PublicMetadata
 	connections map[string]connectorruntime.Connection
@@ -138,11 +136,110 @@ func (b *databaseSmokeBackend) Prepared(name string) (connectorruntime.Connectio
 	return b.Connect(context.Background(), name)
 }
 func (b *databaseSmokeBackend) Connect(_ context.Context, name string) (connectorruntime.Connection, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	connection, ok := b.connections[name]
 	if !ok {
 		return connectorruntime.Connection{}, connectorruntime.ErrUnauthorized
 	}
+	if b.transport != "" {
+		connection.TransportID = "ctg_" + strings.Repeat(b.transport, 22)
+	}
+	// every read has a new permission deadline without changing its binding.
+	connection.ExpiresAt = minTimeForDatabaseSmoke(b.deadline, time.Now().Add(time.Minute))
 	return connection, nil
 }
 func (b *databaseSmokeBackend) Renew(context.Context) (time.Time, error) { return b.deadline, nil }
 func (b *databaseSmokeBackend) Close(context.Context) error              { return nil }
+
+func minTimeForDatabaseSmoke(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+func runDatabaseSDKSmoke(t *testing.T, root, binary string, state connectorruntime.Status, backend *databaseSmokeBackend, protocol, language string) {
+	t.Helper()
+	backend.mu.Lock()
+	backend.transport = "a"
+	backend.mu.Unlock()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	fixture, err := filepath.Abs("../../packages/ts/test/fixtures/connections/database-smoke.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.CommandContext(ctx, "node", fixture, protocol)
+	if language == "python" {
+		python, err := filepath.Abs("../../packages/py/.venv/bin/python")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixture, err = filepath.Abs("../../packages/py/tests/database_smoke.py")
+		if err != nil {
+			t.Fatal(err)
+		}
+		command = exec.CommandContext(ctx, python, fixture, binary)
+	}
+	command.Dir = root
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, "TNL_") && !strings.HasPrefix(value, "NODE_OPTIONS=") {
+			command.Env = append(command.Env, value)
+		}
+	}
+	command.Env = append(command.Env, "TNL_CONNECTION_HANDLE="+state.ConnectionHandle)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	output, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	defer func() {
+		cancel()
+		if !waited {
+			_ = command.Wait()
+		}
+	}()
+	scanner := bufio.NewScanner(output)
+	for _, step := range []struct{ event, transport string }{{"binding-a", "b"}, {"binding-b", "a"}, {"closed", ""}} {
+		if !scanner.Scan() || scanner.Text() != step.event {
+			cancel()
+			err := command.Wait()
+			waited = true
+			t.Fatalf("database SDK %s: wanted %s, got %q: %v; %v\n%s", language, step.event, scanner.Text(), scanner.Err(), err, stderr.String())
+		}
+		if step.transport == "" {
+			break
+		}
+		backend.mu.Lock()
+		backend.transport = step.transport
+		backend.mu.Unlock()
+		if _, err := io.WriteString(input, "next\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err = command.Wait()
+	waited = true
+	if err != nil {
+		t.Fatalf("database SDK %s: %v\n%s", language, err, stderr.String())
+	}
+	handle, err := connectorruntime.ReadHandle(state.ConnectionHandle)
+	if err != nil {
+		t.Fatal("factory cleanup stopped the shared native owner", err)
+	}
+	var current connectorruntime.Status
+	if err := connectorruntime.Call(t.Context(), state.ConnectionHandle, "status", connectorruntime.Request{Schema: 1, Directory: handle.Directory, ConfigDigest: handle.ConfigDigest}, &current); err != nil || current.PID != state.PID {
+		t.Fatal("factory cleanup replaced the shared native owner", err)
+	}
+	t.Log("real database pools retained original connections across changing permission deadlines and A/B/A bindings; joined driver cleanup left the native owner running")
+}

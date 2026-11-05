@@ -222,7 +222,7 @@ tasks:
   tcp-clients:
     dir: "{{.ROOT_DIR}}"
     desc: Check PostgreSQL and MySQL SDK queries over verified TLS and selected connection lifetimes
-    deps: [":js:build"]
+    deps: [":js:build", ":py:sync"]
     cmds:
       - go -C tools/testharness run . postgres-tls -- go test -race -v ./internal/publisher -run='{{.RUN | default "^TestIntegration(ManagedDatabaseProviders|DatabaseSDKSmoke|ManagedPostgres)"}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
       - go -C tools/testharness run . mysql-tls -- go test -race -v ./internal/publisher -run='^TestIntegration(ManagedDatabaseProviders|DatabaseSDKSmoke)/mysql' -count=1 -timeout=5m -args -tnl-test-tier=integration

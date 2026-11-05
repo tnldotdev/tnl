@@ -25,7 +25,7 @@ func PythonFacade(configuration config.TNL, configPath string) (map[string][]byt
 		return nil, errors.New("project configuration is required for declarations")
 	}
 	var source strings.Builder
-	source.WriteString(pythonGenerated + "from __future__ import annotations\n\nimport os\nfrom typing import Literal, overload\n\nimport tnl as _tnl\n\n")
+	source.WriteString(pythonGenerated + "from __future__ import annotations\n\nimport os\nfrom collections.abc import Awaitable, Callable\nfrom typing import Literal, overload\n\nimport tnl as _tnl\n\n")
 	static := !strings.EqualFold(filepath.Ext(configPath), ".ts")
 	names := make([]string, 0, len(configuration.Services))
 	if static {
@@ -66,6 +66,31 @@ func PythonFacade(configuration config.TNL, configPath string) (map[string][]byt
 			nameType = "Never"
 		}
 		fmt.Fprintf(&source, "    def connect(self, service: %s, *, directory: str | os.PathLike[str] | None = None) -> _tnl.ConnectionHandle[_tnl.Connection]:\n        return _project.connect(service, directory=directory)\n\n", nameType)
+	}
+	for _, protocol := range ordered {
+		if len(ordered) > 1 {
+			source.WriteString("    @overload\n")
+		}
+		fmt.Fprintf(&source, "    def client[T](self, service: Literal[%s], *, create: Callable[[_tnl.%s], T | Awaitable[T]], close: Callable[[T], None | Awaitable[None]], directory: str | os.PathLike[str] | None = None) -> _tnl.ClientFactory[T]:", strings.Join(groups[protocol], ", "), protocols[protocol])
+		if len(ordered) > 1 {
+			source.WriteString(" ...\n\n")
+		} else {
+			source.WriteString("\n        return _project.client(service, create=create, close=close, directory=directory)\n\n")
+		}
+	}
+	if len(ordered) != 1 {
+		nameType, createType := "str", "_tnl.Connection"
+		if static && len(names) == 0 {
+			nameType = "Never"
+		}
+		if len(ordered) > 1 {
+			// overloads provide exact callback types; implementation dispatch is
+			// checked by the same project's runtime protocol selection.
+			createType = "..."
+		} else {
+			createType = "[" + createType + "]"
+		}
+		fmt.Fprintf(&source, "    def client[T](self, service: %s, *, create: Callable[%s, T | Awaitable[T]], close: Callable[[T], None | Awaitable[None]], directory: str | os.PathLike[str] | None = None) -> _tnl.ClientFactory[T]:\n        return _project.client(service, create=create, close=close, directory=directory)\n\n", nameType, createType)
 	}
 	if !static {
 		source.WriteString("# generic: a TypeScript factory's evaluated names are not a stable declaration.\n_project = _tnl.Project()\n")

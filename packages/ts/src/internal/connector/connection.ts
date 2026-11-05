@@ -6,7 +6,14 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Pool, buildConnector, fetch as transportFetch, type Dispatcher } from "undici/index.js";
 import { TnlCleanupError, TnlError } from "../../errors.js";
-import type { TnlConnectionHandle, TnlConnectionRegistry, TnlFetch } from "../../project.js";
+import type {
+  TnlClientFactory,
+  TnlClientOptions,
+  TnlConnectionHandle,
+  TnlConnectionRegistry,
+  TnlFetch,
+} from "../../project.js";
+import { clientFactory } from "./client_factory.js";
 import { awaitableConnection } from "./awaitable_connection.js";
 import { ownerIPC, prepareExternal } from "./connection_ipc.js";
 import { context, contextKey, type NativeScope } from "./context.js";
@@ -619,4 +626,22 @@ export function connectionHandle(
     },
     async () => result(await prepare(name, externalFile)),
   );
+}
+
+export function connectionClient<Client>(
+  name: string,
+  options: TnlClientOptions<Settings, Client>,
+  updateProject: (project: ProjectRuntime) => void,
+): TnlClientFactory<Client> {
+  if (!isServiceName(name)) throw new TnlError("sdk.configuration_invalid");
+  const externalFile = process.env.TNL_CONNECTION_HANDLE;
+  return clientFactory(async () => {
+    const prepared = await prepare(name, externalFile);
+    updateProject(prepared.project);
+    const { expires: _expires, ...binding } = prepared.snapshot;
+    return {
+      key: JSON.stringify([prepared.file, binding]),
+      connection: settings(name, prepared.snapshot, externalFile),
+    };
+  }, options);
 }

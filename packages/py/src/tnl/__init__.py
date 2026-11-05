@@ -2,6 +2,7 @@
 
 from ._app import PreparedService, Server, prepare, run
 from ._asgi import AccessPolicy, Limits, RateLimit, Tunnel, open
+from ._client import ClientFactory, client
 from ._connections import (
     Connection,
     ConnectionHandle,
@@ -31,6 +32,7 @@ __all__ = [
     "AccessPolicy",
     "Connection",
     "ConnectionHandle",
+    "ClientFactory",
     "HTTPConnection",
     "HTTPConnectionHandle",
     "KubernetesConnection",
@@ -53,6 +55,7 @@ __all__ = [
     "Server",
     "handler",
     "connect",
+    "client",
     "configure_workload",
     "open",
     "prepare",

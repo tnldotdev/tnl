@@ -58,6 +58,13 @@ export async function verifyNpmConsumer(directory: string): Promise<void> {
         assert.equal(typeof handle.then, "function");
         assert.equal(Object.getOwnPropertyDescriptor(handle, "then").enumerable, false);
         assert.throws(() => ({ ...handle }), error => error instanceof root.TnlError && error.code === "sdk.connection_unprepared");
+        const getClient = root.tnl.client("database", {
+          create() { throw new Error("factory creation must remain lazy"); },
+          close() { throw new Error("unstarted factory has no driver to close"); },
+        });
+        assert.equal(typeof getClient, "function");
+        await getClient.close();
+        await assert.rejects(getClient(), error => error instanceof root.TnlError && error.code === "sdk.client_closed");
       }
       const token = async () => "request-scoped-assertion";
       workloadESM.configureWorkload({name: "worker", token});
@@ -84,6 +91,10 @@ export async function verifyNpmConsumer(directory: string): Promise<void> {
         const handle = root.tnl.connect("database");
         assert.throws(() => ({ ...handle }), error => error instanceof root.TnlError && error.code === "sdk.connection_server_only");
         await assert.rejects(Promise.resolve(handle), error => error instanceof root.TnlError && error.code === "sdk.connection_server_only");
+        assert.throws(() => root.tnl.client("database", {
+          create() { throw new Error("browser must not invoke driver callbacks"); },
+          close() { throw new Error("browser must not invoke driver callbacks"); },
+        }), error => error instanceof root.TnlError && error.code === "sdk.connection_server_only");
       }
       `,
     ],

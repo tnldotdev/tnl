@@ -19,6 +19,9 @@ import type {
   TnlServiceNames,
   TnlService,
   TnlProtocolRegistry,
+  TnlConnectionRegistry,
+  TnlClientFactory,
+  TnlClientOptions,
 } from "./project.js";
 export type * from "./project.js";
 export type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
@@ -56,6 +59,10 @@ export type TnlRuntime = Readonly<
       connect<Name extends TnlServiceNames<Config>>(
         name: Name,
       ): TnlConnectionHandle<TnlConnection<Config, Name>>;
+      client<Name extends TnlServiceNames<Config>, Client>(
+        name: Name,
+        options: TnlClientOptions<TnlConnection<Config, Name>, Client>,
+      ): TnlClientFactory<Client>;
     }
 >;
 
@@ -106,6 +113,23 @@ export const tnl = Object.freeze({
       throw new TnlError("sdk.connection_server_only");
     const { connectionHandle } = loadConnection();
     return connectionHandle(name, (project) => {
+      runtime =
+        runtime === undefined
+          ? project
+          : parseProjectRuntime({
+              ...runtime,
+              services: { ...runtime.services, ...project.services },
+            });
+    });
+  },
+  client<Client>(
+    name: string,
+    options: TnlClientOptions<TnlConnectionRegistry[keyof TnlConnectionRegistry], Client>,
+  ) {
+    if (typeof process === "undefined" || typeof process.versions?.node !== "string")
+      throw new TnlError("sdk.connection_server_only");
+    const { connectionClient } = loadConnection();
+    return connectionClient(name, options, (project) => {
       runtime =
         runtime === undefined
           ? project
