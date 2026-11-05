@@ -104,8 +104,18 @@ func (f *connectorFixture) PrepareConnectorPeerPair(ctx context.Context, service
 	}
 }
 
-func (f *connectorFixture) RebindConnectorPeerPair(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
-	return controlv1.ConnectorPeerPairRebindState{}, ErrServiceConnection
+func (f *connectorFixture) RebindConnectorPeerPair(ctx context.Context, service, pairID string, body controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p := f.peers[pairID]
+	message, err := controlv1.ConnectorPeerPairRebindProofMessage(service, pairID, body)
+	signature, decodeErr := base64.RawURLEncoding.Strict().DecodeString(body.Signature)
+	if p == nil || ctx.Err() != nil || err != nil || decodeErr != nil || !ed25519.Verify(f.device.PublicKey, message, signature) || body.Phase != controlv1.ConnectorPeerPairInspect {
+		return controlv1.ConnectorPeerPairRebindState{}, ErrServiceConnection
+	}
+	pair := p.pair
+	pair.ObservedAt, pair.ExpiresAt, pair.SourceIp = time.Now(), f.expires, new("127.0.0.1")
+	return controlv1.ConnectorPeerPairRebindState{Active: &pair, HighWaterGeneration: pair.DeliveryGeneration, ReadyRelays: pair.Relays}, nil
 }
 
 func (f *connectorFixture) RenewConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {

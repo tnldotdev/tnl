@@ -195,7 +195,7 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 	f.run.PairReady = &controlv1.ConnectorPeerPairReady{PublisherIdentityId: connectorID(t, opaqueid.PublisherIdentityPrefix)}
 	for slot, endpoint := range f.endpoints {
 		f.run.PairReady.Relays = append(f.run.PairReady.Relays, controlv1.ConnectorPeerPairRelay{PublisherConnectionId: connectorID(t, opaqueid.PublisherConnectionPrefix), AssignmentRevision: 1, RelayAddress: endpoint.Address, TlsServerName: endpoint.ServerName,
-			RelayLease: controlv1.ConnectorPeerRelayLease{RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayId: fmt.Sprintf("node-%d", slot), RelayRunId: fmt.Sprintf("run-%d", slot), RelayLeaseRevision: 1}})
+			RelayLease: controlv1.ConnectorPeerRelayLease{RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayId: fmt.Sprintf("node-%d", slot), RelayRunId: connectorID(t, opaqueid.RelayRunPrefix), RelayLeaseRevision: 1}})
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
