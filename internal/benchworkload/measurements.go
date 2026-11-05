@@ -182,7 +182,9 @@ func (r *VisitorResult) Observe(request RequestResult) {
 			if request.TLS > 0 {
 				r.TLS.Observe(request.TLS)
 			}
-			r.FirstByte.Observe(request.FirstByte.Sub(request.Scheduled))
+			if !request.FirstByte.IsZero() {
+				r.FirstByte.Observe(request.FirstByte.Sub(request.Scheduled))
+			}
 			r.Total.Observe(request.Duration)
 		}
 	}

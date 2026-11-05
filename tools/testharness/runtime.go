@@ -49,8 +49,21 @@ var runtimeApps = []string{"app", "app-2", "app-3", "app-4"}
 
 func runRuntime(ctx context.Context, root string) (retErr error) {
 	workload := os.Getenv("RUNTIME_WORKLOAD")
-	if workload != "" && workload != "public-url" && workload != "connect" {
-		return errors.New("RUNTIME_WORKLOAD must be public-url or connect")
+	if workload != "" && workload != "public-url" && workload != "connect" && workload != "postgres" {
+		return errors.New("RUNTIME_WORKLOAD must be public-url, connect, or postgres")
+	}
+	if workload == "postgres" {
+		directory, err := os.MkdirTemp("", "tnl-runtime-postgres-tls-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(directory)
+		if err := writeDatabaseCertificates(directory); err != nil {
+			return err
+		}
+		if err := os.Setenv("RUNTIME_DATABASE_TLS_DIR", directory); err != nil {
+			return err
+		}
 	}
 	results := os.Getenv("RESULTS")
 	if results == "" {
@@ -71,12 +84,33 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 	if err := os.MkdirAll(results, 0o755); err != nil {
 		return fmt.Errorf("create runtime results directory: %w", err)
 	}
+	if workload == "postgres" {
+		revision := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
+		revision.Dir = root
+		commit, err := revision.Output()
+		if err != nil {
+			return fmt.Errorf("read workload source revision: %w", err)
+		}
+		status := exec.CommandContext(ctx, "git", "status", "--porcelain")
+		status.Dir = root
+		changes, err := status.Output()
+		if err != nil {
+			return fmt.Errorf("read workload source status: %w", err)
+		}
+		data, err := json.Marshal(map[string]any{"revision": strings.TrimSpace(string(commit)), "working_tree_dirty": len(changes) != 0})
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(results, "source.json"), data, 0o644); err != nil {
+			return err
+		}
+	}
 	if err := os.Setenv("RESULTS", results); err != nil {
 		return err
 	}
 	routes, err := strconv.Atoi(os.Getenv("PUBLIC_URLS"))
-	if err != nil || routes < 4 || routes > 10000 {
-		return errors.New("PUBLIC_URLS must be between 4 and 10000")
+	if err != nil || (workload == "postgres" && routes != 1) || (workload != "postgres" && (routes < 4 || routes > 10000)) {
+		return errors.New("PUBLIC_URLS must be between 4 and 10000 (exactly 1 for postgres)")
 	}
 	scenario := os.Getenv("SCENARIO")
 	if scenario == "" {
@@ -95,6 +129,9 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 	}
 	if scenario == "control-restart" {
 		profiles = append(profiles, "replicated-relays")
+	}
+	if workload == "postgres" {
+		profiles = append(profiles, "postgres-load")
 	}
 	var random [8]byte
 	if _, err := rand.Read(random[:]); err != nil {
@@ -140,6 +177,11 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 	if err := h.waitForExit(ctx, "setup"); err != nil {
 		return err
 	}
+	if workload == "postgres" {
+		if err := stack.Up(ctx, compose.RunServices("postgres-target"), compose.Wait(true)); err != nil {
+			return fmt.Errorf("start runtime PostgreSQL target: %w", err)
+		}
+	}
 	if err := h.startEventWatcher(ctx); err != nil {
 		return err
 	}
@@ -153,6 +195,9 @@ func runRuntime(ctx context.Context, root string) (retErr error) {
 	services = append(services, runtimePublishers...)
 	services = append(services, "visitor-1", "visitor-2", "visitor-3", "visitor-4")
 	services = append(services, runtimeApps...)
+	if workload == "postgres" {
+		services = append(services[:0], "control-a", "control-b", "ingress-a", "ingress-b", "relay-a", "relay-b", "publishers", "visitor-1", "postgres-target")
+	}
 	services = append(services, "dns", "pebble", "coordinator")
 	if err := stack.Up(ctx, compose.RunServices(services...)); err != nil {
 		return fmt.Errorf("start runtime components: %w", err)
@@ -384,7 +429,7 @@ func (h *runtimeHarness) close() error {
 		{"visitor-1", "visitor-2", "visitor-3", "visitor-4"},
 		append(runtimeApps, runtimePublishers...),
 		{"ingress-a", "ingress-b", "relay-a", "relay-b"},
-		{"control-a", "control-b", "pebble", "dns", "coordinator", "postgres"},
+		{"control-a", "control-b", "pebble", "dns", "coordinator", "postgres-target", "postgres"},
 	} {
 		var present []string
 		for _, name := range group {

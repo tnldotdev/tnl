@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/miekg/dns"
 	"github.com/tnldotdev/tnl/internal/benchworkload"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
@@ -324,7 +325,36 @@ func TestSeparatedResourceFilesCaptureMemoryAttribution(t *testing.T) {
 		resources.MemoryFileDirty != 31 || resources.MemoryFileWriteback != 32 || resources.ReceiveBytes != 33 || resources.SendBytes != 34 {
 		t.Fatalf("resource evidence = %+v", resources)
 	}
+	for _, component := range []string{"postgres", "postgres-target"} {
+		postgres := separatedPostgresResource(t, component, func(query string, args ...any) pgx.Row {
+			return separatedPostgresTestRow(func(dest ...any) error {
+				if len(args) == 1 && query == `SELECT pg_read_file($1, 0, 65536)` {
+					value, ok := files[args[0].(string)]
+					if !ok {
+						return fmt.Errorf("unexpected PostgreSQL resource file %q", args[0])
+					}
+					*dest[0].(*string) = value
+					return nil
+				}
+				if !strings.Contains(query, "FROM pg_stat_database") || len(dest) != 7 {
+					return fmt.Errorf("unexpected PostgreSQL summary query")
+				}
+				*dest[0].(*string) = component + "-started"
+				for index, field := range dest[1:] {
+					*field.(*int64) = int64(index + 1)
+				}
+				return nil
+			})
+		})
+		if postgres.NetworkNamespace != component || postgres.ProcessRunID != component+"-started" || postgres.ThrottledUsec != resources.ThrottledUsec || postgres.MemoryMaxEvents != resources.MemoryMaxEvents || *postgres.Postgres != (separatedPostgresResources{SharedMemoryBytes: 1, SharedBuffersBytes: 2, Backends: 3, BlocksRead: 4, BlocksHit: 5, TempBytes: 6}) {
+			t.Fatalf("%s resource attribution: %+v", component, postgres)
+		}
+	}
 }
+
+type separatedPostgresTestRow func(...any) error
+
+func (row separatedPostgresTestRow) Scan(dest ...any) error { return row(dest...) }
 
 func TestRelayKillFreshVisitorContract(t *testing.T) {
 	exited := time.Unix(100, 0)
