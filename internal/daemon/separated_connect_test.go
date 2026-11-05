@@ -255,6 +255,21 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 		before := separatedCapture(t, database, name+"-before")
 		phase.Start = time.Now().Add(time.Second)
 		separatedWrite(t, fmt.Sprintf("connect.phase-%d", sequence), phase)
+		var after separatedSnapshot
+		if *runtimeLoadWorkload == "postgres" {
+			guard := postgresResourceGuard{Notes: postgresResourceBracketNotes}
+			var err error
+			after, err = capturePostgresBeforeExport(t.Context(), separatedCoordination(t), phase, separatedConnectVisitors(), func() separatedSnapshot {
+				guard.CaptureStarted = time.Now()
+				snapshot := separatedCapture(t, database, name+"-after")
+				guard.CaptureCompleted = time.Now()
+				return snapshot
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			separatedResult(t, name+"-resource-guard", guard)
+		}
 		var results []connectLoadResult
 		for _, component := range separatedConnectVisitors() {
 			var result connectLoadResult
@@ -264,7 +279,9 @@ func runSeparatedConnect(t *testing.T, database *sql.DB, count, rate int, durati
 		if *runtimeLoadWorkload == "postgres" && *postgresLoadDiagnostics != "off" && !phase.Direct {
 			separatedWait(t, name+".publisher-diagnostics-done", 15*time.Second, nil)
 		}
-		after := separatedCapture(t, database, name+"-after")
+		if *runtimeLoadWorkload != "postgres" {
+			after = separatedCapture(t, database, name+"-after")
+		}
 		separatedReportResources(t, name, before, after)
 		assertSeparatedNoMemoryLimitEvents(t, name, before, after)
 		assertSeparatedNoRejections(t, name, before, after)

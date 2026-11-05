@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -22,6 +23,73 @@ import (
 const postgresLoadTarget = "postgres-target:5432"
 const postgresLoadHostname = "db.fixture.test"
 const postgresLoadMaxSamples = 1_000_000
+
+const postgresResourceBracketNotes = "for successful phases, resource deltas span the prepared before snapshot through the pre-export after snapshot, not exact per-query CPU. " +
+	"after capture starts once all visitor workers have joined; measured sessions stay open and buffered results remain retained until export authorization. " +
+	"snapshots are sequential, non-atomic reads and include start delay, coordination, background leases and capture queries. " +
+	"publisher diagnostics, optional profiling and enabled observer sampling can continue during the capture guard. post-run raw flush/export, PID verification and measured-session teardown follow authorization. " +
+	"an aborted visitor preserves raw results and closes sessions without requiring authorization; its resource bracket is invalid."
+
+type postgresResourceGuard struct {
+	CaptureStarted   time.Time `json:"capture_started"`
+	CaptureCompleted time.Time `json:"capture_completed"`
+	Notes            string    `json:"notes"`
+}
+
+// publish completion even when Run returned an error or its context was cancelled.
+// the caller retains sessions/results until authorization, or closes on failure.
+func waitPostgresExport(ctx context.Context, coordination *benchworkload.Coordination, phase, component string) error {
+	announce, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	err := coordination.Put(announce, phase+"."+component+".measured", true)
+	cancel()
+	if err != nil {
+		return err
+	}
+	wait, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	var authorized bool
+	if err := coordination.Wait(wait, phase+".export", &authorized); err != nil {
+		return err
+	}
+	if !authorized {
+		return errors.New("PostgreSQL export was not authorized")
+	}
+	return wait.Err()
+}
+
+// preserve completed rows before the caller fails and its session defer runs.
+// successful export stays on the caller's normal path; never flush it twice.
+func awaitPostgresRecordingExport(ctx context.Context, coordination *benchworkload.Coordination, phase, component string, recording *postgresRecording, output io.Closer, runErr error) error {
+	if barrierErr := waitPostgresExport(ctx, coordination, phase, component); barrierErr != nil {
+		return errors.Join(runErr, barrierErr, recording.Flush(), output.Close())
+	}
+	return nil
+}
+
+// release also runs when a measured wait fails or capture calls t.Fatal. use a
+// separate bounded context so cancellation cannot strand a waiting visitor.
+func capturePostgresBeforeExport(ctx context.Context, coordination *benchworkload.Coordination, phase connectLoadPhase, components []string, capture func() separatedSnapshot) (after separatedSnapshot, err error) {
+	defer func() {
+		release, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+		err = errors.Join(err, coordination.Put(release, phase.Name+".export", true))
+	}()
+	wait, cancel := context.WithTimeout(ctx, phase.Duration+15*time.Second)
+	defer cancel()
+	for _, component := range components {
+		var measured bool
+		if err := coordination.Wait(wait, phase.Name+"."+component+".measured", &measured); err != nil {
+			return after, err
+		}
+		if !measured {
+			return after, fmt.Errorf("PostgreSQL visitor %s did not finish measurement", component)
+		}
+	}
+	if err := wait.Err(); err != nil {
+		return after, err
+	}
+	return capture(), nil
+}
 
 func postgresLoadMetadata(t *testing.T) controlv1.ServiceMetadata {
 	t.Helper()
@@ -149,6 +217,13 @@ func runSeparatedPostgresVisitor(t *testing.T, ctx context.Context, component st
 				return
 			}
 			result.Summary, err = visitor.Run(ctx, benchworkload.VisitorConfig{Rate: *runtimeLoadRPS, Workers: *runtimeLoadWorkers, QueueSlots: *runtimeLoadQueue, Start: phase.Start, Duration: phase.Duration, OnResult: recording.Record, Timing: timing})
+			metadata.MeasurementCompleted = time.Now()
+			// keep diagnostic Finish/export calls after this guard; enabled samplers
+			// may continue while the coordinator captures resources.
+			if exportErr := awaitPostgresRecordingExport(ctx, separatedCoordination(t), phase.Name, component, recording, requestFile, err); exportErr != nil {
+				t.Fatal(exportErr)
+			}
+			metadata.ExportAuthorized = time.Now()
 			// publish only metadata, and only once the complete artifact is visible.
 			metadata.FlushStarted = time.Now()
 			if err := errors.Join(err, recording.Flush(), requestFile.Close()); err != nil {

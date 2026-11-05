@@ -17,7 +17,7 @@ var postgresLoadRecording = flag.String("tnl-postgres-load-recording", "live", "
 var postgresLoadTiming = flag.Bool("tnl-postgres-load-timing", false, "record bounded visitor offer, collector, and file-write timings in memory; export after the phase")
 
 const postgresRecordingNotes = "buffered retains the preallocated raw-result backing array through the phase and flush; storage bytes exclude referenced strings and are not measured RSS. no forced GC. " +
-	"publisher capture preparation and writes remain separate confounds; inspect its capture.json bounds. whole-phase resource deltas include post-run export, verification and teardown. metadata_write_started excludes this metadata write itself. " +
+	"publisher capture preparation and writes remain separate confounds; inspect its capture.json bounds. " + postgresResourceBracketNotes + " inspect the phase resource-guard artifact for coordinator capture bounds. metadata_write_started excludes this metadata write itself. " +
 	"timing offsets use the visitor's monotonic phase epoch; completed_ns precedes deferred request cleanup, request_returned_ns follows it; result_index is 1-based JSONL order and slot is 0-based. " +
 	"collector_unlock_started_ns precedes unlock; collector_released_ns can include scheduling after unlock. file writes can contain bytes from several results."
 
@@ -38,6 +38,8 @@ type postgresRecordingMetadata struct {
 	RetainedResultStorageBytes int64     `json:"retained_result_storage_bytes"`
 	PreparationStarted         time.Time `json:"preparation_started"`
 	PreparationCompleted       time.Time `json:"preparation_completed"`
+	MeasurementCompleted       time.Time `json:"measurement_completed"`
+	ExportAuthorized           time.Time `json:"export_authorized"`
 	FlushStarted               time.Time `json:"flush_started"`
 	FlushCompleted             time.Time `json:"flush_completed"`
 	TimingEnabled              bool      `json:"timing_enabled"`

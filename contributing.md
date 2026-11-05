@@ -47,6 +47,14 @@ The default `off` mode omits the publisher's metrics owner; use `metrics` for
 a recording-enabled comparison. `trace` captures a short Go execution trace,
 not SQL text or per-query distributed spans.
 
+Use `RESULT_RECORDING=buffered` to keep bounded raw results in memory and write
+them after measurement, rather than blocking workers on live JSONL writes.
+`TIMING=true` adds in-memory offer, query, collector, and file-write timings;
+allow additional memory for those records. `VISITOR_CPUS` sets the budget shared
+by the generator and native connector; keep `VISITOR_GOMAXPROCS` fixed when
+comparing quotas. Ending resource snapshots precede export and session teardown,
+but still include background work and capture overhead, not exact per-query CPU.
+
 Docker Hub images use `docker.io` directly and stay pinned by digest. Docker,
 Compose, and the test harness use existing Docker credentials, including credential
 helpers. Use `docker login` if you need authenticated pulls locally. GitHub-hosted
