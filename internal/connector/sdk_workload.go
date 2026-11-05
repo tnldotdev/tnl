@@ -62,6 +62,17 @@ func sdkWorkloadContext(selected workloadmanifest.Selection, source string) conn
 	return connectorruntime.SDKWorkload{Schema: 1, Name: selected.Name, Directory: selected.Directory, Manifest: selected.Path, Policy: selected.Policy, Source: source, TokenEnv: selected.Workload.Acquisition.TokenEnv}
 }
 
+func sdkWorkloadRefresh(selected workloadmanifest.Selection, source string, request connectorruntime.SDKWorkloadRequest, environment connectorruntime.SDKEnvironment, assertion string) *workloadmanifest.Acquisition {
+	if source == "callback" || source == "vercel" && assertion != "" {
+		return nil
+	}
+	hints := selected.Workload.Acquisition
+	if request.TokenFile != "" {
+		hints = workloadmanifest.Acquisition{Method: "token-file", TokenFile: request.TokenFile}
+	}
+	return workload.RefreshSource(selected.Directory, hints, environment.Getenv)
+}
+
 func acquireSDKWorkload(ctx context.Context, selected workloadmanifest.Selection, source string, request connectorruntime.SDKWorkloadRequest, environment connectorruntime.SDKEnvironment, assertion string) (string, error) {
 	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

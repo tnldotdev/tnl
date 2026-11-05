@@ -1,7 +1,9 @@
 """exercise actual SDK selection against the integration topology."""
 
 import asyncio
+import http.client
 import os
+import socket
 import sys
 from pathlib import Path
 
@@ -12,7 +14,10 @@ from tnl import _connections
 _connections.native_binary = lambda: Path(sys.argv[1])
 token = Path("assertion").read_text().strip()
 native_provider = "provider" in sys.argv
-if not native_provider:
+rotating_file = "refresh" in sys.argv
+if rotating_file:
+    tnl.configure_workload("test", token_file="assertion")
+elif not native_provider:
     tnl.configure_workload("test", token=lambda: token)
 
 
@@ -47,6 +52,33 @@ async def main() -> None:
             assert (await handle).port == first.port
             assert handle._session.handle == owner
         print("warm", flush=True)
+        if rotating_file:
+            assert isinstance(first, tnl.HTTPConnection)
+
+            def open_stream() -> tuple[socket.socket, http.client.HTTPResponse]:
+                raw = socket.create_connection((first.host, first.port), timeout=90)
+                secure = first.ssl.wrap_socket(raw, server_hostname=first.server_hostname)
+                secure.sendall(
+                    (
+                        "GET /refresh-stream HTTP/1.1\r\n"
+                        f"Host: {first.server_hostname}\r\n"
+                        "Connection: close\r\n\r\n"
+                    ).encode()
+                )
+                response = http.client.HTTPResponse(secure)
+                response.begin()
+                return secure, response
+
+            stream, response = await asyncio.to_thread(open_stream)
+            try:
+                assert await asyncio.to_thread(response.readline) == b"before-proof\n"
+                print("streaming", flush=True)
+                assert await asyncio.to_thread(input) == "refreshed"
+                assert await asyncio.to_thread(response.read) == b"after-proof\n"
+                print("retained", flush=True)
+            finally:
+                response.close()
+                stream.close()
         if "lifecycle" in sys.argv:
             from native_lifecycle import run
 
