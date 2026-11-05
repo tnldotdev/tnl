@@ -40,14 +40,13 @@
 +-------------------------------------------------------------+
 ```
 
-The Next.js and Vite plugins automatically handle port conflicts for multiple
-worktrees running at once.
+The Next.js and Vite plugins automatically handle port conflicts. And OAuth and webhooks get one consistent URL that works across all worktrees.
 
 ### in prod
 
 Connect to private services from anywhere (laptop, CI, etc.).
 
-For instance, a `tnl` publisher can run inside your VPC and connect outbound to relays, so your database and Kubernetes API don't need public endpoints:
+For instance, a `tnl` publisher runs inside your VPC and connects outbound to relays, so your database and Kubernetes API aren't publicly exposed:
 
 ```text
   tnl (your laptop)  tnl (github actions)    tnl (vercel fn)
@@ -67,12 +66,12 @@ For instance, a `tnl` publisher can run inside your VPC and connect outbound to 
 |                              |                              |
 |                +-------------+-------------+                |
 |                v                           v                |
-|            postgres                   kubernetes            |
+|       postgres (e.g. RDS)          kubernetes (e.g. EKS)    |
 |                                                             |
 +-------------------------------------------------------------+
 ```
 
-Read on for more details.
+Read below for more details.
 
 ## start developing
 
