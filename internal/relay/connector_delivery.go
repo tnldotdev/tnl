@@ -166,7 +166,7 @@ type connectorBridge struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	done       chan struct{}
-	publisher  peer.Carrier
+	publisher  *peer.ForwardingRegistration
 	connector  *peer.CarrierSlot
 	replace    sync.Mutex
 	mu         sync.Mutex
@@ -293,8 +293,8 @@ func (b *connectorBridge) serve(owner *connectorPacketSession, a *ConnectorAccep
 	defer close(b.done)
 	var workers sync.WaitGroup
 	finished := make(chan error, 2)
-	workers.Go(func() { finished <- peer.ForwardPackets(b.ctx, b.connector, b.publisher) })
-	workers.Go(func() { finished <- peer.ForwardPackets(b.ctx, b.publisher, b.connector) })
+	workers.Go(func() { finished <- b.publisher.ForwardToPublisher(b.ctx) })
+	workers.Go(func() { finished <- b.publisher.ForwardToConnector(b.ctx) })
 	defer func() {
 		b.cancel()
 		b.mu.Lock()

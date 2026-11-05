@@ -39,19 +39,19 @@ type Config struct {
 }
 
 type fragment struct {
-	sequence   uint64
-	generation uint64
-	total      uint16
-	mask       uint8
-	data       [tunnelv1.MaxPeerPacketBytes]byte
+	sequence uint64
+	revision carrierRevision
+	total    uint16
+	mask     uint8
+	data     [tunnelv1.MaxPeerPacketBytes]byte
 }
 
 type path struct {
-	carrier    Carrier
-	queue      chan queuedFrame
-	generation uint64
-	closeOnce  sync.Once
-	closeErr   error
+	carrier   Carrier
+	queue     chan queuedFrame
+	revision  carrierRevision
+	closeOnce sync.Once
+	closeErr  error
 	// health, challenge, and counters are protected by Endpoint.mu.
 	alive, failed bool
 	ack, sent     time.Time
@@ -64,33 +64,25 @@ type path struct {
 }
 
 type queuedFrame struct {
-	generation uint64
-	data       []byte
+	revision carrierRevision
+	data     []byte
 }
 
 type queuedPacket struct {
-	data       []byte
-	slot       *CarrierSlot
-	generation uint64
+	data     []byte
+	revision carrierRevision
 }
 
 // caller-buffer copy is the input commit. replacement either follows this
 // bounded copy or discards the stale candidate, even after dequeue.
 func (p queuedPacket) copyTo(b []byte) (int, bool) {
-	if p.slot != nil {
-		p.slot.mu.Lock()
-		defer p.slot.mu.Unlock()
-		if p.slot.closed || p.slot.revision != p.generation {
-			return 0, false
-		}
-	}
-	return copy(b, p.data), true
+	return p.revision.copyTo(b, p.data)
 }
 
-func (p *path) refreshGenerationLocked() {
+func (p *path) refreshRevisionLocked() {
 	if slot, ok := p.carrier.(*CarrierSlot); ok {
-		if next := slot.Generation(); next != p.generation {
-			p.generation = next
+		if next := slot.Generation(); next != p.revision {
+			p.revision = next
 			p.alive = false
 			p.ack = time.Time{}
 			p.challenge = [16]byte{}
@@ -202,7 +194,7 @@ func (e *Endpoint) PathHealthy(index int) bool {
 		return false
 	}
 	p := e.paths[index]
-	p.refreshGenerationLocked()
+	p.refreshRevisionLocked()
 	return p.alive && !p.failed && time.Since(p.ack) <= e.config.PathTimeout
 }
 
@@ -254,22 +246,22 @@ func (e *Endpoint) WriteTo(b []byte, addr net.Addr) (int, error) {
 	}
 	e.mu.Lock()
 	for _, p := range e.paths {
-		p.refreshGenerationLocked()
+		p.refreshRevisionLocked()
 	}
 	e.chooseLocked()
 	index := e.active
-	generation := e.paths[index].generation
+	revision := e.paths[index].revision
 	e.mu.Unlock()
 	seq := e.seq.Add(1)
 	for offset := 0; offset < len(b); offset += tunnelv1.PeerFragmentBytes {
 		part := b[offset:min(offset+tunnelv1.PeerFragmentBytes, len(b))]
-		e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: seq, Fragment: uint8(offset / tunnelv1.PeerFragmentBytes), Total: uint16(len(b)), Payload: part}, generation)
+		e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: seq, Fragment: uint8(offset / tunnelv1.PeerFragmentBytes), Total: uint16(len(b)), Payload: part}, revision)
 	}
 	// bounded queues intentionally drop packets; inner QUIC performs recovery.
 	return len(b), nil
 }
 
-func (e *Endpoint) enqueue(index int, packet tunnelv1.PeerPacket, generation uint64) {
+func (e *Endpoint) enqueue(index int, packet tunnelv1.PeerPacket, revision carrierRevision) {
 	packet.Sender, packet.Path = e.config.Role, uint8(index)
 	unsigned, err := packet.AuthenticatedBytes()
 	if err != nil {
@@ -287,13 +279,13 @@ func (e *Endpoint) enqueue(index int, packet tunnelv1.PeerPacket, generation uin
 	if p == nil || p.failed {
 		return
 	}
-	p.refreshGenerationLocked()
-	if p.generation != generation {
+	p.refreshRevisionLocked()
+	if p.revision != revision {
 		p.stats.DroppedFrames++
 		return
 	}
 	select {
-	case p.queue <- queuedFrame{generation, frame}:
+	case p.queue <- queuedFrame{revision: revision, data: frame}:
 		p.stats.PeakQueuedFrames = max(p.stats.PeakQueuedFrames, len(p.queue))
 	default:
 		p.stats.DroppedFrames++
@@ -309,7 +301,7 @@ func (e *Endpoint) sendLoop(index int, p *path) {
 			ctx, cancel := context.WithTimeout(e.ctx, e.config.PathTimeout)
 			var err error
 			if slot, ok := p.carrier.(*CarrierSlot); ok {
-				err = slot.SendGeneration(ctx, frame.data, frame.generation)
+				err = slot.sendRevision(ctx, frame.data, frame.revision)
 			} else {
 				err = p.carrier.Send(ctx, frame.data)
 			}
@@ -374,7 +366,7 @@ func (e *Endpoint) probeLoop() {
 				continue
 			}
 			e.mu.Lock()
-			p.refreshGenerationLocked()
+			p.refreshRevisionLocked()
 			if now.Sub(p.ack) > e.config.PathTimeout {
 				p.alive = false
 			}
@@ -388,10 +380,10 @@ func (e *Endpoint) probeLoop() {
 				p.sent = now
 			}
 			challenge := p.challenge
-			generation := p.generation
+			revision := p.revision
 			e.chooseLocked()
 			e.mu.Unlock()
-			e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerProbe, Sequence: e.seq.Add(1), Total: 16, Payload: challenge[:]}, generation)
+			e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerProbe, Sequence: e.seq.Add(1), Total: 16, Payload: challenge[:]}, revision)
 		}
 		select {
 		case <-e.ctx.Done():
@@ -404,10 +396,10 @@ func (e *Endpoint) probeLoop() {
 func (e *Endpoint) receiveLoop(index int, p *path) {
 	for {
 		var frame []byte
-		var generation uint64
+		var revision carrierRevision
 		var err error
 		if slot, ok := p.carrier.(*CarrierSlot); ok {
-			frame, generation, err = slot.receiveGeneration(e.ctx)
+			frame, revision, err = slot.receiveRevision(e.ctx)
 		} else {
 			frame, err = p.carrier.Receive(e.ctx)
 		}
@@ -424,11 +416,11 @@ func (e *Endpoint) receiveLoop(index int, p *path) {
 		e.mu.Unlock()
 		switch packet.Kind {
 		case tunnelv1.PeerProbe:
-			e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerProbeReply, Sequence: e.seq.Add(1), Total: 16, Payload: packet.Payload}, generation)
+			e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerProbeReply, Sequence: e.seq.Add(1), Total: 16, Payload: packet.Payload}, revision)
 		case tunnelv1.PeerProbeReply:
 			e.mu.Lock()
-			p.refreshGenerationLocked()
-			if !p.failed && p.generation == generation && p.challenge != [16]byte{} && hmac.Equal(p.challenge[:], packet.Payload) {
+			p.refreshRevisionLocked()
+			if !p.failed && p.revision == revision && p.challenge != [16]byte{} && hmac.Equal(p.challenge[:], packet.Payload) {
 				p.ack, p.alive = time.Now(), true
 				p.stats.RTT = p.ack.Sub(p.sent)
 				p.challenge = [16]byte{}
@@ -436,7 +428,7 @@ func (e *Endpoint) receiveLoop(index int, p *path) {
 			}
 			e.mu.Unlock()
 		case tunnelv1.PeerData:
-			e.assemble(p, packet, generation)
+			e.assemble(p, packet, revision)
 		}
 	}
 }
@@ -454,7 +446,7 @@ func authenticatePacket(frame []byte, key [32]byte, role uint8, index int) (tunn
 	return packet, hmac.Equal(packet.MAC[:], mac.Sum(nil))
 }
 
-func (e *Endpoint) assemble(p *path, packet tunnelv1.PeerPacket, generation uint64) {
+func (e *Endpoint) assemble(p *path, packet tunnelv1.PeerPacket, revision carrierRevision) {
 	if packet.Sequence < p.highest && p.highest-packet.Sequence >= reassemblySlots {
 		return
 	}
@@ -464,8 +456,8 @@ func (e *Endpoint) assemble(p *path, packet tunnelv1.PeerPacket, generation uint
 		return
 	}
 	f := &p.fragments[slot]
-	if f.sequence != packet.Sequence || f.generation != generation {
-		*f = fragment{sequence: packet.Sequence, generation: generation, total: packet.Total}
+	if f.sequence != packet.Sequence || f.revision != revision {
+		*f = fragment{sequence: packet.Sequence, revision: revision, total: packet.Total}
 	}
 	if f.total != packet.Total {
 		return
@@ -481,9 +473,8 @@ func (e *Endpoint) assemble(p *path, packet tunnelv1.PeerPacket, generation uint
 	}
 	p.complete[slot] = packet.Sequence
 	b := append([]byte(nil), f.data[:f.total]...)
-	carrierSlot, _ := p.carrier.(*CarrierSlot)
 	select {
-	case e.input <- queuedPacket{data: b, slot: carrierSlot, generation: generation}:
+	case e.input <- queuedPacket{data: b, revision: revision}:
 	default:
 		e.mu.Lock()
 		p.stats.DroppedFrames++

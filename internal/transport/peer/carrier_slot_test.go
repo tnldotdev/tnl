@@ -115,7 +115,7 @@ func TestPeerCarrierReplacementDoesNotRetagOutputOrMixFragments(t *testing.T) {
 	if len(p.queue) != 0 {
 		t.Fatal("stale output retagged")
 	}
-	if err := slot.SendGeneration(t.Context(), []byte("old queue"), prior); err != nil || len(nextPeer.in) != 0 {
+	if err := slot.sendRevision(t.Context(), []byte("old queue"), prior); err != nil || len(nextPeer.in) != 0 {
 		t.Fatal("old output escaped", err)
 	}
 	data := bytes.Repeat([]byte{7}, tunnelv1.MaxPeerPacketBytes)
@@ -218,5 +218,125 @@ func TestPeerCarrierCutCancelsAndJoinsEnteredWork(t *testing.T) {
 				t.Fatal("late carrier leaked")
 			}
 		})
+	}
+}
+
+func TestPeerCarrierRevisionBindsAdmissionAndInputCopy(t *testing.T) {
+	left, right := NewCarrierSlot(), NewCarrierSlot()
+	defer left.Close()
+	defer right.Close()
+	first, firstPeer := memoryPair()
+	second, secondPeer := memoryPair()
+	defer firstPeer.Close()
+	defer secondPeer.Close()
+	if err := left.Install(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := right.Install(second); err != nil {
+		t.Fatal(err)
+	}
+	prior := left.Generation()
+	if prior == right.Generation() {
+		t.Fatal("different slots shared a revision token")
+	}
+	if err := right.sendRevision(t.Context(), []byte("wrong slot"), prior); !errors.Is(err, ErrConfiguration) || len(secondPeer.in) != 0 {
+		t.Fatal("foreign revision admitted output", err)
+	}
+	if complete, err := right.trackForward(t.Context(), prior); complete != nil || !errors.Is(err, ErrConfiguration) {
+		t.Fatal("foreign revision admitted forwarding work", err)
+	}
+	if complete, err := left.trackForward(t.Context(), carrierRevision{}); complete != nil || !errors.Is(err, ErrConfiguration) {
+		t.Fatal("zero revision admitted slot work", err)
+	}
+	copyInput := func(revision carrierRevision, current bool) {
+		t.Helper()
+		buffer := []byte("untouched")
+		n, ok := revision.copyTo(buffer, []byte("new"))
+		if current {
+			if !ok || n != 3 || string(buffer) != "newouched" {
+				t.Fatal("current input copy failed", n, ok, string(buffer))
+			}
+		} else if ok || n != 0 || string(buffer) != "untouched" {
+			t.Fatal("fenced input modified caller buffer", n, ok, string(buffer))
+		}
+	}
+	copyInput(prior, true)
+	copyInput(carrierRevision{}, true) // non-replaceable paths have no slot fence.
+	if err := left.Install(nil); err != nil {
+		t.Fatal(err)
+	}
+	copyInput(prior, false)
+	absent := left.Generation()
+	copyInput(absent, false)
+	next, nextPeer := memoryPair()
+	defer nextPeer.Close()
+	if err := left.Install(next); err != nil {
+		t.Fatal(err)
+	}
+	copyInput(prior, false)
+	copyInput(absent, false)
+	copyInput(left.Generation(), true)
+	if complete, err := left.trackForward(t.Context(), prior); complete != nil || err != nil {
+		t.Fatal("removed revision acquired forwarding work", err)
+	}
+	current := left.Generation()
+	if err := left.Close(); err != nil {
+		t.Fatal(err)
+	}
+	copyInput(current, false)
+	if complete, err := left.trackForward(t.Context(), current); complete != nil || !errors.Is(err, net.ErrClosed) {
+		t.Fatal("closed slot admitted forwarding work", err)
+	}
+}
+
+func TestPeerCarrierForwardCompletionJoinsOnlyItsPredecessor(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	slot := NewCarrierSlot()
+	defer slot.Close()
+	old, remote := memoryPair()
+	defer remote.Close()
+	if err := slot.Install(old); err != nil {
+		t.Fatal(err)
+	}
+	complete, err := slot.trackForward(ctx, slot.Generation())
+	if err != nil || complete == nil {
+		t.Fatal("current forwarding work was not admitted", err)
+	}
+	defer complete()
+	next, successor := memoryPair()
+	defer successor.Close()
+	installed := make(chan error, 1)
+	go func() { installed <- slot.Install(next) }()
+	awaitEndpointSignal(t, ctx, old.stop)
+	if ctx.Err() != nil {
+		t.Fatal("removal canceled retained publisher authority", ctx.Err())
+	}
+	select {
+	case err := <-installed:
+		t.Fatal("successor installed before forwarding completion", err)
+	default:
+	}
+	complete()
+	complete() // a completion cannot subtract another call's work.
+	if err := <-installed; err != nil {
+		t.Fatal(err)
+	}
+	nextComplete, err := slot.trackForward(ctx, slot.Generation())
+	if err != nil || nextComplete == nil {
+		t.Fatal("successor forwarding work was not admitted", err)
+	}
+	defer nextComplete()
+	go func() { installed <- slot.Install(nil) }()
+	awaitEndpointSignal(t, ctx, next.stop)
+	complete()
+	select {
+	case err := <-installed:
+		t.Fatal("predecessor completion released successor work", err)
+	default:
+	}
+	nextComplete()
+	if err := <-installed; err != nil {
+		t.Fatal(err)
 	}
 }

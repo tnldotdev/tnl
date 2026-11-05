@@ -65,19 +65,19 @@ type sharedPeer struct {
 // replayWindow accepts two fragments of one sequence once, in any order,
 // while bounding out-of-order delivery independently for each registration.
 type replayWindow struct {
-	highest    uint64
-	sequence   [64]uint64
-	fragments  [64]uint8
-	generation [64]uint64
+	highest   uint64
+	sequence  [64]uint64
+	fragments [64]uint8
+	revision  [64]carrierRevision
 }
 
 func (w *replayWindow) accept(frame []byte) bool {
-	return w.acceptGeneration(frame, 0)
+	return w.acceptRevision(frame, carrierRevision{})
 }
 
-// the first fragment binds its sequence to one physical carrier generation.
+// the first fragment binds its sequence to one local carrier revision.
 // a handoff never resets sequence history or admits the tail of an old packet.
-func (w *replayWindow) acceptGeneration(frame []byte, generation uint64) bool {
+func (w *replayWindow) acceptRevision(frame []byte, revision carrierRevision) bool {
 	p, err := tunnelv1.ParsePeerPacket(frame)
 	if err != nil || (p.Sequence < w.highest && w.highest-p.Sequence >= uint64(len(w.sequence))) {
 		return false
@@ -86,9 +86,9 @@ func (w *replayWindow) acceptGeneration(frame []byte, generation uint64) bool {
 	slot := p.Sequence % uint64(len(w.sequence))
 	if w.sequence[slot] != p.Sequence {
 		w.sequence[slot], w.fragments[slot] = p.Sequence, 0
-		w.generation[slot] = generation
+		w.revision[slot] = revision
 	}
-	if w.generation[slot] != generation {
+	if w.revision[slot] != revision {
 		return false
 	}
 	bit := uint8(1 << p.Fragment)
@@ -150,7 +150,7 @@ func (s *SharedDatagrams) Register(b PairBinding) (Carrier, error) {
 	return s.register(b, nil)
 }
 
-func (s *SharedDatagrams) register(b PairBinding, destination *CarrierSlot) (Carrier, error) {
+func (s *SharedDatagrams) register(b PairBinding, destination *CarrierSlot) (forwardingCarrier, error) {
 	if !b.valid() {
 		return nil, ErrConfiguration
 	}
@@ -217,12 +217,12 @@ func (s *SharedDatagrams) readLoop() {
 		if p != nil && p.binding.Delivery == d {
 			_, frame, err := tunnelv1.OpenPeerDelivery(data, tunnelv1.PeerDeliveryDatagram, p.binding.Key)
 			if err == nil && p.binding.authentic(frame, 1-p.binding.Role) && p.replay.accept(frame) {
-				var generation uint64
+				var revision carrierRevision
 				if p.destination != nil {
-					generation = p.destination.Generation()
+					revision = p.destination.Generation()
 				}
 				select {
-				case p.in <- queuedFrame{generation: generation, data: frame}:
+				case p.in <- queuedFrame{revision: revision, data: frame}:
 				default:
 					p.drops++
 					s.drops++
@@ -347,12 +347,8 @@ func (c *SharedDatagramCarrier) Receive(ctx context.Context) ([]byte, error) {
 	return b.data, err
 }
 
-func (c *SharedDatagramCarrier) receiveForward(ctx context.Context, destination *CarrierSlot) ([]byte, uint64, error) {
-	if destination == nil || c.peer.destination != destination {
-		return nil, 0, ErrConfiguration
-	}
-	b, err := c.receive(ctx)
-	return b.data, b.generation, err
+func (c *SharedDatagramCarrier) receiveForward(ctx context.Context) (queuedFrame, error) {
+	return c.receive(ctx)
 }
 
 func (c *SharedDatagramCarrier) receive(ctx context.Context) (queuedFrame, error) {

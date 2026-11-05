@@ -27,6 +27,26 @@ type installedCarrier struct {
 	work    sync.WaitGroup
 }
 
+// carrierRevision is a local admission token, not a wire delivery generation.
+// the slot identity prevents an equal counter from authorizing another path.
+type carrierRevision struct {
+	slot     *CarrierSlot
+	revision uint64
+}
+
+// copyTo commits input under the same lock that fences carrier replacement.
+// the zero token belongs to an endpoint path with a non-replaceable carrier.
+func (r carrierRevision) copyTo(destination, source []byte) (int, bool) {
+	if r.slot != nil {
+		r.slot.mu.Lock()
+		defer r.slot.mu.Unlock()
+		if r.slot.closed || r.slot.current == nil || r.slot.revision != r.revision {
+			return 0, false
+		}
+	}
+	return copy(destination, source), true
+}
+
 func (c *installedCarrier) close() error {
 	if c == nil {
 		return nil
@@ -83,11 +103,11 @@ func (s *CarrierSlot) notifyLocked() {
 	s.changed = make(chan struct{})
 }
 
-func (s *CarrierSlot) retire(revision uint64) {
+func (s *CarrierSlot) retire(revision carrierRevision) {
 	s.replace.Lock()
 	defer s.replace.Unlock()
 	s.mu.Lock()
-	if s.closed || s.revision != revision {
+	if s.closed || revision.slot != s || s.revision != revision.revision {
 		s.mu.Unlock()
 		return
 	}
@@ -98,34 +118,49 @@ func (s *CarrierSlot) retire(revision uint64) {
 	_ = old.close()
 }
 
-func (s *CarrierSlot) Generation() uint64 {
+// Generation returns an opaque local revision for observation and admission.
+// it is independent of the authenticated wire delivery generation.
+func (s *CarrierSlot) Generation() carrierRevision {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.revision
+	return carrierRevision{slot: s, revision: s.revision}
 }
 
 // enter and retirement share the lock; work cannot be added after removal.
-func (s *CarrierSlot) enter(ctx context.Context, revision uint64) (*installedCarrier, error) {
+func (s *CarrierSlot) enter(ctx context.Context, revision carrierRevision) (*installedCarrier, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if revision.slot != s {
+		return nil, ErrConfiguration
+	}
 	if s.closed {
 		return nil, net.ErrClosed
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if s.current == nil || s.revision != revision {
+	if s.current == nil || s.revision != revision.revision {
 		return nil, nil
 	}
 	s.current.work.Add(1)
 	return s.current, nil
 }
 
-func (s *CarrierSlot) Send(ctx context.Context, b []byte) error {
-	return s.SendGeneration(ctx, b, s.Generation())
+// trackForward joins an entered publisher write without canceling it when its
+// source is removed. the caller retains its original timeout and authority.
+func (s *CarrierSlot) trackForward(ctx context.Context, revision carrierRevision) (func(), error) {
+	c, err := s.enter(ctx, revision)
+	if c == nil {
+		return nil, err
+	}
+	return sync.OnceFunc(c.work.Done), nil
 }
 
-func (s *CarrierSlot) SendGeneration(ctx context.Context, b []byte, revision uint64) error {
+func (s *CarrierSlot) Send(ctx context.Context, b []byte) error {
+	return s.sendRevision(ctx, b, s.Generation())
+}
+
+func (s *CarrierSlot) sendRevision(ctx context.Context, b []byte, revision carrierRevision) error {
 	c, err := s.enter(ctx, revision)
 	if c == nil {
 		return err
@@ -143,23 +178,23 @@ func (s *CarrierSlot) SendGeneration(ctx context.Context, b []byte, revision uin
 }
 
 func (s *CarrierSlot) Receive(ctx context.Context) ([]byte, error) {
-	b, _, err := s.receiveGeneration(ctx)
+	b, _, err := s.receiveRevision(ctx)
 	return b, err
 }
 
-func (s *CarrierSlot) receiveGeneration(ctx context.Context) ([]byte, uint64, error) {
+func (s *CarrierSlot) receiveRevision(ctx context.Context) ([]byte, carrierRevision, error) {
 	for {
 		s.mu.Lock()
-		revision, changed := s.revision, s.changed
+		revision, changed := carrierRevision{slot: s, revision: s.revision}, s.changed
 		s.mu.Unlock()
 		c, err := s.enter(ctx, revision)
 		if err != nil {
-			return nil, 0, err
+			return nil, carrierRevision{}, err
 		}
 		if c == nil {
 			select {
 			case <-ctx.Done():
-				return nil, 0, ctx.Err()
+				return nil, carrierRevision{}, ctx.Err()
 			case <-changed:
 				continue
 			}
@@ -175,7 +210,7 @@ func (s *CarrierSlot) receiveGeneration(ctx context.Context) ([]byte, uint64, er
 			continue
 		}
 		s.mu.Lock()
-		current := !s.closed && s.revision == revision
+		current := !s.closed && s.revision == revision.revision
 		s.mu.Unlock()
 		if current {
 			return b, revision, nil

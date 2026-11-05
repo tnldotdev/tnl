@@ -53,7 +53,7 @@ func (c *pausedFrameConn) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func forwardPublisherPair(t *testing.T, ctx context.Context, tcp bool) (Carrier, Carrier, PairBinding) {
+func forwardPublisherPair(t *testing.T, ctx context.Context, tcp bool, connector *CarrierSlot) (*ForwardingRegistration, Carrier, PairBinding) {
 	t.Helper()
 	serverTLS, clientTLS := peerTLS(t)
 	var left, right muxsession.Session
@@ -72,7 +72,10 @@ func forwardPublisherPair(t *testing.T, ctx context.Context, tcp bool) (Carrier,
 	}
 	t.Cleanup(func() { _ = relay.Close(); _ = publisher.Close() })
 	a, b := sharedBinding(t, 1, RelayA)
-	out, err := relay.Register(a, true)
+	if rejected, err := relay.RegisterForwarding(a, true, nil); rejected != nil || !errors.Is(err, ErrConfiguration) {
+		t.Fatal("forwarding registration accepted an unbound destination", err)
+	}
+	out, err := relay.RegisterForwarding(a, true, connector)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,24 +91,24 @@ func TestPeerForwardReplacementFinishesEnteredPublisherFrame(t *testing.T) {
 		t.Run(boundary, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			output, receiver, binding := forwardPublisherPair(t, ctx, true)
+			source := NewCarrierSlot()
+			output, receiver, binding := forwardPublisherPair(t, ctx, true, source)
 			frame := func(seq uint64) []byte {
 				return signedPacket(t, binding, tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: seq, Total: 1, Payload: []byte{byte(seq)}})
 			}
 			// introduce and retain the exact publisher registration and stream.
-			if err := output.Send(ctx, frame(1)); err != nil {
+			if err := output.publisher.Send(ctx, frame(1)); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := receiver.Receive(ctx); err != nil {
 				t.Fatal(err)
 			}
-			live := output.(*registeredStreamCarrier).live
+			live := output.publisher.(*registeredStreamCarrier).live
 			paused := &pausedFrameConn{Conn: live.Conn, header: make(chan struct{}), release: make(chan struct{}), deadline: deadline{changed: make(chan struct{})}}
 			paused.armed.Store(true)
 			live.Conn = paused
 			release := sync.OnceFunc(func() { close(paused.release) })
 			defer release()
-			source := NewCarrierSlot()
 			old, sender := memoryPair()
 			defer sender.Close()
 			if err := source.Install(old); err != nil {
@@ -113,7 +116,7 @@ func TestPeerForwardReplacementFinishesEnteredPublisherFrame(t *testing.T) {
 			}
 			life, retire := context.WithCancel(ctx)
 			done := make(chan error, 1)
-			go func() { done <- ForwardPackets(life, source, output) }()
+			go func() { done <- output.ForwardToPublisher(life) }()
 			defer func() { release(); retire(); _ = source.Close() }()
 			if err := sender.Send(ctx, frame(42)); err != nil {
 				t.Fatal(err)
@@ -168,7 +171,7 @@ func TestPeerForwardReplacementFinishesEnteredPublisherFrame(t *testing.T) {
 			if got, err := receiver.Receive(ctx); err != nil || !bytes.Equal(got, frame(43)) {
 				t.Fatal("retained stream lost framing or replay history", err)
 			}
-			if output.(*registeredStreamCarrier).live != live {
+			if output.publisher.(*registeredStreamCarrier).live != live {
 				t.Fatal("reopened publisher stream")
 			}
 			retire()
@@ -182,22 +185,22 @@ func TestPeerForwardReplacementFinishesEnteredPublisherFrame(t *testing.T) {
 }
 
 type heldForwardRead struct {
-	Carrier
+	forwardingCarrier
 	held             atomic.Bool
 	entered, release chan struct{}
 }
 
-func (c *heldForwardRead) receiveForward(ctx context.Context, destination *CarrierSlot) ([]byte, uint64, error) {
-	b, generation, err := c.Carrier.(forwardingSource).receiveForward(ctx, destination)
+func (c *heldForwardRead) receiveForward(ctx context.Context) (queuedFrame, error) {
+	b, err := c.forwardingCarrier.receiveForward(ctx)
 	if err == nil && c.held.CompareAndSwap(false, true) {
 		close(c.entered)
 		select {
 		case <-c.release:
 		case <-ctx.Done():
-			return nil, 0, ctx.Err()
+			return queuedFrame{}, ctx.Err()
 		}
 	}
-	return b, generation, err
+	return b, err
 }
 
 type heldForwardClose struct {
@@ -244,9 +247,10 @@ func TestPeerForwardFencesAllQueuedPublisherPackets(t *testing.T) {
 	frame := func(seq uint64) []byte {
 		return signedPacket(t, b, tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sender: 1, Sequence: seq, Total: 1, Payload: []byte{byte(seq)}})
 	}
+	sharedInput := input.publisher.(*SharedDatagramCarrier)
 	waitQueued := func(count int) {
 		t.Helper()
-		for len(input.(*SharedDatagramCarrier).peer.in) != count {
+		for len(sharedInput.peer.in) != count {
 			select {
 			case <-ctx.Done():
 				t.Fatal("input did not reach queue", ctx.Err())
@@ -260,11 +264,12 @@ func TestPeerForwardFencesAllQueuedPublisherPackets(t *testing.T) {
 		}
 	}
 	waitQueued(2)
-	held := &heldForwardRead{Carrier: input, entered: make(chan struct{}), release: make(chan struct{})}
+	held := &heldForwardRead{forwardingCarrier: input.publisher, entered: make(chan struct{}), release: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(held.release) })
 	defer release()
 	done := make(chan error, 1)
-	go func() { done <- ForwardPackets(ctx, held, destination) }()
+	input.publisher = held
+	go func() { done <- input.ForwardToConnector(ctx) }()
 	defer func() { release(); releaseClose(); cancel(); <-done }()
 	awaitEndpointSignal(t, ctx, held.entered)
 	next, successor := memoryPair()
@@ -301,16 +306,16 @@ func TestPeerForwardReplacementCannotCompleteOldFragments(t *testing.T) {
 		t.Run(map[bool]string{false: "quic", true: "tls-tcp"}[tcp], func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			output, receiver, binding := forwardPublisherPair(t, ctx, tcp)
 			source := NewCarrierSlot()
 			defer source.Close()
+			output, receiver, binding := forwardPublisherPair(t, ctx, tcp, source)
 			old, sender := memoryPair()
 			defer sender.Close()
 			if err := source.Install(old); err != nil {
 				t.Fatal(err)
 			}
 			done := make(chan error, 1)
-			go func() { done <- ForwardPackets(ctx, source, output) }()
+			go func() { done <- output.ForwardToPublisher(ctx) }()
 			defer func() { cancel(); _ = source.Close(); <-done }()
 			data := bytes.Repeat([]byte{7}, tunnelv1.MaxPeerPacketBytes)
 			frame := func(seq uint64, part uint8) []byte {
@@ -333,7 +338,7 @@ func TestPeerForwardReplacementCannotCompleteOldFragments(t *testing.T) {
 			}
 			endpoint := &Endpoint{input: make(chan queuedPacket, packetQueue)}
 			path := &path{carrier: receiver}
-			endpoint.assemble(path, packet, 0)
+			endpoint.assemble(path, packet, carrierRevision{})
 			next, successor := memoryPair()
 			defer successor.Close()
 			if err := source.Install(next); err != nil {
@@ -353,13 +358,96 @@ func TestPeerForwardReplacementCannotCompleteOldFragments(t *testing.T) {
 				if err != nil || packet.Sequence != 43 {
 					t.Fatal("old sequence crossed the handoff", packet.Sequence, err)
 				}
-				endpoint.assemble(path, packet, 0)
+				endpoint.assemble(path, packet, carrierRevision{})
 			}
 			if len(endpoint.input) != 1 {
 				t.Fatal("mixed fragments or lost fresh packet")
 			}
 			if got := <-endpoint.input; !bytes.Equal(got.data, data) {
 				t.Fatal("fresh fragments did not assemble")
+			}
+		})
+	}
+}
+
+func TestPeerForwardRegistrationBindsBothDirections(t *testing.T) {
+	for _, tcp := range []bool{false, true} {
+		t.Run(map[bool]string{false: "quic", true: "tls-tcp"}[tcp], func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			connector := NewCarrierSlot()
+			defer connector.Close()
+			registration, publisher, binding := forwardPublisherPair(t, ctx, tcp, connector)
+			carrier, client := memoryPair()
+			defer client.Close()
+			if err := connector.Install(carrier); err != nil {
+				t.Fatal(err)
+			}
+			life, retire := context.WithCancel(ctx)
+			done := make(chan error, 2)
+			go func() { done <- registration.ForwardToPublisher(life) }()
+			go func() { done <- registration.ForwardToConnector(life) }()
+			defer func() {
+				retire()
+				_ = connector.Close()
+				_ = registration.Close()
+				for range 2 {
+					select {
+					case err := <-done:
+						if err == nil {
+							t.Error("forwarder lost shutdown error")
+						}
+					case <-ctx.Done():
+						t.Error("forwarding registration did not join", ctx.Err())
+					}
+				}
+			}()
+			frame := func(sender uint8, sequence uint64) []byte {
+				return signedPacket(t, binding, tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sender: sender, Sequence: sequence, Total: 1, Payload: []byte{byte(sequence)}})
+			}
+			if err := client.Send(ctx, frame(0, 41)); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := publisher.Receive(ctx); err != nil || !bytes.Equal(got, frame(0, 41)) {
+				t.Fatal("bound publisher direction failed", err)
+			}
+			if err := publisher.Send(ctx, frame(1, 41)); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := client.Receive(ctx); err != nil || !bytes.Equal(got, frame(1, 41)) {
+				t.Fatal("bound connector direction failed", err)
+			}
+			next, successor := memoryPair()
+			defer successor.Close()
+			if err := connector.Install(next); err != nil {
+				t.Fatal(err)
+			}
+			for _, sequence := range []uint64{41, 42} {
+				if err := successor.Send(ctx, frame(0, sequence)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got, err := publisher.Receive(ctx); err != nil || !bytes.Equal(got, frame(0, 42)) {
+				t.Fatal("bound registration reset publisher replay history", err)
+			}
+			// a framed read already waiting at removal keeps its old stamp and
+			// may drop the first reply. the next read must use the successor.
+			for _, sequence := range []uint64{42, 43} {
+				if err := publisher.Send(ctx, frame(1, sequence)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for {
+				got, err := successor.Receive(ctx)
+				if err != nil {
+					t.Fatal("bound registration did not follow replacement", err)
+				}
+				if bytes.Equal(got, frame(1, 43)) {
+					break
+				}
+				if !bytes.Equal(got, frame(1, 42)) {
+					t.Fatal("bound registration delivered a stale reply")
+				}
 			}
 		})
 	}

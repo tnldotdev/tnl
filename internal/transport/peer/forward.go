@@ -5,69 +5,74 @@ import (
 	"time"
 )
 
-// ForwardPackets forwards authenticated carrier frames without buffering or
-// replaying them. a slot cut fences reads waiting for a destination and joins
-// entered sends. an entered publisher send finishes within its original timeout
-// and authority context: interrupting a retained stream can leave a partial frame.
-// the bounded replay window belongs to this forwarding lifetime,
-// not to any replacement carrier registration.
-// forwarding into a slot requires a source from RegisterForwarding bound to it.
-func ForwardPackets(ctx context.Context, source, destination Carrier) error {
-	var replay replayWindow
+// ForwardingRegistration owns both directions of one relay bridge. the publisher
+// registration, destination admission fence, and replay windows survive connector
+// replacement. each direction has one worker, joined by the role owner.
+type ForwardingRegistration struct {
+	publisher   forwardingCarrier
+	connector   *CarrierSlot
+	toPublisher replayWindow
+	toConnector replayWindow
+}
+
+// forwarding carriers stamp the destination revision at transport admission,
+// before any shared input queue. a dequeue cannot give old work a new carrier.
+type forwardingCarrier interface {
+	Carrier
+	receiveForward(context.Context) (queuedFrame, error)
+}
+
+// ForwardToPublisher fences reads from removed connector carriers, but joins
+// entered publisher sends within their original one-second timeout and authority.
+// interrupting a retained publisher stream could leave a partial frame; any send
+// error ends this direction so that the role owner retires the registration.
+func (r *ForwardingRegistration) ForwardToPublisher(ctx context.Context) error {
 	for {
-		var destinationGeneration uint64
-		destinationSlot, _ := destination.(*CarrierSlot)
-		var frame []byte
-		var generation uint64
-		var err error
-		sourceSlot, _ := source.(*CarrierSlot)
-		if destinationSlot != nil {
-			input, ok := source.(forwardingSource)
-			if !ok {
-				return ErrConfiguration
-			}
-			frame, destinationGeneration, err = input.receiveForward(ctx, destinationSlot)
-			generation = destinationGeneration
-		} else if sourceSlot != nil {
-			frame, generation, err = sourceSlot.receiveGeneration(ctx)
-		} else {
-			frame, err = source.Receive(ctx)
-		}
+		frame, revision, err := r.connector.receiveRevision(ctx)
 		if err != nil {
 			return err
 		}
-		if !replay.acceptGeneration(frame, generation) {
+		if !r.toPublisher.acceptRevision(frame, revision) {
 			continue
 		}
 		call, cancel := context.WithTimeout(ctx, time.Second)
-		var entered *installedCarrier
-		if sourceSlot != nil {
-			entered, err = sourceSlot.enter(call, generation)
-			if entered == nil {
-				cancel()
-				if err != nil {
-					return err
-				}
-				continue
+		complete, err := r.connector.trackForward(call, revision)
+		if complete == nil {
+			cancel()
+			if err != nil {
+				return err
 			}
+			continue
 		}
-		if destinationSlot != nil {
-			err = destinationSlot.SendGeneration(call, frame, destinationGeneration)
-		} else {
-			err = destination.Send(call, frame)
-		}
+		err = r.publisher.Send(call, frame)
 		cancel()
-		if entered != nil {
-			entered.work.Done()
-		}
+		complete()
 		if err != nil {
 			return err
 		}
 	}
 }
 
-// forwarding sources stamp the destination generation at transport admission,
-// before any shared input queue. a dequeue cannot assign old work a new carrier.
-type forwardingSource interface {
-	receiveForward(context.Context, *CarrierSlot) ([]byte, uint64, error)
+// ForwardToConnector fences queued and entered sends into a removed connector
+// carrier. unlike the retained publisher registration, that carrier is closed
+// and never reused after replacement.
+func (r *ForwardingRegistration) ForwardToConnector(ctx context.Context) error {
+	for {
+		frame, err := r.publisher.receiveForward(ctx)
+		if err != nil {
+			return err
+		}
+		if !r.toConnector.acceptRevision(frame.data, frame.revision) {
+			continue
+		}
+		call, cancel := context.WithTimeout(ctx, time.Second)
+		err = r.connector.sendRevision(call, frame.data, frame.revision)
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
 }
+
+// Close retires the publisher registration, not the slot or borrowed transport.
+func (r *ForwardingRegistration) Close() error { return r.publisher.Close() }

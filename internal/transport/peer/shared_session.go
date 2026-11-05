@@ -71,14 +71,18 @@ func (s *SharedSession) Register(binding PairBinding, initiate bool) (Carrier, e
 // RegisterForwarding binds incoming packet admission to a replaceable destination
 // before the registration is visible to readers. it retains that fence for the
 // registration's lifetime, including while the destination is absent.
-func (s *SharedSession) RegisterForwarding(binding PairBinding, initiate bool, destination *CarrierSlot) (Carrier, error) {
+func (s *SharedSession) RegisterForwarding(binding PairBinding, initiate bool, destination *CarrierSlot) (*ForwardingRegistration, error) {
 	if destination == nil {
 		return nil, ErrConfiguration
 	}
-	return s.register(binding, initiate, destination)
+	publisher, err := s.register(binding, initiate, destination)
+	if err != nil {
+		return nil, err
+	}
+	return &ForwardingRegistration{publisher: publisher, connector: destination}, nil
 }
 
-func (s *SharedSession) register(binding PairBinding, initiate bool, destination *CarrierSlot) (Carrier, error) {
+func (s *SharedSession) register(binding PairBinding, initiate bool, destination *CarrierSlot) (forwardingCarrier, error) {
 	if s.ctx.Err() != nil {
 		return nil, net.ErrClosed
 	}

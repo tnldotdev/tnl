@@ -20,17 +20,17 @@ func TestPeerFragmentsStayWithTheirFixedCarrier(t *testing.T) {
 	first := tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: 43, Total: uint16(len(data)), Payload: data[:tunnelv1.PeerFragmentBytes]}
 	second := first
 	second.Fragment, second.Payload = 1, data[tunnelv1.PeerFragmentBytes:]
-	e.assemble(left, first, 0)
-	e.assemble(right, second, 0)
+	e.assemble(left, first, carrierRevision{})
+	e.assemble(right, second, carrierRevision{})
 	if len(e.input) != 0 {
 		t.Fatal("fragments from different relay carriers completed a packet")
 	}
-	e.assemble(right, first, 0)
+	e.assemble(right, first, carrierRevision{})
 	if got := <-e.input; !bytes.Equal(got.data, data) {
 		t.Fatal("one carrier could not assemble its own packet")
 	}
-	e.assemble(right, first, 0)
-	e.assemble(right, second, 0)
+	e.assemble(right, first, carrierRevision{})
+	e.assemble(right, second, carrierRevision{})
 	if len(e.input) != 0 {
 		t.Fatal("completed packet bypassed the replay window")
 	}
