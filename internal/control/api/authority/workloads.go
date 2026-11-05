@@ -17,7 +17,7 @@ import (
 type WorkloadStore interface {
 	WorkloadPolicy(context.Context, string, string, string, string) (controlstate.ProjectWorkload, error)
 	ExchangeWorkload(context.Context, controlstate.ExchangeWorkloadRequest, time.Time) (controlstate.WorkloadSession, error)
-	RenewWorkloadSession(context.Context, string, string, time.Time) (controlstate.WorkloadSession, error)
+	RenewWorkloadSession(context.Context, string, string, controlstate.WorkloadRenewal, time.Time) (controlstate.WorkloadSession, error)
 	RevokeWorkloadSession(context.Context, string, string, time.Time) error
 	IdentifyWorkload(context.Context, string, string, string, string, oidc.WorkloadExecution, time.Time) (string, error)
 	WorkloadAssertionPolicy(context.Context, string, string) (controlstate.ProjectWorkload, error)
@@ -167,7 +167,17 @@ func (h *handler) RenewWorkloadSession(w http.ResponseWriter, r *http.Request, i
 		writeProblem(w, 503, authorityv1.Unavailable, "workload authentication is unavailable")
 		return
 	}
-	result, err := store.RenewWorkloadSession(r.Context(), id, token, time.Now())
+	var body authorityv1.WorkloadRenewal
+	if decodeJSON(w, r, &body) != nil {
+		writeProblem(w, 400, authorityv1.InvalidRequest, "invalid workload renewal")
+		return
+	}
+	signature, err := base64.RawURLEncoding.Strict().DecodeString(body.Signature)
+	if err != nil || len(signature) != ed25519.SignatureSize || body.Sequence <= 0 {
+		writeProblem(w, 400, authorityv1.InvalidRequest, "invalid workload renewal proof")
+		return
+	}
+	result, err := store.RenewWorkloadSession(r.Context(), id, token, controlstate.WorkloadRenewal{Sequence: body.Sequence, Signature: signature}, time.Now())
 	if err != nil {
 		workloadProblem(w, err)
 		return

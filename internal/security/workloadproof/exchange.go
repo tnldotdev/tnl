@@ -1,4 +1,4 @@
-// package workloadproof defines the native exchange's key-possession proof.
+// package workloadproof defines native workload key-possession proofs.
 package workloadproof
 
 import (
@@ -20,6 +20,12 @@ func Exchange(team, project, workload, source, nonce string, assertion [32]byte,
 
 func Attach(session string, assertion [32]byte) []byte {
 	data, _ := json.Marshal([]string{"tnl-workload-attach/v1", session, base64.RawURLEncoding.EncodeToString(assertion[:])})
+	digest := sha256.Sum256(data)
+	return digest[:]
+}
+
+func Renew(session string, sequence int64) []byte {
+	data, _ := json.Marshal([]any{"tnl-workload-renew/v1", session, sequence})
 	digest := sha256.Sum256(data)
 	return digest[:]
 }
