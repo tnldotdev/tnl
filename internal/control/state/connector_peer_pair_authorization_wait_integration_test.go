@@ -198,6 +198,23 @@ func TestIntegrationConnectorPeerPairAuthorizationCurrentStateAfterWait(t *testi
 				defer join()
 				ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 				defer cancel()
+				if action == "renew" && authority == "relay" {
+					if err := awaitIntegrationResult(t, ctx, done); err != nil {
+						t.Fatal("owner renewal waited for relay delivery authority", err)
+					}
+					if err := gate.Commit(ctx); err != nil {
+						t.Fatal(err)
+					}
+					var savedSlots []byte
+					if err := f.d.pool.QueryRow(ctx, `SELECT slots FROM control.connector_peer_pairs WHERE id=$1`, pair.ID).Scan(&savedSlots); err != nil {
+						t.Fatal(err)
+					}
+					var relays [2]ConnectorPeerPairRelay
+					if err := json.Unmarshal(savedSlots, &relays); err != nil || relays != pair.Relays {
+						t.Fatal("renewal adopted changed relay authority", err)
+					}
+					return
+				}
 				waitForPostgresBlock(t, ctx, f.d, int32(gate.Conn().PgConn().PID()), done)
 				if err := gate.Commit(ctx); err != nil {
 					t.Fatal(err)

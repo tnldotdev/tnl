@@ -183,6 +183,7 @@ type Querier interface {
 	GetCompanyAuthenticationDeadline(ctx context.Context, sessionID string) (pgtype.Timestamptz, error)
 	GetCompanyEligibility(ctx context.Context, arg GetCompanyEligibilityParams) (ControlCompanyEligibility, error)
 	GetConnectorPeerPairForOwner(ctx context.Context, arg GetConnectorPeerPairForOwnerParams) (ControlConnectorPeerPair, error)
+	GetConnectorPeerPendingBinding(ctx context.Context, pairID string) (ControlConnectorPeerPendingBinding, error)
 	GetControlSessionByAccessID(ctx context.Context, accessTokenID string) (GetControlSessionByAccessIDRow, error)
 	GetCurrentIdentityConnection(ctx context.Context, teamID string) (ControlIdentityConnection, error)
 	GetCustomDomainByIdempotency(ctx context.Context, arg GetCustomDomainByIdempotencyParams) (GetCustomDomainByIdempotencyRow, error)
@@ -260,6 +261,7 @@ type Querier interface {
 	HasTeamMembershipHistory(ctx context.Context, arg HasTeamMembershipHistoryParams) (bool, error)
 	HasVisitorIPSet(ctx context.Context, publicUrlID string) (bool, error)
 	HeartbeatPublishRun(ctx context.Context, arg HeartbeatPublishRunParams) (ControlPublishRun, error)
+	InitializeConnectorPeerSession(ctx context.Context, arg InitializeConnectorPeerSessionParams) (ControlConnectorPeerPair, error)
 	InsertACMEOrder(ctx context.Context, arg InsertACMEOrderParams) (ControlAcmeOrder, error)
 	InsertAdminAuditEvent(ctx context.Context, arg InsertAdminAuditEventParams) error
 	InsertBrowserAccessHandoff(ctx context.Context, arg InsertBrowserAccessHandoffParams) error
@@ -494,6 +496,7 @@ type Querier interface {
 	PublisherScopeAvailable(ctx context.Context, arg PublisherScopeAvailableParams) (bool, error)
 	PutCompanyEligibility(ctx context.Context, arg PutCompanyEligibilityParams) error
 	QuarantineMemberSlug(ctx context.Context, arg QuarantineMemberSlugParams) (int64, error)
+	ReadConnectorPeerBindingClaims(ctx context.Context, arg ReadConnectorPeerBindingClaimsParams) ([]ControlConnectorPeerPairLegClaim, error)
 	ReadConnectorPeerClaimBounds(ctx context.Context, pairID string) ([]ReadConnectorPeerClaimBoundsRow, error)
 	// relay leases are current-state recheck deadlines, not pair renewals.
 	ReadConnectorPeerObservationRelayBounds(ctx context.Context, arg ReadConnectorPeerObservationRelayBoundsParams) ([]ReadConnectorPeerObservationRelayBoundsRow, error)

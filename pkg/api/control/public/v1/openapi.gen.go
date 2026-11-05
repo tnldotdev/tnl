@@ -1967,8 +1967,10 @@ type ConnectorPeerPair struct {
 	DeliveryGeneration int64 `json:"delivery_generation"`
 
 	// DeliveryId Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.
-	DeliveryId string    `json:"delivery_id"`
-	ExpiresAt  time.Time `json:"expires_at"`
+	DeliveryId string `json:"delivery_id"`
+
+	// ExpiresAt Owner authority deadline, conservatively capped for a pending snapshot by pending_until. Independent relay claims and publisher installation retain their confirmed bounds; see ConnectorPeerPairPrepared.binding_expires_at in service-runs.yaml. Only a fresh authorized owner renewal extends owner authority; inspect and exact lifecycle retries do not.
+	ExpiresAt time.Time `json:"expires_at"`
 
 	// Key Per-binding delivery credential; never use it as the retained endpoint frame key.
 	Key string `json:"key"`
@@ -1982,12 +1984,14 @@ type ConnectorPeerPair struct {
 	PublisherIdentityId string `json:"publisher_identity_id"`
 
 	// PublisherPreparedUntil The publisher reported its exact packet registration and inner listener installed through this bound. This startup barrier is not visitor permission or a guarantee of continued process liveness.
-	PublisherPreparedUntil *time.Time               `json:"publisher_prepared_until,omitempty"`
-	PublisherProvedUntil   *time.Time               `json:"publisher_proved_until,omitempty"`
-	Relays                 []ConnectorPeerPairRelay `json:"relays"`
-	RunNumber              int64                    `json:"run_number"`
-	ServiceId              ServiceID                `json:"service_id"`
-	ServiceRunId           ServiceRunID             `json:"service_run_id"`
+	PublisherPreparedUntil *time.Time `json:"publisher_prepared_until,omitempty"`
+
+	// PublisherProvedUntil Independent publisher path-proof freshness, at most five seconds and capped by installation, claim, pending-operation and owner bounds. Used only for activation, not a serving lease. Inspect, exact proof retries and owner renewal cannot extend it; fresh proofs use the prepared operation in service-runs.yaml.
+	PublisherProvedUntil *time.Time               `json:"publisher_proved_until,omitempty"`
+	Relays               []ConnectorPeerPairRelay `json:"relays"`
+	RunNumber            int64                    `json:"run_number"`
+	ServiceId            ServiceID                `json:"service_id"`
+	ServiceRunId         ServiceRunID             `json:"service_run_id"`
 
 	// SessionKey Stable endpoint frame key, returned only to the authorized connector and publisher, never a relay.
 	SessionKey string  `json:"session_key,omitempty"`
@@ -2131,8 +2135,10 @@ type ConnectorPeerPairRebindState struct {
 	HighWaterGeneration int64                             `json:"high_water_generation"`
 	Operation           *ConnectorPeerPairRebindOperation `json:"operation,omitempty"`
 	Pending             *ConnectorPeerPair                `json:"pending,omitempty"`
-	PendingUntil        *time.Time                        `json:"pending_until,omitempty"`
-	ReadyRelays         []ConnectorPeerPairRelay          `json:"ready_relays"`
+
+	// PendingUntil Fixed pending-operation deadline, at most ten seconds from preparation and capped by the existing owner authority. Inspect, exact retries and owner renewal cannot extend it. Publisher installation and path proofs in service-runs.yaml cannot outlive this deadline while pending.
+	PendingUntil *time.Time               `json:"pending_until,omitempty"`
+	ReadyRelays  []ConnectorPeerPairRelay `json:"ready_relays"`
 }
 
 // ConnectorPeerPairRelay defines model for ConnectorPeerPairRelay.
@@ -3546,6 +3552,7 @@ type ServiceName = string
 
 // ServiceObservation defines model for ServiceObservation.
 type ServiceObservation struct {
+	DeliveryGeneration  int64                         `json:"delivery_generation,omitempty"`
 	EventId             string                        `json:"event_id"`
 	EventType           ServiceObservationEventType   `json:"event_type"`
 	OccurredAt          time.Time                     `json:"occurred_at"`

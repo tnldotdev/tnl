@@ -138,7 +138,10 @@ schemas:
         $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairBindingState"
         x-go-type-skip-optional-pointer: true
       source_ip: { type: string, maxLength: 45 }
-      publisher_proved_until: { type: string, format: date-time }
+      publisher_proved_until:
+        type: string
+        format: date-time
+        description: Independent publisher path-proof freshness, at most five seconds and capped by installation, claim, pending-operation and owner bounds. Used only for activation, not a serving lease. Inspect, exact proof retries and owner renewal cannot extend it; fresh proofs use the prepared operation in service-runs.yaml.
       observed_at:
         type: string
         format: date-time
@@ -152,7 +155,10 @@ schemas:
         minItems: 2
         maxItems: 2
         items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairRelay" }
-      expires_at: { type: string, format: date-time }
+      expires_at:
+        type: string
+        format: date-time
+        description: Owner authority deadline, conservatively capped for a pending snapshot by pending_until. Independent relay claims and publisher installation retain their confirmed bounds; see ConnectorPeerPairPrepared.binding_expires_at in service-runs.yaml. Only a fresh authorized owner renewal extends owner authority; inspect and exact lifecycle retries do not.
   ConnectorPeerPairRenewal:
     type: object
     additionalProperties: false
@@ -287,7 +293,10 @@ schemas:
       active: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPair" }
       pending: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPair" }
       high_water_generation: { type: integer, format: int64, minimum: 1 }
-      pending_until: { type: string, format: date-time }
+      pending_until:
+        type: string
+        format: date-time
+        description: Fixed pending-operation deadline, at most ten seconds from preparation and capped by the existing owner authority. Inspect, exact retries and owner renewal cannot extend it. Publisher installation and path proofs in service-runs.yaml cannot outlive this deadline while pending.
       ready_relays:
         type: array
         maxItems: 2

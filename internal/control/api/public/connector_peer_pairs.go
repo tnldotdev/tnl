@@ -35,6 +35,14 @@ func connectorPairResponse(pair controlstate.ConnectorPeerPair) controlv1.Connec
 	result := controlv1.ConnectorPeerPair{PairId: pair.ID, ServiceId: pair.ServiceID, ServiceRunId: pair.ServiceRunID, RunNumber: pair.RunNumber,
 		PublisherIdentityId: pair.PublisherIdentityID, Subject: visitorsubject.Wire(pair.Subject), DeliveryId: base64.RawURLEncoding.EncodeToString(pair.DeliveryID[:]), DeliveryGeneration: pair.DeliveryGeneration,
 		Key: pair.Key, Relays: connectorPairRelays(pair.Relays), ObservedAt: pair.ObservedAt, ExpiresAt: pair.ExpiresAt}
+	result.SessionKey, result.TrustRevision, result.OperationId, result.BindingChallenge, result.BindingState = pair.SessionKey, pair.TrustRevision, pair.OperationID, pair.BindingChallenge, controlv1.ConnectorPeerPairBindingState(pair.BindingState)
+	if pair.SourceIP.IsValid() {
+		source := pair.SourceIP.String()
+		result.SourceIp = &source
+	}
+	if !pair.PublisherProvedUntil.IsZero() {
+		result.PublisherProvedUntil = &pair.PublisherProvedUntil
+	}
 	if !pair.PublisherPreparedUntil.IsZero() {
 		result.PublisherPreparedUntil = &pair.PublisherPreparedUntil
 	}
@@ -96,10 +104,12 @@ func (h *handler) connectorPairSource(w http.ResponseWriter, r *http.Request, bo
 
 func connectorPairProblem(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, controlstate.ErrServiceConflict):
-		writeProblem(w, 409, controlv1.Conflict, "connector peer pair conflicts with the current delivery; select the run again")
 	case errors.Is(err, controlstate.ErrServiceAccess), errors.Is(err, controlstate.ErrVisitorPermission), errors.Is(err, controlstate.ErrWorkloadDenied):
 		writeProblem(w, 403, controlv1.Forbidden, "connector peer pair source or run is no longer authorized")
+	case errors.Is(err, controlstate.ErrConnectorPeerBindingStale):
+		writeProblem(w, 409, controlv1.StaleNetworkBinding, "connector network binding changed; inspect the retained owner")
+	case errors.Is(err, controlstate.ErrServiceConflict):
+		writeProblem(w, 409, controlv1.Conflict, "connector peer pair conflicts with the current delivery; inspect the retained owner")
 	default:
 		writeControlStateProblem(w, "authorize connector peer pair", err)
 	}
@@ -192,7 +202,7 @@ func (h *handler) ListConnectorPeerPairs(w http.ResponseWriter, r *http.Request,
 func (h *handler) ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID, pairID string) {
 	w.Header().Set("Cache-Control", "no-store")
 	var body controlv1.ConnectorPeerPairPrepared
-	if decodeJSONLimited(w, r, &body, 1024) != nil || body.DeliveryGeneration < 1 || body.BindingExpiresAt.IsZero() {
+	if decodeJSONLimited(w, r, &body, 4096) != nil || body.DeliveryGeneration < 1 || body.BindingExpiresAt.IsZero() {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid connector peer preparation report")
 		return
 	}
@@ -211,8 +221,16 @@ func (h *handler) ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *htt
 		writeProblem(w, 503, controlv1.Unavailable, "connector peer preparation reports are unavailable")
 		return
 	}
-	err = store.ConfirmConnectorPeerPairPrepared(r.Context(), serviceID, runID, pairID, token, controlstate.ConnectorPeerPairPrepared{
-		DeliveryID: id, DeliveryGeneration: body.DeliveryGeneration, BindingExpiresAt: body.BindingExpiresAt}, time.Now())
+	prepared := controlstate.ConnectorPeerPairPrepared{DeliveryID: id, DeliveryGeneration: body.DeliveryGeneration, BindingExpiresAt: body.BindingExpiresAt,
+		Phase: string(body.Phase), OperationID: body.OperationId, BindingChallenge: body.BindingChallenge}
+	if len(body.PathProofs) > 2 {
+		writeProblem(w, 400, controlv1.InvalidRequest, "invalid connector peer path proofs")
+		return
+	}
+	for _, proof := range body.PathProofs {
+		prepared.PathProofs = append(prepared.PathProofs, tunnelv1.ConnectorPeerPairPathProof{ConnectionSlot: proof.ConnectionSlot, ProbeNonce: proof.ProbeNonce, ReplyFrame: proof.ReplyFrame})
+	}
+	err = store.ConfirmConnectorPeerPairPrepared(r.Context(), serviceID, runID, pairID, token, prepared, time.Now())
 	if err != nil {
 		serviceRunProblem(w, "confirm connector peer preparation", err)
 		return
@@ -249,5 +267,6 @@ func (h *handler) DeliverConnectorPeerPair(w http.ResponseWriter, r *http.Reques
 		Subject: visitorsubject.Wire(delivery.Subject), DeliveryGeneration: delivery.DeliveryGeneration,
 		DeliveryId: base64.RawURLEncoding.EncodeToString(delivery.DeliveryID[:]), Key: delivery.Key,
 		SourceIp: delivery.SourceIP.String(), Relays: connectorPairRelays(delivery.Relays), ObservedAt: delivery.ObservedAt, ExpiresAt: delivery.ExpiresAt,
+		SessionKey: delivery.SessionKey, TrustRevision: delivery.TrustRevision, OperationId: delivery.OperationID, BindingChallenge: delivery.BindingChallenge, BindingState: controlv1.ConnectorPeerPairBindingState(delivery.BindingState),
 	})
 }

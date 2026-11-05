@@ -26,7 +26,7 @@ func TestIntegrationConnectorServiceAuditExactRunPairAndSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: pair.ServiceID, ServiceKind: "service",
-		RunID: f.run.RunID, RunNumber: f.run.RunNumber, PairID: pair.ID, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL",
+		RunID: f.run.RunID, RunNumber: f.run.RunNumber, PairID: pair.ID, DeliveryGeneration: pair.DeliveryGeneration, VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL",
 		SourceIP: source.String(), EventType: "connection.open", OccurredAt: f.now, Outcome: "allowed"}
 	report := func(token string, events ...serviceaudit.Observation) (ServiceObservationResult, error) {
 		return f.d.IngestServiceRunObservations(ctx, pair.ServiceID, f.run.RunID, token, f.run.RunNumber, serviceaudit.Batch{Events: events}, f.now)

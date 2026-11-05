@@ -25,18 +25,12 @@ type connectorPeerBinding struct {
 func (d *Database) connectorPeerPairBinding(ctx context.Context, tx pgx.Tx, run controlstatedb.ControlServiceRun, pair controlstatedb.ControlConnectorPeerPair, now time.Time) (b connectorPeerBinding, err error) {
 	started := time.Now()
 	checkedNow := func() time.Time { return now.Add(time.Since(started)) }
-	if pair.ServiceID != run.ServiceID || pair.ServiceRunID != run.ID || pair.RunNumber != run.RunNumber ||
-		pair.PublisherIdentityID != run.PublisherIdentityID || !pair.ExpiresAt.Time.After(now) || pair.LastAuthorizedAt.Time.After(now) ||
-		run.State != "ready" || !run.Healthy || !activeServiceRun(run, now) || !run.CertificateExpiresAt.Valid || !run.CertificateExpiresAt.Time.After(now) {
+	subject, _, sessionUntil, err := d.connectorPeerSessionAuthority(ctx, tx, run, pair, now)
+	if err != nil {
+		return b, err
+	}
+	if run.State != "ready" {
 		return b, ErrServiceAccess
-	}
-	publisherUntil, err := connectorPeerPublisherAuthority(ctx, tx, run, now)
-	if err != nil {
-		return b, err
-	}
-	subject, _, subjectUntil, err := connectorPeerPairSubjectKey(ctx, tx, pair, now)
-	if err != nil {
-		return b, err
 	}
 	b.subject = subject
 	ready, err := connectorPairReadySelection(ctx, tx, run.ID, run.ServiceID, run.RunNumber, now)
@@ -61,9 +55,9 @@ func (d *Database) connectorPeerPairBinding(ctx context.Context, tx pgx.Tx, run 
 			return b, ErrServiceAccess
 		}
 	}
-	b.expiresAt = minTime(pair.ExpiresAt.Time, minTime(publisherUntil, subjectUntil))
+	b.expiresAt = sessionUntil
 	b.recheckAt = minTime(b.expiresAt, minTime(leases[0].LeaseExpiresAt.Time, leases[1].LeaseExpiresAt.Time))
-	claims, err := q.ReadConnectorPeerClaimBounds(ctx, pair.ID)
+	claims, err := q.ReadConnectorPeerBindingClaims(ctx, controlstatedb.ReadConnectorPeerBindingClaimsParams{PairID: pair.ID, DeliveryGeneration: pair.DeliveryGeneration})
 	if err != nil {
 		return b, err
 	}

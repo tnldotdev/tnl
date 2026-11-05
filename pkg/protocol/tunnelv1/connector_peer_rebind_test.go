@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func connectorRebindFixture(t *testing.T, phase string) ConnectorPeerPairRebindProof {
+func connectorRebindFixture(t testing.TB, phase string) ConnectorPeerPairRebindProof {
 	t.Helper()
 	initial := connectorPairGoldenProof()
 	p := ConnectorPeerPairRebindProof{Phase: phase, ServiceID: initial.ServiceID, PairID: "cpp_1234567890123456789012",
@@ -171,14 +171,31 @@ func TestStaleNetworkBindingControlRoundTrip(t *testing.T) {
 }
 
 func FuzzConnectorPeerPairRebindProof(f *testing.F) {
-	f.Add("inspect", "owner", int64(1), "", "")
-	f.Add("activate", "owner", int64(2), "invalid", "invalid")
+	for _, phase := range []string{"inspect", "prepare", "activate", "abort"} {
+		p := connectorRebindFixture(f, phase)
+		if _, err := p.Message(); err != nil {
+			f.Fatal("invalid fuzz seed", err)
+		}
+		frame := ""
+		if len(p.PathProofs) > 0 {
+			frame = p.PathProofs[0].ReplyFrame
+		}
+		f.Add(phase, p.IdempotencyKey, p.ExpectedGeneration, p.BindingChallenge, frame)
+	}
 	f.Fuzz(func(t *testing.T, phase, owner string, generation int64, challenge, frame string) {
-		p := connectorRebindFixture(t, "inspect")
+		p := connectorRebindFixture(t, phase)
 		p.Phase, p.IdempotencyKey, p.ExpectedGeneration, p.BindingChallenge = phase, owner, generation, challenge
-		if frame != "" {
-			p.PathProofs = []ConnectorPeerPairPathProof{{ConnectionSlot: 0, ProbeNonce: challenge, ReplyFrame: frame}}
+		if len(p.PathProofs) > 0 {
+			p.PathProofs[0].ReplyFrame = frame
 		}
 		_, _ = p.Message()
+	})
+}
+
+func FuzzConnectorPeerPairPathProof(f *testing.F) {
+	p := connectorRebindFixture(f, "activate").PathProofs[0]
+	f.Add(p.ConnectionSlot, p.ProbeNonce, p.ReplyFrame)
+	f.Fuzz(func(t *testing.T, slot int, nonce, frame string) {
+		_ = (ConnectorPeerPairPathProof{ConnectionSlot: slot, ProbeNonce: nonce, ReplyFrame: frame}).Validate()
 	})
 }

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -80,10 +81,10 @@ func assertNativeDeliveryID(t *testing.T, d *Database, pair ConnectorPeerPair) {
 func rotateConnectorPairStorage(t *testing.T, d *Database, pair ConnectorPeerPair) *Database {
 	t.Helper()
 	ctx := t.Context()
-	var oldCiphertext []byte
+	var oldCiphertext, oldSessionCiphertext []byte
 	var oldKeyID string
-	if err := d.pool.QueryRow(ctx, `SELECT key_ciphertext,storage_key_id FROM control.connector_peer_pairs WHERE id=$1`, pair.ID).
-		Scan(&oldCiphertext, &oldKeyID); err != nil || oldKeyID != d.storageKey.CurrentID() {
+	if err := d.pool.QueryRow(ctx, `SELECT key_ciphertext,storage_key_id,session_key_ciphertext FROM control.connector_peer_pairs WHERE id=$1`, pair.ID).
+		Scan(&oldCiphertext, &oldKeyID, &oldSessionCiphertext); err != nil || oldKeyID != d.storageKey.CurrentID() {
 		t.Fatal("pair was not sealed under the original storage key", err)
 	}
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{11}, 32))
@@ -110,7 +111,7 @@ func rotateConnectorPairStorage(t *testing.T, d *Database, pair ConnectorPeerPai
 			break
 		}
 	}
-	if remaining, err := rotating.countPreviousStorageSecrets(ctx); err != nil || remaining != 1 {
+	if remaining, err := rotating.countPreviousStorageSecrets(ctx); err != nil || remaining != 2 {
 		t.Fatal("locked connector pair was omitted from previous-key count", remaining, err)
 	}
 	wait, cancel := context.WithTimeout(ctx, 350*time.Millisecond)
@@ -140,6 +141,18 @@ func rotateConnectorPairStorage(t *testing.T, d *Database, pair ConnectorPeerPai
 	if err := reopened.pool.QueryRow(ctx, `SELECT key_ciphertext,storage_key_id FROM control.connector_peer_pairs WHERE id=$1`, pair.ID).
 		Scan(&ciphertext, &keyID); err != nil || keyID != reopened.storageKey.CurrentID() || bytes.Equal(ciphertext, oldCiphertext) {
 		t.Fatal("pair retained its previous ciphertext or key ID", err)
+	}
+	if err := reopened.pool.QueryRow(ctx, `SELECT session_key_ciphertext,session_key_storage_key_id FROM control.connector_peer_pairs WHERE id=$1`, pair.ID).
+		Scan(&ciphertext, &keyID); err != nil || keyID != reopened.storageKey.CurrentID() || bytes.Equal(ciphertext, oldSessionCiphertext) {
+		t.Fatal("session retained its previous ciphertext or key ID", err)
+	}
+	var sessionKey string
+	row, err := controlstatedb.New(reopened.pool).LockConnectorPeerPairForLegClaim(ctx, pair.ID)
+	if err == nil {
+		sessionKey, err = reopened.connectorPeerSessionKey(row)
+	}
+	if err != nil || sessionKey != pair.SessionKey {
+		t.Fatal("rotation changed the endpoint-only session key", err)
 	}
 	return reopened
 }
@@ -312,7 +325,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP,
-		testConnectorLegProof(t, first, 0, now.Add(time.Microsecond), private), now.Add(time.Microsecond)); !errors.Is(err, ErrServiceAccess) {
+		testConnectorLegProof(t, first, 0, now.Add(time.Microsecond), private), now.Add(time.Microsecond)); !errors.Is(err, ErrConnectorPeerBindingStale) {
 		t.Fatal("changed relay address retained its old pair key", err)
 	}
 	if _, err := d.PrepareConnectorPeerPair(visitor, request, now); !errors.Is(err, ErrServiceAccess) {
@@ -347,7 +360,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, sourceIP, leg0, writtenAgain.RequestedAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("older proof recovered key after retry", err)
 	}
-	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, netip.MustParseAddr("192.0.2.11"), testConnectorLegProof(t, first, 0, now.Add(2*time.Microsecond), private), now.Add(2*time.Microsecond)); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, first.Relays[0].RelayLease, netip.MustParseAddr("192.0.2.11"), testConnectorLegProof(t, first, 0, now.Add(2*time.Microsecond), private), now.Add(2*time.Microsecond)); !errors.Is(err, ErrConnectorPeerBindingStale) {
 		t.Fatal("new source reused an existing relay claim", err)
 	}
 	var claimCount int
@@ -523,7 +536,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 	if _, err := d.PrepareConnectorPeerPair(visitor, replacement, replacement.RequestedAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("replaced assignment recovered pair", err)
 	}
-	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP, testConnectorLegProof(t, second, 0, replacement.RequestedAt.Add(time.Microsecond), private), replacement.RequestedAt.Add(time.Microsecond)); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, second.Relays[0].RelayLease, sourceIP, testConnectorLegProof(t, second, 0, replacement.RequestedAt.Add(time.Microsecond), private), replacement.RequestedAt.Add(time.Microsecond)); !errors.Is(err, ErrConnectorPeerBindingStale) {
 		t.Fatal("replaced ready assignment recovered relay key", err)
 	}
 	if _, err := d.pool.Exec(ctx, `UPDATE control.service_connection_slots SET connection_assignment_revision=connection_assignment_revision-1 WHERE publisher_connection_id=$1`, first.Relays[0].PublisherConnectionID); err != nil {

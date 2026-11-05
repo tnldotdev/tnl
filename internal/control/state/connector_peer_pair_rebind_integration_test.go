@@ -1,14 +1,13 @@
 package state
 
 import (
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
-func TestIntegrationConnectorPeerPairRenewalRejectsChangedCarrier(t *testing.T) {
+func TestIntegrationConnectorPeerPairRenewalRetainsOwnerWithoutChangingCarrier(t *testing.T) {
 	f := newConnectorPairFixture(t)
 	pair := f.create(t)
 	for slot := range pair.Relays {
@@ -34,12 +33,17 @@ func TestIntegrationConnectorPeerPairRenewalRejectsChangedCarrier(t *testing.T) 
 			renew.ExpectedRelays[0].AssignmentRevision++
 		}
 		f.sign(t, &renew)
-		if _, err := f.d.RenewConnectorPeerPair(f.visitor, "https://control.example.test", renew, renew.RequestedAt); !errors.Is(err, ErrServiceAccess) {
-			t.Fatal("changed carrier renewed retained session", err)
+		if current {
+			renew.RequestedAt = renew.RequestedAt.Add(time.Second)
+			f.sign(t, &renew)
+		}
+		renewed, err := f.d.RenewConnectorPeerPair(f.visitor, "https://control.example.test", renew, renew.RequestedAt)
+		if err != nil || renewed.ID != pair.ID || renewed.SessionKey != pair.SessionKey || renewed.Key != pair.Key || renewed.Relays != pair.Relays || renewed.DeliveryGeneration != pair.DeliveryGeneration {
+			t.Fatal("owner renewal changed retained delivery", err)
 		}
 	}
 	var stored string
 	if err := f.d.pool.QueryRow(t.Context(), `SELECT slots->0->>'publisher_connection_id' FROM control.connector_peer_pairs WHERE id=$1`, pair.ID).Scan(&stored); err != nil || stored != pair.Relays[0].PublisherConnectionID {
-		t.Fatal("failed renewal changed pair", stored, err)
+		t.Fatal("owner renewal changed pair assignments", stored, err)
 	}
 }

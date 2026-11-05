@@ -13,7 +13,8 @@ SELECT count(*) FROM (
 -- name: ListConnectorPeerPairCandidates :many
 -- candidates convey no delivery authority. the publisher checks each delivery
 -- separately after the exact relay claims have been accepted.
-SELECT id,delivery_generation FROM control.connector_peer_pairs
+SELECT id,COALESCE((SELECT pending.delivery_generation FROM control.connector_peer_pending_bindings pending
+    WHERE pending.pair_id=connector_peer_pairs.id AND pending.pending_until>sqlc.arg(now)),delivery_generation)::bigint AS delivery_generation FROM control.connector_peer_pairs
 WHERE service_id=sqlc.arg(service_id) AND service_run_id=sqlc.arg(service_run_id)
     AND run_number=sqlc.arg(run_number) AND publisher_identity_id=sqlc.arg(publisher_identity_id)
     AND expires_at>sqlc.arg(now) AND id COLLATE "C">sqlc.arg(after_id) COLLATE "C"
@@ -73,10 +74,10 @@ WHERE id=sqlc.arg(id) AND delivery_generation=sqlc.arg(delivery_generation)
 -- two rows maximum per pair. an uncertain response requires a fresh proof from
 -- the same observed source and the same relay process, never the old nonce.
 INSERT INTO control.connector_peer_pair_leg_claims(pair_id,connection_slot,requested_at,nonce_digest,source_ip,
-    relay_id,relay_run_id,relay_lease_revision,checked_at,confirmed_until)
+    relay_id,relay_run_id,relay_lease_revision,checked_at,confirmed_until,delivery_generation)
 VALUES (sqlc.arg(pair_id),sqlc.arg(connection_slot),sqlc.arg(requested_at),sqlc.arg(nonce_digest),
-    sqlc.arg(source_ip),sqlc.arg(relay_id),sqlc.arg(relay_run_id),sqlc.arg(relay_lease_revision),sqlc.arg(checked_at),sqlc.arg(confirmed_until))
-ON CONFLICT (pair_id,connection_slot) DO UPDATE SET
+    sqlc.arg(source_ip),sqlc.arg(relay_id),sqlc.arg(relay_run_id),sqlc.arg(relay_lease_revision),sqlc.arg(checked_at),sqlc.arg(confirmed_until),sqlc.arg(delivery_generation))
+ON CONFLICT (pair_id,delivery_generation,connection_slot) DO UPDATE SET
     requested_at=EXCLUDED.requested_at,nonce_digest=EXCLUDED.nonce_digest,
     checked_at=EXCLUDED.checked_at,confirmed_until=EXCLUDED.confirmed_until
 WHERE control.connector_peer_pair_leg_claims.requested_at<EXCLUDED.requested_at
@@ -95,7 +96,20 @@ WHERE id=sqlc.arg(pair_id) AND publisher_prepared_until>sqlc.arg(confirmed_until
 -- name: ReadConnectorPeerClaimBounds :many
 SELECT connection_slot,checked_at,confirmed_until,source_ip,relay_id,relay_run_id,relay_lease_revision
 FROM control.connector_peer_pair_leg_claims WHERE pair_id=sqlc.arg(pair_id)
+    AND delivery_generation=(SELECT delivery_generation FROM control.connector_peer_pairs WHERE id=sqlc.arg(pair_id))
 ORDER BY connection_slot LIMIT 2;
+
+-- name: ReadConnectorPeerBindingClaims :many
+SELECT * FROM control.connector_peer_pair_leg_claims WHERE pair_id=sqlc.arg(pair_id)
+    AND delivery_generation=sqlc.arg(delivery_generation) ORDER BY connection_slot LIMIT 2;
+
+-- name: GetConnectorPeerPendingBinding :one
+SELECT * FROM control.connector_peer_pending_bindings WHERE pair_id=sqlc.arg(pair_id);
+
+-- name: InitializeConnectorPeerSession :one
+UPDATE control.connector_peer_pairs SET session_key_ciphertext=sqlc.arg(ciphertext),session_key_digest=sqlc.arg(digest),
+    session_key_storage_key_id=sqlc.arg(storage_key_id),trust_revision=sqlc.arg(trust_revision)
+WHERE id=sqlc.arg(id) AND session_key_ciphertext IS NULL RETURNING *;
 
 -- name: ReadConnectorPeerObservationRelayBounds :many
 -- relay leases are current-state recheck deadlines, not pair renewals.
