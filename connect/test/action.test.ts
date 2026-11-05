@@ -187,29 +187,37 @@ describe("native main and post", () => {
   });
   test("cancellation interrupts a pending OIDC provider and never starts connector connections", async () => {
     const controller = new AbortController();
-    let entered: (() => void) | undefined;
+    let entered!: () => void;
     const ready = new Promise<void>((resolve) => {
       entered = resolve;
     });
-    let finish: ((token: string) => void) | undefined;
+    let finish!: (token: string) => void;
+    const provider = new Promise<string>((resolve) => {
+      finish = resolve;
+    });
+    let settled = false;
     const running = main({
       signal: controller.signal,
       getIDToken: () => {
-        entered?.();
-        return new Promise((resolve) => {
-          finish = resolve;
+        entered();
+        return provider.then((token) => {
+          settled = true;
+          return token;
         });
       },
     }).catch((error: unknown) => error);
-    await ready;
-    controller.abort();
-    const result = await Promise.race([
-      running,
-      new Promise((resolve) => setTimeout(() => resolve("waiting"), 100)),
-    ]);
-    finish?.("late.private.assertion");
+    try {
+      await ready;
+      controller.abort();
+      // cancellation joins owned cleanup without waiting for the provider.
+      expect(await running).toMatchObject({ code: "TNL_ACTION_CANCELLED" });
+      expect(settled).toBe(false);
+      const owned = await saved();
+      await expect(stat(owned.session)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      finish("late.private.assertion");
+    }
     await running;
-    expect(result).toMatchObject({ code: "TNL_ACTION_CANCELLED" });
     expect(await readFile(path.join(project, "trace.ndjson"), "utf8")).not.toContain(
       '"op":"start"',
     );
