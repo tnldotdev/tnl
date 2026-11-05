@@ -89,7 +89,7 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		type declaration config.Workload
 		base := (&jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, DoNotReference: true, RequiredFromJSONSchemaTags: true, Mapper: schemaForType}).Reflect(declaration{})
 		result := &jsonschema.Schema{}
-		providers := []string{"github", "vercel", "fly", "oidc", "google"}
+		providers := []string{"github", "vercel", "fly", "oidc", "google", "kubernetes"}
 		for _, provider := range providers {
 			props := jsonschema.NewProperties()
 			for _, other := range providers {

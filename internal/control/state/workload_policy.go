@@ -26,14 +26,16 @@ var (
 )
 
 type ProjectWorkload struct {
-	Provider           string                 `json:"provider"`
-	Trust              oidc.WorkloadTrust     `json:"trust"`
-	GitHub             *ProjectWorkloadGitHub `json:"github,omitempty"`
-	Google             *ProjectWorkloadGoogle `json:"google,omitempty"`
-	Services           []string               `json:"services"`
-	MaxDurationSeconds int                    `json:"max_duration_seconds"`
+	Provider           string                     `json:"provider"`
+	Trust              oidc.WorkloadTrust         `json:"trust"`
+	GitHub             *ProjectWorkloadGitHub     `json:"github,omitempty"`
+	Google             *ProjectWorkloadGoogle     `json:"google,omitempty"`
+	Kubernetes         *ProjectWorkloadKubernetes `json:"kubernetes,omitempty"`
+	Services           []string                   `json:"services"`
+	MaxDurationSeconds int                        `json:"max_duration_seconds"`
 }
 type ProjectWorkloadGoogle = controlv1.ProjectWorkloadGoogle
+type ProjectWorkloadKubernetes = controlv1.ProjectWorkloadKubernetes
 type ProjectWorkloadGitHub struct {
 	Repository        string   `json:"repository"`
 	RepositoryID      string   `json:"repository_id"`
@@ -56,6 +58,9 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 	}
 	for name, p := range c.Workloads {
 		if (p.Provider == "google") != (p.Google != nil) {
+			return ErrProjectConfigurationInvalid
+		}
+		if (p.Provider == "kubernetes") != (p.Kubernetes != nil) {
 			return ErrProjectConfigurationInvalid
 		}
 		if p.Provider != "github" {
@@ -205,6 +210,11 @@ func (p ProjectWorkload) validateTrust() error {
 		return true
 	}
 	switch p.Provider {
+	case "kubernetes":
+		k := p.Kubernetes
+		if k == nil || !config.ExactWorkloadValue(k.Context) || !config.WorkloadHTTPS(k.ClusterServer) || !naming.ValidAuthorityLabel(k.Namespace) || !config.ValidKubernetesName(k.ServiceAccount) || len(t.Claims) != 2 || t.Claims["sub"] != "system:serviceaccount:"+k.Namespace+":"+k.ServiceAccount || !config.ValidKubernetesUID(t.Claims["service_account_uid"]) {
+			return ErrProjectConfigurationInvalid
+		}
 	case "google":
 		if p.Google == nil || !config.ValidGoogleServiceAccount(p.Google.ServiceAccount) || config.ValidWorkloadNumericID(p.Google.ServiceAccount) && p.Google.ServiceAccount != t.Claims["sub"] || t.Issuer != config.GoogleWorkloadIssuer || t.JWKSURL != config.GoogleWorkloadJWKS || len(t.Claims) != 1 || !config.ValidWorkloadNumericID(t.Claims["sub"]) {
 			return ErrProjectConfigurationInvalid
