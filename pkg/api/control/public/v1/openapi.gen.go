@@ -2890,6 +2890,8 @@ type ProjectWorkload struct {
 
 // ProjectWorkloadGitHub Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
 type ProjectWorkloadGitHub struct {
+	// DefaultBranch Repository default branch resolved during trusted apply; reused when the declaration omits branch and tag.
+	DefaultBranch     *string  `json:"default_branch,omitempty"`
 	Environment       *string  `json:"environment,omitempty"`
 	Events            []string `json:"events"`
 	JobWorkflowRef    *string  `json:"job_workflow_ref,omitempty"`

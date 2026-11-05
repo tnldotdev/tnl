@@ -118,7 +118,7 @@ func (c WorkloadExecution) Matches(p WorkloadTrust) bool {
 	claims := c.Claims
 	if c.Vercel != nil {
 		v := c.Vercel
-		claims = map[string]string{"owner": v.Owner, "owner_id": v.OwnerID, "project_id": v.ProjectID, "environment": v.Environment}
+		claims = map[string]string{"owner": v.Owner, "owner_id": v.OwnerID, "project": v.Project, "project_id": v.ProjectID, "environment": v.Environment}
 	}
 	if c.Fly != nil {
 		f := c.Fly

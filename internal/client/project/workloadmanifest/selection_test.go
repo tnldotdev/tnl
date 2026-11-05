@@ -169,6 +169,9 @@ func TestManifestProviderAcquisitionOwnership(t *testing.T) {
 	}{
 		{"github", Acquisition{Method: "github-actions", Audience: "https://control.example.test"}, true},
 		{"github", Acquisition{Method: "github-actions", Audience: "https://control.example.test", TokenFile: "token"}, false},
+		{"github", Acquisition{Method: "token-file", Audience: "https://control.example.test", TokenFile: "token"}, true},
+		{"github", Acquisition{Method: "token-env", Audience: "https://control.example.test", TokenEnv: "JOB_TOKEN"}, true},
+		{"github", Acquisition{Method: "token-env", Audience: "wrong", TokenEnv: "JOB_TOKEN"}, false},
 		{"vercel", Acquisition{Method: "vercel-oidc"}, true},
 		{"vercel", Acquisition{Method: "vercel-oidc", Audience: "unexpected"}, false},
 		{"vercel", Acquisition{Method: "vercel-oidc", TokenFile: "token"}, false},
@@ -176,6 +179,10 @@ func TestManifestProviderAcquisitionOwnership(t *testing.T) {
 		{"oidc", Acquisition{Method: "token-file", Audience: "audience"}, false},
 		{"oidc", Acquisition{Method: "callback", Audience: "audience"}, true},
 		{"oidc", Acquisition{Method: "callback", Audience: "audience", TokenFile: "token"}, false},
+		{"oidc", Acquisition{Method: "token-env", Audience: "audience", TokenEnv: "JOB_TOKEN"}, true},
+		{"oidc", Acquisition{Method: "token-env", Audience: "audience", TokenEnv: "JOB=TOKEN"}, false},
+		{"oidc", Acquisition{Method: "token-env", Audience: "audience", TokenEnv: "JOB_TOKEN", TokenFile: "token"}, false},
+		{"oidc", Acquisition{Method: "token-file", TokenFile: "token"}, false},
 	} {
 		directory, m, write := selectionFixture(t)
 		w := m.Workloads["job"]

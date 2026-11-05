@@ -76,7 +76,8 @@ async def select_workload(
     raw = await asyncio.to_thread(preview, service, request)
     if (
         not isinstance(raw, dict)
-        or set(raw) != {"schema", "name", "directory", "manifest", "policy", "source"}
+        or set(raw) - {"token_env"}
+        != {"schema", "name", "directory", "manifest", "policy", "source"}
         or type(raw["schema"]) is not int
         or raw["schema"] != 1
         or not all(
@@ -87,6 +88,12 @@ async def select_workload(
     ):
         raise TnlError("sdk.connection_invalid", "the native workload selection is invalid")
     name, policy = str(raw["name"]), str(raw["policy"])
+    token_env = raw.get("token_env")
+    if token_env is not None and (
+        not isinstance(token_env, str)
+        or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", token_env)
+    ):
+        raise TnlError("sdk.connection_invalid", "the native workload token source is invalid")
     service_name(name)
     assertion = None
     if raw["source"] == "callback":
@@ -101,6 +108,11 @@ async def select_workload(
             "github_request_token": os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", ""),
             "vercel_token_file": os.environ.get("VERCEL_OIDC_TOKEN_FILE", ""),
             "vercel_token": os.environ.get("VERCEL_OIDC_TOKEN", ""),
+            **(
+                {"token_env": token_env, "token_value": os.environ.get(token_env, "")}
+                if isinstance(token_env, str)
+                else {}
+            ),
         },
         assertion,
     )

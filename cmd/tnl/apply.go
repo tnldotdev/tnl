@@ -55,7 +55,7 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 	} else if !errors.Is(err, clientcontrol.ErrNotFound) {
 		return err
 	}
-	if err = bindProjectWorkloads(ctx, project, &declaration, existing.Configuration); err != nil {
+	if err = bindProjectWorkloads(ctx, project, session.Authenticated().ServerEndpoint, &declaration, existing.Configuration); err != nil {
 		return err
 	}
 	applied, err := session.Authenticated().Control.ApplyProjectConfiguration(ctx, source.Key, controlv1.ApplyProjectConfigurationRequest{
