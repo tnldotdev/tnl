@@ -1092,7 +1092,7 @@ export interface TnlConfig {
                 reusableWorkflow?: string;
               };
           /**
-           * Fixed session window; defaults to 1h and must be positive and at most 6h.
+           * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
            */
           maxDuration?: TnlRatePeriod;
         }
@@ -1128,7 +1128,7 @@ export interface TnlConfig {
             environment: "production" | "preview" | "development";
           };
           /**
-           * Fixed session window; defaults to 1h and must be positive and at most 6h.
+           * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
            */
           maxDuration?: TnlRatePeriod;
         }
@@ -1164,7 +1164,7 @@ export interface TnlConfig {
             machineId?: string;
           };
           /**
-           * Fixed session window; defaults to 1h and must be positive and at most 6h.
+           * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
            */
           maxDuration?: TnlRatePeriod;
         }
@@ -1203,7 +1203,7 @@ export interface TnlConfig {
             jwksUrl?: string;
           };
           /**
-           * Fixed session window; defaults to 1h and must be positive and at most 6h.
+           * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
            */
           maxDuration?: TnlRatePeriod;
         }

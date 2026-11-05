@@ -35,7 +35,7 @@ tasks:
 
   workload-runtime:
     dir: "{{.ROOT_DIR}}"
-    desc: Check real workload QUIC and TLS/TCP paths, native PostgreSQL, HTTP, renewal, revocation and fixed expiry
+    desc: Check real workload QUIC and TLS/TCP paths, PostgreSQL, HTTP, proof refresh, hard limits and revocation
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadTransport' -count=1 -timeout=8m -args -tnl-test-tier=integration
 

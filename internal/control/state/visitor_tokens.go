@@ -324,7 +324,10 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		if err != nil {
 			return result, err
 		}
-		until = minTime(workloadSource.LeaseExpiresAt, workloadSource.ExpiresAt)
+		until = minTime(workloadSource.LeaseExpiresAt, workloadSource.IdentityExpiresAt)
+		if workloadSource.ExpiresAt != nil {
+			until = minTime(until, *workloadSource.ExpiresAt)
+		}
 		subject = visitortoken.Workload{SessionID: workloadSource.ID, KeySHA256: digest}
 		result.PublicKey = ed25519.PublicKey(workloadSource.PublicKey)
 		result.ConnectorUntil = minTime(until, now.Add(WorkloadLease))

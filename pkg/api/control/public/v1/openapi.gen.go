@@ -2670,11 +2670,13 @@ type ProjectWebhook struct {
 // ProjectWorkload defines model for ProjectWorkload.
 type ProjectWorkload struct {
 	// Github Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
-	Github             *ProjectWorkloadGitHub `json:"github,omitempty"`
-	MaxDurationSeconds int                    `json:"max_duration_seconds"`
-	Provider           WorkloadProvider       `json:"provider"`
-	Services           []string               `json:"services"`
-	Trust              WorkloadTrust          `json:"trust"`
+	Github *ProjectWorkloadGitHub `json:"github,omitempty"`
+
+	// MaxDurationSeconds Optional absolute session limit in seconds. Zero means no hard limit; permission leases and verified platform-proof expiry still apply.
+	MaxDurationSeconds int              `json:"max_duration_seconds"`
+	Provider           WorkloadProvider `json:"provider"`
+	Services           []string         `json:"services"`
+	Trust              WorkloadTrust    `json:"trust"`
 }
 
 // ProjectWorkloadGitHub Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.

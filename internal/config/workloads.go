@@ -20,7 +20,7 @@ type Workload struct {
 	OIDC        *WorkloadOIDC   `json:"oidc,omitempty" yaml:"oidc,omitempty"`
 	Token       *WorkloadToken  `json:"token,omitempty" yaml:"token,omitempty"`
 	Services    []string        `json:"services" yaml:"services" jsonschema:"required,minItems=1,maxItems=32,uniqueItems=true" jsonschema_description:"exact configured service keys assigned to named publisher groups; local services cannot be workload targets."`
-	MaxDuration *Duration       `json:"max_duration,omitempty" yaml:"max_duration,omitempty" jsonschema_description:"Fixed session window; defaults to 1h and must be positive and at most 6h."`
+	MaxDuration *Duration       `json:"max_duration,omitempty" yaml:"max_duration,omitempty" jsonschema_description:"Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof."`
 }
 
 type WorkloadGitHub struct {
@@ -104,12 +104,13 @@ func (p Workload) TokenAudience(server string) string {
 	return server
 }
 
-const DefaultWorkloadMaxDuration = time.Hour
-const MaxWorkloadMaxDuration = 6 * time.Hour
+const MaxWorkloadMaxDurationSeconds = (1<<63 - 1) / int64(time.Second)
+const MaxWorkloadMaxDuration = time.Duration(MaxWorkloadMaxDurationSeconds) * time.Second
 
+// durationLimit returns zero when no absolute limit was declared.
 func (p Workload) DurationLimit() time.Duration {
 	if p.MaxDuration == nil {
-		return DefaultWorkloadMaxDuration
+		return 0
 	}
 	return p.MaxDuration.Value()
 }
@@ -232,7 +233,7 @@ func ValidateWorkloads(c TNL) error {
 			}
 			seen[s] = true
 		}
-		if d := p.DurationLimit(); d < time.Second || d > MaxWorkloadMaxDuration || d%time.Second != 0 {
+		if d := p.DurationLimit(); p.MaxDuration != nil && (d < time.Second || d > MaxWorkloadMaxDuration || d%time.Second != 0) {
 			return bad()
 		}
 	}

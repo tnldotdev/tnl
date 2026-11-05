@@ -64,9 +64,9 @@ func TestIntegrationWorkloadReusableProviderFixedWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for at := now.Add(30 * time.Second); at.Before(session.ExpiresAt); at = at.Add(30 * time.Second) {
+	for at := now.Add(30 * time.Second); at.Before(*session.ExpiresAt); at = at.Add(30 * time.Second) {
 		renewed, e := d.RenewWorkloadSession(t.Context(), session.ID, session.Credential, signWorkloadRenewal(session, key), at)
-		if e != nil || !renewed.ExpiresAt.Equal(session.ExpiresAt) {
+		if e != nil || !renewed.ExpiresAt.Equal(*session.ExpiresAt) {
 			t.Fatal("renew changed fixed window", e)
 		}
 		session = renewed
@@ -111,7 +111,7 @@ func TestIntegrationWorkloadHandleCapacityAndExpiredCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authorization, err := d.CheckWorkloadService(ctx, first.Credential, service, now.Add(32*time.Second)); err != nil || authorization.Subject != first.Subject || authorization.ValidUntil.After(first.ExpiresAt) {
+	if authorization, err := d.CheckWorkloadService(ctx, first.Credential, service, now.Add(32*time.Second)); err != nil || authorization.Subject != first.Subject || authorization.ValidUntil.After(*first.ExpiresAt) {
 		t.Fatal("renewal changed subject or fixed lifetime", err)
 	}
 	expired := renewed.LeaseExpiresAt.Add(time.Second)
@@ -229,7 +229,7 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 		t.Fatal("jti moved to another execution", err)
 	}
 	renewed, err := d.RenewWorkloadSession(ctx, original.ID, original.Credential, signWorkloadRenewal(original, key), now.Add(30*time.Second))
-	if err != nil || !renewed.ExpiresAt.Equal(original.ExpiresAt) || !renewed.LeaseExpiresAt.Equal(now.Add(120*time.Second)) {
+	if err != nil || !renewed.ExpiresAt.Equal(*original.ExpiresAt) || !renewed.LeaseExpiresAt.Equal(now.Add(120*time.Second)) {
 		t.Fatal("renew changed absolute window", err)
 	}
 	for _, id := range original.ServiceIDs {
@@ -263,7 +263,7 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 	if _, err = d.ExchangeWorkload(ctx, exchange, now.Add(time.Minute)); err != nil {
 		t.Fatal("same JWT/key could not resume after policy addition", err)
 	}
-	for at := now.Add(90 * time.Second); at.Before(original.ExpiresAt); at = at.Add(30 * time.Second) {
+	for at := now.Add(90 * time.Second); at.Before(*original.ExpiresAt); at = at.Add(30 * time.Second) {
 		if !renewed.IdentityExpiresAt.After(at.Add(WorkloadLease)) {
 			fresh := exchange.Execution
 			fresh.GitHub = new(*fresh.GitHub)
@@ -285,10 +285,10 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 			t.Fatal("renewal restored narrowed rights")
 		}
 	}
-	if _, err = d.RenewWorkloadSession(ctx, original.ID, original.Credential, signWorkloadRenewal(renewed, key), original.ExpiresAt); !errors.Is(err, ErrWorkloadDenied) {
+	if _, err = d.RenewWorkloadSession(ctx, original.ID, original.Credential, signWorkloadRenewal(renewed, key), *original.ExpiresAt); !errors.Is(err, ErrWorkloadDenied) {
 		t.Fatal("renew crossed absolute deadline", err)
 	}
-	if _, err = d.CheckWorkloadService(ctx, original.Credential, services[0].ID, original.ExpiresAt); !errors.Is(err, ErrWorkloadDenied) {
+	if _, err = d.CheckWorkloadService(ctx, original.Credential, services[0].ID, *original.ExpiresAt); !errors.Is(err, ErrWorkloadDenied) {
 		t.Fatal("expired session still authorized", err)
 	}
 }
@@ -353,7 +353,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	}
 	request.Signature = ed25519.Sign(key, message)
 	pair, err := d.PrepareConnectorPeerPair(ctx, request, now)
-	if err != nil || pair.Subject != session.Subject || pair.Subject.IdentityID != "" || pair.Subject.DeviceID != "" || !pair.ExpiresAt.Equal(session.ExpiresAt) {
+	if err != nil || pair.Subject != session.Subject || pair.Subject.IdentityID != "" || pair.Subject.DeviceID != "" || !pair.ExpiresAt.Equal(*session.ExpiresAt) {
 		t.Fatal("native workload subject/fixed expiry changed", err)
 	}
 	retry, err := d.PrepareConnectorPeerPair(ctx, request, now)
@@ -367,7 +367,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	}
 	visitor := mustOpaqueID(t, opaqueid.VisitorConnectionPrefix)
 	delivered, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, now.Add(time.Second))
-	if err != nil || !delivered.ExpiresAt.Equal(session.ExpiresAt) {
+	if err != nil || !delivered.ExpiresAt.Equal(*session.ExpiresAt) {
 		t.Fatal("native workload recheck deadline", err)
 	}
 	if _, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, session.Credential, now); !errors.Is(err, ErrServiceAccess) {
@@ -398,7 +398,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	decision, err := d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, now)
-	if err != nil || !decision.Allowed || decision.Admitted || !decision.ValidUntil.Equal(session.ExpiresAt) {
+	if err != nil || !decision.Allowed || decision.Admitted || !decision.ValidUntil.Equal(*session.ExpiresAt) {
 		t.Fatal("public workload certificate authorization", decision, err)
 	}
 	if err = d.PromotePublicServiceVisitor(ctx, lease.IngressLeaseIdentity, direct, now); err != nil {
@@ -421,10 +421,10 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 			t.Fatal("audit scanned workload as a human", err)
 		}
 	}
-	if _, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, session.ExpiresAt); err == nil {
+	if _, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, *session.ExpiresAt); err == nil {
 		t.Fatal("native authority outlived job")
 	}
-	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, session.ExpiresAt); !errors.Is(err, ErrServiceAccess) {
+	if _, err = d.AuthorizeServiceClientCertificate(ctx, service.ID, run.RunID, run.Token, direct, run.RunNumber, source, block.Bytes, *session.ExpiresAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("public stream outlived job", err)
 	}
 	// policy removal denies still-live admissions before their earlier deadline.

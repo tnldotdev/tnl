@@ -79,6 +79,42 @@ func WriteHandle(path string, h Handle) error {
 	return err
 }
 
+// updateHandle changes only the deadline of the exact retained capability. a
+// private temporary file keeps concurrent readers from observing partial JSON.
+func updateHandle(path string, previous, next Handle) error {
+	if VerifyDirectory(filepath.Dir(path)) != nil || !sameHandleCapability(previous, next) || !next.ExpiresAt.After(time.Now()) {
+		return ErrUnauthorized
+	}
+	current, err := ReadHandle(path)
+	if err != nil {
+		return err
+	}
+	if !sameHandleCapability(current, previous) || !current.ExpiresAt.Equal(previous.ExpiresAt) {
+		return ErrUnauthorized
+	}
+	data, err := json.Marshal(next)
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".handle-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, writeErr := f.Write(data)
+	closeErr := f.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+
+func sameHandleCapability(a, b Handle) bool {
+	return a.Schema == b.Schema && a.Key == b.Key && a.URL == b.URL &&
+		a.Directory == b.Directory && a.ConfigDigest == b.ConfigDigest &&
+		a.Executable == b.Executable && a.Workload == b.Workload && a.TeamID == b.TeamID
+}
+
 func VerifyDirectory(path string) error {
 	if !filepath.IsAbs(path) || safeAncestors(path) != nil {
 		return ErrUnauthorized

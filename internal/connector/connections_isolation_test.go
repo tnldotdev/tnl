@@ -27,7 +27,7 @@ func connectionBackendFixture(t *testing.T, handle func(http.ResponseWriter, *ht
 	team := "tm_" + strings.Repeat("t", 22)
 	ids := []string{"svc_" + strings.Repeat("a", 22), "svc_" + strings.Repeat("b", 22)}
 	now := time.Now()
-	session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: ids, ExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second)}
+	session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: ids, ExpiresAt: new(now.Add(time.Hour)), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second)}
 	session.IdentityExpiresAt = now.Add(2 * time.Hour)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -46,7 +46,7 @@ func connectionBackendFixture(t *testing.T, handle func(http.ResponseWriter, *ht
 	if _, err := client.Exchange(t.Context(), team, "project", strings.Repeat("a", 64), "worker", "assertion", []string{"api", "db"}); err != nil {
 		t.Fatal(err)
 	}
-	b := &connectorConnectionBackend{scope: connectorruntime.Context{Services: []string{"api", "db"}}, connectorConnectionSession: connectorConnectionSession{workload: client, deadline: session.ExpiresAt}, listeners: map[string]*ownedServiceListener{}, services: map[string]controlv1.Service{}, metadata: meta.PublicMetadata{Services: map[string]meta.Service{}}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}}}}}
+	b := &connectorConnectionBackend{scope: connectorruntime.Context{Services: []string{"api", "db"}}, connectorConnectionSession: connectorConnectionSession{workload: client, deadline: workload.SessionDeadline(session)}, listeners: map[string]*ownedServiceListener{}, services: map[string]controlv1.Service{}, metadata: meta.PublicMetadata{Services: map[string]meta.Service{}}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}}}}}
 	for i, name := range []string{"api", "db"} {
 		protocol := []controlv1.ServiceProtocol{"http", "postgres"}[i]
 		b.services[name] = controlv1.Service{Id: ids[i], Protocol: protocol, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: name + ".example.test", Port: 15443 + i}}

@@ -93,7 +93,6 @@ schemas:
         provider,
         subject,
         lease_expires_at,
-        expires_at,
         renew_after,
         service_ids,
         binding,
@@ -109,7 +108,10 @@ schemas:
       provider: { $ref: "../../../public/v1/openapi.yaml#/components/schemas/WorkloadProvider" }
       subject: { $ref: "../../../public/v1/openapi.yaml#/components/schemas/VisitorSubject" }
       lease_expires_at: { type: string, format: date-time }
-      expires_at: { type: string, format: date-time }
+      expires_at:
+        type: string
+        format: date-time
+        description: Absolute hard session deadline when maxDuration was configured. Omitted otherwise. Refresh and renewal cannot extend or remove an existing deadline.
       renew_after: { type: string, format: date-time }
       service_ids: { type: array, maxItems: 32, items: { type: string } }
       binding: { type: string, pattern: "^[0-9a-f]{64}$" }

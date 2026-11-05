@@ -33,7 +33,7 @@ func TestGitHubBindingDefaultsReuseAndErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := first["test"].Github
-	if calls != 1 || g.RepositoryId != "12345" || g.RepositoryOwnerId != "6789" || g.Ref != "refs/heads/trunk" || g.WorkflowRef != "example/repository/.github/workflows/test.yml@refs/heads/trunk" || !reflect.DeepEqual(g.Events, []string{"push"}) || first["test"].MaxDurationSeconds != 3600 {
+	if calls != 1 || g.RepositoryId != "12345" || g.RepositoryOwnerId != "6789" || g.Ref != "refs/heads/trunk" || g.WorkflowRef != "example/repository/.github/workflows/test.yml@refs/heads/trunk" || !reflect.DeepEqual(g.Events, []string{"push"}) || first["test"].MaxDurationSeconds != 0 {
 		t.Fatal("incorrect initial binding", first)
 	}
 	o.Previous = first

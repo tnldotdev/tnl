@@ -209,10 +209,10 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	shortDone := openStream(shortJob)
 	select {
 	case <-shortDone:
-	case <-time.After(time.Until(shortSession.ExpiresAt) + time.Second):
+	case <-time.After(time.Until(*shortSession.ExpiresAt) + time.Second):
 		t.Fatal("fixed-expiry HTTP stream stayed open")
 	}
-	if wait := time.Until(shortSession.ExpiresAt); wait > 0 {
+	if wait := time.Until(*shortSession.ExpiresAt); wait > 0 {
 		time.Sleep(wait + 25*time.Millisecond)
 	}
 	if _, err := shortJob.ClientTLSCertificate(t.Context(), ids["api"]); err == nil {

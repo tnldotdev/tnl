@@ -39,7 +39,7 @@ func newIdentityRefreshFixture(t *testing.T) *identityRefreshFixture {
 	f := &identityRefreshFixture{attached: make(chan struct{}, 16)}
 	now := time.Now()
 	id := "wls_" + strings.Repeat("s", 22)
-	current := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: "tm_" + strings.Repeat("t", 22), ProjectKey: "project", Workload: "job", Provider: controlv1.WorkloadOIDC, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: []string{}, ExpiresAt: now.Add(time.Minute), IdentityExpiresAt: now.Add(2 * time.Second), LeaseExpiresAt: now.Add(2 * time.Second), RenewAfter: now.Add(30 * time.Second)}
+	current := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: "tm_" + strings.Repeat("t", 22), ProjectKey: "project", Workload: "job", Provider: controlv1.WorkloadOIDC, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: []string{}, ExpiresAt: new(now.Add(time.Minute)), IdentityExpiresAt: now.Add(2 * time.Second), LeaseExpiresAt: now.Add(2 * time.Second), RenewAfter: now.Add(30 * time.Second)}
 	var mu sync.Mutex
 	var public ed25519.PublicKey
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +104,7 @@ func newIdentityRefreshFixture(t *testing.T) *identityRefreshFixture {
 		t.Fatal(err)
 	}
 	lifetime, cancel := context.WithCancel(t.Context())
-	f.backend = &connectorConnectionBackend{connectorConnectionSession: connectorConnectionSession{workload: client, deadline: f.initial.ExpiresAt}, lifetime: lifetime, cancel: cancel, metadata: meta.PublicMetadata{Services: map[string]meta.Service{}}}
+	f.backend = &connectorConnectionBackend{connectorConnectionSession: connectorConnectionSession{workload: client, deadline: workload.SessionDeadline(f.initial)}, lifetime: lifetime, cancel: cancel, metadata: meta.PublicMetadata{Services: map[string]meta.Service{}}}
 	f.backend.rememberAssertion("initial.private.jwt", f.initial.IdentityExpiresAt, f.initial)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -162,7 +162,7 @@ func TestConnectionBackgroundRefreshRereadsRotatingFile(t *testing.T) {
 	}
 	unlock()
 	current, err := f.backend.workload.Session()
-	if err != nil || !current.IdentityExpiresAt.After(f.initial.IdentityExpiresAt) || current.Id != f.initial.Id || current.Credential != f.initial.Credential || current.Subject.WorkloadSessionId == nil || *current.Subject.WorkloadSessionId != f.initial.Id || !current.ExpiresAt.Equal(f.initial.ExpiresAt) || f.exchanges.Load() != 1 || f.attachments.Load() != 1 {
+	if err != nil || !current.IdentityExpiresAt.After(f.initial.IdentityExpiresAt) || current.Id != f.initial.Id || current.Credential != f.initial.Credential || current.Subject.WorkloadSessionId == nil || *current.Subject.WorkloadSessionId != f.initial.Id || !current.ExpiresAt.Equal(*f.initial.ExpiresAt) || f.exchanges.Load() != 1 || f.attachments.Load() != 1 {
 		t.Fatal("background refresh replaced or broadened its original session", err)
 	}
 }
