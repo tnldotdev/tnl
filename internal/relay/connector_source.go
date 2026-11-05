@@ -30,6 +30,12 @@ func newConnectorSocketSource(accepted muxsession.AcceptedPeer) (*connectorSocke
 	if err != nil {
 		return nil, err
 	}
+	if _, udp := accepted.RemoteAddr().(*net.UDPAddr); udp {
+		bound, ok := accepted.(muxsession.IPBoundPeer)
+		if !ok || !bound.RemoteIPBound() {
+			return nil, errConnectorSocketSource
+		}
+	}
 	return &connectorSocketSource{peer: accepted, ip: ip}, nil
 }
 

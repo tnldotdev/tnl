@@ -116,7 +116,7 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 			return fmt.Errorf("listen for TLS/TCP publisher connections: %w", err)
 		}
 	}
-	udpListener, err := listenRelayQUIC(settings.udpListen, settings.udpPacket, transportTLS, settings.quic)
+	udpListener, err := listenRelayQUIC(settings.udpListen, settings.udpPacket, transportTLS, settings.quic, settings.runtime.publisherConnectionLimit)
 	if err != nil {
 		_ = tcpListener.Close()
 		_ = internalListener.Close()
@@ -148,7 +148,11 @@ func (d *daemon) startRelay(ctx context.Context, settings relayProcessSettings, 
 	return nil
 }
 
-func listenRelayQUIC(address string, packet net.PacketConn, trust *tls.Config, config muxsession.QUICConfig) (*muxsession.QUICListener, error) {
+func listenRelayQUIC(address string, packet net.PacketConn, trust *tls.Config, config muxsession.QUICConfig, publisherConnectionLimit int64) (*muxsession.QUICListener, error) {
+	// source isolation covers every accepted outer connection. leave bounded
+	// room for connector candidates and unauthenticated handshakes in addition
+	// to the configured publisher capacity; never follow cross-IP migration.
+	config.PinnedRemoteIPLimit = int(min(max(publisherConnectionLimit, 1), 1<<30)) + 128
 	if packet != nil {
 		return muxsession.ListenQUICPacket(packet, trust, config)
 	}

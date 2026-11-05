@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -29,6 +30,7 @@ func (*connectorSourcePeer) LocalAddr() net.Addr {
 	return net.UDPAddrFromAddrPort(netip.MustParseAddrPort("127.0.0.1:443"))
 }
 func (*connectorSourcePeer) TLSConnectionState() tls.ConnectionState { return tls.ConnectionState{} }
+func (*connectorSourcePeer) RemoteIPBound() bool                     { return true }
 func (p *connectorSourcePeer) move(ip string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -89,6 +91,16 @@ func TestConnectorSocketSourceUsesOnlyCanonicalAcceptedIP(t *testing.T) {
 		if _, err := newConnectorSocketSource(&connectorSourcePeer{address: address}); !errors.Is(err, errConnectorSocketSource) {
 			t.Fatal("noncanonical accepted source was allowed", address, err)
 		}
+	}
+}
+
+func TestConnectorSocketSourceRequiresPreDispatchIPBindingForUDP(t *testing.T) {
+	accepted := &connectorSourcePeer{}
+	accepted.move("192.0.2.1:443")
+	// embedding only the address capability deliberately hides its IP fence.
+	unbound := struct{ muxsession.AcceptedPeer }{accepted}
+	if _, err := newConnectorSocketSource(unbound); !errors.Is(err, errConnectorSocketSource) {
+		t.Fatal("UDP address snapshot was treated as a pre-dispatch IP fence", err)
 	}
 }
 
