@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" width="200" alt="tnl" />
+  <img src="docs/logo.svg" width="100" alt="tnl" />
 </p>
 <p align="center">
   easy tunnels for dev and prod
