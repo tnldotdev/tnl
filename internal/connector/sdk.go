@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -55,12 +54,13 @@ type sdkOwnerRecord struct {
 	Owner        connectorruntime.SDKOwner `json:"owner"`
 	Failure      failure.Reason            `json:"failure,omitempty"`
 	FinishedAt   time.Time                 `json:"finished_at,omitzero"`
+	ClosedAt     time.Time                 `json:"closed_at,omitzero"`
 	StartFailure bool                      `json:"start_failure,omitempty"`
 	Adopted      bool                      `json:"adopted,omitempty"`
 }
 
-// keep completed failures for requests delayed before owner selection. language
-// and native request deadlines are shorter than this retention window.
+// keep completed failures and close fences for requests delayed before identity
+// selection. language and native request deadlines are shorter than this window.
 const sdkRequestLifetime = 2 * time.Minute
 
 type sdkStartFailure struct {
@@ -160,6 +160,9 @@ func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assert
 			return connectorruntime.SDKPrepared{}, connectorruntime.ErrInvalid
 		}
 		options.startedAt = requested
+	}
+	if time.Since(options.startedAt) > sdkRequestLifetime {
+		return connectorruntime.SDKPrepared{}, connectorruntime.ErrExpired
 	}
 	if options.ParentPID <= 0 || !naming.ValidServiceName(options.Service) || connectorruntime.VerifyDirectory(options.Registry) != nil {
 		return connectorruntime.SDKPrepared{}, connectorruntime.ErrInvalid
@@ -336,6 +339,9 @@ func (o sdkOperations) sdkOwner(ctx context.Context, options SDKOptions, scope c
 		return connectorruntime.Status{}, false, err
 	}
 	owner := connectorruntime.Status{Schema: 1, State: "ready", ConnectionHandle: record.Owner.ConnectionHandle, Executable: record.Owner.Executable, ExpiresAt: record.Owner.ExpiresAt}
+	if !record.ClosedAt.IsZero() && !options.startedAt.After(record.ClosedAt) {
+		return connectorruntime.Status{}, false, connectorruntime.ErrExpired
+	}
 	if record.Failure != "" {
 		setup := failure.Wrap("prepare SDK owner", record.Failure, connectorruntime.ErrUnavailable)
 		if owner.ConnectionHandle != "" {
@@ -375,18 +381,18 @@ func (o sdkOperations) sdkOwner(ctx context.Context, options SDKOptions, scope c
 			return connectorruntime.ErrExpired
 		}
 		for k, previous := range r.Owners {
-			if k != key && previous.Failure != "" && previous.Owner.ConnectionHandle == "" && !(r.RetainStartFailure && previous.StartFailure) && time.Since(previous.FinishedAt) > sdkRequestLifetime {
+			if k != key && previous.Failure != "" && previous.Owner.ConnectionHandle == "" && !(r.RetainStartFailure && previous.StartFailure) && time.Since(previous.FinishedAt) > sdkRequestLifetime && time.Since(previous.ClosedAt) > sdkRequestLifetime {
 				delete(r.Owners, k)
 				continue
 			}
-			if k != key && previous.Owner.ConnectionHandle != "" && o.stopped(previous.Owner.ConnectionHandle) == nil {
+			if k != key && previous.Owner.ConnectionHandle != "" && o.stopped(previous.Owner.ConnectionHandle) == nil && time.Since(previous.ClosedAt) > sdkRequestLifetime {
 				delete(r.Owners, k)
 			}
 		}
 		if _, exists := r.Owners[key]; !exists && len(r.Owners) >= 32 {
 			return connectorruntime.ErrUnavailable
 		}
-		r.Owners[key] = sdkOwnerRecord{}
+		r.Owners[key] = sdkOwnerRecord{ClosedAt: record.ClosedAt}
 		return nil
 	}); err != nil {
 		return connectorruntime.Status{}, false, err
@@ -399,7 +405,7 @@ func (o sdkOperations) sdkOwner(ctx context.Context, options SDKOptions, scope c
 		owner = status
 		return sdkUpdate(context.WithoutCancel(ctx), options, func(r *sdkRegistry) error {
 			closed = r.Closed
-			r.Owners[key] = sdkOwnerRecord{Owner: status.SDKOwner()}
+			r.Owners[key] = sdkOwnerRecord{Owner: status.SDKOwner(), ClosedAt: record.ClosedAt}
 			return nil
 		})
 	}); err != nil {
@@ -409,7 +415,7 @@ func (o sdkOperations) sdkOwner(ctx context.Context, options SDKOptions, scope c
 			if reason == "" {
 				reason = failure.ConnectionUnavailable
 			}
-			r.Owners[key] = sdkOwnerRecord{Failure: reason, FinishedAt: completed, StartFailure: true}
+			r.Owners[key] = sdkOwnerRecord{Failure: reason, FinishedAt: completed, StartFailure: true, ClosedAt: record.ClosedAt}
 			return nil
 		})
 		return connectorruntime.Status{}, false, &sdkStartFailure{error: errors.Join(err, saved), retained: retained && saved == nil, handle: sdkFailureHandle(key, completed)}
@@ -467,34 +473,6 @@ func StopSDK(ctx context.Context, registry string, parentPID int) error {
 	return nativeSDKOperations().stopSDK(ctx, SDKOptions{Registry: registry, OwnerStartOptions: OwnerStartOptions{ParentPID: parentPID}})
 }
 
-// CloseSDKFailure releases only the referenced failed startup. an old observation
-// cannot clear a replacement, stop a peer, or close the application registry.
-func CloseSDKFailure(ctx context.Context, registry string, parentPID int, handle string) error {
-	parts := strings.Split(handle, ".")
-	if parentPID <= 0 || len(parts) != 2 || len(parts[0]) != 64 || len(parts[1]) != 16 || connectorruntime.VerifyDirectory(registry) != nil {
-		return connectorruntime.ErrInvalid
-	}
-	if _, err := hex.DecodeString(parts[0] + parts[1]); err != nil {
-		return connectorruntime.ErrInvalid
-	}
-	gate, err := filelock.AcquireContext(ctx, filepath.Join(registry, "owner-"+parts[0]+".lock"), os.Getuid())
-	if err != nil {
-		return err
-	}
-	defer gate.Close()
-	return sdkUpdate(ctx, SDKOptions{Registry: registry, OwnerStartOptions: OwnerStartOptions{ParentPID: parentPID}}, func(r *sdkRegistry) error {
-		record, exists := r.Owners[parts[0]]
-		if !exists || sdkFailureHandle(parts[0], record.FinishedAt) != handle {
-			return nil
-		}
-		if !record.StartFailure || record.Owner.ConnectionHandle != "" {
-			return connectorruntime.ErrUnauthorized
-		}
-		delete(r.Owners, parts[0])
-		return nil
-	})
-}
-
 func (o sdkOperations) stopSDK(ctx context.Context, options SDKOptions) error {
 	if options.ParentPID <= 0 || connectorruntime.VerifyDirectory(options.Registry) != nil {
 		return connectorruntime.ErrInvalid
@@ -547,7 +525,7 @@ func (o sdkOperations) sdkDiscard(ctx context.Context, options SDKOptions, key s
 		if current.Owner.ConnectionHandle != owner.ConnectionHandle || current.Adopted {
 			return nil
 		}
-		record = sdkOwnerRecord{Owner: owner.SDKOwner(), Failure: failure.ServerResponseInvalid}
+		record = sdkOwnerRecord{Owner: owner.SDKOwner(), Failure: failure.ServerResponseInvalid, ClosedAt: current.ClosedAt}
 		r.Owners[key] = record
 		return nil
 	}); err != nil {
@@ -567,7 +545,7 @@ func (o sdkOperations) sdkRetire(ctx context.Context, options SDKOptions, key st
 	}
 	return sdkUpdate(ctx, options, func(r *sdkRegistry) error {
 		if r.Owners[key].Owner.ConnectionHandle == record.Owner.ConnectionHandle {
-			r.Owners[key] = sdkOwnerRecord{Failure: record.Failure, FinishedAt: time.Now()}
+			r.Owners[key] = sdkOwnerRecord{Failure: record.Failure, FinishedAt: time.Now(), ClosedAt: record.ClosedAt}
 		}
 		return nil
 	})

@@ -12,22 +12,22 @@ import (
 )
 
 type connectionsCommand struct {
-	Capabilities    connectionsCapabilities       `cmd:""`
-	Context         connectionsContextOptions     `cmd:""`
-	Start           connectionsStartOptions       `cmd:""`
-	Identity        connectionsContextOptions     `cmd:"" hidden:""`
-	Attach          connectionsHandleOptions      `cmd:"" hidden:""`
-	Recover         connectionsHandleOptions      `cmd:"" hidden:""`
-	Serve           connectionsServeOptions       `cmd:"" hidden:""`
-	Status          connectionsHandleOptions      `cmd:""`
-	Read            connectionsReadOptions        `cmd:"" help:"Read one prepared connection from its existing owner without starting or authenticating."`
-	Prepare         connectionsReadOptions        `cmd:"" hidden:""`
-	SDKPrepare      connectionsSDKOptions         `cmd:"" hidden:""`
-	SDKWorkload     connectionsSDKWorkloadOptions `cmd:"" hidden:""`
-	SDKStop         connectionsSDKStopOptions     `cmd:"" hidden:""`
-	SDKCloseFailure connectionsSDKFailureOptions  `cmd:"" hidden:""`
-	Stop            connectionsHandleOptions      `cmd:""`
-	KubeCredential  connectionsKubeOptions        `cmd:"" hidden:""`
+	Capabilities   connectionsCapabilities       `cmd:""`
+	Context        connectionsContextOptions     `cmd:""`
+	Start          connectionsStartOptions       `cmd:""`
+	Identity       connectionsContextOptions     `cmd:"" hidden:""`
+	Attach         connectionsHandleOptions      `cmd:"" hidden:""`
+	Recover        connectionsHandleOptions      `cmd:"" hidden:""`
+	Serve          connectionsServeOptions       `cmd:"" hidden:""`
+	Status         connectionsHandleOptions      `cmd:""`
+	Read           connectionsReadOptions        `cmd:"" help:"Read one prepared connection from its existing owner without starting or authenticating."`
+	Prepare        connectionsReadOptions        `cmd:"" hidden:""`
+	SDKPrepare     connectionsSDKOptions         `cmd:"" hidden:""`
+	SDKWorkload    connectionsSDKWorkloadOptions `cmd:"" hidden:""`
+	SDKStop        connectionsSDKStopOptions     `cmd:"" hidden:""`
+	SDKClose       connectionsSDKCloseOptions    `cmd:"" hidden:""`
+	Stop           connectionsHandleOptions      `cmd:""`
+	KubeCredential connectionsKubeOptions        `cmd:"" hidden:""`
 }
 type connectionsCapabilities struct {
 	Output string `name:"output" enum:"json" default:"json"`
@@ -84,9 +84,10 @@ type connectionsSDKStopOptions struct {
 	ParentPID int    `name:"parent-pid" required:""`
 }
 
-type connectionsSDKFailureOptions struct {
+type connectionsSDKCloseOptions struct {
 	connectionsSDKStopOptions `embed:""`
-	FailureHandle             string `name:"failure-handle" required:""`
+	Handle                    string `name:"handle" type:"path"`
+	FailureHandle             string `name:"failure-handle"`
 }
 
 func (o connectionsContextOptions) options() connector.ContextOptions {
@@ -138,8 +139,8 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 		return write(connector.SelectSDKWorkload(flags.SDKWorkload.Directory, flags.SDKWorkload.Service, os.Stdin))
 	case "runtime connections sdk-stop":
 		return stopped(connector.StopSDK(ctx, flags.SDKStop.Registry, flags.SDKStop.ParentPID))
-	case "runtime connections sdk-close-failure":
-		return stopped(connector.CloseSDKFailure(ctx, flags.SDKCloseFailure.Registry, flags.SDKCloseFailure.ParentPID, flags.SDKCloseFailure.FailureHandle))
+	case "runtime connections sdk-close":
+		return stopped(connector.CloseSDK(ctx, connector.SDKCloseOptions{Registry: flags.SDKClose.Registry, ParentPID: flags.SDKClose.ParentPID, Handle: flags.SDKClose.Handle, FailureHandle: flags.SDKClose.FailureHandle}))
 	case "runtime connections status":
 		return write(connector.Status(ctx, flags.Status.Handle))
 	case "runtime connections stop":
