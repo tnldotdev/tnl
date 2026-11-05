@@ -51,6 +51,19 @@ declare abstract class ConnectionPreparation<Settings> implements PromiseLike<Se
 /** await to prepare; synchronous workload reads require an explicit prepared handle. */
 export type TnlConnectionHandle<Settings> = Settings & ConnectionPreparation<Settings>;
 
+/** callbacks adapt ordinary drivers without adding a driver-specific tnl wrapper. */
+export type TnlClientOptions<Connection, Client> = Readonly<{
+  create(connection: Connection): Client | PromiseLike<Client>;
+  close(client: Client): void | PromiseLike<void>;
+}>;
+
+/** each call selects current native authority before returning its cached client. */
+export type TnlClientFactory<Client> = {
+  (): Promise<Client>;
+  /** join pending creation and close only this factory's ordinary clients. */
+  close(): Promise<void>;
+};
+
 type DeepReadonly<Value> = Value extends object
   ? { readonly [Key in keyof Value]: DeepReadonly<Value[Key]> }
   : Value;

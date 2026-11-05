@@ -37,4 +37,7 @@ export const tnl = Object.freeze({
       },
     );
   },
+  client(): never {
+    throw new TnlError("sdk.connection_server_only");
+  },
 }) as unknown as TnlRuntime;
