@@ -51,25 +51,33 @@ func (b PairBinding) authentic(frame []byte, sender uint8) bool {
 }
 
 type sharedPeer struct {
-	binding PairBinding
-	ctx     context.Context
-	cancel  context.CancelFunc
-	in      chan []byte
-	out     [][]byte
-	done    chan struct{}
-	drops   uint64
-	replay  replayWindow
+	binding     PairBinding
+	ctx         context.Context
+	cancel      context.CancelFunc
+	in          chan queuedFrame
+	destination *CarrierSlot
+	out         [][]byte
+	done        chan struct{}
+	drops       uint64
+	replay      replayWindow
 }
 
 // replayWindow accepts two fragments of one sequence once, in any order,
 // while bounding out-of-order delivery independently for each registration.
 type replayWindow struct {
-	highest   uint64
-	sequence  [64]uint64
-	fragments [64]uint8
+	highest    uint64
+	sequence   [64]uint64
+	fragments  [64]uint8
+	generation [64]uint64
 }
 
 func (w *replayWindow) accept(frame []byte) bool {
+	return w.acceptGeneration(frame, 0)
+}
+
+// the first fragment binds its sequence to one physical carrier generation.
+// a handoff never resets sequence history or admits the tail of an old packet.
+func (w *replayWindow) acceptGeneration(frame []byte, generation uint64) bool {
 	p, err := tunnelv1.ParsePeerPacket(frame)
 	if err != nil || (p.Sequence < w.highest && w.highest-p.Sequence >= uint64(len(w.sequence))) {
 		return false
@@ -78,6 +86,10 @@ func (w *replayWindow) accept(frame []byte) bool {
 	slot := p.Sequence % uint64(len(w.sequence))
 	if w.sequence[slot] != p.Sequence {
 		w.sequence[slot], w.fragments[slot] = p.Sequence, 0
+		w.generation[slot] = generation
+	}
+	if w.generation[slot] != generation {
+		return false
 	}
 	bit := uint8(1 << p.Fragment)
 	if w.fragments[slot]&bit != 0 {
@@ -135,6 +147,10 @@ func NewSharedDatagrams(parent context.Context, conn muxsession.DatagramSession)
 // only with a strictly newer generation; tombstones prevent stale reuse. a full
 // owner must be replaced with a fresh outer session, not grow without bound.
 func (s *SharedDatagrams) Register(b PairBinding) (Carrier, error) {
+	return s.register(b, nil)
+}
+
+func (s *SharedDatagrams) register(b PairBinding, destination *CarrierSlot) (Carrier, error) {
 	if !b.valid() {
 		return nil, ErrConfiguration
 	}
@@ -152,7 +168,7 @@ func (s *SharedDatagrams) Register(b PairBinding) (Carrier, error) {
 		s.removeLocked(old)
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
-	p := &sharedPeer{binding: b, ctx: ctx, cancel: cancel, in: make(chan []byte, sharedQueuePerPeer), done: make(chan struct{})}
+	p := &sharedPeer{binding: b, ctx: ctx, cancel: cancel, in: make(chan queuedFrame, sharedQueuePerPeer), done: make(chan struct{}), destination: destination}
 	s.peers[id] = p
 	s.lastGeneration[id] = b.Delivery.Generation
 	s.order = append(s.order, p)
@@ -201,8 +217,12 @@ func (s *SharedDatagrams) readLoop() {
 		if p != nil && p.binding.Delivery == d {
 			_, frame, err := tunnelv1.OpenPeerDelivery(data, tunnelv1.PeerDeliveryDatagram, p.binding.Key)
 			if err == nil && p.binding.authentic(frame, 1-p.binding.Role) && p.replay.accept(frame) {
+				var generation uint64
+				if p.destination != nil {
+					generation = p.destination.Generation()
+				}
 				select {
-				case p.in <- frame:
+				case p.in <- queuedFrame{generation: generation, data: frame}:
 				default:
 					p.drops++
 					s.drops++
@@ -323,16 +343,29 @@ func (c *SharedDatagramCarrier) Send(ctx context.Context, frame []byte) error {
 }
 
 func (c *SharedDatagramCarrier) Receive(ctx context.Context) ([]byte, error) {
+	b, err := c.receive(ctx)
+	return b.data, err
+}
+
+func (c *SharedDatagramCarrier) receiveForward(ctx context.Context, destination *CarrierSlot) ([]byte, uint64, error) {
+	if destination == nil || c.peer.destination != destination {
+		return nil, 0, ErrConfiguration
+	}
+	b, err := c.receive(ctx)
+	return b.data, b.generation, err
+}
+
+func (c *SharedDatagramCarrier) receive(ctx context.Context) (queuedFrame, error) {
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return queuedFrame{}, ctx.Err()
 	case <-c.peer.done:
-		return nil, net.ErrClosed
+		return queuedFrame{}, net.ErrClosed
 	case b := <-c.peer.in:
 		// if close won the race, a buffered frame must not escape.
 		select {
 		case <-c.peer.done:
-			return nil, net.ErrClosed
+			return queuedFrame{}, net.ErrClosed
 		default:
 		}
 		return b, nil

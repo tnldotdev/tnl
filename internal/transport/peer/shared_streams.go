@@ -35,15 +35,16 @@ type SharedStreams struct {
 }
 
 type StreamPair struct {
-	owner   *SharedStreams
-	binding PairBinding
-	pending chan *SharedStreamCarrier
-	active  *SharedStreamCarrier
-	done    chan struct{}
-	ctx     context.Context
-	cancel  context.CancelFunc
-	opens   sync.WaitGroup
-	replay  replayWindow
+	owner       *SharedStreams
+	binding     PairBinding
+	pending     chan *SharedStreamCarrier
+	active      *SharedStreamCarrier
+	done        chan struct{}
+	ctx         context.Context
+	cancel      context.CancelFunc
+	opens       sync.WaitGroup
+	replay      replayWindow
+	destination *CarrierSlot
 }
 
 // NewSharedStreams takes ownership of stream acceptance, not of the session.
@@ -97,6 +98,10 @@ func (s *SharedStreams) AcceptIntroduction(ctx context.Context, stream muxsessio
 }
 
 func (s *SharedStreams) Register(b PairBinding) (*StreamPair, error) {
+	return s.register(b, nil)
+}
+
+func (s *SharedStreams) register(b PairBinding, destination *CarrierSlot) (*StreamPair, error) {
 	if !b.valid() {
 		return nil, ErrConfiguration
 	}
@@ -116,7 +121,7 @@ func (s *SharedStreams) Register(b PairBinding) (*StreamPair, error) {
 		oldCarrier = s.removeLocked(old)
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
-	p := &StreamPair{owner: s, binding: b, pending: make(chan *SharedStreamCarrier, 1), done: make(chan struct{}), ctx: ctx, cancel: cancel}
+	p := &StreamPair{owner: s, binding: b, pending: make(chan *SharedStreamCarrier, 1), done: make(chan struct{}), ctx: ctx, cancel: cancel, destination: destination}
 	s.pairs[id] = p
 	s.lastGeneration[id] = b.Delivery.Generation
 	s.mu.Unlock()
@@ -196,6 +201,7 @@ func (s *SharedStreams) acceptIntroduction(ctx context.Context, stream muxsessio
 	if !allowed {
 		return
 	}
+	generation := known.forwardGeneration()
 	sealed, frame, err := tunnelv1.ReadPeerDeliveryFrame(stream, tunnelv1.PeerDeliveryStream, known.binding.Key)
 	if err != nil || sealed != d {
 		return
@@ -214,7 +220,7 @@ func (s *SharedStreams) acceptIntroduction(ctx context.Context, stream muxsessio
 		s.mu.Unlock()
 		return
 	}
-	c := &SharedStreamCarrier{StreamCarrier: &StreamCarrier{Conn: stream}, pair: p, first: frame}
+	c := &SharedStreamCarrier{StreamCarrier: &StreamCarrier{Conn: stream}, pair: p, first: frame, firstGeneration: generation}
 	p.pending <- c // the admission slot was checked under the same lock.
 	p.active = c
 	keep = true
@@ -316,10 +322,11 @@ func (s *SharedStreams) Close() error {
 // receiving. closing it removes only the pair's stream, not the outer session.
 type SharedStreamCarrier struct {
 	*StreamCarrier
-	pair   *StreamPair
-	first  []byte
-	readMu sync.Mutex
-	once   sync.Once
+	pair            *StreamPair
+	first           []byte
+	firstGeneration uint64
+	readMu          sync.Mutex
+	once            sync.Once
 }
 
 func (c *SharedStreamCarrier) Send(ctx context.Context, b []byte) error {
@@ -343,6 +350,18 @@ func (c *SharedStreamCarrier) Send(ctx context.Context, b []byte) error {
 }
 
 func (c *SharedStreamCarrier) Receive(ctx context.Context) ([]byte, error) {
+	b, _, err := c.receive(ctx)
+	return b, err
+}
+
+func (p *StreamPair) forwardGeneration() uint64 {
+	if p.destination != nil {
+		return p.destination.Generation()
+	}
+	return 0
+}
+
+func (c *SharedStreamCarrier) receive(ctx context.Context) ([]byte, uint64, error) {
 	c.readMu.Lock()
 	defer c.readMu.Unlock()
 	s := c.pair.owner
@@ -350,38 +369,39 @@ func (c *SharedStreamCarrier) Receive(ctx context.Context) ([]byte, error) {
 	valid := s.ctx.Err() == nil && s.pairs[c.pair.binding.Delivery.Pair] == c.pair && c.pair.active == c && c.StreamCarrier != nil
 	s.mu.Unlock()
 	if !valid {
-		return nil, net.ErrClosed
+		return nil, 0, net.ErrClosed
 	}
 	if c.first != nil {
 		b := c.first
 		c.first = nil
-		return b, nil
+		return b, c.firstGeneration, nil
 	}
 	stop := interruptOnCancel(ctx, c.Close)
 	defer stop()
+	generation := c.pair.forwardGeneration()
 	d, b, err := tunnelv1.ReadPeerDeliveryFrame(c.StreamCarrier.Conn, tunnelv1.PeerDeliveryStream, c.pair.binding.Key)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if d != c.pair.binding.Delivery {
-		return nil, tunnelv1.ErrPeerPacket
+		return nil, 0, tunnelv1.ErrPeerPacket
 	}
 	s.mu.Lock()
 	valid = s.ctx.Err() == nil && s.pairs[c.pair.binding.Delivery.Pair] == c.pair && c.pair.active == c
 	s.mu.Unlock()
 	if !valid {
-		return nil, net.ErrClosed
+		return nil, 0, net.ErrClosed
 	}
 	if !c.pair.binding.authentic(b, 1-c.pair.binding.Role) {
-		return nil, tunnelv1.ErrPeerPacket
+		return nil, 0, tunnelv1.ErrPeerPacket
 	}
 	s.mu.Lock()
 	accepted := s.pairs[c.pair.binding.Delivery.Pair] == c.pair && c.pair.active == c && c.pair.replay.accept(b)
 	s.mu.Unlock()
 	if !accepted {
-		return nil, tunnelv1.ErrPeerPacket
+		return nil, 0, tunnelv1.ErrPeerPacket
 	}
-	return b, nil
+	return b, generation, nil
 }
 
 func (c *SharedStreamCarrier) Close() error {

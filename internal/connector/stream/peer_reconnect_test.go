@@ -1,0 +1,147 @@
+package stream
+
+import (
+	"context"
+	"io"
+	"net"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+)
+
+func TestConnectorReconnectRetainsInnerSessionAndApplication(t *testing.T) {
+	for _, transport := range []string{"quic", "tls-tcp"} {
+		t.Run(transport, func(t *testing.T) {
+			f := newConnectorFixture(t, transport)
+			setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
+			p, err := prepareConnectorConnection(t.Context(), setup, f.config, f.device)
+			stop()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.Close()
+			inner, endpoint, permissions, owner := p.connection, p.endpoint, p.permissions, p.owner
+			local, app := net.Pipe()
+			defer app.Close()
+			done := make(chan error, 1)
+			go func() { done <- p.Forward(t.Context(), local) }()
+			exchange := func(message string) {
+				t.Helper()
+				_ = app.SetDeadline(time.Now().Add(3 * time.Second))
+				if _, err := io.WriteString(app, message); err != nil {
+					t.Fatal(err)
+				}
+				got := make([]byte, len(message))
+				if _, err := io.ReadFull(app, got); err != nil || string(got) != message {
+					t.Fatal("application changed", err)
+				}
+			}
+			exchange("before")
+			opened := f.opened.Load()
+			for _, slots := range [][]int{{0}, {1}, {0, 1}} {
+				p.mu.Lock()
+				old := p.legs
+				p.mu.Unlock()
+				for _, slot := range slots {
+					_ = old[slot].session.Close()
+				}
+				until := time.Now().Add(4 * time.Second)
+				for {
+					p.mu.Lock()
+					repaired := true
+					for _, slot := range slots {
+						repaired = repaired && p.legs[slot] != old[slot]
+					}
+					p.mu.Unlock()
+					if repaired && p.endpoint.PathHealthy(0) && p.endpoint.PathHealthy(1) {
+						break
+					}
+					if time.Now().After(until) {
+						t.Fatal("leg not repaired", context.Cause(p.ctx))
+					}
+					time.Sleep(time.Millisecond)
+				}
+				exchange("after-repair")
+				if p.connection != inner || p.endpoint != endpoint || p.permissions != permissions || p.owner != owner || f.opened.Load() != opened {
+					t.Fatal("repair replaced inner ownership or target stream")
+				}
+			}
+			_ = app.Close()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("forwarding did not join")
+			}
+		})
+	}
+}
+
+func TestConnectorReconnectCancellationAndAuthorityDeadline(t *testing.T) {
+	for _, boundary := range []string{"backoff", "connect", "expiry"} {
+		t.Run(boundary, func(t *testing.T) {
+			f := newConnectorFixture(t, "quic")
+			var armed atomic.Bool
+			entered := make(chan struct{}, 2)
+			connector := muxsession.QUICConnector{TLSConfig: f.config.TransportTLS, Config: muxsession.QUICConfig{Config: fixtureDatagramConfig()}}
+			config := f.config
+			gate := muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
+				if !armed.Load() {
+					return connector.Connect(ctx, endpoint)
+				}
+				entered <- struct{}{}
+				<-ctx.Done()
+				return nil, context.Cause(ctx)
+			})
+			config.RelayQUIC, config.RelayTCP = gate, gate
+			setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
+			p, err := prepareConnectorConnection(t.Context(), setup, config, f.device)
+			stop()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.Close()
+			armed.Store(true)
+			p.mu.Lock()
+			old := p.legs[0]
+			if boundary == "expiry" {
+				p.preparedUntil = time.Now().Add(400 * time.Millisecond)
+				p.notifyLocked()
+			}
+			deadline := p.preparedUntil
+			p.mu.Unlock()
+			_ = old.session.Close()
+			if boundary != "backoff" {
+				select {
+				case <-entered:
+				case <-time.After(time.Second):
+					t.Fatal("connect not reached")
+				}
+			}
+			if boundary == "expiry" {
+				select {
+				case <-p.ctx.Done():
+				case <-time.After(time.Second):
+					t.Fatal("reconnect extended authority")
+				}
+				if time.Now().Before(deadline) {
+					t.Fatal("fixture did not reach expiry")
+				}
+			}
+			closed := make(chan struct{})
+			go func() { p.Close(); close(closed) }()
+			select {
+			case <-closed:
+			case <-time.After(time.Second):
+				t.Fatal("reconnect did not cancel and join")
+			}
+			p.mu.Lock()
+			replaced := p.legs[0] != old
+			p.mu.Unlock()
+			if replaced {
+				t.Fatal("canceled reconnect installed carrier")
+			}
+		})
+	}
+}

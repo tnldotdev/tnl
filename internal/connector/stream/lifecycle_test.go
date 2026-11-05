@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
 
 func TestConnectorAssignmentConflictKeepsHealthyOtherPath(t *testing.T) {
-	f := newConnectorFixture(t, "tls-tcp")
+	f := newConfiguredConnectorFixture(t, "tls-tcp", "", func(f *connectorFixture, _ *Config) { f.drainRejections = true })
 	healthy := f.local(t)
 	if _, err := healthy.Write([]byte("before")); err != nil {
 		t.Fatal(err)
@@ -26,6 +27,13 @@ func TestConnectorAssignmentConflictKeepsHealthyOtherPath(t *testing.T) {
 	for _, path := range lost {
 		_ = path.Close()
 	}
+	until := time.Now().Add(3 * time.Second)
+	for f.rejected[0].Load() == 0 {
+		if time.Now().After(until) {
+			t.Fatal("replacement did not reach the assignment fence")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	if _, err := healthy.Write([]byte("after")); err != nil {
 		t.Fatal(err)
 	}
@@ -34,8 +42,8 @@ func TestConnectorAssignmentConflictKeepsHealthyOtherPath(t *testing.T) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if len(f.sessions[0]) != 1 || len(f.sessions[1]) != siblings || f.opened.Load() != 1 || f.rejected[0].Load() != 0 {
-		t.Fatal("healthy stream was restarted or replayed")
+	if len(f.sessions[0]) != 2 || len(f.sessions[1]) != siblings || f.opened.Load() != 1 || f.rejected[0].Load() != 1 {
+		t.Fatalf("healthy stream was restarted or replayed: sessions=%d/%d sibling_before=%d opened=%d rejected=%d", len(f.sessions[0]), len(f.sessions[1]), siblings, f.opened.Load(), f.rejected[0].Load())
 	}
 }
 

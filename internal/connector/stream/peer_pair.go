@@ -171,6 +171,7 @@ func awaitConnectorPublisher(ctx context.Context, control Control, service strin
 }
 
 type connectorRelayLeg struct {
+	nonce     []byte
 	session   *tunnel.Session
 	packets   *peer.SharedSession
 	carrier   peer.Carrier
@@ -207,6 +208,10 @@ func connectorLegProof(signer Signer, pair controlv1.ConnectorPeerPair, slot int
 // are passive until activation, so a losing QUIC/TCP attempt cannot spend the
 // publisher's registration or replace a sibling's replay state.
 func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int) (*connectorRelayLeg, error) {
+	return prepareConnectorLeg(ctx, lifetime, config, signer, pair, key, slot, nil, nil)
+}
+
+func prepareConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int, previous *connectorRelayLeg, replacement []byte) (*connectorRelayLeg, error) {
 	roots := config.TransportTLS
 	if roots == nil {
 		roots = &tls.Config{MinVersion: tls.VersionTLS13}
@@ -298,6 +303,7 @@ func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 		return nil, errors.Join(ErrServiceConnection, failures)
 	}
 	l := winner.leg
+	l.nonce = l.proof.Nonce
 	owned := false
 	defer func() {
 		if !owned {
@@ -310,6 +316,12 @@ func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 	if ctx.Err() != nil || !l.until.After(time.Now()) {
 		return nil, errors.Join(ErrServiceConnection, context.Cause(ctx))
 	}
+	if previous != nil {
+		if !previous.until.After(time.Now()) || l.receipt.SourceIP != previous.receipt.SourceIP || !previous.proof.SameLeg(l.proof) || previous.receipt.DeliveryID != l.receipt.DeliveryID {
+			return nil, ErrServiceConnection
+		}
+		l.until = earliestConnectorDeadline(l.until, previous.until)
+	}
 	l.packets, failures = peer.NewSharedSession(lifetime, winner.outer)
 	if failures != nil {
 		return nil, failures
@@ -321,7 +333,12 @@ func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 	}
 	request, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 	if err == nil {
-		err = l.session.ActivateConnectorLeg(ctx, request)
+		if previous == nil {
+			err = l.session.ActivateConnectorLeg(ctx, request)
+		} else {
+			l.nonce = replacement
+			err = l.session.ReplaceConnectorLeg(ctx, request, previous.nonce, replacement)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -329,3 +346,13 @@ func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 	owned = true
 	return l, nil
 }
+
+// a packet-carrier failure must wake the leg owner even when its control stream
+// is still connected. the slot closes this wrapper after canceling packet work.
+type connectorLegCarrier struct{ *connectorRelayLeg }
+
+func (c connectorLegCarrier) Send(ctx context.Context, b []byte) error { return c.carrier.Send(ctx, b) }
+func (c connectorLegCarrier) Receive(ctx context.Context) ([]byte, error) {
+	return c.carrier.Receive(ctx)
+}
+func (c connectorLegCarrier) Close() error { return errors.Join(c.carrier.Close(), c.session.Close()) }

@@ -36,6 +36,9 @@ func startPrivateHTTPPublisher(t *testing.T, f *privateSeparatedFixture, service
 		t.Fatal(err)
 	}
 	quic, tcp := f.connectors()
+	if f.publisherTCPOnly {
+		quic = privateDisabledConnector()
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	ready, done := make(chan struct{}), make(chan error, 1)
 	heartbeat := 100 * time.Millisecond

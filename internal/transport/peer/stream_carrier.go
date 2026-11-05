@@ -65,4 +65,15 @@ func (c *registeredStreamCarrier) Receive(ctx context.Context) ([]byte, error) {
 	return live.Receive(ctx)
 }
 
+func (c *registeredStreamCarrier) receiveForward(ctx context.Context, destination *CarrierSlot) ([]byte, uint64, error) {
+	if destination == nil || c.pair.destination != destination {
+		return nil, 0, ErrConfiguration
+	}
+	live, err := c.carrier(ctx, false)
+	if err != nil {
+		return nil, 0, err
+	}
+	return live.receive(ctx)
+}
+
 func (c *registeredStreamCarrier) Close() error { return c.pair.Close() }

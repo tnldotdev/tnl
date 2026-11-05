@@ -72,6 +72,9 @@ func closePeerCarriers(paths [2]peer.Carrier) {
 }
 
 func (p *PeerSession) serveRelayPackets(ctx context.Context) error {
+	// relay bridges retain these exact registrations across connector socket
+	// replacement. recreating them here would discard replay state and the
+	// inner session; publisher connection replacement still retires this owner.
 	binding := p.bindingSnapshot()
 	paths, err := p.bound.peerCarriers(binding)
 	if err != nil {

@@ -233,8 +233,14 @@ func ReadControl(reader io.Reader) (Message, error) {
 			return Message{}, ErrConnectorLegBinding
 		}
 		for name := range selection {
-			if name != "nonce" {
+			if name != "nonce" && name != "previous_nonce" && name != "replacement_nonce" {
 				return Message{}, ErrConnectorLegBinding
+			}
+			if name == "previous_nonce" || name == "replacement_nonce" {
+				var nonce []byte
+				if json.Unmarshal(selection[name], &nonce) != nil || len(nonce) != 32 {
+					return Message{}, ErrConnectorLegBinding
+				}
 			}
 		}
 	}

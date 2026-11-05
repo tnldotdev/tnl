@@ -13,6 +13,19 @@ import (
 // candidates remain passive until their owner joins the losers and chooses one.
 // activation does not sign another proof, contact control, or extend a deadline.
 func (s *Session) ActivateConnectorLeg(ctx context.Context, requestID string) (err error) {
+	return s.activateConnectorLeg(ctx, requestID, nil, nil)
+}
+
+// ReplaceConnectorLeg selects a successor on its authenticated control stream.
+// the relay must check the predecessor, source and unchanged authority itself.
+func (s *Session) ReplaceConnectorLeg(ctx context.Context, requestID string, previous, replacement []byte) error {
+	if len(previous) != 32 || len(replacement) != 32 {
+		return &ProtocolError{Code: tunnelv1.InvalidMessage}
+	}
+	return s.activateConnectorLeg(ctx, requestID, previous, replacement)
+}
+
+func (s *Session) activateConnectorLeg(ctx context.Context, requestID string, previous, replacement []byte) (err error) {
 	if s == nil || s.role != tunnelv1.Connector || s.connectorLeg == nil {
 		return &ProtocolError{Code: tunnelv1.Unauthenticated}
 	}
@@ -42,7 +55,7 @@ func (s *Session) ActivateConnectorLeg(ctx context.Context, requestID string) (e
 	// an ambiguous response cannot be retried on this control stream. the role
 	// owner closes this candidate rather than risking a second installation.
 	s.connectorActivated = true
-	binding := tunnelv1.ConnectorLegBinding{Nonce: bytes.Clone(s.connectorLeg.Nonce)}
+	binding := tunnelv1.ConnectorLegBinding{Nonce: bytes.Clone(s.connectorLeg.Nonce), PreviousNonce: bytes.Clone(previous), ReplacementNonce: bytes.Clone(replacement)}
 	if err := tunnelv1.WriteControl(s.control, tunnelv1.Message{Type: tunnelv1.ConnectorLegActivate, ProtocolVersion: tunnelv1.Version,
 		RequestID: requestID, Role: tunnelv1.Connector, ConnectorLegBinding: &binding}); err != nil {
 		return err
@@ -57,7 +70,7 @@ func (s *Session) ActivateConnectorLeg(ctx context.Context, requestID string) (e
 	if response.Type == tunnelv1.Error {
 		return &ProtocolError{Code: response.Code}
 	}
-	if response.Type != tunnelv1.ConnectorLegActivated || response.ConnectorLegBinding == nil || !response.ConnectorLegBinding.Matches(*s.connectorLeg) {
+	if response.Type != tunnelv1.ConnectorLegActivated || response.ConnectorLegBinding == nil || !response.ConnectorLegBinding.Matches(*s.connectorLeg) || !bytes.Equal(response.ConnectorLegBinding.PreviousNonce, previous) || !bytes.Equal(response.ConnectorLegBinding.ReplacementNonce, replacement) {
 		return &ProtocolError{Code: tunnelv1.InvalidMessage}
 	}
 	if cause := context.Cause(ctx); cause != nil {

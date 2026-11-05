@@ -3,6 +3,7 @@ package tunnelv1
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"testing"
 )
 
@@ -57,6 +58,39 @@ func TestConnectorLegActivationClosedUnionAndExactNonce(t *testing.T) {
 	for _, kind := range []MessageType{Hello, HelloAccepted, ConnectorLegRenew, ConnectorLegRenewed, Ping, Pong, Drain, Draining, Drained, Error, GoAway} {
 		if err := (Message{Type: kind, ProtocolVersion: Version, ConnectorLegBinding: &binding}).Validate(); err == nil {
 			t.Fatal("activation binding escaped its union", kind)
+		}
+	}
+}
+
+func TestConnectorLegReplacementBindingRoundTrip(t *testing.T) {
+	binding := ConnectorLegBinding{Nonce: bytes.Repeat([]byte{1}, 32), PreviousNonce: bytes.Repeat([]byte{2}, 32), ReplacementNonce: bytes.Repeat([]byte{3}, 32)}
+	message := Message{Type: ConnectorLegActivate, ProtocolVersion: Version, RequestID: "repair", Role: Connector, ConnectorLegBinding: &binding}
+	var wire bytes.Buffer
+	if err := WriteControl(&wire, message); err != nil {
+		t.Fatal(err)
+	}
+	const golden = `{"type":"connector_leg_activate","protocol_version":1,"request_id":"repair","role":"connector","connector_leg_binding":{"nonce":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=","previous_nonce":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=","replacement_nonce":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM="}}`
+	want, err := io.ReadAll(frame(golden))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(wire.Bytes(), want) {
+		t.Fatalf("replacement wire changed: %s", wire.Bytes()[4:])
+	}
+	got, err := ReadControl(&wire)
+	if err != nil || !bytes.Equal(got.ConnectorLegBinding.PreviousNonce, binding.PreviousNonce) || !bytes.Equal(got.ConnectorLegBinding.ReplacementNonce, binding.ReplacementNonce) {
+		t.Fatal("replacement binding lost", err)
+	}
+	for _, mutate := range []func(*ConnectorLegBinding){
+		func(b *ConnectorLegBinding) { b.PreviousNonce = nil },
+		func(b *ConnectorLegBinding) { b.ReplacementNonce = nil },
+		func(b *ConnectorLegBinding) { b.ReplacementNonce = b.PreviousNonce },
+		func(b *ConnectorLegBinding) { b.PreviousNonce = b.PreviousNonce[:31] },
+	} {
+		invalid := binding
+		mutate(&invalid)
+		if invalid.Validate() == nil {
+			t.Fatal("partial or self-replacing handoff accepted")
 		}
 	}
 }

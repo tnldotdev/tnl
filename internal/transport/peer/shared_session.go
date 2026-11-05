@@ -65,13 +65,27 @@ func newSharedSession(parent context.Context, outer muxsession.Session, dispatch
 func (s *SharedSession) Done() <-chan struct{} { return s.ctx.Done() }
 
 func (s *SharedSession) Register(binding PairBinding, initiate bool) (Carrier, error) {
+	return s.register(binding, initiate, nil)
+}
+
+// RegisterForwarding binds incoming packet admission to a replaceable destination
+// before the registration is visible to readers. it retains that fence for the
+// registration's lifetime, including while the destination is absent.
+func (s *SharedSession) RegisterForwarding(binding PairBinding, initiate bool, destination *CarrierSlot) (Carrier, error) {
+	if destination == nil {
+		return nil, ErrConfiguration
+	}
+	return s.register(binding, initiate, destination)
+}
+
+func (s *SharedSession) register(binding PairBinding, initiate bool, destination *CarrierSlot) (Carrier, error) {
 	if s.ctx.Err() != nil {
 		return nil, net.ErrClosed
 	}
 	if s.datagrams != nil {
-		return s.datagrams.Register(binding)
+		return s.datagrams.register(binding, destination)
 	}
-	pair, err := s.streams.Register(binding)
+	pair, err := s.streams.register(binding, destination)
 	if err != nil {
 		return nil, err
 	}
