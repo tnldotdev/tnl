@@ -43,13 +43,14 @@ type Connector struct {
 }
 
 type connectorPair struct {
-	response controlv1.ConnectorPeerPair
-	public   ed25519.PublicKey
-	key      [32]byte
-	paths    [2]chan peer.Carrier
-	mu       sync.Mutex
-	nonces   [2][]byte
-	seen     map[string]bool
+	response   controlv1.ConnectorPeerPair
+	public     ed25519.PublicKey
+	key        [32]byte
+	sessionKey [32]byte
+	paths      [2]chan peer.Carrier
+	mu         sync.Mutex
+	nonces     [2][]byte
+	seen       map[string]bool
 }
 
 func NewConnector(t *testing.T, ca *x509.Certificate, caKey ed25519.PrivateKey, service, run, workload, hostname, target string) *Connector {
@@ -139,11 +140,16 @@ func (n *Connector) Prepare(ctx context.Context, body controlv1.ConnectorPeerPai
 	if _, err := rand.Read(p.key[:]); err != nil {
 		return controlv1.ConnectorPeerPair{}, err
 	}
+	if _, err := rand.Read(p.sessionKey[:]); err != nil {
+		return controlv1.ConnectorPeerPair{}, err
+	}
 	id, err := opaqueid.New("cpp_")
 	if err != nil {
 		return controlv1.ConnectorPeerPair{}, err
 	}
-	p.response = controlv1.ConnectorPeerPair{PairId: id, DeliveryId: base64.RawURLEncoding.EncodeToString(delivery[:]), DeliveryGeneration: 1, Key: base64.RawURLEncoding.EncodeToString(p.key[:]), ServiceId: n.service, ServiceRunId: n.run, RunNumber: 1, PublisherIdentityId: n.Ready.PublisherIdentityId, Subject: body.Subject, Relays: n.Ready.Relays, ObservedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}
+	p.response = controlv1.ConnectorPeerPair{PairId: id, DeliveryId: base64.RawURLEncoding.EncodeToString(delivery[:]), DeliveryGeneration: 1, Key: base64.RawURLEncoding.EncodeToString(p.key[:]),
+		SessionKey: base64.RawURLEncoding.EncodeToString(p.sessionKey[:]), TrustRevision: 1, BindingState: controlv1.ConnectorPeerPairBindingActive,
+		ServiceId: n.service, ServiceRunId: n.run, RunNumber: 1, PublisherIdentityId: n.Ready.PublisherIdentityId, Subject: body.Subject, Relays: n.Ready.Relays, ObservedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}
 	for slot := range p.paths {
 		p.paths[slot] = make(chan peer.Carrier, 1)
 	}
@@ -233,7 +239,7 @@ func (n *Connector) serve(p *connectorPair, ready chan<- error) {
 			return
 		}
 	}
-	packets, err := peer.New(n.ctx, peer.Config{Key: p.key, Role: 1, Paths: paths})
+	packets, err := peer.New(n.ctx, peer.Config{Key: p.sessionKey, Role: 1, Paths: paths, Binding: peer.BindingRevision{PairID: p.response.PairId, Generation: p.response.DeliveryGeneration}})
 	if err != nil {
 		return
 	}

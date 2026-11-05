@@ -122,7 +122,7 @@ func TestPeerBindingStagesBothPathsAndPreservesOwner(t *testing.T) {
 	if err := left.StageBinding(next); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := left.BindingProofs(next); !ok || got != proofs {
+	if _, ok := left.BindingProofs(next); !ok {
 		t.Fatal("duplicate stage discarded evidence")
 	}
 	if _, err := left.WriteTo([]byte("not active"), left.RemoteAddr()); err != nil {
@@ -165,6 +165,26 @@ func TestPeerBindingStagesBothPathsAndPreservesOwner(t *testing.T) {
 	left.SuspendBinding()
 	if err := left.ActivateBinding(next); !errors.Is(err, ErrConfiguration) {
 		t.Fatal("suspended old delivery resurrected without a newer operation", err)
+	}
+}
+
+func TestPeerBindingDuplicateStagePreservesExactEvidence(t *testing.T) {
+	binding := testBinding(18)
+	e := &Endpoint{ctx: t.Context(), binding: binding, bindingPending: true, bindingEpoch: 7, config: Config{PathTimeout: time.Minute}}
+	for index := range e.paths {
+		slot := NewCarrierSlot()
+		e.paths[index] = &path{carrier: slot, revision: slot.Generation(), alive: true, ack: time.Now(), proof: BindingPathProof{ConnectionSlot: index, ProbeNonce: "retained nonce", ReplyFrame: "retained reply"}}
+	}
+	before, ok := e.BindingProofs(binding)
+	if !ok {
+		t.Fatal("missing initial evidence")
+	}
+	// no live probe worker can replace the evidence while this tests the duplicate.
+	if err := e.StageBinding(binding); err != nil {
+		t.Fatal(err)
+	}
+	if after, ok := e.BindingProofs(binding); !ok || after != before || e.bindingEpoch != 7 || !e.bindingPending {
+		t.Fatal("duplicate stage replaced the pending binding or its exact evidence")
 	}
 }
 

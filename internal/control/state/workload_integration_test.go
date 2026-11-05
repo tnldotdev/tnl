@@ -388,7 +388,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	for _, connector := range []bool{false, true} {
 		observation := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: service.ID, ServiceKind: "service", EventType: "connection.open", OccurredAt: now, RunID: run.RunID, RunNumber: run.RunNumber, VisitorConnectionID: direct, SourceIP: source.String(), Outcome: "allowed"}
 		if connector {
-			observation.VisitorConnectionID, observation.PairID = visitor, pair.ID
+			observation.VisitorConnectionID, observation.PairID, observation.DeliveryGeneration = visitor, pair.ID, pair.DeliveryGeneration
 			if _, err := d.IngestServiceRunObservations(ctx, service.ID, run.RunID, run.Token, run.RunNumber, serviceaudit.Batch{Events: []serviceaudit.Observation{observation}}, now); err != nil {
 				t.Fatal("native audit scanned workload as human", err)
 			}
