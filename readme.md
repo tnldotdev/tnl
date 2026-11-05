@@ -29,7 +29,7 @@
                 +------------------+------------------+
                 |                                     |
            direct UDP                             tnl relay
-        (when available)                         (fallback)
+        (when possible)                           (fallback)
                 |                                     |
                 +------------------+------------------+
                                    |
@@ -52,7 +52,8 @@ The Next.js and Vite plugins automatically handle port conflicts. And OAuth and 
 
 Connect to private services from anywhere (laptop, CI, etc.).
 
-For instance, a `tnl` publisher runs inside your VPC. Traffic is end-to-end encrypted between your client and the publisher and uses direct hole-punched UDP when available. Your db or Kubernetes API aren't publicly exposed:
+For instance, a `tnl` publisher runs inside your VPC. Traffic is end-to-end encrypted between your client and the publisher.
+It tries hole-punched UDP, with relays as a fallback. Your db or Kubernetes API aren't publicly exposed:
 
 ```text
     tnl (your laptop)    tnl (GitHub Actions)      tnl (Vercel fn)
@@ -62,7 +63,7 @@ For instance, a `tnl` publisher runs inside your VPC. Traffic is end-to-end encr
                 +------------------+------------------+
                 |                                     |
            direct UDP                             tnl relay
-        (when available)                         (fallback)
+        (when possible)                           (fallback)
                 |                                     |
                 +------------------+------------------+
                                    |
