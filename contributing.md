@@ -75,6 +75,11 @@ require the exact schema version and baseline identity. The post-quantum public
 URL policy is part of the existing version 1 baseline; it cannot open a database
 created by a previous baseline.
 
+Schema version 2 adds connector session rebinding without changing that baseline.
+Stop all server roles, run `tnld migrate`, and restart matching server binaries;
+the upgrade keeps existing database records. Publishers and connectors also need
+matching binaries. A restart does not restore a publisher's application sockets.
+
 `task format-check` checks without editing. `task generate-check` regenerates
 files and compares them with `HEAD`, so commit intended generated changes first.
 For Markdown edits, format just the files you changed:

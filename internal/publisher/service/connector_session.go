@@ -356,7 +356,7 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 		a.cancel()
 	}
 	a.audit = serviceaudit.Observation{ServiceID: binding.serviceID, ServiceKind: "service", RunID: binding.runID,
-		RunNumber: int64(binding.number), PairID: binding.pairID, VisitorConnectionID: visitorID,
+		RunNumber: int64(binding.number), PairID: binding.pairID, DeliveryGeneration: binding.generation, VisitorConnectionID: visitorID,
 		SourceIP: binding.source.String(), EventType: "connection.open", Outcome: "denied", Reason: "authorization"}
 	callerDone := make(chan struct{})
 	stopCaller := context.AfterFunc(a.caller, func() { defer close(callerDone); a.stopAndClose() })
