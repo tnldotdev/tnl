@@ -14,6 +14,8 @@
 
 ## `tnl` where?
 
+Check out the different places `tnl` can be used.
+
 ### dev
 
 `tnl` gives every Git worktree its own unique HTTPS URL. Traffic stays encrypted from the browser to your laptop. Here's how it looks:
@@ -71,6 +73,8 @@ For instance, a `tnl` publisher can run inside your VPC and connect outbound to 
 |                                                             |
 +-------------------------------------------------------------+
 ```
+
+Read on for more details.
 
 ## start developing
 
