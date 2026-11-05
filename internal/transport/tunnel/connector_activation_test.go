@@ -77,7 +77,7 @@ func TestConnectorLegActivationRejectsForeignCandidate(t *testing.T) {
 }
 
 func TestConnectorLegActivationKeepsCallbackClassificationCauseAndSafeWire(t *testing.T) {
-	for _, code := range []tunnelv1.ErrorCode{tunnelv1.Unavailable, tunnelv1.StaleConnectionAssignment, tunnelv1.CapacityExceeded, "", tunnelv1.InvalidMessage} {
+	for _, code := range []tunnelv1.ErrorCode{tunnelv1.Unavailable, tunnelv1.StaleConnectionAssignment, tunnelv1.CapacityExceeded, tunnelv1.HandoffRevisionExhausted, "", tunnelv1.InvalidMessage} {
 		t.Run(string(code), func(t *testing.T) {
 			client, server, _, _ := connectorRenewalPair(t)
 			cause := errors.New("private-provider-secret")
@@ -134,6 +134,58 @@ func TestConnectorLegActivationChecksResponseBinding(t *testing.T) {
 			var rejected *ProtocolError
 			if err := client.ActivateConnectorLeg(t.Context(), "winner"); !errors.As(err, &rejected) || rejected.Code != tunnelv1.InvalidMessage {
 				t.Fatal("activation trusted a foreign response", err)
+			}
+			if err := await(t, done); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestConnectorLegReplacementChecksEntireOperation(t *testing.T) {
+	op, err := tunnelv1.NewConnectorHandoff(tunnelv1.ConnectorHandoffID{2}, tunnelv1.ConnectorHandoffID{3}, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, outcome := range []string{"success", "hello", "previous", "successor", "revision", "initial"} {
+		t.Run(outcome, func(t *testing.T) {
+			client, server, proof, _ := connectorRenewalPair(t)
+			done := tunnelWorker(t, func() { _ = server.Close() }, func() error {
+				request, err := tunnelv1.ReadControl(server.control)
+				if err != nil {
+					return err
+				}
+				activation, err := request.ConnectorLegBinding.Activation()
+				if err != nil {
+					return err
+				}
+				handoff, replacement := activation.Replacement()
+				if !replacement || handoff != op || !activation.Matches(proof) {
+					t.Error("replacement did not bind its hello and exact operation")
+				}
+				binding := request.ConnectorLegBinding
+				switch outcome {
+				case "hello":
+					binding.Nonce[0]++
+				case "previous":
+					binding.PreviousNonce[31]++
+				case "successor":
+					binding.ReplacementNonce[0]++
+				case "revision":
+					binding.HandoffRevision++
+				case "initial":
+					binding.PreviousNonce, binding.ReplacementNonce, binding.HandoffRevision = nil, nil, 0
+				}
+				return tunnelv1.WriteControl(server.control, tunnelv1.Message{Type: tunnelv1.ConnectorLegActivated, ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID, ConnectorLegBinding: binding})
+			})
+			err := client.ReplaceConnectorLeg(t.Context(), "repair", op)
+			var rejected *ProtocolError
+			if outcome == "success" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if !errors.As(err, &rejected) || rejected.Code != tunnelv1.InvalidMessage {
+				t.Fatal("replacement trusted a foreign operation response", err)
 			}
 			if err := await(t, done); err != nil {
 				t.Fatal(err)

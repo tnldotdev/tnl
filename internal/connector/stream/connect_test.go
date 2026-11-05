@@ -60,7 +60,12 @@ type connectorFixture struct {
 	activationConflict    [2]atomic.Bool
 	rejected              [2]atomic.Int64
 	helloNonces           [2][][]byte
+	dropHelloReply        [2]atomic.Bool
+	dropActivationReply   [2]atomic.Bool
+	handoffAttempts       [2][]tunnelv1.ConnectorHandoff
 	tlsGate               *fixtureTLSGate
+	drainRejections       bool
+	rejectionClosing      chan struct{}
 }
 
 func connectorID(t *testing.T, prefix string) string {
@@ -257,14 +262,65 @@ func TestOpaquePreflightVerifiesTLSBeforeReadyWithoutApplicationBytes(t *testing
 	}
 }
 
+// these tests can require a delivered protocol rejection. an immediate outer
+// close may discard a queued QUIC/yamux error reply, which is only a transport
+// failure at the client. wait for that client to consume the reply and close.
+type fixtureRejectionDrain struct {
+	muxsession.Session
+	ctx                       context.Context
+	rejected                  atomic.Bool
+	closing                   chan struct{}
+	dropHello, dropActivation *atomic.Bool
+}
+
+func (s *fixtureRejectionDrain) AcceptStream(ctx context.Context) (muxsession.Stream, error) {
+	stream, err := s.Session.AcceptStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &fixtureReplyLossStream{Stream: stream, owner: s}, nil
+}
+
+type fixtureReplyLossStream struct {
+	muxsession.Stream
+	owner *fixtureRejectionDrain
+}
+
+func (s *fixtureReplyLossStream) Write(payload []byte) (int, error) {
+	if bytes.Contains(payload, []byte(`"type":"hello_accepted"`)) && s.owner.dropHello.CompareAndSwap(true, false) ||
+		bytes.Contains(payload, []byte(`"type":"connector_leg_activated"`)) && s.owner.dropActivation.CompareAndSwap(true, false) {
+		return 0, io.ErrClosedPipe
+	}
+	return s.Stream.Write(payload)
+}
+
+func (s *fixtureRejectionDrain) Close() error {
+	if s.rejected.Load() {
+		select {
+		case s.closing <- struct{}{}:
+		default:
+		}
+		select {
+		case <-s.Session.Done():
+		case <-s.ctx.Done():
+		}
+	}
+	return s.Session.Close()
+}
+
 func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Session, slot uint8) {
-	defer transport.Close()
+	drain := &fixtureRejectionDrain{Session: transport, ctx: ctx, closing: f.rejectionClosing, dropHello: &f.dropHelloReply[slot], dropActivation: &f.dropActivationReply[slot]}
+	defer drain.Close()
 	var native *fixtureConnectorPeer
-	session, hello, err := tunnel.AcceptWithResult(ctx, transport, func(_ context.Context, hello tunnelv1.Message) (*tunnelv1.ConnectorPairLegAccepted, error) {
+	session, hello, err := tunnel.AcceptWithResult(ctx, drain, func(_ context.Context, hello tunnelv1.Message) (*tunnelv1.ConnectorPairLegAccepted, error) {
 		f.assignments[slot].Add(1)
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		proof := hello.ConnectorPairLegProof
+		if f.denied.Load() {
+			drain.rejected.Store(f.drainRejections)
+			return nil, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+		}
 		if proof == nil || f.failed[slot] {
 			return nil, &tunnel.ProtocolError{Code: tunnelv1.Unavailable}
 		}
@@ -296,17 +352,35 @@ func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Sess
 	defer carrier.Close()
 	_ = session.HandleConnectorLegControl(ctx, func(_ context.Context, selection tunnelv1.ConnectorLegBinding) error {
 		if f.activationConflict[slot].Load() {
+			drain.rejected.Store(f.drainRejections)
 			f.rejected[slot].Add(1)
 			return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		}
 		f.mu.Lock()
-		defer f.mu.Unlock()
-		if len(native.nonces[slot]) != 0 || !selection.Matches(*hello.ConnectorPairLegProof) {
+		activation, err := selection.Activation()
+		if err != nil || !activation.Matches(*hello.ConnectorPairLegProof) {
+			f.mu.Unlock()
 			return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		}
-		native.nonces[slot] = bytes.Clone(hello.ConnectorPairLegProof.Nonce)
-		native.paths[slot] <- carrier
-		return nil
+		handoff, replacement := activation.Replacement()
+		if replacement {
+			f.handoffAttempts[slot] = append(f.handoffAttempts[slot], handoff)
+			expected, revisionErr := native.handoffs[slot].Revision().Next()
+			retry := native.handoffs[slot] == handoff
+			advance := revisionErr == nil && handoff.Revision() == expected && bytes.Equal(native.nonces[slot], selection.PreviousNonce)
+			if !retry && !advance {
+				f.mu.Unlock()
+				return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+			}
+			native.handoffs[slot] = handoff
+		} else if native.nonces[slot] != nil {
+			f.mu.Unlock()
+			return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+		}
+		selected := activation.SelectedHandoff()
+		native.nonces[slot] = append([]byte(nil), selected[:]...)
+		f.mu.Unlock()
+		return native.paths[slot].Install(carrier)
 	}, func(context.Context, tunnelv1.ConnectorPairLegProof) (tunnelv1.ConnectorPairLegAccepted, error) {
 		return native.receipt(int(slot)), nil
 	})
@@ -662,14 +736,27 @@ func TestConnectorRevokedSessionStopsOnlyItsActiveStreams(t *testing.T) {
 	}
 }
 
-func TestConnectorNeverRetriesAnAttemptedAssignment(t *testing.T) {
-	// losing a prepared carrier cannot repeat a hello or reopen its sibling.
+func TestConnectorReconnectUsesFreshProofAndRetainsSibling(t *testing.T) {
+	// a replacement needs a fresh signed hello, never a reused candidate proof.
 	f := newConnectorFixture(t, "quic")
 	f.mu.Lock()
 	lost := append([]muxsession.Session(nil), f.sessions[0]...)
 	f.mu.Unlock()
 	for _, session := range lost {
 		_ = session.Close()
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		f.mu.Lock()
+		reconnected := len(f.sessions[0]) == 2
+		f.mu.Unlock()
+		if reconnected {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("lost carrier was not reconnected")
+		}
+		time.Sleep(time.Millisecond)
 	}
 	local := f.local(t)
 	if _, err := local.Write([]byte("retained")); err != nil {
@@ -680,7 +767,7 @@ func TestConnectorNeverRetriesAnAttemptedAssignment(t *testing.T) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.assignments[0].Load() != 1 || len(f.sessions[0]) != 1 || len(f.sessions[1]) != 1 {
+	if f.assignments[0].Load() != 2 || len(f.sessions[0]) != 2 || len(f.sessions[1]) != 1 || bytes.Equal(f.helloNonces[0][0], f.helloNonces[0][1]) {
 		t.Fatal("an attempted credential was reused or the healthy sibling restarted")
 	}
 }

@@ -30,6 +30,12 @@ type connectorUse struct {
 	prepared *PreparedConnector
 }
 
+type connectorPath struct {
+	leg     *connectorRelayLeg
+	carrier *peer.CarrierSlot
+	done    bool
+}
+
 // connectorConnection owns one selected run and retained inner QUIC connection.
 // background workers own authority renewal and proof generation;
 // local arrivals consume immutable signed openings and never call control.
@@ -52,8 +58,8 @@ type connectorConnection struct {
 	reportedUntil time.Time
 	source        string
 	permission    controlv1.VisitorTokenResponse
-	legs          [2]*connectorRelayLeg
-	legDone       [2]bool
+	paths         [2]connectorPath
+	key           [32]byte
 	openings      []preparedOpening
 	active        map[*connectorUse]struct{}
 	warm          *connectorUse
@@ -108,21 +114,29 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	var starts sync.WaitGroup
 	for slot := range 2 {
 		starts.Go(func() {
-			p.legs[slot], results[slot] = connectConnectorLeg(setup, life, config, signer, p.pair, key, slot)
+			p.paths[slot].leg, results[slot] = connectConnectorLeg(setup, life, config, signer, p.pair, key, slot)
 		})
 	}
 	starts.Wait()
 	if result = errors.Join(results[:]...); result != nil {
 		return nil, result
 	}
-	if p.legs[0].receipt.SourceIP != p.legs[1].receipt.SourceIP {
+	if p.paths[0].leg.receipt.SourceIP != p.paths[1].leg.receipt.SourceIP {
 		return nil, ErrServiceConnection
 	}
-	p.source = p.legs[0].receipt.SourceIP
+	p.source = p.paths[0].leg.receipt.SourceIP
 	if p.preparedUntil, p.reportedUntil, result = awaitConnectorPublisher(setup, config.Control, p.run.ServiceID, create, p.pair); result != nil {
 		return nil, result
 	}
-	p.endpoint, result = peer.New(life, peer.Config{Key: key, Role: 0, Paths: [2]peer.Carrier{p.legs[0].carrier, p.legs[1].carrier}})
+	p.key = key
+	for slot := range 2 {
+		path := &p.paths[slot]
+		path.carrier = peer.NewCarrierSlot()
+		if result = path.carrier.Install(connectorLegCarrier{path.leg}); result != nil {
+			return nil, result
+		}
+	}
+	p.endpoint, result = peer.New(life, peer.Config{Key: key, Role: 0, Paths: [2]peer.Carrier{p.paths[0].carrier, p.paths[1].carrier}})
 	if result != nil {
 		return nil, result
 	}
@@ -453,20 +467,29 @@ func minConnectorCall(until time.Time) time.Time {
 func (p *connectorConnection) maintainLeg(slot int) {
 	defer func() {
 		p.mu.Lock()
-		p.legDone[slot] = true
-		ended := p.legDone[0] && p.legDone[1]
+		p.paths[slot].done = true
+		ended := p.paths[0].done && p.paths[1].done
 		p.mu.Unlock()
-		// one lost carrier leaves the retained inner session on its sibling.
-		// after both are terminal, no reconnect can deliver a remote close; end
-		// local children now rather than waiting for QUIC's idle timeout.
+		// both-path temporary loss retains inner QUIC. only exhausted authority
+		// or terminal rejection ends a leg worker; neither can revive a session.
 		if ended {
 			p.cancel(ErrServiceConnection)
 		}
 	}()
 	for {
 		p.mu.Lock()
-		leg, changed := p.legs[slot], p.changed
+		leg, changed := p.paths[slot].leg, p.changed
 		p.mu.Unlock()
+		if leg.session.Err() != nil {
+			disposition, err := p.reconnectLeg(slot, leg)
+			if disposition == terminateConnection {
+				p.cancel(err)
+			}
+			if disposition != retryAttempt {
+				return
+			}
+			continue
+		}
 		delay := min(2*time.Second, max(100*time.Millisecond, time.Until(leg.until)/4))
 		timer := time.NewTimer(delay)
 		select {
@@ -475,6 +498,7 @@ func (p *connectorConnection) maintainLeg(slot int) {
 			return
 		case <-leg.session.Done():
 			timer.Stop()
+			continue
 		case <-changed:
 			timer.Stop()
 		case <-timer.C:
@@ -507,16 +531,134 @@ func (p *connectorConnection) maintainLeg(slot int) {
 			return
 		}
 		if !leg.until.After(time.Now()) || leg.session.Err() != nil {
-			_ = leg.Close()
-			return
+			disposition, err := p.reconnectLeg(slot, leg)
+			if disposition == terminateConnection {
+				p.cancel(err)
+			}
+			if disposition != retryAttempt {
+				return
+			}
+			continue
 		}
 		if !connectorTemporary(err) {
 			p.cancel(err)
 			return
 		}
 		// an unavailable renewal never extends the last confirmed deadline.
-		// a lost carrier is not reconnected; inner QUIC uses its warm sibling.
 	}
+}
+
+func (p *connectorConnection) reconnectLeg(slot int, previous *connectorRelayLeg) (reconnectDisposition, error) {
+	_ = p.paths[slot].carrier.Install(nil)
+	_ = previous.Close()
+	// retain this operation across lost hello or activation replies. each
+	// candidate still carries a fresh signed proof and socket-source claim.
+	replacement, err := nextConnectorLegReplacement(previous)
+	if err != nil {
+		return terminateConnection, err
+	}
+	for delay := 100 * time.Millisecond; ; delay = min(2*delay, time.Second) {
+		p.mu.Lock()
+		pair := p.pair
+		until := earliestConnectorDeadline(previous.until, p.until, p.preparedUntil, p.run.ValidUntil, p.permission.ExpiresAt)
+		current := p.currentLocked() && pair.Relays[slot] == previous.relay
+		p.mu.Unlock()
+		if !current || !until.After(time.Now()) {
+			return retirePath, ErrServiceConnection
+		}
+		call, stop := context.WithDeadline(p.ctx, until)
+		timer := time.NewTimer(delay)
+		select {
+		case <-call.Done():
+			timer.Stop()
+			stop()
+			return retirePath, context.Cause(call)
+		case <-timer.C:
+		}
+		attempt, finish := context.WithDeadline(call, minConnectorCall(until))
+		next, err := prepareConnectorLeg(attempt, p.ctx, p.config, p.signer, pair, p.key, slot, replacement)
+		if err == nil {
+			err = context.Cause(attempt)
+		}
+		finish()
+		stop()
+		if err != nil {
+			if next != nil {
+				_ = next.Close()
+			}
+			if disposition := connectorReconnectError(err); disposition != retryAttempt {
+				return disposition, err
+			}
+			continue
+		}
+		p.mu.Lock()
+		current = p.currentLocked() && until.After(time.Now()) && p.pair.Relays[slot] == previous.relay
+		p.mu.Unlock()
+		if !current {
+			_ = next.Close()
+			return retirePath, ErrServiceConnection
+		}
+		// no authority lock spans physical cancellation or joined carrier work.
+		if err := p.paths[slot].carrier.Install(connectorLegCarrier{next}); err != nil {
+			_ = next.Close()
+			return retirePath, err
+		}
+		p.mu.Lock()
+		current = p.currentLocked() && until.After(time.Now())
+		if current {
+			p.paths[slot].leg = next
+		}
+		p.mu.Unlock()
+		if !current {
+			_ = p.paths[slot].carrier.Install(nil)
+			_ = next.Close()
+			return retirePath, ErrServiceConnection
+		}
+		return retryAttempt, nil
+	}
+}
+
+type reconnectDisposition uint8
+
+const (
+	retryAttempt reconnectDisposition = iota
+	retirePath
+	terminateConnection
+)
+
+// a raced candidate's temporary error must not hide another candidate's
+// authorization rejection. capacity can clear as the old socket joins cleanup.
+func connectorReconnectError(err error) reconnectDisposition {
+	terminal, stale, retryable := false, false, false
+	var visit func(error)
+	visit = func(err error) {
+		if protocol, ok := err.(*tunnel.ProtocolError); ok {
+			retryable = retryable || protocol.Code == tunnelv1.CapacityExceeded
+			stale = stale || protocol.Code == tunnelv1.StaleConnectionAssignment
+			terminal = terminal || protocol.Code != tunnelv1.Unavailable && protocol.Code != tunnelv1.CapacityExceeded && protocol.Code != tunnelv1.StaleConnectionAssignment
+		}
+		retryable = retryable || connectorTemporary(err)
+		switch wrapped := err.(type) {
+		case interface{ Unwrap() []error }:
+			for _, cause := range wrapped.Unwrap() {
+				visit(cause)
+			}
+		case interface{ Unwrap() error }:
+			visit(wrapped.Unwrap())
+		}
+	}
+	visit(err)
+	if terminal {
+		return terminateConnection
+	}
+	if stale {
+		// stop this path without transferring authority from its retained sibling.
+		return retirePath
+	}
+	if retryable {
+		return retryAttempt
+	}
+	return terminateConnection
 }
 
 func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) error {
@@ -596,9 +738,12 @@ func (p *connectorConnection) Close() {
 			_ = p.endpoint.Close()
 		}
 		p.workers.Wait()
-		for _, leg := range p.legs {
-			if leg != nil {
-				_ = leg.Close()
+		for _, path := range p.paths {
+			if path.carrier != nil {
+				_ = path.carrier.Close()
+			}
+			if path.leg != nil {
+				_ = path.leg.Close()
 			}
 		}
 		if warm != nil {

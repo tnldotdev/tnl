@@ -158,16 +158,19 @@ func (d *connectorDelivery) renew(ctx context.Context, a *ConnectorAcceptor, out
 	return next.receipt, nil
 }
 
-// connectorBridge binds one selected connector carrier to this publisher connection.
-// losing that carrier ends this bridge; it is never replaced in place.
+// connectorBridge retains the publisher registration and replay state while a
+// connector carrier is absent. only an exact authenticated predecessor handoff
+// may replace that carrier, before the last confirmed deadline.
 type connectorBridge struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	done      chan struct{}
-	publisher peer.Carrier
-	connector peer.Carrier
+	publisher *peer.ForwardingRegistration
+	connector *peer.CarrierSlot
+	replace   sync.Mutex
 	mu        sync.Mutex
 	active    *connectorDelivery
+	handoff   handoffState
 	until     time.Time
 	claim     connectorClaim
 	proof     tunnelv1.ConnectorPairLegProof
@@ -175,7 +178,8 @@ type connectorBridge struct {
 
 func (p *connectorPacketSession) selectBridge(ctx context.Context, a *ConnectorAcceptor, d *connectorDelivery, id [16]byte, selection tunnelv1.ConnectorLegBinding) (*connectorBridge, error) {
 	denied := &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
-	if !selection.Matches(d.proof) {
+	activation, err := selection.Activation()
+	if err != nil || !activation.Matches(d.proof) {
 		return nil, denied
 	}
 	lease, valid := a.currentLease(d.proof)
@@ -183,35 +187,107 @@ func (p *connectorPacketSession) selectBridge(ctx context.Context, a *ConnectorA
 		return nil, &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.closed || p.ctx.Err() != nil || ctx.Err() != nil {
+		p.mu.Unlock()
 		return nil, errors.Join(denied, net.ErrClosed)
 	}
 	b := p.bridges[id]
+	if _, replacement := activation.Replacement(); replacement {
+		p.mu.Unlock()
+		if b == nil {
+			return nil, denied
+		}
+		return b.replaceCarrier(ctx, d, activation)
+	}
+	defer p.mu.Unlock()
 	if b != nil {
 		return nil, denied
 	}
 	if len(p.bridges) >= maxConnectorSessions {
 		return nil, &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
 	}
-	carrier, err := p.Register(peerBinding(d.claim, id, 0), true)
+	connector := peer.NewCarrierSlot()
+	carrier, err := p.RegisterForwarding(peerBinding(d.claim, id, 0), true, connector)
 	if err != nil {
+		_ = connector.Close()
 		return nil, errors.Join(err, &tunnel.ProtocolError{Code: tunnelv1.Unavailable})
 	}
 	life, cancel := context.WithCancel(p.ctx)
 	b = &connectorBridge{ctx: life, cancel: cancel, done: make(chan struct{}), publisher: carrier,
-		connector: &connectorReadyCarrier{Carrier: d.carrier, cancel: d.cancel}, active: d, until: d.until, claim: d.claim, proof: d.proof}
+		connector: connector, active: d, until: d.until, claim: d.claim, proof: d.proof,
+		handoff: initialHandoff(activation, d.proof.RequestedAt)}
+	_ = b.connector.Install(&connectorReadyCarrier{Carrier: d.carrier, cancel: d.cancel})
 	p.bridges[id] = b
 	go b.serve(p, a, d.connection, id)
 	return b, nil
 }
 
-func (b *connectorBridge) detach(d *connectorDelivery) {
+func (b *connectorBridge) replaceCarrier(ctx context.Context, d *connectorDelivery, selection tunnelv1.ConnectorActivation) (*connectorBridge, error) {
+	denied := &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+	if !selection.Matches(d.proof) {
+		return nil, denied
+	}
+	b.replace.Lock()
+	defer b.replace.Unlock()
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	if ctx.Err() != nil || d.ctx.Err() != nil || b.ctx.Err() != nil || !b.until.After(time.Now()) || !d.until.After(time.Now()) ||
+		!b.proof.SameLeg(d.proof) ||
+		b.claim.key != d.claim.key || b.claim.ref != d.claim.ref || b.claim.receipt.SourceIP != d.claim.receipt.SourceIP {
+		b.mu.Unlock()
+		return nil, denied
+	}
+	switch b.handoff.record(selection, d.proof.RequestedAt) {
+	case handoffRejected:
+		b.mu.Unlock()
+		return nil, denied
+	case handoffExhausted:
+		b.mu.Unlock()
+		return nil, &tunnel.ProtocolError{Code: tunnelv1.HandoffRevisionExhausted}
+	}
+	old := b.active
+	// reconnection spends the previous deadline; only ordinary renewal can
+	// advance authority. the fresh socket claim may narrow it.
+	if d.until.Before(b.until) {
+		b.until = d.until
+	}
+	d.until = b.until
+	b.active = d
+	b.mu.Unlock()
+	err := b.connector.Install(&connectorReadyCarrier{Carrier: d.carrier, cancel: d.cancel})
+	if old != nil {
+		old.cancel()
+	}
+	b.mu.Lock()
+	current := err == nil && b.ctx.Err() == nil && b.until.After(time.Now())
+	lost := ctx.Err() != nil || d.ctx.Err() != nil
+	if lost && b.active == d {
+		b.active = nil
+	}
+	b.mu.Unlock()
+	if !current {
+		b.cancel()
+		return nil, errors.Join(denied, err, context.Cause(ctx))
+	}
+	if lost {
+		// a committed handoff whose candidate disappeared keeps its chain and
+		// publisher registration. a fresh socket can resume the same operation.
+		_ = b.connector.Install(nil)
+		return nil, errors.Join(&tunnel.ProtocolError{Code: tunnelv1.Unavailable}, context.Cause(ctx), context.Cause(d.ctx))
+	}
+	return b, nil
+}
+
+func (b *connectorBridge) detach(d *connectorDelivery) {
+	b.replace.Lock()
+	defer b.replace.Unlock()
+	b.mu.Lock()
+	active := b.active == d
 	if b.active == d {
 		b.active = nil
-		b.cancel()
+	}
+	b.mu.Unlock()
+	if active {
+		_ = b.connector.Install(nil)
 	}
 }
 
@@ -219,8 +295,8 @@ func (b *connectorBridge) serve(owner *connectorPacketSession, a *ConnectorAccep
 	defer close(b.done)
 	var workers sync.WaitGroup
 	finished := make(chan error, 2)
-	workers.Go(func() { finished <- forwardConnectorPackets(b.ctx, b.connector, b.publisher) })
-	workers.Go(func() { finished <- forwardConnectorPackets(b.ctx, b.publisher, b.connector) })
+	workers.Go(func() { finished <- b.publisher.ForwardToPublisher(b.ctx) })
+	workers.Go(func() { finished <- b.publisher.ForwardToConnector(b.ctx) })
 	defer func() {
 		b.cancel()
 		b.mu.Lock()
@@ -259,21 +335,6 @@ func (b *connectorBridge) serve(owner *connectorPacketSession, a *ConnectorAccep
 			if c, present := a.Publishers.connectorCandidate(b.claim.ref, lease); !valid || !present || c != connection {
 				return
 			}
-		}
-	}
-}
-
-func forwardConnectorPackets(ctx context.Context, source, destination peer.Carrier) error {
-	for {
-		frame, err := source.Receive(ctx)
-		if err != nil {
-			return err
-		}
-		call, stop := context.WithTimeout(ctx, time.Second)
-		err = destination.Send(call, frame)
-		stop()
-		if err != nil {
-			return err
 		}
 	}
 }

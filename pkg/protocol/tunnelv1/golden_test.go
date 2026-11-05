@@ -35,6 +35,15 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 	assertGoldenFrame(t, "control-connector-activate", connectorActivate, WriteControl, ReadControl)
 	connectorActivate.Type, connectorActivate.Role = ConnectorLegActivated, ""
 	assertGoldenFrame(t, "control-connector-activated", connectorActivate, WriteControl, ReadControl)
+	handoff, err := NewConnectorHandoff(ConnectorHandoffID(bytes.Repeat([]byte{2}, 32)), ConnectorHandoffID(bytes.Repeat([]byte{3}, 32)), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := InitialConnectorActivation(ConnectorHelloNonce(bytes.Repeat([]byte{1}, 32))).Replacing(handoff).Binding()
+	connectorReplace := Message{Type: ConnectorLegActivate, ProtocolVersion: Version, RequestID: "repair", Role: Connector, ConnectorLegBinding: &replacement}
+	assertGoldenFrame(t, "control-connector-replace", connectorReplace, WriteControl, ReadControl)
+	connectorReplace.Type, connectorReplace.Role = ConnectorLegActivated, ""
+	assertGoldenFrame(t, "control-connector-replaced", connectorReplace, WriteControl, ReadControl)
 	connectorRenew := connectorHello
 	connectorRenew.Type, connectorRenew.RequestID = ConnectorLegRenew, "renew_1"
 	assertGoldenFrame(t, "control-connector-renew", connectorRenew, WriteControl, ReadControl)
@@ -79,6 +88,8 @@ func TestInvalidFixtures(t *testing.T) {
 		{"invalid-connector-receipt-source", readControl},
 		{"invalid-connector-activation-null", readControl},
 		{"invalid-connector-activation-foreign-field", readControl},
+		{"invalid-connector-replacement-missing-revision", readControl},
+		{"invalid-connector-replacement-revision-overflow", readControl},
 		{"invalid-visitor-missing-field", readVisitor},
 		{"invalid-connector-peer-unknown-field", readConnectorPeerVisitor},
 		{"invalid-connector-peer-missing-field", readConnectorPeerVisitor},

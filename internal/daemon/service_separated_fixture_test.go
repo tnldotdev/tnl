@@ -60,6 +60,7 @@ type privateSeparatedFixture struct {
 	visitorRootPEM              []byte
 	processContext              func(string) context.Context
 	publisherConnections        chan<- *publisherservice.Claimed
+	publisherTCPOnly            bool
 }
 
 // the topology has one real control database/API and two relay runtimes. tests

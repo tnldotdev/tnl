@@ -14,23 +14,23 @@ import (
 )
 
 func TestPeerFragmentsStayWithTheirFixedCarrier(t *testing.T) {
-	e := &Endpoint{input: make(chan []byte, packetQueue)}
+	e := &Endpoint{input: make(chan queuedPacket, packetQueue)}
 	left, right := new(path), new(path)
 	data := bytes.Repeat([]byte{7}, tunnelv1.MaxPeerPacketBytes)
 	first := tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: 43, Total: uint16(len(data)), Payload: data[:tunnelv1.PeerFragmentBytes]}
 	second := first
 	second.Fragment, second.Payload = 1, data[tunnelv1.PeerFragmentBytes:]
-	e.assemble(left, first)
-	e.assemble(right, second)
+	e.assemble(left, first, carrierRevision{})
+	e.assemble(right, second, carrierRevision{})
 	if len(e.input) != 0 {
 		t.Fatal("fragments from different relay carriers completed a packet")
 	}
-	e.assemble(right, first)
-	if got := <-e.input; !bytes.Equal(got, data) {
+	e.assemble(right, first, carrierRevision{})
+	if got := <-e.input; !bytes.Equal(got.data, data) {
 		t.Fatal("one carrier could not assemble its own packet")
 	}
-	e.assemble(right, first)
-	e.assemble(right, second)
+	e.assemble(right, first, carrierRevision{})
+	e.assemble(right, second, carrierRevision{})
 	if len(e.input) != 0 {
 		t.Fatal("completed packet bypassed the replay window")
 	}
@@ -48,7 +48,7 @@ func TestPeerQueuedInputHonorsDeadlineAndClose(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer e.Close()
-			e.input <- []byte("queued before the fence")
+			e.input <- queuedPacket{data: []byte("queued before the fence")}
 			want := os.ErrDeadlineExceeded
 			if closing {
 				want = net.ErrClosed

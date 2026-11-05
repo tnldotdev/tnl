@@ -12,7 +12,7 @@ import (
 // so preparation cannot race an introduction ahead of the remote registration.
 // Close retires the registration
 // and interrupts setup without closing the borrowed outer session.
-func (p *StreamPair) Carrier(open bool) Carrier {
+func (p *StreamPair) Carrier(open bool) *registeredStreamCarrier {
 	return &registeredStreamCarrier{pair: p, open: open, ready: make(chan struct{})}
 }
 
@@ -63,6 +63,14 @@ func (c *registeredStreamCarrier) Receive(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 	return live.Receive(ctx)
+}
+
+func (c *registeredStreamCarrier) receiveForward(ctx context.Context) (queuedFrame, error) {
+	live, err := c.carrier(ctx, false)
+	if err != nil {
+		return queuedFrame{}, err
+	}
+	return live.receive(ctx)
 }
 
 func (c *registeredStreamCarrier) Close() error { return c.pair.Close() }

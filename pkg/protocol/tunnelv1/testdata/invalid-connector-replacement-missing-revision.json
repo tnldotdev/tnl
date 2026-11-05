@@ -1,0 +1,11 @@
+{
+  "type": "connector_leg_activate",
+  "protocol_version": 1,
+  "request_id": "repair",
+  "role": "connector",
+  "connector_leg_binding": {
+    "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+    "previous_nonce": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
+    "replacement_nonce": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM="
+  }
+}

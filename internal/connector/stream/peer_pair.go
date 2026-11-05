@@ -171,14 +171,16 @@ func awaitConnectorPublisher(ctx context.Context, control Control, service strin
 }
 
 type connectorRelayLeg struct {
-	session   *tunnel.Session
-	packets   *peer.SharedSession
-	carrier   peer.Carrier
-	proof     tunnelv1.ConnectorPairLegProof
-	receipt   tunnelv1.ConnectorPairLegAccepted
-	transport tunnel.Transport
-	until     time.Time
-	relay     controlv1.ConnectorPeerPairRelay
+	selectedHandoff tunnelv1.ConnectorHandoffID
+	handoffRevision tunnelv1.ConnectorHandoffRevision
+	session         *tunnel.Session
+	packets         *peer.SharedSession
+	carrier         peer.Carrier
+	proof           tunnelv1.ConnectorPairLegProof
+	receipt         tunnelv1.ConnectorPairLegAccepted
+	transport       tunnel.Transport
+	until           time.Time
+	relay           controlv1.ConnectorPeerPairRelay
 }
 
 func (l *connectorRelayLeg) Close() error {
@@ -207,6 +209,31 @@ func connectorLegProof(signer Signer, pair controlv1.ConnectorPeerPair, slot int
 // are passive until activation, so a losing QUIC/TCP attempt cannot spend the
 // publisher's registration or replace a sibling's replay state.
 func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int) (*connectorRelayLeg, error) {
+	return prepareConnectorLeg(ctx, lifetime, config, signer, pair, key, slot, nil)
+}
+
+type connectorLegReplacement struct {
+	previous *connectorRelayLeg
+	handoff  tunnelv1.ConnectorHandoff
+}
+
+func nextConnectorLegReplacement(previous *connectorRelayLeg) (*connectorLegReplacement, error) {
+	revision, err := previous.handoffRevision.Next()
+	if err != nil {
+		return nil, errors.Join(&tunnel.ProtocolError{Code: tunnelv1.HandoffRevisionExhausted}, err)
+	}
+	var nextID tunnelv1.ConnectorHandoffID
+	if _, err := rand.Read(nextID[:]); err != nil {
+		return nil, err
+	}
+	handoff, err := tunnelv1.NewConnectorHandoff(previous.selectedHandoff, nextID, revision)
+	if err != nil {
+		return nil, err
+	}
+	return &connectorLegReplacement{previous: previous, handoff: handoff}, nil
+}
+
+func prepareConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int, replacement *connectorLegReplacement) (*connectorRelayLeg, error) {
 	roots := config.TransportTLS
 	if roots == nil {
 		roots = &tls.Config{MinVersion: tls.VersionTLS13}
@@ -298,6 +325,12 @@ func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 		return nil, errors.Join(ErrServiceConnection, failures)
 	}
 	l := winner.leg
+	hello, err := tunnelv1.ParseConnectorHelloNonce(l.proof.Nonce)
+	if err != nil {
+		_ = l.session.Close()
+		return nil, err
+	}
+	l.selectedHandoff = tunnelv1.InitialConnectorActivation(hello).SelectedHandoff()
 	owned := false
 	defer func() {
 		if !owned {
@@ -310,6 +343,13 @@ func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 	if ctx.Err() != nil || !l.until.After(time.Now()) {
 		return nil, errors.Join(ErrServiceConnection, context.Cause(ctx))
 	}
+	if replacement != nil {
+		previous := replacement.previous
+		if !previous.until.After(time.Now()) || l.receipt.SourceIP != previous.receipt.SourceIP || !previous.proof.SameLeg(l.proof) || previous.receipt.DeliveryID != l.receipt.DeliveryID {
+			return nil, ErrServiceConnection
+		}
+		l.until = earliestConnectorDeadline(l.until, previous.until)
+	}
 	l.packets, failures = peer.NewSharedSession(lifetime, winner.outer)
 	if failures != nil {
 		return nil, failures
@@ -321,7 +361,13 @@ func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 	}
 	request, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 	if err == nil {
-		err = l.session.ActivateConnectorLeg(ctx, request)
+		if replacement == nil {
+			err = l.session.ActivateConnectorLeg(ctx, request)
+		} else {
+			l.selectedHandoff = replacement.handoff.Next()
+			l.handoffRevision = replacement.handoff.Revision()
+			err = l.session.ReplaceConnectorLeg(ctx, request, replacement.handoff)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -329,3 +375,13 @@ func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 	owned = true
 	return l, nil
 }
+
+// a packet-carrier failure must wake the leg owner even when its control stream
+// is still connected. the slot closes this wrapper after canceling packet work.
+type connectorLegCarrier struct{ *connectorRelayLeg }
+
+func (c connectorLegCarrier) Send(ctx context.Context, b []byte) error { return c.carrier.Send(ctx, b) }
+func (c connectorLegCarrier) Receive(ctx context.Context) ([]byte, error) {
+	return c.carrier.Receive(ctx)
+}
+func (c connectorLegCarrier) Close() error { return errors.Join(c.carrier.Close(), c.session.Close()) }
