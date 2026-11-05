@@ -14,9 +14,7 @@
 
 ## `tnl` where?
 
-Check out the different places `tnl` can be used.
-
-### dev
+### in dev
 
 `tnl` gives every Git worktree its own unique HTTPS URL. Traffic stays encrypted from the browser to your laptop. Here's how it looks:
 
@@ -45,7 +43,7 @@ Check out the different places `tnl` can be used.
 The Next.js and Vite plugins automatically handle port conflicts for multiple
 worktrees running at once.
 
-### prod
+### in prod
 
 Connect to private services from anywhere (laptop, CI, etc.).
 
