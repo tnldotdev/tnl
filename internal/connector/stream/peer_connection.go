@@ -451,7 +451,7 @@ func (p *connectorConnection) renewActive(active []*connectorUse, permission con
 		renewals.Go(func() {
 			entry, err := connectorOpening(p.signer, stream.entry, permission.VisitorToken)
 			if err == nil {
-				err = stream.prepared.queuePermission(preparedPermissionRenewal{writer: p.permissions, update: tunnelv1.ConnectorPermissionUpdate{VisitorConnectionID: entry.VisitorConnectionID, Permission: entry.Permission}, until: bound})
+				err = stream.prepared.queuePermission(preparedPermissionRenewal{writer: p.permissions, update: tunnelv1.ConnectorPermissionUpdate{VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration, Permission: entry.Permission}, until: bound})
 			}
 			if err != nil {
 				_ = stream.prepared.Close()

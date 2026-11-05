@@ -12,7 +12,7 @@ import (
 )
 
 func permissionAccepted(stream muxsession.Stream, update tunnelv1.ConnectorPermissionUpdate) error {
-	return tunnelv1.WriteConnectorPermissionResult(stream, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: update.VisitorConnectionID, UpdateNumber: update.UpdateNumber, Kind: tunnelv1.ConnectorPermissionAccepted})
+	return tunnelv1.WriteConnectorPermissionResult(stream, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: update.VisitorConnectionID, UpdateNumber: update.UpdateNumber, DeliveryGeneration: update.DeliveryGeneration, Kind: tunnelv1.ConnectorPermissionAccepted})
 }
 
 func TestConnectorPermissionSuspensionGatesQueuedFramesAndAcceptedACK(t *testing.T) {
@@ -198,7 +198,7 @@ func TestConnectorPermissionSuspensionKeepsDenialAndSessionCloseTerminal(t *test
 				t.Fatal(err)
 			}
 			if reject {
-				err = tunnelv1.WriteConnectorPermissionResult(control, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: update.VisitorConnectionID, UpdateNumber: update.UpdateNumber, Kind: tunnelv1.ConnectorPermissionRejected})
+				err = tunnelv1.WriteConnectorPermissionResult(control, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: update.VisitorConnectionID, UpdateNumber: update.UpdateNumber, DeliveryGeneration: update.DeliveryGeneration, Kind: tunnelv1.ConnectorPermissionRejected})
 			} else {
 				err = server.Close()
 			}

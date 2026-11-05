@@ -88,7 +88,7 @@ func signedPermissionUpdate(t *testing.T, b *Bound, p *PeerSession, entry tunnel
 		t.Fatal(err)
 	}
 	entry.Permission.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{2}, 32)), message))
-	return tunnelv1.ConnectorPermissionUpdate{VisitorConnectionID: entry.VisitorConnectionID, Permission: entry.Permission}
+	return tunnelv1.ConnectorPermissionUpdate{VisitorConnectionID: entry.VisitorConnectionID, DeliveryGeneration: entry.DeliveryGeneration, Permission: entry.Permission}
 }
 
 func permissionAdmission(t *testing.T, b *Bound, p *PeerSession, id string) *connectorAdmission {
@@ -161,7 +161,7 @@ func TestConnectorPermissionControlIsolatesPolicyWaitAndInvalidProof(t *testing.
 						t.Fatal(err)
 					}
 					foreign.Permission.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{2}, 32)), message))
-					update = tunnelv1.ConnectorPermissionUpdate{VisitorConnectionID: first.VisitorConnectionID, Permission: foreign.Permission}
+					update = tunnelv1.ConnectorPermissionUpdate{VisitorConnectionID: first.VisitorConnectionID, DeliveryGeneration: first.DeliveryGeneration, Permission: foreign.Permission}
 				}
 			}
 			pending, cancelPending := context.WithCancel(ctx)
@@ -624,12 +624,12 @@ func TestConnectorPermissionControlReservesCreditAgainstAllApplicationBackpressu
 			go func() {
 				u, err := tunnelv1.ReadConnectorPermissionUpdate(stream)
 				if err == nil {
-					err = tunnelv1.WriteConnectorPermissionResult(stream, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: u.VisitorConnectionID, UpdateNumber: u.UpdateNumber, Kind: tunnelv1.ConnectorPermissionAccepted})
+					err = tunnelv1.WriteConnectorPermissionResult(stream, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: u.VisitorConnectionID, UpdateNumber: u.UpdateNumber, DeliveryGeneration: u.DeliveryGeneration, Kind: tunnelv1.ConnectorPermissionAccepted})
 				}
 				got <- u
 				done <- err
 			}()
-			update := tunnelv1.ConnectorPermissionUpdate{VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", UpdateNumber: 1, Permission: tunnelv1.ConnectorVisitorPermission{Token: "signed-visitor-token", PublicKey: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), Signature: base64.RawURLEncoding.EncodeToString(make([]byte, 64))}}
+			update := tunnelv1.ConnectorPermissionUpdate{VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", UpdateNumber: 1, DeliveryGeneration: 7, Permission: tunnelv1.ConnectorVisitorPermission{Token: "signed-visitor-token", PublicKey: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), Signature: base64.RawURLEncoding.EncodeToString(make([]byte, 64))}}
 			call, stop := context.WithTimeout(ctx, 2*time.Second)
 			defer stop()
 			if err := control.Renew(call, update); err != nil {

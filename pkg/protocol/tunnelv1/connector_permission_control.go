@@ -51,25 +51,28 @@ var ErrConnectorPermissionUpdate = errors.New("tunnelv1: invalid connector permi
 type ConnectorPermissionUpdate struct {
 	VisitorConnectionID string                     `json:"visitor_connection_id"`
 	UpdateNumber        uint64                     `json:"update_number"`
+	DeliveryGeneration  int64                      `json:"delivery_generation"`
 	Permission          ConnectorVisitorPermission `json:"permission"`
 }
 
 func (u ConnectorPermissionUpdate) valid() bool {
-	return opaqueid.Valid(u.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) && u.UpdateNumber > 0 && u.Permission.valid()
+	return opaqueid.Valid(u.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) && u.UpdateNumber > 0 && u.DeliveryGeneration > 0 && u.Permission.valid()
 }
 
 type ConnectorPermissionResult struct {
 	VisitorConnectionID string     `json:"visitor_connection_id"`
 	UpdateNumber        uint64     `json:"update_number"`
+	DeliveryGeneration  int64      `json:"delivery_generation"`
 	Kind                StreamKind `json:"kind"`
 }
 
 const ConnectorPermissionAccepted StreamKind = "connector_permission_accepted"
 const ConnectorPermissionRejected StreamKind = "connector_permission_rejected"
+const ConnectorPermissionStale StreamKind = "connector_permission_stale"
 
 func (r ConnectorPermissionResult) valid() bool {
-	return opaqueid.Valid(r.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) && r.UpdateNumber > 0 &&
-		(r.Kind == ConnectorPermissionAccepted || r.Kind == ConnectorPermissionRejected)
+	return opaqueid.Valid(r.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) && r.UpdateNumber > 0 && r.DeliveryGeneration > 0 &&
+		(r.Kind == ConnectorPermissionAccepted || r.Kind == ConnectorPermissionRejected || r.Kind == ConnectorPermissionStale)
 }
 
 func WriteConnectorPermissionResult(w io.Writer, result ConnectorPermissionResult) error {

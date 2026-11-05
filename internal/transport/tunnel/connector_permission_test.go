@@ -16,7 +16,7 @@ import (
 )
 
 func connectorPermissionFixture() tunnelv1.ConnectorPermissionUpdate {
-	return tunnelv1.ConnectorPermissionUpdate{VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", UpdateNumber: 1, Permission: tunnelv1.ConnectorVisitorPermission{Token: "signed-visitor-token", PublicKey: strings.Repeat("A", 43), Signature: strings.Repeat("A", 86)}}
+	return tunnelv1.ConnectorPermissionUpdate{VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", UpdateNumber: 1, DeliveryGeneration: 7, Permission: tunnelv1.ConnectorVisitorPermission{Token: "signed-visitor-token", PublicKey: strings.Repeat("A", 43), Signature: strings.Repeat("A", 86)}}
 }
 
 func permissionControlPair(t *testing.T, client, server muxsession.Session) (*ConnectorPermissionWriter, muxsession.Stream) {
@@ -167,7 +167,7 @@ func TestConnectorPermissionWriteGateKeepsOriginalDeadline(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		return tunnelv1.WriteConnectorPermissionResult(control, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: update.VisitorConnectionID, UpdateNumber: update.UpdateNumber, Kind: tunnelv1.ConnectorPermissionAccepted})
+		return tunnelv1.WriteConnectorPermissionResult(control, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: update.VisitorConnectionID, UpdateNumber: update.UpdateNumber, DeliveryGeneration: update.DeliveryGeneration, Kind: tunnelv1.ConnectorPermissionAccepted})
 	})
 	if err := writer.Renew(tunnelContext(t), connectorPermissionFixture()); err != nil {
 		t.Fatal("expired waiter poisoned a sibling control write", err)
@@ -201,7 +201,7 @@ func TestConnectorPermissionControlSkipsMalformedBoundedUpdate(t *testing.T) {
 }
 
 func TestConnectorPermissionACKCannotReleaseAnotherVisitorOrFutureRequest(t *testing.T) {
-	for _, boundary := range []string{"visitor", "request"} {
+	for _, boundary := range []string{"visitor", "request", "binding"} {
 		t.Run(boundary, func(t *testing.T) {
 			client, server := newMemoryPair(t)
 			writer, control := permissionControlPair(t, client, server)
@@ -210,11 +210,13 @@ func TestConnectorPermissionACKCannotReleaseAnotherVisitorOrFutureRequest(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			result := tunnelv1.ConnectorPermissionResult{VisitorConnectionID: update.VisitorConnectionID, UpdateNumber: update.UpdateNumber, Kind: tunnelv1.ConnectorPermissionAccepted}
+			result := tunnelv1.ConnectorPermissionResult{VisitorConnectionID: update.VisitorConnectionID, UpdateNumber: update.UpdateNumber, DeliveryGeneration: update.DeliveryGeneration, Kind: tunnelv1.ConnectorPermissionAccepted}
 			if boundary == "visitor" {
 				result.VisitorConnectionID = "vc_bbbbbbbbbbbbbbbbbbbbbb"
-			} else {
+			} else if boundary == "request" {
 				result.UpdateNumber++
+			} else {
+				result.DeliveryGeneration++
 			}
 			_ = tunnelv1.WriteConnectorPermissionResult(control, result)
 			if err := await(t, done); !errors.Is(err, tunnelv1.ErrConnectorPermissionUpdate) {
@@ -225,6 +227,34 @@ func TestConnectorPermissionACKCannotReleaseAnotherVisitorOrFutureRequest(t *tes
 			}
 		})
 	}
+}
+
+func TestConnectorPermissionStaleGrantsNothingAndKeepsControlReusable(t *testing.T) {
+	client, server := newMemoryPair(t)
+	writer, control := permissionControlPair(t, client, server)
+	ctx, cancel := context.WithCancel(tunnelContext(t))
+	defer cancel()
+	var stale atomic.Bool
+	stale.Store(true)
+	done := tunnelWorker(t, cancel, func() error {
+		return ServeConnectorPermissionControl(ctx, control, func(update tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
+			if stale.Swap(false) {
+				_ = responder.RespondStale(update)
+			} else {
+				_ = responder.Respond(update, true)
+			}
+		}, func() {})
+	})
+	update := connectorPermissionFixture()
+	if err := writer.Renew(tunnelContext(t), update); !errors.Is(err, ErrConnectorPermissionStale) || writer.Err() != nil {
+		t.Fatal("stale proof granted authority or ended shared control", err)
+	}
+	update.DeliveryGeneration++
+	if err := writer.Renew(tunnelContext(t), update); err != nil {
+		t.Fatal("current revision could not follow a stale proof", err)
+	}
+	cancel()
+	_ = await(t, done)
 }
 
 func TestConnectorPermissionLateDuplicateACKCannotReleaseNextRenewal(t *testing.T) {
@@ -246,7 +276,7 @@ func TestConnectorPermissionLateDuplicateACKCannotReleaseNextRenewal(t *testing.
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := tunnelv1.WriteConnectorPermissionResult(control, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: old.VisitorConnectionID, UpdateNumber: old.UpdateNumber, Kind: tunnelv1.ConnectorPermissionAccepted}); err != nil {
+		if err := tunnelv1.WriteConnectorPermissionResult(control, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: old.VisitorConnectionID, UpdateNumber: old.UpdateNumber, DeliveryGeneration: old.DeliveryGeneration, Kind: tunnelv1.ConnectorPermissionAccepted}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -255,7 +285,7 @@ func TestConnectorPermissionLateDuplicateACKCannotReleaseNextRenewal(t *testing.
 		t.Fatal("late/duplicate ACK released the next request", err)
 	case <-time.After(20 * time.Millisecond):
 	}
-	if err := tunnelv1.WriteConnectorPermissionResult(control, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: current.VisitorConnectionID, UpdateNumber: current.UpdateNumber, Kind: tunnelv1.ConnectorPermissionAccepted}); err != nil {
+	if err := tunnelv1.WriteConnectorPermissionResult(control, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: current.VisitorConnectionID, UpdateNumber: current.UpdateNumber, DeliveryGeneration: current.DeliveryGeneration, Kind: tunnelv1.ConnectorPermissionAccepted}); err != nil {
 		t.Fatal(err)
 	}
 	if err := await(t, next); err != nil {

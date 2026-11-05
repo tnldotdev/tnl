@@ -192,7 +192,7 @@ func (g *ConnectorPermissionGate) write(ctx context.Context, stream muxsession.S
 	return true, result
 }
 
-func (g *ConnectorPermissionGate) acknowledged(ctx context.Context, result <-chan bool) error {
+func (g *ConnectorPermissionGate) acknowledged(ctx context.Context, result <-chan error) error {
 	started := time.Now()
 	g.mu.Lock()
 	paused := g.pausedLocked(started)
@@ -224,8 +224,8 @@ func (g *ConnectorPermissionGate) acknowledged(ctx context.Context, result <-cha
 		select {
 		case decision := <-result:
 			timer.Stop()
-			if !decision {
-				return ErrConnectorPermissionRejected
+			if decision != nil {
+				return decision
 			}
 			accepted = true
 			result = nil

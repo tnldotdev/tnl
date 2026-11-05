@@ -13,11 +13,13 @@ import (
 )
 
 var ErrConnectorPermissionRejected = errors.New("connector permission renewal rejected")
+var ErrConnectorPermissionStale = errors.New("connector permission binding is stale")
 
 type pendingConnectorPermission struct {
-	visitor string
-	result  chan bool
-	decided bool
+	visitor    string
+	generation int64
+	result     chan error
+	decided    bool
 }
 
 // ConnectorPermissionWriter owns the first inner bidirectional stream and its
@@ -89,14 +91,20 @@ func (w *ConnectorPermissionWriter) receive() {
 		}
 		w.mu.Lock()
 		pending := w.pending[result.UpdateNumber]
-		if result.UpdateNumber > w.next || pending != nil && pending.visitor != result.VisitorConnectionID {
+		if result.UpdateNumber > w.next || pending != nil && (pending.visitor != result.VisitorConnectionID || pending.generation != result.DeliveryGeneration) {
 			w.mu.Unlock()
 			fail(tunnelv1.ErrConnectorPermissionUpdate)
 			return
 		}
 		if pending != nil && !pending.decided {
 			pending.decided = true
-			pending.result <- result.Kind == tunnelv1.ConnectorPermissionAccepted
+			var decision error
+			if result.Kind == tunnelv1.ConnectorPermissionRejected {
+				decision = ErrConnectorPermissionRejected
+			} else if result.Kind == tunnelv1.ConnectorPermissionStale {
+				decision = ErrConnectorPermissionStale
+			}
+			pending.result <- decision
 		}
 		w.mu.Unlock()
 	}
@@ -120,7 +128,7 @@ func (w *ConnectorPermissionWriter) Renew(ctx context.Context, update tunnelv1.C
 	}
 	w.next++
 	update.UpdateNumber = w.next
-	pending := &pendingConnectorPermission{visitor: update.VisitorConnectionID, result: make(chan bool, 1)}
+	pending := &pendingConnectorPermission{visitor: update.VisitorConnectionID, generation: update.DeliveryGeneration, result: make(chan error, 1)}
 	w.pending[w.next] = pending
 	w.uses.Add(1)
 	w.mu.Unlock()
@@ -253,10 +261,20 @@ func (r *ConnectorPermissionResponder) Respond(update tunnelv1.ConnectorPermissi
 	if accepted {
 		kind = tunnelv1.ConnectorPermissionAccepted
 	}
+	return r.respond(update, kind)
+}
+
+// RespondStale grants no authority. the caller keeps the admission's existing
+// permission deadline and waits for a proof for the current binding revision.
+func (r *ConnectorPermissionResponder) RespondStale(update tunnelv1.ConnectorPermissionUpdate) error {
+	return r.respond(update, tunnelv1.ConnectorPermissionStale)
+}
+
+func (r *ConnectorPermissionResponder) respond(update tunnelv1.ConnectorPermissionUpdate, kind tunnelv1.StreamKind) error {
 	ctx, cancel := context.WithTimeout(r.ctx, connectorPermissionSuspensionLimit)
 	defer cancel()
 	_, err := r.suspension.write(ctx, r.stream, r.gate, func(w io.Writer) error {
-		return tunnelv1.WriteConnectorPermissionResult(w, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: update.VisitorConnectionID, UpdateNumber: update.UpdateNumber, Kind: kind})
+		return tunnelv1.WriteConnectorPermissionResult(w, tunnelv1.ConnectorPermissionResult{VisitorConnectionID: update.VisitorConnectionID, UpdateNumber: update.UpdateNumber, DeliveryGeneration: update.DeliveryGeneration, Kind: kind})
 	})
 	if err != nil {
 		r.fail(err)
