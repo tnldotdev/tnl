@@ -100,6 +100,7 @@ func (s *Session) activateConnectorLeg(ctx context.Context, requestID string, ac
 		return &ProtocolError{Code: tunnelv1.InvalidMessage}
 	}
 	if response.Type == tunnelv1.Error {
+		_ = s.control.CloseWrite()
 		return &ProtocolError{Code: response.Code}
 	}
 	if response.Type != tunnelv1.ConnectorLegActivated || response.ConnectorLegBinding == nil {

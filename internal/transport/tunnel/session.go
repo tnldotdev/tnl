@@ -131,6 +131,9 @@ func dial(ctx context.Context, transport muxsession.Session, hello tunnelv1.Mess
 		return nil, receipt, fmt.Errorf("tunnel: read hello response: %w", err)
 	}
 	if response.Type == tunnelv1.Error {
+		if native {
+			_ = control.CloseWrite()
+		}
 		return nil, receipt, &ProtocolError{Code: response.Code}
 	}
 	if response.Type != tunnelv1.HelloAccepted {
@@ -205,7 +208,9 @@ func AcceptWithResult(ctx context.Context, transport muxsession.Session, authent
 		if errors.As(authErr, &protocolError) && validAuthenticationError(protocolError.Code) {
 			code = protocolError.Code
 		}
-		_ = writeProtocolError(control, code)
+		if writeProtocolError(control, code) == nil && hello.Role == tunnelv1.Connector {
+			drainConnectorRejection(setupCtx, control)
+		}
 		return nil, tunnelv1.Message{}, authErr
 	}
 	if err := tunnelv1.WriteControl(control, tunnelv1.Message{
