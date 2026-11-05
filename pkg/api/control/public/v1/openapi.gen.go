@@ -1574,11 +1574,12 @@ func (e WebhookProviderSourceResponseSource1Kind) Valid() bool {
 
 // Defines values for WorkloadProvider.
 const (
-	WorkloadFly    WorkloadProvider = "fly"
-	WorkloadGitHub WorkloadProvider = "github"
-	WorkloadGoogle WorkloadProvider = "google"
-	WorkloadOIDC   WorkloadProvider = "oidc"
-	WorkloadVercel WorkloadProvider = "vercel"
+	WorkloadFly        WorkloadProvider = "fly"
+	WorkloadGitHub     WorkloadProvider = "github"
+	WorkloadGoogle     WorkloadProvider = "google"
+	WorkloadKubernetes WorkloadProvider = "kubernetes"
+	WorkloadOIDC       WorkloadProvider = "oidc"
+	WorkloadVercel     WorkloadProvider = "vercel"
 )
 
 // Valid indicates whether the value is a known member of the WorkloadProvider enum.
@@ -1589,6 +1590,8 @@ func (e WorkloadProvider) Valid() bool {
 	case WorkloadGitHub:
 		return true
 	case WorkloadGoogle:
+		return true
+	case WorkloadKubernetes:
 		return true
 	case WorkloadOIDC:
 		return true
@@ -2678,6 +2681,9 @@ type ProjectWorkload struct {
 	// Google Service account selector retained by trusted apply. The verified numeric identity is the trust sub claim; this selector is setup metadata, not an assertion claim.
 	Google *ProjectWorkloadGoogle `json:"google,omitempty"`
 
+	// Kubernetes Trusted setup selectors retained for unchanged applies. The trust sub and service_account_uid claims define the approved service account identity; runtime never reads these setup selectors as credentials.
+	Kubernetes *ProjectWorkloadKubernetes `json:"kubernetes,omitempty"`
+
 	// MaxDurationSeconds Optional absolute session limit in seconds. Zero means no hard limit; permission leases and verified platform-proof expiry still apply.
 	MaxDurationSeconds int              `json:"max_duration_seconds"`
 	Provider           WorkloadProvider `json:"provider"`
@@ -2701,6 +2707,14 @@ type ProjectWorkloadGitHub struct {
 
 // ProjectWorkloadGoogle Service account selector retained by trusted apply. The verified numeric identity is the trust sub claim; this selector is setup metadata, not an assertion claim.
 type ProjectWorkloadGoogle struct {
+	ServiceAccount string `json:"service_account"`
+}
+
+// ProjectWorkloadKubernetes Trusted setup selectors retained for unchanged applies. The trust sub and service_account_uid claims define the approved service account identity; runtime never reads these setup selectors as credentials.
+type ProjectWorkloadKubernetes struct {
+	ClusterServer  string `json:"cluster_server"`
+	Context        string `json:"context"`
+	Namespace      string `json:"namespace"`
 	ServiceAccount string `json:"service_account"`
 }
 

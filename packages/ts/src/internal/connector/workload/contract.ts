@@ -11,6 +11,7 @@ export interface WorkloadRequest {
     fly_app_name?: string;
     github_actions?: string;
     cloud_run_service?: string;
+    kubernetes_service_host?: string;
   };
 }
 

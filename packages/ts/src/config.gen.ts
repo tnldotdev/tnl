@@ -964,6 +964,7 @@ export interface TnlConfig {
           fly?: never;
           oidc?: never;
           google?: never;
+          kubernetes?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1102,6 +1103,7 @@ export interface TnlConfig {
           fly?: never;
           oidc?: never;
           google?: never;
+          kubernetes?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1139,6 +1141,7 @@ export interface TnlConfig {
           vercel?: never;
           oidc?: never;
           google?: never;
+          kubernetes?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1176,6 +1179,7 @@ export interface TnlConfig {
           vercel?: never;
           fly?: never;
           google?: never;
+          kubernetes?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1216,6 +1220,7 @@ export interface TnlConfig {
           vercel?: never;
           fly?: never;
           oidc?: never;
+          kubernetes?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1240,6 +1245,48 @@ export interface TnlConfig {
             /**
              * Google service account email or immutable numeric ID. Trusted apply resolves an email with gcloud and saves the numeric identity.
              */
+            serviceAccount: string;
+          };
+          /**
+           * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
+           */
+          maxDuration?: TnlRatePeriod;
+        }
+      | {
+          github?: never;
+          vercel?: never;
+          fly?: never;
+          oidc?: never;
+          google?: never;
+          /**
+           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           *
+           * @minItems 1
+           * @maxItems 32
+           */
+          services: [string, ...string[]];
+          token?:
+            | {
+                file: string;
+                env?: never;
+              }
+            | {
+                file?: never;
+                env: string;
+              };
+          kubernetes: {
+            /**
+             * Trusted setup context; defaults to the current kubectl context. Runtime acquisition never reads kubeconfig.
+             */
+            context?: string;
+            /**
+             * Namespace; defaults to the selected context's namespace, then default.
+             */
+            namespace?: string;
+            /**
+             * Projected token audience; defaults to the control URL.
+             */
+            audience?: string;
             serviceAccount: string;
           };
           /**

@@ -23,7 +23,7 @@ import (
 
 func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	for _, provider := range []string{"vercel", "fly", "oidc", "google"} {
+	for _, provider := range []string{"vercel", "fly", "oidc", "google", "kubernetes"} {
 		t.Run(provider, func(t *testing.T) {
 			ctx := t.Context()
 			dbURL := testutil.NewDisposablePostgresDatabaseURL(t, "workload_"+provider)
@@ -61,6 +61,11 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				trust.Claims = map[string]string{"sub": "112010400000000710080"}
 				claims = map[string]any{"iss": trust.Issuer, "aud": trust.Audience, "sub": trust.Claims["sub"]}
 			}
+			if provider == "kubernetes" {
+				trust.Issuer, trust.JWKSURL, trust.Audience = "https://oidc.eks.us-west-2.amazonaws.com/id/example", "https://oidc.eks.us-west-2.amazonaws.com/id/example/keys", "https://control.example"
+				trust.Claims = map[string]string{"sub": "system:serviceaccount:production:orders", "service_account_uid": "11111111-1111-4111-8111-111111111111"}
+				claims = map[string]any{"iss": trust.Issuer, "aud": trust.Audience, "sub": trust.Claims["sub"], "kubernetes.io": map[string]any{"namespace": "production", "serviceaccount": map[string]any{"name": "orders", "uid": trust.Claims["service_account_uid"]}, "pod": map[string]any{"name": "orders-one", "uid": "22222222-2222-4222-8222-222222222222"}}}
+			}
 			claims["iat"], claims["nbf"], claims["exp"] = now.Unix(), now.Unix(), now.Add(10*time.Minute).Unix()
 			issuer := githubtest.NewKeySet(t, trust.JWKSURL)
 			mux := http.NewServeMux()
@@ -82,6 +87,11 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if provider == "google" {
 				p := configuration.Workloads["storefront"]
 				p.Google = &controlstate.ProjectWorkloadGoogle{ServiceAccount: "orders@project.iam.gserviceaccount.com"}
+				configuration.Workloads["storefront"] = p
+			}
+			if provider == "kubernetes" {
+				p := configuration.Workloads["storefront"]
+				p.Kubernetes = &controlstate.ProjectWorkloadKubernetes{Context: "eks-development", ClusterServer: "https://cluster.example.test", Namespace: "production", ServiceAccount: "orders"}
 				configuration.Workloads["storefront"] = p
 			}
 			data, _ := json.Marshal(configuration)
@@ -131,6 +141,42 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if attached, err := job.Attach(ctx, rotated); err != nil || attached.Id != session.Id || attached.Binding != binding || !attached.ExpiresAt.Equal(*session.ExpiresAt) || attached.AssertionExpiresAt == nil || attached.AssertionExpiresAt.Unix() != now.Add(11*time.Minute).Unix() {
 				t.Fatal("authenticated assertion attachment changed session", err)
 			}
+			if provider == "kubernetes" {
+				pod := claims["kubernetes.io"].(map[string]any)["pod"].(map[string]any)
+				original := pod["uid"]
+				pod["uid"] = "33333333-3333-4333-8333-333333333333"
+				replacementToken := issuer.Sign(t, claims)
+				replacementBinding, err := job.Identify(ctx, team, "store", body.SourceFingerprint, "storefront", replacementToken)
+				if err != nil || replacementBinding == binding {
+					t.Fatal("replacement Pod reused the old binding", err)
+				}
+				before, err := job.Session()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := job.Attach(ctx, replacementToken); err == nil {
+					t.Fatal("replacement Pod attached proof to the old session")
+				}
+				after, err := job.Session()
+				if err != nil || after.Id != before.Id || after.Binding != before.Binding || !after.IdentityExpiresAt.Equal(before.IdentityExpiresAt) || !after.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
+					t.Fatal("rejected Pod attachment changed current authority", err)
+				}
+				replacement, err := workload.New(server.URL, server.Client())
+				if err != nil {
+					t.Fatal(err)
+				}
+				replaced, err := replacement.Exchange(ctx, team, "store", body.SourceFingerprint, "storefront", replacementToken, nil)
+				if err != nil || replaced.Id == session.Id || replaced.Binding != replacementBinding {
+					t.Fatal("replacement Pod did not receive separate authority", err)
+				}
+				if err := replacement.Revoke(ctx); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := job.ListServices(ctx); err != nil {
+					t.Fatal("replacement cleanup revoked the original Pod", err)
+				}
+				pod["uid"] = original
+			}
 			encoded, err := json.Marshal(session)
 			if err != nil {
 				t.Fatal(err)
@@ -162,15 +208,23 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				}
 			}
 			for field := range trust.Claims {
-				original := claims[field]
-				claims[field] = "another"
+				selected, key := claims, field
+				if provider == "kubernetes" && field == "service_account_uid" {
+					selected = claims["kubernetes.io"].(map[string]any)["serviceaccount"].(map[string]any)
+					key = "uid"
+				}
+				original := selected[key]
+				selected[key] = "another"
+				if provider == "kubernetes" && field == "service_account_uid" {
+					selected[key] = "44444444-4444-4444-8444-444444444444"
+				}
 				if _, err := job.Attach(ctx, issuer.Sign(t, claims)); err == nil {
 					t.Fatalf("attachment accepted wrong %s", field)
 				}
 				if _, err = job.Exchange(ctx, team, "store", body.SourceFingerprint, "storefront", issuer.Sign(t, claims), nil); err == nil {
 					t.Fatalf("wrong %s accepted", field)
 				}
-				claims[field] = original
+				selected[key] = original
 			}
 			// narrowing deletes issued rights; additions cannot expand the old snapshot.
 			p := (*body.Configuration.Workloads)["storefront"]
