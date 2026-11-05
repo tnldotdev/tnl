@@ -91,6 +91,17 @@ func (c *controlAdapter) RenewConnectorPeerPair(ctx context.Context, service str
 	return c.client.RenewDeviceConnectorPeerPair(ctx, service, *body.PreviousPairId, device.Subject.DeviceID, body)
 }
 
+func (c *controlAdapter) RebindConnectorPeerPair(ctx context.Context, service, pair string, body controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+	device, err := c.ConnectorSigner(ctx, c.identityID)
+	if err != nil {
+		return controlv1.ConnectorPeerPairRebindState{}, err
+	}
+	if !visitorsubject.Equal(body.Subject, device.Subject) {
+		return controlv1.ConnectorPeerPairRebindState{}, ErrServiceConnection
+	}
+	return c.client.RebindDeviceConnectorPeerPair(ctx, service, pair, device.Subject.DeviceID, body)
+}
+
 func (c *controlAdapter) VisitorPermission(ctx context.Context, service string) (controlv1.VisitorTokenResponse, error) {
 	device, err := c.ConnectorSigner(ctx, c.identityID)
 	if err != nil {

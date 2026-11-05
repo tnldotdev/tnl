@@ -36,6 +36,17 @@ func (c *Client) RenewDeviceConnectorPeerPair(ctx context.Context, service, pair
 	})
 }
 
+func (c *Client) RebindDeviceConnectorPeerPair(ctx context.Context, service, pair, device string, body controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+	source, err := json.Marshal(controlv1.VisitorTokenDeviceSource{Kind: controlv1.VisitorTokenDevice, DeviceId: device})
+	if err != nil {
+		return controlv1.ConnectorPeerPairRebindState{}, err
+	}
+	body.Source = source
+	return requestWithAccess[controlv1.ConnectorPeerPairRebindState](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RebindConnectorPeerPair(ctx, service, pair, body, editors...)
+	})
+}
+
 func (c *Client) PrepareWorkloadConnectorPeerPair(ctx context.Context, service, credential string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
 	source, err := json.Marshal(controlv1.VisitorTokenWorkloadSource{Kind: controlv1.VisitorTokenWorkload, Credential: credential})
 	if err != nil {
@@ -55,6 +66,17 @@ func (c *Client) RenewWorkloadConnectorPeerPair(ctx context.Context, service, pa
 	body.Source = source
 	return request[controlv1.ConnectorPeerPairRenewal](ctx, c, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.RenewConnectorPeerPair(ctx, service, pair, body, editors...)
+	})
+}
+
+func (c *Client) RebindWorkloadConnectorPeerPair(ctx context.Context, service, pair, credential string, body controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+	source, err := json.Marshal(controlv1.VisitorTokenWorkloadSource{Kind: controlv1.VisitorTokenWorkload, Credential: credential})
+	if err != nil {
+		return controlv1.ConnectorPeerPairRebindState{}, err
+	}
+	body.Source = source
+	return request[controlv1.ConnectorPeerPairRebindState](ctx, c, "", func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RebindConnectorPeerPair(ctx, service, pair, body, editors...)
 	})
 }
 

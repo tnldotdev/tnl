@@ -13,6 +13,7 @@ type ControlConfig struct {
 	Resolve      func(context.Context, string) (Run, error)
 	Pair         func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error)
 	RenewPair    func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error)
+	RebindPair   func(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error)
 	Permission   func(context.Context, string) (controlv1.VisitorTokenResponse, error)
 	Close        func() error
 	CloseContext func(context.Context) error
@@ -40,6 +41,12 @@ func (c *configuredControl) PrepareConnectorPeerPair(ctx context.Context, id str
 }
 func (c *configuredControl) RenewConnectorPeerPair(ctx context.Context, id string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
 	return c.config.RenewPair(ctx, id, body)
+}
+func (c *configuredControl) RebindConnectorPeerPair(ctx context.Context, service, pair string, body controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+	if c.config.RebindPair == nil {
+		return controlv1.ConnectorPeerPairRebindState{}, ErrServiceConnection
+	}
+	return c.config.RebindPair(ctx, service, pair, body)
 }
 func (c *configuredControl) VisitorPermission(ctx context.Context, id string) (controlv1.VisitorTokenResponse, error) {
 	return c.config.Permission(ctx, id)

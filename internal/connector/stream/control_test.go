@@ -148,3 +148,43 @@ func TestControlSelectionBindsDeviceServiceProtocolAndRevision(t *testing.T) {
 		t.Fatal("selection for another device accepted")
 	}
 }
+
+func TestControlRebindUsesEnrolledDeviceAndRejectsAnotherSubject(t *testing.T) {
+	identity, device, service := connectorID(t, opaqueid.IdentityPrefix), connectorID(t, "vdev_"), connectorID(t, opaqueid.ServicePrefix)
+	pair := connectorID(t, "cpp_")
+	calls := 0
+	control, _ := adapterFixture(t, identity, func(_ *clientstate.Store, w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/visitor-devices" {
+			var body controlv1.EnrollVisitorDeviceJSONRequestBody
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_ = json.NewEncoder(w).Encode(controlv1.VisitorDevice{Id: device, IdentityId: identity, PublicKey: body.PublicKey, CreatedAt: time.Now()})
+			return
+		}
+		calls++
+		if r.URL.Path != "/v1/services/"+service+"/connector-peer-pairs/"+pair+"/rebind" {
+			t.Error("rebind reselected the service or pair")
+		}
+		var body controlv1.ConnectorPeerPairRebindRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		var source controlv1.VisitorTokenDeviceSource
+		if err := json.Unmarshal(body.Source, &source); err != nil || source.DeviceId != device {
+			t.Error("rebind lost its enrolled device source", err)
+		}
+		_ = json.NewEncoder(w).Encode(controlv1.ConnectorPeerPairRebindState{HighWaterGeneration: 2, ReadyRelays: []controlv1.ConnectorPeerPairRelay{}})
+	})
+	signer, err := control.ConnectorSigner(t.Context(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := controlv1.ConnectorPeerPairRebindRequest{Phase: "inspect", Subject: visitorsubject.Wire(signer.Subject)}
+	state, err := control.RebindConnectorPeerPair(t.Context(), service, pair, body)
+	if err != nil || state.HighWaterGeneration != 2 || calls != 1 {
+		t.Fatal("enrolled device could not inspect its retained pair", err)
+	}
+	body.Subject.DeviceId = new(connectorID(t, "vdev_"))
+	if _, err := control.RebindConnectorPeerPair(t.Context(), service, pair, body); err == nil || calls != 1 {
+		t.Fatal("another subject reached the rebind endpoint", err)
+	}
+}

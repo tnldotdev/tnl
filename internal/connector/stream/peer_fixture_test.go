@@ -99,6 +99,10 @@ func (f *connectorFixture) PrepareConnectorPeerPair(ctx context.Context, service
 	}
 }
 
+func (f *connectorFixture) RebindConnectorPeerPair(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+	return controlv1.ConnectorPeerPairRebindState{}, ErrServiceConnection
+}
+
 func (f *connectorFixture) RenewConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
 	pair, err := f.PrepareConnectorPeerPair(ctx, service, body)
 	if err != nil {

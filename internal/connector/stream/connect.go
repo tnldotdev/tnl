@@ -50,6 +50,7 @@ type Control interface {
 	ResolveService(context.Context, string) (Run, error)
 	PrepareConnectorPeerPair(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error)
 	RenewConnectorPeerPair(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error)
+	RebindConnectorPeerPair(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error)
 	VisitorPermission(context.Context, string) (controlv1.VisitorTokenResponse, error)
 }
 
