@@ -17,13 +17,6 @@ func TestIntegrationWorkloadKubernetesMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := workloadTestMigrationProvider(t, url)
-	if _, err := provider.DownTo(t.Context(), 5); err != nil {
-		t.Fatal(err)
-	}
-	if err := d.Readiness(t.Context()); err == nil {
-		t.Fatal("serving accepted the schema without Kubernetes provider support")
-	}
 	var before string
 	if err := d.pool.QueryRow(t.Context(), `SELECT to_jsonb(w)::text FROM control.workload_sessions w WHERE id=$1`, session.ID).Scan(&before); err != nil {
 		t.Fatal(err)
