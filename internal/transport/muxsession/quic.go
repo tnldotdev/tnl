@@ -295,15 +295,30 @@ func normalizeQUICError(err error) error {
 	}
 	var applicationError *quic.ApplicationError
 	if errors.As(err, &applicationError) && applicationError.ErrorCode == 0 {
+		return errors.Join(ErrClosed, err)
+	}
+	// quic also wraps net.ErrClosed for failed closes and timeouts. retain
+	// those typed failures rather than treating them as a normal shutdown.
+	if err == net.ErrClosed {
 		return ErrClosed
 	}
-	return normalizeClosed(err)
+	return err
 }
 
 type quicStream struct {
 	*quic.Stream
 	local  net.Addr
 	remote net.Addr
+}
+
+func (s *quicStream) Read(b []byte) (int, error) {
+	n, err := s.Stream.Read(b)
+	return n, normalizeQUICError(err)
+}
+
+func (s *quicStream) Write(b []byte) (int, error) {
+	n, err := s.Stream.Write(b)
+	return n, normalizeQUICError(err)
 }
 
 func (s *quicStream) Close() error {
