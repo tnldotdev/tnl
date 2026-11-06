@@ -248,7 +248,7 @@ describe("root runtime", () => {
       .parse(
         JSON.parse(
           await readFile(
-            new URL("../../../../api/fixtures/project-metadata-v2.json", import.meta.url),
+            new URL("../../../../api/fixtures/project-metadata-v1.json", import.meta.url),
             "utf8",
           ),
         ) as unknown,

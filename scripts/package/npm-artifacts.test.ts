@@ -3,7 +3,7 @@ import { assertExportTargets, type PackageManifest } from "./npm-artifacts.ts";
 
 const manifest: PackageManifest = {
   name: "@tnldotdev/tnl",
-  version: "0.0.0-development",
+  version: "1.0.0-development",
   license: "BSD-3-Clause",
   exports: {
     "./another-subpath": {

@@ -249,7 +249,7 @@ func TestTunnelProjectStateIsPartOfFreshV1Baseline(t *testing.T) {
 			t.Fatalf("initial migration does not contain %q", required)
 		}
 	}
-	if tunnelSnapshotSchemaVersion != 3 {
+	if tunnelSnapshotSchemaVersion != 1 {
 		t.Fatalf("tunnel snapshot schema version = %d", tunnelSnapshotSchemaVersion)
 	}
 }

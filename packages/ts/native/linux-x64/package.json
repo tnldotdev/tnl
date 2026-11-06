@@ -1,6 +1,6 @@
 {
   "name": "@tnldotdev/tnl-linux-x64",
-  "version": "0.0.0-development",
+  "version": "1.0.0-development",
   "description": "The Linux x64 binary for tnl.",
   "license": "BSD-3-Clause",
   "repository": {

@@ -63,7 +63,7 @@ func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 		SchemaVersion int                `json:"schema_version"`
 		Inspections   []inspectionRecord `json:"inspections"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &list); err != nil || list.SchemaVersion != 2 || len(list.Inspections) != 0 {
+	if err := json.Unmarshal(stdout.Bytes(), &list); err != nil || list.SchemaVersion != 1 || len(list.Inspections) != 0 {
 		t.Fatalf("list = %+v, %v", list, err)
 	}
 	stdout.Reset()
@@ -125,7 +125,7 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 		SchemaVersion int                `json:"schema_version"`
 		Inspections   []inspectionRecord `json:"inspections"`
 	}
-	if err := json.Unmarshal(listOutput.Bytes(), &list); err != nil || len(list.Inspections) != 3 ||
+	if err := json.Unmarshal(listOutput.Bytes(), &list); err != nil || list.SchemaVersion != 1 || len(list.Inspections) != 3 ||
 		list.Inspections[0].Protocol != "http" || list.Inspections[0].HTTP == nil ||
 		list.Inspections[0].Result != "error" || list.Inspections[0].HTTP.Status != 404 ||
 		list.Inspections[1].Result != "error" || list.Inspections[1].HTTP.Status != 500 ||
@@ -156,9 +156,10 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var show struct {
-		Inspection inspectionRecord `json:"inspection"`
+		SchemaVersion int              `json:"schema_version"`
+		Inspection    inspectionRecord `json:"inspection"`
 	}
-	if err := json.Unmarshal(showOutput.Bytes(), &show); err != nil || show.Inspection.Number != 1 ||
+	if err := json.Unmarshal(showOutput.Bytes(), &show); err != nil || show.SchemaVersion != 1 || show.Inspection.Number != 1 ||
 		show.Inspection.HTTP == nil || show.Inspection.HTTP.Path != "/health" || show.Inspection.Result != "ok" {
 		t.Fatalf("typed HTTP inspection = %s, %v", showOutput.String(), err)
 	}
