@@ -263,6 +263,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 		}
 	}
 	sourceIP := netip.MustParseAddr("192.0.2.10")
+	claimsStarted := time.Now()
 	leg0 := testConnectorLegProof(t, first, 0, now, private)
 	claimMessage, err := leg0.RelayClaimMessage(sourceIP)
 	if err != nil {
@@ -354,14 +355,17 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 	if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1`, first.ID).Scan(&claimCount); err != nil || claimCount != 2 {
 		t.Fatal("claim retries exceeded one stored nonce per relay leg", claimCount, err)
 	}
-	if delivered, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, first.ID, first.DeliveryGeneration, run.Token, now); err != nil || delivered.Key != first.Key || delivered.DeliveryID != first.DeliveryID || delivered.Subject != first.Subject || delivered.SourceIP != sourceIP || delivered.Relays != first.Relays || delivered.ExpiresAt.After(first.ExpiresAt) {
+	// claims include database elapsed time in checked_at. delivery must follow
+	// those checks on the fixture clock, rather than race them from the same now.
+	deliveryNow := now.Add(time.Since(claimsStarted))
+	if delivered, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, first.ID, first.DeliveryGeneration, run.Token, deliveryNow); err != nil || delivered.Key != first.Key || delivered.DeliveryID != first.DeliveryID || delivered.Subject != first.Subject || delivered.SourceIP != sourceIP || delivered.Relays != first.Relays || delivered.ExpiresAt.After(first.ExpiresAt) {
 		t.Fatal("current publisher did not receive the exact claimed binding", err)
 	}
 	if _, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, first.ID, first.DeliveryGeneration, "wrong", now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("wrong run token recovered pair key", err)
 	}
 	t.Run("publisher preparation barrier", func(t *testing.T) {
-		assertConnectorPairPreparationBarrier(t, d, first, run, now)
+		assertConnectorPairPreparationBarrier(t, d, first, run, deliveryNow)
 	})
 	again, err := d.PrepareConnectorPeerPair(visitor, request, now)
 	if err != nil || again.ID != first.ID || again.Key != first.Key || again.DeliveryID != first.DeliveryID || again.DeliveryGeneration != first.DeliveryGeneration || !again.ExpiresAt.Equal(first.ExpiresAt) {
