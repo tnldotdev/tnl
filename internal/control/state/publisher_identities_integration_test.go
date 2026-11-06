@@ -81,13 +81,13 @@ func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 		}
 	}
 	files, err := migrationFiles.ReadDir("migrations")
-	if err != nil || int64(len(files)) != schemaVersion || files[0].Name() != "00001_baseline.sql" {
+	if err != nil || len(files) != 1 || files[0].Name() != "00001_baseline.sql" || schemaVersion != 1 {
 		t.Fatalf("baseline = %v, %v", files, err)
 	}
 	var actualVersion int64
 	var actualBaseline string
-	if err := d.pool.QueryRow(t.Context(), `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&actualVersion); err != nil || actualVersion != schemaVersion {
-		t.Fatal("fresh database did not initialize the current schema", actualVersion, err)
+	if err := d.pool.QueryRow(t.Context(), `SELECT MAX(version_id) FILTER (WHERE is_applied) FROM control.goose_db_version`).Scan(&actualVersion); err != nil || actualVersion != 1 {
+		t.Fatal("fresh database did not initialize schema 1", actualVersion, err)
 	}
 	if err := d.pool.QueryRow(t.Context(), `SELECT baseline_id FROM control.schema_identity WHERE id=1`).Scan(&actualBaseline); err != nil || actualBaseline != baselineID {
 		t.Fatal("fresh baseline identity changed", actualBaseline, err)

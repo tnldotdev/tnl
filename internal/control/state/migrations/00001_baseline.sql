@@ -1848,6 +1848,7 @@ CREATE TABLE control.workload_sessions (
     storage_key_id text NOT NULL,
     created_at timestamptz NOT NULL,
     renewed_at timestamptz NOT NULL,
+    renewal_sequence bigint NOT NULL DEFAULT 0 CHECK (renewal_sequence >= 0),
     lease_expires_at timestamptz NOT NULL,
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz,
