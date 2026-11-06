@@ -3,6 +3,7 @@ package muxsession
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -79,6 +80,9 @@ func TestSessionContract(t *testing.T) {
 					}
 				}
 				state := remote.TLSConnectionState()
+				if state.Version != tls.VersionTLS13 || state.CurveID != tls.X25519MLKEM768 {
+					t.Fatalf("native transport lost hybrid post-quantum key agreement: %s", state.CurveID)
+				}
 				if !state.HandshakeComplete || state.NegotiatedProtocol != ALPN || state.ServerName != "relay.test" {
 					t.Fatalf("accepted peer lost TLS identity: %+v", state)
 				}

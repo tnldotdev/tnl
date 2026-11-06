@@ -272,6 +272,9 @@ func mergeTunnel(base, override *config.Tunnel) *config.Tunnel {
 	if override.Ephemeral != nil {
 		result.Ephemeral = override.Ephemeral
 	}
+	if override.RequirePostQuantum != nil {
+		result.RequirePostQuantum = override.RequirePostQuantum
+	}
 	result.Limits = config.MergeLimits(result.Limits, override.Limits)
 	return result
 }

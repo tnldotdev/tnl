@@ -41,7 +41,7 @@ func savedPublicAddress(publicURL controlv1.PublicURL) (string, error) {
 }
 
 func validateTCPPublishOptions[P ~string](flags publishCommand, protocol P) error {
-	if flags.service && (flags.Anonymous || len(flags.IP) != 0 || flags.PublicURL != "" || flags.Ephemeral || flags.Open) {
+	if flags.service && (flags.RequirePostQuantum != nil || flags.Anonymous || len(flags.IP) != 0 || flags.PublicURL != "" || flags.Ephemeral || flags.Open) {
 		return publisherCLIError("this configured service is private; add an explicit publicURL block to enable public HTTPS")
 	}
 	if flags.TargetTLS != nil && !*flags.TargetTLS && (flags.TargetTLSName != "" || flags.TargetCAFile != "" || strings.HasPrefix(flags.Target, "https://")) {
@@ -63,7 +63,7 @@ func validateTCPPublishOptions[P ~string](flags publishCommand, protocol P) erro
 	if flags.Ephemeral {
 		return failure.Wrap("validate TCP publication", failure.InvalidTunnelFlags, errors.New("services are saved; --ephemeral requires HTTP"))
 	}
-	if flags.Anonymous || len(flags.IP) != 0 || flags.PublicURL != "" {
+	if flags.RequirePostQuantum != nil || flags.Anonymous || len(flags.IP) != 0 || flags.PublicURL != "" {
 		return failure.Wrap("validate TCP publish options", failure.InvalidTunnelFlags,
 			errors.New("public URL and visitor access flags require HTTP"))
 	}

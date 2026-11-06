@@ -89,6 +89,10 @@
               "type": "boolean",
               "description": "Remove the public URL when this tunnel stops."
             },
+            "require_post_quantum": {
+              "type": "boolean",
+              "description": "Require hybrid post-quantum key agreement for public HTTPS visitors."
+            },
             "limits": {
               "properties": {
                 "http": {
@@ -383,6 +387,10 @@
                       "ephemeral": {
                         "type": "boolean",
                         "description": "Remove the public URL when this tunnel stops."
+                      },
+                      "require_post_quantum": {
+                        "type": "boolean",
+                        "description": "Require hybrid post-quantum key agreement for public HTTPS visitors."
                       },
                       "limits": {
                         "properties": {

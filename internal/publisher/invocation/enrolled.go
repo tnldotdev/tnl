@@ -166,7 +166,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 		if err != nil {
 			return err
 		}
-		b := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: invocation, Target: target}
+		b := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: invocation, Target: target, RequirePostQuantum: flags.RequirePostQuantum}
 		policy, err := resolveVisitorAccess(ctx, control, flags.Access, flags.Anonymous, flags.IP)
 		if err != nil {
 			return err
@@ -271,6 +271,9 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 		cfg.BrowserLoginAvailable = discovery.BrowserLoginAvailable != nil && *discovery.BrowserLoginAvailable
 	}
 	cfg.PublisherIdentityID = native.PublisherIdentityID()
+	if flags.RequirePostQuantum != nil && *flags.RequirePostQuantum != publicURL.RequirePostQuantum {
+		return failure.Wrap("select public HTTPS policy", failure.PublisherGrantMismatch, errors.New("public HTTPS requirement differs from the saved public URL; update it with a manager sign-in"))
+	}
 	if publicURL.Ephemeral {
 		cfg.Ephemeral = true
 		cfg.AssignedPublicURL = &publicURL

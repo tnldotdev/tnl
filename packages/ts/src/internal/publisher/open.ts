@@ -37,6 +37,8 @@ interface OpenSettings {
   readonly stateDir?: string;
   /** hostname the publisher uses to reach this listener. */
   readonly targetHostname?: string;
+  /** require hybrid post-quantum key agreement from HTTPS visitors. */
+  readonly requirePostQuantum?: boolean;
   readonly access?:
     | "restricted"
     | "anonymous"
@@ -135,6 +137,9 @@ async function openServerUntraced(
             : { ip: [...options.access.ip] }),
         }),
     ...(options.limits === undefined ? {} : { limits: options.limits }),
+    ...(options.requirePostQuantum === undefined
+      ? {}
+      : { require_post_quantum: options.requirePostQuantum }),
   };
   const selection = {
     invocationID,
@@ -377,6 +382,7 @@ const openOptionsSchema = z
     directory: pathTextSchema.optional(),
     stateDir: pathTextSchema.optional(),
     targetHostname: z.string().min(1).optional(),
+    requirePostQuantum: z.boolean().optional(),
     access: z
       .union([
         accessModeSchema,

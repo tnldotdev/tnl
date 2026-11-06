@@ -11,6 +11,7 @@ import (
 	"time"
 
 	yamux "github.com/libp2p/go-yamux/v5"
+	"github.com/tnldotdev/tnl/internal/security/tlspolicy"
 )
 
 const defaultMaxIncomingStreams = 4096
@@ -106,8 +107,7 @@ func transportTLSConfigForALPN(config *tls.Config, serverName string, server boo
 	if config == nil {
 		return nil, errors.New("muxsession: TLS configuration is required")
 	}
-	result := config.Clone()
-	result.MinVersion = tls.VersionTLS13
+	result := tlspolicy.RequirePostQuantum(config)
 	result.NextProtos = []string{alpn}
 	if !server {
 		result.ServerName = serverName

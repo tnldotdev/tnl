@@ -79,7 +79,7 @@ func TestProjectDeclarationUsesPublicURLPresenceAndPreservesPolicyLimitsAndGrant
 		PublisherGroups: map[string]config.PublisherGroup{group: {}},
 		Tunnel:          &config.Tunnel{Access: &config.Access{Mode: "anonymous", IP: []string{"198.51.100.1", "192.0.2.1"}}, Limits: &config.Limits{HTTP: &config.WorkLimits{Total: &total, Rate: &config.Rate{Count: &count, Per: &period}}, Traffic: &config.TrafficLimits{Connections: &connections, UploadBytes: &upload}}},
 		Services: config.Services{
-			"web":      {Tunnel: &config.Tunnel{}, Access: &config.ServiceAccess{Team: true}, HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}, Paths: map[string]config.PathMount{"/api": {Service: "internal", StripPrefix: true}}}},
+			"web":      {Tunnel: &config.Tunnel{RequirePostQuantum: new(true)}, Access: &config.ServiceAccess{Team: true}, HTTP: &config.HTTPService{Readiness: &config.Readiness{Path: "/health"}, Paths: map[string]config.PathMount{"/api": {Service: "internal", StripPrefix: true}}}},
 			"internal": {Access: &config.ServiceAccess{Team: true}},
 			"remote":   {PublisherGroup: &group, Target: &config.ServiceTarget{Type: "address", Address: &remote}, Access: &config.ServiceAccess{Team: true}},
 		},
@@ -93,6 +93,9 @@ func TestProjectDeclarationUsesPublicURLPresenceAndPreservesPolicyLimitsAndGrant
 		t.Fatalf("private HTTP declaration: %+v", internal)
 	}
 	web := declaration.Services["web"]
+	if web.PublicUrl.RequirePostQuantum == nil || !*web.PublicUrl.RequirePostQuantum {
+		t.Fatal("declaration lost the public HTTPS requirement")
+	}
 	if web.PublicUrl == nil || web.PublicUrl.Hostname != nil || web.PublicUrl.DomainId != nil || web.Access == nil || !bool(web.Access.Team) {
 		t.Fatalf("local public declaration was allocated or lost team access: %+v", web)
 	}

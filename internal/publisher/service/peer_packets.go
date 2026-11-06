@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	quic "github.com/quic-go/quic-go"
+	"github.com/tnldotdev/tnl/internal/security/tlspolicy"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -88,12 +89,12 @@ func (p *PeerSession) serveRelayPackets(ctx context.Context) error {
 	defer packets.Close()
 	transport := &quic.Transport{Conn: packets}
 	defer transport.Close()
-	listener, err := transport.Listen(&tls.Config{MinVersion: tls.VersionTLS13, NextProtos: []string{muxsession.ALPN}, GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	listener, err := transport.Listen(tlspolicy.RequirePostQuantum(&tls.Config{MinVersion: tls.VersionTLS13, NextProtos: []string{muxsession.ALPN}, GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		if hello.ServerName != p.bound.prepared.managedHostname {
 			return nil, ErrPrivateStream
 		}
 		return p.bound.prepared.currentCertificate()
-	}}, tunnel.ConnectorQUICConfig())
+	}}), tunnel.ConnectorQUICConfig())
 	if err != nil {
 		return err
 	}

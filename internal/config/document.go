@@ -223,13 +223,14 @@ func (m *PathMount) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type Tunnel struct {
-	Domain    *string `json:"domain,omitempty" yaml:"domain,omitempty"`
-	Name      *string `json:"-" yaml:"-"`
-	PublicURL *string `json:"hostname,omitempty" yaml:"hostname,omitempty" jsonschema_description:"Exact authorized public hostname or HTTPS origin. Mutually exclusive with the service's name override."`
-	Open      *bool   `json:"-" yaml:"-"`
-	Access    *Access `json:"access,omitempty" yaml:"access,omitempty"`
-	Ephemeral *bool   `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
-	Limits    *Limits `json:"limits,omitempty" yaml:"limits,omitempty"`
+	RequirePostQuantum *bool   `json:"require_post_quantum,omitempty" yaml:"require_post_quantum,omitempty" jsonschema_description:"Require hybrid post-quantum key agreement for public HTTPS visitors."`
+	Domain             *string `json:"domain,omitempty" yaml:"domain,omitempty"`
+	Name               *string `json:"-" yaml:"-"`
+	PublicURL          *string `json:"hostname,omitempty" yaml:"hostname,omitempty" jsonschema_description:"Exact authorized public hostname or HTTPS origin. Mutually exclusive with the service's name override."`
+	Open               *bool   `json:"-" yaml:"-"`
+	Access             *Access `json:"access,omitempty" yaml:"access,omitempty"`
+	Ephemeral          *bool   `json:"ephemeral,omitempty" yaml:"ephemeral,omitempty"`
+	Limits             *Limits `json:"limits,omitempty" yaml:"limits,omitempty"`
 }
 
 // Limits apply to application requests after visitor access.

@@ -311,6 +311,7 @@ type Invocation struct {
 	Pid                     int                                      `json:"pid"`
 	PublisherCredentialFile string                                   `json:"publisher_credential_file,omitempty"`
 	PublisherIdentityId     string                                   `json:"publisher_identity_id,omitempty"`
+	RequirePostQuantum      *bool                                    `json:"require_post_quantum,omitempty"`
 	ServerUrl               *string                                  `json:"server_url,omitempty"`
 	Target                  string                                   `json:"target"`
 	Version                 InvocationVersion                        `json:"version"`

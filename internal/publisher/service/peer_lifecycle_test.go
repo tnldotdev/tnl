@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net"
@@ -280,6 +281,9 @@ func TestConnectorPeerServingOwnsFixedCarriersAndRetainedInnerSession(t *testing
 	connection, err := transport.Dial(ctx, packets.RemoteAddr(), trust, tunnel.ConnectorQUICConfig())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if state := connection.ConnectionState().TLS; state.Version != tls.VersionTLS13 || state.CurveID != tls.X25519MLKEM768 {
+		t.Fatalf("inner publisher connection negotiated TLS %x with %s", state.Version, state.CurveID)
 	}
 	inner, err := muxsession.AdoptQUIC(connection)
 	if err != nil {

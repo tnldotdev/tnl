@@ -60,6 +60,7 @@ func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg p
 		}
 		protocol := cfg.ServiceProtocol
 		body := controlv1.CreatePublicURLRequest{TeamId: services.teamID, DomainId: services.domainID, CanonicalHostname: cfg.Hostname, PublicUrlScope: services.publicURLScope, Purpose: cfg.Purpose, ServiceProtocol: &protocol, AllowedIpPrefixes: &cfg.AllowedIPPrefixes}
+		body.RequirePostQuantum = cfg.RequirePostQuantum
 		if cfg.AccessMode != "" {
 			mode := cfg.AccessMode
 			body.AccessMode = &mode
@@ -85,16 +86,19 @@ func reserveConfiguredURL(ctx context.Context, services publisherServices, cfg p
 		}
 		prefixes = cfg.AllowedIPPrefixes
 	}
-	if publicURL.Target != "" || cfg.AccessMode == "" && cfg.AllowedIPPrefixes != nil && !slices.Equal(prefixes, cfg.AllowedIPPrefixes) {
+	if publicURL.Target != "" || cfg.RequirePostQuantum != nil && *cfg.RequirePostQuantum != publicURL.RequirePostQuantum || cfg.AccessMode == "" && cfg.AllowedIPPrefixes != nil && !slices.Equal(prefixes, cfg.AllowedIPPrefixes) {
 		if cfg.AccessMode == "" && cfg.AllowedIPPrefixes != nil {
 			prefixes = cfg.AllowedIPPrefixes
 		}
-		return services.routes.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{Target: "", AllowedIpPrefixes: slices.Clone(prefixes)})
+		return services.routes.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{Target: "", AllowedIpPrefixes: slices.Clone(prefixes), RequirePostQuantum: cfg.RequirePostQuantum})
 	}
 	return publicURL, nil
 }
 
 func configuredURLAccessMatches(publicURL controlv1.PublicURL, prefixes []string, cfg publisher.Config) bool {
+	if cfg.RequirePostQuantum != nil && *cfg.RequirePostQuantum != publicURL.RequirePostQuantum {
+		return false
+	}
 	if cfg.AccessMode != "" {
 		return publicURL.AccessMode == cfg.AccessMode && slices.Equal(prefixes, cfg.AllowedIPPrefixes)
 	}

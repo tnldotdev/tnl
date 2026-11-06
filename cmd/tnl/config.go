@@ -44,7 +44,7 @@ func projectRoot(ctx context.Context, flags cli) (string, error) {
 }
 
 func (c projectConfiguration) applyPublish(flags *publishCommand) error {
-	flags.namedOverrides = flags.Anonymous || len(flags.IP) != 0 || flags.PublicURL != "" || flags.Name != "" || flags.Domain != "" || flags.Ephemeral ||
+	flags.namedOverrides = flags.RequirePostQuantum != nil || flags.Anonymous || len(flags.IP) != 0 || flags.PublicURL != "" || flags.Name != "" || flags.Domain != "" || flags.Ephemeral ||
 		flags.TargetTLS != nil || flags.TargetTLSName != "" || flags.TargetCAFile != "" || flags.Requests != nil || flags.Concurrency != nil || flags.RateRequests != nil || flags.RatePer != "" || flags.RateBurst != nil || flags.inspectionModeFromCLI
 	service := ""
 	enrolled := flags.Enrolled || flags.EnrollmentKey != "" || flags.PublisherIdentityID != "" || flags.PublisherCredentialFile != ""
@@ -264,6 +264,9 @@ func applyTunnelConfiguration(flags *tunnelFlags, tunnel *config.Tunnel) {
 		return
 	}
 	applyTunnelLimits(flags, tunnel.Limits)
+	if flags.RequirePostQuantum == nil {
+		flags.RequirePostQuantum = tunnel.RequirePostQuantum
+	}
 	if flags.Domain == "" && tunnel.Domain != nil {
 		flags.Domain = *tunnel.Domain
 	}

@@ -22,6 +22,7 @@ import (
 )
 
 type Options struct {
+	RequirePostQuantum  bool
 	ControlURL          string
 	HTTPClient          *http.Client
 	State               *clientstate.Store
@@ -68,7 +69,7 @@ func Run(ctx context.Context, options Options) (result error) {
 	if native.ControlURL() != options.ControlURL {
 		return publisheridentity.ErrScope
 	}
-	body := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: options.InvocationID, Target: target}
+	body := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: options.InvocationID, Target: target, RequirePostQuantum: &options.RequirePostQuantum}
 	if options.AccessMode != "" {
 		mode := options.AccessMode
 		body.AccessMode = &mode
@@ -123,9 +124,10 @@ func Run(ctx context.Context, options Options) (result error) {
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
 	publication := publisher.Config{
-		Control:        native,
-		VisitorControl: client,
-		ControlURL:     options.ControlURL, State: options.State,
+		RequirePostQuantum: &options.RequirePostQuantum,
+		Control:            native,
+		VisitorControl:     client,
+		ControlURL:         options.ControlURL, State: options.State,
 		TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, MembershipID: membershipID,
 		PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLScope: publicURL.PublicUrlScope,
 		Purpose: controlv1.App, Hostname: publicURL.CanonicalHostname, Target: target, ServiceProtocol: controlv1.Http,

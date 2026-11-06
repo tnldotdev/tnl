@@ -1652,10 +1652,11 @@ type AdminServerStatusRole string
 
 // AllocateEphemeralPublicURLRequest defines model for AllocateEphemeralPublicURLRequest.
 type AllocateEphemeralPublicURLRequest struct {
-	AccessMode   *VisitorAccessMode          `json:"access_mode,omitempty"`
-	InvocationId ResourceID                  `json:"invocation_id"`
-	Ip           *[]string                   `json:"ip,omitempty"`
-	Limits       *PublisherApplicationLimits `json:"limits,omitempty"`
+	AccessMode         *VisitorAccessMode          `json:"access_mode,omitempty"`
+	InvocationId       ResourceID                  `json:"invocation_id"`
+	Ip                 *[]string                   `json:"ip,omitempty"`
+	Limits             *PublisherApplicationLimits `json:"limits,omitempty"`
+	RequirePostQuantum *bool                       `json:"require_post_quantum,omitempty"`
 
 	// Target Local service address, such as http://app.internal:3000.
 	Target string `json:"target"`
@@ -2057,16 +2058,17 @@ type CreatePreviewRequest struct {
 
 // CreatePublicURLRequest defines model for CreatePublicURLRequest.
 type CreatePublicURLRequest struct {
-	AccessMode        *VisitorAccessMode        `json:"access_mode,omitempty"`
-	AllowedIpPrefixes *[]string                 `json:"allowed_ip_prefixes,omitempty"`
-	CanonicalHostname CanonicalHostname         `json:"canonical_hostname"`
-	DomainId          DomainID                  `json:"domain_id"`
-	Ephemeral         *bool                     `json:"ephemeral,omitempty"`
-	MembershipId      *MembershipID             `json:"membership_id,omitempty"`
-	PublicUrlScope    PublicURLScope            `json:"public_url_scope"`
-	PublisherPool     *bool                     `json:"publisher_pool,omitempty"`
-	Purpose           PublicURLPurpose          `json:"purpose"`
-	ServiceProtocol   *PublicURLServiceProtocol `json:"service_protocol,omitempty"`
+	AccessMode         *VisitorAccessMode        `json:"access_mode,omitempty"`
+	AllowedIpPrefixes  *[]string                 `json:"allowed_ip_prefixes,omitempty"`
+	CanonicalHostname  CanonicalHostname         `json:"canonical_hostname"`
+	DomainId           DomainID                  `json:"domain_id"`
+	Ephemeral          *bool                     `json:"ephemeral,omitempty"`
+	MembershipId       *MembershipID             `json:"membership_id,omitempty"`
+	PublicUrlScope     PublicURLScope            `json:"public_url_scope"`
+	PublisherPool      *bool                     `json:"publisher_pool,omitempty"`
+	Purpose            PublicURLPurpose          `json:"purpose"`
+	RequirePostQuantum *bool                     `json:"require_post_quantum,omitempty"`
+	ServiceProtocol    *PublicURLServiceProtocol `json:"service_protocol,omitempty"`
 
 	// Target Must be empty for OAuth and webhook URLs, which are non-ephemeral and served by publisher handlers. May be empty for a saved app or alias public URL whose publisher supplies its HTTP target locally. Demo and ephemeral app or alias URLs require a target.
 	Target string `json:"target"`
@@ -2630,9 +2632,10 @@ type ProjectServicePublicURL struct {
 	DomainId *string              `json:"domain_id,omitempty"`
 
 	// Ephemeral Local declarations may request an ephemeral worktree URL.
-	Ephemeral *bool                `json:"ephemeral,omitempty"`
-	Hostname  *string              `json:"hostname,omitempty"`
-	Limits    *ProjectPublicLimits `json:"limits,omitempty"`
+	Ephemeral          *bool                `json:"ephemeral,omitempty"`
+	Hostname           *string              `json:"hostname,omitempty"`
+	Limits             *ProjectPublicLimits `json:"limits,omitempty"`
+	RequirePostQuantum *bool                `json:"require_post_quantum,omitempty"`
 }
 
 // ProjectTargetDiscovery Exact provider selector resolved by the assigned publisher with its own AWS credentials. Control does not discover targets or credentials. EKS requires kubernetes; RDS requires postgres or mysql, verified against provider metadata.
@@ -2691,24 +2694,27 @@ type ProjectWorkloadGitHub struct {
 
 // PublicURL defines model for PublicURL.
 type PublicURL struct {
-	AccessMode           VisitorAccessMode        `json:"access_mode"`
-	AllowedIpPrefixes    *[]string                `json:"allowed_ip_prefixes,omitempty"`
-	CanonicalHostname    CanonicalHostname        `json:"canonical_hostname"`
-	CreatedAt            time.Time                `json:"created_at"`
-	DomainId             DomainID                 `json:"domain_id"`
-	Ephemeral            bool                     `json:"ephemeral"`
-	ExpiresAt            *time.Time               `json:"expires_at,omitempty"`
-	Id                   PublicURLID              `json:"id"`
-	LifecycleState       PublicURLLifecycleState  `json:"lifecycle_state"`
-	MembershipId         *MembershipID            `json:"membership_id,omitempty"`
-	MutationRevision     int64                    `json:"mutation_revision"`
-	NextPublishRunNumber int64                    `json:"next_publish_run_number"`
-	OpenPublishRunId     *PublishRunID            `json:"open_publish_run_id,omitempty"`
-	PolicyRevision       int64                    `json:"policy_revision"`
-	PublicUrlScope       PublicURLScope           `json:"public_url_scope"`
-	PublisherPool        *bool                    `json:"publisher_pool,omitempty"`
-	Purpose              PublicURLPurpose         `json:"purpose"`
-	ServiceProtocol      PublicURLServiceProtocol `json:"service_protocol"`
+	AccessMode           VisitorAccessMode       `json:"access_mode"`
+	AllowedIpPrefixes    *[]string               `json:"allowed_ip_prefixes,omitempty"`
+	CanonicalHostname    CanonicalHostname       `json:"canonical_hostname"`
+	CreatedAt            time.Time               `json:"created_at"`
+	DomainId             DomainID                `json:"domain_id"`
+	Ephemeral            bool                    `json:"ephemeral"`
+	ExpiresAt            *time.Time              `json:"expires_at,omitempty"`
+	Id                   PublicURLID             `json:"id"`
+	LifecycleState       PublicURLLifecycleState `json:"lifecycle_state"`
+	MembershipId         *MembershipID           `json:"membership_id,omitempty"`
+	MutationRevision     int64                   `json:"mutation_revision"`
+	NextPublishRunNumber int64                   `json:"next_publish_run_number"`
+	OpenPublishRunId     *PublishRunID           `json:"open_publish_run_id,omitempty"`
+	PolicyRevision       int64                   `json:"policy_revision"`
+	PublicUrlScope       PublicURLScope          `json:"public_url_scope"`
+	PublisherPool        *bool                   `json:"publisher_pool,omitempty"`
+	Purpose              PublicURLPurpose        `json:"purpose"`
+
+	// RequirePostQuantum Require TLS 1.3 hybrid post-quantum key agreement from public HTTPS visitors.
+	RequirePostQuantum bool                     `json:"require_post_quantum"`
+	ServiceProtocol    PublicURLServiceProtocol `json:"service_protocol"`
 
 	// Target Empty for handler-backed OAuth and webhook URLs, and for saved app or alias public URLs whose publisher supplies its HTTP target locally.
 	Target    string    `json:"target"`
@@ -3620,6 +3626,9 @@ type TrafficSelection struct {
 // UpdatePublicURLRequest defines model for UpdatePublicURLRequest.
 type UpdatePublicURLRequest struct {
 	AllowedIpPrefixes []string `json:"allowed_ip_prefixes"`
+
+	// RequirePostQuantum Omit to preserve the saved public URL's requirement.
+	RequirePostQuantum *bool `json:"require_post_quantum,omitempty"`
 
 	// Target Must remain empty for OAuth and webhook URLs. May be empty when keeping a saved app or alias public URL targetless.
 	Target string `json:"target"`

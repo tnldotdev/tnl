@@ -169,6 +169,7 @@ func TestInvocationWorkerPublicationAndLimits(t *testing.T) {
 		t.Fatalf("repeat allocated again: registration=%+v allocations=%d err=%v", repeated, f.Allocations.Load(), err)
 	}
 	body["limits"] = map[string]any{"requests": 7, "concurrency": 2, "rate": map[string]any{"requests": 3, "per": "4s"}}
+	body["require_post_quantum"] = true
 	var conflict *publisherprotocol.ResponseError
 	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, nil); !errors.As(err, &conflict) || conflict.Code != "runtime.owner_conflict" {
 		t.Fatalf("changed invocation did not conflict: %v", err)
@@ -187,6 +188,9 @@ func TestInvocationWorkerPublicationAndLimits(t *testing.T) {
 	}
 	select {
 	case cfg = <-captured:
+		if cfg.RequirePostQuantum == nil || !*cfg.RequirePostQuantum || !cfg.AssignedPublicURL.RequirePostQuantum {
+			t.Fatal("native invocation lost the public HTTPS requirement")
+		}
 		if cfg.Limits != (publisher.ApplicationLimits{Requests: 7, Concurrency: 2, RateRequests: 3, RatePer: 4 * time.Second}) {
 			t.Fatalf("worker limits=%+v", cfg.Limits)
 		}
@@ -194,6 +198,9 @@ func TestInvocationWorkerPublicationAndLimits(t *testing.T) {
 		t.Fatal("limited invocation did not reach publisher")
 	}
 	allocation := <-allocations
+	if allocation.RequirePostQuantum == nil || !*allocation.RequirePostQuantum {
+		t.Fatal("native allocation lost the public HTTPS requirement")
+	}
 	if allocation.Limits == nil || allocation.Limits.Requests == nil || *allocation.Limits.Requests != 7 || allocation.Limits.Concurrency == nil || *allocation.Limits.Concurrency != 2 || allocation.Limits.Rate == nil || allocation.Limits.Rate.Requests != 3 || allocation.Limits.Rate.Per != "4s" {
 		t.Fatalf("allocation lost supported limits: %+v", allocation.Limits)
 	}

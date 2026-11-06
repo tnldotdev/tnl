@@ -196,6 +196,7 @@ schemas:
     type: object
     additionalProperties: false
     properties:
+      require_post_quantum: { type: boolean }
       domain_id: { type: string }
       hostname: { type: string, maxLength: 253 }
       access: { $ref: "../openapi.yaml#/components/schemas/ProjectPublicAccess" }

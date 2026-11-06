@@ -70,6 +70,7 @@ func TestUpdateRouteAuthorizesExactRouteAndCanonicalMutation(t *testing.T) {
 	}}
 	h := &handler{store: store, authorizer: authorizer}
 	request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{
+		"require_post_quantum":true,
 		"target":"http://127.0.0.1:4000",
 		"allowed_ip_prefixes":["2001:db8::1/64","192.0.2.9/24"]
 	}`))
@@ -80,6 +81,9 @@ func TestUpdateRouteAuthorizesExactRouteAndCanonicalMutation(t *testing.T) {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
 	wantPrefixes := []string{"192.0.2.0/24", "2001:db8::/64"}
+	if store.update.RequirePostQuantum == nil || !*store.update.RequirePostQuantum {
+		t.Fatal("public HTTPS requirement not forwarded to state")
+	}
 	if len(authorizer.requests) != 1 || !slices.Equal(authorizer.readTokens, []string{"access-token"}) || !slices.Equal(store.authorizationPublicURLIDs, []string{"public_url_1"}) {
 		t.Fatalf("authorization calls = %#v; route lookups = %v", authorizer, store.authorizationPublicURLIDs)
 	}
@@ -542,6 +546,25 @@ func TestCreateSavedPublicURLWithoutATarget(t *testing.T) {
 	}
 	if len(store.requests) != 4 || store.requests[0].Target != "" || store.requests[1].Purpose != controlstate.PublicURLPurposeAlias || len(authorizer.requests) != 4 {
 		t.Fatalf("targetless creation = %#v, authorization = %#v", store.requests, authorizer.requests)
+	}
+}
+
+func TestCreatePublicURLPostQuantumPolicyBindsIdempotency(t *testing.T) {
+	store := &publicURLCreationStore{result: controlstate.PublicURL{ID: "url_created", CanonicalHostname: "app.example", Purpose: controlstate.PublicURLPurposeApp, RequirePostQuantum: true}}
+	authorizer := &recordingAuthorizer{decision: authorization.Decision{IdentityID: "identity", TeamID: "team", DomainID: "domain", CanonicalHostname: "app.example", PublicURLScope: "shared", PolicyRevision: 1}}
+	h := &handler{store: store, authorizer: authorizer}
+	for _, value := range []string{"true", "false"} {
+		request := httptest.NewRequest(http.MethodPost, "/v1/public-urls", strings.NewReader(`{"team_id":"team","domain_id":"domain","canonical_hostname":"app.example","public_url_scope":"shared","purpose":"app","target":"","require_post_quantum":`+value+`}`))
+		request.Header.Set("Authorization", "Bearer token")
+		request.Header.Set("Idempotency-Key", "same-invocation")
+		response := httptest.NewRecorder()
+		h.CreatePublicURL(response, request, controlv1.CreatePublicURLParams{})
+		if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"require_post_quantum":true`) {
+			t.Fatalf("create policy: %d %s", response.Code, response.Body.String())
+		}
+	}
+	if len(store.requests) != 2 || !store.requests[0].RequirePostQuantum || store.requests[1].RequirePostQuantum || store.requests[0].RequestDigest == store.requests[1].RequestDigest {
+		t.Fatal("post-quantum policy was not bound to the idempotent request")
 	}
 }
 

@@ -312,6 +312,22 @@
       "dimension_policy": "resource"
     },
     {
+      "key": "tls.key_exchange",
+      "values": [
+        "X25519MLKEM768",
+        "SecP256r1MLKEM768",
+        "SecP384r1MLKEM1024",
+        "MLKEM1024",
+        "X25519",
+        "CurveP256",
+        "CurveP384",
+        "CurveP521",
+        "other"
+      ],
+      "semantics": "negotiated TLS key exchange",
+      "dimension_policy": "bounded"
+    },
+    {
       "key": "tls.protocol.version",
       "values": [
         "1.2",
@@ -2348,10 +2364,11 @@
     },
     {
       "name": "tnl_publisher_tls_handshakes_total",
-      "semantics": "Completed TLS handshakes; negotiated version and resumption only on success.",
+      "semantics": "Completed TLS handshakes; negotiated version, key exchange and resumption only on success.",
       "kind": "counter",
       "dimensions": [
         "otel.metric.overflow",
+        "tls.key_exchange",
         "tls.protocol.version",
         "tls.resumed",
         "tnl.access_path",

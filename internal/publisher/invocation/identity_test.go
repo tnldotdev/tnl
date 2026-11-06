@@ -22,7 +22,7 @@ func TestReserveConfiguredURLCreatesBeforeEnrollingPublisher(t *testing.T) {
 		Id: "url_0123456789abcdefghijkl", TeamId: "team", DomainId: "domain",
 		CanonicalHostname: "web.member.example", PublicUrlScope: controlv1.Shared,
 		Purpose: controlv1.App, ServiceProtocol: controlv1.Http,
-		LifecycleState: controlv1.Enabled, AccessMode: controlv1.Anonymous, AllowedIpPrefixes: &prefixes,
+		LifecycleState: controlv1.Enabled, AccessMode: controlv1.Anonymous, AllowedIpPrefixes: &prefixes, RequirePostQuantum: true,
 	}
 	created := false
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +41,9 @@ func TestReserveConfiguredURLCreatesBeforeEnrollingPublisher(t *testing.T) {
 			var body controlv1.CreatePublicURLRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.CanonicalHostname != publicURL.CanonicalHostname || body.Purpose != controlv1.App || body.Target != "" || body.AccessMode == nil || *body.AccessMode != controlv1.Anonymous {
 				t.Errorf("created URL with incorrect public policy: %+v, %v", body, err)
+			}
+			if body.RequirePostQuantum == nil || !*body.RequirePostQuantum {
+				t.Error("configured public HTTPS requirement not sent to control")
 			}
 			created = true
 			w.WriteHeader(http.StatusCreated)
@@ -65,7 +68,7 @@ func TestReserveConfiguredURLCreatesBeforeEnrollingPublisher(t *testing.T) {
 		t.Fatal(err)
 	}
 	services := publisherServices{state: state, routes: control, teamID: publicURL.TeamId, domainID: publicURL.DomainId, publicURLScope: controlv1.Shared}
-	cfg := publisher.Config{Hostname: publicURL.CanonicalHostname, Purpose: publicURL.Purpose, ServiceProtocol: publicURL.ServiceProtocol, AccessMode: controlv1.Anonymous, AllowedIPPrefixes: prefixes}
+	cfg := publisher.Config{Hostname: publicURL.CanonicalHostname, Purpose: publicURL.Purpose, ServiceProtocol: publicURL.ServiceProtocol, AccessMode: controlv1.Anonymous, AllowedIPPrefixes: prefixes, RequirePostQuantum: new(true)}
 	for range 2 {
 		selected, err := reserveConfiguredURL(t.Context(), services, cfg)
 		if err != nil || selected.Id != publicURL.Id || !created {

@@ -14,8 +14,9 @@ func publicURLResponse(publicURL controlstate.PublicURL) controlv1.PublicURL {
 		protocol = controlv1.Http
 	}
 	result := controlv1.PublicURL{
-		PublisherPool: &publicURL.PublisherPool,
-		Id:            publicURL.ID, TeamId: publicURL.TeamID, DomainId: publicURL.DomainID,
+		RequirePostQuantum: publicURL.RequirePostQuantum,
+		PublisherPool:      &publicURL.PublisherPool,
+		Id:                 publicURL.ID, TeamId: publicURL.TeamID, DomainId: publicURL.DomainID,
 		CanonicalHostname: publicURL.CanonicalHostname, Target: publicURL.Target,
 		ServiceProtocol:  protocol,
 		AccessMode:       controlv1.VisitorAccessMode(publicURL.AccessMode),

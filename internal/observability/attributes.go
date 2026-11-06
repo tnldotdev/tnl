@@ -102,6 +102,7 @@ var (
 	HTTPStatus             = metricIntKey{keyName{"http.response.status_code"}}
 	HTTPRoute              = metricStringKey{keyName{"http.route"}}
 	TLSVersion             = metricStringKey{keyName{"tls.protocol.version"}}
+	TLSKeyExchange         = metricStringKey{keyName{"tls.key_exchange"}}
 	TLSResumed             = metricBoolKey{keyName{"tls.resumed"}}
 	ResponseOrigin         = metricStringKey{keyName{"tnl.response_origin"}}
 	VisitorConnectionID    = stringKey{keyName{"tnl.visitor_connection_id"}}

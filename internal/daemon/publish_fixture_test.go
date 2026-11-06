@@ -47,7 +47,7 @@ func publicURLIntegrationConnector(addresses map[string]string, connector muxses
 	})
 }
 
-type integrationConnectorStats struct{ attempts, successful atomic.Int64 }
+type integrationConnectorStats struct{ attempts, successful, postQuantum atomic.Int64 }
 
 func observeIntegrationConnector(connector muxsession.Connector) (muxsession.Connector, *integrationConnectorStats) {
 	stats := new(integrationConnectorStats)
@@ -56,6 +56,9 @@ func observeIntegrationConnector(connector muxsession.Connector) (muxsession.Con
 		session, err := connector.Connect(ctx, endpoint)
 		if err == nil {
 			stats.successful.Add(1)
+			if peer, ok := session.(muxsession.AcceptedPeer); ok && peer.TLSConnectionState().CurveID == tls.X25519MLKEM768 {
+				stats.postQuantum.Add(1)
+			}
 		}
 		return session, err
 	}), stats
@@ -254,7 +257,8 @@ func prepareIntegrationPublisher(ctx context.Context, config publisher.Config) (
 				target = ""
 			}
 			body := controlv1.CreatePublicURLRequest{TeamId: config.TeamID, DomainId: config.DomainID,
-				CanonicalHostname: config.Hostname, PublicUrlScope: config.PublicURLScope,
+				RequirePostQuantum: config.RequirePostQuantum,
+				CanonicalHostname:  config.Hostname, PublicUrlScope: config.PublicURLScope,
 				Purpose: config.Purpose, Target: target, AccessMode: &mode,
 				AllowedIpPrefixes: &config.AllowedIPPrefixes, Ephemeral: &config.Ephemeral}
 			if config.PublicURLScope == controlv1.Member {

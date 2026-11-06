@@ -83,6 +83,7 @@ INSERT INTO control.public_urls (
     purpose,
     service_protocol,
     publisher_pool,
+    require_post_quantum,
     ingress_pool_id,
     policy_revision,
     access_mode,
@@ -115,6 +116,7 @@ INSERT INTO control.public_urls (
     sqlc.arg(purpose),
     sqlc.arg(service_protocol),
     sqlc.arg(publisher_pool),
+    sqlc.arg(require_post_quantum),
     sqlc.arg(ingress_pool_id),
     sqlc.arg(policy_revision),
     sqlc.arg(access_mode),
@@ -137,6 +139,7 @@ RETURNING *;
 -- name: UpdatePublicURL :one
 UPDATE control.public_urls
 SET target = sqlc.arg(target),
+    require_post_quantum = COALESCE(sqlc.narg(require_post_quantum)::boolean, require_post_quantum),
     policy_revision = sqlc.arg(policy_revision),
     ip_policy = sqlc.arg(ip_policy),
     allowed_ip_policy_ciphertext = sqlc.narg(allowed_ip_policy_ciphertext),
@@ -150,6 +153,16 @@ WHERE id = sqlc.arg(public_url_id)
   AND mutation_revision = sqlc.arg(expected_mutation_revision)
   AND mutation_revision < 9223372036854775807
 RETURNING *;
+
+-- name: SetPublicURLPostQuantum :execrows
+UPDATE control.public_urls AS u
+SET require_post_quantum = sqlc.arg(require_post_quantum),
+    mutation_revision = mutation_revision + 1,
+    updated_at = sqlc.arg(now)
+WHERE u.id = sqlc.arg(public_url_id)
+  AND u.mutation_revision < 9223372036854775807
+  AND NOT EXISTS (SELECT 1 FROM control.publish_runs
+      WHERE public_url_id = sqlc.arg(public_url_id) AND closed_at IS NULL);
 
 -- name: RenewEphemeralPublicURLExpiry :one
 UPDATE control.public_urls

@@ -261,6 +261,11 @@ func TestIntegrationPublisherTransportMatrix(t *testing.T) {
 			}
 			handle := fixture.startPublisher(t, target.URL, quicConnector, tcpConnector)
 			ready := fixture.waitReady(t, handle)
+			for _, stats := range []*integrationConnectorStats{quicStats, tcpStats} {
+				if got, want := stats.postQuantum.Load(), stats.successful.Load(); got != want {
+					t.Fatalf("%s negotiated hybrid PQ on %d/%d native connections", transport, got, want)
+				}
+			}
 
 			join, cancelJoin := context.WithTimeout(t.Context(), 15*time.Second)
 			var workers sync.WaitGroup

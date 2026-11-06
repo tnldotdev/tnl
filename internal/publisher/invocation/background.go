@@ -309,6 +309,9 @@ func InstallBackgroundJob(ctx context.Context, registry *supervisor.Registry, fl
 			return err
 		}
 	} // namespace enrollment cannot become an installed saved URL job.
+	if flags.RequirePostQuantum != nil && *flags.RequirePostQuantum != publicURL.RequirePostQuantum {
+		return failure.Wrap("select public HTTPS policy", failure.PublisherGrantMismatch, errors.New("public HTTPS requirement differs from the saved public URL; update it with a manager sign-in"))
+	}
 	if publicURL.Ephemeral || publicURL.Purpose != controlv1.App || publicURL.ServiceProtocol != controlv1.Http {
 		return supervisor.ErrScope
 	}

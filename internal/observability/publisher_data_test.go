@@ -192,10 +192,10 @@ func TestPublisherTLSRecordsNegotiatedFactsAndNoFactsOnFailure(t *testing.T) {
 	m := New("publisher")
 	defer m.Shutdown(context.Background())
 	ctx := WithMetrics(t.Context(), m)
-	state := tls.ConnectionState{Version: tls.VersionTLS13, DidResume: true, ServerName: "secret.example"}
+	state := tls.ConnectionState{Version: tls.VersionTLS13, DidResume: true, CurveID: tls.X25519MLKEM768, ServerName: "secret.example"}
 	PublisherTLS(ctx, "target", state, nil)
 	PublisherTLS(ctx, "visitor", state, context.DeadlineExceeded)
-	if got := dataMetric(t, m, "tnl_publisher_tls_handshakes_total", map[string]string{"tnl_tls_leg": "target", "tls_protocol_version": "1.3", "tls_resumed": "true", "tnl_outcome": "success"}); got != 1 {
+	if got := dataMetric(t, m, "tnl_publisher_tls_handshakes_total", map[string]string{"tnl_tls_leg": "target", "tls_protocol_version": "1.3", "tls_key_exchange": "X25519MLKEM768", "tls_resumed": "true", "tnl_outcome": "success"}); got != 1 {
 		t.Fatal(metricsText(t, m))
 	}
 	if got := dataMetric(t, m, "tnl_publisher_tls_handshakes_total", map[string]string{"tnl_tls_leg": "visitor", "tls_protocol_version": "1.3"}); got != 0 {

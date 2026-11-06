@@ -157,6 +157,7 @@ func NewPublishingFixture(t *testing.T, hooks PublishingHooks) *PublishingFixtur
 		id := fmt.Sprintf("%s%022x", opaqueid.PublicURLPrefix, len(routes)+1)
 		membership := membershipID
 		publicURL := controlv1.PublicURL{Id: id, CanonicalHostname: request.CanonicalHostname, Target: request.Target, TeamId: teamID, DomainId: domainID, MembershipId: &membership, PublicUrlScope: request.PublicUrlScope, Purpose: controlv1.PublicURLPurpose(request.Purpose), LifecycleState: controlv1.Enabled, NextPublishRunNumber: 1, PolicyRevision: 1}
+		publicURL.RequirePostQuantum = request.RequirePostQuantum != nil && *request.RequirePostQuantum
 		routes[id] = publicURL
 		mu.Unlock()
 		writeJSON(w, publicURL)

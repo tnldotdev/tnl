@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -29,6 +30,9 @@ func bindPublicRun(config Config, setup controlv1.PublishRunSetup) (publicRunAut
 	}
 	if err := validateRouteIdentity(setup.PublicUrl, config); err != nil {
 		return publicRunAuthority{}, err
+	}
+	if config.RequirePostQuantum != nil && *config.RequirePostQuantum != setup.PublicUrl.RequirePostQuantum {
+		return publicRunAuthority{}, failure.Wrap("validate public HTTPS policy", failure.ServerResponseInvalid, errors.New("publish run does not match the requested post-quantum requirement"))
 	}
 	if setup.PublishRun.PublicUrlId != setup.PublicUrl.Id || setup.PublishRun.TeamId != setup.PublicUrl.TeamId {
 		return publicRunAuthority{}, errors.New("publisher: server returned a different publish run")

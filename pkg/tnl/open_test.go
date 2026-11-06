@@ -19,7 +19,11 @@ func TestOpenRealPublicationReusesIdentityAndCleansCanceledContext(t *testing.T)
 	if !testutil.IsolatedPublishingTest(t) {
 		return
 	}
-	f := publishingtest.New(t, testutil.PublishingHooks{})
+	atReady := make(chan controlv1.PublishRunSetup, 2)
+	f := publishingtest.New(t, testutil.PublishingHooks{Ready: func(_ context.Context, setup controlv1.PublishRunSetup) error {
+		atReady <- setup
+		return nil
+	}})
 	secret, err := f.NamespaceEnrollment(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +35,7 @@ func TestOpenRealPublicationReusesIdentityAndCleansCanceledContext(t *testing.T)
 	}
 	for attempt := range 2 {
 		ctx, cancel := context.WithCancel(t.Context())
-		options := Options{PublisherIdentity: prepared, StateDir: root, StateProtection: ProtectionFile, HTTPClient: f.HTTP}
+		options := Options{RequirePostQuantum: attempt == 1, PublisherIdentity: prepared, StateDir: root, StateProtection: ProtectionFile, HTTPClient: f.HTTP}
 		if attempt == 1 {
 			options.PublisherIdentity, options.PublisherIdentityID, options.ServerURL = nil, prepared.value.PublisherIdentityID(), f.URL
 		}
@@ -43,6 +47,10 @@ func TestOpenRealPublicationReusesIdentityAndCleansCanceledContext(t *testing.T)
 		if tunnel.URL() == "" {
 			cancel()
 			t.Fatal("Open returned before its exact run was ready")
+		}
+		if setup := <-atReady; setup.PublicUrl.RequirePostQuantum != options.RequirePostQuantum {
+			cancel()
+			t.Fatal("Go SDK lost the public HTTPS requirement")
 		}
 		if status, _, err := f.Visit(t.Context(), tunnel.URL()); err != nil || status != 204 {
 			cancel()

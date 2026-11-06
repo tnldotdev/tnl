@@ -157,6 +157,7 @@ class Tunnel:
         access_mode: str | None,
         ip: list[str] | None,
         limits: Limits | None,
+        require_post_quantum: bool = False,
     ) -> None:
         self._native = native
         self._server = server
@@ -186,6 +187,8 @@ class Tunnel:
         self._initial_registration: asyncio.Task[None] | None = None
         if access_mode is not None:
             self._payload["access_mode"] = access_mode
+        if require_post_quantum:
+            self._payload["require_post_quantum"] = True
         if ip is not None:
             self._payload["ip"] = ip
         if limits is not None:
@@ -439,10 +442,13 @@ async def open(
     state_dir: str | Path | None = None,
     access: Literal["restricted", "anonymous"] | AccessPolicy | None = None,
     limits: Limits | None = None,
+    require_post_quantum: bool = False,
 ) -> AsyncIterator[Tunnel]:
     """start ASGI, register its bound listener, and wait for native routability."""
     if not callable(app):
         raise TnlError("sdk.configuration_invalid", "pass an ASGI app")
+    if not isinstance(require_post_quantum, bool):
+        raise TnlError("sdk.configuration_invalid", "require_post_quantum must be a boolean")
     if publisher_credential_file is not None and publisher_identity_id is not None:
         raise TnlError("sdk.configuration_invalid", "select a publisher file or publisher ID")
     # a running connector owner does not inherit later changes to the app's env.
@@ -493,6 +499,7 @@ async def open(
         access_mode,
         ip,
         limits,
+        require_post_quantum,
     )
     try:
         await tunnel.start()

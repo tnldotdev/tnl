@@ -130,6 +130,16 @@ func (d *Database) reconcileAppliedPublicSettings(ctx context.Context, tx pgx.Tx
 		return err
 	}
 	modeChanged := u.AccessMode != p.Access.Mode
+	if p.RequirePostQuantum != nil && *p.RequirePostQuantum != u.RequirePostQuantum {
+		n, err := q.SetPublicURLPostQuantum(ctx, controlstatedb.SetPublicURLPostQuantumParams{PublicURLID: id, RequirePostQuantum: *p.RequirePostQuantum, Now: timestamptz(now)})
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return ErrPublishRunOpen
+		}
+		u.MutationRevision++
+	}
 	if modeChanged {
 		n, err := q.SetPublicURLAccessMode(ctx, controlstatedb.SetPublicURLAccessModeParams{PublicURLID: id, AccessMode: p.Access.Mode, ExpectedRevision: u.MutationRevision, Now: timestamptz(now)})
 		if err != nil {

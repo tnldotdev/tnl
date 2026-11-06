@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
@@ -95,7 +96,8 @@ func (d *Database) UpdateAuthorizedPublicURL(
 		policyStorageKeyID = d.storageKey.CurrentID()
 	}
 	updated, err := queries.UpdatePublicURL(ctx, controlstatedb.UpdatePublicURLParams{
-		Target: request.Target, PolicyRevision: policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
+		RequirePostQuantum: pgtype.Bool{Bool: request.RequirePostQuantum != nil && *request.RequirePostQuantum, Valid: request.RequirePostQuantum != nil},
+		Target:             request.Target, PolicyRevision: policyRevision, IpPolicy: string(routeIPPolicy(prefixes)),
 		AllowedIpPolicyCiphertext:   policyCiphertext,
 		AllowedIpPolicyStorageKeyID: nullableText(policyStorageKeyID),
 		AllowedIpHashes:             policyHashes, AllowedIpHashKeyID: nullableText(policyKeyID),

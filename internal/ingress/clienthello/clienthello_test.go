@@ -75,6 +75,34 @@ func TestInspectClientHelloFragmentsAndReplays(t *testing.T) {
 	}
 }
 
+func TestInspectPostQuantumClientHelloFragmentsAndReplays(t *testing.T) {
+	client, server := net.Pipe()
+	done := make(chan error, 1)
+	t.Cleanup(func() { _ = client.Close(); _ = server.Close(); <-done })
+	_ = server.SetDeadline(time.Now().Add(5 * time.Second))
+	go func() {
+		done <- tls.Client(client, &tls.Config{ServerName: "route.example", MinVersion: tls.VersionTLS13, CurvePreferences: []tls.CurveID{tls.X25519MLKEM768}}).HandshakeContext(t.Context())
+	}()
+	hello, err := InspectClientHello(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the hybrid public key makes this a larger real handshake, not padding.
+	if len(hello.Prefix) < 1200 || int(binary.BigEndian.Uint16(hello.Prefix[3:5])) != len(hello.Prefix)-5 {
+		t.Fatalf("unexpected hybrid ClientHello framing: %d bytes", len(hello.Prefix))
+	}
+	fragmented := tlsRecords(hello.Prefix[5:], 1, 32, 256, 1024)
+	fragmented = append(fragmented, []byte("remaining TLS bytes")...)
+	inspected, err := inspectClientHello(&shortReader{Reader: bytes.NewReader(fragmented)})
+	if err != nil || inspected.ServerName != "route.example" {
+		t.Fatalf("hybrid ClientHello: %q, %v", inspected.ServerName, err)
+	}
+	replayed, err := io.ReadAll(inspected.Replay())
+	if err != nil || !bytes.Equal(replayed, fragmented) {
+		t.Fatalf("hybrid handshake changed during forwarding: %v", err)
+	}
+}
+
 func TestInspectClientHelloAcceptsUnknownALPN(t *testing.T) {
 	input := tlsRecords(buildClientHello(sni("demo.example"), alpnExtension("custom/1")))
 	result, err := inspectClientHello(bytes.NewReader(input))

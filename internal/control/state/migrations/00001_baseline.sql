@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-guest-ready-without-usage-accounting')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-post-quantum')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-guest-ready-without-usage-accounting');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-post-quantum');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -496,6 +496,7 @@ CREATE TABLE control.guest_retry_keys (
 );
 
 CREATE TABLE control.public_urls (
+    require_post_quantum boolean NOT NULL DEFAULT false,
     id text PRIMARY KEY CHECK (id <> ''),
     team_id text NOT NULL CHECK (team_id <> ''),
     domain_id text NOT NULL CHECK (domain_id <> ''),

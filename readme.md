@@ -124,6 +124,8 @@ By default, any visitor needs to sign in or have a share link.
 
 Hot reloading, WebSockets, SSE, and streaming responses are all supported.
 
+Native tunnel connections use [post-quantum encryption](https://tnl.dev/docs/security#post-quantum-encryption), including TCP fallback.
+
 _Already have an app listening on port 3000? Run `npx tnl publish 3000`._
 
 See [installation options](https://tnl.dev/docs/publish), the

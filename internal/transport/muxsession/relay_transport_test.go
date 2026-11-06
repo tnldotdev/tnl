@@ -13,7 +13,7 @@ import (
 func TestRelayTransportRejectsRetiredALPNAndWrongHostname(t *testing.T) {
 	for _, name := range []string{"quic", "quic-basic", "tls-tcp"} {
 		tcp := name == "tls-tcp"
-		for _, variant := range []string{"current", "retired alpn", "unknown alpn", "wrong hostname", "untrusted certificate"} {
+		for _, variant := range []string{"current", "classical only", "retired alpn", "unknown alpn", "wrong hostname", "untrusted certificate"} {
 			t.Run(name+"/"+variant, func(t *testing.T) {
 				serverTLS, roots := testTLSConfigs(t)
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -53,6 +53,9 @@ func TestRelayTransportRejectsRetiredALPNAndWrongHostname(t *testing.T) {
 					if session != nil {
 						defer session.Close()
 						state := session.(AcceptedPeer).TLSConnectionState()
+						if state.CurveID != tls.X25519MLKEM768 {
+							t.Error("relay lost hybrid post-quantum key agreement")
+						}
 						if state.NegotiatedProtocol != ALPN || state.ServerName != "relay.test" {
 							t.Error("relay lost verified transport identity")
 						}
@@ -63,6 +66,8 @@ func TestRelayTransportRejectsRetiredALPNAndWrongHostname(t *testing.T) {
 				client := roots.Clone()
 				client.ServerName, client.NextProtos = "relay.test", []string{ALPN}
 				switch variant {
+				case "classical only":
+					client.CurvePreferences = []tls.CurveID{tls.X25519}
 				case "retired alpn":
 					client.NextProtos = []string{"tnl-connector/1"}
 				case "unknown alpn":

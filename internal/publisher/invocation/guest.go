@@ -112,7 +112,8 @@ func createGuestDemoURL(ctx context.Context, services publisherServices, cfg pub
 	}
 	protocol, ephemeral := controlv1.Http, true
 	publicURL, err := services.routes.CreatePublicURL(ctx, controlv1.CreatePublicURLRequest{
-		TeamId: services.teamID, MembershipId: &services.membershipID, DomainId: services.domainID,
+		RequirePostQuantum: cfg.RequirePostQuantum,
+		TeamId:             services.teamID, MembershipId: &services.membershipID, DomainId: services.domainID,
 		CanonicalHostname: services.hostname, Purpose: controlv1.Demo, PublicUrlScope: controlv1.Member,
 		ServiceProtocol: &protocol, Target: cfg.Target, AllowedIpPrefixes: &cfg.AllowedIPPrefixes, Ephemeral: &ephemeral,
 	}, key)

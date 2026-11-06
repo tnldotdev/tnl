@@ -33,6 +33,7 @@ type PublicURLServerConfig struct {
 	ServiceProtocol       controlv1.PublicURLServiceProtocol
 	Purpose               controlv1.PublicURLPurpose
 	AccessMode            controlv1.VisitorAccessMode
+	RequirePostQuantum    bool
 	TargetTLSName         string
 	TargetOptions         publisherproxy.TargetOptions
 	Handler               http.Handler

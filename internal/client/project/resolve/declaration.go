@@ -175,7 +175,7 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 }
 
 func projectPublicURL(tunnel *config.Tunnel) (*controlv1.ProjectServicePublicURL, error) {
-	value := &controlv1.ProjectServicePublicURL{Ephemeral: tunnel.Ephemeral}
+	value := &controlv1.ProjectServicePublicURL{Ephemeral: tunnel.Ephemeral, RequirePostQuantum: tunnel.RequirePostQuantum}
 	if tunnel.Access != nil {
 		mode := controlv1.VisitorAccessMode(tunnel.Access.VisitorMode())
 		value.Access = &controlv1.ProjectPublicAccess{Mode: &mode}

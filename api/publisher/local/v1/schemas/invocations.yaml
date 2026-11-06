@@ -35,6 +35,7 @@ schemas:
       publisher_credential_file:
         { type: string, maxLength: 4096, x-go-type-skip-optional-pointer: true }
       access_mode: { type: string, enum: [restricted, anonymous] }
+      require_post_quantum: { type: boolean }
       ip: { type: array, maxItems: 32, items: { type: string, maxLength: 64 } }
       limits:
         $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/PublisherApplicationLimits"

@@ -14,6 +14,7 @@
   "publisher_groups": "publisherGroups",
   "publisher_pool": "publisherPool",
   "rate_per": "ratePer",
+  "require_post_quantum": "requirePostQuantum",
   "reusable_workflow": "reusableWorkflow",
   "server_name": "serverName",
   "source_ips": "sourceIPs",
