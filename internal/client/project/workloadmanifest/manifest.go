@@ -14,8 +14,8 @@ import (
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"golang.org/x/sys/unix"
 )
@@ -60,7 +60,7 @@ func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error)
 		m.Team = *c.Team
 	}
 	var err error
-	m.Server, err = clientstate.CanonicalServer(m.Server)
+	m.Server, err = httpclient.CanonicalServer(m.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +111,7 @@ func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error)
 }
 
 func (m Manifest) Validate() error {
-	server, err := clientstate.CanonicalServer(m.Server)
+	server, err := httpclient.CanonicalServer(m.Server)
 	if err != nil || server != m.Server || !config.WorkloadHTTPS(m.Server) || m.Schema != 1 || !config.ExactWorkloadValue(m.Team) || !config.ExactWorkloadValue(m.ProjectKey) || !fingerprint.MatchString(m.SourceFingerprint) || !naming.ValidAuthorityLabel(m.ProjectLabel) || len(m.Workloads) == 0 || len(m.Workloads) > 32 || len(m.Services) > 128 {
 		return ErrInvalid
 	}

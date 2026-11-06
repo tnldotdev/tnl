@@ -14,7 +14,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	"github.com/tnldotdev/tnl/internal/connector/workload"
+	"github.com/tnldotdev/tnl/internal/connector/workload/acquisition"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
@@ -102,7 +102,7 @@ func TestConnectionSDKWorkloadSourcesAndTokenFileRotation(t *testing.T) {
 	acquire := func() (string, error) {
 		return acquireSDKWorkload(context.Background(), selected, source, request, connectorruntime.SDKEnvironment{}, "")
 	}
-	if _, err := acquire(); !errors.Is(err, workload.ErrAssertionUnavailable) {
+	if _, err := acquire(); !errors.Is(err, acquisition.ErrAssertionUnavailable) {
 		t.Fatal("missing selected file fell back", err)
 	}
 	for _, token := range []string{"first", "rotated"} {

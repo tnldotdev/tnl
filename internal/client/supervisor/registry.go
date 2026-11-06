@@ -22,6 +22,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/httpjson"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -289,7 +290,7 @@ func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.Pu
 // JobKey keeps the resource kind in the key, so a future service ID
 // cannot collide with a public URL ID on the same server.
 func JobKey(server, kind, resourceID string) string {
-	if canonical, err := clientstate.CanonicalServer(server); err == nil {
+	if canonical, err := httpclient.CanonicalServer(server); err == nil {
 		server = canonical
 	}
 	digest := sha256.Sum256([]byte(server + "\x00" + kind + "\x00" + resourceID))
@@ -588,7 +589,7 @@ func validateJob(job *Job) error {
 	default:
 		return ErrScope
 	}
-	server, err := clientstate.CanonicalServer(job.Server)
+	server, err := httpclient.CanonicalServer(job.Server)
 	if err != nil {
 		return ErrScope
 	}

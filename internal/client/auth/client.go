@@ -15,6 +15,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -97,7 +98,7 @@ func authenticatedResult(resolved control, source *tokenSource) (*Client, error)
 }
 
 func Logout(ctx context.Context, config Config) error {
-	server, err := clientstate.CanonicalServer(config.ServerEndpoint)
+	server, err := httpclient.CanonicalServer(config.ServerEndpoint)
 	if err != nil {
 		return err
 	}
@@ -138,7 +139,7 @@ func Logout(ctx context.Context, config Config) error {
 }
 
 func resolveControl(ctx context.Context, serverEndpoint string, httpClient *http.Client) (control, error) {
-	serverEndpoint, err := clientstate.CanonicalServer(serverEndpoint)
+	serverEndpoint, err := httpclient.CanonicalServer(serverEndpoint)
 	if err != nil {
 		return control{}, err
 	}
@@ -329,7 +330,8 @@ func authoritySession(
 	if err != nil {
 		return clientstate.ControlSession{}, err
 	}
-	return stored, nil
+	return clientstate.ControlSession{SessionID: stored.SessionId, AccessToken: stored.AccessToken, AccessExpiresAt: stored.AccessExpiresAt,
+		RefreshToken: stored.RefreshToken, RefreshExpiresAt: stored.RefreshExpiresAt}, nil
 }
 
 func refreshUsable(session clientstate.ControlSession, now time.Time) bool {

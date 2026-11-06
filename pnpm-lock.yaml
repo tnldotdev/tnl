@@ -95,6 +95,9 @@ importers:
       vitest:
         specifier: 5.0.3
         version: 5.0.3(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(@vitest/coverage-v8@5.0.3)(jsdom@30.1.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(tsx@4.23.1)(yaml@2.9.1))
+      workerd:
+        specifier: 1.20261031.1
+        version: 1.20261031.1
       ws:
         specifier: 8.22.0
         version: 8.22.0
@@ -287,6 +290,36 @@ packages:
   '@bramus/specificity@2.4.2':
     resolution: {integrity: sha512-ctxtJ/eA+t+6q2++vj5j7FYX3nRu311q1wfYH3xjlLOsczhlhxAg2FWNUXhpGvAw3BWo1xBcvOV6/YLc2r5FJw==}
     hasBin: true
+
+  '@cloudflare/workerd-darwin-64@1.20261031.1':
+    resolution: {integrity: sha512-qjXbqX7J50hqThWbYzT2c5yxr5Ymq6m6WETgPGqOAbIY+aZ11NQhnEV1Vsd/3Ljt97ctApQ1v8aCwX4Fa16nYQ==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@cloudflare/workerd-darwin-arm64@1.20261031.1':
+    resolution: {integrity: sha512-rN2OJjYA9DiHJPub+J1D1TCTw0+g40M+hfMUsD4sPm1qBSWyqG/H9M40ww2IKB16F8m+/0O9GmdlzYI932GduA==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@cloudflare/workerd-linux-64@1.20261031.1':
+    resolution: {integrity: sha512-42mhHUcRRqs0FI3Ej6HybrxuCeOoHiH9A1h8CC341bT/FSNBzJZWNLiiCHaQQH+dpYU+Vz/bC6DurKnuJZTW3Q==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [linux]
+
+  '@cloudflare/workerd-linux-arm64@1.20261031.1':
+    resolution: {integrity: sha512-ZGeXhiFYcUoKvQVLARBowkyjEhymW7VUMk69f4TD2B7UFj4ijq6YEDWcxm0oQLw7uTI9W2915Bnlp8sCixLYag==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@cloudflare/workerd-windows-64@1.20261031.1':
+    resolution: {integrity: sha512-n936OTt6rPIWrOEZ3LJzaKP3AqTnsf80uiR0Zb664RCSBCYwpWQsuiCtsFRjPDOz43GP2QOLIffrCcV0oJ9wYQ==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [win32]
 
   '@csstools/color-helpers@6.1.2':
     resolution: {integrity: sha512-grhRy3OKmniaAEKXMjua5z/EODX0MSqBGjunw8+j/3HQjOnahs2AGhvEOIYVUWcU6ScApbhLhVrQTX8XqrMrow==}
@@ -2928,6 +2961,11 @@ packages:
     engines: {node: '>=20.11'}
     hasBin: true
 
+  workerd@1.20261031.1:
+    resolution: {integrity: sha512-zmB9Etm6GyIPyf4A83R4rADax9SK4gsIQr+woiAryAtlDoomfXUJUQQsuV/cVypsuolLMR11TKf3Z+bU43Zwtg==}
+    engines: {node: '>=16'}
+    hasBin: true
+
   ws@8.22.0:
     resolution: {integrity: sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg==}
     engines: {node: '>=10.0.0'}
@@ -3150,6 +3188,21 @@ snapshots:
   '@bramus/specificity@2.4.2':
     dependencies:
       css-tree: 3.2.1
+
+  '@cloudflare/workerd-darwin-64@1.20261031.1':
+    optional: true
+
+  '@cloudflare/workerd-darwin-arm64@1.20261031.1':
+    optional: true
+
+  '@cloudflare/workerd-linux-64@1.20261031.1':
+    optional: true
+
+  '@cloudflare/workerd-linux-arm64@1.20261031.1':
+    optional: true
+
+  '@cloudflare/workerd-windows-64@1.20261031.1':
+    optional: true
 
   '@csstools/color-helpers@6.1.2': {}
 
@@ -5255,6 +5308,14 @@ snapshots:
       isexe: 2.0.0
 
   why-is-node-running@3.2.1: {}
+
+  workerd@1.20261031.1:
+    optionalDependencies:
+      '@cloudflare/workerd-darwin-64': 1.20261031.1
+      '@cloudflare/workerd-darwin-arm64': 1.20261031.1
+      '@cloudflare/workerd-linux-64': 1.20261031.1
+      '@cloudflare/workerd-linux-arm64': 1.20261031.1
+      '@cloudflare/workerd-windows-64': 1.20261031.1
 
   ws@8.22.0: {}
 

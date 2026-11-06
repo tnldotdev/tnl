@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/tnldotdev/tnl/internal/client/state/clientstatedb"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 )
 
 // KnownProjectPublicURLs returns bounded IDs previously published by this
@@ -16,7 +17,7 @@ func (d *Database) KnownProjectPublicURLs(ctx context.Context, project, server s
 	if project == "" || !filepath.IsAbs(project) {
 		return nil, errors.New("clientstate: absolute project root is required")
 	}
-	canonical, err := CanonicalServer(server)
+	canonical, err := httpclient.CanonicalServer(server)
 	if err != nil {
 		return nil, err
 	}

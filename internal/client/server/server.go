@@ -5,13 +5,14 @@ import (
 	"context"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 )
 
 const DefaultURL = "https://control.tnl.dev"
 
 func Select(ctx context.Context, state *clientstate.Database, explicit string) (string, error) {
 	if explicit != "" {
-		return clientstate.CanonicalServer(explicit)
+		return httpclient.CanonicalServer(explicit)
 	}
 	server, found, err := state.SavedServer(ctx)
 	if err != nil {

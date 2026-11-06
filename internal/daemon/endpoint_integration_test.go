@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/connector"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
@@ -121,7 +122,7 @@ func TestIntegrationEndpointProductionPath(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			production, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
+			production, err := connector.NewHumanControl(f.identity.routes, f.identity.state, person.Identity.Id)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
@@ -73,7 +72,7 @@ func TestValidateIssuedControlSession(t *testing.T) {
 			}
 			got, err := ValidateControlSessionResponse(response, test.expectedID, test.expectedExpiry)
 			if !test.valid {
-				if err == nil || got != (clientstate.ControlSession{}) {
+				if err == nil || !reflect.DeepEqual(got, authorityv1.ControlSessionResponse{}) {
 					t.Fatal("invalid response exposed partial session credentials")
 				}
 				for _, token := range []string{response.AccessToken, response.RefreshToken} {
@@ -82,7 +81,7 @@ func TestValidateIssuedControlSession(t *testing.T) {
 					}
 				}
 			} else {
-				want := clientstate.ControlSession{SessionID: response.SessionId, AccessToken: response.AccessToken, RefreshToken: response.RefreshToken, AccessExpiresAt: response.AccessExpiresAt, RefreshExpiresAt: response.RefreshExpiresAt}
+				want := response
 				if err != nil || !reflect.DeepEqual(got, want) {
 					t.Fatalf("valid session fields were not preserved: %v", err)
 				}

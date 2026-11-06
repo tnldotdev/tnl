@@ -15,6 +15,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -186,7 +187,7 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			return selectErr
 		}
 		if flags.ServerURL == "" && flags.Configuration.Config.Server != nil && !flags.All {
-			server, selectErr = clientstate.CanonicalServer(*flags.Configuration.Config.Server)
+			server, selectErr = httpclient.CanonicalServer(*flags.Configuration.Config.Server)
 			if selectErr != nil {
 				return selectErr
 			}

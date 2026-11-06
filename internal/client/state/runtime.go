@@ -14,6 +14,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/state/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 )
 
 const RuntimeEventRetention = 2048
@@ -130,7 +131,7 @@ func (d *Database) KnownProjectURLs(ctx context.Context, project, server string)
 	if _, err := runtimeProject(project); err != nil {
 		return nil, err
 	}
-	origin, err := CanonicalServer(server)
+	origin, err := httpclient.CanonicalServer(server)
 	if err != nil {
 		return nil, err
 	}

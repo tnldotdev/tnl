@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/connector"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -103,7 +104,7 @@ func TestIntegrationPreparedConnectorHasNoArrivalRPCOrSigning(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				control, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
+				control, err := connector.NewHumanControl(f.identity.routes, f.identity.state, person.Identity.Id)
 				if err != nil {
 					t.Fatal(err)
 				}

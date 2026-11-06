@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 )
 
 type StatusResult struct {
@@ -20,7 +20,7 @@ type StatusResult struct {
 // Status is local unless check is requested. checking may refresh credentials
 // and validate with control, but never initiates approval or browser login.
 func Status(ctx context.Context, config Config, check bool) (StatusResult, error) {
-	server, err := clientstate.CanonicalServer(config.ServerEndpoint)
+	server, err := httpclient.CanonicalServer(config.ServerEndpoint)
 	result := StatusResult{SchemaVersion: 1, Server: server, Status: "unauthenticated", Source: "none"}
 	if err != nil {
 		return result, err

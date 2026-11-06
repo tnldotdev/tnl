@@ -6,6 +6,7 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -20,7 +21,7 @@ func SelectRetained(ctx context.Context, options RetainedOptions) (RetainedSelec
 		return selection, err
 	}
 	selection.Target = address
-	server, err := clientstate.CanonicalServer(options.Server)
+	server, err := httpclient.CanonicalServer(options.Server)
 	if err != nil {
 		return selection, err
 	}

@@ -1,4 +1,4 @@
-package stream
+package connector
 
 import (
 	"bytes"
@@ -16,13 +16,14 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-func adapterFixture(t *testing.T, identity string, handler func(*clientstate.Store, http.ResponseWriter, *http.Request)) (Control, *clientstate.Store) {
+func adapterFixture(t *testing.T, identity string, handler func(*clientstate.Store, http.ResponseWriter, *http.Request)) (connectorstream.Control, *clientstate.Store) {
 	t.Helper()
 	var profile *clientstate.Store
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +47,7 @@ func adapterFixture(t *testing.T, identity string, handler func(*clientstate.Sto
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, err := NewControl(client, profile, identity)
+	control, err := NewHumanControl(client, profile, identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,6 +57,15 @@ func adapterFixture(t *testing.T, identity string, handler func(*clientstate.Sto
 		}
 	})
 	return control, profile
+}
+
+func connectorID(t *testing.T, prefix string) string {
+	t.Helper()
+	id, err := opaqueid.New(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func TestControlDevicePersistsRetryKeyAndRejectsChangedEnrollment(t *testing.T) {

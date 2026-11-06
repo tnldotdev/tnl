@@ -1,6 +1,21 @@
 version: "3"
 
 tasks:
+  connector-wasm:
+    dir: "{{.ROOT_DIR}}"
+    desc: Qualify experimental PostgreSQL over the real local connector topology (RUNTIME=node/bun/workerd)
+    deps: [":wasm:build"]
+    vars:
+      RUNTIME: '{{default "node" .RUNTIME}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationConnectorWASMFixture$' -count=1 -timeout=10m -args -tnl-test-tier=integration -tnl-wasm-fixture-command='["node","scripts/test/connector-wasm.ts","--runtime","{{.RUNTIME}}","--fixture","{fixture}"]'
+
+  connector-wasm:native:
+    dir: "{{.ROOT_DIR}}"
+    desc: Prove the WASM spike's local topology retains a native PostgreSQL transaction across a relay carrier fault
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationConnectorWASMFixture$' -count=1 -timeout=10m -args -tnl-test-tier=integration -tnl-wasm-fixture-self-test
+
   live-authorization:
     dir: "{{.ROOT_DIR}}"
     desc: Check browser and alias authorization in disposable PostgreSQL

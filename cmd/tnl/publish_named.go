@@ -5,9 +5,9 @@ import (
 	"errors"
 	"os"
 
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/publisher/local"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -35,7 +35,7 @@ func namedInvocation(flags publishCommand) (resolvedNamedInvocation, error) {
 		return resolvedNamedInvocation{}, failure.Wrap("select named team", failure.NamedPublishTeam, errors.New("explicit team required"))
 	}
 	if flags.ServerURL != "" {
-		server, err := clientstate.CanonicalServer(flags.ServerURL)
+		server, err := httpclient.CanonicalServer(flags.ServerURL)
 		if err != nil {
 			return resolvedNamedInvocation{}, err
 		}

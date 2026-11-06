@@ -20,6 +20,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
@@ -85,7 +86,7 @@ func ResolveProject(ctx context.Context, options Options) (clientproject.Project
 		return clientproject.Project{}, "", err
 	}
 	if selected := os.Getenv("TNL_SERVER"); selected != "" {
-		canonical, err := clientstate.CanonicalServer(selected)
+		canonical, err := httpclient.CanonicalServer(selected)
 		if err != nil {
 			return clientproject.Project{}, "", err
 		}

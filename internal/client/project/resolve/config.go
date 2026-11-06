@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 )
 
 // Options selects configuration without depending on a command's flags.
@@ -117,11 +118,11 @@ func TeamForServer(server string, configuredServer, configuredTeam *string) (str
 		return "", nil
 	}
 	if server != "" && configuredServer != nil {
-		selected, err := clientstate.CanonicalServer(server)
+		selected, err := httpclient.CanonicalServer(server)
 		if err != nil {
 			return "", err
 		}
-		project, err := clientstate.CanonicalServer(*configuredServer)
+		project, err := httpclient.CanonicalServer(*configuredServer)
 		if err != nil {
 			return "", err
 		}

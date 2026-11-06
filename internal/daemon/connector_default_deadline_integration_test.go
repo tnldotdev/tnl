@@ -14,6 +14,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/connector"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -110,7 +111,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, err := connectorstream.NewControl(f.identity.routes, f.identity.state, person.Identity.Id)
+	control, err := connector.NewHumanControl(f.identity.routes, f.identity.state, person.Identity.Id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +237,7 @@ func TestIntegrationPrivateDefaultLeaseCycles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sibling, err := connectorstream.NewControl(f.identity.routes, profile, person.Identity.Id)
+	sibling, err := connector.NewHumanControl(f.identity.routes, profile, person.Identity.Id)
 	if err != nil {
 		t.Fatal(err)
 	}

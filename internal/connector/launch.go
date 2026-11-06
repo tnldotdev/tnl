@@ -17,7 +17,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	"github.com/tnldotdev/tnl/internal/connector/workload"
+	"github.com/tnldotdev/tnl/internal/connector/workload/acquisition"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 )
@@ -70,11 +70,11 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 			if hints.TokenFile != "" && !filepath.IsAbs(hints.TokenFile) {
 				hints.TokenFile = filepath.Join(scope.Directory, hints.TokenFile)
 			}
-			request.Assertion, err = workload.Acquire(ctx, hints, nil, os.Getenv)
+			request.Assertion, err = acquisition.Acquire(ctx, hints, nil, os.Getenv)
 			if err != nil {
 				return failure.Wrap("acquire workload assertion", failure.WorkloadAssertionUnavailable, err)
 			}
-			request.Refresh = workload.RefreshSource(scope.Directory, hints, os.Getenv)
+			request.Refresh = acquisition.RefreshSource(scope.Directory, hints, os.Getenv)
 		}
 	}
 	return launchOwner(ctx, options, request, func(status connectorruntime.Status) error { return json.NewEncoder(output).Encode(status) })

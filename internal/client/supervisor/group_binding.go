@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go/logging"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
@@ -105,7 +106,7 @@ var localRoleARN = regexp.MustCompile(`^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{1
 var localAWSRegion = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]+$`)
 
 func (b GroupBinding) Validate() error {
-	canonical, err := clientstate.CanonicalServer(b.Scope.Server)
+	canonical, err := httpclient.CanonicalServer(b.Scope.Server)
 	if err != nil || canonical != b.Scope.Server || b.Version != 1 || b.Scope.Team == "" || b.Scope.Group == "" || b.Scope.Publisher == "" || ValidateTrust([]byte(b.ServerCAPEM)) != nil || len(b.Discovery) > 128 || publisherprovenance.Validate(b.Deployment) != nil {
 		return ErrScope
 	}

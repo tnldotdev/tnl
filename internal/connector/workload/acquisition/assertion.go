@@ -1,4 +1,6 @@
-package workload
+// package acquisition owns native provider I/O, file-backed assertions and project
+// acquisition hints. the portable workload session client does not import it.
+package acquisition
 
 import (
 	"bytes"

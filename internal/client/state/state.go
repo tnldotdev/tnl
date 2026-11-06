@@ -15,7 +15,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/state/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 )
 
 // databaseFilename identifies the fresh client-state baseline independently of
@@ -193,7 +193,7 @@ func (d *Database) Close() error {
 
 // Server returns state scoped to a canonical server origin.
 func (d *Database) Server(ctx context.Context, serverOrigin string) (*Store, error) {
-	serverOrigin, err := CanonicalServer(serverOrigin)
+	serverOrigin, err := httpclient.CanonicalServer(serverOrigin)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +224,7 @@ func (d *Database) SavedServer(ctx context.Context) (string, bool, error) {
 	if !selected.Valid {
 		return "", false, nil
 	}
-	server, err := CanonicalServer(selected.String)
+	server, err := httpclient.CanonicalServer(selected.String)
 	if err != nil || server != selected.String {
 		return "", true, errors.New("clientstate: selected server is invalid")
 	}
@@ -233,7 +233,7 @@ func (d *Database) SavedServer(ctx context.Context) (string, bool, error) {
 
 // SaveServer records the server selected by a successful login.
 func (d *Database) SaveServer(ctx context.Context, serverOrigin string) error {
-	serverOrigin, err := CanonicalServer(serverOrigin)
+	serverOrigin, err := httpclient.CanonicalServer(serverOrigin)
 	if err != nil {
 		return err
 	}
@@ -255,16 +255,4 @@ func (d *Database) SaveServer(ctx context.Context, serverOrigin string) error {
 		return fmt.Errorf("clientstate: commit selected server update: %w", err)
 	}
 	return nil
-}
-
-// CanonicalServer validates and normalizes a tnl server origin.
-func CanonicalServer(value string) (string, error) {
-	server, err := naming.CanonicalControlURL(value)
-	if errors.Is(err, naming.ErrInvalidControlPort) {
-		return "", failure.Wrap("validate control URL port", failure.InvalidControlPort, err)
-	}
-	if err != nil {
-		return "", failure.Wrap("validate control URL", failure.InvalidControlURL, err)
-	}
-	return server, nil
 }

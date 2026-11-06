@@ -15,8 +15,8 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
@@ -70,7 +70,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	}
 	server := valueOrEmpty(a.project.Config.Server)
 	if request.ServerUrl != nil {
-		selected, err := clientstate.CanonicalServer(*request.ServerUrl)
+		selected, err := httpclient.CanonicalServer(*request.ServerUrl)
 		if err != nil {
 			return publisherprotocol.Registration{}, err
 		}

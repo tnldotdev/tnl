@@ -16,6 +16,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -319,7 +320,7 @@ func (r *MetadataResolver) Context(
 
 func (r *MetadataResolver) server(ctx context.Context, configured *string) (string, error) {
 	if configured != nil {
-		return clientstate.CanonicalServer(*configured)
+		return httpclient.CanonicalServer(*configured)
 	}
 	if !r.savedServerLoaded {
 		server, found, err := r.state.SavedServer(ctx)

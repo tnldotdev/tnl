@@ -146,7 +146,7 @@ func (b *connectorConnectionBackend) prepareService(ctx context.Context, name st
 		control, err = connectorstream.NewWorkloadControl(client)
 	} else {
 		identity = b.human.identity.Identity.Id
-		control, err = connectorstream.NewControl(b.human.authenticated.Control, b.human.store, identity)
+		control, err = NewHumanControl(b.human.authenticated.Control, b.human.store, identity)
 	}
 	if err != nil {
 		return nil, err

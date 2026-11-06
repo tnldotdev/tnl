@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/naming"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
@@ -150,7 +151,7 @@ func InstallBackgroundJob(ctx context.Context, registry *supervisor.Registry, fl
 	job.ReadinessPath = flags.ReadinessPath
 	job.Limits = flags.Limits
 	var err error
-	job.Server, err = clientstate.CanonicalServer(job.Server)
+	job.Server, err = httpclient.CanonicalServer(job.Server)
 	if err != nil {
 		return supervisor.ErrScope
 	}

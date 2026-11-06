@@ -9,7 +9,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	"github.com/tnldotdev/tnl/internal/connector/workload"
+	"github.com/tnldotdev/tnl/internal/connector/workload/acquisition"
 	"github.com/tnldotdev/tnl/internal/failure"
 )
 
@@ -38,13 +38,13 @@ func selectSDKWorkload(directory, service string, request connectorruntime.SDKWo
 	method := selected.Workload.Acquisition.Method
 	if request.Name != "" {
 		if method != "callback" && method != "github-actions" {
-			return selected, "", workload.ErrAssertionSource
+			return selected, "", acquisition.ErrAssertionSource
 		}
 		if request.Callback {
 			return selected, "callback", nil
 		}
 		if len(request.TokenFile) > 4096 || strings.ContainsRune(request.TokenFile, 0) {
-			return selected, "", workload.ErrAssertionSource
+			return selected, "", acquisition.ErrAssertionSource
 		}
 		return selected, "native", nil
 	}
@@ -70,24 +70,24 @@ func sdkWorkloadRefresh(selected workloadmanifest.Selection, source string, requ
 	if request.TokenFile != "" {
 		hints = workloadmanifest.Acquisition{Method: "token-file", TokenFile: request.TokenFile}
 	}
-	return workload.RefreshSource(selected.Directory, hints, environment.Getenv)
+	return acquisition.RefreshSource(selected.Directory, hints, environment.Getenv)
 }
 
 func acquireSDKWorkload(ctx context.Context, selected workloadmanifest.Selection, source string, request connectorruntime.SDKWorkloadRequest, environment connectorruntime.SDKEnvironment, assertion string) (string, error) {
 	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if source == "callback" || source == "vercel" && assertion != "" {
-		return (workload.AssertionSource{Assertion: assertion}).Acquire(bounded)
+		return (acquisition.AssertionSource{Assertion: assertion}).Acquire(bounded)
 	}
 	if assertion != "" {
-		return "", workload.ErrAssertionSource
+		return "", acquisition.ErrAssertionSource
 	}
 	if request.TokenFile != "" {
 		file := request.TokenFile
 		if !filepath.IsAbs(file) {
 			file = filepath.Join(selected.Directory, file)
 		}
-		return (workload.AssertionSource{TokenFile: file}).Acquire(bounded)
+		return (acquisition.AssertionSource{TokenFile: file}).Acquire(bounded)
 	}
 	hints := selected.Workload.Acquisition
 	if hints.Method == "vercel-oidc" && environment.VercelTokenFile != "" && !filepath.IsAbs(environment.VercelTokenFile) {
@@ -96,7 +96,7 @@ func acquireSDKWorkload(ctx context.Context, selected workloadmanifest.Selection
 	if hints.TokenFile != "" && !filepath.IsAbs(hints.TokenFile) {
 		hints.TokenFile = filepath.Join(selected.Directory, hints.TokenFile)
 	}
-	return workload.Acquire(bounded, hints, nil, environment.Getenv)
+	return acquisition.Acquire(bounded, hints, nil, environment.Getenv)
 }
 
 func (b *connectorConnectionBackend) SDKWorkload(ctx context.Context, request connectorruntime.Request) (connectorruntime.SDKWorkload, error) {

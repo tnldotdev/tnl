@@ -113,7 +113,7 @@ tasks:
     desc: Check private owner IPC, verified connector HTTPS, Kubernetes, and connection lifetimes
     deps: [":js:build", ":py:sync"]
     cmds:
-      - go test -race ./internal/connector/runtime ./internal/connector/workload ./internal/control/oidc -count=1 -timeout=3m
+      - go test -race ./internal/connector/runtime ./internal/connector/workload/... ./internal/control/oidc -count=1 -timeout=3m
       - go test -race ./cmd/tnl ./internal/connector ./tests/integration/connector -run='^Test(Connection|IntegrationConnectionConnectorOwner)' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   test:connections:context:

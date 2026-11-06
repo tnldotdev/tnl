@@ -14,6 +14,7 @@ import (
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/naming"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
@@ -132,7 +133,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 	var profile *clientstate.Store
 	var database *clientstate.Database
 	if flags.System {
-		server, err = clientstate.CanonicalServer(flags.ServerURL)
+		server, err = httpclient.CanonicalServer(flags.ServerURL)
 		if err != nil {
 			return err
 		}

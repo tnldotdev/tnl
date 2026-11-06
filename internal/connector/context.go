@@ -17,11 +17,11 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	"github.com/tnldotdev/tnl/internal/connector/workload"
+	"github.com/tnldotdev/tnl/internal/connector/workload/acquisition"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
@@ -88,7 +88,7 @@ func connectionProject(ctx context.Context, options ContextOptions) (projectConf
 			return projectConfiguration{}, connectorruntime.Context{}, err
 		}
 	}
-	server, err = clientstate.CanonicalServer(server)
+	server, err = httpclient.CanonicalServer(server)
 	if err != nil {
 		return projectConfiguration{}, connectorruntime.Context{}, err
 	}
@@ -127,7 +127,7 @@ func connectionProject(ctx context.Context, options ContextOptions) (projectConf
 			return projectConfiguration{}, connectorruntime.Context{}, err
 		}
 		if effective.Server != nil {
-			selected, err := clientstate.CanonicalServer(*effective.Server)
+			selected, err := httpclient.CanonicalServer(*effective.Server)
 			if err != nil || selected != server {
 				return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrInvalid
 			}
@@ -221,12 +221,12 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 	}
 	backend := &connectorConnectionBackend{openSession: o.OpenSession, project: project, scope: scope, stateDir: options.StateDir, assertion: request.Assertion, directory: options.OwnerDirectory, runnerTemp: options.RunnerTemp, parentPID: options.ParentPID}
 	if request.Refresh != nil {
-		if scope.Workload == "" || workload.ValidateRefreshSource(*request.Refresh) != nil {
+		if scope.Workload == "" || acquisition.ValidateRefreshSource(*request.Refresh) != nil {
 			return connectorruntime.ErrInvalid
 		}
 		source := *request.Refresh
 		backend.refreshAssertion = func(ctx context.Context) (string, error) {
-			return workload.Acquire(ctx, source, nil, func(string) string { return "" })
+			return acquisition.Acquire(ctx, source, nil, func(string) string { return "" })
 		}
 	}
 	if options.SDKRegistry != "" {
@@ -300,7 +300,7 @@ func Reason(err error) failure.Reason {
 		return failure.WorkloadRequired
 	case errors.Is(err, workloadmanifest.ErrDenied):
 		return failure.WorkloadServiceDenied
-	case errors.Is(err, workload.ErrAssertionSource), errors.Is(err, workload.ErrAssertionUnavailable):
+	case errors.Is(err, acquisition.ErrAssertionSource), errors.Is(err, acquisition.ErrAssertionUnavailable):
 		return failure.WorkloadAssertionUnavailable
 	case errors.Is(err, connectorruntime.ErrTeam):
 		return failure.ConnectionTeamBinding

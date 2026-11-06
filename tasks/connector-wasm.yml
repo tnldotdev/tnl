@@ -1,0 +1,45 @@
+version: "3"
+
+tasks:
+  build:
+    dir: "{{.ROOT_DIR}}"
+    desc: Build the experimental connector with the pinned Go JS/WASM runtime
+    cmds:
+      - node scripts/build/connector-wasm.ts
+
+  check:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check the experimental WASM host and PostgreSQL adapters without infrastructure
+    cmds:
+      - task: test:go
+      - pnpm exec tsc --project development/connector-wasm/tsconfig.json
+      - pnpm exec oxlint --deny-warnings --report-unused-disable-directives development/connector-wasm scripts/build/connector-wasm.ts
+      - pnpm exec vitest run development/connector-wasm
+
+  test:go:
+    dir: "{{.ROOT_DIR}}"
+    desc: Run bridge and TLS invariants inside the pinned Go JS/WASM runtime
+    env:
+      GOOS: js
+      GOARCH: wasm
+    cmds:
+      - go vet ./development/connector-wasm/go
+      - go test -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./development/connector-wasm/go -count=1 -timeout=1m
+
+  workerd-preflight:
+    dir: "{{.ROOT_DIR}}"
+    desc: Load the experimental Worker and precompiled WASM module locally without PostgreSQL
+    deps: [build]
+    cmds:
+      - node scripts/test/connector-wasm-workerd.ts --preflight
+
+  benchmark:
+    internal: true
+    dir: "{{.ROOT_DIR}}"
+    desc: Compare retained PostgreSQL queries without race instrumentation
+    deps: [build]
+    vars:
+      RUNTIME: '{{default "node" .RUNTIME}}'
+      QUERIES: '{{default "1000" .QUERIES}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -v ./internal/daemon -run='^TestLoadConnectorWASMFixture$' -count=1 -timeout=10m -args -tnl-test-tier=runtime-load -tnl-wasm-fixture-command='["node","scripts/test/connector-wasm.ts","--runtime","{{.RUNTIME}}","--queries","{{.QUERIES}}","--fixture","{fixture}"]'

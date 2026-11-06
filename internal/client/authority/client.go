@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"time"
 
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/httpjson"
@@ -48,7 +47,7 @@ type Client struct {
 }
 
 func New(endpoint string, httpClient *http.Client, access credentials.AccessToken) (*Client, error) {
-	canonical, err := clientstate.CanonicalServer(endpoint)
+	canonical, err := httpclient.CanonicalServer(endpoint)
 	if err != nil || canonical != endpoint {
 		if err == nil {
 			err = errors.New("authority endpoint is not canonical")
@@ -271,24 +270,21 @@ func unavailableError(ctx context.Context, err error) error {
 }
 
 // ValidateControlSessionResponse checks credentials and session data returned by the authority.
-func ValidateControlSessionResponse(response authorityv1.ControlSessionResponse, expectedSessionID string, expectedRefreshExpiry time.Time) (clientstate.ControlSession, error) {
+func ValidateControlSessionResponse(response authorityv1.ControlSessionResponse, expectedSessionID string, expectedRefreshExpiry time.Time) (authorityv1.ControlSessionResponse, error) {
 	access := credentials.AccessToken(response.AccessToken)
 	refresh := credentials.RefreshToken(response.RefreshToken)
 	if _, _, err := credentials.ParseAccessToken(access); err != nil {
-		return clientstate.ControlSession{}, failure.Wrap("validate authority session", failure.ServerResponseInvalid, errors.New("authorityclient: authority returned an invalid access token"))
+		return authorityv1.ControlSessionResponse{}, failure.Wrap("validate authority session", failure.ServerResponseInvalid, errors.New("authorityclient: authority returned an invalid access token"))
 	}
 	if _, _, err := credentials.ParseRefreshToken(refresh); err != nil {
-		return clientstate.ControlSession{}, failure.Wrap("validate authority session", failure.ServerResponseInvalid, errors.New("authorityclient: authority returned an invalid refresh token"))
+		return authorityv1.ControlSessionResponse{}, failure.Wrap("validate authority session", failure.ServerResponseInvalid, errors.New("authorityclient: authority returned an invalid refresh token"))
 	}
 	if !opaqueid.Valid(response.SessionId, opaqueid.ControlSessionPrefix) || expectedSessionID != "" && response.SessionId != expectedSessionID ||
 		!response.AccessExpiresAt.After(time.Now()) || response.RefreshExpiresAt.Before(response.AccessExpiresAt) ||
 		!expectedRefreshExpiry.IsZero() && !response.RefreshExpiresAt.Equal(expectedRefreshExpiry) {
-		return clientstate.ControlSession{}, failure.Wrap("validate authority session", failure.ServerResponseInvalid, errors.New("authorityclient: authority returned an invalid control session"))
+		return authorityv1.ControlSessionResponse{}, failure.Wrap("validate authority session", failure.ServerResponseInvalid, errors.New("authorityclient: authority returned an invalid control session"))
 	}
-	return clientstate.ControlSession{
-		SessionID: response.SessionId, AccessToken: access.String(), AccessExpiresAt: response.AccessExpiresAt,
-		RefreshToken: refresh.String(), RefreshExpiresAt: response.RefreshExpiresAt,
-	}, nil
+	return response, nil
 }
 
 func responseError(status int, header http.Header, payload []byte) error {

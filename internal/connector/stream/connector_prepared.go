@@ -62,7 +62,7 @@ func prepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 	setup, finish := observability.ClientOperation(setup, "connector.visitor_setup")
 	defer func() { finish(result) }()
 	ctx := lifetime
-	if ctx == nil || ctx.Err() != nil || session == nil || !validProtocol(run.Protocol) || run.Endpoint == nil || run.ServiceTLS == nil || run.ServiceTLS.InsecureSkipVerify || len(run.ServiceTLS.Certificates) != 0 || run.ServiceTLS.GetClientCertificate != nil || !run.ValidUntil.After(time.Now()) ||
+	if ctx == nil || ctx.Err() != nil || session == nil || !ValidProtocol(run.Protocol) || run.Endpoint == nil || run.ServiceTLS == nil || run.ServiceTLS.InsecureSkipVerify || len(run.ServiceTLS.Certificates) != 0 || run.ServiceTLS.GetClientCertificate != nil || !run.ValidUntil.After(time.Now()) ||
 		run.ServiceID != entry.ServiceID || run.ServiceRunID != entry.ServiceRunID || run.RunNumber != entry.RunNumber || run.TrustRevision < 1 || uint64(run.TrustRevision) != entry.MetadataRevision {
 		return nil, ErrServiceConnection
 	}

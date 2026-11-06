@@ -326,7 +326,7 @@ func serveConnector(ctx context.Context, session *Session, listener net.Listener
 }
 
 func connectConfiguration(ctx context.Context, session *Session, job supervisor.Job) (connectorstream.Config, error) {
-	control, err := connectorstream.NewControl(session.authenticated.Control, session.store, job.IdentityID)
+	control, err := NewHumanControl(session.authenticated.Control, session.store, job.IdentityID)
 	if err != nil {
 		return connectorstream.Config{}, err
 	}

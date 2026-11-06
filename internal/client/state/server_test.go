@@ -23,18 +23,3 @@ func TestSavedServer(t *testing.T) {
 		t.Fatalf("saved server = %q, %t, %v", server, found, err)
 	}
 }
-
-func TestCanonicalServerRejectsNonOrigins(t *testing.T) {
-	for _, value := range []string{
-		"http://tnl.example",
-		"https://user@tnl.example",
-		"https://tnl.example/path",
-		"https://tnl.example?query=true",
-		"https://tnl.example:0",
-		"https://tnl.example:65536",
-	} {
-		if _, err := CanonicalServer(value); err == nil {
-			t.Fatalf("CanonicalServer(%q) succeeded", value)
-		}
-	}
-}

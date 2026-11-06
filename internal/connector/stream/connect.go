@@ -107,64 +107,70 @@ func Stream(ctx context.Context, local net.Conn, config Config) error {
 type connectionConsumer func(context.Context, func(context.Context, net.Conn) error) error
 
 func serveConnections(ctx context.Context, config Config, consume connectionConsumer) (result error) {
-	startup, finish := observability.ClientOperation(ctx, "connector.startup")
-	defer func() { finish(result) }()
-	if config.Control == nil || !opaqueid.Valid(config.ServiceID, opaqueid.ServicePrefix) || config.IdentityID != "" && !opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix) || !validProtocol(config.Protocol) || config.TrustRevision < 1 || config.Endpoint == nil || config.Endpoint.Hostname == "" || config.Endpoint.Port < 1024 || config.Endpoint.Port > 65535 {
-		return ErrServiceConnection
-	}
-	if config.TransportTLS != nil && config.TransportTLS.InsecureSkipVerify || config.ServiceTLS == nil || config.ServiceTLS.InsecureSkipVerify || len(config.ServiceTLS.Certificates) != 0 || config.ServiceTLS.GetClientCertificate != nil {
-		return ErrServiceConnection
-	}
-	if config.MaxConnections == 0 {
-		config.MaxConnections = 64
-	}
-	if config.MaxConnections < 1 || config.MaxConnections > 4096 {
-		return ErrServiceConnection
-	}
-	defer func() {
-		cleanup := observability.Independent(context.WithoutCancel(ctx))
-		if config.CleanupContext != nil {
-			cleanup = config.CleanupContext()
-		}
-		bounded, stop := context.WithTimeout(cleanup, 5*time.Second)
-		defer stop()
-		if closer, ok := config.Control.(interface{ CloseContext(context.Context) error }); ok {
-			result = errors.Join(result, closer.CloseContext(bounded))
-		} else if closer, ok := config.Control.(interface{ Close() error }); ok {
-			result = errors.Join(result, closer.Close())
-		}
-	}()
-	setup, stop := context.WithTimeout(startup, 30*time.Second)
-	defer stop()
-	signer, err := config.Control.ConnectorSigner(setup, config.IdentityID)
+	p, err := Prepare(ctx, config)
 	if err != nil {
 		return err
 	}
-	if signer.Subject.Validate() != nil || signer.Subject.IdentityID != config.IdentityID || len(signer.PublicKey) != ed25519.PublicKeySize || signer.Sign == nil {
-		return ErrServiceConnection
-	}
-	p, err := prepareConnectorConnection(ctx, setup, config, signer)
-	if err != nil {
-		return err
-	}
-	defer p.Close()
-	finish(nil)
-	err = consume(p.ctx, p.Forward)
+	defer func() { result = errors.Join(result, p.Close()) }()
+	err = consume(p.Context(), p.Forward)
 	if ctx.Err() != nil {
 		if errors.Is(context.Cause(ctx), context.Canceled) {
 			return nil
 		}
 		return errors.Join(context.Cause(ctx), err)
 	}
-	if p.ctx.Err() != nil {
-		// retain the established connection's retirement boundary regardless of
-		// which authority or transport worker ends it first, plus its exact cause.
-		return errors.Join(ErrServiceConnection, context.Cause(p.ctx), err)
+	if p.Context().Err() != nil {
+		return errors.Join(ErrServiceConnection, context.Cause(p.Context()), err)
 	}
 	return err
 }
 
-func validProtocol(protocol string) bool {
+// Prepare owns the same paired relay and retained inner QUIC lifetime as Serve.
+// a caller without a local listener supplies application connections to Forward
+// and must Close to join transport, authority, and forwarding work.
+func Prepare(ctx context.Context, config Config) (_ *Session, result error) {
+	startup, finish := observability.ClientOperation(ctx, "connector.startup")
+	defer func() { finish(result) }()
+	if config.Control == nil || !opaqueid.Valid(config.ServiceID, opaqueid.ServicePrefix) || config.IdentityID != "" && !opaqueid.Valid(config.IdentityID, opaqueid.IdentityPrefix) || !ValidProtocol(config.Protocol) || config.TrustRevision < 1 || config.Endpoint == nil || config.Endpoint.Hostname == "" || config.Endpoint.Port < 1024 || config.Endpoint.Port > 65535 {
+		return nil, ErrServiceConnection
+	}
+	if config.TransportTLS != nil && config.TransportTLS.InsecureSkipVerify || config.ServiceTLS == nil || config.ServiceTLS.InsecureSkipVerify || len(config.ServiceTLS.Certificates) != 0 || config.ServiceTLS.GetClientCertificate != nil {
+		return nil, ErrServiceConnection
+	}
+	if config.MaxConnections == 0 {
+		config.MaxConnections = 64
+	}
+	if config.MaxConnections < 1 || config.MaxConnections > 4096 {
+		return nil, ErrServiceConnection
+	}
+	s := &Session{config: config, parent: ctx}
+	defer func() {
+		if result != nil {
+			result = errors.Join(result, s.Close())
+		}
+	}()
+	setup, stop := context.WithTimeout(startup, 30*time.Second)
+	defer stop()
+	signer, err := config.Control.ConnectorSigner(setup, config.IdentityID)
+	if err != nil {
+		return nil, err
+	}
+	if signer.Subject.Validate() != nil || signer.Subject.IdentityID != config.IdentityID || len(signer.PublicKey) != ed25519.PublicKeySize || signer.Sign == nil {
+		return nil, ErrServiceConnection
+	}
+	p, err := prepareConnectorConnection(ctx, setup, config, signer)
+	if err != nil {
+		return nil, err
+	}
+	s.connection = p
+	p.mu.Lock()
+	s.initialRelayAddress = p.pair.Relays[0].RelayAddress
+	p.mu.Unlock()
+	return s, nil
+}
+
+// ValidProtocol identifies protocols supported by connector preparation.
+func ValidProtocol(protocol string) bool {
 	return protocol == "http" || protocol == "tcp" || protocol == "mysql" || protocol == "postgres" || protocol == "kubernetes"
 }
 

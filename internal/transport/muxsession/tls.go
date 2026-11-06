@@ -21,10 +21,15 @@ const streamCloseTimeout = time.Second
 
 var errStreamCleanupBlocked = errors.New("muxsession: stream cleanup blocked transport writer")
 
+// TCPDialer supplies raw sockets; TLS verification remains owned by this transport.
+type TCPDialer interface {
+	DialContext(context.Context, string, string) (net.Conn, error)
+}
+
 // TLSYamuxConfig configures the raw TLS/TCP plus yamux transport.
 type TLSYamuxConfig struct {
 	MaxIncomingStreams int
-	Dialer             *net.Dialer
+	Dialer             TCPDialer
 }
 
 // TLSYamuxConnector establishes raw TLS/TCP plus yamux sessions.

@@ -33,6 +33,9 @@ includes:
   deploy:
     taskfile: ./tasks/deployment.yml
     dir: "{{.ROOT_DIR}}"
+  wasm:
+    taskfile: ./tasks/connector-wasm.yml
+    dir: "{{.ROOT_DIR}}"
 
 tasks:
   dev:
@@ -178,6 +181,12 @@ tasks:
     desc: Measure warm PostgreSQL SELECT 1 latency through one publisher service run
     cmds:
       - task: workloads:go:test:load:postgres
+
+  go:test:load:connector-wasm:
+    dir: "{{.ROOT_DIR}}"
+    desc: Compare the experimental WASM and native PostgreSQL paths locally (RUNTIME=node/bun/workerd, QUERIES=1000)
+    cmds:
+      - task: wasm:benchmark
 
   package:
     dir: "{{.ROOT_DIR}}"

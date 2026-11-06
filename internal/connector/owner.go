@@ -25,6 +25,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/connector/kubeconfig"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
+	"github.com/tnldotdev/tnl/internal/connector/workload/acquisition"
 	"github.com/tnldotdev/tnl/internal/observability"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -590,7 +591,7 @@ func (b *connectorConnectionBackend) attach(ctx context.Context, assertion strin
 	defer unlock()
 	if assertion == "" {
 		var err error
-		assertion, err = workload.Acquire(ctx, b.acquisition, nil, os.Getenv)
+		assertion, err = acquisition.Acquire(ctx, b.acquisition, nil, os.Getenv)
 		if err != nil {
 			return err
 		}

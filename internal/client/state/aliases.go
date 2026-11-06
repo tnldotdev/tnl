@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/client/state/clientstatedb"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
@@ -42,7 +43,7 @@ type AliasSelection struct {
 }
 
 func (s AliasScope) validate() error {
-	server, err := CanonicalServer(s.Server)
+	server, err := httpclient.CanonicalServer(s.Server)
 	namespace, hostErr := naming.CanonicalizeHostname(s.Namespace)
 	if err != nil || server != s.Server || hostErr != nil || namespace != s.Namespace ||
 		!filepath.IsAbs(s.ProjectKey) || filepath.Clean(s.ProjectKey) != s.ProjectKey || strings.ContainsRune(s.ProjectKey, '\x00') ||

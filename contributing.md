@@ -53,6 +53,45 @@ helpers. Use `docker login` if you need authenticated pulls locally. GitHub-host
 runners pulling public images are
 [exempt from Docker Hub's pull rate limit](https://docs.github.com/en/actions/reference/limits#docker-hubs-rate-limit-for-github-actions).
 
+## try the experimental wasm connector
+
+Build the connector with the pinned Go JS/WASM runtime and check its host adapters:
+
+```sh
+mise exec -- task wasm:build
+mise exec -- task wasm:check
+```
+
+The experiment lives in `development/connector-wasm`; it does not replace the
+TypeScript SDK's native backend. Its local PostgreSQL fixture reuses control, two
+relays, a publisher, and a signed workload issuer. With Docker running, qualify
+the fixture separately through the native connector:
+
+```sh
+mise exec -- task go:test:integration:connector-wasm:native
+mise exec -- task go:test:integration:connector-wasm RUNTIME=node
+mise exec -- task go:test:integration:connector-wasm RUNTIME=bun
+mise exec -- task go:test:integration:connector-wasm RUNTIME=workerd
+```
+
+This target owns disposable PostgreSQL and keeps credentials in a private
+temporary file outside the checkout. It verifies an open transaction survives an
+interrupted relay carrier without changing the database session or replaying a
+write. The WASM targets also require an independently exchanged workload to renew
+and revoke before the runner exits. The workerd target uses two concurrent
+requests to check request-owned sockets. These local checks do not establish
+deployed Workers reachability, egress behavior, or resource limits.
+
+For a longer query comparison without Go race instrumentation:
+
+```sh
+mise exec -- task go:test:load:connector-wasm RUNTIME=node QUERIES=1000
+```
+
+Use `bun` or `workerd` for the other runtimes. The native baseline is an already
+prepared Go connector in the same topology, not the SDK's native helper process;
+its query timings do not measure helper startup, IPC, CPU, or memory.
+
 ## edit generated sources
 
 Edit the source named in a generated file's header, then regenerate:

@@ -1,4 +1,4 @@
-package stream
+package connector
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -26,47 +27,47 @@ type controlAdapter struct {
 func (*controlAdapter) String() string   { return "private connector control" }
 func (*controlAdapter) GoString() string { return "private connector control" }
 
-// NewControl borrows the signed-in identity's protected, server-scoped device.
+// NewHumanControl borrows the signed-in identity's protected, server-scoped device.
 // each connector connection creates its own signed owner key at preparation.
-func NewControl(client *clientcontrol.Client, profile *clientstate.Store, identityID string) (Control, error) {
+func NewHumanControl(client *clientcontrol.Client, profile *clientstate.Store, identityID string) (connectorstream.Control, error) {
 	if client == nil || profile == nil || !opaqueid.Valid(identityID, opaqueid.IdentityPrefix) {
-		return nil, ErrServiceConnection
+		return nil, connectorstream.ErrServiceConnection
 	}
 	return &controlAdapter{client: client, profile: profile, identityID: identityID}, nil
 }
 
-func (c *controlAdapter) ConnectorSigner(ctx context.Context, identity string) (Signer, error) {
+func (c *controlAdapter) ConnectorSigner(ctx context.Context, identity string) (connectorstream.Signer, error) {
 	if identity != c.identityID {
-		return Signer{}, ErrServiceConnection
+		return connectorstream.Signer{}, connectorstream.ErrServiceConnection
 	}
 	c.deviceMu.Lock()
 	defer c.deviceMu.Unlock()
 	device, err := c.profile.EnsureEnrolledVisitorDevice(ctx, identity, c.client.EnrollVisitorDevice)
 	if err != nil {
 		if errors.Is(err, clientstate.ErrPublisherStateConflict) {
-			return Signer{}, errors.Join(ErrServiceConnection, err)
+			return connectorstream.Signer{}, errors.Join(connectorstream.ErrServiceConnection, err)
 		}
-		return Signer{}, err
+		return connectorstream.Signer{}, err
 	}
-	return Signer{Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: identity, DeviceID: device.ID}, PublicKey: device.SigningKey.Public().(ed25519.PublicKey), Sign: func(message []byte) []byte { return ed25519.Sign(device.SigningKey, message) }}, nil
+	return connectorstream.Signer{Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, IdentityID: identity, DeviceID: device.ID}, PublicKey: device.SigningKey.Public().(ed25519.PublicKey), Sign: func(message []byte) []byte { return ed25519.Sign(device.SigningKey, message) }}, nil
 }
 
-func (c *controlAdapter) ResolveService(ctx context.Context, service string) (Run, error) {
+func (c *controlAdapter) ResolveService(ctx context.Context, service string) (connectorstream.Run, error) {
 	if !opaqueid.Valid(service, opaqueid.ServicePrefix) {
-		return Run{}, ErrServiceConnection
+		return connectorstream.Run{}, connectorstream.ErrServiceConnection
 	}
 	signer, err := c.ConnectorSigner(ctx, c.identityID)
 	if err != nil {
-		return Run{}, err
+		return connectorstream.Run{}, err
 	}
 	selected, err := c.client.SelectServiceRun(ctx, service, signer.Subject.DeviceID)
 	if err != nil {
-		return Run{}, err
+		return connectorstream.Run{}, err
 	}
-	if selected.Endpoint == nil || selected.ServiceId != service || !visitorsubject.Equal(selected.Subject, signer.Subject) || !opaqueid.Valid(selected.ServiceRunId, opaqueid.ServiceRunPrefix) || selected.RunNumber < 1 || selected.TrustRevision < 1 || !selected.ExpiresAt.After(time.Now()) || !validProtocol(string(selected.Protocol)) {
-		return Run{}, ErrServiceConnection
+	if selected.Endpoint == nil || selected.ServiceId != service || !visitorsubject.Equal(selected.Subject, signer.Subject) || !opaqueid.Valid(selected.ServiceRunId, opaqueid.ServiceRunPrefix) || selected.RunNumber < 1 || selected.TrustRevision < 1 || !selected.ExpiresAt.After(time.Now()) || !connectorstream.ValidProtocol(string(selected.Protocol)) {
+		return connectorstream.Run{}, connectorstream.ErrServiceConnection
 	}
-	return Run{ServiceID: service, ServiceRunID: selected.ServiceRunId, RunNumber: uint64(selected.RunNumber), ValidUntil: selected.ExpiresAt, Protocol: string(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: selected.Endpoint, PairReady: selected.PairReady}, nil
+	return connectorstream.Run{ServiceID: service, ServiceRunID: selected.ServiceRunId, RunNumber: uint64(selected.RunNumber), ValidUntil: selected.ExpiresAt, Protocol: string(selected.Protocol), TrustRevision: selected.TrustRevision, Endpoint: selected.Endpoint, PairReady: selected.PairReady}, nil
 }
 
 func (c *controlAdapter) PrepareConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
@@ -75,7 +76,7 @@ func (c *controlAdapter) PrepareConnectorPeerPair(ctx context.Context, service s
 		return controlv1.ConnectorPeerPair{}, err
 	}
 	if !visitorsubject.Equal(body.Subject, device.Subject) {
-		return controlv1.ConnectorPeerPair{}, ErrServiceConnection
+		return controlv1.ConnectorPeerPair{}, connectorstream.ErrServiceConnection
 	}
 	return c.client.PrepareDeviceConnectorPeerPair(ctx, service, device.Subject.DeviceID, body)
 }
@@ -86,7 +87,7 @@ func (c *controlAdapter) RenewConnectorPeerPair(ctx context.Context, service str
 		return controlv1.ConnectorPeerPairRenewal{}, err
 	}
 	if body.Action != "renew" || body.PreviousPairId == nil || !visitorsubject.Equal(body.Subject, device.Subject) {
-		return controlv1.ConnectorPeerPairRenewal{}, ErrServiceConnection
+		return controlv1.ConnectorPeerPairRenewal{}, connectorstream.ErrServiceConnection
 	}
 	return c.client.RenewDeviceConnectorPeerPair(ctx, service, *body.PreviousPairId, device.Subject.DeviceID, body)
 }

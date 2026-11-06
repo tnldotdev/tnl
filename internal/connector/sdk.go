@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
+	"github.com/tnldotdev/tnl/internal/connector/workload/acquisition"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"golang.org/x/sys/unix"
@@ -222,11 +223,11 @@ func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assert
 		}
 		bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		assertion, err = workload.Acquire(bounded, hints, nil, os.Getenv)
+		assertion, err = acquisition.Acquire(bounded, hints, nil, os.Getenv)
 		if err != nil {
 			return connectorruntime.SDKPrepared{}, err
 		}
-		options.refresh = workload.RefreshSource(scope.Directory, hints, os.Getenv)
+		options.refresh = acquisition.RefreshSource(scope.Directory, hints, os.Getenv)
 	}
 	if !slices.Contains(scope.Services, options.Service) {
 		return connectorruntime.SDKPrepared{}, connectorruntime.ErrUnauthorized

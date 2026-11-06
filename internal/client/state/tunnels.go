@@ -14,6 +14,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/client/state/clientstatedb"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
@@ -114,7 +115,7 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if options.Command != TunnelCommandPublish {
 		return nil, errors.New("clientstate: invalid tunnel command")
 	}
-	server, err := CanonicalServer(options.Server)
+	server, err := httpclient.CanonicalServer(options.Server)
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/httpclient"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 )
 
@@ -70,7 +71,7 @@ func preparePublisher(ctx context.Context, options Options) (*clientstate.Databa
 			return nil, nil, "", nil, ErrPublisherScope
 		}
 		if server != "" {
-			canonical, err := clientstate.CanonicalServer(server)
+			canonical, err := httpclient.CanonicalServer(server)
 			if err != nil || canonical != origin {
 				return nil, nil, "", nil, ErrPublisherScope
 			}

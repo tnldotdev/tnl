@@ -14,6 +14,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
+	"github.com/tnldotdev/tnl/internal/connector/workload/acquisition"
 	"github.com/tnldotdev/tnl/internal/failure"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
@@ -90,7 +91,7 @@ func Identify(ctx context.Context, options ContextOptions, input io.Reader) (aut
 		if hints.TokenFile != "" && !filepath.IsAbs(hints.TokenFile) {
 			hints.TokenFile = filepath.Join(scope.Directory, hints.TokenFile)
 		}
-		request.Assertion, err = workload.Acquire(ctx, hints, nil, os.Getenv)
+		request.Assertion, err = acquisition.Acquire(ctx, hints, nil, os.Getenv)
 		if err != nil {
 			return authorityv1.WorkloadIdentity{}, err
 		}

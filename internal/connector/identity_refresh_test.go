@@ -22,6 +22,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
+	"github.com/tnldotdev/tnl/internal/connector/workload/acquisition"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -131,7 +132,7 @@ func TestConnectionBackgroundRefreshRereadsRotatingFile(t *testing.T) {
 	}
 	read := make(chan struct{}, 16)
 	f.start(func(ctx context.Context) (string, error) {
-		value, err := workload.Acquire(ctx, workloadmanifest.Acquisition{Method: "token-file", TokenFile: file}, nil, os.Getenv)
+		value, err := acquisition.Acquire(ctx, workloadmanifest.Acquisition{Method: "token-file", TokenFile: file}, nil, os.Getenv)
 		read <- struct{}{}
 		return value, err
 	})
@@ -174,7 +175,7 @@ func TestConnectionBackgroundRefreshFailureNeverReplacesIdentity(t *testing.T) {
 			f.start(func(context.Context) (string, error) {
 				switch source {
 				case "missing":
-					return "", workload.ErrAssertionUnavailable
+					return "", acquisition.ErrAssertionUnavailable
 				case "unchanged":
 					return "initial.private.jwt", nil
 				default:
