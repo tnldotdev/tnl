@@ -67,6 +67,17 @@ normal release binaries. Use `DIAGNOSTICS=metrics`, not `DIAGNOSTICS=trace`, wit
 that mode; inspect receipts and actual trace coverage rather than assuming retention.
 Both modes add work and memory use, so compare matched observer-enabled
 controls rather than treating them as normal-path benchmarks.
+On Linux, the existing 100 ms sampler also takes at most 16 kernel metadata
+snapshots when it wakes more than 10 ms late. Private `kernel-snapshots.json`
+records bounded thread state, wait symbols, syscall numbers (never arguments),
+namespace IDs, and established IPv4 loopback TCP ports, queue sizes, and inodes.
+Read bounds use the visitor phase epoch; snapshots are not atomic and add sampler
+work. Procfs reads have no hard deadline: kernel waits can delay the sampler and
+`Finish`; request workers do not read procfs. Join ports to visitor trace markers
+and OS TIDs to trace thread IDs, not GoIDs. A nonempty receive queue can show bytes
+waiting before the connector resumes; an empty, missing, or truncated observation
+cannot prove prompt delivery or scheduling. Thread state `R` means running or
+runnable, not necessarily on CPU.
 
 Docker Hub images use `docker.io` directly and stay pinned by digest. Docker,
 Compose, and the test harness use existing Docker credentials, including credential

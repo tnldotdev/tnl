@@ -72,33 +72,37 @@ type postgresLateTrigger struct {
 }
 
 type postgresLateReceipt struct {
-	Config                                  postgresLateConfig
-	VisitorPID                              int
-	SampleCount, SampleLimit, TraceBytes    int
-	SampleInterval, MaximumSamplingLateness time.Duration
-	Trigger                                 *postgresLateTrigger
-	TraceStatus, TraceFile, Coverage        string
-	SnapshotStarted, SnapshotCompleted      time.Duration
-	MarkerStarted, MarkerCompleted          time.Duration
-	MarkerStatus                            string
-	NotifyStarted, NotifyCompleted          time.Duration
-	NotifyTimeout, NotifyDeadline           time.Duration
-	NotifyStatus                            string
-	PostTriggerRequested, PostTriggerActual time.Duration
-	PostTriggerStarted, PostTriggerDeadline time.Duration
-	PostTriggerCompleted                    time.Duration
-	PostTriggerStatus                       string
-	TracePartial                            bool
-	Cancelled                               bool
-	Notes                                   []string
-	Issues                                  []string
-	Error                                   string
+	Config                                   postgresLateConfig
+	VisitorPID                               int
+	SampleCount, SampleLimit, TraceBytes     int
+	SampleInterval, MaximumSamplingLateness  time.Duration
+	Trigger                                  *postgresLateTrigger
+	TraceStatus, TraceFile, Coverage         string
+	SnapshotStarted, SnapshotCompleted       time.Duration
+	MarkerStarted, MarkerCompleted           time.Duration
+	MarkerStatus                             string
+	NotifyStarted, NotifyCompleted           time.Duration
+	NotifyTimeout, NotifyDeadline            time.Duration
+	NotifyStatus                             string
+	PostTriggerRequested, PostTriggerActual  time.Duration
+	PostTriggerStarted, PostTriggerDeadline  time.Duration
+	PostTriggerCompleted                     time.Duration
+	PostTriggerStatus                        string
+	TracePartial                             bool
+	Cancelled                                bool
+	Notes                                    []string
+	Issues                                   []string
+	Error                                    string
+	KernelSnapshotCount, KernelSnapshotLimit int
+	KernelSnapshotSkipped                    int
+	KernelSnapshotFile, KernelSnapshotNotes  string
 }
 
 type postgresLateDiagnostic struct {
 	cfg                   postgresLateConfig
 	receipt               postgresLateReceipt
 	samples               []postgresLateSample
+	kernels               []postgresKernelSnapshot
 	trigger               chan postgresLateTrigger
 	sampleDone, traceDone chan struct{}
 	cancel                context.CancelFunc
@@ -144,6 +148,8 @@ func startPostgresLateDiagnostic(ctx context.Context, cfg postgresLateConfig) *p
 	}
 	d.samples = make([]postgresLateSample, 0, int((cfg.Duration+5*time.Second+tailAllowance)/postgresLateInterval)+2)
 	d.receipt.SampleLimit = cap(d.samples)
+	d.kernels = make([]postgresKernelSnapshot, 0, postgresKernelSnapshotLimit)
+	d.receipt.KernelSnapshotLimit, d.receipt.KernelSnapshotNotes = postgresKernelSnapshotLimit, postgresKernelNotes
 	var recorder *trace.FlightRecorder
 	if cfg.Mode == "trace" {
 		d.traceBytes = make([]byte, postgresLateTraceLimit)
@@ -315,6 +321,9 @@ func (d *postgresLateDiagnostic) sample(ctx context.Context) {
 		}
 		metrics.Read(values)
 		s.GCCycles, s.HeapBytes, s.GCCPUSeconds, s.GOMAXPROCS = values[0].Value.Uint64(), values[1].Value.Uint64(), values[2].Value.Float64(), values[3].Value.Uint64()
+		if runtime.GOOS == "linux" {
+			d.snapshotKernel("/proc", s)
+		}
 		s.Completed = time.Since(d.cfg.Start)
 		s.Skipped = max(0, int64(s.Completed/postgresLateInterval)-index)
 		d.samples = append(d.samples, s)
@@ -443,7 +452,7 @@ func (d *postgresLateDiagnostic) Finish(directory string) error {
 		return nil
 	}
 	d.finish.Do(func() {
-		defer func() { d.samples, d.traceBytes = nil, nil }()
+		defer func() { d.samples, d.kernels, d.traceBytes = nil, nil, nil }()
 		close(d.trigger)
 		// normal workload completion is not capture cancellation. keep sampling
 		// through any remaining tail, then join both owners before exporting.
@@ -469,6 +478,8 @@ func (d *postgresLateDiagnostic) Finish(directory string) error {
 			return errors.Join(err, f.Close())
 		}
 		d.err = errors.Join(d.err, write("samples.json", d.samples))
+		d.receipt.KernelSnapshotCount, d.receipt.KernelSnapshotFile = len(d.kernels), "kernel-snapshots.json"
+		d.err = errors.Join(d.err, write(d.receipt.KernelSnapshotFile, d.kernels))
 		if d.receipt.TraceFile != "" {
 			d.err = errors.Join(d.err, write(d.receipt.TraceFile, d.traceBytes))
 		}
