@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/tls"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -24,6 +26,74 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func TestVisitorSourceMetadataOnlyOpeningDoesNotConsumeFallbackProof(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		route, err := newTestPublicURLServer(t, PublicURLServerConfig{Hostname: "route.example", Certificate: publicURLTestCertificate(t, "route.example"), Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+		})})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer route.Close()
+		if err := route.Start(); err != nil {
+			t.Fatal(err)
+		}
+		header, metadata := sourceMetadataFixture(t, route)
+		wire, err := proxyproto.Encode(metadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		open := func(connectionID string) net.Conn {
+			t.Helper()
+			local, remote := net.Pipe()
+			t.Cleanup(func() { _ = remote.Close() })
+			streamHeader := header
+			streamHeader.PublisherConnectionID = connectionID
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				serveTestPublicVisitor(t, route, local, streamHeader)
+			}()
+			t.Cleanup(func() { _ = remote.Close(); <-done })
+			if _, err := remote.Write(wire); err != nil {
+				t.Fatal(err)
+			}
+			return remote
+		}
+		stalled := open("connection-a")
+		synctest.Wait()
+		route.mu.Lock()
+		consumed := len(route.sourceHistory)
+		route.mu.Unlock()
+		if consumed != 0 {
+			t.Fatal("metadata without visitor bytes consumed fallback source proof")
+		}
+		fallback := tls.Client(open("connection-b"), &tls.Config{RootCAs: rootsForCertificate(t, *route.certificate.Load()), ServerName: "route.example"})
+		defer fallback.Close()
+		if err := fallback.HandshakeContext(t.Context()); err != nil {
+			t.Fatal("fallback could not use the uncommitted source proof", err)
+		}
+		response, err := capacityRequest(fallback, "/", true)
+		if err != nil || response.StatusCode != http.StatusNoContent {
+			t.Fatal("fallback did not reach the application", err)
+		}
+		_ = response.Body.Close()
+		// a delayed first byte on the abandoned path must not reuse the proof
+		// after the healthy path has committed it.
+		if _, err := stalled.Write([]byte{22}); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := stalled.Read(make([]byte, 1)); n != 0 || !errors.Is(err, io.EOF) {
+			t.Fatal("abandoned path replayed committed source proof", n, err)
+		}
+		if calls.Load() != 1 {
+			t.Fatal("visitor application work was replayed", calls.Load())
+		}
+	})
+}
 
 func TestVisitorSourceReplayWindowPreservesEveryReorderAndRejectsOldSequences(t *testing.T) {
 	for _, shift := range []uint64{1, 63, 64, 65, 127, 128, 191, 192, 255, 256, 257, 1024} {

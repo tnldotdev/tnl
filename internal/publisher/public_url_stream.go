@@ -1,6 +1,7 @@
 package publisher
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -149,6 +150,14 @@ func (r *PublicURLServer) handleVisitor(parent context.Context, admission *publi
 		visitorErr = err
 		return
 	}
+	// metadata can reach a publisher while its acceptance is still in flight.
+	// do not consume the shared source proof until a visitor byte arrives: ingress
+	// may still choose another relay before crossing its retry boundary.
+	visitorBytes := bufio.NewReaderSize(replay, 1)
+	if _, err := visitorBytes.Peek(1); err != nil {
+		visitorErr = err
+		return
+	}
 	if err := admission.authenticateSource(streamHeader, header); err != nil {
 		visitorErr = err
 		return
@@ -167,7 +176,7 @@ func (r *PublicURLServer) handleVisitor(parent context.Context, admission *publi
 	}
 	session := &visitorSession{visitor: Visitor{Run: r.run, Header: streamHeader, Source: header.Source, Destination: header.Destination}, promote: promote, guard: r.guard, life: life, cancel: cancel, capacity: admission}
 	defer session.close()
-	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: replay}, header: header, denied: denied, session: session}
+	metadata := &metadataConn{Conn: &publicURLReaderConn{Conn: connection, reader: visitorBytes}, header: header, denied: denied, session: session}
 	if endStream != nil {
 		metadata.endStream = func() error { return endStream(life) }
 	}
