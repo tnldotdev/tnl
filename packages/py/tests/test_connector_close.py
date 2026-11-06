@@ -52,16 +52,17 @@ def test_close_before_first_handle_joins_native_and_retains_failed_stop(
     async def scenario() -> None:
         pending = asyncio.create_task(prepare())
         assert await asyncio.to_thread(starting.wait, 5)
+        (preparation,) = handle._lifetime.preparations
         try:
             closing = asyncio.create_task(handle.aclose())
-            while not handle._session.closed:
+            while not handle._lifetime.closed:
                 await asyncio.sleep(0)
             assert not closing.done() and not stopping.is_set()
             release.set()
             with pytest.raises(tnl.TnlError) as error:
                 await closing
             assert error.value is failure
-            assert stopping.is_set() and handle._session.pending == 0
+            assert stopping.is_set() and preparation.pending == 0
             registry = handle._session.scope.registry
             assert registry is not None
             await handle.aclose()
