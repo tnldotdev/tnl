@@ -1,312 +1,343 @@
-# tnl
+<p align="center">
+  <img src="docs/logo.svg" width="100" alt="tnl" />
+</p>
+<p align="center">
+  easy tunnels for dev and prod
+  <br/>
+  by <a href="https://github.com/0xcadams">@0xcadams</a>
+  <br/><br/>
+  <i><code>tnl</code> is not ready yet - first release is coming November 23.</i>
+</p>
+<br/>
 
-take a shortcut through the internet.
+`tnl` allows you to take a shortcut through the internet. It's like if Tailscale and Cloudflare Tunnels had a baby. And that baby had a great devex.
 
-> tnl is in prerelease. the first release is coming november 1.
+## `tnl` where?
 
-`tnl` gives your local app an end-to-end encrypted HTTPS URL. By default, every
-Git worktree gets its own unique URL, so you can easily preview multiple
-development tracks in parallel.
+### in dev
+
+`tnl` gives every Git worktree its own unique HTTPS URL. Traffic stays encrypted from the browser to your laptop. Here's how it looks:
 
 ```text
-                           browser
-                              |
-                            HTTPS
-                              v
-                 tnld (hosted or self-hosted)
-                              |
-                      encrypted traffic
-                              |
-+-----------------------------v-----------------------------+
-|                       your machine                        |
-|                                                           |
-|  main repo                    perf worktree               |
-|  web URL -> :5173             web URL -> :5174            |
-|  api URL -> :3001             api URL -> :3002            |
-|                                                           |
-+-----------------------------------------------------------+
+                             your browser
+                                   |
+                     https://*.calm-otter.tnl.dev
+                                   v
+                              tnl ingress
+                         (hosted/self-hosted)
+                                   |
+                +------------------+------------------+
+                |                                     |
+           direct UDP                             tnl relay
+        (when possible)                           (fallback)
+                |                                     |
+                +------------------+------------------+
+                                   |
++----------------------------------v----------------------------------+
+|                             your laptop                             |
+|                                  |                                  |
+|                +-----------------+----------------+                 |
+|                v                                  v                 |
+|       tnl (main checkout)                tnl (perf worktree)        |
+|     app.calm-otter.tnl.dev           app-perf.calm-otter.tnl.dev    |
+|                |                                  |                 |
+|                v                                  v                 |
+|         localhost:5173                     localhost:5174           |
++---------------------------------------------------------------------+
 ```
 
-## try tnl
+The Next.js and Vite plugins automatically handle port conflicts. And OAuth and webhooks get one consistent URL that works across all worktrees.
 
-Try the built-in demo without installing a project dependency or signing in:
+### in prod
 
-```bash
-npx --yes @tnldotdev/tnl publish --demo
+Connect to private services from anywhere (laptop, CI, etc.).
+
+For instance, you can run a `tnl` publisher inside your VPC. Traffic is end-to-end encrypted between your client and the publisher.
+It tries hole-punched UDP, with relays as a fallback. Your db or Kubernetes API aren't publicly exposed:
+
+```text
+    tnl (your laptop)    tnl (GitHub Actions)      tnl (Vercel fn)
+            |                      |                      |
+            +----------------------+----------------------+
+                                   |
+                +------------------+------------------+
+                |                                     |
+           direct UDP                             tnl relay
+        (when possible)                           (fallback)
+                |                                     |
+                +------------------+------------------+
+                                   |
++----------------------------------v----------------------------------+
+|                          aws / private vpc                          |
+|                                  |                                  |
+|                            tnl publisher                            |
+|                                  |                                  |
+|                 +----------------+-----------------+                |
+|                 v                                  v                |
+|        postgres (e.g. RDS)               kubernetes (e.g. EKS)      |
++---------------------------------------------------------------------+
 ```
 
-On tnl.dev, the guest link opens in your browser when ready. Click **ping** and
-match the URL and count with the terminal running `tnl`. The browser shows the
-round-trip time and when your computer sent the pong. Guests can run one demo
-at a time. The link admits this demo without signing in; tnl prints it once
-instead of admitting every visitor from your IP. A guest credential lasts 72 hours
-and allows 20 cumulative minutes ready across runs, including idle time.
-Ctrl+C stops the demo and removes its public URL.
-Run `tnl auth login` to publish your own
-app. CLI telemetry is on by default, including for the demo. Run
-`tnl telemetry off` to disable it.
+Read below for more details.
 
 ## start developing
 
-From your project directory, install the NPM package:
+First, install the npm package and initialize your project:
 
 ```bash
-npm install -D @tnldotdev/tnl@next
-```
-
-Initialize with the helper:
-
-```bash
+npm install -D @tnldotdev/tnl
 npx tnl init
-```
-
-`tnl init` creates project configuration and helps connect your framework's
-development listener. Your usual development script still starts the app:
-
-```ts
-// tnl.config.ts
-import { defineConfig } from "@tnldotdev/tnl/config";
-
-export default defineConfig({
-  services: {
-    app: { publicURL: {} },
-  },
-});
-```
-
-Then run:
-
-```bash
 npx tnl auth login
-pnpm dev
-npx tnl wait
-npx tnl status --scope=local
-npx tnl status --scope=server
 ```
 
-Sign in once with `tnl auth login`. The integration prepares public metadata before
-framework startup, then reports the listener's actual bound port to a local
-`tnl` process. By default, a visitor needs a current sign-in, share link, or
-URL-scoped visitor token. To allow anonymous visitors to a service, set
-`publicURL: { access: "anonymous" }` for that service. An additional IP list in
-`publicURL: { access: { ip: ["192.0.2.0/24"] } }` limits where credentialed visitors may connect;
-an IP match does not replace their credential.
+For example, with Vite, `tnl init` adds `tnl()` alongside your existing plugins:
 
-`tnl wait` checks a fresh public response. `tnl status` shows every configured
-service, including apps that have not started, without sending a request to the
-app. `tnl watch --output ndjson` follows ordered local lifecycle events.
+```ts
+// vite.config.ts
+import { defineConfig } from "vite";
+import tnl from "@tnldotdev/tnl/vite";
 
-Local publication works in a directory without Git or an origin remote. Its
-identity stays with the canonical project directory when you initialize Git,
-change the origin, or switch branches. Each separate checkout gets its own local
-identity. Portable `tnl apply` and workload generation require a Git source.
+export default defineConfig({
+  plugins: [tnl()],
+});
+```
 
-One local `tnl` process holds the project's evaluated configuration. After changing
-it, stop and restart all of that project's apps and named local publishers
-together. Reusing an owner with a different configuration fails with restart
-instructions. Each routable public publish run gets one automatic readiness
-check with a two-minute retry budget; use `tnl wait` for a fresh check afterward.
-
-Hot reloading works automatically, as well as SSE/websockets/streaming responses.
-
-You can [allow reviewers](https://tnl.dev/docs/publish#who-can-visit) or
-declare a stable webhook endpoint when you need one. Provider IPs are only
-allowed on the declared webhook path and method.
-
-[Follow the quickstart](https://tnl.dev/docs) or read about
-[framework setup](https://tnl.dev/docs/frameworks).
-
-## give your services their own urls
-
-If your project has several services, name them in `tnl.config.ts` and
-select the service when preparing each app:
+It also creates a project configuration:
 
 ```ts
 // tnl.config.ts
 import { defineConfig } from "@tnldotdev/tnl/config";
 
 export default defineConfig({
+  feedback: true,
   services: {
-    web: { publicURL: {} },
-    api: { publicURL: {} },
+    app: {
+      publicURL: {},
+      target: { type: "app" },
+    },
   },
 });
 ```
 
-Pass `service: "web"` or `service: "api"` to your framework integration or
-`tnl.prepare()` in each app. Start each service with its normal development
-command:
+Start your app with `npm run dev` and get its URL.
+By default, any visitor needs to sign in or have a share link.
+
+Hot reloading, WebSockets, SSE, and streaming responses are all supported.
+
+_Already have an app listening on port 3000? Run `npx tnl publish 3000`._
+
+See [installation options](https://tnl.dev/docs/publish), the
+[quickstart](https://tnl.dev/docs), and [framework integrations](https://tnl.dev/docs/frameworks).
+
+## run worktrees side by side
+
+Once your `tnl` setup is committed to Git, you can leave the app running in your main checkout, and in another terminal, create a worktree and start the app there too:
 
 ```bash
-pnpm --dir apps/web dev
-pnpm --dir apps/api dev
-npx tnl wait
+git worktree add ../perf
+cd ../perf
+npm ci
+npm run dev
 ```
 
-These will have separate URLs:
-
-| service | URL                                                   |
-| ------- | ----------------------------------------------------- |
-| `web`   | `https://web-example-k7n2p9.ecstatic-penguin.tnl.dev` |
-| `api`   | `https://api-example-k7n2p9.ecstatic-penguin.tnl.dev` |
-
-Use the API URL assigned to this project in the frontend:
-
-```ts
-import { tnl } from "@tnldotdev/tnl";
-
-const apiURL = tnl.services?.api?.url;
-// https://api-example-k7n2p9.ecstatic-penguin.tnl.dev
-```
-
-Read about [project configuration](https://tnl.dev/docs/configuration) and
-[framework metadata](https://tnl.dev/docs/frameworks#use-a-service-url-in-your-app).
-An explicit `publicURL` block enables public HTTPS. Omit it to keep a service
-private, including HTTP services; use `tnl connect NAME` to reach a private
-service. `protocol` defaults to `http`; `tcp`, `mysql`, and `postgres` describe
-private targets. Set `access: { team: true }` on a service to allow the team.
-For a Node or Bun API, prepare its service before startup and register the bound
-listener. Port 0 lets the application choose an available port:
-
-```ts
-import { createServer } from "node:http";
-import { tnl } from "@tnldotdev/tnl";
-
-const publication = await tnl.prepare({ service: "api" });
-const server = createServer((_request, response) => response.end("hello"));
-server.listen(0, "127.0.0.1");
-await publication.register(server);
-```
-
-Registration acknowledges the listener; `tnl wait` checks public readiness.
-See [API server setup](https://tnl.dev/docs/frameworks#api-servers).
-
-## open changes side by side
-
-Create another Git worktree. The project configuration comes with it:
-
-```bash
-git worktree add -b perf ../perf
-```
-
-Then start the two services:
-
-```bash
-pnpm --dir apps/web dev
-pnpm --dir apps/api dev
-```
-
-The same frontend is now running from two checkouts:
-
-| checkout  | frontend public URL                                        |
-| --------- | ---------------------------------------------------------- |
-| primary   | `https://web-example-k7n2p9.ecstatic-penguin.tnl.dev`      |
-| `../perf` | `https://web-example-perf-m4q8s2.ecstatic-penguin.tnl.dev` |
-
-`tnl` names each URL after the service and project, adding the checkout name
-for a linked worktree. A short ID keeps names distinct, and switching branches
-leaves the URL unchanged.
-
-For Next.js and Vite, there is no port bookkeeping. If another worktree already
-uses the preferred port, the framework can choose another and `tnl` follows the
-listener it actually opens. Restarting the same worktree reuses its URL.
-
-See what is running across your local worktrees from any of them:
-
-```bash
-npx tnl status --all --scope=local
-```
-
-## custom domain
-
-Claim a development subdomain and make it the default for new public URLs:
-
-```bash
-npx tnl domain claim dev.example.com --default
-npx tnl domain list
-```
-
-Delegate the subdomain with the NS records. Then, dev URLs will look like:
+This would end up looking like:
 
 ```text
-https://web-example-k7n2p9.chase.dev.example.com
+shop
++-- main checkout -> https://app-shop-k7n2p9.calm-otter.tnl.dev
+|
++-- perf worktree -> https://app-shop-perf-m4q8s2.calm-otter.tnl.dev
 ```
 
-[Use a custom domain](https://tnl.dev/docs/domains).
+Vite and Next.js can choose another port when the preferred one is taken, and `tnl` will publish the port they actually open. Restarting either checkout reuses its URL. Read [more about worktrees](https://tnl.dev/docs/development#develop-in-parallel-worktrees).
 
-## self-host
+## share it and get feedback
 
-Configure a standard OIDC issuer and server client on control, and set
-`TNLD_MANAGED_DOMAIN=routes.example.com`. Sign in through the browser approval flow:
+You can leave inline feedback in your app for your agent to review. Or, send someone on your team a link:
 
 ```bash
-tnl auth login --server https://control.example.com --open
-tnl status --scope=server --server https://control.example.com
-tnl publish 3000 --server https://control.example.com --name app
-# https://app.alex.routes.example.com
+npx tnl share link create app-shop-k7n2p9.calm-otter.tnl.dev \
+  --expires-in 7d
 ```
 
-Without `--name`, `tnl` uses a stable project-and-worktree name. Personal
-teams use a readable label, such as `app.alex.routes.example.com`; members of
-the `studio` team use `app.alex.studio.routes.example.com`. A shared hosted
-server can set `TNLD_MANAGED_URL_MODE=generated` to assign labels such as
-`ecstatic-penguin` instead. Publisher certificate issuance requires DNS-01
-automation, including for exact-hostname certificates. Namespace wildcard plans
-can reuse DNS and certificates; pointing an exact hostname at ingress alone does
-not enable issuance. service endpoints also require a ready team domain
-with DNS-01 automation.
+The link expires after a week and can be revoked early. Similar to how Vercel comments work, reviewers can leave inline feedback:
 
-After deploying the `tnl` server, update your config with it:
+```text
+share link -> your app -> click an element -> leave feedback
+```
+
+Then you (or your agent) can use `tnl feedback list` to read feedback from the CLI. See [sharing and feedback](https://tnl.dev/docs/development#share-a-preview).
+
+## register your callbacks once
+
+To add OAuth or webhook support, add the following to your config:
 
 ```ts
 export default defineConfig({
-  server: "https://control.example.com",
-  services: {
-    // ...
+  // ...existing configuration
+  oauth: true,
+  // and/or
+  webhooks: {
+    payments: {
+      service: "app",
+      path: "/webhooks/stripe",
+      provider: "stripe",
+    },
   },
 });
 ```
 
-The same config works with hosted tnl.dev or your own server.
+The OAuth and webhook URLs do not change when you work across multiple checkouts. They "just work" across all your worktrees.
 
-Named publisher groups can run near services on your private network. Keep
-their service declarations in Git, then run `tnl apply` to save a revision in
-control. Enrolled publishers pull only their group's assignments and report
-their observed revision and health. Starting `pnpm dev` still registers only
-the local listener; it does not apply production changes. Cloud capacity and
-task replacement belong to your infrastructure. The
-[Fargate templates](deploy/publisher/fargate/readme.md) show that boundary.
+OAuth automatically returns the browser to the worktree that started login:
 
-[Run your own server](https://tnl.dev/docs/self-hosting).
+```text
+                             perf worktree
+                                   |
+                                   | start login
+                                   v
+                                 GitHub
+                                   |
+                                   v
++---------------------------------------------------------------------+
+|     https://oauth-shop-n6t4c2.calm-otter.tnl.dev/auth/callback      |
++---------------------------------------------------------------------+
+                                   |
+                                   | redirect browser
+                                   v
+                             perf worktree
+```
 
-## not using typescript/javascript, or don't want config?
+Or, for webhooks, the same event fans out to all running worktrees:
 
-You can use Homebrew to install the `tnl` client. Publish an HTTP app
-already listening on port 3000 without any configuration:
+```text
+                         webhook (e.g. Stripe)
+                                   |
+                                   v
++---------------------------------------------------------------------+
+| https://hooks-shop-b6m2x7d4qk5ra.calm-otter.tnl.dev/webhooks/stripe |
++---------------------------------------------------------------------+
+                                   |
+                       +-----------+-----------+
+                       |                       |
+                       v                       v
+                      main                    perf
+```
+
+You can also select a single webhook receiver, instead of fanning out. See [OAuth setup](https://tnl.dev/docs/development#register-one-oauth-callback-for-your-worktrees)
+and [webhook providers](https://tnl.dev/docs/webhooks).
+
+## connect to prod
+
+### from your laptop
+
+For example, connect to a private PostgreSQL instance in Amazon RDS:
+
+```ts
+export default defineConfig({
+  // ...existing config
+  publisherGroups: {
+    production: {},
+  },
+  services: {
+    orders: {
+      publisherGroup: "production",
+      protocol: "postgres",
+      target: {
+        type: "rds",
+        instance: "orders",
+        region: "us-east-1",
+      },
+      access: { team: true },
+    },
+  },
+});
+```
+
+Use your RDS instance name and region. Apply it with `npx tnl apply`, then run a `production` publisher in your VPC. From your laptop:
 
 ```bash
-brew install tnldotdev/tap/tnl
-tnl publish 3000
+npx tnl connect orders
 ```
 
-Or install with curl:
+Team members use the printed connection settings with `psql` or their database driver and their normal database credentials. Kubernetes works with `kubectl` and your cluster's existing credentials.
 
-```sh
-curl -fsSL https://tnl.dev/install | sh
+Read about [setting up private services](https://tnl.dev/docs/private-services) or [generating AWS publisher infrastructure](https://tnl.dev/docs/aws-publishers).
+
+### or from ci
+
+Let a GitHub Actions workflow connect to `orders`:
+
+```ts
+export default defineConfig({
+  // ...existing config
+  workloads: {
+    migrate: {
+      provider: "github",
+      services: ["orders"],
+      github: {
+        // your GitHub repo details
+        repository: "shop/storefront",
+        workflow: ".github/workflows/deploy.yml",
+        ref: "refs/heads/main",
+      },
+    },
+  },
+});
 ```
 
-For an app that is already running, [use `tnl publish`](https://tnl.dev/docs/publish).
+Apply the config, then add the action to your deploy job. For example, with Drizzle:
+
+```yaml
+# .github/workflows/deploy.yml
+permissions:
+  contents: read
+  id-token: write
+steps:
+  # git checkout or package installation...
+  - uses: tnldotdev/tnl/connect@<sha>
+    with:
+      workload: migrate
+  - run: npx drizzle-kit migrate
+    env:
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+```
+
+The action uses GitHub's OIDC with secure, short-lived tokens to connect to the `orders` service. Then, in your Drizzle config:
+
+```ts
+// drizzle.config.ts
+import { defineConfig } from "drizzle-kit";
+import { tnl } from "@tnldotdev/tnl";
+
+export default defineConfig({
+  dialect: "postgresql",
+  dbCredentials: {
+    ...tnl.connect("orders"),
+    user: "postgres",
+    database: "orders",
+    password: process.env.DB_PASSWORD!,
+  },
+});
+```
+
+`tnl.connect("orders")` reads the local host, port, and TLS settings prepared by the action. The db password comes from GitHub secrets.
+
+See [GitHub Actions setup](https://tnl.dev/docs/workloads#connect-a-github-actions-job).
+
+## custom domains or self-hosting
+
+You can also add a subdomain you own, for URLs like `https://app.alex.dev.example.com`.
+
+Use `tnl domain claim` to get the DNS records to add; once verified, `tnl` manages its public URL DNS and certificates.
+See [setting up a custom domain](https://tnl.dev/docs/domains).
+
+Or, you can even run the whole stack yourself (control, ingress, and relays), forever free. See [running your own server](https://tnl.dev/docs/self-hosting).
 
 ## how much does it cost?
 
-tnl.dev is free for now. Teams have a soft limit of 50 GiB of transfer per
-month across their public URLs, counting traffic in both directions.
-
-Accounts and teams created while it is free will keep a free plan
-if paid options arrive.
+The hosted tnl.dev is free for now. Accounts and teams created while it is free will keep a free plan if paid options arrive.
 
 ## license
 
-The client and server are licensed under [BSD-3-Clause](LICENSE). See the
-[dependency notices](THIRD_PARTY_LICENSES.txt), browse the
-[command reference](https://tnl.dev/docs/cli), or [contribute](contributing.md).
+This project is [BSD-3-Clause licensed](LICENSE).

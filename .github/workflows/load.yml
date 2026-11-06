@@ -33,14 +33,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            tools/testharness/go.sum
-            .github/workflows/load.yml
+        uses: ./.github/actions/setup-go # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
 
       - name: Install Task
         uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
@@ -56,9 +49,13 @@ jobs:
         run: task go:test:load:database DELAY="$DELAY" PUBLIC_URLS="$PUBLIC_URLS"
 
   runtime:
-    name: Runtime workloads
+    name: Runtime workload (${{ matrix.scenario }})
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [smoke, relay-kill, connect]
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,13 +63,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            tools/testharness/go.sum
+        uses: ./.github/actions/setup-go # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
 
       - name: Install Task
         uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
@@ -82,16 +73,48 @@ jobs:
           checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
 
       - name: Run runtime smoke
+        if: matrix.scenario == 'smoke'
         run: task go:test:load:runtime RACE=1 RESULTS=bench-results/ci-smoke
 
       - name: Run relay-kill fallback workload
+        if: matrix.scenario == 'relay-kill'
         run: task go:test:load:runtime SCENARIO=relay-kill RPS=160 RESULTS=bench-results/ci-relay-kill
 
       - name: Run connector load smoke
+        if: matrix.scenario == 'connect'
         run: task go:test:load:connect RACE=1 RESULTS=bench-results/ci-connect
 
+      - name: Retain workload evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-workloads-${{ matrix.scenario }}
+          path: bench-results/ci-*
+          if-no-files-found: ignore
+          retention-days: 7
+
+  runtime-extended:
+    name: Extended runtime workloads
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-go # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
+
+      - name: Install Task
+        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+          repo-token: ""
+          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+
       - name: Run reference and extended fault workloads
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           # give 64 publishers cold-start headroom and database CPU for policy refresh.
           DATABASE_CPUS=2 task go:test:load:runtime PUBLIC_URLS=64 START_PARALLEL=64 READY_TIMEOUT=60s RPS=160 DURATION=30s RESULTS=bench-results/ci-reference
@@ -105,7 +128,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: runtime-workloads
+          name: runtime-workloads-extended
           path: bench-results/ci-*
           if-no-files-found: ignore
           retention-days: 7
@@ -113,7 +136,7 @@ jobs:
   load:
     name: Load tests
     if: always()
-    needs: [database, runtime]
+    needs: [database, runtime, runtime-extended]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -122,4 +145,13 @@ jobs:
         env:
           DATABASE_RESULT: ${{ needs.database.result }}
           RUNTIME_RESULT: ${{ needs.runtime.result }}
-        run: test "$DATABASE_RESULT" = success && test "$RUNTIME_RESULT" = success
+          EXTENDED_RESULT: ${{ needs.runtime-extended.result }}
+          EXTENDED_REQUIRED: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+        run: |
+          test "$DATABASE_RESULT" = success
+          test "$RUNTIME_RESULT" = success
+          if [ "$EXTENDED_REQUIRED" = true ]; then
+            test "$EXTENDED_RESULT" = success
+          else
+            test "$EXTENDED_RESULT" = skipped
+          fi
