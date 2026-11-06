@@ -1833,7 +1833,7 @@ CREATE TABLE control.workload_sessions (
     team_id text NOT NULL REFERENCES control.teams(id),
     project_key text NOT NULL,
     workload_name text NOT NULL,
-    provider text NOT NULL CHECK (provider IN ('github','vercel','fly','oidc','google')),
+    provider text NOT NULL CHECK (provider IN ('github','vercel','fly','oidc','google','kubernetes')),
     session_nonce text NOT NULL CHECK (session_nonce ~ '^[A-Za-z0-9_-]{16,128}$'),
     repository_id text,
     run_id text,
