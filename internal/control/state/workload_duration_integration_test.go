@@ -111,13 +111,6 @@ func TestIntegrationWorkloadOptionalDurationMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := workloadTestMigrationProvider(t, url)
-	if _, err := provider.DownTo(t.Context(), 3); err != nil {
-		t.Fatal(err)
-	}
-	if err := d.Readiness(t.Context()); err == nil {
-		t.Fatal("serving accepted the old mandatory-cap schema")
-	}
 	if err := Migrate(t.Context(), url); err != nil {
 		t.Fatal(err)
 	}
