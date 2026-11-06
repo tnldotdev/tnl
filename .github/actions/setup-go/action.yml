@@ -1,0 +1,48 @@
+name: Set up Go with trusted caches
+description: Restore Go caches without letting PR jobs save them
+inputs:
+  cache-scope:
+    description: Build variant to restore
+    default: build
+  cache-save:
+    description: Refresh this cache on successful main pushes
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Install pinned Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+        cache: false
+
+    - name: Locate Go caches
+      id: paths
+      shell: bash
+      run: |
+        echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+        echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+        echo "image=$ImageOS" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Go caches
+      if: inputs.cache-save != 'true' || github.event_name != 'push' || github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ${{ steps.paths.outputs.modules }}
+          ${{ steps.paths.outputs.build }}
+        key: go-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.paths.outputs.image }}-${{ inputs.cache-scope }}-${{ hashFiles('go.mod', '**/go.sum', 'mise.toml') }}-${{ github.sha }}
+        restore-keys: |
+          go-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.paths.outputs.image }}-${{ inputs.cache-scope }}-${{ hashFiles('go.mod', '**/go.sum', 'mise.toml') }}-
+
+    # only designated writers refresh caches; all other jobs restore them.
+    - name: Refresh Go caches on main
+      if: inputs.cache-save == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # zizmor: ignore[cache-poisoning] v6.1.0; successful trusted main pushes only
+      with:
+        path: |
+          ${{ steps.paths.outputs.modules }}
+          ${{ steps.paths.outputs.build }}
+        key: go-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.paths.outputs.image }}-${{ inputs.cache-scope }}-${{ hashFiles('go.mod', '**/go.sum', 'mise.toml') }}-${{ github.sha }}
+        restore-keys: |
+          go-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.paths.outputs.image }}-${{ inputs.cache-scope }}-${{ hashFiles('go.mod', '**/go.sum', 'mise.toml') }}-
