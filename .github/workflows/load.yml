@@ -93,7 +93,8 @@ jobs:
       - name: Run reference and extended fault workloads
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
-          task go:test:load:runtime PUBLIC_URLS=64 START_PARALLEL=64 RPS=160 DURATION=30s RESULTS=bench-results/ci-reference
+          # allow cold certificate issuance and ingress preparation for all 64 publishers.
+          task go:test:load:runtime PUBLIC_URLS=64 START_PARALLEL=64 READY_TIMEOUT=60s RPS=160 DURATION=30s RESULTS=bench-results/ci-reference
           task go:test:load:runtime SCENARIO=forwarding-blackhole RESULTS=bench-results/ci-forwarding-blackhole
           task go:test:load:runtime SCENARIO=publisher-blackhole RESULTS=bench-results/ci-publisher-blackhole
           task go:test:load:runtime SCENARIO=udp-fallback RESULTS=bench-results/ci-udp-fallback
