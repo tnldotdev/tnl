@@ -116,7 +116,7 @@ func TestReconcileJoinsOldAssignmentBeforeStartingReplacement(t *testing.T) {
 func TestWorkerMeasurementsKeepAcceptedDeploymentAndReplicaScope(t *testing.T) {
 	control, key := groupFixture(t)
 	member := control.assignment.Member
-	report := &controlv1.PublisherDeploymentReport{DeploymentId: "aws-example", Provider: "aws", ReplicaKey: "replica-1", Instance: "instance-1", Image: "ghcr.io/tnldotdev/tnl@sha256:" + strings.Repeat("a", 64), SoftwareVersion: "devel", TemplateVersion: "2", TemplateSha256: strings.Repeat("b", 64)}
+	report := &controlv1.PublisherDeploymentReport{DeploymentId: "aws-example", Provider: "aws", ReplicaKey: "replica-1", Instance: "instance-1", Image: "ghcr.io/tnldotdev/tnl@sha256:" + strings.Repeat("a", 64), SoftwareVersion: "devel", TemplateVersion: "1", TemplateSha256: strings.Repeat("b", 64)}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	identities := make(chan observability.Identity, 1)

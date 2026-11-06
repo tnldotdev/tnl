@@ -77,7 +77,7 @@ func TestRuntimeDeploymentRetainedAcrossLostReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	control := &lostStartControl{public: public}
-	report := controlv1.PublisherDeploymentReport{DeploymentId: "aws-example", Provider: "aws", ReplicaKey: "replica-1", Instance: "instance", Image: "ghcr.io/tnldotdev/tnl@sha256:" + strings.Repeat("a", 64), SoftwareVersion: "devel", TemplateVersion: "2", TemplateSha256: strings.Repeat("b", 64)}
+	report := controlv1.PublisherDeploymentReport{DeploymentId: "aws-example", Provider: "aws", ReplicaKey: "replica-1", Instance: "instance", Image: "ghcr.io/tnldotdev/tnl@sha256:" + strings.Repeat("a", 64), SoftwareVersion: "devel", TemplateVersion: "1", TemplateSha256: strings.Repeat("b", 64)}
 	expected := report
 	owner, err := New(control, "https://control.example", "publisher", "key", "scope", private, &report)
 	if err != nil {
