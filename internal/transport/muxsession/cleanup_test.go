@@ -2,13 +2,91 @@ package muxsession
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 )
+
+func TestYamuxWriterFailureDoesNotWaitForTLSCloseNotify(t *testing.T) {
+	for _, failure := range []string{"deadline setup", "write timeout"} {
+		t.Run(failure, func(t *testing.T) { testYamuxWriterFailure(t, failure == "write timeout") })
+	}
+}
+
+func testYamuxWriterFailure(t *testing.T, timeout bool) {
+	t.Helper()
+	synctest.Test(t, func(t *testing.T) {
+		serverTLS, clientTLS := testTLSConfigs(t)
+		clientTLS.ServerName = "relay.test"
+		local, peer := net.Pipe()
+		defer peer.Close()
+		failure := errors.New("write deadline unavailable")
+		network := &failYamuxWriteDeadlineConn{Conn: local, failure: failure}
+		secure, remote := tls.Client(network, clientTLS), tls.Server(peer, serverTLS)
+		handshake := make(chan error, 1)
+		go func() { handshake <- remote.HandshakeContext(t.Context()) }()
+		if err := secure.HandshakeContext(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-handshake; err != nil {
+			t.Fatal(err)
+		}
+		// fail the yamux writer at deadline setup or while writing TLS records
+		// to a peer that no longer reads. sendMsg waits for shutdown after the
+		// writer exits, so TLS shutdown must close the raw socket immediately.
+		network.fail.Store(!timeout)
+		session, err := newYamuxSession(secure, true, 4096)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		if timeout {
+			time.Sleep(yamuxConfig(4096).ConnectionWriteTimeout)
+		}
+		synctest.Wait()
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+		started := time.Now()
+		// yamux can enqueue another SYN after its writer exits because its send
+		// queue is buffered. the next attempt that observes sendDone must not
+		// wait for a TLS alert; the session owns any enqueued test streams.
+		for err == nil {
+			_, err = session.OpenStream(ctx)
+		}
+		if timeout {
+			var timedOut net.Error
+			if !errors.As(err, &timedOut) || !timedOut.Timeout() {
+				t.Fatal("lost writer timeout", err)
+			}
+		} else if !errors.Is(err, failure) {
+			t.Fatal("lost writer failure", err)
+		}
+		if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+			t.Fatalf("opening waited %s for TLS close-notify after writer failure", elapsed)
+		}
+		if !errors.Is(session.Err(), err) {
+			t.Fatal("session lost writer failure", session.Err())
+		}
+	})
+}
+
+type failYamuxWriteDeadlineConn struct {
+	net.Conn
+	fail    atomic.Bool
+	failure error
+}
+
+func (c *failYamuxWriteDeadlineConn) SetWriteDeadline(deadline time.Time) error {
+	if c.fail.Swap(false) {
+		return c.failure
+	}
+	return c.Conn.SetWriteDeadline(deadline)
+}
 
 func TestYamuxCleanupWithBlockedWriter(t *testing.T) {
 	for _, operation := range []string{"close", "half_close", "reset"} {
