@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -164,7 +165,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		<-p.permissions.Done()
 		// match session retirement while preserving the transport cause. an
 		// earlier authority failure remains the context's first cancellation cause.
-		p.cancel(errors.Join(ErrServiceConnection, p.permissions.Err()))
+		p.cancel(fmt.Errorf("connector permission owner ended: %w", errors.Join(ErrServiceConnection, p.permissions.Err())))
 	})
 	p.permission, result = config.Control.VisitorPermission(setup, config.ServiceID)
 	if result != nil || setup.Err() != nil {
@@ -324,7 +325,7 @@ func (p *connectorConnection) watch() {
 		until := earliestConnectorDeadline(p.until, p.preparedUntil, p.run.ValidUntil, p.permission.ExpiresAt)
 		changed := p.changed
 		if !p.currentLocked() {
-			p.cancel(ErrServiceConnection)
+			p.cancel(fmt.Errorf("connector authority expired: %w", ErrServiceConnection))
 		}
 		p.mu.Unlock()
 		timer := time.NewTimer(time.Until(until))
@@ -334,7 +335,7 @@ func (p *connectorConnection) watch() {
 			return
 		case <-p.session.Done():
 			timer.Stop()
-			p.cancel(ErrServiceConnection)
+			p.cancel(fmt.Errorf("connector inner session ended: %w", errors.Join(ErrServiceConnection, p.session.Err())))
 			return
 		case <-changed:
 			timer.Stop()
@@ -385,7 +386,7 @@ func (p *connectorConnection) refresh() {
 		if err != nil {
 			stop()
 			if !connectorTemporary(err) && p.ctx.Err() == nil {
-				p.cancel(err)
+				p.cancel(fmt.Errorf("renew connector pair: %w", err))
 				return
 			}
 			continue
@@ -400,7 +401,7 @@ func (p *connectorConnection) refresh() {
 		stop()
 		if err != nil {
 			if !connectorTemporary(err) && p.ctx.Err() == nil {
-				p.cancel(err)
+				p.cancel(fmt.Errorf("prepare connector renewal openings: %w", err))
 				return
 			}
 			continue
@@ -421,7 +422,7 @@ func (p *connectorConnection) refresh() {
 		now := time.Now()
 		if !p.currentLocked() || !bound.After(now) || !preparedUntil.After(now) || !next.ValidUntil.After(now) || !permission.ExpiresAt.After(now) {
 			p.mu.Unlock()
-			p.cancel(ErrServiceConnection)
+			p.cancel(fmt.Errorf("install connector renewal after authority expired: %w", ErrServiceConnection))
 			return
 		}
 		next.ServiceTLS = p.config.ServiceTLS
@@ -473,7 +474,7 @@ func (p *connectorConnection) maintainLeg(slot int) {
 		// both-path temporary loss retains inner QUIC. only exhausted authority
 		// or terminal rejection ends a leg worker; neither can revive a session.
 		if ended {
-			p.cancel(ErrServiceConnection)
+			p.cancel(fmt.Errorf("connector relay legs retired: %w", ErrServiceConnection))
 		}
 	}()
 	for {
