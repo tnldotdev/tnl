@@ -652,24 +652,27 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if t.Failed() {
 		return
 	}
+	claimsStarted := time.Now()
+	checkedNow := func() time.Time { return now.Add(time.Since(claimsStarted)) }
 	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, pair.Relays[0].RelayLease, netip.MustParseAddr("198.51.100.10"), proof, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("connector hint overrode relay-observed IP policy", err)
 	}
 	if claim, err := testClaimConnectorPeerPairLeg(t, d, ctx, pair.Relays[0].RelayLease, netip.MustParseAddr("192.0.2.10"), proof, now); err != nil || claim.Key != pair.Key {
 		t.Fatal("allowed observed source lost delivery", err)
 	}
-	if _, err := d.DeliverConnectorPeerPair(ctx, serviceID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, now); !errors.Is(err, ErrServiceAccess) {
+	if _, err := d.DeliverConnectorPeerPair(ctx, serviceID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, checkedNow()); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("one workload leg prepared a publisher binding", err)
 	}
 	allowedSource := netip.MustParseAddr("192.0.2.10")
 	if _, err := testClaimConnectorPeerPairLeg(t, d, ctx, pair.Relays[1].RelayLease, allowedSource, testConnectorLegProof(t, pair, 1, now, private), now); err != nil {
 		t.Fatal("second workload leg did not claim allowed source", err)
 	}
-	if binding, err := d.DeliverConnectorPeerPair(ctx, serviceID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, now); err != nil || binding.Key != pair.Key || binding.SourceIP != allowedSource || binding.ExpiresAt.After(workload.LeaseExpiresAt) {
+	// delivery and installation follow the claims' elapsed database checks.
+	if binding, err := d.DeliverConnectorPeerPair(ctx, serviceID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, checkedNow()); err != nil || binding.Key != pair.Key || binding.SourceIP != allowedSource || binding.ExpiresAt.After(workload.LeaseExpiresAt) {
 		t.Fatal("publisher did not get IP-allowed workload binding", err)
 	}
 	report := ConnectorPeerPairPrepared{DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: pair.ExpiresAt}
-	if err := d.ConfirmConnectorPeerPairPrepared(ctx, serviceID, run.RunID, pair.ID, run.Token, report, now); err != nil {
+	if err := d.ConfirmConnectorPeerPairPrepared(ctx, serviceID, run.RunID, pair.ID, run.Token, report, checkedNow()); err != nil {
 		t.Fatal("workload publisher barrier rejected two checked claims", err)
 	}
 	// narrowing authority must durably narrow readiness, so a later pair renewal
