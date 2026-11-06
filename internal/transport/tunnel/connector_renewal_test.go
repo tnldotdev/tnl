@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -101,4 +103,66 @@ func TestConnectorLegRenewalRejectsChangedReceiptSource(t *testing.T) {
 	}
 	cancel()
 	_ = await(t, done)
+}
+
+func TestConnectorLegRenewalRetiresInterruptedControlExchange(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		name := "before reply"
+		if partial {
+			name = "partial reply"
+		}
+		t.Run(name, func(t *testing.T) {
+			client, server, proof, initial := connectorRenewalPair(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			received, release := make(chan struct{}), make(chan struct{})
+			resume := sync.OnceFunc(func() { close(release) })
+			defer resume()
+			serverDone := tunnelWorker(t, func() { resume(); _ = server.Close() }, func() error {
+				request, err := tunnelv1.ReadControl(server.control)
+				if err != nil {
+					return err
+				}
+				var frame bytes.Buffer
+				if err := tunnelv1.WriteControl(&frame, tunnelv1.Message{Type: tunnelv1.ConnectorLegRenewed,
+					ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID, ConnectorPairLegAccepted: &initial}); err != nil {
+					return err
+				}
+				if partial {
+					if _, err := server.control.Write(frame.Next(1)); err != nil {
+						return err
+					}
+				}
+				close(received)
+				<-release
+				_, err = io.Copy(server.control, &frame)
+				return err
+			})
+			renewed := tunnelWorker(t, func() { cancel(); _ = client.Close() }, func() error {
+				receipt, err := client.RenewConnectorLeg(ctx, "interrupted", proof, initial)
+				if receipt != (tunnelv1.ConnectorPairLegAccepted{}) {
+					t.Error("interrupted renewal returned authority")
+				}
+				return err
+			})
+			select {
+			case <-received:
+			case <-time.After(time.Second):
+				t.Fatal("renewal did not reach the reply barrier")
+			}
+			cancel()
+			if err := await(t, renewed); !errors.Is(err, context.Canceled) {
+				t.Fatal("interrupted renewal lost cancellation", err)
+			}
+			select {
+			case <-client.Done():
+			default:
+				t.Fatal("interrupted renewal left an uncertain control stream reusable")
+			}
+			resume()
+			if err := await(t, serverDone); err == nil {
+				t.Fatal("late renewal reply reached the retired connection")
+			}
+		})
+	}
 }

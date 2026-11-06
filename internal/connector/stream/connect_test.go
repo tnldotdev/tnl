@@ -381,7 +381,18 @@ func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Sess
 		native.nonces[slot] = append([]byte(nil), selected[:]...)
 		f.mu.Unlock()
 		return native.paths[slot].Install(carrier)
-	}, func(context.Context, tunnelv1.ConnectorPairLegProof) (tunnelv1.ConnectorPairLegAccepted, error) {
+	}, func(ctx context.Context, _ tunnelv1.ConnectorPairLegProof) (tunnelv1.ConnectorPairLegAccepted, error) {
+		f.mu.Lock()
+		gate := native.renewalGate[slot]
+		f.mu.Unlock()
+		if gate != nil {
+			gate.once.Do(func() { close(gate.entered) })
+			select {
+			case <-gate.release:
+			case <-ctx.Done():
+				return tunnelv1.ConnectorPairLegAccepted{}, context.Cause(ctx)
+			}
+		}
 		return native.receipt(int(slot)), nil
 	})
 }

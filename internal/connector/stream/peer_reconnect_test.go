@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +13,82 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func TestConnectorInterruptedRenewalReconnectsWithoutReplacingApplication(t *testing.T) {
+	for _, transport := range []string{"quic", "tls-tcp"} {
+		t.Run(transport, func(t *testing.T) {
+			f := newConnectorFixture(t, transport)
+			setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
+			p, err := prepareConnectorConnection(t.Context(), setup, f.config, f.device)
+			stop()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.Close()
+			inner, permissions, owner := p.connection, p.permissions, p.owner
+			local, app := net.Pipe()
+			defer app.Close()
+			forwarded := make(chan error, 1)
+			go func() { forwarded <- p.Forward(t.Context(), local) }()
+			exchange := func(message string) {
+				t.Helper()
+				_ = app.SetDeadline(time.Now().Add(3 * time.Second))
+				if _, err := io.WriteString(app, message); err != nil {
+					t.Fatal(err)
+				}
+				got := make([]byte, len(message))
+				if _, err := io.ReadFull(app, got); err != nil || string(got) != message {
+					t.Fatal("interrupted renewal replaced application delivery", err)
+				}
+			}
+			exchange("before renewal")
+			opened := f.opened.Load()
+			p.mu.Lock()
+			old, pair := p.paths[0].leg, p.pair
+			p.mu.Unlock()
+			gate := &fixtureTLSGate{entered: make(chan struct{}), release: make(chan struct{})}
+			resume := sync.OnceFunc(func() { close(gate.release) })
+			defer resume()
+			f.mu.Lock()
+			f.peers[pair.PairId].renewalGate[0] = gate
+			f.mu.Unlock()
+			select {
+			case <-gate.entered:
+			case <-time.After(3 * time.Second):
+				t.Fatal("renewal did not reach the reply barrier")
+			}
+			select {
+			case <-old.session.Done():
+			case <-time.After(3 * time.Second):
+				t.Fatal("timed-out renewal retained its uncertain control stream")
+			}
+			resume()
+			deadline := time.Now().Add(4 * time.Second)
+			for {
+				p.mu.Lock()
+				repaired := p.paths[0].leg != old
+				p.mu.Unlock()
+				if repaired && p.endpoint.PathHealthy(0) {
+					break
+				}
+				if p.ctx.Err() != nil || time.Now().After(deadline) {
+					t.Fatal("interrupted renewal did not reconnect", context.Cause(p.ctx))
+				}
+				time.Sleep(time.Millisecond)
+			}
+			exchange("after renewal")
+			if p.connection != inner || p.permissions != permissions || p.owner != owner || f.opened.Load() != opened {
+				t.Fatal("renewal recovery replaced retained ownership or replayed the application")
+			}
+			_ = app.Close()
+			select {
+			case <-forwarded:
+			case <-time.After(time.Second):
+				t.Fatal("application forwarding did not join")
+			}
+		})
+	}
+}
 
 func TestConnectorReconnectRetainsInnerSessionAndApplication(t *testing.T) {
 	for _, transport := range []string{"quic", "tls-tcp"} {
