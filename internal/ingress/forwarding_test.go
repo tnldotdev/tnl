@@ -51,7 +51,7 @@ func TestForwarderPoolsExactRelaySessionAndPreservesBytes(t *testing.T) {
 		t.Fatalf("backends = %d; want 1", len(backends))
 	}
 
-	for index, visitorConnectionID := range []string{"visitor_connection_1", "visitor_connection_2"} {
+	for _, visitorConnectionID := range []string{"visitor_connection_1", "visitor_connection_2"} {
 		connection, err := backends[0].Start(ingressContext(t), visitorConnectionID, false, nil, nil)
 		if err != nil {
 			t.Fatalf("Open(%q): %v", visitorConnectionID, err)
@@ -68,7 +68,7 @@ func TestForwarderPoolsExactRelaySessionAndPreservesBytes(t *testing.T) {
 
 		request := ingressAwait(t, requests)
 		want := forwardingTestHeader(entry, visitorConnectionID)
-		want.ConfirmBeforeBytes = index == 0
+		want.ConfirmBeforeBytes = true
 		if request.header != want || request.payload != "ping" {
 			t.Fatalf("forwarded request = %#v; want header %#v and payload ping", request, want)
 		}

@@ -36,8 +36,8 @@ type ForwarderConfig struct {
 	PromoteVisitor       func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult
 }
 
-// Forwarder pools authenticated sessions to exact relay processes and opens
-// pipelined internal-forwarding streams for visitor connections.
+// Forwarder pools authenticated sessions to exact relay processes and waits for
+// each internal-forwarding stream's acceptance before sending visitor bytes.
 type Forwarder struct {
 	bindPublicConnection func(ingressv1.IngressRoutingTableEntry, func()) (func(), error)
 	signVisitorSource    VisitorSourceSigner
@@ -283,12 +283,11 @@ func (b forwardingBackend) Start(ctx context.Context, visitorConnectionID string
 				return nil
 			}
 		}
-		header.ConfirmBeforeBytes = !b.forwarder.confirmedAssignment(b.target.key(), session, header)
+		// a previously accepted assignment does not prove this path still carries
+		// bytes. confirm each opening before crossing the visitor retry boundary.
+		header.ConfirmBeforeBytes = true
 		stream, err := session.OpenInternalForwardingStream(ctx, header, proxy, initial, events)
 		if err == nil {
-			if header.ConfirmBeforeBytes {
-				b.forwarder.confirmAssignment(b.target.key(), session, header)
-			}
 			if len(overflow) != 0 {
 				n, writeErr := writeSetup(ctx, stream, nil, overflow)
 				if writeErr != nil {
@@ -344,55 +343,10 @@ func (t relayTarget) key() relaySessionKey {
 type relaySessionKey relayTarget
 
 type relaySession struct {
-	ready     chan struct{}
-	cancel    context.CancelFunc
-	session   *tunnel.Session
-	err       error
-	confirmed map[tunnelv1.AdmissionHeader]struct{}
-}
-
-func assignmentKey(h tunnelv1.InternalForwardingHeader) tunnelv1.AdmissionHeader {
-	key := h.Admission()
-	key.VisitorConnectionID = ""
-	return key
-}
-
-func (f *Forwarder) confirmedAssignment(key relaySessionKey, session *tunnel.Session, h tunnelv1.InternalForwardingHeader) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	entry := f.sessions[key]
-	if entry == nil || entry.session != session {
-		return false
-	}
-	_, ok := entry.confirmed[assignmentKey(h)]
-	return ok
-}
-
-func (f *Forwarder) confirmAssignment(key relaySessionKey, session *tunnel.Session, h tunnelv1.InternalForwardingHeader) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	entry := f.sessions[key]
-	if entry == nil || entry.session != session {
-		return
-	}
-	if entry.confirmed == nil {
-		entry.confirmed = make(map[tunnelv1.AdmissionHeader]struct{})
-	}
-	current := assignmentKey(h)
-	for old := range entry.confirmed {
-		if old.PublicURLID != current.PublicURLID || old.ConnectionSlot != current.ConnectionSlot {
-			continue
-		}
-		if old.PublishRunNumber > current.PublishRunNumber || old.PublishRunNumber == current.PublishRunNumber && old.ConnectionAssignmentRevision > current.ConnectionAssignmentRevision {
-			return
-		}
-		delete(entry.confirmed, old)
-	}
-	// a full cache keeps using pre-byte confirmation, without retaining unbounded
-	// historical public URLs on a long-lived relay session.
-	if len(entry.confirmed) < 4096 {
-		entry.confirmed[current] = struct{}{}
-	}
+	ready   chan struct{}
+	cancel  context.CancelFunc
+	session *tunnel.Session
+	err     error
 }
 
 func (f *Forwarder) session(ctx context.Context, target relayTarget) (*tunnel.Session, bool, error) {

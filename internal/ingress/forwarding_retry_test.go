@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -9,7 +10,106 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func TestForwarderWarmStalledAssignmentFallsBackBeforeVisitorBytes(t *testing.T) {
+	material := newForwardingTestMaterial(t)
+	warmed := make(chan tunnel.InternalForwardingRequest, 1)
+	stalled := make(chan *tunnel.IncomingPublicForwardingStream, 1)
+	checkSibling := make(chan struct{})
+	server := startForwardingTestServer(t, material, func(ctx context.Context, transport muxsession.Session) error {
+		session, _, err := tunnel.Accept(ctx, transport, func(_ context.Context, message tunnelv1.Message) error {
+			if message.Role != tunnelv1.Ingress || message.Credential != forwardingClusterSecret {
+				return &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		defer session.Close()
+		first, err := session.AcceptInternalForwardingStream(ctx)
+		if err != nil {
+			return err
+		}
+		if err := first.Accept(); err != nil {
+			return err
+		}
+		warmed <- first
+		second, err := session.AcceptInternalForwardingStream(ctx)
+		if err != nil {
+			return err
+		}
+		// withhold acceptance after this exact session/assignment was warmed.
+		stalled <- second.(*tunnel.IncomingPublicForwardingStream)
+		select {
+		case <-checkSibling:
+			if _, err := first.Stream().Write([]byte("ok")); err != nil {
+				return err
+			}
+		case <-ctx.Done():
+			return nil
+		}
+		<-ctx.Done()
+		return nil
+	})
+	forwarder := newTestForwarder(t, material)
+	backend := mustOnlyBackend(t, forwarder, forwardingTestEntry(time.Now(), server.address())).(forwardingBackend)
+	warm, err := backend.Start(ingressContext(t), "visitor_warm", false, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownIngressConn(t, warm)
+	ingressAwait(t, warmed)
+	session, _, err := forwarder.session(ingressContext(t), backend.target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback := newTLSBackend(t)
+	config := publicURLConfig(backend, contextBackend{fallback})
+	config.OpenTimeout = 2 * time.Second
+	_, address := startIngress(t, config)
+	client := ingressClient(t, address, "route.example", "")
+	_ = client.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := client.Handshake(); err != nil {
+		t.Fatal("warm stalled assignment prevented fallback", err)
+	}
+	exchangePing(t, client)
+	result := ingressAwait(t, fallback.result)
+	if result.err != nil || result.request != "ping" || fallback.opens.Load() != 1 {
+		t.Fatalf("fallback did not deliver exactly once: %+v opens=%d", result, fallback.opens.Load())
+	}
+	request := ingressAwait(t, stalled)
+	_, remainder, err := proxyproto.Decode(bytes.NewReader(request.TakeInitial()))
+	if err != nil {
+		t.Fatal("stalled relay lost PROXY metadata", err)
+	}
+	initial, err := io.ReadAll(remainder)
+	if err != nil || !request.Header.ConfirmBeforeBytes || len(initial) != 0 || request.Header.VisitorConnectionID != result.visitorConnectionID {
+		t.Fatal("stalled relay received visitor bytes or lost the connection identity", request.Header)
+	}
+	if err := request.Stream().SetReadDeadline(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := request.Stream().Read(make([]byte, 1)); n != 0 {
+		t.Fatal("stalled relay received a visitor byte after fallback")
+	}
+	if session.Err() != nil || !forwarder.currentSession(backend.target.key(), session) {
+		t.Fatal("stalled opening discarded a pooled session and its sibling")
+	}
+	close(checkSibling)
+	_ = warm.SetReadDeadline(time.Now().Add(fixtureTimeout))
+	response := make([]byte, 2)
+	if _, err := io.ReadFull(warm, response); err != nil || string(response) != "ok" {
+		t.Fatalf("sibling stream did not survive: %q %v", response, err)
+	}
+	if got := server.accepted.Load(); got != 1 {
+		t.Fatalf("pooled relay sessions=%d, want 1", got)
+	}
+}
 
 type failingForwardingConnector struct {
 	relayConnector
