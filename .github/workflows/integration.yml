@@ -109,6 +109,7 @@ jobs:
         timeout-minutes: 3
         run: |
           sudo sed --in-place --regexp-extended \
+            -e 's|mirror[+]file:/etc/apt/apt-mirrors[.]txt|https://archive.ubuntu.com/ubuntu/|g' \
             -e 's|https?://(azure\.)?archive\.ubuntu\.com/ubuntu/?|https://archive.ubuntu.com/ubuntu/|g' \
             -e 's|http://security\.ubuntu\.com/ubuntu/?|https://security.ubuntu.com/ubuntu/|g' \
             /etc/apt/sources.list.d/ubuntu.sources

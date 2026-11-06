@@ -215,6 +215,29 @@ describe("CI scheduling and required checks", () => {
     expect(apt?.run).toContain("Acquire::https::Timeout=15");
     expect(apt?.run).toContain("APT::Update::Error-Mode=any");
     expect(apt?.run).not.toMatch(/allow-unauthenticated|trusted=yes|Verify-Peer=false/);
+    assert(apt?.run);
+    const expressions = [...apt.run.matchAll(/-e '([^']+)'/g)].flatMap((match) => [
+      "-e",
+      z.string().parse(match[1]),
+    ]);
+    const rewritten = spawnSync("sed", ["-E", ...expressions], {
+      encoding: "utf8",
+      input: [
+        "URIs: mirror+file:/etc/apt/apt-mirrors.txt",
+        "URIs: http://azure.archive.ubuntu.com/ubuntu/",
+        "URIs: http://archive.ubuntu.com/ubuntu",
+        "URIs: http://security.ubuntu.com/ubuntu/",
+        "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
+      ].join("\n"),
+    });
+    expect(rewritten.status).toBe(0);
+    expect(rewritten.stdout).toBe(
+      [
+        ...Array<string>(3).fill("URIs: https://archive.ubuntu.com/ubuntu/"),
+        "URIs: https://security.ubuntu.com/ubuntu/",
+        "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
+      ].join("\n"),
+    );
   });
 });
 
