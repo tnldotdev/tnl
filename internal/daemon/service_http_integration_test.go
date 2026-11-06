@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"net/netip"
 	"net/url"
 	"os"
@@ -185,7 +186,16 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	client := &http.Client{Transport: newTransport(nil), Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	request := func(client *http.Client, path, header, secret string, want int) *http.Response {
 		t.Helper()
-		r, _ := http.NewRequestWithContext(t.Context(), "GET", base+path, nil)
+		var acquired, reused, secured, responseStarted atomic.Bool
+		ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+			GotConn: func(info httptrace.GotConnInfo) {
+				acquired.Store(true)
+				reused.Store(info.Reused)
+			},
+			TLSHandshakeDone:     func(_ tls.ConnectionState, err error) { secured.Store(err == nil) },
+			GotFirstResponseByte: func() { responseStarted.Store(true) },
+		})
+		r, _ := http.NewRequestWithContext(ctx, "GET", base+path, nil)
 		if header != "" {
 			r.Header.Set(header, secret)
 		}
@@ -194,7 +204,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 		r.Header["Authorization"] = []string{"caller-one", "caller-two"}
 		response, err := client.Do(r)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("%v; connection acquired=%t reused=%t TLS completed=%t response started=%t", err, acquired.Load(), reused.Load(), secured.Load(), responseStarted.Load())
 		}
 		if response.StatusCode != want {
 			body, _ := io.ReadAll(response.Body)
