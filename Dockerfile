@@ -23,11 +23,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -mod=readonly -trimpath \
     -ldflags="-s -w -X github.com/tnldotdev/tnl/internal/buildinfo.Version=${VERSION} -X github.com/tnldotdev/tnl/internal/buildinfo.Commit=${COMMIT}" \
-    -o /out/tnld ./cmd/tnld && \
-    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -mod=readonly -trimpath \
-    -ldflags="-s -w -X github.com/tnldotdev/tnl/internal/buildinfo.Version=${VERSION} -X github.com/tnldotdev/tnl/internal/buildinfo.Commit=${COMMIT}" \
-    -o /out/tnl ./cmd/tnl && \
+    -o /out/ ./cmd/tnl ./cmd/tnld && \
     setcap cap_net_bind_service=+ep /out/tnld
 RUN install -d -m 0700 /out/client-state
 

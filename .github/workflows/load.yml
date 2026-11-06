@@ -32,15 +32,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Go
-        uses: ./.github/actions/setup-go # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
-
-      - name: Install Task
-        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+      - name: Set up tools
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          version: 3.53.1
-          repo-token: ""
-          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+          go-cache: build
 
       - name: Run load tests
         env:
@@ -62,15 +57,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Go
-        uses: ./.github/actions/setup-go # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
-
-      - name: Install Task
-        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+      - name: Set up tools
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          version: 3.53.1
-          repo-token: ""
-          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+          go-cache: build
 
       - name: Run runtime smoke
         if: matrix.scenario == 'smoke'
@@ -104,15 +94,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Go
-        uses: ./.github/actions/setup-go # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
-
-      - name: Install Task
-        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+      - name: Set up tools
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          version: 3.53.1
-          repo-token: ""
-          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
+          go-cache: build
 
       - name: Run reference and extended fault workloads
         run: |

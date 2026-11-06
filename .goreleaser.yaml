@@ -10,7 +10,8 @@ before:
     - go mod download
 
 builds:
-  - id: tnl
+  - &native-build
+    id: tnl
     main: ./cmd/tnl
     binary: tnl
     env:
@@ -30,25 +31,10 @@ builds:
       - arm64
     mod_timestamp: "{{ .CommitTimestamp }}"
 
-  - id: tnld
+  - <<: *native-build
+    id: tnld
     main: ./cmd/tnld
     binary: tnld
-    env:
-      - CGO_ENABLED=0
-    flags:
-      - -mod=readonly
-      - -trimpath
-    ldflags:
-      - -s -w
-      - -X github.com/tnldotdev/tnl/internal/buildinfo.Version={{ .Version }}
-      - -X github.com/tnldotdev/tnl/internal/buildinfo.Commit={{ .FullCommit }}
-    goos:
-      - darwin
-      - linux
-    goarch:
-      - amd64
-      - arm64
-    mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
   - id: release

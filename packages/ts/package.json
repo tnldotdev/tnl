@@ -37,11 +37,11 @@
       "types": "./dist/index.d.ts",
       "browser": {
         "import": "./dist/index.browser.js",
-        "require": "./dist/index.browser.cjs",
+        "require": "./dist/index.browser.js",
         "default": "./dist/index.browser.js"
       },
       "import": "./dist/index.js",
-      "require": "./dist/index.cjs",
+      "require": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./config": {
@@ -53,7 +53,7 @@
       "types": "./dist/workload.d.ts",
       "node": {
         "import": "./dist/workload.js",
-        "require": "./dist/workload.cjs"
+        "require": "./dist/workload.js"
       }
     },
     "./next": {
@@ -71,8 +71,8 @@
     "access": "public"
   },
   "scripts": {
-    "build": "pnpm run clean && tsc --project tsconfig.json && node ../../scripts/build/ts-bridges.ts && node ../../scripts/package/node-licenses.ts",
-    "clean": "node ../../scripts/build/clean-package.ts",
+    "build": "pnpm run clean && tsc --project tsconfig.json && node ../../scripts/package/node-licenses.ts",
+    "clean": "node --input-type=module -e 'import {rmSync} from \"node:fs\"; rmSync(\"dist\", {recursive:true, force:true})'",
     "prepack": "pnpm run build"
   },
   "dependencies": {

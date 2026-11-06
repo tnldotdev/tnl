@@ -336,10 +336,13 @@ async function main(): Promise<void> {
         stdio: "inherit",
       });
       if (["controlv1", "authorityv1", "publisherv1"].includes(name)) {
-        execFileSync(
-          process.execPath,
-          [join(root, "scripts/generate/normalize-openapi-go.ts"), "openapi.gen.go"],
-          { cwd, stdio: "inherit" },
+        const output = join(cwd, "openapi.gen.go");
+        await writeFile(
+          output,
+          (await readFile(output, "utf8")).replaceAll(
+            'fmt.Errorf("Header parameter ',
+            'fmt.Errorf("header parameter ',
+          ),
         );
       }
     }

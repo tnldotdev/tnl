@@ -3,14 +3,12 @@ version: "3"
 tasks:
   dev:
     internal: true
-    dir: "{{.ROOT_DIR}}"
     desc: Run the local development stack
     deps: [":local:certificates"]
     cmds:
       - docker compose --file development/local/compose.yaml up --build
 
   certificates:
-    dir: "{{.ROOT_DIR}}"
     internal: true
     status:
       - test -s .local/certs/local.crt
@@ -24,7 +22,6 @@ tasks:
       - chmod 0600 .local/certs/local-root.key .local/certs/local.key
 
   up:
-    dir: "{{.ROOT_DIR}}"
     desc: Start the local services in the background
     deps: [":local:certificates"]
     cmds:
@@ -33,7 +30,6 @@ tasks:
       - curl --noproxy '*' --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert .local/certs/local-root.pem https://control.127.0.0.1.nip.io:8445/v1/ready
 
   trust:
-    dir: "{{.ROOT_DIR}}"
     desc: Trust the local control and Pebble issuance roots on macOS
     preconditions:
       - sh: test -s .local/certs/local-root.pem
@@ -53,7 +49,6 @@ tasks:
         done
 
   untrust:
-    dir: "{{.ROOT_DIR}}"
     desc: Remove the local control and Pebble issuance roots from the macOS keychain
     cmds:
       - |
@@ -70,7 +65,6 @@ tasks:
         done
 
   login:
-    dir: "{{.ROOT_DIR}}"
     desc: Authenticate the isolated local client through local OIDC browser approval
     cmds:
       - |
@@ -78,7 +72,6 @@ tasks:
           go run ./cmd/tnl auth login --team local --open
 
   tnl:
-    dir: "{{.ROOT_DIR}}"
     desc: Run the isolated local client; pass arguments after --
     requires:
       vars: [CLI_ARGS]
@@ -86,13 +79,11 @@ tasks:
       - TNL_SERVER=https://control.127.0.0.1.nip.io:8445 TNL_STATE_DIR=.local/client-state go run ./cmd/tnl {{.CLI_ARGS}}
 
   down:
-    dir: "{{.ROOT_DIR}}"
     desc: Stop the local services without removing state
     cmds:
       - docker compose --file development/local/compose.yaml stop
 
   reset:
-    dir: "{{.ROOT_DIR}}"
     desc: Remove local services, trust, and persistent state
     cmds:
       - task: :local:untrust
