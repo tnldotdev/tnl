@@ -573,6 +573,7 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { _ = listener.Close() })
 		address = listener.Addr().String()
 		ctx, cancel := context.WithCancel(t.Context())
 		ready, done := make(chan struct{}), make(chan error, 1)
@@ -589,10 +590,11 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			}
 			done <- err
 		}()
+		var stoppedError error
 		stop := sync.OnceFunc(func() {
 			cancel()
 			select {
-			case <-done:
+			case stoppedError = <-done:
 			case <-time.After(10 * time.Second):
 				t.Error("workload connector did not join")
 			}
@@ -605,7 +607,8 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			done <- err
 			t.Fatal(err)
 		case <-time.After(10 * time.Second):
-			t.Fatalf("workload connector not ready: %s/%s source=%s", transport, name, source.Id)
+			stop()
+			t.Fatalf("workload connector not ready: %s/%s source=%s; joined setup: %v", transport, name, source.Id, stoppedError)
 		}
 		dial = func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, network, address)
