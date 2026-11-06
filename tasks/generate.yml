@@ -22,47 +22,34 @@ vars:
 
 tasks:
   generate:
-    dir: "{{.ROOT_DIR}}"
+    aliases: [go:generate]
     desc: Regenerate all committed artifacts
-    deps: [":go:generate"]
-
-  generate-check:
-    dir: "{{.ROOT_DIR}}"
-    desc: Check generated files for drift
-    deps: [":go:generate-check"]
-
-  format:
-    dir: "{{.ROOT_DIR}}"
-    desc: Format all source files
-    deps: [":go:format", ":js:format", ":py:format"]
-
-  format-check:
-    dir: "{{.ROOT_DIR}}"
-    desc: Check formatting without changing files
-    deps: [":go:format-check", ":js:format-check", ":py:format-check"]
-
-  go:generate:
-    dir: "{{.ROOT_DIR}}"
     cmds:
-      # internal generators compile the committed API models; toolbar generation
-      # also needs the browser validators before Go reaches its package.
+      # generate API models and browser validators before compiling Go generators.
       - node scripts/generate/openapi.ts
       - node scripts/generate/publisher-model.ts
       - go generate -skip 'scripts/generate/(openapi|publisher-model)\.ts' ./...
 
-  go:generate-check:
-    dir: "{{.ROOT_DIR}}"
+  generate-check:
+    aliases: [go:generate-check]
+    desc: Check generated files for drift
     cmds:
-      - task: :go:generate
+      - task: generate
       - git diff --exit-code HEAD -- {{.GENERATED_PATHS}}
       - test -z "$(git ls-files --others --exclude-standard -- {{.GENERATED_PATHS}})"
 
+  format:
+    desc: Format all source files
+    deps: ["go:format", "js:format", "py:format"]
+
+  format-check:
+    desc: Check formatting without changing files
+    deps: ["go:format-check", "js:format-check", "py:format-check"]
+
   go:format:
-    dir: "{{.ROOT_DIR}}"
     cmds:
       - goimports -w .
 
   go:format-check:
-    dir: "{{.ROOT_DIR}}"
     cmds:
       - test -z "$(goimports -l .)"

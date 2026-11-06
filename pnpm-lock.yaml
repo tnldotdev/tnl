@@ -113,10 +113,6 @@ importers:
       zod:
         specifier: 4.6.6
         version: 4.6.6
-    devDependencies:
-      '@vercel/ncc':
-        specifier: 0.45.0
-        version: 0.45.0
 
   packages/ts:
     dependencies:
@@ -1717,10 +1713,6 @@ packages:
   '@vercel/cli-exec@1.0.1':
     resolution: {integrity: sha512-g9XerViJ/paZujufXYcu5XYI2vU2rtB4sgdpjUHde5RnOkdmpu0ngH46LCFGHoPXO/C+qDPSczIHIRN+8Q2YKQ==}
     engines: {node: '>= 18'}
-
-  '@vercel/ncc@0.45.0':
-    resolution: {integrity: sha512-8zPi1yO2mHpoKTD+e+Bf0ZT3e+sWHSOyGapm9s7b5R0gxJi3CiFTqmeQiMEyu6ejrz2s09M8JkEoUaTWjBJPQQ==}
-    hasBin: true
 
   '@vercel/oidc@4.0.2':
     resolution: {integrity: sha512-S/5IX4cY+UD9X3A9TTBejkd1JOXv/rDKjaAB8GaPglKav/D5BHsOlVGfiriNZ/UCMZznPe3THNL1HNgpA3ZFbA==}
@@ -3962,8 +3954,6 @@ snapshots:
   '@vercel/cli-exec@1.0.1':
     dependencies:
       execa: 5.1.1
-
-  '@vercel/ncc@0.45.0': {}
 
   '@vercel/oidc@4.0.2':
     dependencies:

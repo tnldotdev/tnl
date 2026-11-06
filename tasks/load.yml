@@ -2,7 +2,6 @@ version: "3"
 
 tasks:
   go:test:load:database:
-    dir: "{{.ROOT_DIR}}"
     desc: Run database load tests (DELAY=0ms/5ms/20ms, PUBLIC_URLS=1000, HISTORY=1 ready event/url plus preparation, RUN=^TestLoad)
     vars:
       DELAY: '{{default "0ms" .DELAY}}'
@@ -15,7 +14,6 @@ tasks:
       - go -C tools/testharness run . postgres -- go test -v ./internal/control/state -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=database-load -tnl-load-delay='{{.DELAY}}' -tnl-load-public-urls='{{.PUBLIC_URLS}}' -tnl-load-history='{{.HISTORY}}' -tnl-load-duration='{{.DURATION}}' -tnl-load-retention='{{.RETENTION}}'
 
   go:test:load:runtime:
-    dir: "{{.ROOT_DIR}}"
     desc: Run per-component constrained real visitor/recovery/shutdown load
     vars:
       PUBLIC_URLS: '{{default "4" .PUBLIC_URLS}}'
@@ -71,7 +69,6 @@ tasks:
       - go -C tools/testharness run . runtime
 
   go:test:load:connect:
-    dir: "{{.ROOT_DIR}}"
     desc: Measure built tnl connect in the separated topology (MODE=postgres for warm SELECT 1; WORKERS=connections, RPS, DURATION, RESULTS)
     vars:
       MODE: '{{default "connect" .MODE}}'
@@ -100,7 +97,6 @@ tasks:
           RESULTS: '{{default (printf "bench-results/connect-%s" (now | date "20060102-150405")) .RESULTS}}'
 
   go:test:load:postgres:
-    dir: "{{.ROOT_DIR}}"
     desc: Measure warm SELECT 1 on one service run (WORKERS=connections, RPS, DURATION, RESULTS; DIAGNOSTICS=off by default)
     cmds:
       - task: go:test:load:connect

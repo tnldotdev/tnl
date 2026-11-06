@@ -30,7 +30,7 @@ test("selects the native package for each supported target", () => {
   }
 });
 
-test("catalog matches independent targets and native manifests", () => {
+test("catalog matches supported targets and is frozen", () => {
   assert.deepEqual(
     nativeTargets.map(({ platform, architecture, packageName }) => [
       platform,
@@ -40,17 +40,6 @@ test("catalog matches independent targets and native manifests", () => {
     targets,
   );
   assert(Object.isFrozen(nativeTargets));
-  for (const [platform, architecture, name] of targets) {
-    const manifest = jsonRecord(
-      readFileSync(
-        new URL(`../../native/${platform}-${architecture}/package.json`, import.meta.url),
-        "utf8",
-      ),
-    );
-    assert.equal(manifest.name, name);
-    assert.deepEqual(manifest.os, [platform]);
-    assert.deepEqual(manifest.cpu, [architecture]);
-  }
 });
 
 test("native binary resolution preserves installation checks", () => {

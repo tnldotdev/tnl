@@ -1,8 +1,0 @@
-{
-  "extends": "./type-test.tsconfig.json",
-  "files": [
-    "test/types/sdk-type-test.ts",
-    "test/types/next-type-test.ts",
-    "test/types/vite-type-test.ts"
-  ]
-}

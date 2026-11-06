@@ -1,4 +1,4 @@
-name: Set up Go with trusted caches
+name: Restore trusted Go caches
 description: Restore Go caches without letting PR jobs save them
 inputs:
   cache-scope:
@@ -10,12 +10,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Install pinned Go
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-      with:
-        go-version-file: go.mod
-        cache: false
-
     - name: Locate Go caches
       id: paths
       shell: bash

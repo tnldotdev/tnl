@@ -1,0 +1,39 @@
+name: Set up repository tools
+description: Install selected mise tools and restore trusted dependency caches
+inputs:
+  tools:
+    description: Space-separated tool names from mise.toml
+    default: go task
+  go-cache:
+    description: Go build variant to restore, or empty to disable
+    default: ""
+  go-cache-save:
+    description: Refresh this Go cache on successful main pushes
+    default: "false"
+  pnpm:
+    description: Install frozen workspace dependencies
+    default: "false"
+  pnpm-cache-save:
+    description: Save the frozen pnpm store on main pushes
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Install tools from mise.toml
+      uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      with:
+        install_args: ${{ inputs.tools }}
+        cache_save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+    - name: Restore Go caches
+      if: inputs.go-cache != ''
+      uses: ./.github/actions/cache-go # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
+      with:
+        cache-scope: ${{ inputs.go-cache }}
+        cache-save: ${{ inputs.go-cache-save }}
+
+    - name: Install workspace dependencies
+      if: inputs.pnpm == 'true'
+      uses: ./.github/actions/install-pnpm # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
+      with:
+        cache-save: ${{ inputs.pnpm-cache-save }}

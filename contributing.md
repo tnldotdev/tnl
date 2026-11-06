@@ -12,6 +12,8 @@ mise exec -- uv sync --frozen --project packages/py
 ```
 
 Run repository commands through `mise exec --` to use the versions in `mise.toml`.
+CI installs selected tools from the same file. `flyctl` remains available for
+operator work but is not installed by routine CI jobs.
 
 ## check your change
 
@@ -81,6 +83,22 @@ For Markdown edits, format just the files you changed:
 mise exec -- pnpm exec oxfmt --write contributing.md
 mise exec -- pnpm exec oxfmt --check contributing.md
 ```
+
+## build release packages
+
+```sh
+mise exec -- task package
+```
+
+This builds the four Go release archives, then packages the same native client
+binaries for npm and Python. npm metadata is generated from the launcher's target
+catalog; Hatchling builds the platform wheels. The checks install the actual
+packages and run public API and native CLI smoke tests. SDK tests own browser
+boundaries and Node/Bun compatibility rather than repeating them in the packers.
+
+`task release:npm-package` and `task py:build` reuse an existing
+`task release:snapshot`. Both accept `OUTPUT` and an optional expected `VERSION`,
+so tag releases and local snapshots use the same packaging and checks.
 
 ## try the local stack
 

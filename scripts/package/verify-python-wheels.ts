@@ -1,126 +1,49 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import process from "node:process";
-import { promisify } from "node:util";
-import * as z from "zod";
-import { parseJSON } from "./validation.ts";
+import { nativeTargets } from "../../packages/ts/src/internal/native/native-targets.ts";
+import { wheelTag } from "./pack-python-wheels.ts";
+import { legalFiles, releaseArtifacts, root } from "./release-artifacts.ts";
+import { pythonVersion } from "./python-version.ts";
 
-const execFileAsync = promisify(execFile);
-const directory = process.argv[2];
-assert(directory, "usage: node scripts/package/verify-python-wheels.ts WHEEL_DIRECTORY");
-const root = path.resolve(directory);
-const manifest = parseJSON(
-  await readFile(path.join(root, "wheels.json"), "utf8"),
-  z.object({
-    version: z.string(),
-    releaseVersion: z.string(),
-    commit: z.string().regex(/^[a-f0-9]{40}$/),
-    wheels: z
-      .array(
-        z.object({
-          name: z.string(),
-          tag: z.string(),
-          binarySha256: z.string().regex(/^[a-f0-9]{64}$/),
-        }),
-      )
-      .length(4),
-  }),
-  "Python wheel manifest",
+assert(process.argv[2], "usage: verify-python-wheels.ts WHEEL_DIRECTORY");
+const directory = path.resolve(process.argv[2]);
+const release = await releaseArtifacts();
+const target = nativeTargets.find(
+  (t) => t.platform === process.platform && t.architecture === process.arch,
 );
-const tags = [
-  "macosx_12_0_x86_64",
-  "macosx_12_0_arm64",
-  "manylinux_2_17_x86_64",
-  "manylinux_2_17_aarch64",
-];
-assert.deepEqual(manifest.wheels.map((wheel) => wheel.tag).sort(), [...tags].sort());
-const distribution = `tnldotdev_tnl-${manifest.version}`;
-for (const wheel of manifest.wheels) {
-  assert.equal(wheel.name, `${distribution}-py3-none-${wheel.tag}.whl`);
-  const file = path.join(root, wheel.name);
-  const { stdout: listing } = await execFileAsync("unzip", ["-Z", "-1", file]);
-  const entries = listing.trim().split("\n");
-  const record = `${distribution}.dist-info/RECORD`;
-  assert(entries.includes(record));
-  for (const name of ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.txt"]) {
-    assert(entries.includes(`${distribution}.dist-info/licenses/${name}`));
-  }
-  assert(entries.includes("tnl/__init__.py") && entries.includes("tnl/bin/tnl"));
-  assert(entries.includes("tnl/py.typed"), "Python wheel is missing its PEP 561 marker");
-  const records = (await unzip(file, record)).toString("utf8");
-  const marker = await unzip(file, "tnl/py.typed");
-  assert(
-    records
-      .split("\n")
-      .includes(
-        `tnl/py.typed,sha256=${createHash("sha256").update(marker).digest("base64url")},${marker.length}`,
-      ),
-    "Python wheel must record its PEP 561 marker",
-  );
-  assert(
-    !entries.some(
-      (name) => name.includes("__pycache__") || name.endsWith(".pyc") || name === "tnld",
-    ),
-  );
-  const binary = await unzip(file, "tnl/bin/tnl");
-  assert.equal(createHash("sha256").update(binary).digest("hex"), wheel.binarySha256);
-  const metadata = (await unzip(file, `${distribution}.dist-info/METADATA`)).toString("utf8");
-  const wheelMetadata = (await unzip(file, `${distribution}.dist-info/WHEEL`)).toString("utf8");
-  assert(metadata.includes(`Version: ${manifest.version}\n`));
-  assert(metadata.includes("License-Expression: BSD-3-Clause\n"));
-  assert(wheelMetadata.includes(`Tag: py3-none-${wheel.tag}\n`));
-}
-
-const target =
-  process.platform === "darwin"
-    ? process.arch === "arm64"
-      ? "macosx_12_0_arm64"
-      : "macosx_12_0_x86_64"
-    : process.arch === "arm64"
-      ? "manylinux_2_17_aarch64"
-      : "manylinux_2_17_x86_64";
-const native = manifest.wheels.find((wheel) => wheel.tag === target);
-assert(native, "the Python wheels do not contain this runner's platform");
-const environment = await mkdtemp(path.join(tmpdir(), "tnl-python-wheel-check-"));
-try {
-  await execFileAsync("uv", ["venv", "--python", "python3", environment]);
-  const python = path.join(environment, "bin", "python");
-  await execFileAsync("uv", ["pip", "install", "--python", python, path.join(root, native.name)], {
-    maxBuffer: 1024 * 1024,
+assert(target, "unsupported wheel smoke-test platform");
+const wheels = (await readdir(directory)).filter((file) => file.endsWith(".whl"));
+assert.equal(wheels.length, nativeTargets.length);
+for (const file of wheels) {
+  const listing = execFileSync("unzip", ["-Z", "-1", path.join(directory, file)], {
+    encoding: "utf8",
   });
-  await execFileAsync(
+  for (const name of legalFiles)
+    assert(listing.includes(`.dist-info/licenses/${name}\n`), `${file} is missing ${name}`);
+}
+const wheel = wheels.find((file) => file.endsWith(`-${wheelTag(target)}.whl`));
+assert(wheel, "missing current platform wheel");
+const environment = await mkdtemp(path.join(tmpdir(), "tnl-wheel-"));
+try {
+  execFileSync("uv", ["venv", "--python", "python3", environment], { stdio: "inherit" });
+  const python = path.join(environment, "bin/python");
+  execFileSync("uv", ["pip", "install", "--python", python, path.join(directory, wheel)], {
+    stdio: "inherit",
+  });
+  execFileSync(
     python,
     [
-      "-c",
-      `import importlib.metadata, os, pathlib, subprocess, sys, tnl
-version, release, commit = sys.argv[1:]
-assert importlib.metadata.version("tnldotdev-tnl") == version
-assert (pathlib.Path(tnl.__file__).parent / "py.typed").is_file()
-binary = pathlib.Path(tnl.__file__).parent / "bin" / "tnl"
-assert os.access(binary, os.X_OK)
-assert subprocess.check_output([str(binary), "version"], text=True).strip() == f"tnl {release} ({commit})"`,
-      manifest.version,
-      manifest.releaseVersion,
-      manifest.commit,
+      "-I",
+      path.join(root, "packages/py/tests/wheel_smoke.py"),
+      pythonVersion(release.version),
+      release.version,
+      release.commit,
     ],
-    { maxBuffer: 1024 * 1024 },
+    { stdio: "inherit", timeout: 30_000 },
   );
-  await execFileAsync(python, ["-I", path.resolve("packages/py/tests/wheel_smoke.py")], {
-    maxBuffer: 1024 * 1024,
-    timeout: 30_000,
-  });
 } finally {
   await rm(environment, { recursive: true, force: true });
-}
-
-async function unzip(file: string, name: string): Promise<Buffer> {
-  const { stdout } = await execFileAsync("unzip", ["-p", file, name], {
-    encoding: "buffer",
-    maxBuffer: 64 << 20,
-  });
-  return stdout;
 }

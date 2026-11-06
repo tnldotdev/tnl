@@ -1,36 +1,23 @@
-import { execFileSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { rm, writeFile } from "node:fs/promises";
 import { build } from "esbuild";
+import { writeDependencyLicenses } from "../../scripts/package/node-licenses.ts";
 
-const require = createRequire(import.meta.url);
-// ncc's ts-loader uses the removed TypeScript 6 compiler API. transpile with
-// the repository's esbuild first; strict type checking remains a separate check.
-await build({
-  entryPoints: ["src/main.ts", "src/post.ts"],
-  bundle: true,
-  packages: "external",
-  platform: "node",
-  format: "esm",
-  target: "node24",
-  outdir: ".build",
-  outExtension: { ".js": ".mjs" },
-});
+await rm("dist", { recursive: true, force: true });
 for (const entry of ["main", "post"]) {
-  execFileSync(
-    process.execPath,
-    [
-      require.resolve("@vercel/ncc/dist/ncc/cli.js"),
-      "build",
-      `.build/${entry}.mjs`,
-      "--out",
-      `dist/${entry}`,
-      "--minify",
-      "--license",
-      "licenses.txt",
-    ],
-    { stdio: "inherit" },
-  );
+  await build({
+    entryPoints: [`src/${entry}.ts`],
+    outfile: `dist/${entry}/index.mjs`,
+    bundle: true,
+    minify: true,
+    platform: "node",
+    format: "esm",
+    target: "node24",
+    supported: { "template-literal": false },
+    banner: {
+      js: 'import {createRequire} from "node:module"; const require = createRequire(import.meta.url);',
+    },
+    legalComments: "inline",
+  });
+  await writeDependencyLicenses(process.cwd(), `dist/${entry}/licenses.txt`);
 }
-await mkdir("dist", { recursive: true });
 await writeFile("dist/package.json", '{"type":"module"}\n');

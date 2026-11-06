@@ -15,41 +15,6 @@ concurrency:
 jobs:
   templates:
     name: Offline template contracts
-    # pinned python 3.13.9 has no setup-python build for ubuntu 26.04.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up pnpm and Node
-        uses: ./.github/actions/setup-pnpm # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
-        with:
-          node-version: 22.23.2
-          cache: true
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.13.9"
-
-      - name: Install pinned uv
-        run: python3 -m pip install uv==0.9.18
-
-      - name: Install Task
-        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
-        with:
-          version: 3.53.1
-          repo-token: ""
-          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
-
-      - name: Check publisher templates
-        run: task deploy:publishers:check
-
-  replacement:
-    name: Durable identity replacement
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -58,26 +23,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Go
-        uses: ./.github/actions/setup-go # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
+      - name: Set up tools
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          cache-scope: race
+          tools: go node pnpm python uv task
+          go-cache: build
+          pnpm: true
 
-      - name: Install Task
-        uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
-        with:
-          version: 3.53.1
-          repo-token: ""
-          checksum: a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7
-
-      - name: Check portable identity validation
-        run: task go:test:publisher-identity
-
-      - name: Check durable identity and certificate files
-        run: task go:test:publisher-state
-
-      - name: Check task replacement with real control
-        run: task go:test:integration:publisher-replacement
-
-      - name: Check real CLI identity and certificate recovery
-        run: task go:test:integration:cli RUN='^TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion$'
+      - name: Check publisher templates
+        run: task deploy:publishers:check

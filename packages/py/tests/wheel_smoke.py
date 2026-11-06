@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
+import pathlib
+import subprocess
+import sys
 
 import httpx
 import websockets
@@ -114,4 +118,11 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    version, release, commit = sys.argv[1:]
+    package = pathlib.Path(tnl.__file__).parent
+    assert importlib.metadata.version("tnldotdev-tnl") == version
+    assert (package / "py.typed").is_file()
+    assert subprocess.check_output([str(package / "bin/tnl"), "version"], text=True).strip() == (
+        f"tnl {release} ({commit})"
+    )
     asyncio.run(main())

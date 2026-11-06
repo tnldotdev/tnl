@@ -59,6 +59,7 @@ export default defineConfig(({ mode }) => ({
           name: "node",
           include: ["**/*.test.{ts,tsx}"],
           exclude: [
+            "connect/**",
             "**/dist/**",
             "**/.next/**",
             "**/node_modules/**",

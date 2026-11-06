@@ -8,7 +8,6 @@
     "format": "oxfmt --write '**/*'",
     "format:check": "oxfmt --check '**/*'",
     "lint": "oxlint --deny-warnings --report-unused-disable-directives connect/src connect/test connect/scripts internal/client/project/loader.ts internal/publisher/toolbar internal/publisher/browserapi packages scripts vitest*.ts",
-    "pack": "node scripts/package/verify-packages.ts",
     "test": "pnpm build && pnpm test:run",
     "test:run": "vitest run",
     "test:coverage": "pnpm build && vitest run --coverage --mode coverage",
