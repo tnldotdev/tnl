@@ -25,6 +25,7 @@ type commandDiagnostic struct {
 	Command                 []string   `json:"command,omitempty"`
 	SDKRetainedStartFailure bool       `json:"sdk_retained_start_failure,omitempty"`
 	SDKFailureHandle        string     `json:"sdk_failure_handle,omitempty"`
+	SDKOwnerHandle          string     `json:"sdk_owner_handle,omitempty"`
 }
 
 func commandDiagnosticFor(err error) commandDiagnostic {
@@ -38,6 +39,10 @@ func commandDiagnosticFor(err error) commandDiagnostic {
 	var handle interface{ SDKFailureHandle() string }
 	if result.SDKRetainedStartFailure && errors.As(err, &handle) {
 		result.SDKFailureHandle = handle.SDKFailureHandle()
+	}
+	var owner interface{ SDKOwnerHandle() string }
+	if errors.As(err, &owner) {
+		result.SDKOwnerHandle = owner.SDKOwnerHandle()
 	}
 	if reason, definition, ok := failure.Describe(err); ok && string(reason) == result.Reason {
 		result.Retryable = definition.Retry == failure.RetryLater
