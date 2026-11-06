@@ -100,6 +100,16 @@ func TestCopyRealYamuxResetAndSessionEOFStopIdleDirection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// join the server's stream acknowledgment before closing the socket.
+			// otherwise that write can win the session failure with EPIPE before
+			// the receive loop observes the abortive close's ECONNRESET.
+			if _, err := inbound.Write([]byte("ready")); err != nil {
+				t.Fatal(err)
+			}
+			var ready [5]byte
+			if _, err := io.ReadFull(outbound, ready[:]); err != nil || string(ready[:]) != "ready" {
+				t.Fatalf("stream acknowledgment barrier: %q, %v", ready, err)
+			}
 			right, _ := tcpPair(t)
 			result := startCopy(t, inbound, right, nil, nil)
 			if sessionLoss {
