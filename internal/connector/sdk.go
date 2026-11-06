@@ -62,6 +62,21 @@ type sdkStartFailure struct {
 	handle   string
 }
 
+type sdkOwnerFailure struct {
+	error
+	handle string
+}
+
+func (e *sdkOwnerFailure) Unwrap() error          { return e.error }
+func (e *sdkOwnerFailure) SDKOwnerHandle() string { return e.handle }
+
+func sdkOwnerError(err error, owner connectorruntime.Status) error {
+	if err == nil || owner.ConnectionHandle == "" {
+		return err
+	}
+	return &sdkOwnerFailure{error: err, handle: owner.ConnectionHandle}
+}
+
 func (e *sdkStartFailure) Unwrap() error          { return e.error }
 func (e *sdkStartFailure) RetainSDKFailure() bool { return e.retained }
 func (e *sdkStartFailure) SDKFailureHandle() string {
@@ -186,7 +201,7 @@ func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assert
 	}
 	owner, created, err := o.sdkOwner(ctx, options, scope, key, assertion)
 	if err != nil {
-		return connectorruntime.SDKPrepared{}, err
+		return connectorruntime.SDKPrepared{}, sdkOwnerError(err, owner)
 	}
 	prepared, err := o.prepare(ctx, owner, options.Service, assertion)
 	if err == nil {
@@ -202,14 +217,14 @@ func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assert
 		if errors.Is(err, connectorruntime.ErrInvalid) {
 			invalid := failure.Wrap("read native SDK preparation", failure.ServerResponseInvalid, err)
 			if !created {
-				return connectorruntime.SDKPrepared{}, invalid
+				return connectorruntime.SDKPrepared{}, sdkOwnerError(invalid, owner)
 			}
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 			defer cancel()
-			return connectorruntime.SDKPrepared{}, sdkCleanupFailure(invalid, o.sdkDiscard(cleanup, options, key, owner))
+			return connectorruntime.SDKPrepared{}, sdkOwnerError(sdkCleanupFailure(invalid, o.sdkDiscard(cleanup, options, key, owner)), owner)
 		}
 		// denial, expiry and IPC failure retain the exact owner capability.
-		return connectorruntime.SDKPrepared{}, err
+		return connectorruntime.SDKPrepared{}, sdkOwnerError(err, owner)
 	}
 	return connectorruntime.SDKPrepared{Schema: 1, Owner: owner.SDKOwner(), Prepared: prepared}, nil
 }

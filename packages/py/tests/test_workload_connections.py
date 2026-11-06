@@ -52,6 +52,8 @@ class NativeFixture:
         self.calls: list[str] = []
         self.requests: list[tuple[str, str | None]] = []
         self.owners: dict[str, str] = {}
+        self.owner_lock = threading.Lock()
+        self.owner_index = 0
         self.closed: list[str] = []
         self.denied: set[str] = set()
         self.deadline = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
@@ -59,6 +61,7 @@ class NativeFixture:
         self.pause = False
         self.failure: str | None = None
         self.fail_start: set[str] = set()
+        self.fail_prepare: set[str] = set()
         self.retained: dict[str, str] = {}
         self.fail_close = False
         monkeypatch.setattr(_connections, "_sessions", {})
@@ -123,6 +126,8 @@ class NativeFixture:
             self.retained = {key: value for key, value in self.retained.items() if value != handle}
             return {"schema": 1, "state": "stopped"}
         if args[0] == "stop":
+            if self.fail_close:
+                raise tnl.TnlError("sdk.connection_unavailable", "native close did not join")
             self.closed.append(args[args.index("--handle") + 1])
             return {"schema": 1, "state": "stopped"}
         if args[0] == "sdk-stop":
@@ -153,10 +158,18 @@ class NativeFixture:
                 "sdk_failure_handle": handle,
             }
         binding = "same" if assertion in {"first", "rotated"} else assertion
-        file = self.owners.get(binding)
-        if file is None or file in self.closed:
-            file = str(self.directory / f"owner-{len(self.requests)}")
-            self.owners[binding] = file
+        with self.owner_lock:
+            file = self.owners.get(binding)
+            if file is None or file in self.closed:
+                self.owner_index += 1
+                file = str(self.directory / f"owner-{self.owner_index}")
+                self.owners[binding] = file
+        if assertion in self.fail_prepare:
+            return {
+                "schema": 1,
+                "reason": "TNL_CLIENT_CONNECTION_UNAVAILABLE",
+                "sdk_owner_handle": file,
+            }
         return {
             "schema": 1,
             "owner": {
@@ -352,6 +365,258 @@ def test_reselecting_one_handle_cannot_transfer_a_siblings_close_ownership(
         await alias.aclose()
         await first
         await first.aclose()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("retry_close", [False, True])
+def test_initial_service_failure_keeps_cleanup_without_stopping_a_peer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retry_close: bool
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    current = "other"
+    tnl.configure_workload("job", token=lambda: current)
+
+    async def scenario() -> None:
+        nonlocal current
+        peer = tnl.connect("db", directory=tmp_path)
+        await peer
+        current = "first"
+        native.fail_prepare.add("first")
+        failed = tnl.connect("db", directory=tmp_path)
+        with pytest.raises(tnl.TnlError) as caught:
+            await failed
+        assert caught.value.code == "sdk.connection_unavailable"
+        owner = native.owners["same"]
+        assert owner not in native.closed
+        if retry_close:
+            native.fail_close = True
+            with pytest.raises(tnl.TnlError):
+                await failed.aclose()
+            assert owner not in native.closed
+            native.fail_close = False
+        await failed.aclose()
+        assert native.closed == [owner] and "sdk-stop" not in native.calls
+        current = "other"
+        await peer
+        await peer.aclose()
+        assert not peer._session.scope.handles
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("retry_close", [False, True])
+def test_close_joins_an_inflight_identity_reselection_without_leaking_its_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retry_close: bool
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    current = "first"
+    tnl.configure_workload("job", token=lambda: current)
+
+    async def scenario() -> None:
+        nonlocal current
+        handle = tnl.connect("db", directory=tmp_path)
+        await handle
+        first = handle._session.handle
+        current = "peer"
+        peer = tnl.connect("db", directory=tmp_path)
+        await peer
+        current = "other"
+        native.pause = True
+
+        async def prepare() -> _connections.Connection:
+            return await handle
+
+        pending = asyncio.create_task(prepare())
+        closing: asyncio.Task[None] | None = None
+        try:
+            assert await asyncio.to_thread(native.identifying.wait, 5)
+            native.fail_close = retry_close
+            closing = asyncio.create_task(handle.aclose())
+            # observe the public close fence while native selection is held.
+            async with asyncio.timeout(5):
+                while True:
+                    try:
+                        handle.snapshot()
+                    except tnl.TnlError as error:
+                        assert error.code == "sdk.connection_closed"
+                        break
+                    await asyncio.sleep(0)
+            assert not closing.done()
+            native.release.set()
+            with pytest.raises(tnl.TnlError) as caught:
+                await pending
+            assert caught.value.code == "sdk.connection_closed"
+            if retry_close:
+                with pytest.raises(tnl.TnlError):
+                    await closing
+                assert native.owners["other"] not in native.closed
+                native.fail_close = False
+                await handle.aclose()
+            else:
+                await closing
+            assert first in native.closed and native.owners["other"] in native.closed
+            assert native.owners["peer"] not in native.closed and "sdk-stop" not in native.calls
+            current = "peer"
+            await peer
+            await peer.aclose()
+            assert not peer._session.scope.handles
+        finally:
+            native.release.set()
+            await asyncio.gather(pending, return_exceptions=True)
+            if closing is not None:
+                await asyncio.gather(closing, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_closing_an_old_owner_alias_does_not_close_a_pending_new_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    current = "first"
+    tnl.configure_workload("job", token=lambda: current)
+
+    async def scenario() -> None:
+        nonlocal current
+        handle = tnl.connect("db", directory=tmp_path)
+        alias = tnl.connect("db", directory=tmp_path)
+        await handle
+        await alias
+        current = "other"
+        native.pause = True
+
+        async def prepare() -> _connections.Connection:
+            return await handle
+
+        pending = asyncio.create_task(prepare())
+        try:
+            assert await asyncio.to_thread(native.identifying.wait, 5)
+            await alias.aclose()
+            native.release.set()
+            await pending
+            assert native.owners["other"] not in native.closed
+            await handle
+            await handle.aclose()
+            assert not handle._session.scope.handles
+        finally:
+            native.release.set()
+            await asyncio.gather(pending, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_reselection_retains_its_worker_for_joined_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    current = "first"
+    tnl.configure_workload("job", token=lambda: current)
+
+    async def scenario() -> None:
+        nonlocal current
+        handle = tnl.connect("db", directory=tmp_path)
+        await handle
+        current = "other"
+        native.pause = True
+
+        async def prepare() -> _connections.Connection:
+            return await handle
+
+        pending = asyncio.create_task(prepare())
+        try:
+            assert await asyncio.to_thread(native.identifying.wait, 5)
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+            closing = asyncio.create_task(handle.aclose())
+            native.release.set()
+            await closing
+            assert native.owners["same"] in native.closed
+            assert native.owners["other"] in native.closed
+            assert not handle._session.scope.handles
+        finally:
+            native.release.set()
+            await asyncio.gather(pending, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_close_retains_all_concurrent_identity_selections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    current = "first"
+    tnl.configure_workload("job", token=lambda: current)
+    entered = {name: threading.Event() for name in ("other", "third")}
+    select = native.select
+
+    def observe(name: str, assertion: str | None) -> object:
+        if assertion in entered:
+            entered[assertion].set()
+        return select(name, assertion)
+
+    monkeypatch.setattr(native, "select", observe)
+
+    async def scenario() -> None:
+        nonlocal current
+        handle = tnl.connect("db", directory=tmp_path)
+        await handle
+        native.pause = True
+
+        async def prepare() -> _connections.Connection:
+            return await handle
+
+        pending: list[asyncio.Task[_connections.Connection]] = []
+        closing: asyncio.Task[None] | None = None
+        try:
+            for name, event in entered.items():
+                current = name
+                pending.append(asyncio.create_task(prepare()))
+                assert await asyncio.to_thread(event.wait, 5)
+            closing = asyncio.create_task(handle.aclose())
+            async with asyncio.timeout(5):
+                while True:
+                    try:
+                        handle.snapshot()
+                    except tnl.TnlError as error:
+                        assert error.code == "sdk.connection_closed"
+                        break
+                    await asyncio.sleep(0)
+            assert not closing.done()
+            native.release.set()
+            for result in await asyncio.gather(*pending, return_exceptions=True):
+                assert isinstance(result, tnl.TnlError) and result.code == "sdk.connection_closed"
+            await closing
+            assert len(set(native.owners.values())) == 3
+            assert set(native.closed) == set(native.owners.values())
+            assert not handle._session.scope.handles
+        finally:
+            native.release.set()
+            await asyncio.gather(*pending, return_exceptions=True)
+            if closing is not None:
+                await asyncio.gather(closing, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_unretained_preparation_errors_do_not_accumulate_cleanup_operations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    NativeFixture(tmp_path, monkeypatch)
+    current = "first"
+    tnl.configure_workload("job", token=lambda: current)
+
+    async def scenario() -> None:
+        nonlocal current
+        handle = tnl.connect("db", directory=tmp_path)
+        await handle
+        current = "forged"
+        for _ in range(40):
+            with pytest.raises(tnl.TnlError):
+                await handle
+            assert not handle._lifetime.preparations
+        await handle.aclose()
 
     asyncio.run(scenario())
 
