@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
@@ -577,6 +579,19 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 		t.Cleanup(func() { _ = listener.Close() })
 		address = listener.Addr().String()
 		ctx, cancel := context.WithCancel(t.Context())
+		started := time.Now()
+		var requestStarted, acquired, written, responseStarted atomic.Int64
+		traceContext := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+			GetConn: func(string) {
+				requestStarted.Store(time.Now().UnixNano())
+				acquired.Store(0)
+				written.Store(0)
+				responseStarted.Store(0)
+			},
+			GotConn:              func(httptrace.GotConnInfo) { acquired.Store(time.Now().UnixNano()) },
+			WroteRequest:         func(httptrace.WroteRequestInfo) { written.Store(time.Now().UnixNano()) },
+			GotFirstResponseByte: func() { responseStarted.Store(time.Now().UnixNano()) },
+		})
 		ready, done := make(chan struct{}), make(chan error, 1)
 		quic, tcp := f.connectors()
 		if transport == "quic" {
@@ -585,7 +600,7 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			quic = privateDisabledConnector()
 		}
 		go func() {
-			err := connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(ready); return nil }})
+			err := connectorstream.Serve(traceContext, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(ready); return nil }})
 			if ctx.Err() == nil {
 				p.ended <- fmt.Errorf("workload connector %s/%s source=%s ended: %v", transport, name, source.Id, err)
 			}
@@ -610,6 +625,23 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 		// match Serve's fixed startup budget; preparation includes the
 		// publisher's background policy snapshot and both relay paths.
 		case <-time.After(30 * time.Second):
+			// capture the blocked request before cancellation releases its database
+			// locks. this independent, bounded snapshot cannot make setup pass late.
+			elapsed := func(at int64) time.Duration {
+				if at == 0 {
+					return -1
+				}
+				return time.Duration(at - started.UnixNano())
+			}
+			pool := f.database.PoolStats()
+			t.Logf("workload startup elapsed=%s last request=%s connection=%s write=%s response=%s pool acquired=%d idle=%d total=%d empty acquisitions=%d cancelled acquisitions=%d", time.Since(started), elapsed(requestStarted.Load()), elapsed(acquired.Load()), elapsed(written.Load()), elapsed(responseStarted.Load()), pool.AcquiredConns(), pool.IdleConns(), pool.TotalConns(), pool.EmptyAcquireCount(), pool.CanceledAcquireCount())
+			diagnostics, diagnosticErr := f.database.Diagnostics(t.Context())
+			encoded, encodeErr := json.Marshal(diagnostics)
+			if len(encoded) <= controlstate.MaxDatabaseDiagnosticBytes && encodeErr == nil {
+				t.Logf("workload startup database diagnostics: %s; error=%v", encoded, diagnosticErr)
+			} else {
+				t.Logf("workload startup database diagnostics omitted: bytes=%d error=%v", len(encoded), encodeErr)
+			}
 			stop()
 			t.Fatalf("workload connector %s/%s source=%s not ready within 30s; joined setup: %v", transport, name, source.Id, stoppedError)
 		}
