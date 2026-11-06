@@ -1,6 +1,12 @@
 version: "3"
 
 tasks:
+  test:workflows:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check CI scheduling, required results, and cache boundaries
+    cmds:
+      - pnpm exec vitest run scripts/development/workflows.test.ts
+
   test:ipc-boundaries:
     dir: "{{.ROOT_DIR}}"
     desc: Check local SDK descriptor, HTTP, and process boundaries
