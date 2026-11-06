@@ -249,9 +249,11 @@ func (d *Database) readPublisherVisitorPolicyTransaction(ctx context.Context, sc
 	var sourceKey []byte
 	switch scope.Kind {
 	case visitorscope.PublicURL:
-		// match mutation order before publisherRunLive takes identity/grant
-		// guards. a background read must not reverse heartbeat's URL-first order.
-		if _, err := lockVisitorURL(ctx, q, scope.ID); err != nil {
+		// policy refresh does not mutate team authority. share the same guard
+		// as publish-run creation so sibling URLs can refresh concurrently,
+		// while queued authority mutations still fence later readers. retain
+		// team -> URL -> publisher identity/grant lock order.
+		if _, err := lockVisitorURLWithTeamGuard(ctx, q, scope.ID, q.LockLocalTeamForSession); err != nil {
 			return result, err
 		}
 		id, digest, err := credentials.ParsePublishRunToken(credentials.PublishRunToken(token))
