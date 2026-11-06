@@ -45,12 +45,13 @@ import (
 
 type integrationGuestPublisherControl struct {
 	*clientcontrol.Client
-	native       *publisheridentity.Native
-	assigned     controlv1.PublicURL
-	shareRedeems chan error
-	createRun    func(context.Context, string, string) (controlv1.PublishRunSetup, error)
-	markReady    func(context.Context, string, uint64, credentials.PublishRunToken) error
-	heartbeats   *atomic.Int64
+	native         *publisheridentity.Native
+	assigned       controlv1.PublicURL
+	shareRedeems   chan error
+	createRun      func(context.Context, string, string) (controlv1.PublishRunSetup, error)
+	markReady      func(context.Context, string, uint64, credentials.PublishRunToken) error
+	heartbeats     *atomic.Int64
+	policyRevision *atomic.Int64
 }
 
 func (c integrationGuestPublisherControl) PublisherIdentityID() string {
@@ -84,6 +85,15 @@ func (c integrationGuestPublisherControl) HeartbeatPublishRun(ctx context.Contex
 		c.heartbeats.Add(1)
 	}
 	return response, err
+}
+
+func (c integrationGuestPublisherControl) ReadPublisherVisitorPolicy(ctx context.Context, body controlv1.PublisherVisitorPolicyRequest, token string) (controlv1.VisitorPolicyUpdate, error) {
+	if c.policyRevision != nil {
+		// after_revision reports the policy already installed before this fetch,
+		// rather than a response the publisher has not applied yet.
+		c.policyRevision.Store(body.AfterRevision)
+	}
+	return c.Client.ReadPublisherVisitorPolicy(ctx, body, token)
 }
 
 func (c integrationGuestPublisherControl) RedeemPublishRunShare(ctx context.Context, runID string, body controlv1.RedeemShareRequest, token credentials.PublishRunToken) (controlv1.ShareRedemption, error) {
@@ -500,8 +510,8 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	}
 	var share controlv1.Share
 	shareRedeems := make(chan error, 1)
-	var heartbeats atomic.Int64
-	controlAdapter := integrationGuestPublisherControl{Client: authenticated.Control, native: native, assigned: publicURL, shareRedeems: shareRedeems, heartbeats: &heartbeats}
+	var heartbeats, policyRevision atomic.Int64
+	controlAdapter := integrationGuestPublisherControl{Client: authenticated.Control, native: native, assigned: publicURL, shareRedeems: shareRedeems, heartbeats: &heartbeats, policyRevision: &policyRevision}
 	preparing, allowReady := make(chan error, 1), make(chan struct{})
 	replacing := make(chan struct{})
 	if deadlineProof {
@@ -660,9 +670,15 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		transferredAt := time.Now()
 		waitForIntegrationCondition(t, 20*time.Second, func(ctx context.Context) (bool, error) {
 			var renewed bool
-			err := inspect.QueryRowContext(ctx, `SELECT last_heartbeat_at > $3 AND closed_at IS NULL
-				FROM control.publish_runs WHERE public_url_id=$1 AND publish_run_number=$2`, ready.PublicURLID, ready.PublishRunNumber, transferredAt).Scan(&renewed)
-			return renewed, err
+			var revision int64
+			err := inspect.QueryRowContext(ctx, `SELECT run.last_heartbeat_at > $3 AND run.closed_at IS NULL, policy.revision
+				FROM control.publish_runs AS run JOIN control.visitor_policies AS policy
+				ON policy.resource_kind='public_url' AND policy.resource_id=run.public_url_id
+				WHERE run.public_url_id=$1 AND run.publish_run_number=$2`, ready.PublicURLID, ready.PublishRunNumber, transferredAt).Scan(&renewed, &revision)
+			// extending an ephemeral public URL advances its policy revision.
+			// join publisher preparation inside the existing heartbeat budget;
+			// ingress may otherwise issue a newer proof before that policy applies.
+			return renewed && policyRevision.Load() >= revision, err
 		})
 	}
 	response, err := visitor.client.Get(ready.PublicURL + "/state")
