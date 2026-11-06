@@ -64,8 +64,9 @@ async def run(handle: tnl.ConnectionHandle[tnl.Connection], first: tnl.Connectio
     pending = asyncio.create_task(prepare(starting))
     print("starting", flush=True)
     assert await asyncio.to_thread(input) == "close"
+    (preparation,) = starting._lifetime.preparations
     closing = asyncio.create_task(starting.aclose())
-    while not starting._session.closed:
+    while not starting._lifetime.closed:
         await asyncio.sleep(0)
     assert not closing.done() and not pending.done()
     print("closing", flush=True)
@@ -76,7 +77,7 @@ async def run(handle: tnl.ConnectionHandle[tnl.Connection], first: tnl.Connectio
         assert error.code == "sdk.connection_closed"
     else:
         raise AssertionError("closed startup returned a live connection")
-    assert starting._session.joined and starting._session.pending == 0
+    assert starting._session.joined and preparation.pending == 0
     assert not starting._session.scope.handles
     print("startup-joined", flush=True)
 
