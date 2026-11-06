@@ -10,7 +10,7 @@
 </p>
 <br/>
 
-`tnl` allows you to take a shortcut through the internet. It's like if Tailscale and Cloudflare Tunnels had a baby. And that baby had a great devex.
+`tnl` helps you connect to local and/or private services through end-to-end encrypted tunnels. It's like if Tailscale and Cloudflare Tunnel had a baby. And that baby had a great devex.
 
 ## `tnl` where?
 
@@ -52,7 +52,7 @@ The Next.js and Vite plugins automatically handle port conflicts. And OAuth and 
 
 Connect to private services from anywhere (laptop, CI, etc.).
 
-For instance, you can run a `tnl` publisher inside your VPC. Traffic is end-to-end encrypted between your client and the publisher.
+For instance, you can run a `tnl` publisher inside your VPC. Traffic is end-to-end encrypted between your client and your publisher.
 It tries hole-punched UDP, with relays as a fallback. Your db or Kubernetes API aren't publicly exposed:
 
 ```text
