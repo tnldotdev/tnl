@@ -183,7 +183,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		<-p.permissions.Done()
 		// match session retirement while preserving the transport cause. an
 		// earlier authority failure remains the context's first cancellation cause.
-		p.cancel(errors.Join(ErrServiceConnection, p.permissions.Err()))
+		p.cancel(fmt.Errorf("connector permission owner ended: %w", errors.Join(ErrServiceConnection, p.permissions.Err())))
 	})
 	p.permission, result = config.Control.VisitorPermission(setup, config.ServiceID)
 	if result != nil || setup.Err() != nil {
@@ -379,7 +379,7 @@ func (p *connectorConnection) watch() {
 			return
 		case <-p.session.Done():
 			timer.Stop()
-			p.cancel(errors.Join(ErrServiceConnection, p.session.Err()))
+			p.cancel(fmt.Errorf("connector inner session ended: %w", errors.Join(ErrServiceConnection, p.session.Err())))
 			return
 		case <-changed:
 			timer.Stop()
@@ -464,7 +464,7 @@ func (p *connectorConnection) refreshAuthority() error {
 	}
 	if err != nil {
 		stop()
-		return err
+		return fmt.Errorf("renew connector pair: %w", err)
 	}
 	// keep the previous ready pool behind its original authority fence while
 	// background signing prepares the replacement. arrivals never see an empty
@@ -475,7 +475,7 @@ func (p *connectorConnection) refreshAuthority() error {
 	}
 	stop()
 	if err != nil {
-		return err
+		return fmt.Errorf("prepare connector renewal openings: %w", err)
 	}
 	p.mu.Lock()
 	preparedUntil, reportedUntil := p.preparedUntil, p.reportedUntil
@@ -499,7 +499,7 @@ func (p *connectorConnection) refreshAuthority() error {
 	}
 	if !p.ownerCurrentLocked() || !bound.After(now) || !next.ValidUntil.After(now) || !permission.ExpiresAt.After(now) {
 		p.mu.Unlock()
-		return ErrServiceConnection
+		return fmt.Errorf("install connector renewal after authority expired: %w", ErrServiceConnection)
 	}
 	next.ServiceTLS = p.config.ServiceTLS
 	// pair renewal is not publisher installation renewal. retain only a
