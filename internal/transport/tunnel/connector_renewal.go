@@ -22,10 +22,16 @@ func (s *Session) RenewConnectorLeg(ctx context.Context, requestID string, proof
 	if err != nil {
 		return receipt, err
 	}
+	synchronized := false
 	defer func() {
 		err = errors.Join(err, finish(err == nil))
 		if err != nil {
 			receipt = tunnelv1.ConnectorPairLegAccepted{}
+			if !synchronized {
+				// a missed or partial reply cannot become the next exchange's reply.
+				// retire this outer leg; its owner may replace it within old authority.
+				err = errors.Join(err, s.Close())
+			}
 		}
 	}()
 	if err := tunnelv1.WriteControl(s.control, tunnelv1.Message{Type: tunnelv1.ConnectorLegRenew, ProtocolVersion: tunnelv1.Version,
@@ -40,12 +46,14 @@ func (s *Session) RenewConnectorLeg(ctx context.Context, requestID string, proof
 		return receipt, errors.New("tunnel: connector renewal response does not match request")
 	}
 	if response.Type == tunnelv1.Error {
+		synchronized = true
 		return receipt, &ProtocolError{Code: response.Code}
 	}
 	if response.Type != tunnelv1.ConnectorLegRenewed || response.ConnectorPairLegAccepted == nil ||
 		response.ConnectorPairLegAccepted.Match(proof, previous.DeliveryID, started, time.Now()) != nil || response.ConnectorPairLegAccepted.SourceIP != previous.SourceIP {
 		return receipt, errors.New("tunnel: connector renewal receipt does not match existing claim")
 	}
+	synchronized = true
 	return *response.ConnectorPairLegAccepted, nil
 }
 

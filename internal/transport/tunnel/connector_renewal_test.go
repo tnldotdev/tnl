@@ -66,6 +66,11 @@ func TestConnectorLegRenewalUsesExistingControlAndRejectsSubstitution(t *testing
 	if _, err := client.RenewConnectorLeg(t.Context(), "wrong", changed, initial); err == nil {
 		t.Fatal("renewal substituted the original assignment")
 	}
+	canceled, stop := context.WithCancel(t.Context())
+	stop()
+	if _, err := client.RenewConnectorLeg(canceled, "not-written", proof, initial); !errors.Is(err, context.Canceled) || client.Err() != nil {
+		t.Fatal("cancellation before the exchange retired a healthy control stream", err)
+	}
 	for index := 1; index <= 2; index++ {
 		proof.Nonce = bytes.Repeat([]byte{byte(index)}, 32)
 		proof.RequestedAt = time.Now()

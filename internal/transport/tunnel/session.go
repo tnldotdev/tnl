@@ -575,6 +575,10 @@ func setupDeadline(ctx context.Context, connection net.Conn) (func(bool) error, 
 			<-interrupted
 		}
 		cause := context.Cause(setupCtx)
+		// a socket deadline can wake i/o before the context timer is scheduled.
+		if cause == nil && !time.Now().Before(deadline) {
+			cause = context.DeadlineExceeded
+		}
 		cancel()
 		if !success {
 			return cause
