@@ -159,12 +159,18 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 				if sticky && errors.As(err, &handle) {
 					failureHandle = handle.SDKFailureHandle()
 				}
+				var owner interface{ SDKOwnerHandle() string }
+				var ownerHandle string
+				if errors.As(err, &owner) {
+					ownerHandle = owner.SDKOwnerHandle()
+				}
 				_ = json.NewEncoder(w).Encode(struct {
 					Schema        int            `json:"schema"`
 					Reason        failure.Reason `json:"reason"`
 					Retained      bool           `json:"sdk_retained_start_failure,omitempty"`
 					FailureHandle string         `json:"sdk_failure_handle,omitempty"`
-				}{Schema: 1, Reason: reason, Retained: sticky, FailureHandle: failureHandle})
+					OwnerHandle   string         `json:"sdk_owner_handle,omitempty"`
+				}{Schema: 1, Reason: reason, Retained: sticky, FailureHandle: failureHandle, OwnerHandle: ownerHandle})
 				return
 			}
 			_ = json.NewEncoder(w).Encode(prepared)

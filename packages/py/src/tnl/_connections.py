@@ -54,7 +54,19 @@ class _RetainedStartFailure(TnlError):
         self.handle = handle
 
 
-def _native_error(reason: object, retained: bool = False, handle: object = None) -> TnlError:
+class _OwnerPreparationFailure(TnlError):
+    def __init__(self, error: TnlError, handle: str) -> None:
+        super().__init__(error.code, str(error))
+        self.handle = handle
+
+
+def _native_error(
+    reason: object, retained: bool = False, handle: object = None, owner: object = None
+) -> TnlError:
+    if owner is not None:
+        if not isinstance(owner, str) or not Path(owner).is_absolute() or "\0" in owner:
+            return _error("invalid")
+        return _OwnerPreparationFailure(_native_error(reason), owner)
     if retained and isinstance(reason, str):
         if (
             not isinstance(handle, str)
@@ -322,15 +334,17 @@ def _command(binary: Path, *arguments: str, input_value: object = None) -> objec
                     reason = None
                     retained = False
                     failure_handle = None
+                    owner_handle = None
                     try:
                         problem: object = json.loads(diagnostic)
                         if isinstance(problem, dict):
                             reason = problem.get("reason")
                             retained = problem.get("sdk_retained_start_failure") is True
                             failure_handle = problem.get("sdk_failure_handle")
+                            owner_handle = problem.get("sdk_owner_handle")
                     except (ValueError, UnicodeDecodeError):
                         pass
-                    raise _native_error(reason, retained, failure_handle)
+                    raise _native_error(reason, retained, failure_handle, owner_handle)
                 result: object = json.loads(data)
                 return result
             finally:
@@ -360,6 +374,7 @@ class _Session:
         self.pending = 0
         self.attached: _Session | None = None
         self.failed: set[_Session] = set()
+        self.preparations: set[_Session] = set()
         self.ipc: OwnerIPC | None = None
         self.failure_handle: str | None = None
 
@@ -437,6 +452,9 @@ class _Session:
                 self.changed.wait(remaining)
             selected = self.attached or self
             failed = tuple(self.failed)
+            preparations = tuple(self.preparations)
+        for preparation in preparations:
+            preparation.close()
         for session in failed:
             session.close()
         if selected is not self:
@@ -614,6 +632,13 @@ class _Scope:
                     with requester.changed:
                         requester.failed.add(self.failure_handles[error.handle].session)
             raise
+        except _OwnerPreparationFailure as error:
+            with self.lock:
+                failed_owner = self.handles.setdefault(error.handle, _Session(self, error.handle))
+                if requester is not None and failed_owner is not requester:
+                    with requester.changed:
+                        requester.failed.add(failed_owner)
+            raise
         value = _object(raw, {"schema", "owner", "prepared"})
         owner = _object(
             value.get("owner"),
@@ -685,7 +710,16 @@ class _Scope:
                         self.entry = None
                         entry[1].close()
         if isinstance(raw, dict) and "reason" in raw:
-            _object(raw, {"schema", "reason", "sdk_retained_start_failure", "sdk_failure_handle"})
+            _object(
+                raw,
+                {
+                    "schema",
+                    "reason",
+                    "sdk_retained_start_failure",
+                    "sdk_failure_handle",
+                    "sdk_owner_handle",
+                },
+            )
             if (
                 type(raw.get("schema")) is not int
                 or raw["schema"] != 1
@@ -696,6 +730,7 @@ class _Scope:
                 raw["reason"],
                 raw.get("sdk_retained_start_failure") is True,
                 raw.get("sdk_failure_handle"),
+                raw.get("sdk_owner_handle"),
             )
         return raw
 
@@ -794,6 +829,10 @@ class ConnectionHandle[C: Connection]:
         self, session: _Session, protocol: str | None = None, service: str | None = None
     ) -> None:
         self._session = session
+        # pending selections belong to this handle, not aliases of its current
+        # native owner. reuse the session's joined, retryable cleanup boundary.
+        self._lifetime = _Session(session.scope)
+        self._lifetime.attached = session
         self._protocol = protocol
         assert service is not None
         self._service = service
@@ -804,6 +843,8 @@ class ConnectionHandle[C: Connection]:
 
     def snapshot(self) -> C:
         """read a prepared owner's current snapshot, without startup or sign-in."""
+        if self._lifetime.closed:
+            raise _error("closed")
         if uses_workload() and (not self._verified_workload or self._session.handle is None):
             raise _error("not_prepared")
         return self._check(self._session.read(service=self._service))
@@ -814,17 +855,41 @@ class ConnectionHandle[C: Connection]:
         return cast(C, connection)
 
     async def _prepare(self) -> C:
-        if self._session.creator_pid != os.getpid() or self._session.closed:
+        if (
+            self._session.creator_pid != os.getpid()
+            or self._lifetime.closed
+            or self._session.closed
+        ):
             raise _error("closed")
         selection = None
         if uses_workload():
             selection = await select_workload(self._session.directory, self._service)
-        connection, session = await asyncio.to_thread(
-            self._session.prepare, self._service, selection
-        )
-        if self._session.closed:
-            raise _error("closed")
-        self._session = session
+        with self._lifetime.changed:
+            if self._lifetime.closed:
+                raise _error("closed")
+            preparation = _Session(self._session.scope)
+            self._lifetime.preparations.add(preparation)
+        try:
+            connection, session = await asyncio.to_thread(
+                preparation.prepare, self._service, selection
+            )
+        except asyncio.CancelledError:
+            # cancelling the await does not join its worker. keep that exact
+            # preparation for close, including a selection not returned yet.
+            raise
+        except BaseException:
+            with preparation.changed:
+                retained = preparation.attached is not None or bool(preparation.failed)
+            if not retained:
+                with self._lifetime.changed:
+                    self._lifetime.preparations.discard(preparation)
+            raise
+        with self._lifetime.changed:
+            if self._lifetime.closed:
+                raise _error("closed")
+            self._session = session
+            self._lifetime.attached = session
+            self._lifetime.preparations.remove(preparation)
         self._verified_workload = selection is not None
         return self._check(connection)
 
@@ -867,7 +932,7 @@ class ConnectionHandle[C: Connection]:
 
     def close(self) -> None:
         """close the shared SDK-owned session; mounted owners stay running."""
-        self._session.close()
+        self._lifetime.close()
 
     async def aclose(self) -> None:
         await asyncio.to_thread(self.close)

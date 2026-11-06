@@ -38,6 +38,7 @@ export const sdkPreparationSchema = z.union([
     reason: z.string(),
     sdk_retained_start_failure: z.boolean().exactOptional(),
     sdk_failure_handle: z.string().exactOptional(),
+    sdk_owner_handle: pathTextSchema.exactOptional(),
   }),
 ]);
 export const connectionHandleSchema = z.strictObject({
