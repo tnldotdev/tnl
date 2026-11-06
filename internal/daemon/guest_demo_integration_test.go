@@ -357,7 +357,16 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 			err := inspect.QueryRow(`SELECT json_build_object('ready_at',active_ready_at,'ready_deadline',ready_deadline,
 				'serving_until',serving_until,'used_ready_ns',used_ready_ns,'ended_at',ended_at,'end_reason',end_reason,
 				'publisher_expires_at',(SELECT publisher_expires_at FROM control.publish_runs ORDER BY created_at DESC LIMIT 1),
-				'closed_at',(SELECT closed_at FROM control.publish_runs ORDER BY created_at DESC LIMIT 1))::text FROM control.guest_trials LIMIT 1`).Scan(&authority)
+				'last_heartbeat_at',(SELECT last_heartbeat_at FROM control.publish_runs ORDER BY created_at DESC LIMIT 1),
+				'closed_at',(SELECT closed_at FROM control.publish_runs ORDER BY created_at DESC LIMIT 1),
+				'publisher_connections',(SELECT json_agg(json_build_object('slot',connection_slot,'state',state,
+					'relay_id',connected_relay_id,'relay_run_id',connected_relay_run_id,'relay_lease_revision',connected_relay_lease_revision))
+					FROM control.publish_run_connection_slots),
+				'ingress_leases',(SELECT json_agg(json_build_object('id',ingress_id,'run_id',ingress_run_id,
+					'expires_at',lease_expires_at,'routing_table_revision',routing_table_revision)) FROM control.ingress_leases),
+				'relay_leases',(SELECT json_agg(json_build_object('id',relay_id,'run_id',relay_run_id,
+					'expires_at',lease_expires_at,'lease_revision',relay_lease_revision)) FROM control.relay_leases))::text
+				FROM control.guest_trials LIMIT 1`).Scan(&authority)
 			t.Logf("guest authority at failure: %s; read error %v", authority, err)
 		}
 	})
