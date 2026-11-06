@@ -113,8 +113,9 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		t.Fatal(err)
 	}
 	config.ControlTrustedProxies, config.ControlClientIPHeader = []string{"127.0.0.1/32"}, "X-Forwarded-For"
-	publicControlAddress := unusedTCPAddress(t)
-	startIntegrationControlProxy(t, nil, publicControlAddress, config.ControlListen, controlTLS)
+	publicControlListener := serviceRuntimeListener(t)
+	publicControlAddress := publicControlListener.Addr().String()
+	serveIntegrationControlProxy(t, nil, publicControlListener, config.ControlListen, controlTLS)
 	pebble, dnsProvider := privateFixtureACME(t, database, &config)
 	if defaults {
 		config.IngressLeaseDuration, config.RelayLeaseDuration = 30*time.Second, 30*time.Second
