@@ -1850,10 +1850,10 @@ CREATE TABLE control.workload_sessions (
     created_at timestamptz NOT NULL,
     renewed_at timestamptz NOT NULL,
     lease_expires_at timestamptz NOT NULL,
-    identity_expires_at timestamptz NOT NULL,
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz,
     renewal_sequence bigint NOT NULL DEFAULT 0 CHECK (renewal_sequence >= 0),
+    identity_expires_at timestamptz NOT NULL,
     UNIQUE(team_id,project_key,repository_id,run_id,run_attempt,check_run_id),
     UNIQUE(team_id,project_key,session_nonce),
     CHECK ((provider='github' AND repository_id IS NOT NULL AND run_id IS NOT NULL AND run_attempt IS NOT NULL AND check_run_id IS NOT NULL) OR
