@@ -132,22 +132,18 @@ func TestIntegrationWorkloadIdentityExpiryMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := workloadTestMigrationProvider(t, url)
-	if _, err := provider.DownTo(t.Context(), 2); err != nil {
-		t.Fatal(err)
+	// the initial schema must reject a lease beyond its verified identity.
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.workload_sessions SET lease_expires_at=$2 WHERE id=$1`, session.ID, now.Add(90*time.Second)); err == nil {
+		t.Fatal("baseline accepted a lease beyond identity expiry")
 	}
-	// version 2 allowed a renewed lease to outlive the initial platform JWT.
-	if _, err := d.pool.Exec(t.Context(), `UPDATE control.workload_sessions SET lease_expires_at=$2,renewal_sequence=1 WHERE id=$1`, session.ID, now.Add(90*time.Second)); err != nil {
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.workload_sessions SET renewal_sequence=1 WHERE id=$1`, session.ID); err != nil {
 		t.Fatal(err)
-	}
-	if err := d.Readiness(t.Context()); err == nil {
-		t.Fatal("serving accepted schema without identity expiry")
 	}
 	if err := Migrate(t.Context(), url); err != nil {
 		t.Fatal(err)
 	}
 	recovered, err := d.ExchangeWorkload(t.Context(), exchange, now)
 	if err != nil || recovered.ID != session.ID || recovered.Credential != session.Credential || recovered.RenewalSequence != 1 || !recovered.ExpiresAt.Equal(session.ExpiresAt) || !recovered.IdentityExpiresAt.Equal(now.Add(45*time.Second)) || !recovered.LeaseExpiresAt.Equal(recovered.IdentityExpiresAt) || !reflect.DeepEqual(recovered.ServiceIDs, session.ServiceIDs) {
-		t.Fatal("migration did not clip the lease while preserving session authority", err)
+		t.Fatal("repeat migration changed identity expiry or session authority", err)
 	}
 }
