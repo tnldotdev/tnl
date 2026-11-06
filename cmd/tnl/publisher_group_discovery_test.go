@@ -20,15 +20,29 @@ func TestPublisherGroupDiscoveryForegroundUsesNativeTLS(t *testing.T) {
 		result = servePublisherGroupWithDiscovery(ctx, fixture.Job, fixture.Profile, fixture.Key, nil, fixture)
 	}()
 	defer func() { cancel(); <-done }()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
 	select {
 	case health := <-fixture.Heartbeat:
-		if !health.Healthy || fixture.TargetHandshakes.Load() == 0 {
-			t.Fatal("foreground group did not verify discovered EKS target TLS")
+		if !health.Healthy {
+			t.Fatal("foreground group reported unhealthy discovered EKS target TLS")
 		}
 	case <-done:
 		t.Fatal("foreground group ended before target preflight", result)
-	case <-time.After(5 * time.Second):
+	case <-deadline.C:
 		t.Fatal("foreground group did not publish its cloud assignment")
+	}
+	// the client may finish TLS before the server records its handshake.
+	// join that observation inside the same preparation budget.
+	select {
+	case <-fixture.TargetHandshake:
+		if fixture.TargetHandshakes.Load() == 0 {
+			t.Fatal("foreground group did not verify discovered EKS target TLS")
+		}
+	case <-done:
+		t.Fatal("foreground group ended before target recorded TLS", result)
+	case <-deadline.C:
+		t.Fatal("target did not record the verified TLS handshake")
 	}
 	cancel()
 	select {
