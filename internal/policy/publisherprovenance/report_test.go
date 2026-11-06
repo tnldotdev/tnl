@@ -13,7 +13,7 @@ import (
 )
 
 func testReport() controlv1.PublisherDeploymentReport {
-	return controlv1.PublisherDeploymentReport{DeploymentId: "aws-" + strings.Repeat("a", 40), Provider: "aws", ReplicaKey: "replica-1", Instance: "aws-replica", Image: "ghcr.io/tnldotdev/tnl@sha256:" + strings.Repeat("a", 64), SoftwareVersion: "v1.2.3", TemplateVersion: "2", TemplateSha256: strings.Repeat("b", 64)}
+	return controlv1.PublisherDeploymentReport{DeploymentId: "aws-" + strings.Repeat("a", 40), Provider: "aws", ReplicaKey: "replica-1", Instance: "aws-replica", Image: "ghcr.io/tnldotdev/tnl@sha256:" + strings.Repeat("a", 64), SoftwareVersion: "v1.2.3", TemplateVersion: "1", TemplateSha256: strings.Repeat("b", 64)}
 }
 
 func TestPublisherDeploymentEnvironmentIsOptionalAndBounded(t *testing.T) {

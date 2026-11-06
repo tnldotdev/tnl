@@ -98,7 +98,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tnl-project"
-version = "0.0.0"
+version = "1.0.0"
 requires-python = ">=3.12"
 dependencies = ["tnldotdev-tnl"]
 

@@ -77,7 +77,7 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report := controlv1.PublisherDeploymentReport{DeploymentId: "aws-" + strings.Repeat("a", 40), Provider: "aws", ReplicaKey: "replica-1", Instance: "aws-instance", Image: "ghcr.io/tnldotdev/tnl@sha256:" + strings.Repeat("a", 64), SoftwareVersion: "v1.2.3", TemplateVersion: "2", TemplateSha256: strings.Repeat("b", 64)}
+	report := controlv1.PublisherDeploymentReport{DeploymentId: "aws-" + strings.Repeat("a", 40), Provider: "aws", ReplicaKey: "replica-1", Instance: "aws-instance", Image: "ghcr.io/tnldotdev/tnl@sha256:" + strings.Repeat("a", 64), SoftwareVersion: "v1.2.3", TemplateVersion: "1", TemplateSha256: strings.Repeat("b", 64)}
 	request := func(m controlv1.PublisherGroupMember, key ed25519.PrivateKey, action controlv1.PublisherRuntimeRequestAction, run string, epoch int64, report *controlv1.PublisherDeploymentReport) controlv1.PublisherRuntimeRequest {
 		t.Helper()
 		scope := publisherproof.RuntimeScope(m.GroupId, string(action), run, epoch, publisherprovenance.Digest(report))
