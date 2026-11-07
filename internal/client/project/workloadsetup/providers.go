@@ -15,11 +15,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pelletier/go-toml/v2"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"golang.org/x/sys/unix"
 )
+
+const providerMetadataLimit = 2 << 20
 
 func environment(name string) string { return os.Getenv(name) }
 
@@ -39,7 +42,7 @@ func commandOutput(ctx context.Context, directory, name string, args ...string) 
 type boundedOutput struct{ buffer bytes.Buffer }
 
 func (b *boundedOutput) Write(data []byte) (int, error) {
-	if b.buffer.Len()+len(data) > 2<<20 {
+	if b.buffer.Len()+len(data) > providerMetadataLimit {
 		return 0, ErrBinding
 	}
 	return b.buffer.Write(data)
@@ -80,12 +83,6 @@ func (r resolver) bindProvider(ctx context.Context, o Options, p config.Workload
 func (r resolver) vercel(ctx context.Context, directory string, v *config.WorkloadVercel, previous controlv1.ProjectWorkload) (controlv1.WorkloadTrust, error) {
 	t := controlv1.WorkloadTrust{Provider: controlv1.WorkloadVercel}
 	old := previous.Trust
-	if previous.Provider == t.Provider && old.Claims["project"] != "" && (v.Project == "" || v.Project == old.Claims["project"]) && (v.Team == "" || v.Team == old.Claims["owner"]) {
-		t = old
-		t.Claims = cloneClaims(old.Claims)
-		t.Claims["environment"] = v.Environment
-		return t, nil
-	}
 	project, team := v.Project, v.Team
 	if project == "" {
 		var link struct {
@@ -95,6 +92,12 @@ func (r resolver) vercel(ctx context.Context, directory string, v *config.Worklo
 		if err := readProjectJSON(filepath.Join(directory, ".vercel", "project.json"), &link); err != nil {
 			return t, errors.Join(ErrVercelProject, err)
 		}
+		if !strings.HasPrefix(link.ProjectID, "prj_") || !strings.HasPrefix(link.OrgID, "team_") {
+			return t, ErrBinding
+		}
+		if previous.Provider == t.Provider && (link.ProjectID != old.Claims["project_id"] || link.OrgID != old.Claims["owner_id"]) {
+			return t, ErrRebinding
+		}
 		project = link.ProjectID
 		if team == "" {
 			team = link.OrgID
@@ -102,6 +105,12 @@ func (r resolver) vercel(ctx context.Context, directory string, v *config.Worklo
 	}
 	if project == "" {
 		return t, ErrBinding
+	}
+	if previous.Provider == t.Provider && old.Claims["project"] != "" && (v.Project == "" || v.Project == old.Claims["project"]) && (v.Team == "" || v.Team == old.Claims["owner"]) {
+		t = old
+		t.Claims = cloneClaims(old.Claims)
+		t.Claims["environment"] = v.Environment
+		return t, nil
 	}
 	token := r.getenv("VERCEL_TOKEN")
 	if token == "" {
@@ -125,13 +134,13 @@ func (r resolver) vercel(ctx context.Context, directory string, v *config.Worklo
 	if err := r.get(ctx, "https://api.vercel.com/v9/projects/"+url.PathEscape(project)+"?"+query.Encode(), token, &metadata); err != nil {
 		return t, err
 	}
-	if !strings.HasPrefix(metadata.ID, "prj_") || !strings.HasPrefix(metadata.AccountID, "team_") || !naming.ValidAuthorityLabel(metadata.Name) || !metadata.OIDC.Enabled || metadata.OIDC.Mode != "team" && metadata.OIDC.Mode != "global" {
+	if !strings.HasPrefix(metadata.ID, "prj_") || !strings.HasPrefix(metadata.AccountID, "team_") || !config.ValidVercelProjectName(metadata.Name) || !metadata.OIDC.Enabled || metadata.OIDC.Mode != "team" && metadata.OIDC.Mode != "global" {
 		return t, ErrBinding
 	}
 	if v.Project != "" && v.Project != metadata.Name {
 		return t, ErrBinding
 	}
-	if strings.HasPrefix(project, "prj_") && metadata.ID != project {
+	if v.Project == "" && metadata.ID != project {
 		return t, ErrBinding
 	}
 	if strings.HasPrefix(team, "team_") && metadata.AccountID != team {
@@ -163,14 +172,14 @@ func (r resolver) fly(ctx context.Context, directory, server string, f *config.W
 	t := controlv1.WorkloadTrust{Provider: controlv1.WorkloadFly}
 	app := f.App
 	if app == "" {
-		output, err := r.run(ctx, directory, "flyctl", "config", "show", "--local")
+		data, err := readProjectFile(filepath.Join(directory, "fly.toml"))
 		if err != nil {
-			return t, err
+			return t, errors.Join(ErrBinding, err)
 		}
 		var local struct {
-			App string `json:"app"`
+			App string `toml:"app"`
 		}
-		if json.Unmarshal(output, &local) != nil {
+		if toml.Unmarshal(data, &local) != nil {
 			return t, ErrBinding
 		}
 		app = local.App
@@ -199,7 +208,7 @@ func (r resolver) fly(ctx context.Context, directory, server string, f *config.W
 	if token == "" {
 		return t, ErrBinding
 	}
-	body, err := json.Marshal(map[string]any{"query": `query($app: String!) { app(name: $app) { name internalNumericId organization { slug internalNumericId } } }`, "variables": map[string]string{"app": app}})
+	body, err := json.Marshal(map[string]any{"query": `query($app: String!) { app(name: $app) { name internalNumericId organization { rawSlug internalNumericId } } }`, "variables": map[string]string{"app": app}})
 	if err != nil {
 		return t, err
 	}
@@ -216,8 +225,8 @@ func (r resolver) fly(ctx context.Context, directory, server string, f *config.W
 				Name string      `json:"name"`
 				ID   json.Number `json:"internalNumericId"`
 				Org  struct {
-					Slug string      `json:"slug"`
-					ID   json.Number `json:"internalNumericId"`
+					RawSlug string      `json:"rawSlug"`
+					ID      json.Number `json:"internalNumericId"`
 				} `json:"organization"`
 			} `json:"app"`
 		} `json:"data"`
@@ -226,15 +235,15 @@ func (r resolver) fly(ctx context.Context, directory, server string, f *config.W
 		return t, err
 	}
 	a := response.Data.App
-	if len(response.Errors) != 0 || a.Name != app || !naming.ValidAuthorityLabel(a.Org.Slug) || !positiveID(a.ID) || !positiveID(a.Org.ID) || f.Org != "" && a.Org.Slug != f.Org {
+	if len(response.Errors) != 0 || a.Name != app || !naming.ValidAuthorityLabel(a.Org.RawSlug) || !positiveID(a.ID) || !positiveID(a.Org.ID) || f.Org != "" && a.Org.RawSlug != f.Org {
 		return t, ErrBinding
 	}
 	if previous.Provider == t.Provider && (old.Claims["app_id"] != a.ID.String() || old.Claims["org_id"] != a.Org.ID.String()) {
 		return t, ErrRebinding
 	}
-	t.Issuer = "https://oidc.fly.io/" + a.Org.Slug
+	t.Issuer = "https://oidc.fly.io/" + a.Org.RawSlug
 	t.JwksUrl, t.Audience = t.Issuer+"/.well-known/jwks", server
-	t.Claims = map[string]string{"org_name": a.Org.Slug, "org_id": a.Org.ID.String(), "app_name": a.Name, "app_id": a.ID.String()}
+	t.Claims = map[string]string{"org_name": a.Org.RawSlug, "org_id": a.Org.ID.String(), "app_name": a.Name, "app_id": a.ID.String()}
 	if f.MachineID != "" {
 		t.Claims["machine_id"] = f.MachineID
 	}
@@ -255,16 +264,27 @@ func cloneClaims(claims map[string]string) map[string]string {
 }
 
 func readProjectJSON(path string, value any) error {
-	file, err := os.OpenFile(path, os.O_RDONLY|unix.O_NONBLOCK, 0)
+	data, err := readProjectFile(path)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 2<<20 {
+	if json.Unmarshal(data, value) != nil {
 		return ErrBinding
 	}
-	return decodeJSON(file, value)
+	return nil
+}
+
+func readProjectFile(path string) ([]byte, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > providerMetadataLimit {
+		return nil, ErrBinding
+	}
+	return readProviderMetadata(file)
 }
 
 func (r resolver) get(ctx context.Context, endpoint, token string, target any) error {
@@ -291,12 +311,23 @@ func (r resolver) do(request *http.Request, target any) error {
 }
 
 func decodeJSON(reader io.Reader, target any) error {
-	data, err := io.ReadAll(io.LimitReader(reader, (2<<20)+1))
+	data, err := readProviderMetadata(reader)
 	if err != nil {
-		return errors.Join(ErrBinding, err)
+		return err
 	}
-	if len(data) > 2<<20 || json.Unmarshal(data, target) != nil {
+	if json.Unmarshal(data, target) != nil {
 		return ErrBinding
 	}
 	return nil
+}
+
+func readProviderMetadata(reader io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, providerMetadataLimit+1))
+	if err != nil {
+		return nil, errors.Join(ErrBinding, err)
+	}
+	if len(data) > providerMetadataLimit {
+		return nil, ErrBinding
+	}
+	return data, nil
 }

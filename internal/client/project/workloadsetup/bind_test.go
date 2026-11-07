@@ -140,7 +140,7 @@ func TestFlyNumericBindingAndReuse(t *testing.T) {
 		if request.URL.String() != "https://api.fly.io/graphql" || request.Method != "POST" {
 			t.Fatal("wrong Fly metadata authority")
 		}
-		return `{"data":{"app":{"name":"worker","internalNumericId":456,"organization":{"slug":"acme","internalNumericId":"123"}}}}`
+		return `{"data":{"app":{"name":"worker","internalNumericId":456,"organization":{"slug":"acme","rawSlug":"acme","internalNumericId":"123"}}}}`
 	})
 	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: &config.WorkloadFly{App: "worker"}, Services: []string{"db"}}}}
 	first, err := r.resolve(t.Context(), o)
@@ -227,18 +227,16 @@ func TestLinkedVercelProjectIsOnlyASelectionHint(t *testing.T) {
 }
 
 func TestFlyLocalSelectionAndNumericIDs(t *testing.T) {
-	r := fixtureResolver(t, func(*http.Request) string {
-		return `{"data":{"app":{"name":"worker","internalNumericId":456,"organization":{"slug":"acme","internalNumericId":123}}}}`
-	})
-	calls := 0
-	r.run = func(_ context.Context, directory, name string, args ...string) ([]byte, error) {
-		calls++
-		if directory != "/project" || name != "flyctl" || !reflect.DeepEqual(args, []string{"config", "show", "--local"}) {
-			t.Fatal("local Fly selection started a provider operation")
-		}
-		return []byte(`{"app":"worker"}`), nil
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "fly.toml"), []byte("app = 'worker'\nprimary_region = 'ord'\n"), 0600); err != nil {
+		t.Fatal(err)
 	}
-	o := Options{Directory: "/project", Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: &config.WorkloadFly{}, Services: []string{"db"}}}}
+	calls := 0
+	r := fixtureResolver(t, func(*http.Request) string {
+		calls++
+		return `{"data":{"app":{"name":"worker","internalNumericId":456,"organization":{"slug":"acme","rawSlug":"acme","internalNumericId":123}}}}`
+	})
+	o := Options{Directory: directory, Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: &config.WorkloadFly{}, Services: []string{"db"}}}}
 	bound, err := r.resolve(t.Context(), o)
 	if err != nil || calls != 1 || bound["job"].Trust.Claims["app_id"] != "456" {
 		t.Fatal("local Fly defaults failed", err)

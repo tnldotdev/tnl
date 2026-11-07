@@ -186,7 +186,7 @@ func ValidateWorkloads(c TNL) error {
 			}
 		case "vercel":
 			v := p.Vercel
-			if v.Project != "" && !naming.ValidAuthorityLabel(v.Project) || v.Team != "" && !naming.ValidAuthorityLabel(v.Team) || !slices.Contains([]string{"production", "preview", "development"}, v.Environment) {
+			if v.Project != "" && !ValidVercelProjectName(v.Project) || v.Team != "" && !naming.ValidAuthorityLabel(v.Team) || !slices.Contains([]string{"production", "preview", "development"}, v.Environment) {
 				return bad()
 			}
 		case "fly":
