@@ -63,6 +63,27 @@ type sdkOwnerRecord struct {
 // selection. language and native request deadlines are shorter than this window.
 const sdkRequestLifetime = 2 * time.Minute
 
+const (
+	sdkMaxActiveOwners = 32
+	sdkMaxOwnerRecords = 256
+)
+
+// reserved startups and unjoined cleanup keep an active slot. completed failures
+// retain only bounded bookkeeping, including failures retained until exact close.
+func (record sdkOwnerRecord) active() bool {
+	return record.Owner.ConnectionHandle != "" || record.Failure == ""
+}
+
+func (r *sdkRegistry) activeOwners() int {
+	var count int
+	for _, record := range r.Owners {
+		if record.active() {
+			count++
+		}
+	}
+	return count
+}
+
 type sdkStartFailure struct {
 	error
 	retained bool
@@ -389,7 +410,14 @@ func (o sdkOperations) sdkOwner(ctx context.Context, options SDKOptions, scope c
 				delete(r.Owners, k)
 			}
 		}
-		if _, exists := r.Owners[key]; !exists && len(r.Owners) >= 32 {
+		if _, exists := r.Owners[key]; !exists && len(r.Owners) >= sdkMaxOwnerRecords {
+			return connectorruntime.ErrUnavailable
+		}
+		active := r.activeOwners()
+		if previous, exists := r.Owners[key]; exists && previous.active() {
+			active--
+		}
+		if active >= sdkMaxActiveOwners {
 			return connectorruntime.ErrUnavailable
 		}
 		r.Owners[key] = sdkOwnerRecord{ClosedAt: record.ClosedAt}
@@ -578,7 +606,7 @@ func sdkUpdate(ctx context.Context, options SDKOptions, update func(*sdkRegistry
 			return err
 		}
 		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || stat.Uid != uint32(os.Getuid()) || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() > connectorruntime.MaxBytes || connectorruntime.ReadJSON(f, &r) != nil || r.Schema != 1 || r.ParentPID != options.ParentPID || r.Owners == nil || r.Assertions == nil || len(r.Owners) > 32 || len(r.Assertions) > 256 {
+		if !ok || stat.Uid != uint32(os.Getuid()) || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() > connectorruntime.MaxBytes || connectorruntime.ReadJSON(f, &r) != nil || r.Schema != 1 || r.ParentPID != options.ParentPID || r.Owners == nil || r.Assertions == nil || len(r.Owners) > sdkMaxOwnerRecords || r.activeOwners() > sdkMaxActiveOwners || len(r.Assertions) > 256 {
 			return connectorruntime.ErrUnauthorized
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -587,6 +615,9 @@ func sdkUpdate(ctx context.Context, options SDKOptions, update func(*sdkRegistry
 	before, _ := json.Marshal(r)
 	if err := update(&r); err != nil {
 		return err
+	}
+	if len(r.Owners) > sdkMaxOwnerRecords || r.activeOwners() > sdkMaxActiveOwners {
+		return connectorruntime.ErrInvalid
 	}
 	data, err := json.Marshal(r)
 	if err != nil {
