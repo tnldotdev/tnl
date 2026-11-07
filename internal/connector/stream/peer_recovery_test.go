@@ -18,23 +18,24 @@ func TestConnectorRecoveryWakeOnlyTracksTransitions(t *testing.T) {
 	defer cancel(nil)
 	var canceled atomic.Int32
 	p := &connectorConnection{ctx: ctx, cancel: cancel, until: time.Now().Add(time.Minute), changed: make(chan struct{}), recover: make(chan struct{}, 1), bindingCancel: func() { canceled.Add(1) }}
-	p.requestRecovery(false)
+	p.requestRecovery(connectorInspecting)
 	<-p.recover
 	inspected := p.changed
 	for range 100 {
-		p.requestRecovery(false)
+		p.requestRecovery(connectorInspecting)
 	}
 	if p.changed != inspected || len(p.recover) != 0 {
 		t.Fatal("unchanged inspection kept waking its coordinator")
 	}
-	p.requestRecovery(true)
+	p.requestRecovery(connectorRebinding)
 	<-p.recover
 	staged := p.changed
 	for range 100 {
-		p.requestRecovery(true)
+		p.requestRecovery(connectorRebinding)
+		p.requestRecovery(connectorInspecting)
 	}
-	if p.changed != staged || len(p.recover) != 0 || canceled.Load() != 1 || !p.rebindNeeded {
-		t.Fatal("waiting for ready assignments caused a self-triggered recovery loop")
+	if p.changed != staged || len(p.recover) != 0 || canceled.Load() != 1 || p.recoveryState != connectorRebinding {
+		t.Fatal("repeated recovery changed state, restarted cancellation, or woke its coordinator")
 	}
 }
 
@@ -63,14 +64,14 @@ func TestConnectorRecoveryRejectedPrepareInspectsBeforeChoosingNewOperation(t *t
 				return state, nil
 			}}
 			p := &connectorConnection{ctx: ctx, cancel: cancel, config: Config{Control: control}, signer: signer, owner: request.IdempotencyKey, run: run, pair: original,
-				until: time.Now().Add(time.Minute), permission: controlv1.VisitorTokenResponse{ExpiresAt: time.Now().Add(time.Minute)}, highWater: original.DeliveryGeneration, changed: make(chan struct{}), rebindNeeded: true, rebinding: true, inspectNeeded: true}
+				until: time.Now().Add(time.Minute), permission: controlv1.VisitorTokenResponse{ExpiresAt: time.Now().Add(time.Minute)}, highWater: original.DeliveryGeneration, changed: make(chan struct{}), recoveryState: connectorRebinding}
 			op := &connectorRebindOperation{prepare: &connectorRebindPhase{request: request, started: time.Now()}}
 			p.rebind = op
 			rejected := &clientcontrol.ProblemError{Status: http.StatusConflict, Problem: controlv1.Problem{Code: code}}
 			if !connectorBindingChanged(rejected) {
 				t.Fatal("authenticated stale binding was terminal")
 			}
-			if err := p.reconcileRebind(op); !connectorTemporary(err) || calls != 1 || p.rebind != nil || p.rebinding || !p.rebindNeeded || !reflect.DeepEqual(p.pair, original) {
+			if err := p.reconcileRebind(op); !connectorTemporary(err) || calls != 1 || p.rebind != nil || p.recoveryState != connectorRebinding || !reflect.DeepEqual(p.pair, original) {
 				t.Fatal("rejected prepare did not retain its owner for a fresh CAS", err)
 			}
 		})

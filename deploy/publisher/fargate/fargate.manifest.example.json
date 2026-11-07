@@ -10,9 +10,9 @@
       "provider": "aws",
       "configuration_fingerprint": "73493ae667fcea6cecdf581aa3a848302a449b9950cc9a99570bbbfe08cb2d01",
       "template_path": "aws/production.yaml",
-      "template_sha256": "b8aa28b211af4a3cdcd36eeba92419dd7c4fe520953d61c5b1c85fb319127337",
+      "template_sha256": "2eeb0925a24fad351caef9632e2ce9e99ecf3ff67cd0a15f93f24ef1cc9e7715",
       "parameters_example_path": "aws/production.parameters.example.json",
-      "parameters_example_sha256": "7b2eaaacf9d0cb35a66628ba5adbfa36e8112dc8d8403619495229d07935d473",
+      "parameters_example_sha256": "7d00ec9b8bd721a1883be748daf1faeb3e75851971d85c3ceea2bff05b032a11",
       "storage_policy_path": "aws/production.storage-policy.json",
       "storage_policy_sha256": "384ccbcc1df8a2a44a74461bdbe13b2381fc138fbb173b6edb73050e5553d17f",
       "replicas": [

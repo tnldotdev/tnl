@@ -89,7 +89,7 @@ describe("generated Fargate group boundary", () => {
         { Name: "TNL_DEPLOYMENT_PROVIDER", Value: "aws" },
         { Name: "TNL_DEPLOYMENT_REPLICA_KEY", Value: `replica-${index}` },
         { Name: "TNL_DEPLOYMENT_IMAGE", Value: { Ref: "PublisherImage" } },
-        { Name: "TNL_DEPLOYMENT_TEMPLATE_VERSION", Value: "2" },
+        { Name: "TNL_DEPLOYMENT_TEMPLATE_VERSION", Value: "1" },
         { Name: "TNL_DEPLOYMENT_TEMPLATE_SHA256", Value: { Ref: "TemplateSHA256" } },
       ]);
       expect(container).not.toHaveProperty("PortMappings");

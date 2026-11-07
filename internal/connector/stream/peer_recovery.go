@@ -21,6 +21,17 @@ type connectorRebindPhase struct {
 	started time.Time
 }
 
+// inspection permits traffic on the current binding; rebinding fences it until
+// the coordinator installs a newer authorized binding. only recovery can advance
+// either state back to ready.
+type connectorRecoveryState uint8
+
+const (
+	connectorBindingReady connectorRecoveryState = iota
+	connectorInspecting
+	connectorRebinding
+)
+
 // only the recovery coordinator mutates phase requests or pending legs. the
 // retained connection still owns authority, application uses, and inner QUIC.
 type connectorRebindOperation struct {
@@ -76,33 +87,28 @@ func connectorRecoveryWait(cause error) error {
 	return errors.Join(&tunnel.ProtocolError{Code: tunnelv1.Unavailable}, cause)
 }
 
-func (p *connectorConnection) requestRecovery(rebind bool) {
+func (p *connectorConnection) requestRecovery(next connectorRecoveryState) {
 	p.mu.Lock()
-	changed := !p.inspectNeeded
-	p.inspectNeeded = true
-	fresh := rebind && !p.rebinding && !p.rebindNeeded
-	changed = changed || fresh
-	if fresh {
-		p.rebindNeeded = true
+	if next <= p.recoveryState {
+		p.mu.Unlock()
+		return
+	}
+	p.recoveryState = next
+	if next == connectorRebinding {
 		p.openings = nil
 	}
 	until, stop := p.until, p.bindingCancel
 	active := make([]*PreparedConnector, 0, len(p.active))
-	if fresh {
+	if next == connectorRebinding {
 		for use := range p.active {
 			if use.prepared != nil {
 				active = append(active, use.prepared)
 			}
 		}
 	}
-	if changed {
-		p.notifyLocked()
-	}
+	p.notifyLocked()
 	p.mu.Unlock()
-	if !changed {
-		return
-	}
-	if fresh {
+	if next == connectorRebinding {
 		if stop != nil {
 			stop()
 		}
@@ -168,16 +174,16 @@ func (p *connectorConnection) callRebind(phase *connectorRebindPhase) (controlv1
 }
 
 func (p *connectorConnection) inspectBinding() (controlv1.ConnectorPeerPairRebindState, time.Time, error) {
-	if p.inspectRequest == nil {
+	if p.inspection == nil {
 		phase, err := p.newRebindPhase(controlv1.ConnectorPeerPairInspect, "", p.highWater, nil, "", nil)
 		if err != nil {
 			return controlv1.ConnectorPeerPairRebindState{}, time.Time{}, err
 		}
-		p.inspectRequest, p.inspectStarted = &phase.request, phase.started
+		p.inspection = phase
 	}
-	state, until, err := p.callRebind(&connectorRebindPhase{request: *p.inspectRequest, started: p.inspectStarted})
+	state, until, err := p.callRebind(p.inspection)
 	if err == nil {
-		p.inspectRequest = nil
+		p.inspection = nil
 	}
 	return state, until, err
 }
@@ -230,7 +236,7 @@ func (p *connectorConnection) abandonPending(op *connectorRebindOperation) error
 	p.pair = *state.Active
 	p.run.PairReady = &controlv1.ConnectorPeerPairReady{PublisherIdentityId: p.pair.PublisherIdentityId, Relays: p.pair.Relays}
 	p.rebind = nil
-	p.rebinding, p.rebindNeeded, p.inspectNeeded = false, true, true
+	p.recoveryState = connectorRebinding
 	p.notifyLocked()
 	p.mu.Unlock()
 	return connectorRecoveryWait(nil)
@@ -238,14 +244,14 @@ func (p *connectorConnection) abandonPending(op *connectorRebindOperation) error
 
 func (p *connectorConnection) recoverBinding() error {
 	p.mu.Lock()
-	needed, inspect := p.rebindNeeded || p.rebinding, p.inspectNeeded
+	recovery := p.recoveryState
 	op := p.rebind
 	current := p.ownerCurrentLocked()
 	p.mu.Unlock()
 	if !current {
 		return ErrServiceConnection
 	}
-	if !needed && !inspect {
+	if recovery == connectorBindingReady {
 		return nil
 	}
 	if op == nil {
@@ -257,10 +263,10 @@ func (p *connectorConnection) recoverBinding() error {
 			return ErrServiceConnection
 		}
 		p.mu.Lock()
-		unchanged := !p.rebindNeeded && state.Active.DeliveryGeneration == p.pair.DeliveryGeneration && state.Active.BindingState == controlv1.ConnectorPeerPairBindingActive &&
+		unchanged := p.recoveryState == connectorInspecting && state.Active.DeliveryGeneration == p.pair.DeliveryGeneration && state.Active.BindingState == controlv1.ConnectorPeerPairBindingActive &&
 			len(state.ReadyRelays) == 2 && state.ReadyRelays[0] == p.pair.Relays[0] && state.ReadyRelays[1] == p.pair.Relays[1] && state.Active.SourceIp != nil && *state.Active.SourceIp == p.source
 		if unchanged {
-			p.inspectNeeded = false
+			p.recoveryState = connectorBindingReady
 			for slot := range p.paths {
 				if p.paths[slot].needsInspection {
 					p.paths[slot].inspected, p.paths[slot].needsInspection = true, false
@@ -272,7 +278,7 @@ func (p *connectorConnection) recoverBinding() error {
 		if unchanged {
 			return nil
 		}
-		p.requestRecovery(true)
+		p.requestRecovery(connectorRebinding)
 		if len(state.ReadyRelays) != 2 {
 			return connectorRecoveryWait(nil)
 		}
@@ -291,7 +297,7 @@ func (p *connectorConnection) recoverBinding() error {
 			}
 		}
 		p.mu.Lock()
-		p.rebind, p.rebinding = op, true
+		p.rebind = op
 		p.mu.Unlock()
 	}
 	if op.retired || !op.until.IsZero() && !op.until.After(time.Now()) {
@@ -373,7 +379,7 @@ func (p *connectorConnection) reconcileRebind(op *connectorRebindOperation) erro
 			return ErrServiceConnection
 		}
 		p.mu.Lock()
-		p.rebind, p.rebinding = nil, false
+		p.rebind = nil
 		p.notifyLocked()
 		p.mu.Unlock()
 		return connectorRecoveryWait(nil)
@@ -519,7 +525,7 @@ func (p *connectorConnection) installActiveBinding(op *connectorRebindOperation,
 			uses = append(uses, use)
 		}
 	}
-	p.rebind, p.rebinding, p.rebindNeeded, p.inspectNeeded = nil, false, false, false
+	p.rebind, p.recoveryState = nil, connectorBindingReady
 	permission, bound := p.permission, earliestConnectorDeadline(p.until, p.run.ValidUntil, p.permission.ExpiresAt)
 	p.notifyLocked()
 	p.mu.Unlock()

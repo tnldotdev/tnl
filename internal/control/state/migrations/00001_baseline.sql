@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-post-quantum')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-connector-rebinding')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-post-quantum');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-connector-rebinding');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2691,6 +2691,21 @@ CREATE TABLE control.connector_peer_pairs (
     last_request_at timestamptz NOT NULL,
     replay_fence_until timestamptz NOT NULL,
     expires_at timestamptz NOT NULL,
+    session_key_ciphertext bytea,
+    session_key_digest bytea CHECK (session_key_digest IS NULL OR octet_length(session_key_digest)=32),
+    session_key_storage_key_id text,
+    trust_revision bigint NOT NULL DEFAULT 1 CHECK (trust_revision>0),
+    high_water_generation bigint NOT NULL DEFAULT 1 CHECK (high_water_generation>0),
+    binding_operation_id text NOT NULL DEFAULT '',
+    binding_challenge bytea,
+    publisher_proved_until timestamptz,
+    publisher_proof_digest bytea,
+    rebind_operation_id text NOT NULL DEFAULT '',
+    rebind_generation bigint,
+    rebind_status text CHECK (rebind_status IN ('pending','active','aborted','expired')),
+    rebind_prepare_digest bytea,
+    rebind_activate_digest bytea,
+    rebind_abort_digest bytea,
     FOREIGN KEY (service_run_id,service_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT,
     CONSTRAINT connector_peer_pairs_owner_key UNIQUE (subject_kind,subject_id,service_run_id,owner_key),
     CONSTRAINT connector_peer_pairs_stable_owner_key CHECK (owner_key=idempotency_key),
@@ -2700,6 +2715,37 @@ CREATE TABLE control.connector_peer_pairs (
         AND expires_at<=last_authorized_at+interval '5 minutes'),
     CHECK ((subject_kind='human_device') = (parent_control_session_id IS NOT NULL)),
     CHECK (replay_fence_until=last_request_at+interval '5 minutes')
+);
+
+-- +goose StatementBegin
+CREATE FUNCTION control.connector_peer_generation_defaults() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP='UPDATE' THEN
+        NEW.high_water_generation=GREATEST(OLD.high_water_generation,NEW.high_water_generation);
+    END IF;
+    NEW.high_water_generation=GREATEST(NEW.high_water_generation,NEW.delivery_generation);
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER connector_peer_generation_defaults BEFORE INSERT OR UPDATE ON control.connector_peer_pairs
+    FOR EACH ROW EXECUTE FUNCTION control.connector_peer_generation_defaults();
+
+CREATE TABLE control.connector_peer_pending_bindings (
+    pair_id text PRIMARY KEY REFERENCES control.connector_peer_pairs(id) ON DELETE CASCADE,
+    delivery_generation bigint NOT NULL CHECK (delivery_generation>0),
+    operation_id text NOT NULL CHECK (operation_id ~ '^ik_[A-Za-z0-9]{22}$'),
+    challenge bytea NOT NULL CHECK (octet_length(challenge)=32),
+    slots jsonb NOT NULL CHECK (jsonb_typeof(slots)='array' AND jsonb_array_length(slots)=2),
+    key_ciphertext bytea NOT NULL,
+    key_digest bytea NOT NULL CHECK (octet_length(key_digest)=32),
+    storage_key_id text NOT NULL,
+    created_at timestamptz NOT NULL,
+    pending_until timestamptz NOT NULL,
+    publisher_prepared_until timestamptz,
+    publisher_proved_until timestamptz,
+    publisher_proof_digest bytea,
+    CHECK (pending_until>created_at AND pending_until<=created_at+interval '10 seconds')
 );
 
 CREATE TABLE control.connector_peer_pair_leg_claims (
@@ -2714,7 +2760,8 @@ CREATE TABLE control.connector_peer_pair_leg_claims (
     relay_id text NOT NULL,
     relay_run_id text NOT NULL,
     relay_lease_revision bigint NOT NULL CHECK (relay_lease_revision>0),
-    PRIMARY KEY(pair_id,connection_slot)
+    delivery_generation bigint NOT NULL CHECK (delivery_generation>0),
+    PRIMARY KEY(pair_id,delivery_generation,connection_slot)
 );
 
 CREATE INDEX connector_peer_pairs_expiry ON control.connector_peer_pairs(expires_at);
@@ -2724,7 +2771,7 @@ CREATE INDEX connector_peer_pairs_run_inventory ON control.connector_peer_pairs(
 -- installed audit scope survives pair replacement without retaining delivery
 -- secrets or serving authority. only publisher installation can create it.
 CREATE TABLE control.connector_peer_audit_bindings (
-    pair_id text PRIMARY KEY CHECK (pair_id ~ '^cpp_[A-Za-z0-9]{22}$'),
+    pair_id text NOT NULL CHECK (pair_id ~ '^cpp_[A-Za-z0-9]{22}$'),
     service_id text NOT NULL REFERENCES control.services(id) ON DELETE RESTRICT,
     service_run_id text NOT NULL,
     run_number bigint NOT NULL CHECK (run_number>=1),
@@ -2734,6 +2781,9 @@ CREATE TABLE control.connector_peer_audit_bindings (
     source_ip inet NOT NULL,
     created_at timestamptz NOT NULL,
     expires_at timestamptz NOT NULL,
+    delivery_generation bigint NOT NULL CHECK (delivery_generation>0),
+    retired_at timestamptz,
+    PRIMARY KEY(pair_id,delivery_generation),
     CHECK ((identity_id IS NULL)=(device_id IS NULL)),
     CHECK (expires_at>created_at),
     FOREIGN KEY (service_run_id,service_id,run_number) REFERENCES control.service_runs(id,service_id,run_number) ON DELETE RESTRICT

@@ -329,9 +329,11 @@ func TestConnectorPermissionCancellationJoinsPhysicalCallback(t *testing.T) {
 				held.Stream = writer.stream
 				held.writeEntered = make(chan struct{})
 				done = tunnelWorker(t, release, func() error {
-					return writeConnectorPermission(ctx, held, make(chan struct{}, 1), func(w io.Writer) error {
+					var gate ConnectorPermissionGate
+					_, err := gate.write(ctx, held, make(chan struct{}, 1), func(w io.Writer) error {
 						return tunnelv1.WriteConnectorPermissionUpdate(w, connectorPermissionFixture())
 					})
+					return err
 				})
 				await(t, held.writeEntered)
 			} else {

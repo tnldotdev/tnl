@@ -207,7 +207,9 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 	for _, p := range b.connectorPeers {
 		binding := p.deliveryBindingLocked()
 		if !b.peerRelaysCurrentLocked(binding) {
-			p.deliveryActive = false
+			if p.deliveryState == peerDeliveryActive {
+				p.deliveryState = peerDeliverySuspended
+			}
 			obsolete = append(obsolete, struct {
 				p       *PeerSession
 				network peerNetworkBinding
@@ -357,7 +359,9 @@ func (c *Claimed) Close() error {
 		}
 		for _, p := range c.bound.connectorPeers {
 			if p.deliverySlots[c.ref.ConnectionSlot] == c {
-				p.deliveryActive = false
+				if p.deliveryState == peerDeliveryActive {
+					p.deliveryState = peerDeliverySuspended
+				}
 				obsolete = append(obsolete, struct {
 					p       *PeerSession
 					network peerNetworkBinding

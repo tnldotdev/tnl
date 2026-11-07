@@ -574,7 +574,7 @@ type Querier interface {
 	RotateServiceHTTPBrowserSession(ctx context.Context, arg RotateServiceHTTPBrowserSessionParams) error
 	SaveACMEAuthorizationWork(ctx context.Context, arg SaveACMEAuthorizationWorkParams) (ControlAcmeAuthorization, error)
 	SaveACMEOrderWork(ctx context.Context, arg SaveACMEOrderWorkParams) (ControlAcmeOrder, error)
-	// two rows maximum per pair. an uncertain response requires a fresh proof from
+	// two rows maximum per binding. an uncertain response requires a fresh proof from
 	// the same observed source and the same relay process, never the old nonce.
 	SaveConnectorPeerPairLegClaim(ctx context.Context, arg SaveConnectorPeerPairLegClaimParams) (string, error)
 	SaveDNSAuthorityWork(ctx context.Context, arg SaveDNSAuthorityWorkParams) (ControlDnsAuthority, error)

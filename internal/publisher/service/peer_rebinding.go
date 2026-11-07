@@ -7,6 +7,18 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+// delivery state is separate from retained owner authority. staging and prepared
+// permit probes only; retired keeps the failed pending revision for stale checks.
+type peerDeliveryState uint8
+
+const (
+	peerDeliverySuspended peerDeliveryState = iota
+	peerDeliveryActive
+	peerDeliveryStaging
+	peerDeliveryPrepared
+	peerDeliveryRetired
+)
+
 func (b PeerBinding) revision() peer.BindingRevision {
 	return peer.BindingRevision{PairID: b.pairID, Generation: b.generation, OperationID: b.operation, Challenge: b.challenge}
 }
@@ -40,9 +52,9 @@ func (p *PeerSession) detachDeliveryUnderInstall(expected peerNetworkBinding) {
 		b.mu.Unlock()
 		return
 	}
-	p.deliveryActive = false
+	p.deliveryState = peerDeliverySuspended
 	if p.pending != nil {
-		p.pendingRetired, p.pendingInstalled = true, false
+		p.deliveryState = peerDeliveryRetired
 	}
 	if p.packets != nil {
 		p.packets.SuspendBinding()
@@ -77,7 +89,7 @@ func (p *PeerSession) stageBinding(binding PeerBinding) (result error) {
 		return ErrPrivateStream
 	}
 	if p.pending != nil && binding.generation == p.pending.generation {
-		same := binding.peerNetworkBinding.sameOperation(p.pending.peerNetworkBinding) && p.pending.until.After(time.Now()) && p.pendingInstalled && !p.pendingRetired
+		same := binding.peerNetworkBinding.sameOperation(p.pending.peerNetworkBinding) && p.pending.until.After(time.Now()) && p.deliveryState == peerDeliveryPrepared
 		if same {
 			p.pending.until = peerDeadline(p.pending.until, binding.until)
 			close(p.changed)
@@ -93,8 +105,7 @@ func (p *PeerSession) stageBinding(binding PeerBinding) (result error) {
 		b.mu.Unlock()
 		return ErrPrivateStream
 	}
-	p.highwater, p.pending, p.deliveryActive = binding.generation, &binding, false
-	p.pendingInstalled, p.pendingRetired = false, false
+	p.highwater, p.pending, p.deliveryState = binding.generation, &binding, peerDeliveryStaging
 	packets := p.packets
 	until := p.owner.until
 	close(p.changed)
@@ -123,11 +134,11 @@ func (p *PeerSession) stageBinding(binding PeerBinding) (result error) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if !p.currentLocked() || p.pending == nil || p.pendingRetired || !p.pending.until.After(time.Now()) || !p.pending.peerNetworkBinding.sameOperation(binding.peerNetworkBinding) || b.packetSlots != slots || !b.peerRelaysCurrentLocked(binding) {
+	if !p.currentLocked() || p.pending == nil || p.deliveryState != peerDeliveryStaging || !p.pending.until.After(time.Now()) || !p.pending.peerNetworkBinding.sameOperation(binding.peerNetworkBinding) || b.packetSlots != slots || !b.peerRelaysCurrentLocked(binding) {
 		return ErrPrivateStream
 	}
 	p.deliverySlots = slots
-	p.pendingInstalled = true
+	p.deliveryState = peerDeliveryPrepared
 	return nil
 }
 
@@ -141,7 +152,7 @@ func (p *PeerSession) activateBinding(binding PeerBinding) error {
 	b.mu.Lock()
 	valid := p.currentLocked() && b.peerCurrentLocked(binding) && b.peerRelaysCurrentLocked(binding) &&
 		binding.peerIdentity == p.identity && binding.state == controlv1.ConnectorPeerPairBindingActive && p.pending != nil &&
-		!p.pendingRetired && p.pendingInstalled && p.pending.peerNetworkBinding.sameOperation(binding.peerNetworkBinding) && p.pending.until.After(time.Now()) && p.packets != nil && b.packetSlots == p.deliverySlots
+		p.deliveryState == peerDeliveryPrepared && p.pending.peerNetworkBinding.sameOperation(binding.peerNetworkBinding) && p.pending.until.After(time.Now()) && p.packets != nil && b.packetSlots == p.deliverySlots
 	if !valid {
 		b.mu.Unlock()
 		return ErrPrivateStream
@@ -175,7 +186,7 @@ func (p *PeerSession) activateBinding(binding PeerBinding) error {
 		return err
 	}
 	p.installedUntil = peerDeadline(p.pending.until, binding.until)
-	p.network, p.lease, p.pending, p.deliveryActive = binding.peerNetworkBinding, binding.peerLease, nil, true
+	p.network, p.lease, p.pending, p.deliveryState = binding.peerNetworkBinding, binding.peerLease, nil, peerDeliveryActive
 	p.observeOwnerLocked(binding.peerLease)
 	for a := range p.streams {
 		if a.admitted && !a.retiring {

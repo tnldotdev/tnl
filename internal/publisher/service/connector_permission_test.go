@@ -189,7 +189,7 @@ func TestConnectorPermissionPendingBindingWaitsForLocalActivation(t *testing.T) 
 		t.Fatal(err)
 	}
 	b.mu.Lock()
-	p.pending, p.pendingInstalled, p.highwater, p.deliveryActive = &pending, true, pending.generation, false
+	p.pending, p.highwater, p.deliveryState = &pending, pending.generation, peerDeliveryPrepared
 	b.mu.Unlock()
 	old := a.entry
 	if err := a.renewPermission(old, a.permission); !errors.Is(err, tunnel.ErrConnectorPermissionStale) {
@@ -214,7 +214,7 @@ func TestConnectorPermissionPendingBindingWaitsForLocalActivation(t *testing.T) 
 	b.mu.Lock()
 	err = a.guard.RebindSource(pending.source, p.identity.trustRevision)
 	if err == nil {
-		p.network, p.pending, p.deliveryActive = pending.peerNetworkBinding, nil, true
+		p.network, p.pending, p.deliveryState = pending.peerNetworkBinding, nil, peerDeliveryActive
 		p.network.state = controlv1.ConnectorPeerPairBindingActive
 		p.lease = pending.peerLease
 		a.entry = entry

@@ -157,7 +157,7 @@ func TestConnectorPeerRebindingRetainsQUICApplicationTargetAndCapacity(t *testin
 	close(p.changed)
 	p.changed = make(chan struct{})
 	b.mu.Unlock()
-	awaitPublisherBinding(t, ctx, func() bool { b.mu.Lock(); defer b.mu.Unlock(); return !p.deliveryActive })
+	awaitPublisherBinding(t, ctx, func() bool { b.mu.Lock(); defer b.mu.Unlock(); return p.deliveryState == peerDeliverySuspended })
 	for _, wire := range wires {
 		_ = wire.Close()
 	}
@@ -249,9 +249,9 @@ func TestConnectorPeerPendingExpiryAndFailedStageRetireOnlyThatRevision(t *testi
 					t.Fatal("missing carrier installed a pending binding")
 				}
 			}
-			awaitPublisherBinding(t, ctx, func() bool { b.mu.Lock(); defer b.mu.Unlock(); return p.pendingRetired })
+			awaitPublisherBinding(t, ctx, func() bool { b.mu.Lock(); defer b.mu.Unlock(); return p.deliveryState == peerDeliveryRetired })
 			b.mu.Lock()
-			retained := p.currentLocked() && !p.deliveryActive && !p.pendingInstalled && p.highwater == pending.generation
+			retained := p.currentLocked() && p.deliveryState == peerDeliveryRetired && p.highwater == pending.generation
 			changed := p.changed
 			b.mu.Unlock()
 			if !retained {
@@ -281,7 +281,7 @@ func TestConnectorPeerPendingExpiryAndFailedStageRetireOnlyThatRevision(t *testi
 				t.Fatal("new authorized revision could not follow retired delivery", err)
 			}
 			b.mu.Lock()
-			retained = p.currentLocked() && p.pendingInstalled && !p.pendingRetired && p.highwater == newer.generation
+			retained = p.currentLocked() && p.deliveryState == peerDeliveryPrepared && p.highwater == newer.generation
 			b.mu.Unlock()
 			if !retained {
 				t.Fatal("new stage changed owner rather than replacing delivery")
@@ -310,7 +310,7 @@ func TestConnectorPeerPacketAdmissionDoesNotWaitForDeadlineWatch(t *testing.T) {
 			default:
 				pending := nextPublisherBinding(binding)
 				binding = pending
-				p.pending, p.highwater = &pending, pending.generation
+				p.pending, p.highwater, p.deliveryState = &pending, pending.generation, peerDeliveryStaging
 				packet.BindingGeneration = uint64(pending.generation)
 				if boundary == "pending" {
 					p.pending.until = time.Now().Add(-time.Second)

@@ -81,7 +81,7 @@ func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 		}
 	}
 	files, err := migrationFiles.ReadDir("migrations")
-	if err != nil || len(files) != 2 || files[0].Name() != "00001_baseline.sql" || files[1].Name() != "00002_connector_rebinding.sql" || schemaVersion != 2 {
+	if err != nil || len(files) != 1 || files[0].Name() != "00001_baseline.sql" || schemaVersion != 1 {
 		t.Fatalf("baseline = %v, %v", files, err)
 	}
 	var actualVersion int64

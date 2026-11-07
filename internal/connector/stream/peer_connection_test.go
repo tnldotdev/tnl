@@ -427,7 +427,7 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 					t.Fatal("expired installation did not request a replacement binding")
 				}
 				p.mu.Lock()
-				retained := p.ownerCurrentLocked() && !p.currentLocked() && p.rebindNeeded && len(p.openings) == 0 && !p.preparedUntil.After(time.Now())
+				retained := p.ownerCurrentLocked() && !p.currentLocked() && p.recoveryState == connectorRebinding && len(p.openings) == 0 && !p.preparedUntil.After(time.Now())
 				p.mu.Unlock()
 				if !retained {
 					t.Fatal("late installation signing either revived packet delivery or retired valid owner authority")

@@ -122,12 +122,12 @@ func (b *Bound) peerNeedsPreparation(candidate controlv1.ConnectorPeerPairCandid
 		return false
 	}
 	if p := b.connectorPeers[candidate.PairId]; p != nil {
-		if candidate.DeliveryGeneration < p.highwater || p.pendingRetired && candidate.DeliveryGeneration == p.highwater {
+		if candidate.DeliveryGeneration < p.highwater || p.deliveryState == peerDeliveryRetired && candidate.DeliveryGeneration == p.highwater {
 			return false
 		}
 		// renewing local delivery does not confirm installation at control. a
 		// failed confirmation must retry against the last confirmed deadline.
-		return p.currentLocked() && candidate.DeliveryGeneration >= p.network.generation && (p.pending != nil || candidate.DeliveryGeneration > p.network.generation || !p.deliveryActive || p.installedUntil.IsZero() || time.Until(p.installedUntil) < 15*time.Second || time.Until(p.lease.until) < 15*time.Second)
+		return p.currentLocked() && candidate.DeliveryGeneration >= p.network.generation && (p.pending != nil || candidate.DeliveryGeneration > p.network.generation || p.deliveryState != peerDeliveryActive || p.installedUntil.IsZero() || time.Until(p.installedUntil) < 15*time.Second || time.Until(p.lease.until) < 15*time.Second)
 	}
 	for _, slot := range b.packetSlots {
 		if slot == nil {
@@ -199,7 +199,7 @@ func (b *Bound) prepareConnectorPeer(ctx context.Context, control ConnectorPeerC
 	}
 	b.mu.Lock()
 	installed := p.deliveryBindingLocked()
-	current := p.currentLocked() && installed.generation == binding.generation && installed.peerNetworkBinding.sameOperation(binding.peerNetworkBinding) && (p.pending == nil || p.pendingInstalled)
+	current := p.currentLocked() && installed.generation == binding.generation && installed.peerNetworkBinding.sameOperation(binding.peerNetworkBinding) && (p.pending == nil || p.deliveryState == peerDeliveryPrepared)
 	b.mu.Unlock()
 	if !current {
 		return

@@ -212,40 +212,6 @@ func connectorPermissionHandshake(ctx context.Context, stream muxsession.Stream,
 	return errors.Join(result, stream.SetDeadline(time.Time{}))
 }
 
-func writeConnectorPermission(ctx context.Context, stream muxsession.Stream, gate chan struct{}, write func(io.Writer) error) (result error) {
-	if err := context.Cause(ctx); err != nil {
-		return err
-	}
-	select {
-	case gate <- struct{}{}:
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	}
-	defer func() { <-gate }()
-	until, ok := ctx.Deadline()
-	if !ok || !until.After(time.Now()) {
-		return context.DeadlineExceeded
-	}
-	if err := stream.SetWriteDeadline(until); err != nil {
-		return err
-	}
-	joined := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() { defer close(joined); _ = stream.Reset(0) })
-	defer func() {
-		if !stop() {
-			<-joined
-		}
-		result = errors.Join(result, context.Cause(ctx))
-	}()
-	result = write(stream)
-	if result != nil {
-		// partial control frames cannot be repaired or replayed. the ACK
-		// reader observes the reset and fences the complete retained owner.
-		_ = stream.Reset(0)
-	}
-	return result
-}
-
 // ConnectorPermissionResponder is shared only by the bounded per-admission
 // renewal workers. ACK writes never wait for application IO or policy work.
 type ConnectorPermissionResponder struct {

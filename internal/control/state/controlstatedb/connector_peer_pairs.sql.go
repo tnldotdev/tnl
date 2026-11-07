@@ -777,7 +777,7 @@ type SaveConnectorPeerPairLegClaimParams struct {
 	DeliveryGeneration int64
 }
 
-// two rows maximum per pair. an uncertain response requires a fresh proof from
+// two rows maximum per binding. an uncertain response requires a fresh proof from
 // the same observed source and the same relay process, never the old nonce.
 func (q *Queries) SaveConnectorPeerPairLegClaim(ctx context.Context, arg SaveConnectorPeerPairLegClaimParams) (string, error) {
 	row := q.db.QueryRow(ctx, saveConnectorPeerPairLegClaim,

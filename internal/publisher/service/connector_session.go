@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -28,32 +29,30 @@ const maxConnectorPeerStreams = tunnel.MaxConnectorApplicationStreams
 // neither a carrier change nor a sibling connector changes this owner. a new
 // pair/run needs a new owner; it cannot transfer the old owner's admissions.
 type PeerSession struct {
-	bound            *Bound
-	identity         peerIdentity
-	network          peerNetworkBinding
-	lease            peerLease
-	owner            peerLease
-	pending          *PeerBinding
-	pendingInstalled bool
-	pendingRetired   bool
-	highwater        int64
-	deliveryActive   bool
-	installMu        sync.Mutex
-	packets          *peer.Endpoint
-	permissionGate   tunnel.ConnectorPermissionGate
-	packetPaths      [2]*peer.CarrierSlot
-	deliverySlots    [2]*Claimed
-	ctx              context.Context
-	cancel           context.CancelFunc
-	seen             map[string]struct{}
-	streams          map[*connectorAdmission]struct{}
-	serveOnce        sync.Once
-	workers          sync.WaitGroup
-	done             chan struct{}
-	changed          chan struct{}
-	replayUntil      time.Time
-	ready            chan struct{}
-	installedUntil   time.Time
+	bound          *Bound
+	identity       peerIdentity
+	network        peerNetworkBinding
+	lease          peerLease
+	owner          peerLease
+	pending        *PeerBinding
+	deliveryState  peerDeliveryState
+	highwater      int64
+	installMu      sync.Mutex
+	packets        *peer.Endpoint
+	permissionGate tunnel.ConnectorPermissionGate
+	packetPaths    [2]*peer.CarrierSlot
+	deliverySlots  [2]*Claimed
+	ctx            context.Context
+	cancel         context.CancelFunc
+	seen           map[string]struct{}
+	streams        map[*connectorAdmission]struct{}
+	serveOnce      sync.Once
+	workers        sync.WaitGroup
+	done           chan struct{}
+	changed        chan struct{}
+	replayUntil    time.Time
+	ready          chan struct{}
+	installedUntil time.Time
 }
 
 func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession, error) {
@@ -62,7 +61,7 @@ func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if !b.peerCurrentLocked(binding) || !b.peerRelaysCurrentLocked(binding) || binding.state != "active" || binding.operation != "" {
+	if !b.peerCurrentLocked(binding) || !b.peerRelaysCurrentLocked(binding) || binding.state != controlv1.ConnectorPeerPairBindingActive || binding.operation != "" {
 		return nil, ErrPrivateStream
 	}
 	for id, old := range b.connectorPeers {
@@ -81,7 +80,7 @@ func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession
 		b.connectorPeers = make(map[string]*PeerSession)
 	}
 	life, cancel := context.WithCancel(ctx)
-	p := &PeerSession{bound: b, identity: binding.peerIdentity, network: binding.peerNetworkBinding, lease: binding.peerLease, owner: binding.peerLease, highwater: binding.generation, deliveryActive: true, ctx: life, cancel: cancel, seen: make(map[string]struct{}), streams: make(map[*connectorAdmission]struct{}), done: make(chan struct{}), changed: make(chan struct{}), ready: make(chan struct{})}
+	p := &PeerSession{bound: b, identity: binding.peerIdentity, network: binding.peerNetworkBinding, lease: binding.peerLease, owner: binding.peerLease, highwater: binding.generation, deliveryState: peerDeliveryActive, ctx: life, cancel: cancel, seen: make(map[string]struct{}), streams: make(map[*connectorAdmission]struct{}), done: make(chan struct{}), changed: make(chan struct{}), ready: make(chan struct{})}
 	b.connectorPeers[binding.pairID] = p
 	return p, nil
 }
@@ -97,7 +96,7 @@ func (p *PeerSession) Renew(binding PeerBinding) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	valid := p.deliveryCurrentLocked() && b.peerCurrentLocked(binding) && b.peerRelaysCurrentLocked(binding) &&
-		binding.peerIdentity == p.identity && binding.peerNetworkBinding == p.network && binding.state == "active" && p.pending == nil
+		binding.peerIdentity == p.identity && binding.peerNetworkBinding == p.network && binding.state == controlv1.ConnectorPeerPairBindingActive && p.pending == nil
 	if !valid {
 		return ErrPrivateStream
 	}
@@ -121,7 +120,7 @@ func (p *PeerSession) currentLocked() bool {
 }
 
 func (p *PeerSession) deliveryCurrentLocked() bool {
-	return p.currentLocked() && p.deliveryActive && p.pending == nil && p.lease.until.After(time.Now()) &&
+	return p.currentLocked() && p.deliveryState == peerDeliveryActive && p.pending == nil && p.lease.until.After(time.Now()) &&
 		(p.installedUntil.IsZero() || p.installedUntil.After(time.Now())) && p.bound.peerRelaysCurrentLocked(p.bindingLocked())
 }
 
@@ -133,10 +132,10 @@ func (p *PeerSession) watch() {
 		until, changed := p.owner.until, p.changed
 		binding := p.deliveryBindingLocked()
 		suspend := false
-		if p.pending != nil && !p.pendingRetired {
+		if p.pending != nil && p.deliveryState != peerDeliveryRetired {
 			until = peerDeadline(until, p.pending.until)
 			suspend = !p.pending.until.After(time.Now())
-		} else if p.deliveryActive {
+		} else if p.deliveryState == peerDeliveryActive {
 			until = peerDeadline(until, p.lease.until)
 			if !p.installedUntil.IsZero() {
 				until = peerDeadline(until, p.installedUntil)
@@ -542,7 +541,7 @@ func (p *PeerSession) dispatchPermission(update tunnelv1.ConnectorPermissionUpda
 			}
 			a.lastUpdate = update.UpdateNumber
 			entry := a.entry
-			if p.pending != nil && !p.pendingRetired && update.DeliveryGeneration == p.pending.generation {
+			if p.pending != nil && p.deliveryState != peerDeliveryRetired && update.DeliveryGeneration == p.pending.generation {
 				entry.SourceIP = p.pending.source.String()
 			}
 			select {
@@ -609,10 +608,10 @@ func (a *connectorAdmission) renewPermission(entry tunnelv1.ConnectorPeerVisitor
 		b := a.peer.bound
 		b.mu.Lock()
 		binding := a.peer.bindingLocked()
-		if a.peer.pending != nil && !a.peer.pendingRetired && entry.DeliveryGeneration == a.peer.pending.generation {
+		if a.peer.pending != nil && a.peer.deliveryState != peerDeliveryRetired && entry.DeliveryGeneration == a.peer.pending.generation {
 			binding = *a.peer.pending
 		}
-		stale := entry.DeliveryGeneration < max(a.peer.highwater, a.peer.network.generation) || a.peer.pendingRetired && entry.DeliveryGeneration == a.peer.highwater ||
+		stale := entry.DeliveryGeneration < max(a.peer.highwater, a.peer.network.generation) || a.peer.deliveryState == peerDeliveryRetired && entry.DeliveryGeneration == a.peer.highwater ||
 			entry.DeliveryGeneration == a.peer.network.generation && !a.peer.deliveryCurrentLocked()
 		b.mu.Unlock()
 		if stale {
@@ -632,9 +631,9 @@ func (a *connectorAdmission) renewPermission(entry tunnelv1.ConnectorPeerVisitor
 		}
 		b.mu.Lock()
 		current := a.peer.deliveryCurrentLocked() && a.peer.network.generation == entry.DeliveryGeneration && a.peer.network.source.String() == entry.SourceIP && !a.retiring && a.ctx.Err() == nil
-		pending := a.peer.currentLocked() && a.peer.pending != nil && !a.peer.pendingRetired && a.peer.pending.until.After(time.Now()) &&
+		pending := a.peer.currentLocked() && a.peer.pending != nil && a.peer.deliveryState != peerDeliveryRetired && a.peer.pending.until.After(time.Now()) &&
 			a.peer.pending.generation == entry.DeliveryGeneration && a.peer.pending.source.String() == entry.SourceIP && !a.retiring && a.ctx.Err() == nil
-		stale = entry.DeliveryGeneration < max(a.peer.highwater, a.peer.network.generation) || a.peer.pendingRetired && entry.DeliveryGeneration == a.peer.highwater ||
+		stale = entry.DeliveryGeneration < max(a.peer.highwater, a.peer.network.generation) || a.peer.deliveryState == peerDeliveryRetired && entry.DeliveryGeneration == a.peer.highwater ||
 			entry.DeliveryGeneration == a.peer.network.generation && !a.peer.deliveryCurrentLocked()
 		if current {
 			err = a.guard.Renew(next)

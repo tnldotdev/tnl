@@ -43,45 +43,42 @@ type connectorPath struct {
 // background workers own authority renewal and proof generation;
 // local arrivals consume immutable signed openings and never call control.
 type connectorConnection struct {
-	ctx            context.Context
-	cancel         context.CancelCauseFunc
-	config         Config
-	signer         Signer
-	owner          string
-	endpoint       *peer.Endpoint
-	transport      *quic.Transport
-	connection     *quic.Conn
-	session        muxsession.Session
-	permissions    *tunnel.ConnectorPermissionWriter
-	mu             sync.Mutex
-	run            Run
-	pair           controlv1.ConnectorPeerPair
-	until          time.Time
-	preparedUntil  time.Time
-	reportedUntil  time.Time
-	source         string
-	permission     controlv1.VisitorTokenResponse
-	paths          [2]connectorPath
-	key            [32]byte
-	openings       []preparedOpening
-	active         map[*connectorUse]struct{}
-	warm           *connectorUse
-	changed        chan struct{}
-	refill         chan struct{}
-	recover        chan struct{}
-	rebindNeeded   bool
-	inspectNeeded  bool
-	rebinding      bool
-	rebind         *connectorRebindOperation
-	inspectRequest *controlv1.ConnectorPeerPairRebindRequest
-	inspectStarted time.Time
-	highWater      int64
-	bindingCtx     context.Context
-	bindingCancel  context.CancelFunc
-	legUses        sync.WaitGroup
-	workers        sync.WaitGroup
-	uses           sync.WaitGroup
-	once           sync.Once
+	ctx           context.Context
+	cancel        context.CancelCauseFunc
+	config        Config
+	signer        Signer
+	owner         string
+	endpoint      *peer.Endpoint
+	transport     *quic.Transport
+	connection    *quic.Conn
+	session       muxsession.Session
+	permissions   *tunnel.ConnectorPermissionWriter
+	mu            sync.Mutex
+	run           Run
+	pair          controlv1.ConnectorPeerPair
+	until         time.Time
+	preparedUntil time.Time
+	reportedUntil time.Time
+	source        string
+	permission    controlv1.VisitorTokenResponse
+	paths         [2]connectorPath
+	key           [32]byte
+	openings      []preparedOpening
+	active        map[*connectorUse]struct{}
+	warm          *connectorUse
+	changed       chan struct{}
+	refill        chan struct{}
+	recover       chan struct{}
+	recoveryState connectorRecoveryState
+	rebind        *connectorRebindOperation
+	inspection    *connectorRebindPhase
+	highWater     int64
+	bindingCtx    context.Context
+	bindingCancel context.CancelFunc
+	legUses       sync.WaitGroup
+	workers       sync.WaitGroup
+	uses          sync.WaitGroup
+	once          sync.Once
 }
 
 func connectorTemporary(err error) bool {
@@ -283,7 +280,7 @@ func validateConnectorPermissionMetadata(config Config, permission controlv1.Vis
 }
 
 func (p *connectorConnection) currentLocked() bool {
-	return p.ownerCurrentLocked() && !p.rebinding && !p.rebindNeeded && p.preparedUntil.After(time.Now())
+	return p.ownerCurrentLocked() && p.recoveryState != connectorRebinding && p.preparedUntil.After(time.Now())
 }
 
 func (p *connectorConnection) ownerCurrentLocked() bool {
@@ -308,7 +305,7 @@ func connectorOpening(signer Signer, entry tunnelv1.ConnectorPeerVisitorEntry, t
 
 func (p *connectorConnection) fillOpenings() error {
 	p.mu.Lock()
-	if p.rebinding || p.rebindNeeded {
+	if p.recoveryState == connectorRebinding {
 		p.mu.Unlock()
 		return nil
 	}
@@ -352,15 +349,11 @@ func prepareConnectorOpenings(signer Signer, run Run, pair controlv1.ConnectorPe
 func (p *connectorConnection) watch() {
 	for {
 		p.mu.Lock()
-		until := earliestConnectorDeadline(p.until, p.preparedUntil, p.run.ValidUntil, p.permission.ExpiresAt)
-		current := p.currentLocked()
-		expiredDelivery := !p.preparedUntil.After(time.Now()) && p.ownerCurrentLocked() && !p.rebinding && !p.rebindNeeded
-		if expiredDelivery {
-			current = true
-		}
-		if p.rebinding || p.rebindNeeded {
-			until = earliestConnectorDeadline(p.until, p.run.ValidUntil, p.permission.ExpiresAt)
-			current = p.ownerCurrentLocked()
+		until := earliestConnectorDeadline(p.until, p.run.ValidUntil, p.permission.ExpiresAt)
+		current := p.ownerCurrentLocked()
+		expiredDelivery := current && p.recoveryState != connectorRebinding && !p.preparedUntil.After(time.Now())
+		if p.recoveryState != connectorRebinding {
+			until = earliestConnectorDeadline(until, p.preparedUntil)
 		}
 		changed := p.changed
 		if !current {
@@ -368,7 +361,7 @@ func (p *connectorConnection) watch() {
 		}
 		p.mu.Unlock()
 		if expiredDelivery {
-			p.requestRecovery(true)
+			p.requestRecovery(connectorRebinding)
 			continue
 		}
 		timer := time.NewTimer(time.Until(until))
@@ -491,7 +484,7 @@ func (p *connectorConnection) refreshAuthority() error {
 	}
 	now := time.Now()
 	expiredDelivery := !p.preparedUntil.After(now) || !preparedUntil.After(now)
-	paused := p.rebinding || p.rebindNeeded || expiredDelivery
+	paused := p.recoveryState == connectorRebinding || expiredDelivery
 	if expiredDelivery {
 		preparedUntil = earliestConnectorDeadline(preparedUntil, p.preparedUntil)
 		reportedUntil = p.reportedUntil
@@ -517,7 +510,7 @@ func (p *connectorConnection) refreshAuthority() error {
 	p.notifyLocked()
 	p.mu.Unlock()
 	if expiredDelivery {
-		p.requestRecovery(true)
+		p.requestRecovery(connectorRebinding)
 	}
 	if !paused {
 		p.renewActive(active, permission, earliestConnectorDeadline(bound, next.ValidUntil, permission.ExpiresAt))
@@ -554,7 +547,7 @@ func (p *connectorConnection) maintainLeg(slot int) {
 	for {
 		p.mu.Lock()
 		leg, changed, binding := p.paths[slot].leg, p.changed, p.bindingCtx
-		paused := p.rebinding || p.rebindNeeded || p.inspectNeeded
+		paused := p.recoveryState != connectorBindingReady
 		registered := !paused && p.ctx.Err() == nil
 		if registered {
 			p.legUses.Add(1)
@@ -584,7 +577,7 @@ func (p *connectorConnection) maintainLeg(slot int) {
 			continue // the coordinator joins old work before staging replacements.
 		}
 		if disposition == rebindConnection || disposition == retirePath {
-			p.requestRecovery(true)
+			p.requestRecovery(connectorRebinding)
 		}
 		if disposition == terminateConnection {
 			p.cancel(err)
@@ -602,7 +595,7 @@ func (p *connectorConnection) maintainConnectorLeg(binding context.Context, slot
 			p.mu.Lock()
 			p.paths[slot].needsInspection = true
 			p.mu.Unlock()
-			p.requestRecovery(false)
+			p.requestRecovery(connectorInspecting)
 			return retryAttempt, nil
 		}
 		return p.reconnectLeg(binding, slot, leg)

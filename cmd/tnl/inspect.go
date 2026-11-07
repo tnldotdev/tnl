@@ -165,7 +165,7 @@ func runInspectList(ctx context.Context, flags inspectListCommand, project strin
 		return json.NewEncoder(output).Encode(struct {
 			SchemaVersion int                `json:"schema_version"`
 			Inspections   []inspectionRecord `json:"inspections"`
-		}{2, records})
+		}{1, records})
 	}
 	if len(records) == 0 {
 		return writeHumanFrame(output, "tnl inspect list", "no activity", "", clioutput.Text("no matching local activity"))
@@ -238,7 +238,7 @@ func runInspectShow(ctx context.Context, flags inspectShowCommand, project strin
 		return json.NewEncoder(output).Encode(struct {
 			SchemaVersion int              `json:"schema_version"`
 			Inspection    inspectionRecord `json:"inspection"`
-		}{2, record})
+		}{1, record})
 	}
 	fields := []clioutput.Field{
 		clioutput.Field{Label: "time", Value: record.ReceivedAt.Format(time.RFC3339Nano)},

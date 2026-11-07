@@ -20,9 +20,9 @@ func TestIntegrationConnectorPeerPairSchemaConstraints(t *testing.T) {
 	// the five-minute endpoint is valid; each rejected update below must leave
 	// this complete, valid claim intact rather than fail on an unrelated field.
 	if _, err := f.d.pool.Exec(t.Context(), `INSERT INTO control.connector_peer_pair_leg_claims
-		(pair_id,connection_slot,requested_at,checked_at,confirmed_until,nonce_digest,source_ip,relay_id,relay_run_id,relay_lease_revision)
-		VALUES ($1,0,$2,$2,$2::timestamptz+interval '5 minutes',decode(repeat('01',32),'hex'),'192.0.2.8',$3,$4,$5)`,
-		pair.ID, f.now, pair.Relays[0].RelayLease.RelayID, pair.Relays[0].RelayLease.RelayRunID, pair.Relays[0].RelayLease.RelayLeaseRevision); err != nil {
+		(pair_id,connection_slot,requested_at,checked_at,confirmed_until,nonce_digest,source_ip,relay_id,relay_run_id,relay_lease_revision,delivery_generation)
+		VALUES ($1,0,$2,$2,$2::timestamptz+interval '5 minutes',decode(repeat('01',32),'hex'),'192.0.2.8',$3,$4,$5,$6)`,
+		pair.ID, f.now, pair.Relays[0].RelayLease.RelayID, pair.Relays[0].RelayLease.RelayRunID, pair.Relays[0].RelayLease.RelayLeaseRevision, pair.DeliveryGeneration); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
@@ -42,6 +42,8 @@ func TestIntegrationConnectorPeerPairSchemaConstraints(t *testing.T) {
 		{"required claim expiry", `UPDATE control.connector_peer_pair_leg_claims SET confirmed_until=NULL WHERE pair_id=$1`, "23502", pair.ID},
 		{"required claim process", `UPDATE control.connector_peer_pair_leg_claims SET relay_run_id=NULL WHERE pair_id=$1`, "23502", pair.ID},
 		{"claim slot", `UPDATE control.connector_peer_pair_leg_claims SET connection_slot=2 WHERE pair_id=$1`, "23514", pair.ID},
+		{"required claim generation", `UPDATE control.connector_peer_pair_leg_claims SET delivery_generation=NULL WHERE pair_id=$1`, "23502", pair.ID},
+		{"positive claim generation", `UPDATE control.connector_peer_pair_leg_claims SET delivery_generation=0 WHERE pair_id=$1`, "23514", pair.ID},
 		{"claim foreign key", `UPDATE control.connector_peer_pair_leg_claims SET pair_id='cpp_0000000000000000000000' WHERE pair_id=$1`, "23503", pair.ID},
 		{"process key length", `UPDATE control.relay_leases SET peer_signing_public_key=decode('01','hex') WHERE relay_id=$1`, "23514", pair.Relays[0].RelayLease.RelayID},
 		{"required history key", `UPDATE control.relay_run_signing_keys SET peer_signing_public_key=NULL WHERE relay_id=$1`, "23502", pair.Relays[0].RelayLease.RelayID},
@@ -63,7 +65,7 @@ func TestIntegrationConnectorPeerPairSchemaConstraints(t *testing.T) {
 	}
 	// both leg keys are usable, but neither can be inserted twice.
 	if _, err := f.d.pool.Exec(t.Context(), `INSERT INTO control.connector_peer_pair_leg_claims
-		SELECT pair_id,1,requested_at,checked_at,confirmed_until,nonce_digest,source_ip,relay_id,relay_run_id,relay_lease_revision
+		SELECT pair_id,1,requested_at,checked_at,confirmed_until,nonce_digest,source_ip,relay_id,relay_run_id,relay_lease_revision,delivery_generation
 		FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1 AND connection_slot=0`, pair.ID); err != nil {
 		t.Fatal("sibling claim", err)
 	}

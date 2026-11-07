@@ -77,7 +77,7 @@ func (b *Bound) admitPeerPacket(pairID string, generation int64, packet tunnelv1
 		return false
 	}
 	if p.pending != nil {
-		return !p.pendingRetired && p.pending.generation == generation && p.pending.until.After(time.Now()) &&
+		return p.deliveryState != peerDeliveryRetired && p.pending.generation == generation && p.pending.until.After(time.Now()) &&
 			(packet.Kind == tunnelv1.PeerProbe || packet.Kind == tunnelv1.PeerProbeReply)
 	}
 	return p.network.generation == generation && p.deliveryCurrentLocked()

@@ -1,11 +1,11 @@
 {
-  "version": 2,
+  "version": 1,
   "cases": [
     {
       "name": "http endpoint",
       "valid": true,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -24,7 +24,7 @@
       "name": "allocated http port",
       "valid": true,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -43,7 +43,7 @@
       "name": "postgres endpoint",
       "valid": true,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -61,7 +61,7 @@
       "name": "mysql endpoint",
       "valid": true,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -79,7 +79,7 @@
       "name": "tcp endpoint",
       "valid": true,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -97,7 +97,7 @@
       "name": "kubernetes endpoint",
       "valid": true,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -116,7 +116,7 @@
       "name": "port required",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -134,7 +134,7 @@
       "name": "exposure required",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -152,7 +152,7 @@
       "name": "http empty explicit port",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -171,7 +171,7 @@
       "name": "http port mismatch",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -190,7 +190,7 @@
       "name": "port below range",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -208,7 +208,7 @@
       "name": "port above range",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -226,7 +226,7 @@
       "name": "native URL forbidden",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -245,7 +245,7 @@
       "name": "native public exposure is a runtime fact",
       "valid": true,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -263,7 +263,7 @@
       "name": "private target forbidden",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -282,7 +282,7 @@
       "name": "private trust forbidden",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -301,7 +301,7 @@
       "name": "removed ssh protocol",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -319,7 +319,7 @@
       "name": "primary worktree",
       "valid": true,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {},
@@ -330,7 +330,7 @@
       "name": "linked worktree",
       "valid": true,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {},
@@ -348,7 +348,7 @@
       "name": "inconsistent worktree",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {},
@@ -359,7 +359,7 @@
       "name": "valid A-label",
       "valid": true,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "xn--bcher-kva.example",
         "services": {}
@@ -368,13 +368,13 @@
     {
       "name": "invalid A-label",
       "valid": false,
-      "metadata": { "version": 2, "dev": false, "namespace": "xn--a.example", "services": {} }
+      "metadata": { "version": 1, "dev": false, "namespace": "xn--a.example", "services": {} }
     },
     {
       "name": "protocol required",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -392,7 +392,7 @@
       "name": "invalid service name",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -411,7 +411,7 @@
       "name": "duplicate hostname",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -438,7 +438,7 @@
       "name": "incorrect URL",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -457,7 +457,7 @@
       "name": "oauth origin",
       "valid": true,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {},
@@ -468,7 +468,7 @@
       "name": "oauth mismatch",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {},
@@ -479,7 +479,7 @@
       "name": "webhook exact path",
       "valid": true,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {
@@ -507,7 +507,7 @@
       "name": "webhook duplicate method",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {},
@@ -526,7 +526,7 @@
       "name": "webhook URL mismatch",
       "valid": false,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {},
@@ -546,7 +546,7 @@
       "valid": false,
       "runtimeValid": true,
       "metadata": {
-        "version": 2,
+        "version": 1,
         "dev": false,
         "namespace": "member.example",
         "services": {},
@@ -557,13 +557,13 @@
       "name": "unsupported version",
       "valid": false,
       "runtimeValid": true,
-      "metadata": { "version": 3, "dev": false, "namespace": "member.example", "services": {} }
+      "metadata": { "version": 2, "dev": false, "namespace": "member.example", "services": {} }
     },
     {
       "name": "runtime dev is not saved",
       "valid": false,
       "runtimeValid": true,
-      "metadata": { "version": 2, "dev": true, "namespace": "member.example", "services": {} }
+      "metadata": { "version": 1, "dev": true, "namespace": "member.example", "services": {} }
     }
   ]
 }

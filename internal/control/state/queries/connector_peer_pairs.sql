@@ -71,7 +71,7 @@ WHERE id=sqlc.arg(id) AND delivery_generation=sqlc.arg(delivery_generation)
     AND expires_at>sqlc.arg(now);
 
 -- name: SaveConnectorPeerPairLegClaim :one
--- two rows maximum per pair. an uncertain response requires a fresh proof from
+-- two rows maximum per binding. an uncertain response requires a fresh proof from
 -- the same observed source and the same relay process, never the old nonce.
 INSERT INTO control.connector_peer_pair_leg_claims(pair_id,connection_slot,requested_at,nonce_digest,source_ip,
     relay_id,relay_run_id,relay_lease_revision,checked_at,confirmed_until,delivery_generation)
