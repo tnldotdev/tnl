@@ -56,6 +56,10 @@ type sdkOwnerRecord struct {
 	Adopted      bool                      `json:"adopted,omitempty"`
 }
 
+// keep completed failures for requests delayed before owner selection. language
+// and native request deadlines are shorter than this retention window.
+const sdkRequestLifetime = 2 * time.Minute
+
 type sdkStartFailure struct {
 	error
 	retained bool
@@ -339,7 +343,7 @@ func (o sdkOperations) sdkOwner(ctx context.Context, options SDKOptions, scope c
 			return connectorruntime.ErrExpired
 		}
 		for k, previous := range r.Owners {
-			if k != key && previous.Failure != "" && previous.Owner.ConnectionHandle == "" && !(r.RetainStartFailure && previous.StartFailure) {
+			if k != key && previous.Failure != "" && previous.Owner.ConnectionHandle == "" && !(r.RetainStartFailure && previous.StartFailure) && time.Since(previous.FinishedAt) > sdkRequestLifetime {
 				delete(r.Owners, k)
 				continue
 			}
