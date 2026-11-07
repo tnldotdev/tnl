@@ -566,7 +566,7 @@ func TestConnectorServiceRevokedGuardFencesDialWhileStopCallbackWaits(t *testing
 	for a := range p.streams {
 		admission = a
 	}
-	if admission == nil || !admission.admitted || b.reservedStreams != 1 {
+	if admission == nil || !admission.admittedLocked() || b.reservedStreams != 1 {
 		b.mu.Unlock()
 		t.Fatal("missing canonical admission")
 	}

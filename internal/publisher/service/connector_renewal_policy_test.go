@@ -53,7 +53,7 @@ func TestConnectorRenewalSupersededProofDoesNotRetireCurrentGuard(t *testing.T) 
 	if err := guard.AllowRenewal(); err != nil {
 		t.Fatal(err)
 	}
-	a := &connectorAdmission{peer: p, ctx: t.Context(), caller: t.Context(), admitted: true, ready: true, guard: guard}
+	a := &connectorAdmission{peer: p, ctx: t.Context(), caller: t.Context(), state: readyConnectorAdmission{}, guard: guard}
 	apply(2, visitortoken.PolicyLifetime, true)
 	before, err := a.CheckUse(t.Context())
 	if err != nil {

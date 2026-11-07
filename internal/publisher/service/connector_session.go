@@ -267,25 +267,87 @@ func (p *PeerSession) serveSession(session muxsession.Session) error {
 // the lease never calls service code while locked, so this order has no reverse
 // edge. network I/O, cancellation, physical close and joins happen unlocked.
 type connectorAdmission struct {
-	peer                                           *PeerSession
-	ctx                                            context.Context
-	caller                                         context.Context
-	cancel                                         context.CancelFunc
-	stream                                         net.Conn
-	guard                                          *visitorlease.ConnectorGuard
-	entry                                          tunnelv1.ConnectorPeerVisitorEntry
-	permission                                     visitortoken.VerifiedPermission
-	renewals                                       chan connectorPermissionRenewal
-	renewDone                                      chan struct{}
-	lastUpdate                                     uint64
-	retiring, admitted, authorized, pending, ready bool
-	setupUntil                                     time.Time
-	timer                                          *time.Timer
-	timerDone                                      chan struct{}
-	timerStopped                                   bool
-	closeOnce                                      sync.Once
-	closeErr                                       error
-	audit                                          serviceaudit.Observation
+	peer       *PeerSession
+	ctx        context.Context
+	caller     context.Context
+	cancel     context.CancelFunc
+	stream     net.Conn
+	guard      *visitorlease.ConnectorGuard
+	entry      tunnelv1.ConnectorPeerVisitorEntry
+	permission visitortoken.VerifiedPermission
+	renewals   chan connectorPermissionRenewal
+	renewDone  chan struct{}
+	lastUpdate uint64
+	state      connectorAdmissionState // protected by Bound.mu
+	setupUntil time.Time
+	timer      *time.Timer
+	timerDone  chan struct{}
+	closeOnce  sync.Once
+	closeErr   error
+	audit      serviceaudit.Observation
+}
+
+// the phase owns both capacity charges and the setup deadline's timer. retiring
+// keeps the previous phase until physical close and renewal workers have joined.
+// only the owning worker releases charges, never Stop or a deadline callback.
+type connectorAdmissionState interface{ connectorAdmissionState() }
+
+type reservedConnectorAdmission struct{}
+type chargedConnectorAdmission struct{}
+type admittedConnectorAdmission struct{}
+type readyConnectorAdmission struct{}
+type retiringConnectorAdmission struct{ previous connectorAdmissionState }
+type releasedConnectorAdmission struct{}
+
+func (reservedConnectorAdmission) connectorAdmissionState() {}
+func (chargedConnectorAdmission) connectorAdmissionState()  {}
+func (admittedConnectorAdmission) connectorAdmissionState() {}
+func (readyConnectorAdmission) connectorAdmissionState()    {}
+func (retiringConnectorAdmission) connectorAdmissionState() {}
+func (releasedConnectorAdmission) connectorAdmissionState() {}
+
+func (a *connectorAdmission) activeLocked() connectorAdmissionState {
+	if retiring, ok := a.state.(retiringConnectorAdmission); ok {
+		return retiring.previous
+	}
+	return a.state
+}
+
+func (a *connectorAdmission) admittedLocked() bool {
+	switch a.activeLocked().(type) {
+	case admittedConnectorAdmission, readyConnectorAdmission:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *connectorAdmission) chargedLocked() bool {
+	switch a.activeLocked().(type) {
+	case chargedConnectorAdmission, admittedConnectorAdmission, readyConnectorAdmission:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *connectorAdmission) readyLocked() bool {
+	_, ok := a.activeLocked().(readyConnectorAdmission)
+	return ok
+}
+
+func (a *connectorAdmission) retiringLocked() bool {
+	_, ok := a.state.(retiringConnectorAdmission)
+	return ok
+}
+
+func (a *connectorAdmission) retireLocked() {
+	if !a.retiringLocked() {
+		if _, released := a.state.(releasedConnectorAdmission); released {
+			return
+		}
+		a.state = retiringConnectorAdmission{previous: a.state}
+	}
 }
 
 func (p *PeerSession) reserve(caller context.Context, stream net.Conn) (*connectorAdmission, error) {
@@ -300,7 +362,7 @@ func (p *PeerSession) reserve(caller context.Context, stream net.Conn) (*connect
 		return nil, ErrPrivateStream
 	}
 	life, cancel := context.WithCancel(p.ctx)
-	a := &connectorAdmission{peer: p, ctx: life, caller: caller, cancel: cancel, stream: stream, pending: true, setupUntil: time.Now().Add(10 * time.Second), timerDone: make(chan struct{})}
+	a := &connectorAdmission{peer: p, ctx: life, caller: caller, cancel: cancel, stream: stream, state: reservedConnectorAdmission{}, setupUntil: time.Now().Add(10 * time.Second), timerDone: make(chan struct{})}
 	a.timer = time.AfterFunc(time.Until(a.setupUntil), func() { defer close(a.timerDone); a.stopAndClose() })
 	p.streams[a] = struct{}{}
 	b.connectorPending++
@@ -311,7 +373,7 @@ func (p *PeerSession) reserve(caller context.Context, stream net.Conn) (*connect
 func (a *connectorAdmission) Stop() {
 	b := a.peer.bound
 	b.mu.Lock()
-	a.retiring = true
+	a.retireLocked()
 	b.mu.Unlock()
 	a.cancel()
 }
@@ -327,14 +389,14 @@ func (a *connectorAdmission) CheckUse(ctx context.Context) (time.Time, error) {
 	b := a.peer.bound
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if a.retiring || !a.admitted || !a.ready && !time.Now().Before(a.setupUntil) || a.ctx.Err() != nil || a.caller.Err() != nil || ctx.Err() != nil || !a.peer.currentLocked() {
+	if a.retiringLocked() || !a.admittedLocked() || !a.readyLocked() && !time.Now().Before(a.setupUntil) || a.ctx.Err() != nil || a.caller.Err() != nil || ctx.Err() != nil || !a.peer.currentLocked() {
 		return time.Time{}, ErrPrivateStream
 	}
 	until, err := a.guard.Current()
 	if a.peer.owner.until.Before(until) {
 		until = a.peer.owner.until
 	}
-	if !a.ready && a.setupUntil.Before(until) {
+	if !a.readyLocked() && a.setupUntil.Before(until) {
 		until = a.setupUntil
 	}
 	return until, err
@@ -345,7 +407,7 @@ func (a *connectorAdmission) SetupDeadline() time.Time { return a.setupUntil }
 func (a *connectorAdmission) FinishSetup() error {
 	b := a.peer.bound
 	b.mu.Lock()
-	if a.retiring || !a.admitted || a.ctx.Err() != nil || a.caller.Err() != nil || !a.peer.currentLocked() || !time.Now().Before(a.setupUntil) {
+	if a.retiringLocked() || !a.admittedLocked() || a.ctx.Err() != nil || a.caller.Err() != nil || !a.peer.currentLocked() || !time.Now().Before(a.setupUntil) {
 		b.mu.Unlock()
 		return ErrPrivateStream
 	}
@@ -353,8 +415,8 @@ func (a *connectorAdmission) FinishSetup() error {
 		b.mu.Unlock()
 		return err
 	}
-	first := !a.ready
-	a.ready = true
+	first := !a.readyLocked()
+	a.state = readyConnectorAdmission{}
 	allowed := a.audit
 	b.mu.Unlock()
 	if first {
@@ -415,19 +477,21 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 		if !stopCaller() {
 			<-callerDone
 		}
-		if !a.timerStopped && !a.timer.Stop() {
-			<-a.timerDone
+		if a.timer.Stop() {
+			close(a.timerDone)
 		}
+		<-a.timerDone
 		b.mu.Lock()
-		ready := a.ready
+		ready := a.readyLocked()
 		delete(p.streams, a)
-		if a.pending {
+		if !a.admittedLocked() {
 			b.connectorPending--
 		}
-		if a.authorized {
+		if a.chargedLocked() {
 			b.reservedStreams--
 		}
 		audit := a.audit
+		a.state = releasedConnectorAdmission{}
 		b.mu.Unlock()
 		if ready {
 			audit.EventType, audit.Outcome, audit.Reason = "connection.close", "closed", "closed"
@@ -467,7 +531,7 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 	}
 	b.mu.Lock()
 	_, replay := p.seen[entry.VisitorConnectionID]
-	valid := !a.retiring && a.ctx.Err() == nil && a.caller.Err() == nil && p.deliveryCurrentLocked() && p.network == binding.peerNetworkBinding && !replay && len(p.seen) < maxConnectorPeerHistory
+	valid := !a.retiringLocked() && a.ctx.Err() == nil && a.caller.Err() == nil && p.deliveryCurrentLocked() && p.network == binding.peerNetworkBinding && !replay && len(p.seen) < maxConnectorPeerHistory
 	if valid {
 		// valid acceptance spends history even when C or final handoff fails.
 		p.seen[entry.VisitorConnectionID] = struct{}{}
@@ -478,7 +542,7 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 		valid = b.reservedStreams < limit
 		if valid {
 			b.reservedStreams++
-			a.authorized = true
+			a.state = chargedConnectorAdmission{}
 		}
 	}
 	if valid {
@@ -486,12 +550,15 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 		valid = err == nil
 	}
 	if valid {
-		a.timerStopped = a.timer.Stop()
-		valid = a.timerStopped && time.Now().Before(a.setupUntil)
+		if a.timer.Stop() {
+			close(a.timerDone)
+			valid = time.Now().Before(a.setupUntil)
+		} else {
+			valid = false
+		}
 	}
 	if valid {
-		a.admitted = true
-		a.pending = false
+		a.state = admittedConnectorAdmission{}
 		b.connectorPending--
 		a.entry, a.permission = entry, permission
 		a.renewals = make(chan connectorPermissionRenewal, 1)
@@ -533,7 +600,7 @@ func (p *PeerSession) dispatchPermission(update tunnelv1.ConnectorPermissionUpda
 	var overloaded *connectorAdmission
 	if p.currentLocked() {
 		for a := range p.streams {
-			if !a.admitted || a.retiring || a.entry.VisitorConnectionID != update.VisitorConnectionID {
+			if !a.admittedLocked() || a.retiringLocked() || a.entry.VisitorConnectionID != update.VisitorConnectionID {
 				continue
 			}
 			if update.UpdateNumber <= a.lastUpdate {
@@ -547,7 +614,7 @@ func (p *PeerSession) dispatchPermission(update tunnelv1.ConnectorPermissionUpda
 			select {
 			case a.renewals <- connectorPermissionRenewal{update: update, responder: responder, entry: entry}:
 			default:
-				a.retiring = true
+				a.retireLocked()
 				overloaded = a
 			}
 			break
@@ -630,9 +697,9 @@ func (a *connectorAdmission) renewPermission(entry tunnelv1.ConnectorPeerVisitor
 			return ErrPrivateStream
 		}
 		b.mu.Lock()
-		current := a.peer.deliveryCurrentLocked() && a.peer.network.generation == entry.DeliveryGeneration && a.peer.network.source.String() == entry.SourceIP && !a.retiring && a.ctx.Err() == nil
+		current := a.peer.deliveryCurrentLocked() && a.peer.network.generation == entry.DeliveryGeneration && a.peer.network.source.String() == entry.SourceIP && !a.retiringLocked() && a.ctx.Err() == nil
 		pending := a.peer.currentLocked() && a.peer.pending != nil && a.peer.deliveryState != peerDeliveryRetired && a.peer.pending.until.After(time.Now()) &&
-			a.peer.pending.generation == entry.DeliveryGeneration && a.peer.pending.source.String() == entry.SourceIP && !a.retiring && a.ctx.Err() == nil
+			a.peer.pending.generation == entry.DeliveryGeneration && a.peer.pending.source.String() == entry.SourceIP && !a.retiringLocked() && a.ctx.Err() == nil
 		stale = entry.DeliveryGeneration < max(a.peer.highwater, a.peer.network.generation) || a.peer.deliveryState == peerDeliveryRetired && entry.DeliveryGeneration == a.peer.highwater ||
 			entry.DeliveryGeneration == a.peer.network.generation && !a.peer.deliveryCurrentLocked()
 		if current {

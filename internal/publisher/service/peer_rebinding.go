@@ -167,9 +167,9 @@ func (p *PeerSession) activateBinding(binding PeerBinding) error {
 	}
 	var denied []*connectorAdmission
 	for a := range p.streams {
-		if a.admitted && !a.retiring {
+		if a.admittedLocked() && !a.retiringLocked() {
 			if err := a.guard.RebindSource(binding.source, p.identity.trustRevision); err != nil {
-				a.retiring = true
+				a.retireLocked()
 				denied = append(denied, a)
 			}
 		}
@@ -189,7 +189,7 @@ func (p *PeerSession) activateBinding(binding PeerBinding) error {
 	p.network, p.lease, p.pending, p.deliveryState = binding.peerNetworkBinding, binding.peerLease, nil, peerDeliveryActive
 	p.observeOwnerLocked(binding.peerLease)
 	for a := range p.streams {
-		if a.admitted && !a.retiring {
+		if a.admittedLocked() && !a.retiringLocked() {
 			a.entry.DeliveryGeneration, a.entry.SourceIP = binding.generation, binding.source.String()
 			a.audit.SourceIP = binding.source.String()
 			a.audit.DeliveryGeneration = binding.generation
