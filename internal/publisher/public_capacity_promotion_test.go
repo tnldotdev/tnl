@@ -147,7 +147,7 @@ func TestPublicCapacityPendingDeadlineRetainsPermitUntilRetirement(t *testing.T)
 		if err := a.commit(); err == nil {
 			t.Fatal("expired setup committed authorization")
 		}
-		if route.pendingStreams != 1 || route.authorizedStreams != 0 || route.pendingSources[a.source] != 1 {
+		if route.pendingStreams != 1 || route.authorizedStreams != 0 || route.pendingSources[a.sourceLocked()] != 1 {
 			t.Fatal("deadline released a permit before worker retirement")
 		}
 		a.retire()

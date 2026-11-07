@@ -146,7 +146,7 @@ func TestPublicCapacitySourceRequiresVerifiedMetadata(t *testing.T) {
 			if err := a.authenticateSource(header, changed); !errors.Is(err, visitortoken.ErrVisitorSource) {
 				t.Fatal("rewritten source accepted", err)
 			}
-			if len(route.pendingSources) != 0 || a.source.IsValid() {
+			if len(route.pendingSources) != 0 || a.sourceLocked().IsValid() {
 				t.Fatal("unverified metadata spent source capacity")
 			}
 		}
