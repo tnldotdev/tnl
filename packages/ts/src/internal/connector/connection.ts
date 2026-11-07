@@ -32,12 +32,15 @@ interface OwnedConnection {
   readonly file: string;
   readonly binary: string;
   readonly onExit: () => void;
-  ready: boolean;
-  expiresAt?: number;
-  failure?: { readonly error: unknown };
-  stopping?: Promise<void>;
+  state: OwnerState;
   ipc?: Promise<OwnerIPC>;
 }
+type OwnerState =
+  | { readonly phase: "starting" }
+  | { readonly phase: "ready"; readonly expiresAt?: number }
+  | { readonly phase: "expired"; readonly expiresAt: number }
+  | { readonly phase: "failed"; readonly error: unknown }
+  | { readonly phase: "stopping"; readonly previous: OwnerState; readonly done: Promise<void> };
 const maximumBytes = 128 * 1024;
 const owners = new Map<string, OwnedConnection>();
 const pending = new Map<string, Promise<Prepared>>();
@@ -184,31 +187,32 @@ function readArgs(file: string, name: string): string[] {
 }
 
 async function stopOwner(key: string, owner: OwnedConnection): Promise<void> {
-  const stopping =
-    owner.stopping ??
-    (owner.stopping = (async () => {
-      parseValue(
-        stoppedOwnerSchema,
-        await machine(owner.binary, ["stop", "--handle", owner.file]),
-        "sdk.response_invalid",
+  if (owner.state.phase === "stopping") return owner.state.done;
+  const previous = owner.state;
+  const stopping = (async () => {
+    parseValue(
+      stoppedOwnerSchema,
+      await machine(owner.binary, ["stop", "--handle", owner.file]),
+      "sdk.response_invalid",
+    );
+    if (owners.get(key) === owner) owners.delete(key);
+    if (owner.ipc !== undefined)
+      void owner.ipc.then(
+        (ipc) => ipc.close(),
+        () => {},
       );
-      if (owners.get(key) === owner) owners.delete(key);
-      if (owner.ipc !== undefined)
-        void owner.ipc.then(
-          (ipc) => ipc.close(),
-          () => {},
-        );
-      process.removeListener("beforeExit", owner.onExit);
-    })());
+    process.removeListener("beforeExit", owner.onExit);
+  })();
+  owner.state = { phase: "stopping", previous, done: stopping };
   try {
     await stopping;
   } finally {
-    if (owner.stopping === stopping) delete owner.stopping;
+    if (owner.state.phase === "stopping" && owner.state.done === stopping) owner.state = previous;
   }
 }
 
 async function rollbackOwner(key: string, owner: OwnedConnection, error: unknown): Promise<void> {
-  owner.failure = { error };
+  owner.state = { phase: "failed", error };
   try {
     // cleanup has its own lifetime: a canceled read must not abandon an owner.
     await stopOwner(key, owner);
@@ -335,15 +339,29 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
   if (operation !== undefined) return operation;
   operation = (async () => {
     let owner = owners.get(key);
-    if (owner?.failure !== undefined) {
+    if (owner?.state.phase === "starting") {
+      await starting.get(key);
+      owner = owners.get(key);
+    }
+    if (owner?.state.phase === "stopping") {
+      await owner.state.done;
+      owner = owners.get(key);
+    }
+    if (owner?.state.phase === "failed") {
       // a failed stop retains ownership and blocks replacement until joined.
-      await rollbackOwner(key, owner, owner.failure.error);
+      await rollbackOwner(key, owner, owner.state.error);
       owner = undefined;
     }
-    if (owner?.expiresAt !== undefined && owner.expiresAt <= Date.now()) {
+    if (
+      owner?.state.phase === "ready" &&
+      owner.state.expiresAt !== undefined &&
+      owner.state.expiresAt <= Date.now()
+    ) {
       // only a validated owner deadline permits replacement. native stop joins
       // even when deadline cleanup already removed the live handle file.
-      owner.ready = false;
+      owner.state = { phase: "expired", expiresAt: owner.state.expiresAt };
+    }
+    if (owner?.state.phase === "expired") {
       await stopOwner(key, owner);
       owner = undefined;
     }
@@ -379,8 +397,7 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
     // old owner dead. adopt that replacement before considering another start.
     const replacement = owners.get(key);
     if (replacement !== undefined && replacement !== owner) {
-      if (!replacement.ready || replacement.failure !== undefined)
-        throw new TnlError("sdk.connection_unavailable");
+      if (replacement.state.phase !== "ready") throw new TnlError("sdk.connection_unavailable");
       const prepared = await prepareIPC(replacement, name, assertion);
       selectedOwners.set(base, replacement);
       return approve(prepared);
@@ -405,7 +422,7 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
         const startedOwner: OwnedConnection = {
           binary,
           file,
-          ready: false,
+          state: { phase: "starting" },
           onExit: () => {
             void exitCleanup().catch(() => {});
           },
@@ -414,8 +431,7 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
         process.once("beforeExit", startedOwner.onExit);
         try {
           const startup = parseValue(startedOwnerSchema, value, "sdk.response_invalid");
-          startedOwner.expiresAt = startup.expires_at;
-          startedOwner.ready = true;
+          startedOwner.state = { phase: "ready", expiresAt: startup.expires_at };
           return startedOwner;
         } catch (error) {
           await rollbackOwner(key, startedOwner, error);
@@ -451,10 +467,14 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
 function readPrepared(name: string): Prepared {
   const owner =
     process.env.TNL_CONNECTION_HANDLE === undefined ? selectedOwners.get(cacheKey()) : undefined;
-  if (owner?.expiresAt !== undefined && owner.expiresAt <= Date.now())
+  if (
+    owner?.state.phase === "ready" &&
+    owner.state.expiresAt !== undefined &&
+    owner.state.expiresAt <= Date.now()
+  )
     throw new TnlError("sdk.connection_unprepared");
   const file =
-    process.env.TNL_CONNECTION_HANDLE ?? (owner?.ready === true ? owner.file : undefined);
+    process.env.TNL_CONNECTION_HANDLE ?? (owner?.state.phase === "ready" ? owner.file : undefined);
   if (file === undefined) throw new TnlError("sdk.connection_unprepared");
   // a separate native process can use owner IPC while this event loop is blocked.
   // never execute an executable selected by descriptor contents or PATH.
