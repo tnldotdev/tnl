@@ -1,6 +1,13 @@
 version: "3"
 
 tasks:
+  test:client-factories:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check ordinary client caching, exact native bindings and joined driver cleanup
+    deps: [":js:build"]
+    cmds:
+      - pnpm exec vitest run packages/ts/test/connector/client-factory.test.ts packages/ts/test/connector/awaitable-connection.test.ts
+
   test:ipc-boundaries:
     desc: Check local SDK descriptor, HTTP, and process boundaries
     deps: [":js:build"]

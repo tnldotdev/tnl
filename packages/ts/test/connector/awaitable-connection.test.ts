@@ -114,6 +114,37 @@ afterEach(() => {
 });
 
 describe("awaitable root connection handles", () => {
+  test("client factories retain ordinary clients across renewal and isolate exact native owners", async () => {
+    const { connectionClient } = await import("../../src/internal/connector/connection.js");
+    let owner = "a";
+    native.async.mockImplementation(async (_binary, args) => ({
+      stdout: JSON.stringify(
+        args.includes("sdk-prepare")
+          ? {
+              schema: 1,
+              owner: { ...started(), connection_handle: `/private/${owner}/handle.json` },
+              prepared: prepared(),
+            }
+          : prepared(),
+      ),
+    }));
+    const create = vi.fn((settings: object) => ({ settings }));
+    const close = vi.fn();
+    const get = connectionClient("database", { create, close }, vi.fn());
+    const a = await get();
+    expect(await get()).toBe(a);
+    owner = "b";
+    const b = await get();
+    expect(b).not.toBe(a);
+    owner = "a";
+    expect(await get()).toBe(a);
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(close).not.toHaveBeenCalled();
+    const selections = native.async.mock.calls.length;
+    await get.close();
+    expect(close.mock.calls.map(([client]) => client)).toEqual([a, b]);
+    expect(native.async.mock.calls).toHaveLength(selections);
+  });
   test("compatible module copies coalesce cold work and retain prepared reads", async () => {
     const first = await import("../../src/internal/connector/connection.js");
     const { TnlError } = await import("../../src/errors.js");

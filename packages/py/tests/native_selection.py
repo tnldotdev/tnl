@@ -4,6 +4,7 @@ import asyncio
 import http.client
 import os
 import socket
+import ssl
 import sys
 from pathlib import Path
 
@@ -23,6 +24,7 @@ elif not native_provider:
 
 async def main() -> None:
     handle = tnl.connect("api")
+    get_client: tnl.ClientFactory[ssl.SSLSocket] | None = None
     try:
 
         async def prepare() -> _connections.Connection:
@@ -54,38 +56,66 @@ async def main() -> None:
         print("warm", flush=True)
         if rotating_file:
             assert isinstance(first, tnl.HTTPConnection)
+            created, closed = 0, 0
 
-            def open_stream() -> tuple[socket.socket, http.client.HTTPResponse]:
-                raw = socket.create_connection((first.host, first.port), timeout=90)
-                secure = first.ssl.wrap_socket(raw, server_hostname=first.server_hostname)
-                secure.sendall(
+            async def create_socket(connection: tnl.Connection) -> ssl.SSLSocket:
+                nonlocal created
+                assert isinstance(connection, tnl.HTTPConnection)
+                created += 1
+
+                def dial() -> ssl.SSLSocket:
+                    raw = socket.create_connection((connection.host, connection.port), timeout=90)
+                    return connection.ssl.wrap_socket(
+                        raw, server_hostname=connection.server_hostname
+                    )
+
+                return await asyncio.to_thread(dial)
+
+            def close_socket(client: ssl.SSLSocket) -> None:
+                nonlocal closed
+                closed += 1
+                client.close()
+
+            get_client = tnl.client("api", create=create_socket, close=close_socket)
+            stream = await get_client()
+            for _ in range(3):
+                assert await get_client() is stream
+            assert created == 1 and closed == 0
+
+            def open_stream() -> http.client.HTTPResponse:
+                stream.sendall(
                     (
                         "GET /refresh-stream HTTP/1.1\r\n"
                         f"Host: {first.server_hostname}\r\n"
                         "Connection: close\r\n\r\n"
                     ).encode()
                 )
-                response = http.client.HTTPResponse(secure)
+                response = http.client.HTTPResponse(stream)
                 response.begin()
-                return secure, response
+                return response
 
-            stream, response = await asyncio.to_thread(open_stream)
+            response = await asyncio.to_thread(open_stream)
             try:
                 assert await asyncio.to_thread(response.readline) == b"before-proof\n"
                 print("streaming", flush=True)
                 assert await asyncio.to_thread(input) == "refreshed"
                 assert await asyncio.to_thread(response.read) == b"after-proof\n"
-                print("retained", flush=True)
             finally:
                 response.close()
-                stream.close()
+                await get_client.aclose()
+            assert closed == 1
+            print("retained", flush=True)
         if "lifecycle" in sys.argv:
             from native_lifecycle import run
 
             await run(handle, first)
         assert await asyncio.to_thread(input) == "stop"
     finally:
-        await handle.aclose()
+        try:
+            if get_client is not None:
+                await get_client.aclose()
+        finally:
+            await handle.aclose()
 
 
 asyncio.run(main())

@@ -61,9 +61,40 @@ for (const manager of ["npm", "pnpm"]) {
       import {withTnl} from '@tnldotdev/tnl/next';
       import vite from '@tnldotdev/tnl/vite';
       import {configureWorkload} from '@tnldotdev/tnl/workload';
-      assert.equal(createRequire(import.meta.url)('@tnldotdev/tnl').tnl, tnl);
+      const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
+      assert.equal(cjs.tnl, tnl);
       assert.equal(typeof TnlError, 'function');
-      for (const value of [tnl.prepare, tnl.open, tnl.connect, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
+      for (const value of [tnl.prepare, tnl.open, tnl.connect, tnl.client, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
+      for (const root of [{tnl, TnlError}, cjs]) {
+        const getClient = root.tnl.client('database', {
+          create() { throw new Error('factory creation must remain lazy'); },
+          close() { throw new Error('unstarted factory has no driver to close'); },
+        });
+        assert.equal(typeof getClient, 'function');
+        await getClient.close();
+        await assert.rejects(getClient(), error => error instanceof root.TnlError && error.code === 'sdk.client_closed');
+      }
+    `,
+      ],
+      { cwd: consumer, stdio: "inherit" },
+    );
+    execFileSync(
+      process.execPath,
+      [
+        "--conditions=browser",
+        "--input-type=module",
+        "--eval",
+        `
+      import assert from 'node:assert/strict';
+      import {createRequire} from 'node:module';
+      const esm = await import('@tnldotdev/tnl');
+      const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
+      for (const root of [esm, cjs]) {
+        assert.throws(() => root.tnl.client('database', {
+          create() { throw new Error('browser must not invoke driver callbacks'); },
+          close() { throw new Error('browser must not invoke driver callbacks'); },
+        }), error => error instanceof root.TnlError && error.code === 'sdk.connection_server_only');
+      }
     `,
       ],
       { cwd: consumer, stdio: "inherit" },

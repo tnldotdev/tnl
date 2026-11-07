@@ -214,11 +214,21 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
     _connections._command = command
     handle = tnl.connect("database", directory=root)
 
+    class Client:
+        def __init__(self, connection: tnl.Connection) -> None:
+            self.port = connection.port
+
+    closed_clients: list[Client] = []
+    get_client = tnl.client("database", directory=root, create=Client, close=closed_clients.append)
+    client_runner = asyncio.Runner()
+
     async def prepare() -> tnl.Connection:
         return await handle
 
     try:
         db = asyncio.run(prepare())
+        client = client_runner.run(get_client())
+        assert client.port == db.port
         assert isinstance(db, tnl.PostgresConnection)
         held, release = threading.Event(), threading.Event()
         assert handle._session.scope.entry is not None
@@ -308,6 +318,14 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
         pid = os.fork()
         if pid == 0:
             try:
+                asyncio.run(get_client())
+            except tnl.TnlError as error:
+                assert error.code == "sdk.client_closed"
+            else:
+                raise AssertionError("child reused its parent's ordinary client")
+            asyncio.run(get_client.aclose())
+            assert not closed_clients
+            try:
                 ipc.prepare("database")
             except tnl.TnlError as error:
                 assert error.code == "sdk.connection_unavailable"
@@ -345,6 +363,9 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
         assert process.poll() is None
         # the parent's IPC socket and its connector owner still work after child exit.
         assert asyncio.run(prepare()).port == db.port
+        assert client_runner.run(get_client()) is client
+        client_runner.run(get_client.aclose())
+        assert closed_clients == [client] and process.poll() is None
         with socket.create_connection((db.host, db.port), timeout=5) as raw:
             raw.sendall(struct.pack("!II", 8, 80877103))
             assert raw.recv(1) == b"S"
@@ -354,6 +375,7 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
         handle.close()
         process.wait(timeout=5)
     finally:
+        client_runner.close()
         if process.poll() is None:
             process.send_signal(signal.SIGTERM)
         process.wait(timeout=5)
