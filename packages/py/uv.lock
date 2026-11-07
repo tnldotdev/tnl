@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -332,7 +332,7 @@ wheels = [
 
 [[package]]
 name = "tnldotdev-tnl"
-version = "0.0.0.dev0"
+version = "1.0.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },

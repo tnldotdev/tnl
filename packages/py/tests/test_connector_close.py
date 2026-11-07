@@ -1,0 +1,72 @@
+"""closing before the first capability still joins the native registry."""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import threading
+from pathlib import Path
+
+import pytest
+
+import tnl
+from tnl import _connections
+
+
+def test_close_before_first_handle_joins_native_and_retains_failed_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_connections, "_sessions", {})
+    monkeypatch.delenv("TNL_CONNECTION_HANDLE", raising=False)
+    for name in ("TNL_WORKLOAD", "VERCEL", "GITHUB_ACTIONS", "FLY_APP_NAME"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
+    starting, stopping, release = threading.Event(), threading.Event(), threading.Event()
+    failure = tnl.TnlError("sdk.connection_unavailable", "cleanup did not join")
+    stop_attempts = 0
+    stopped_registries: list[str] = []
+
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        nonlocal stop_attempts
+        if args[0] == "sdk-prepare":
+            starting.set()
+            assert release.wait(5)
+            raise tnl.TnlError("sdk.connection_closed", "native scope is closed")
+        assert args[0] == "sdk-stop"
+        stopped_registries.append(args[args.index("--registry") + 1])
+        stopping.set()
+        stop_attempts += 1
+        if stop_attempts == 1:
+            raise failure
+        release.set()
+        return {"schema": 1, "state": "stopped"}
+
+    monkeypatch.setattr(_connections, "_command", command)
+    handle = tnl.connect("database", directory=tmp_path)
+
+    async def prepare() -> tnl.Connection:
+        return await handle
+
+    async def scenario() -> None:
+        pending = asyncio.create_task(prepare())
+        assert await asyncio.to_thread(starting.wait, 5)
+        try:
+            with pytest.raises(tnl.TnlError) as error:
+                await handle.aclose()
+            assert error.value is failure
+            assert stopping.is_set() and not pending.done()
+            registry = handle._session.scope.registry
+            assert registry is not None
+            await handle.aclose()
+            assert stopped_registries == [registry, registry]
+            assert handle._session.joined
+            with pytest.raises(tnl.TnlError):
+                await pending
+            with pytest.raises(tnl.TnlError, match="closed"):
+                await handle
+            assert stop_attempts == 2
+        finally:
+            release.set()
+            await asyncio.gather(pending, return_exceptions=True)
+
+    asyncio.run(scenario())

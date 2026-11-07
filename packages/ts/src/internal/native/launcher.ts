@@ -1,4 +1,4 @@
-import { constants, accessSync, readFileSync } from "node:fs";
+import { constants, accessSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
@@ -66,10 +66,10 @@ export function resolveNativeBinary(options: NativeBinaryOptions = {}): string {
   const binary = path.join(path.dirname(nativeManifestPath), "bin", "tnl");
   try {
     accessSync(binary, constants.X_OK);
+    return realpathSync(binary);
   } catch (error) {
     throw new TnlError("sdk.native_invalid", { cause: error });
   }
-  return binary;
 }
 
 function readManifest(file: string | URL, _packageName: string): PackageManifest {

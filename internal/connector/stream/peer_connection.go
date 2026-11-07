@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -97,15 +98,18 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	life, cancel := context.WithCancelCause(ctx)
 	p := &connectorConnection{ctx: life, cancel: cancel, config: config, signer: signer, changed: make(chan struct{}), refill: make(chan struct{}, 1), recover: make(chan struct{}, 1), active: make(map[*connectorUse]struct{})}
 	p.bindingCtx, p.bindingCancel = context.WithCancel(life)
+	stage := "owner"
 	defer func() {
 		if result != nil {
 			p.Close()
+			result = fmt.Errorf("prepare connector %s: %w", stage, result)
 		}
 	}()
 	p.owner, result = opaqueid.New(opaqueid.IdempotencyPrefix)
 	if result != nil {
 		return nil, result
 	}
+	stage = "service selection"
 	p.run, result = config.Control.ResolveService(setup, config.ServiceID)
 	if result != nil {
 		return nil, result
@@ -116,6 +120,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	p.run.ServiceTLS = config.ServiceTLS
 	var create controlv1.ConnectorPeerPairRequest
 	var key [32]byte
+	stage = "pair"
 	p.pair, key, p.until, create, result = prepareConnectorPair(setup, config.Control, signer, p.run, p.owner)
 	if result != nil {
 		return nil, result
@@ -124,6 +129,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	defer stopAuthority()
 	var results [2]error
 	var starts sync.WaitGroup
+	stage = "relay legs"
 	for slot := range 2 {
 		starts.Go(func() {
 			p.paths[slot].leg, results[slot] = connectConnectorLeg(setup, life, config, signer, p.pair, key, slot)
@@ -137,11 +143,13 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		return nil, ErrServiceConnection
 	}
 	p.source = p.paths[0].leg.receipt.SourceIP
+	stage = "publisher installation"
 	if p.preparedUntil, p.reportedUntil, result = awaitConnectorPublisher(setup, config.Control, p.run.ServiceID, create, p.pair); result != nil {
 		return nil, result
 	}
 	p.key = key
 	p.highWater = p.pair.DeliveryGeneration
+	stage = "packet carriers"
 	for slot := range 2 {
 		path := &p.paths[slot]
 		path.carrier = peer.NewCarrierSlot()
@@ -158,6 +166,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	if result != nil {
 		return nil, result
 	}
+	stage = "packet paths"
 	if result = awaitConnectorPaths(setup, p.endpoint); result != nil {
 		return nil, result
 	}
@@ -166,6 +175,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	trust.ServerName, trust.NextProtos = p.run.Endpoint.Hostname, []string{muxsession.ALPN}
 	innerConfig := tunnel.ConnectorQUICConfig()
 	innerConfig.MaxIncomingStreams = -1
+	stage = "inner TLS"
 	p.connection, result = p.transport.Dial(setup, p.endpoint.RemoteAddr(), trust, innerConfig)
 	if result != nil {
 		return nil, failure.Wrap("prepare connector peer TLS", failure.ConnectionTLSRejected, result)
@@ -174,6 +184,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	if result != nil {
 		return nil, result
 	}
+	stage = "permission control"
 	p.permissions, result = tunnel.OpenConnectorPermissionControl(life, setup, p.session)
 	if result != nil {
 		return nil, result
@@ -182,8 +193,9 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		<-p.permissions.Done()
 		// match session retirement while preserving the transport cause. an
 		// earlier authority failure remains the context's first cancellation cause.
-		p.cancel(errors.Join(ErrServiceConnection, p.permissions.Err()))
+		p.cancel(fmt.Errorf("connector permission owner ended: %w", errors.Join(ErrServiceConnection, p.permissions.Err())))
 	})
+	stage = "visitor permission"
 	p.permission, result = config.Control.VisitorPermission(setup, config.ServiceID)
 	if result != nil || setup.Err() != nil {
 		return nil, errors.Join(ErrServiceConnection, result, context.Cause(setup))
@@ -194,6 +206,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	if !validConnectorPermission(p.run, p.permission) {
 		return nil, ErrServiceConnection
 	}
+	stage = "application openings"
 	if result = p.fillOpenings(); result != nil {
 		return nil, result
 	}
@@ -357,7 +370,7 @@ func (p *connectorConnection) watch() {
 		}
 		changed := p.changed
 		if !current {
-			p.cancel(ErrServiceConnection)
+			p.cancel(fmt.Errorf("connector authority expired: %w", ErrServiceConnection))
 		}
 		p.mu.Unlock()
 		if expiredDelivery {
@@ -371,7 +384,7 @@ func (p *connectorConnection) watch() {
 			return
 		case <-p.session.Done():
 			timer.Stop()
-			p.cancel(ErrServiceConnection)
+			p.cancel(fmt.Errorf("connector inner session ended: %w", errors.Join(ErrServiceConnection, p.session.Err())))
 			return
 		case <-changed:
 			timer.Stop()
@@ -403,7 +416,7 @@ func (p *connectorConnection) refresh() {
 		}
 		if err := p.recoverBinding(); err != nil {
 			if !connectorTemporary(err) && p.ctx.Err() == nil {
-				p.cancel(err)
+				p.cancel(fmt.Errorf("recover connector binding: %w", err))
 				return
 			}
 		}
@@ -420,7 +433,7 @@ func (p *connectorConnection) refresh() {
 				pending := p.rebind != nil
 				p.mu.Unlock()
 				if !connectorTemporary(err) && !(pending && connectorPhaseConflict(err)) && p.ctx.Err() == nil {
-					p.cancel(err)
+					p.cancel(fmt.Errorf("refresh connector authority: %w", err))
 					return
 				}
 			}
@@ -456,7 +469,7 @@ func (p *connectorConnection) refreshAuthority() error {
 	}
 	if err != nil {
 		stop()
-		return err
+		return fmt.Errorf("renew connector pair: %w", err)
 	}
 	// keep the previous ready pool behind its original authority fence while
 	// background signing prepares the replacement. arrivals never see an empty
@@ -467,7 +480,7 @@ func (p *connectorConnection) refreshAuthority() error {
 	}
 	stop()
 	if err != nil {
-		return err
+		return fmt.Errorf("prepare connector renewal openings: %w", err)
 	}
 	p.mu.Lock()
 	preparedUntil, reportedUntil := p.preparedUntil, p.reportedUntil
@@ -491,7 +504,7 @@ func (p *connectorConnection) refreshAuthority() error {
 	}
 	if !p.ownerCurrentLocked() || !bound.After(now) || !next.ValidUntil.After(now) || !permission.ExpiresAt.After(now) {
 		p.mu.Unlock()
-		return ErrServiceConnection
+		return fmt.Errorf("install connector renewal after authority expired: %w", ErrServiceConnection)
 	}
 	next.ServiceTLS = p.config.ServiceTLS
 	// pair renewal is not publisher installation renewal. retain only a

@@ -15,6 +15,7 @@ const fixture = vi.hoisted(() => ({
   recoveries: 0,
   ipc: [] as { file: string; name: string; assertion: string | undefined }[],
   proofs: new Map<string, Set<string>>(),
+  approvals: new Set<string>(),
   prepared: new Set<string>(),
   control: { identity: 0, exchange: 0, inventory: 0, attach: 0, authorization: 0 },
   binding: (assertion: string) =>
@@ -31,7 +32,12 @@ vi.mock("../../src/internal/connector/connection_ipc.js", async () => {
   const { createHash } = await import("node:crypto");
   return {
     ownerIPC: async (file: string) => ({
-      async prepare(name: string, assertion?: string) {
+      async prepare(name: string, assertion?: string, selection?: object) {
+        if (selection !== undefined)
+          return response(
+            ["--no-telemetry", "runtime", "connections", "sdk-prepare", "--selected-service", name],
+            { assertion },
+          );
         fixture.ipc.push({ file, name, assertion });
         const binding = assertion === undefined ? undefined : fixture.binding(assertion);
         if (fixture.dead.has(file) || binding === undefined || fixture.owners.get(file) !== binding)
@@ -111,6 +117,51 @@ function response(args: string[], input: unknown): unknown {
   const body = input as { assertion?: string };
   if (operation === "context") return { schema: 1, config_digest: "c".repeat(64) };
   const binding = body?.assertion === undefined ? undefined : fixture.binding(body.assertion);
+  if (operation === "sdk-prepare") {
+    if (
+      args.includes("--recover-handle") &&
+      !fixture.dead.has(args[args.indexOf("--recover-handle") + 1] ?? "")
+    )
+      throw new Error("owner remains alive");
+    if (!fixture.approvals.has(body?.assertion ?? "")) {
+      fixture.control.identity++;
+      if (binding === undefined) throw new Error("control rejected assertion");
+      fixture.approvals.add(body?.assertion ?? "");
+    }
+    let file = [...fixture.owners].find(
+      ([file, owner]) => owner === binding && !fixture.dead.has(file),
+    )?.[0];
+    if (file === undefined) {
+      const started = response(["--no-telemetry", "runtime", "connections", "start"], input) as {
+        connection_handle: string;
+      };
+      file = started.connection_handle;
+    }
+    const name = args[args.indexOf("--selected-service") + 1] ?? "";
+    fixture.ipc.push({ file, name, assertion: body?.assertion });
+    const proofs = fixture.proofs.get(file);
+    if (!proofs?.has(body?.assertion ?? "")) {
+      fixture.control.attach++;
+      proofs?.add(body?.assertion ?? "");
+    }
+    const serviceKey = JSON.stringify([file, name]);
+    if (!fixture.prepared.has(serviceKey)) {
+      fixture.control.authorization++;
+      fixture.prepared.add(serviceKey);
+    }
+    return {
+      schema: 1,
+      owner: {
+        expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        executable: "/fixture/tnl",
+        connection_handle: file,
+      },
+      prepared: response(
+        ["--no-telemetry", "runtime", "connections", "read", "--handle", file, "--service", name],
+        undefined,
+      ),
+    };
+  }
   if (operation === "identity") {
     fixture.control.identity++;
     if (binding === undefined) throw new Error("control rejected assertion");
@@ -221,6 +272,7 @@ beforeEach(() => {
   fixture.recoveries = 0;
   fixture.ipc.length = 0;
   fixture.proofs.clear();
+  fixture.approvals.clear();
   fixture.prepared.clear();
   fixture.control = { identity: 0, exchange: 0, inventory: 0, attach: 0, authorization: 0 };
   originalListeners = new Set(process.listeners("beforeExit"));
@@ -240,8 +292,7 @@ test("all protocols share a verified native identity owner and assertions travel
   );
   expect(snapshots).toHaveLength(5);
   expect(fixture.owners.size).toBe(1);
-  expect(fixture.calls.filter((c) => c.args[3] === "start")).toHaveLength(1);
-  expect(fixture.calls.filter((c) => c.args[3] === "start")[0]?.args).not.toContain("--service");
+  expect(fixture.calls.every((c) => c.args[3] === "sdk-prepare")).toBe(true);
   expect(fixture.calls.every((c) => !c.args.includes("first"))).toBe(true);
   fixture.assertion = "rotated";
   await connectionHandle("db", vi.fn());
@@ -315,20 +366,20 @@ test("a late concurrent death proof adopts the recovered owner instead of starti
     connectionHandle("mysql", vi.fn()),
   ]);
   expect(current).toMatchObject([{ port: 12346 }, { port: 12346 }]);
-  expect(fixture.calls.filter((c) => c.args[3] === "start")).toHaveLength(2);
+  expect(fixture.owners.size).toBe(2);
 });
 
 test("cold and warm helper/control budgets are explicit; rotation revalidates before reuse", async () => {
   const { connectionHandle } = await import("../../src/internal/connector/connection.js");
   await connectionHandle("api", vi.fn());
-  expect(fixture.calls.map((c) => c.args[3])).toEqual(["context", "identity", "start"]);
+  expect(fixture.calls.map((c) => c.args[3])).toEqual(["sdk-prepare"]);
   expect(Object.values(fixture.control).reduce((a, b) => a + b, 0)).toBe(5);
   for (let i = 0; i < 10; i++) await connectionHandle("api", vi.fn());
-  expect(fixture.calls).toHaveLength(3);
+  expect(fixture.calls).toHaveLength(1);
   expect(Object.values(fixture.control).reduce((a, b) => a + b, 0)).toBe(5);
   fixture.assertion = "rotated";
   await connectionHandle("api", vi.fn());
-  expect(fixture.calls.map((c) => c.args[3])).toEqual(["context", "identity", "start", "identity"]);
+  expect(fixture.calls.map((c) => c.args[3])).toEqual(["sdk-prepare"]);
   expect(fixture.control.attach).toBe(1);
   expect(fixture.control.identity).toBe(3);
 });

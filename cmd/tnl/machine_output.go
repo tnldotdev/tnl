@@ -15,20 +15,35 @@ import (
 // commandDiagnostic is shared by finite command failures and publish events.
 // only authored messages and actions cross the output boundary.
 type commandDiagnostic struct {
-	Reason    string     `json:"reason"`
-	Code      string     `json:"code,omitempty"`
-	Message   string     `json:"message"`
-	HelpURL   string     `json:"help_url,omitempty"`
-	Retryable bool       `json:"retryable"`
-	RetryAt   *time.Time `json:"retry_at,omitempty"`
-	Action    string     `json:"action,omitempty"`
-	Command   []string   `json:"command,omitempty"`
+	Reason                  string     `json:"reason"`
+	Code                    string     `json:"code,omitempty"`
+	Message                 string     `json:"message"`
+	HelpURL                 string     `json:"help_url,omitempty"`
+	Retryable               bool       `json:"retryable"`
+	RetryAt                 *time.Time `json:"retry_at,omitempty"`
+	Action                  string     `json:"action,omitempty"`
+	Command                 []string   `json:"command,omitempty"`
+	SDKRetainedStartFailure bool       `json:"sdk_retained_start_failure,omitempty"`
+	SDKFailureHandle        string     `json:"sdk_failure_handle,omitempty"`
+	SDKOwnerHandle          string     `json:"sdk_owner_handle,omitempty"`
 }
 
 func commandDiagnosticFor(err error) commandDiagnostic {
 	err = classifyCommandError(err)
 	presented := presentFailure(err)
 	result := commandDiagnostic{Reason: string(presented.reason), Message: presented.message, Action: presented.action}
+	var retained interface{ RetainSDKFailure() bool }
+	if errors.As(err, &retained) {
+		result.SDKRetainedStartFailure = retained.RetainSDKFailure()
+	}
+	var handle interface{ SDKFailureHandle() string }
+	if result.SDKRetainedStartFailure && errors.As(err, &handle) {
+		result.SDKFailureHandle = handle.SDKFailureHandle()
+	}
+	var owner interface{ SDKOwnerHandle() string }
+	if errors.As(err, &owner) {
+		result.SDKOwnerHandle = owner.SDKOwnerHandle()
+	}
 	if reason, definition, ok := failure.Describe(err); ok && string(reason) == result.Reason {
 		result.Retryable = definition.Retry == failure.RetryLater
 	} else {

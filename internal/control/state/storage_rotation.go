@@ -15,7 +15,8 @@ const storageRotationClaimRetry = 100 * time.Millisecond
 // CompleteStorageKeyRotation re-encrypts all currently claimable secrets. new
 // writes always use the current key, so a successful pass cannot create more
 // work for the configured previous key.
-func (d *Database) CompleteStorageKeyRotation(ctx context.Context) error {
+func (d *Database) CompleteStorageKeyRotation(ctx context.Context) (retErr error) {
+	defer func() { retErr = storageRotationError(ctx, retErr) }()
 	for {
 		rotated, err := d.ReencryptStorageSecrets(ctx, maximumStorageRotationBatch)
 		if err != nil {
@@ -38,6 +39,21 @@ func (d *Database) CompleteStorageKeyRotation(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func storageRotationError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		return errors.Join(err, cause)
+	}
+	// pgx's socket deadline may fire before the context's timer is scheduled.
+	// retain the driver error and the spent operation deadline in either order.
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return errors.Join(err, context.DeadlineExceeded)
+	}
+	return err
 }
 
 func (d *Database) countPreviousStorageSecrets(ctx context.Context) (int64, error) {

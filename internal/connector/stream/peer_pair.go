@@ -111,13 +111,18 @@ func renewConnectorPair(ctx context.Context, control Control, signer Signer, run
 }
 
 func validateConnectorPair(ctx context.Context, signer Signer, run Run, body controlv1.ConnectorPeerPairRequest, pair controlv1.ConnectorPeerPair, started time.Time, previous *controlv1.ConnectorPeerPair) ([32]byte, time.Time, error) {
+	// response validation must not turn a spent call into a terminal rejection
+	// of the retained pair, whose original authority can still be current.
+	if err := context.Cause(ctx); err != nil {
+		return [32]byte{}, time.Time{}, err
+	}
 	key, keyErr := connectorPairSecret(pair.Key)
 	frameKey, frameKeyErr := connectorPairSecret(pair.SessionKey)
 	_, idErr := tunnelv1.ParsePeerDeliveryIdentifier(pair.DeliveryId)
 	duration := pair.ExpiresAt.Sub(pair.ObservedAt)
 	until := started.Add(duration)
 	if keyErr != nil || frameKeyErr != nil || idErr != nil || !opaqueid.Valid(pair.PairId, "cpp_") || pair.DeliveryGeneration < 1 || pair.ServiceId != run.ServiceID || pair.ServiceRunId != run.ServiceRunID || pair.RunNumber != int64(run.RunNumber) || pair.TrustRevision != run.TrustRevision || pair.PublisherIdentityId != run.PairReady.PublisherIdentityId || !visitorsubject.Equal(pair.Subject, signer.Subject) ||
-		pair.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute || !until.After(time.Now()) || ctx.Err() != nil || len(pair.Relays) != 2 {
+		pair.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute || !until.After(time.Now()) || len(pair.Relays) != 2 {
 		return key, time.Time{}, ErrServiceConnection
 	}
 	for slot, relay := range pair.Relays {

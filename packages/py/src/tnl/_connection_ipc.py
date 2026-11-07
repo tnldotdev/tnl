@@ -5,6 +5,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import queue
 import re
 import socket
 import stat
@@ -30,7 +31,9 @@ class OwnerIPC:
 
     def __init__(self, filename: str) -> None:
         self.creator_pid = os.getpid()
-        self.connection: http.client.HTTPConnection | None = None
+        self.connections: list[http.client.HTTPConnection] = []
+        self.available: queue.LifoQueue[http.client.HTTPConnection] = queue.LifoQueue()
+        self.pending = threading.BoundedSemaphore(64)
         self.closed = False
         try:
             file = Path(filename)
@@ -104,9 +107,12 @@ class OwnerIPC:
                 "directory": scope_directory,
                 "config_digest": digest,
             }
-            self.connection = http.client.HTTPConnection(
-                "127.0.0.1", endpoint.port, timeout=_TIMEOUT
-            )
+            self.connections = [
+                http.client.HTTPConnection("127.0.0.1", endpoint.port, timeout=_TIMEOUT)
+                for _ in range(4)
+            ]
+            for connection in reversed(self.connections):
+                self.available.put_nowait(connection)
             return
         except Exception:
             self.close()
@@ -115,24 +121,35 @@ class OwnerIPC:
     def __repr__(self) -> str:
         return "<tnl native IPC (private)>"
 
-    def prepare(self, service: str, assertion: str | None = None) -> object:
+    def prepare(
+        self,
+        service: str,
+        assertion: str | None = None,
+        *,
+        sdk: bool = False,
+        workload: str | None = None,
+        manifest: str | None = None,
+        requested_at: str | None = None,
+    ) -> object:
         if self.creator_pid != os.getpid():
             self.discard_inherited()
             raise _failure()
+        if not self.pending.acquire(blocking=False):
+            raise _failure()
+        connection = None
         deadline = time.monotonic() + _TIMEOUT
         watchdog: threading.Timer | None = None
         expired = threading.Event()
         try:
             if self.closed or self.expires <= datetime.now(UTC):
                 raise ValueError("closed capability")
-            if self.connection is None:
-                self.connection = http.client.HTTPConnection(
-                    "127.0.0.1", self.port, timeout=_TIMEOUT
-                )
-            self.connection.timeout = max(0.001, deadline - time.monotonic())
-            if self.connection.sock is None:
-                self.connection.connect()
-            peer = self.connection.sock
+            connection = self.available.get(timeout=max(0.001, deadline - time.monotonic()))
+            if self.closed:
+                raise ValueError("closed capability")
+            connection.timeout = max(0.001, deadline - time.monotonic())
+            if connection.sock is None:
+                connection.connect()
+            peer = connection.sock
             if peer is None or time.monotonic() >= deadline:
                 raise TimeoutError("owner IPC deadline")
             peer.settimeout(max(0.001, deadline - time.monotonic()))
@@ -154,33 +171,42 @@ class OwnerIPC:
                 body["acquire_assertion"] = True
             elif assertion is not None:
                 body["assertion"] = assertion
+            if workload is not None:
+                body["workload"] = workload
+            if manifest is not None:
+                body["manifest"] = manifest
+            if requested_at is not None:
+                body["requested_at"] = requested_at
             encoded = json.dumps(body).encode()
-            self.connection.request(
+            connection.request(
                 "POST",
-                "/v1/connections/prepare",
+                "/v1/connections/sdk-prepare" if sdk else "/v1/connections/prepare",
                 encoded,
                 {"Authorization": "Bearer " + self.key, "Content-Type": "application/json"},
             )
-            response = self.connection.getresponse()
+            response = connection.getresponse()
             data = response.read((128 << 10) + 1)
             if (
                 expired.is_set()
                 or time.monotonic() >= deadline
                 or len(data) > 128 << 10
                 or response.status != 200
+                and not sdk
                 or response.getheader("Content-Type", "").split(";")[0] != "application/json"
             ):
                 raise ValueError("invalid owner response")
             result: object = json.loads(data)
             return result
         except Exception:
-            if self.connection is not None:
-                self.connection.close()
-                self.connection = None
+            if connection is not None:
+                connection.close()
         finally:
             if watchdog is not None:
                 watchdog.cancel()
                 watchdog.join()
+            if connection is not None:
+                self.available.put_nowait(connection)
+            self.pending.release()
         raise _failure() from None
 
     def close(self) -> None:
@@ -188,9 +214,8 @@ class OwnerIPC:
             self.discard_inherited()
             return
         self.closed = True
-        if self.connection is not None:
-            self.connection.close()
-            self.connection = None
+        for connection in self.connections:
+            connection.close()
 
     def discard_inherited(self) -> None:
         # HTTPConnection.close can acquire an inherited buffered-reader lock
@@ -199,7 +224,8 @@ class OwnerIPC:
         if self.creator_pid == os.getpid():
             return
         self.closed = True
-        if self.connection is not None and self.connection.sock is not None:
-            descriptor = self.connection.sock.detach()
-            if descriptor >= 0:
-                os.close(descriptor)
+        for connection in self.connections:
+            if connection.sock is not None:
+                descriptor = connection.sock.detach()
+                if descriptor >= 0:
+                    os.close(descriptor)

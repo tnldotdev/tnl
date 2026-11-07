@@ -1,35 +1,52 @@
 import { writeSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { chromium, type Browser } from "playwright";
-import { expect, test } from "vitest";
+import { chromium, type Browser, type BrowserContext } from "playwright";
+import { afterAll, beforeAll, expect, test } from "vitest";
+
+const started = performance.now();
+const counts = {
+  session_responses: 0,
+  page_errors: 0,
+  request_failures: 0,
+  reports: 0,
+  cleanup_errors: 0,
+};
+// write before awaits: a test timeout must not depend on finally or console replay.
+function phase(name: string): void {
+  try {
+    writeSync(
+      2,
+      "toolbar browser fixture " +
+        JSON.stringify({
+          phase: name,
+          elapsed_ms: Math.round(performance.now() - started),
+          ...counts,
+        }) +
+        "\n",
+    );
+  } catch {
+    // a closed diagnostic stream must not replace the test or cleanup failure.
+  }
+}
+
+let browser: Browser | undefined;
+// browser startup gets the existing hook budget, not the behavior test's budget.
+beforeAll(async () => {
+  phase("launch chrome");
+  browser = await chromium.launch({ channel: "chrome", timeout: 30_000 });
+});
+afterAll(async () => {
+  phase("close chrome");
+  try {
+    await browser?.close();
+  } catch (cause) {
+    counts.cleanup_errors++;
+    throw cause;
+  }
+});
 
 test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins", async () => {
-  const started = performance.now();
-  const counts = {
-    session_responses: 0,
-    page_errors: 0,
-    request_failures: 0,
-    reports: 0,
-    cleanup_errors: 0,
-  };
-  // write before awaits: a test timeout must not depend on finally or console replay.
-  function phase(name: string): void {
-    try {
-      writeSync(
-        2,
-        "toolbar browser fixture " +
-          JSON.stringify({
-            phase: name,
-            elapsed_ms: Math.round(performance.now() - started),
-            ...counts,
-          }) +
-          "\n",
-      );
-    } catch {
-      // a closed diagnostic stream must not replace the test or cleanup failure.
-    }
-  }
   phase("read committed bundle");
   const script = await readFile(new URL("./toolbar.js", import.meta.url));
   phase("read committed font");
@@ -132,16 +149,16 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
   });
   phase("listen on loopback");
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  let browser: Browser | undefined;
+  let context: BrowserContext | undefined;
   const failures: unknown[] = [];
   try {
-    phase("launch chrome");
-    browser = await chromium.launch({ channel: "chrome" });
+    if (!browser) throw new Error("missing browser fixture process");
     const address = server.address();
     if (!address || typeof address === "string")
       throw new Error("missing browser fixture listener");
     phase("create page");
-    const page = await browser.newPage();
+    context = await browser.newContext();
+    const page = await context.newPage();
     const errors: string[] = [];
     let sessionResponseIsJSON = false;
     page.on("response", (response) => {
@@ -308,9 +325,9 @@ test("the committed bundle runs in Shadow DOM under CSP and tracks changing pins
   } finally {
     phase("release report for cleanup");
     acceptReport.resolve();
-    phase("close chrome");
+    phase("close browser context");
     try {
-      await browser?.close();
+      await context?.close();
     } catch (cause) {
       counts.cleanup_errors++;
       failures.push(cause);
