@@ -16,7 +16,7 @@ import (
 
 type storeStub struct {
 	job    controlstate.EmailDelivery
-	status int
+	result controlstate.EmailDeliveryOutcome
 	err    error
 }
 
@@ -36,8 +36,8 @@ func TestEmailDeliveryFailurePreservesCauseAndRetryReason(t *testing.T) {
 		t.Fatalf("email failure reason=%s retry=%v cause=%t", reason, definition.Retry, errors.Is(err, cause))
 	}
 }
-func (s *storeStub) FinishInvitationEmail(_ context.Context, _ controlstate.EmailDelivery, status int, _ time.Time) error {
-	s.status = status
+func (s *storeStub) FinishInvitationEmail(_ context.Context, _ controlstate.EmailDelivery, result controlstate.EmailDeliveryOutcome, _ time.Time) error {
+	s.result = result
 	return nil
 }
 
@@ -66,8 +66,8 @@ func TestEmailDeliveryRetriesStatusWithoutFollowingRedirects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := worker.Process(t.Context()); err != nil || store.status != status {
-				t.Fatalf("delivery status=%d error=%v", store.status, err)
+			if _, err := worker.Process(t.Context()); err != nil || store.result != controlstate.InvitationEmailOutcome(status) {
+				t.Fatalf("delivery outcome=%+v error=%v", store.result, err)
 			}
 		})
 	}

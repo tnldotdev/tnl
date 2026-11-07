@@ -3,6 +3,7 @@ package state
 import (
 	"bytes"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -41,11 +42,11 @@ func TestIntegrationInvitationEmailIsEncryptedLeasedRetriedAndScrubbed(t *testin
 	}
 	stale := job
 	stale.Owner = "not-the-current-worker"
-	err = database.FinishInvitationEmail(t.Context(), stale, 204, now)
+	err = database.FinishInvitationEmail(t.Context(), stale, InvitationEmailOutcome(204), now)
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerEmailLeaseStale || !errors.Is(err, ErrEmailDeliveryLeaseStale) {
 		t.Fatalf("stale claim error = %v", err)
 	}
-	if err := database.FinishInvitationEmail(t.Context(), job, 503, now); err != nil {
+	if err := database.FinishInvitationEmail(t.Context(), job, InvitationEmailOutcome(503), now); err != nil {
 		t.Fatal(err)
 	}
 	if early, err := database.ClaimInvitationEmail(t.Context(), "worker-b", now); err != nil || early.ID != "" {
@@ -55,12 +56,25 @@ func TestIntegrationInvitationEmailIsEncryptedLeasedRetriedAndScrubbed(t *testin
 	if err != nil || job.ID != invitation.Invitation.ID || job.Attempts != 2 {
 		t.Fatalf("retry=%+v, %v", job, err)
 	}
-	if err := database.FinishInvitationEmail(t.Context(), job, 204, now.Add(3*time.Second)); err != nil {
+	if err := database.FinishInvitationEmail(t.Context(), job, InvitationEmailOutcome(204), now.Add(3*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	var scrubbed bool
 	if err := database.pool.QueryRow(t.Context(), `SELECT payload_ciphertext IS NULL AND storage_key_id IS NULL FROM control.team_invitation_email_deliveries WHERE delivery_id=$1`, job.ID).Scan(&scrubbed); err != nil || !scrubbed {
 		t.Fatalf("completed payload retained: %v", err)
+	}
+	for _, status := range []int{400, 422} {
+		invitation := create("permanent-" + strconv.Itoa(status))
+		job, err := database.ClaimInvitationEmail(t.Context(), "worker-a", now)
+		if err != nil || job.ID != invitation.Invitation.ID {
+			t.Fatalf("permanent response claim=%+v error=%v", job, err)
+		}
+		if err := database.FinishInvitationEmail(t.Context(), job, InvitationEmailOutcome(status), now); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.pool.QueryRow(t.Context(), `SELECT payload_ciphertext IS NULL AND storage_key_id IS NULL AND completed_at IS NOT NULL FROM control.team_invitation_email_deliveries WHERE delivery_id=$1`, job.ID).Scan(&scrubbed); err != nil || !scrubbed {
+			t.Fatalf("permanent response %d retained queued payload: %v", status, err)
+		}
 	}
 	revoked := create("revoked")
 	if err := database.RevokeTeamInvitation(t.Context(), admin.Identity.Identity.ID, team.ID, revoked.Invitation.ID, now); err != nil {
