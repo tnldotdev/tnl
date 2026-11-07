@@ -18,7 +18,7 @@ func TestWorkloadManifestWithoutGitOrRuntimeConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := config.TNL{Server: new("https://control.example"), Team: new("acme"), Services: config.Services{"inventory": {Protocol: new("http"), Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://private-target.invalid:3000"))}}, "models": {Protocol: new("postgres")}}, Workloads: map[string]config.Workload{"storefront": {Provider: "vercel", TeamID: "team_one", ProjectID: "prj_store", Environment: "production", Services: []string{"inventory", "models"}}}}
+	c := config.TNL{Server: new("https://control.example"), Team: new("acme"), Services: config.Services{"inventory": {Protocol: new("http"), Target: &config.ServiceTarget{Type: "address", Address: new(config.Target("http://private-target.invalid:3000"))}}, "models": {Protocol: new("postgres")}}, Workloads: map[string]config.Workload{"storefront": {Vercel: &config.WorkloadVercel{Project: "store", Environment: "production"}, Services: []string{"inventory", "models"}}}}
 	data, err := workloadmanifest.Generate(c, clientproject.SourceIdentity{Key: "project-store", Fingerprint: strings.Repeat("a", 64), Label: "store"})
 	if err != nil {
 		t.Fatal(err)

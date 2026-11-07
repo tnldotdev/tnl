@@ -454,7 +454,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 	if protocol == "kubernetes" {
 		targetDefinition = map[string]any{"type": "eks", "cluster": "fixture", "region": "us-east-1"}
 	}
-	config := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publisher_groups": map[string]any{"remote": map[string]any{"public": public}}, "services": map[string]any{serviceName: map[string]any{"publisher_group": "remote", "protocol": protocol, "target": targetDefinition}}, "workloads": map[string]any{"test": map[string]any{"provider": "github", "github": map[string]any{"workflow": ".github/workflows/test.yml", "ref": "refs/heads/main", "events": []string{"push"}}, "services": []string{serviceName}}}}}
+	config := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publisher_groups": map[string]any{"remote": map[string]any{"public": public}}, "services": map[string]any{serviceName: map[string]any{"publisher_group": "remote", "protocol": protocol, "target": targetDefinition}}, "workloads": map[string]any{"test": map[string]any{"github": map[string]any{"workflow": ".github/workflows/test.yml", "branch": "main", "events": []string{"push"}}, "services": []string{serviceName}}}}}
 	data, _ := json.Marshal(config)
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), data, 0o600); err != nil {
 		t.Fatal(err)

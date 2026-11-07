@@ -31,6 +31,7 @@ type Acquisition struct {
 	Method    string `json:"method"`
 	Audience  string `json:"audience,omitempty"`
 	TokenFile string `json:"token_file,omitempty"`
+	TokenEnv  string `json:"token_env,omitempty"`
 }
 type Workload struct {
 	Provider           string      `json:"provider"`
@@ -64,7 +65,7 @@ func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error)
 	}
 	for name, p := range c.Workloads {
 		a := Acquisition{}
-		switch p.Provider {
+		switch p.Provider() {
 		case "github":
 			a.Method = "github-actions"
 			a.Audience = m.Server
@@ -72,18 +73,25 @@ func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error)
 			a.Method = "vercel-oidc"
 		case "fly":
 			a.Method = "fly-machine-api"
-			a.Audience = "https://fly.io/" + p.Org
+			a.Audience = m.Server
 		case "oidc":
 			a.Method = "callback"
-			a.Audience = p.Audience
-			if p.TokenFile != "" {
-				a.Method = "token-file"
-				a.TokenFile = p.TokenFile
+			a.Audience = p.TokenAudience(m.Server)
+		}
+		if p.Token != nil {
+			if (p.Token.File == nil) == (p.Token.Env == nil) {
+				return nil, ErrInvalid
+			}
+			if p.Token.File != nil {
+				a = Acquisition{Method: "token-file", Audience: a.Audience, TokenFile: *p.Token.File}
+			}
+			if p.Token.Env != nil {
+				a = Acquisition{Method: "token-env", Audience: a.Audience, TokenEnv: *p.Token.Env}
 			}
 		}
 		services := slices.Clone(p.Services)
 		slices.Sort(services)
-		m.Workloads[name] = Workload{Provider: p.Provider, Services: services, MaxDurationSeconds: int(p.DurationLimit().Seconds()), Acquisition: a}
+		m.Workloads[name] = Workload{Provider: p.Provider(), Services: services, MaxDurationSeconds: int(p.DurationLimit().Seconds()), Acquisition: a}
 		for _, key := range services {
 			m.Services[key] = config.Protocol(c.Services[key])
 		}
@@ -116,6 +124,33 @@ func (m Manifest) Validate() error {
 			}
 			seen[s] = true
 		}
+		if !slices.Contains([]string{"github", "vercel", "fly", "oidc"}, w.Provider) {
+			return ErrInvalid
+		}
+		if a := w.Acquisition; a.Method == "token-file" || a.Method == "token-env" {
+			if w.Provider != "vercel" && !config.ExactWorkloadValue(a.Audience) {
+				return ErrInvalid
+			}
+			if w.Provider == "github" && a.Audience != m.Server {
+				return ErrInvalid
+			}
+			if w.Provider == "fly" && a.Audience != m.Server {
+				return ErrInvalid
+			}
+			if w.Provider == "vercel" && a.Audience != "" {
+				return ErrInvalid
+			}
+			if a.Method == "token-file" && (a.TokenFile == "" || len(a.TokenFile) > 4096 || strings.ContainsAny(a.TokenFile, "\x00\r\n") || a.TokenEnv != "") {
+				return ErrInvalid
+			}
+			if a.Method == "token-env" && (a.TokenEnv == "" || a.TokenFile != "" || config.ValidateWorkloadTokenEnv(a.TokenEnv) != nil) {
+				return ErrInvalid
+			}
+			continue
+		}
+		if w.Acquisition.TokenEnv != "" {
+			return ErrInvalid
+		}
 		switch w.Provider {
 		case "github":
 			if w.Acquisition.Method != "github-actions" || w.Acquisition.Audience != m.Server || w.Acquisition.TokenFile != "" {
@@ -126,7 +161,7 @@ func (m Manifest) Validate() error {
 				return ErrInvalid
 			}
 		case "fly":
-			if w.Acquisition.Method != "fly-machine-api" || !flyAudience.MatchString(w.Acquisition.Audience) || w.Acquisition.TokenFile != "" {
+			if w.Acquisition.Method != "fly-machine-api" || w.Acquisition.Audience != m.Server && !flyAudience.MatchString(w.Acquisition.Audience) || w.Acquisition.TokenFile != "" {
 				return ErrInvalid
 			}
 		case "oidc":

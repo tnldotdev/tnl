@@ -125,3 +125,39 @@ func TestConnectionSDKWorkloadSourcesAndTokenFileRotation(t *testing.T) {
 		t.Fatal("missing explicit source accepted", err)
 	}
 }
+
+func TestConnectionSDKWorkloadEnvironmentOverride(t *testing.T) {
+	f, _ := sdkWorkloadFixture(t, "oidc", workloadmanifest.Acquisition{Method: "token-env", Audience: "https://control.example", TokenEnv: "JOB_ID_TOKEN"})
+	request := connectorruntime.SDKWorkloadRequest{Runtime: workloadmanifest.Runtime{Workload: new("job")}}
+	data, _ := json.Marshal(map[string]any{"schema": 1, "sdk_workload": request})
+	preview, err := SelectSDKWorkload(f.options.Directory, "db", bytes.NewReader(data))
+	if err != nil || preview.Source != "native" || preview.TokenEnv != "JOB_ID_TOKEN" || f.identified != 0 || f.started != 0 {
+		t.Fatal("environment selection acquired provider identity", err)
+	}
+	t.Setenv("JOB_ID_TOKEN", "stale.owner.value")
+	prepare := func(token string) (connectorruntime.SDKPrepared, error) {
+		environment := connectorruntime.SDKEnvironment{TokenEnv: "JOB_ID_TOKEN", TokenValue: token}
+		input, _ := json.Marshal(map[string]any{"schema": 1, "sdk_workload": request, "sdk_workload_policy": preview.Policy, "sdk_environment": environment})
+		return f.operations.prepareSDK(t.Context(), f.options, bytes.NewReader(input))
+	}
+	first, err := prepare("first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		warm, err := prepare("first")
+		if err != nil || warm.Owner.ConnectionHandle != first.Owner.ConnectionHandle {
+			t.Fatal("environment acquisition replaced warm owner", err)
+		}
+	}
+	other, err := prepare("other")
+	if err != nil || other.Owner.ConnectionHandle == first.Owner.ConnectionHandle {
+		t.Fatal("changed environment reused another identity", err)
+	}
+	if _, err := prepare(""); Reason(err) != failure.WorkloadAssertionUnavailable {
+		t.Fatal("empty environment fell back to owner process", err)
+	}
+	if strings.Contains(fmt.Sprintf("%v %#v", connectorruntime.SDKEnvironment{TokenEnv: "JOB_ID_TOKEN", TokenValue: "private-value"}, connectorruntime.SDKEnvironment{TokenValue: "private-value"}), "private-value") {
+		t.Fatal("environment input leaked")
+	}
+}

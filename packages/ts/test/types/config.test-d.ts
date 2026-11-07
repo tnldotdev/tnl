@@ -621,10 +621,9 @@ test("configuration enforces service ownership and references for literals and f
     },
     workloads: {
       deploy: {
-        provider: "github",
         github: {
           workflow: ".github/workflows/deploy.yml",
-          ref: "refs/heads/main",
+          branch: "main",
           events: ["push"],
         },
         services: ["cluster", "db"],
@@ -636,10 +635,9 @@ test("configuration enforces service ownership and references for literals and f
     services: { api: {} },
     workloads: {
       deploy: {
-        provider: "github",
         github: {
           workflow: ".github/workflows/deploy.yml",
-          ref: "refs/heads/main",
+          branch: "main",
           events: ["push"],
         },
         // @ts-expect-error workload policies select existing service keys.
@@ -659,27 +657,16 @@ test("configuration enforces service ownership and references for literals and f
     },
     workloads: {
       storefront: {
-        provider: "vercel",
-        teamId: "team_one",
-        projectId: "prj_store",
-        environment: "production",
+        vercel: { team: "acme", project: "store", environment: "production" },
         services: ["inventory", "models"],
       },
       machine: {
-        provider: "fly",
-        org: "acme",
-        orgId: "123",
-        app: "store",
-        appId: "456",
+        fly: { app: "store" },
         services: ["inventory"],
       },
       worker: {
-        provider: "oidc",
-        issuer: "https://issuer.example",
-        jwksUrl: "https://issuer.example/.well-known/jwks",
-        audience: "tnl-store",
-        claims: { sub: "service:store" },
-        tokenFile: "/run/provider/token",
+        oidc: { issuer: "https://issuer.example", claims: { sub: "service:store" } },
+        token: { file: "/run/provider/token" },
         services: ["models"],
       },
     },
@@ -737,11 +724,7 @@ test("configuration enforces service ownership and references for literals and f
     services: { web: {}, explicit: { publisherGroup: "local" } },
     workloads: {
       ci: {
-        provider: "fly",
-        org: "acme",
-        orgId: "1",
-        app: "web",
-        appId: "2",
+        fly: { app: "web" },
         services: ["web", "explicit"],
       },
     },
@@ -752,6 +735,48 @@ test("configuration enforces service ownership and references for literals and f
   defineConfig(() => localWorkload);
   // @ts-expect-error asynchronous factories reject local workload references.
   defineConfig(async () => localWorkload);
+
+  ({
+    workloads: {
+      mixed: {
+        github: { workflow: ".github/workflows/test.yml" },
+        // @ts-expect-error each workload selects exactly one provider block.
+        fly: { app: "worker" },
+        services: ["db"],
+      },
+      // @ts-expect-error a provider block is required.
+      missing: { services: ["db"] },
+      old: {
+        // @ts-expect-error the provider block replaces the discriminator.
+        provider: "fly",
+        fly: { app: "worker" },
+        services: ["db"],
+      },
+      refs: {
+        github: {
+          workflow: ".github/workflows/test.yml",
+          branch: "main",
+          // @ts-expect-error branch and tag are mutually exclusive.
+          tag: "v1",
+        },
+        services: ["db"],
+      },
+      sources: {
+        fly: { app: "worker" },
+        token: {
+          file: "/run/token",
+          // @ts-expect-error token file and environment variable are mutually exclusive.
+          env: "TOKEN",
+        },
+        services: ["db"],
+      },
+      defaults: {
+        github: { workflow: ".github/workflows/test.yml" },
+        token: { env: "TOKEN" },
+        services: ["db"],
+      },
+    },
+  }) satisfies TnlConfig;
 
   // spreading an inferred configuration preserves its service-reference checks.
   defineConfig({ ...config, inspection: { maxBytes: "1GiB" } });

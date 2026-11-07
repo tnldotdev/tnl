@@ -35,6 +35,7 @@ type ProjectWorkloadGitHub struct {
 	Repository        string   `json:"repository"`
 	RepositoryID      string   `json:"repository_id"`
 	RepositoryOwnerID string   `json:"repository_owner_id"`
+	DefaultBranch     string   `json:"default_branch,omitempty"`
 	WorkflowRef       string   `json:"workflow_ref"`
 	Ref               string   `json:"ref"`
 	Events            []string `json:"events"`
@@ -91,7 +92,18 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 				services[key] = config.Service{PublisherGroup: new(s.PublisherGroup)}
 			}
 		}
-		policy := config.Workload{Provider: "github", GitHub: &config.WorkloadGitHub{Repository: &g.Repository, Workflow: workflow, Ref: g.Ref, Events: g.Events}, Services: p.Services}
+		policy := config.Workload{GitHub: &config.WorkloadGitHub{Repository: &g.Repository, Workflow: workflow, Events: g.Events}, Services: p.Services}
+		if !config.ValidWorkloadRef(g.Ref) {
+			return ErrProjectConfigurationInvalid
+		}
+		if g.DefaultBranch != "" && !config.ValidWorkloadRef("refs/heads/"+g.DefaultBranch) {
+			return ErrProjectConfigurationInvalid
+		}
+		if branch, ok := strings.CutPrefix(g.Ref, "refs/heads/"); ok {
+			policy.GitHub.Branch = &branch
+		} else {
+			policy.GitHub.Tag = new(strings.TrimPrefix(g.Ref, "refs/tags/"))
+		}
 		if g.Environment != "" {
 			policy.GitHub.Environment = &g.Environment
 		}
@@ -196,7 +208,7 @@ func (p ProjectWorkload) validateTrust() error {
 			return ErrProjectConfigurationInvalid
 		}
 		for k := range t.Claims {
-			if !slices.Contains([]string{"owner", "owner_id", "project_id", "environment", "sub"}, k) {
+			if !slices.Contains([]string{"owner", "owner_id", "project", "project_id", "environment", "sub"}, k) {
 				return ErrProjectConfigurationInvalid
 			}
 		}
@@ -212,7 +224,7 @@ func (p ProjectWorkload) validateTrust() error {
 				return ErrProjectConfigurationInvalid
 			}
 		}
-		if !require("org_name", "org_id", "app_name", "app_id") || t.Issuer != "https://oidc.fly.io/"+t.Claims["org_name"] || t.JWKSURL != t.Issuer+"/.well-known/jwks" || t.Audience != "https://fly.io/"+t.Claims["org_name"] {
+		if !require("org_name", "org_id", "app_name", "app_id") || t.Issuer != "https://oidc.fly.io/"+t.Claims["org_name"] || t.JWKSURL != t.Issuer+"/.well-known/jwks" {
 			return ErrProjectConfigurationInvalid
 		}
 	case "oidc":
