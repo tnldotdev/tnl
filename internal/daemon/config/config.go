@@ -263,6 +263,9 @@ func (c Config) Validate() (retErr error) {
 				failure.ServerListenAddressInvalid, listener.setting, err)
 		}
 	}
+	if err := c.validateRelayQUICListen(); err != nil {
+		return err
+	}
 	if c.ClientHelloConnectionLimit <= 0 ||
 		c.StandaloneControlConnectionLimit <= 0 || c.StandaloneRelayConnectionLimit <= 0 {
 		return errors.New("ingress admission capacities must be positive")

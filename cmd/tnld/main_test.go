@@ -63,6 +63,29 @@ func TestRelayQUICProfileDiagnostic(t *testing.T) {
 	}
 }
 
+func TestRelayQUICFlyWildcardDiagnostic(t *testing.T) {
+	var output bytes.Buffer
+	err := run(t.Context(), []string{
+		"serve", "--role=relay", "--relay-quic-profile=fly",
+		"--control-hostname=control.example.com", "--cluster-secret=0123456789abcdef0123456789abcdef",
+		"--relay-service-id=relay-a", "--relay-id=relay-a-1", "--relay-address=relay.example.com:443",
+		"--internal-relay-address=relay.internal:9445",
+	}, &output)
+	typed, ok := failure.Of(err)
+	if !ok || typed.Reason() != failure.ServerConfigInvalid || typed.Setting() != failure.SettingRelayUDPListen {
+		t.Fatalf("wildcard fly listener lost its diagnostic setting: %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("invalid configuration wrote stdout: %q", output.String())
+	}
+	writeTerminalError(&output, err)
+	want := "tnld: bind fly relay QUIC to a specific address TNLD_RELAY_UDP_LISTEN: server configuration is invalid; " +
+		"run tnld config check and correct the reported setting\n"
+	if output.String() != want {
+		t.Fatalf("wildcard fly diagnostic = %q; want %q", output.String(), want)
+	}
+}
+
 func TestRunMigrateRequiresDirectURL(t *testing.T) {
 	t.Setenv("TNLD_DATABASE_DIRECT_URL", "")
 	err := run(t.Context(), []string{"migrate"}, new(bytes.Buffer))

@@ -19,6 +19,7 @@ const (
 	sourceQUICQueue        = 16
 	sourceQUICQueueBytes   = 8 << 20
 	sourceQUICPacketBytes  = 64 << 10
+	sourceQUICOOBBytes     = 128
 )
 
 // sourceQUICListener owns one UDP reader and bounded virtual sockets, one for
@@ -29,10 +30,11 @@ const (
 //
 // these are transport lifetimes, not publisher or connector authority. the role
 // owner still authenticates every accepted connection and chooses when to drain.
-// virtual sockets deliberately do not expose the physical file descriptor:
-// QUIC's optimized batch reader must not bypass this source demultiplexer.
+// metadata-capable virtual sockets provide their own batch reader so QUIC never
+// reads the physical socket directly and bypasses this source demultiplexer.
 type sourceQUICListener struct {
 	packet               net.PacketConn
+	oob                  quic.OOBCapablePacketConn
 	trust                *tls.Config
 	config               *quic.Config
 	limit                int
@@ -51,8 +53,12 @@ type sourceQUICListener struct {
 
 type sourceQUICPacket struct {
 	data    []byte
+	oob     []byte
+	flags   int
 	address *net.UDPAddr
 }
+
+func (p sourceQUICPacket) size() int { return len(p.data) + len(p.oob) }
 
 type sourceQUICSocket struct {
 	owner           *sourceQUICListener
@@ -75,11 +81,14 @@ func listenSourceQUIC(packet net.PacketConn, trust *tls.Config, config QUICConfi
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &sourceQUICListener{packet: packet, trust: trust, config: quicConfig(config.Config), limit: config.PinnedRemoteIPLimit,
 		ctx: ctx, cancel: cancel, sources: make(map[netip.Addr]*sourceQUICSocket), stop: make(chan struct{}), accepted: make(chan *quic.Conn, sourceQUICPendingLimit)}
+	if !config.BasicPacketConn {
+		s.oob, _ = packet.(quic.OOBCapablePacketConn)
+	}
 	// validate TLS and QUIC configuration at startup, not silently on the first
 	// source's packet. this probe owns no physical socket or accepted connection.
 	probeCtx, stopProbe := context.WithCancel(ctx)
 	probe := &sourceQUICSocket{owner: s, ctx: probeCtx, cancel: stopProbe, packets: make(chan sourceQUICPacket), readChanged: make(chan struct{})}
-	transport := &quic.Transport{Conn: probe}
+	transport := &quic.Transport{Conn: probe.packetConn()}
 	listener, err := transport.Listen(trust, s.config)
 	stopProbe()
 	if listener != nil {
@@ -99,8 +108,16 @@ func listenSourceQUIC(packet net.PacketConn, trust *tls.Config, config QUICConfi
 func (s *sourceQUICListener) receive() {
 	defer s.cancel()
 	buffer := make([]byte, sourceQUICPacketBytes)
+	oob := make([]byte, sourceQUICOOBBytes)
 	for {
-		n, address, err := s.packet.ReadFrom(buffer)
+		var n, oobn, flags int
+		var address net.Addr
+		var err error
+		if s.oob != nil {
+			n, oobn, flags, address, err = s.oob.ReadMsgUDP(buffer, oob)
+		} else {
+			n, address, err = s.packet.ReadFrom(buffer)
+		}
 		if err != nil {
 			if s.ctx.Err() == nil && !errors.Is(err, net.ErrClosed) {
 				s.mu.Lock()
@@ -125,7 +142,7 @@ func (s *sourceQUICListener) receive() {
 			ctx, cancel := context.WithCancel(s.ctx)
 			source = &sourceQUICSocket{owner: s, ip: ip, ctx: ctx, cancel: cancel, packets: make(chan sourceQUICPacket, sourceQUICQueue),
 				created: time.Now(), pending: true, readChanged: make(chan struct{})}
-			source.transport = &quic.Transport{Conn: source}
+			source.transport = &quic.Transport{Conn: source.packetConn()}
 			source.listener, err = source.transport.Listen(s.trust, s.config)
 			if err != nil {
 				cancel()
@@ -137,10 +154,10 @@ func (s *sourceQUICListener) receive() {
 				s.wait.Go(source.accept)
 			}
 		}
-		if source != nil && source.ctx.Err() == nil && len(source.packets) < sourceQUICQueue && s.queuedBytes+n <= sourceQUICQueueBytes {
+		if source != nil && source.ctx.Err() == nil && len(source.packets) < sourceQUICQueue && s.queuedBytes+n+oobn <= sourceQUICQueueBytes {
 			copyAddress := net.UDPAddrFromAddrPort(udp.AddrPort())
-			source.packets <- sourceQUICPacket{data: append([]byte(nil), buffer[:n]...), address: copyAddress}
-			s.queuedBytes += n
+			source.packets <- sourceQUICPacket{data: append([]byte(nil), buffer[:n]...), oob: append([]byte(nil), oob[:oobn]...), flags: flags, address: copyAddress}
+			s.queuedBytes += n + oobn
 		}
 		s.mu.Unlock()
 	}
@@ -307,13 +324,21 @@ func (p *sourceQUICSocket) close() {
 		_ = p.transport.Close()
 		p.owner.mu.Lock()
 		for len(p.packets) > 0 {
-			p.owner.queuedBytes -= len((<-p.packets).data)
+			p.owner.queuedBytes -= (<-p.packets).size()
 		}
 		p.owner.mu.Unlock()
 	})
 }
 
 func (p *sourceQUICSocket) ReadFrom(buffer []byte) (int, net.Addr, error) {
+	packet, err := p.readPacket()
+	if err != nil {
+		return 0, nil, err
+	}
+	return copy(buffer, packet.data), packet.address, nil
+}
+
+func (p *sourceQUICSocket) readPacket() (sourceQUICPacket, error) {
 	for {
 		p.deadlineMu.Lock()
 		until, changed := p.readDeadline, p.readChanged
@@ -322,7 +347,7 @@ func (p *sourceQUICSocket) ReadFrom(buffer []byte) (int, net.Addr, error) {
 		var timer *time.Timer
 		if !until.IsZero() {
 			if !until.After(time.Now()) {
-				return 0, nil, os.ErrDeadlineExceeded
+				return sourceQUICPacket{}, os.ErrDeadlineExceeded
 			}
 			timer = time.NewTimer(time.Until(until))
 			expired = timer.C
@@ -332,9 +357,9 @@ func (p *sourceQUICSocket) ReadFrom(buffer []byte) (int, net.Addr, error) {
 			if timer != nil {
 				timer.Stop()
 			}
-			return 0, nil, net.ErrClosed
+			return sourceQUICPacket{}, net.ErrClosed
 		case <-expired:
-			return 0, nil, os.ErrDeadlineExceeded
+			return sourceQUICPacket{}, os.ErrDeadlineExceeded
 		case <-changed:
 			if timer != nil {
 				timer.Stop()
@@ -345,25 +370,32 @@ func (p *sourceQUICSocket) ReadFrom(buffer []byte) (int, net.Addr, error) {
 				timer.Stop()
 			}
 			p.owner.mu.Lock()
-			p.owner.queuedBytes -= len(packet.data)
+			p.owner.queuedBytes -= packet.size()
 			p.owner.mu.Unlock()
 			if p.ctx.Err() != nil {
-				return 0, nil, net.ErrClosed
+				return sourceQUICPacket{}, net.ErrClosed
 			}
-			return copy(buffer, packet.data), packet.address, nil
+			return packet, nil
 		}
 	}
 }
 
 func (p *sourceQUICSocket) WriteTo(buffer []byte, address net.Addr) (int, error) {
-	udp, ok := address.(*net.UDPAddr)
-	if !ok || udp == nil || udp.Zone != "" || udp.AddrPort().Addr().Unmap() != p.ip {
-		return 0, errors.New("muxsession: QUIC destination changed its bound source IP")
-	}
-	if p.ctx.Err() != nil {
-		return 0, net.ErrClosed
+	if err := p.checkDestination(address); err != nil {
+		return 0, err
 	}
 	return p.owner.packet.WriteTo(buffer, address)
+}
+
+func (p *sourceQUICSocket) checkDestination(address net.Addr) error {
+	udp, ok := address.(*net.UDPAddr)
+	if !ok || udp == nil || udp.Zone != "" || udp.AddrPort().Addr().Unmap() != p.ip {
+		return errors.New("muxsession: QUIC destination changed its bound source IP")
+	}
+	if p.ctx.Err() != nil {
+		return net.ErrClosed
+	}
+	return nil
 }
 
 func (p *sourceQUICSocket) Close() error        { p.cancel(); return nil }

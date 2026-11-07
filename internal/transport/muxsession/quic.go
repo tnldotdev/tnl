@@ -16,6 +16,8 @@ const defaultQUICKeepAlivePeriod = 30 * time.Second
 
 const compatibleQUICPacketSize = 1200
 
+var errQUICWildcardListen = errors.New("muxsession: basic QUIC listener requires a specific local IP address")
+
 // QUICConfig configures the QUIC transport. peer-capable role owners opt in to
 // DATAGRAMs with Config.EnableDatagrams; ordinary sessions keep the default off.
 type QUICConfig struct {
@@ -24,6 +26,7 @@ type QUICConfig struct {
 	UDPNetwork string
 	// BasicPacketConn limits listeners to net.PacketConn operations, so replies
 	// follow the socket route instead of received packet interface metadata.
+	// the resolved listen address must name one local IP, not a wildcard.
 	BasicPacketConn bool
 	// PinnedRemoteIPLimit isolates accepted QUIC connections by canonical source
 	// IP before packet dispatch. a nonzero bound opts in; port rebinding remains
@@ -92,6 +95,13 @@ func ListenQUICPacket(packet net.PacketConn, tlsConfig *tls.Config, config QUICC
 		_ = packet.Close()
 		return nil, errors.New("muxsession: source-bound QUIC requires a positive source limit")
 	}
+	if config.BasicPacketConn {
+		address, ok := packet.LocalAddr().(*net.UDPAddr)
+		if !ok || len(address.IP) == 0 || address.IP.IsUnspecified() {
+			_ = packet.Close()
+			return nil, errQUICWildcardListen
+		}
+	}
 	serverConfig, err := transportTLSConfigForALPN(tlsConfig, "", true, ALPN)
 	if err != nil {
 		_ = packet.Close()
@@ -100,7 +110,11 @@ func ListenQUICPacket(packet net.PacketConn, tlsConfig *tls.Config, config QUICC
 	if config.PinnedRemoteIPLimit > 0 {
 		return listenSourceQUIC(packet, serverConfig, config, ALPN)
 	}
-	transport := &quic.Transport{Conn: packet}
+	connection := packet
+	if config.BasicPacketConn {
+		connection = struct{ net.PacketConn }{packet}
+	}
+	transport := &quic.Transport{Conn: connection}
 	listener, err := transport.Listen(serverConfig, quicConfig(config.Config))
 	if err != nil {
 		_ = transport.Close()
@@ -125,6 +139,10 @@ func listenQUICWithALPN(address string, tlsConfig *tls.Config, config QUICConfig
 	udpAddress, err := net.ResolveUDPAddr(network, address)
 	if err != nil {
 		return nil, fmt.Errorf("muxsession: resolve QUIC listen address: %w", err)
+	}
+	// check after resolution too: a hostname can resolve to a wildcard IP.
+	if config.BasicPacketConn && (len(udpAddress.IP) == 0 || udpAddress.IP.IsUnspecified()) {
+		return nil, errQUICWildcardListen
 	}
 	packetConn, err := net.ListenUDP(network, udpAddress)
 	if err != nil {
