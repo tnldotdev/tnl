@@ -111,7 +111,7 @@ func TestConnectorRefreshBlockedWriterDoesNotSpendSiblingBudget(t *testing.T) {
 	healthy, healthyPeer := net.Pipe()
 	defer healthyPeer.Close()
 	makeUse := func(conn net.Conn, entry tunnelv1.ConnectorPeerVisitorEntry) *connectorUse {
-		prepared := &PreparedConnector{ctx: p.ctx, conn: conn, callbackDone: make(chan struct{})}
+		prepared := &PreparedConnector{ctx: p.ctx, conn: conn, stream: streamPrepared{}, permission: permissionUsable{}, callbackDone: make(chan struct{})}
 		prepared.stop = context.AfterFunc(p.ctx, func() { defer close(prepared.callbackDone); _ = conn.Close() })
 		return &connectorUse{entry: entry, prepared: prepared}
 	}

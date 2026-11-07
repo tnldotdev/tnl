@@ -15,7 +15,7 @@ func deadlinePreparedFixture(t *testing.T, until time.Time) (*PreparedConnector,
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	left, right := net.Pipe()
-	p := &PreparedConnector{ctx: ctx, conn: left, permissionUntil: until, callbackDone: make(chan struct{})}
+	p := &PreparedConnector{ctx: ctx, conn: left, stream: streamPrepared{}, permission: permissionUsable{}, permissionUntil: until, callbackDone: make(chan struct{})}
 	p.stop = context.AfterFunc(ctx, func() { defer close(p.callbackDone); _ = p.closePhysical() })
 	p.mu.Lock()
 	p.startPermissionWorkerLocked()
@@ -56,7 +56,8 @@ func TestPreparedConnectorStalePermissionCannotBorrowNewExpiry(t *testing.T) {
 			t.Fatal(err)
 		}
 		p.mu.Lock()
-		fenced := p.permissionPending != nil && p.permissionUntil.Equal(until) && p.permissionErr == nil
+		_, queued := p.permission.(permissionQueued)
+		fenced := queued && p.permissionUntil.Equal(until)
 		p.mu.Unlock()
 		if !fenced {
 			t.Fatal("stale reply released or renewed an application permission")

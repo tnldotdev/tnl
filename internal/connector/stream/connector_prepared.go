@@ -24,24 +24,65 @@ import (
 // call control, reset setup time, or replace the target after live bytes fail.
 // the pair/session owner must close these children before replacing its run.
 type PreparedConnector struct {
-	ctx                context.Context
-	conn               net.Conn
-	mu                 sync.Mutex
-	taken              bool
-	closed             bool
-	stop               func() bool
-	callbackDone       chan struct{}
-	physicalOnce       sync.Once
-	physicalErr        error
-	closeOnce          sync.Once
-	closeErr           error
-	work               sync.WaitGroup
-	permissionPending  chan struct{}
-	permissionErr      error
-	permissionUpdates  chan preparedPermissionRenewal
-	permissionCancel   context.CancelFunc
-	permissionRenewing bool
-	permissionUntil    time.Time
+	ctx               context.Context
+	conn              net.Conn
+	mu                sync.Mutex
+	stream            preparedStreamPhase
+	permission        preparedPermissionPhase
+	stop              func() bool
+	callbackDone      chan struct{}
+	physicalOnce      sync.Once
+	physicalErr       error
+	closeOnce         sync.Once
+	closeErr          error
+	work              sync.WaitGroup
+	permissionUpdates chan preparedPermissionRenewal
+	permissionCancel  context.CancelFunc
+	permissionUntil   time.Time
+}
+
+// stream consumption and permission renewal are independent lifecycles. a
+// pending renewal retains its one wakeup through the active proof and any
+// queued replacement; a denied proof never returns to the usable phase.
+type preparedStreamPhase interface{ preparedStreamPhase() }
+type streamPrepared struct{}
+type streamForwarding struct{}
+type streamClosed struct{}
+
+func (streamPrepared) preparedStreamPhase()   {}
+func (streamForwarding) preparedStreamPhase() {}
+func (streamClosed) preparedStreamPhase()     {}
+
+type preparedPermissionPhase interface{ preparedPermissionPhase() }
+type permissionUsable struct{}
+type permissionQueued struct{ wait chan struct{} }
+type permissionRenewing struct{ wait chan struct{} }
+type permissionDenied struct{}
+
+func (permissionUsable) preparedPermissionPhase()   {}
+func (permissionQueued) preparedPermissionPhase()   {}
+func (permissionRenewing) preparedPermissionPhase() {}
+func (permissionDenied) preparedPermissionPhase()   {}
+
+func (p *PreparedConnector) closedLocked() bool {
+	_, closed := p.stream.(streamClosed)
+	return closed
+}
+
+func (p *PreparedConnector) permissionWaitLocked() chan struct{} {
+	switch state := p.permission.(type) {
+	case permissionQueued:
+		return state.wait
+	case permissionRenewing:
+		return state.wait
+	default:
+		return nil
+	}
+}
+
+func (p *PreparedConnector) permissionDeniedLocked() bool {
+	_, denied := p.permission.(permissionDenied)
+	return denied
 }
 
 type preparedPermissionRenewal struct {
@@ -132,7 +173,7 @@ func prepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 		return nil, ErrServiceConnection
 	}
 	setupStopped = true
-	p := &PreparedConnector{ctx: ctx, conn: connection, callbackDone: make(chan struct{}), permissionUntil: run.ValidUntil}
+	p := &PreparedConnector{ctx: ctx, conn: connection, stream: streamPrepared{}, permission: permissionUsable{}, callbackDone: make(chan struct{}), permissionUntil: run.ValidUntil}
 	p.stop = context.AfterFunc(ctx, func() { defer close(p.callbackDone); _ = p.closePhysical() })
 	p.mu.Lock()
 	p.startPermissionWorkerLocked()
@@ -149,10 +190,10 @@ func (p *PreparedConnector) closePhysical() error {
 func (p *PreparedConnector) finish() {
 	p.closeOnce.Do(func() {
 		p.mu.Lock()
-		p.closed = true
-		if p.permissionPending != nil {
-			close(p.permissionPending)
-			p.permissionPending = nil
+		p.stream = streamClosed{}
+		if pending := p.permissionWaitLocked(); pending != nil {
+			close(pending)
+			p.permission = permissionUsable{}
 		}
 		if p.permissionCancel != nil {
 			p.permissionCancel()
@@ -170,11 +211,11 @@ func (p *PreparedConnector) finish() {
 func (p *PreparedConnector) queuePermission(renewal preparedPermissionRenewal) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed || p.ctx.Err() != nil || p.permissionErr != nil || !p.permissionUntil.IsZero() && !p.permissionUntil.After(time.Now()) {
+	if p.closedLocked() || p.ctx.Err() != nil || p.permissionDeniedLocked() || !p.permissionUntil.IsZero() && !p.permissionUntil.After(time.Now()) {
 		return ErrServiceConnection
 	}
-	if p.permissionPending == nil {
-		p.permissionPending = make(chan struct{})
+	if p.permissionWaitLocked() == nil {
+		p.permission = permissionQueued{wait: make(chan struct{})}
 	}
 	p.startPermissionWorkerLocked()
 	select {
@@ -205,11 +246,11 @@ func (p *PreparedConnector) startPermissionWorkerLocked() {
 func (p *PreparedConnector) suspendPermission() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed || p.ctx.Err() != nil || p.permissionErr != nil || !p.permissionUntil.IsZero() && !p.permissionUntil.After(time.Now()) {
+	if p.closedLocked() || p.ctx.Err() != nil || p.permissionDeniedLocked() || !p.permissionUntil.IsZero() && !p.permissionUntil.After(time.Now()) {
 		return ErrServiceConnection
 	}
-	if p.permissionPending == nil {
-		p.permissionPending = make(chan struct{})
+	if p.permissionWaitLocked() == nil {
+		p.permission = permissionQueued{wait: make(chan struct{})}
 	}
 	p.startPermissionWorkerLocked()
 	return nil
@@ -267,14 +308,19 @@ func (p *PreparedConnector) Close() error {
 // renewal. denial leaves a permanent fence before any waiting write is released.
 func (p *PreparedConnector) renewPermission(ctx context.Context, renew func() error, nextUntil time.Time) error {
 	p.mu.Lock()
-	if p.closed || p.ctx.Err() != nil || ctx.Err() != nil || p.permissionRenewing || p.permissionErr != nil {
+	if p.closedLocked() || p.ctx.Err() != nil || ctx.Err() != nil || p.permissionDeniedLocked() {
 		p.mu.Unlock()
 		return ErrServiceConnection
 	}
-	if p.permissionPending == nil {
-		p.permissionPending = make(chan struct{})
+	if _, renewing := p.permission.(permissionRenewing); renewing {
+		p.mu.Unlock()
+		return ErrServiceConnection
 	}
-	p.permissionRenewing = true
+	pending := p.permissionWaitLocked()
+	if pending == nil {
+		pending = make(chan struct{})
+	}
+	p.permission = permissionRenewing{wait: pending}
 	p.mu.Unlock()
 	err := renew()
 	p.mu.Lock()
@@ -289,13 +335,21 @@ func (p *PreparedConnector) renewPermission(ctx context.Context, renew func() er
 		}
 	}
 	stale := errors.Is(err, tunnel.ErrConnectorPermissionStale)
-	if err != nil && !stale {
-		p.permissionErr = err
-	}
-	p.permissionRenewing = false
-	if p.permissionPending != nil && !stale && (err != nil || len(p.permissionUpdates) == 0) {
-		close(p.permissionPending)
-		p.permissionPending = nil
+	if p.closedLocked() {
+		// finish already released this waiter's channel.
+		p.permission = permissionUsable{}
+	} else if stale {
+		// a replaced binding is not a denial. retain the same write fence
+		// until a proof for the current binding is acknowledged.
+		p.permission = permissionQueued{wait: pending}
+	} else if err != nil {
+		p.permission = permissionDenied{}
+		close(pending)
+	} else if len(p.permissionUpdates) == 0 {
+		p.permission = permissionUsable{}
+		close(pending)
+	} else {
+		p.permission = permissionQueued{wait: pending}
 	}
 	p.mu.Unlock()
 	return err
@@ -304,8 +358,8 @@ func (p *PreparedConnector) renewPermission(ctx context.Context, renew func() er
 func (p *PreparedConnector) waitPermission(ctx context.Context) error {
 	for {
 		p.mu.Lock()
-		pending := p.permissionPending
-		invalid := p.closed || p.ctx.Err() != nil || ctx.Err() != nil || p.permissionErr != nil || !p.permissionUntil.IsZero() && !p.permissionUntil.After(time.Now())
+		pending := p.permissionWaitLocked()
+		invalid := p.closedLocked() || p.ctx.Err() != nil || ctx.Err() != nil || p.permissionDeniedLocked() || !p.permissionUntil.IsZero() && !p.permissionUntil.After(time.Now())
 		p.mu.Unlock()
 		if invalid {
 			return ErrServiceConnection
@@ -331,11 +385,11 @@ func (p *PreparedConnector) Forward(ctx context.Context, local net.Conn) (result
 		return ErrServiceConnection
 	}
 	p.mu.Lock()
-	if p.closed || p.taken || p.ctx.Err() != nil || ctx.Err() != nil {
+	if _, prepared := p.stream.(streamPrepared); !prepared || p.ctx.Err() != nil || ctx.Err() != nil {
 		p.mu.Unlock()
 		return ErrServiceConnection
 	}
-	p.taken = true
+	p.stream = streamForwarding{}
 	p.work.Add(1)
 	p.mu.Unlock()
 	defer p.work.Done()
@@ -373,7 +427,7 @@ type preparedConnectorUse struct {
 func (c *preparedConnectorUse) current() error {
 	c.owner.mu.Lock()
 	defer c.owner.mu.Unlock()
-	if c.owner.closed || c.owner.ctx.Err() != nil || c.ctx.Err() != nil || c.owner.permissionErr != nil || !c.owner.permissionUntil.IsZero() && !c.owner.permissionUntil.After(time.Now()) {
+	if c.owner.closedLocked() || c.owner.ctx.Err() != nil || c.ctx.Err() != nil || c.owner.permissionDeniedLocked() || !c.owner.permissionUntil.IsZero() && !c.owner.permissionUntil.After(time.Now()) {
 		return ErrServiceConnection
 	}
 	return nil
@@ -407,7 +461,7 @@ func (c *preparedConnectorUse) CloseWrite() error {
 }
 func (c *preparedConnectorUse) Close() error {
 	c.owner.mu.Lock()
-	c.owner.closed = true
+	c.owner.stream = streamClosed{}
 	c.owner.mu.Unlock()
 	return c.owner.closePhysical()
 }
