@@ -14,9 +14,10 @@ import (
 	yamux "github.com/libp2p/go-yamux/v5"
 	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 )
 
-func stdioTransportPair(t *testing.T, transport string) (muxsession.Stream, muxsession.Stream) {
+func stdioTransportSessions(t *testing.T, transport string) (muxsession.Session, muxsession.Session) {
 	t.Helper()
 	root, certificate := providerCertificate(t)
 	roots := x509.NewCertPool()
@@ -84,6 +85,14 @@ func stdioTransportPair(t *testing.T, transport string) (muxsession.Stream, muxs
 		t.Fatal(ctx.Err())
 	}
 	t.Cleanup(func() { _ = server.Close() })
+	return client, server
+}
+
+func stdioTransportPair(t *testing.T, transport string) (muxsession.Stream, muxsession.Stream) {
+	t.Helper()
+	client, server := stdioTransportSessions(t, transport)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
 	left, err := client.OpenStream(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +110,68 @@ func stdioTransportPair(t *testing.T, transport string) (muxsession.Stream, muxs
 		t.Fatal(err)
 	}
 	return left, right
+}
+
+type stdioResetReadBarrier struct {
+	muxsession.Stream
+	readDone <-chan struct{}
+}
+
+func (s stdioResetReadBarrier) Reset(code uint32) error {
+	err := s.Stream.Reset(code)
+	<-s.readDone
+	return err
+}
+
+type stdioReadCompleted struct {
+	net.Conn
+	done func()
+}
+
+func (c stdioReadCompleted) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.done()
+	return n, err
+}
+
+func TestStdioResetJoinsReaderBeforeResetReturns(t *testing.T) {
+	for _, transport := range []string{"quic", "tls-tcp"} {
+		t.Run(transport, func(t *testing.T) {
+			raw, _ := stdioTransportPair(t, transport)
+			local, peer := net.Pipe()
+			defer peer.Close()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			readDone := make(chan struct{})
+			release := sync.OnceFunc(func() { close(readDone) })
+			defer release()
+			o := newStdioOperation(ctx, local)
+			selected, err := o.bind(stdioResetReadBarrier{Stream: raw, readDone: readDone})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := o.activate(selected); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() {
+				// the reset wakes the remote copy, whose failure closes stdin.
+				// hold Reset until the stdin result has been classified.
+				_, err := streamcopy.Copy(stdioReadCompleted{Conn: o.local, done: release}, selected)
+				o.complete()
+				done <- o.finish(err)
+			}()
+			cancel()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal("ordinary cancellation leaked the reader's close error", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("reset and copy workers did not join")
+			}
+		})
+	}
 }
 
 func TestStdioAbortRealTransportOppositeResetOrders(t *testing.T) {

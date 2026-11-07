@@ -78,6 +78,9 @@ func (o *stdioOperation) stop(cause error, caller bool) {
 		return
 	}
 	o.stopping, o.cause, o.expected = true, cause, caller && cause == context.Canceled
+	// reset can wake a copy worker that closes local before Reset returns.
+	// publish ownership before either worker can observe that close.
+	o.localClosing = true
 	selected, active := o.selected, o.active
 	o.resetStarted = active && selected != nil && selected.closeDone == nil
 	o.mu.Unlock()
@@ -92,9 +95,6 @@ func (o *stdioOperation) stop(cause error, caller bool) {
 		}
 		o.mu.Unlock()
 	}
-	o.mu.Lock()
-	o.localClosing = true
-	o.mu.Unlock()
 	var closeErr error
 	if local, ok := o.local.(*stdioLocalConn); ok {
 		closeErr = local.abort(cause)
