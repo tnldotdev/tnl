@@ -52,10 +52,16 @@ func TestPolicyLeaseOutageExpiresTrafficAndFencesDelayedRenewal(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		lease, update, key := fixture(t)
 		first := lease.Begin()
+		if lease.phase != leaseNeedsSnapshot || !first.Snapshot {
+			t.Fatal("new lease did not require an authenticated snapshot")
+		}
 		update.View.ObservedAt, update.View.ValidUntil = first.StartedAt, first.StartedAt.Add(10*time.Second)
 		time.Sleep(2 * time.Second)
 		if err := lease.Apply(first, update); err != nil {
 			t.Fatal(err)
+		}
+		if lease.phase != leaseCurrent {
+			t.Fatal("accepted policy did not enter the current phase")
 		}
 		permission := admission(t, lease, key, "first", time.Now().Add(time.Minute))
 		var stopped atomic.Int64
@@ -72,6 +78,9 @@ func TestPolicyLeaseOutageExpiresTrafficAndFencesDelayedRenewal(t *testing.T) {
 		if stopped.Load() != 1 {
 			t.Fatal("expired policy did not stop active traffic exactly once")
 		}
+		if lease.phase != leaseNeedsSnapshot || lease.update.View.VisitorPolicyRevision != 1 {
+			t.Fatal("expiry lost the last authenticated update or kept serving")
+		}
 		if _, enabled, _ := lease.Current(); enabled {
 			t.Fatal("process lease or token outlived expired visitor policy")
 		}
@@ -86,10 +95,28 @@ func TestPolicyLeaseOutageExpiresTrafficAndFencesDelayedRenewal(t *testing.T) {
 		if err := lease.Apply(recovery, update); err != nil {
 			t.Fatal("fresh snapshot could not recover new admissions", err)
 		}
+		if lease.phase != leaseCurrent {
+			t.Fatal("fresh snapshot did not restore the current phase")
+		}
 		if stopped.Load() != 1 {
 			t.Fatal("snapshot revived an old admission")
 		}
 	})
+}
+
+func TestPolicyLeaseClosedPhaseIsTerminal(t *testing.T) {
+	lease, update, _ := fixture(t)
+	if err := lease.Apply(lease.Begin(), update); err != nil {
+		t.Fatal(err)
+	}
+	lease.Close()
+	request := lease.Begin()
+	if lease.phase != leaseClosed || !request.Snapshot || lease.revision != 1 {
+		t.Fatal("closing the lease lost its revision or offered serving authority")
+	}
+	if err := lease.Apply(request, update); !errors.Is(err, ErrUpdate) {
+		t.Fatal("closed lease accepted another snapshot", err)
+	}
 }
 
 func TestPolicyLeaseInstallationCannotOutliveRequestBudget(t *testing.T) {
