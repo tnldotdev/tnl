@@ -215,6 +215,15 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 		return connectorruntime.ErrInvalid
 	}
 	backend := &connectorConnectionBackend{openSession: o.OpenSession, project: project, scope: scope, stateDir: options.StateDir, assertion: request.Assertion, directory: options.OwnerDirectory, runnerTemp: options.RunnerTemp, parentPID: options.ParentPID}
+	if request.Refresh != nil {
+		if scope.Workload == "" || workload.ValidateRefreshSource(*request.Refresh) != nil {
+			return connectorruntime.ErrInvalid
+		}
+		source := *request.Refresh
+		backend.refreshAssertion = func(ctx context.Context) (string, error) {
+			return workload.Acquire(ctx, source, nil, func(string) string { return "" })
+		}
+	}
 	if options.SDKRegistry != "" {
 		if options.ParentPID <= 0 || connectorruntime.VerifyDirectory(options.SDKRegistry) != nil {
 			return connectorruntime.ErrInvalid

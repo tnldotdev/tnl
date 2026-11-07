@@ -37,6 +37,7 @@ type SDKOptions struct {
 	WorkloadSelection  *connectorruntime.SDKWorkloadRequest
 	WorkloadPolicy     string
 	Environment        *connectorruntime.SDKEnvironment
+	refresh            *workloadmanifest.Acquisition
 }
 
 type sdkRegistry struct {
@@ -205,6 +206,7 @@ func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assert
 		if options.Environment != nil {
 			environment = *options.Environment
 		}
+		options.refresh = sdkWorkloadRefresh(selected, source, *options.WorkloadSelection, environment, assertion)
 		assertion, err = acquireSDKWorkload(ctx, selected, source, *options.WorkloadSelection, environment, assertion)
 		if err != nil {
 			return connectorruntime.SDKPrepared{}, err
@@ -224,6 +226,7 @@ func (o sdkOperations) selectSDK(ctx context.Context, options SDKOptions, assert
 		if err != nil {
 			return connectorruntime.SDKPrepared{}, err
 		}
+		options.refresh = workload.RefreshSource(scope.Directory, hints, os.Getenv)
 	}
 	if !slices.Contains(scope.Services, options.Service) {
 		return connectorruntime.SDKPrepared{}, connectorruntime.ErrUnauthorized
@@ -401,7 +404,7 @@ func (o sdkOperations) sdkOwner(ctx context.Context, options SDKOptions, scope c
 	start.SDKRegistry = options.Registry
 	start.RunnerTemp = options.Registry
 	closed := false
-	if err := o.start(ctx, start, connectorruntime.StartRequest{Schema: 1, Context: scope, Assertion: assertion}, func(status connectorruntime.Status) error {
+	if err := o.start(ctx, start, connectorruntime.StartRequest{Schema: 1, Context: scope, Assertion: assertion, Refresh: options.refresh}, func(status connectorruntime.Status) error {
 		owner = status
 		return sdkUpdate(context.WithoutCancel(ctx), options, func(r *sdkRegistry) error {
 			closed = r.Closed
