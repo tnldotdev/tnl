@@ -44,10 +44,20 @@ type Lease struct {
 	update                   Update
 	sequence, applied, epoch uint64
 	revision, keyRevision    int64
-	current, closed          bool
+	phase                    leasePhase
 	timer                    *time.Timer
 	guards                   map[*Guard]struct{}
 }
+
+// the last authenticated update survives expiry for revision and control-clock
+// fences. only a current lease grants authority; closed is terminal.
+type leasePhase uint8
+
+const (
+	leaseNeedsSnapshot leasePhase = iota
+	leaseCurrent
+	leaseClosed
+)
 
 func New(scope visitorscope.Scope, now func() time.Time) (*Lease, error) {
 	if !scope.Valid() {
@@ -63,7 +73,7 @@ func (l *Lease) Begin() Request {
 	l.mu.Lock()
 	stopped := l.expireLocked(l.now())
 	l.sequence++
-	r := Request{AfterRevision: l.revision, Snapshot: !l.current, StartedAt: l.now(), sequence: l.sequence, epoch: l.epoch}
+	r := Request{AfterRevision: l.revision, Snapshot: l.phase != leaseCurrent, StartedAt: l.now(), sequence: l.sequence, epoch: l.epoch}
 	l.mu.Unlock()
 	stopGuards(stopped)
 	return r
@@ -95,7 +105,7 @@ func (l *Lease) Apply(request Request, update Update) error {
 func (l *Lease) applyLocked(request Request, update Update, now time.Time) error {
 	view := update.View
 	duration := view.ValidUntil.Sub(view.ObservedAt)
-	if l.closed || request.epoch != l.epoch || request.sequence <= l.applied || request.sequence > l.sequence || request.StartedAt.IsZero() || now.Before(request.StartedAt) ||
+	if l.phase == leaseClosed || request.epoch != l.epoch || request.sequence <= l.applied || request.sequence > l.sequence || request.StartedAt.IsZero() || now.Before(request.StartedAt) ||
 		(!request.Deadline.IsZero() && !now.Before(request.Deadline)) ||
 		(l.revision > 0 && view.ObservedAt.Before(l.update.View.ControlTime)) ||
 		view.Scope != l.scope || view.VisitorPolicyRevision < l.revision || update.KeyRevision < l.keyRevision || update.KeyRevision < 1 || view.VisitorPolicyRevision < 1 ||
@@ -128,7 +138,7 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 	view.ControlTime = view.ObservedAt
 	view.ObservedAt, view.ValidUntil = request.StartedAt, request.StartedAt.Add(duration)
 	update.View, update.Events = view, nil
-	l.update, l.revision, l.keyRevision, l.applied, l.current = update, view.VisitorPolicyRevision, update.KeyRevision, request.sequence, true
+	l.update, l.revision, l.keyRevision, l.applied, l.phase = update, view.VisitorPolicyRevision, update.KeyRevision, request.sequence, leaseCurrent
 	if l.timer == nil {
 		l.timer = time.AfterFunc(view.ValidUntil.Sub(now), l.expire)
 	} else {
@@ -140,8 +150,8 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 func (l *Lease) Current() (visitortoken.View, bool, bool) {
 	l.mu.Lock()
 	stopped := l.expireLocked(l.now())
-	view, enabled, anonymous := l.update.View, l.current && l.update.Enabled, l.current && l.update.Enabled && l.update.Anonymous
-	if !l.current {
+	view, enabled, anonymous := l.update.View, l.phase == leaseCurrent && l.update.Enabled, l.phase == leaseCurrent && l.update.Enabled && l.update.Anonymous
+	if l.phase != leaseCurrent {
 		view = visitortoken.View{}
 	}
 	l.mu.Unlock()
@@ -150,7 +160,7 @@ func (l *Lease) Current() (visitortoken.View, bool, bool) {
 }
 
 func (l *Lease) allowedLocked(permission visitortoken.VerifiedPermission, source netip.Addr, now time.Time) bool {
-	return l.current && l.update.Enabled && visitortoken.CheckCurrent(permission, l.update.View, now) == nil && (l.update.IP == nil || l.update.IP.Allows(source))
+	return l.phase == leaseCurrent && l.update.Enabled && visitortoken.CheckCurrent(permission, l.update.View, now) == nil && (l.update.IP == nil || l.update.IP.Allows(source))
 }
 
 type Guard struct {
@@ -173,15 +183,15 @@ func (g *Guard) allowedLocked(now time.Time) bool {
 		return false
 	}
 	if g.connection {
-		return l.current && l.update.Enabled && l.update.BoundConnections && now.Before(l.update.View.ValidUntil)
+		return l.phase == leaseCurrent && l.update.Enabled && l.update.BoundConnections && now.Before(l.update.View.ValidUntil)
 	}
 	if g.anonymous {
-		return l.current && l.update.Enabled && l.update.Anonymous && now.Before(l.update.View.ValidUntil) && (l.update.IP == nil || l.update.IP.Allows(g.source))
+		return l.phase == leaseCurrent && l.update.Enabled && l.update.Anonymous && now.Before(l.update.View.ValidUntil) && (l.update.IP == nil || l.update.IP.Allows(g.source))
 	}
 	if l.allowedLocked(g.permission, g.source, now) {
 		return true
 	}
-	if !g.renewable || !l.current || !l.update.Enabled || !now.Before(g.confirmedUntil) || g.permission.Facts().VisitorPolicyRevision == l.update.View.VisitorPolicyRevision ||
+	if !g.renewable || l.phase != leaseCurrent || !l.update.Enabled || !now.Before(g.confirmedUntil) || g.permission.Facts().VisitorPolicyRevision == l.update.View.VisitorPolicyRevision ||
 		(l.update.IP != nil && !l.update.IP.Allows(g.source)) {
 		return false
 	}
@@ -212,7 +222,7 @@ func (l *Lease) BindConnection(stop func()) (*Guard, error) {
 	stopped := l.expireLocked(now)
 	var guard *Guard
 	var err error
-	if !l.current || !l.update.Enabled {
+	if l.phase != leaseCurrent || !l.update.Enabled {
 		err = visitortoken.ErrPolicy
 	} else if l.update.BoundConnections {
 		guard = &Guard{lease: l, connection: true, stop: stop}
@@ -345,10 +355,10 @@ func (g *Guard) Revoke() {
 }
 
 func (l *Lease) expireLocked(now time.Time) []*Guard {
-	if !l.current || now.Before(l.update.View.ValidUntil) {
+	if l.phase != leaseCurrent || now.Before(l.update.View.ValidUntil) {
 		return nil
 	}
-	l.current = false
+	l.phase = leaseNeedsSnapshot
 	l.epoch++
 	var guards []*Guard
 	for guard := range l.guards {
@@ -367,11 +377,10 @@ func (l *Lease) expire() {
 
 func (l *Lease) Close() {
 	l.mu.Lock()
-	l.closed = true
+	l.phase = leaseClosed
 	if l.timer != nil {
 		l.timer.Stop()
 	}
-	l.current = false
 	l.epoch++
 	var guards []*Guard
 	for guard := range l.guards {

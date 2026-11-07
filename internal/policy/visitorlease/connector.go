@@ -25,7 +25,7 @@ func (l *Lease) ConnectorSourceCurrent(source netip.Addr, metadata int64) bool {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.current && !l.closed && l.update.Enabled && metadata == l.update.View.MetadataRevision && l.now().Before(l.update.View.ValidUntil) &&
+	return l.phase == leaseCurrent && l.update.Enabled && metadata == l.update.View.MetadataRevision && l.now().Before(l.update.View.ValidUntil) &&
 		(l.update.IP == nil || l.update.IP.Allows(source.Unmap()))
 }
 
