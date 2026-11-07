@@ -31,6 +31,7 @@ const maxHeaderFields = 100
 
 // readiness probes keep HTML responses streaming and observe headers only.
 const ReadinessProbeHeader = "X-Tnl-Readiness-Probe"
+const ProxyTokenHeader = "X-Tnl-Proxy-Token"
 
 const defaultMaxConnsPerHost = 64
 
@@ -156,6 +157,7 @@ type Config struct {
 	Mounts        []Mount
 	Hooks         ResponseHooks
 	TargetOptions TargetOptions
+	ProxyToken    string
 	// ResolveTarget selects the base target before each request. its immutable
 	// identity retires pooled connections even when the address stays the same.
 	// nil uses Target; mounted paths retain their own target selection.
@@ -178,7 +180,7 @@ func New(config Config) (http.Handler, error) {
 	if err != nil || canonical != config.Hostname {
 		return nil, diagnostic.Wrap(diagnostic.PublicURLInvalid, errors.New("localproxy: hostname must be canonical"))
 	}
-	base, err := newReverseProxy(config.Target, config.MaxConnsPerHost, config.Hooks, config.TargetOptions, config.OnTargetFailure)
+	base, err := newReverseProxy(config.Target, config.MaxConnsPerHost, config.Hooks, config.TargetOptions, config.ProxyToken, config.OnTargetFailure)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +201,7 @@ func New(config Config) (http.Handler, error) {
 			}
 			mu.Lock()
 			if currentAddress != canonical || currentIdentity != identity {
-				selected, err := newReverseProxy(canonical, config.MaxConnsPerHost, config.Hooks, config.TargetOptions, config.OnTargetFailure)
+				selected, err := newReverseProxy(canonical, config.MaxConnsPerHost, config.Hooks, config.TargetOptions, config.ProxyToken, config.OnTargetFailure)
 				if err != nil {
 					mu.Unlock()
 					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
@@ -245,7 +247,7 @@ func New(config Config) (http.Handler, error) {
 						}
 					}
 					var err error
-					upstream, err = newReverseProxy(target, config.MaxConnsPerHost, config.Hooks, mount.Options, config.OnTargetFailure)
+					upstream, err = newReverseProxy(target, config.MaxConnsPerHost, config.Hooks, mount.Options, "", config.OnTargetFailure)
 					if err != nil {
 						mu.Unlock()
 						diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
@@ -258,7 +260,7 @@ func New(config Config) (http.Handler, error) {
 				selected.ServeHTTP(w, r)
 			})
 		} else {
-			proxy, err = newReverseProxy(mount.Target, config.MaxConnsPerHost, config.Hooks, mount.Options, config.OnTargetFailure)
+			proxy, err = newReverseProxy(mount.Target, config.MaxConnsPerHost, config.Hooks, mount.Options, "", config.OnTargetFailure)
 			if err != nil {
 				return nil, fmt.Errorf("localproxy: mount %q: %w", mount.Prefix, err)
 			}
@@ -304,7 +306,7 @@ func New(config Config) (http.Handler, error) {
 	}), httpstream.RequestBodyTimeout), nil
 }
 
-func newReverseProxy(target string, maxConnsPerHost int, hooks ResponseHooks, options TargetOptions, onTargetFailure func()) (*httputil.ReverseProxy, error) {
+func newReverseProxy(target string, maxConnsPerHost int, hooks ResponseHooks, options TargetOptions, proxyToken string, onTargetFailure func()) (*httputil.ReverseProxy, error) {
 	canonicalTarget, err := targetsyntax.NormalizeTarget(target)
 	if err != nil {
 		return nil, err
@@ -355,6 +357,9 @@ func newReverseProxy(target string, maxConnsPerHost int, hooks ResponseHooks, op
 			request.SetURL(targetURL)
 			request.Out.Host = host
 			request.SetXForwarded()
+			if proxyToken != "" {
+				request.Out.Header.Set(ProxyTokenHeader, proxyToken)
+			}
 		},
 		ErrorHandler: func(response http.ResponseWriter, request *http.Request, targetErr error) {
 			observability.PublisherHTTPError(request.Context(), targetErr)
@@ -437,9 +442,9 @@ func ValidateRequest(request *http.Request, hostname string) diagnostic.Code {
 
 func removeForwardingHeaders(headers http.Header) {
 	for name := range headers {
-		lower := strings.ToLower(name)
-		if lower == "forwarded" || lower == "x-real-ip" || strings.HasPrefix(lower, "x-forwarded-") {
-			headers.Del(name)
+		lower := strings.ToLower(strings.ReplaceAll(name, "_", "-"))
+		if lower == "forwarded" || lower == "x-real-ip" || lower == "x-tnl-proxy-token" || strings.HasPrefix(lower, "x-forwarded-") {
+			delete(headers, name)
 		}
 	}
 }

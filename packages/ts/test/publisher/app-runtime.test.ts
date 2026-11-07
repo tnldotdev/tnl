@@ -33,6 +33,25 @@ test("independent SDK copies share preparation and framework callbacks through c
     expect(second.prepareService({}, "next")).toBe(prepared);
     const handle = await prepared;
     onTestFinished(() => handle.close());
+    const credential = z
+      .object({ proxy_token: z.string() })
+      .parse(bootstrap.requests[0]?.body).proxy_token;
+    const received = handle.verifyFetchRequest(
+      new Request("http://127.0.0.1/", {
+        headers: {
+          Host: "api.member.example",
+          "X-Tnl-Proxy-Token": credential,
+          "X-Forwarded-For": "203.0.113.9",
+        },
+      }),
+    );
+    expect(received?.headers.get("x-forwarded-for")).toBe("203.0.113.9");
+    expect(received?.headers.get("x-tnl-proxy-token")).toBeNull();
+    expect(
+      handle.verifyFetchRequest(
+        new Request("http://127.0.0.1/", { headers: { Host: "api.member.example" } }),
+      ),
+    ).toBeNull();
     await second.reportFrameworkTarget(handle, "http://127.0.0.1:3200");
     await first.reportFrameworkTarget(handle, "http://127.0.0.1:3201");
     expect(bootstrap.requests.map(({ path }) => path)).toEqual([
@@ -42,6 +61,16 @@ test("independent SDK copies share preparation and framework callbacks through c
     ]);
     expect(bootstrap.requests.at(-1)?.body).toMatchObject({ target: "http://127.0.0.1:3201" });
     await handle.close();
+    expect(
+      handle.verifyFetchRequest(
+        new Request("http://127.0.0.1/", {
+          headers: {
+            Host: "api.member.example",
+            "X-Tnl-Proxy-Token": credential,
+          },
+        }),
+      ),
+    ).toBeNull();
     expect(process.listenerCount("beforeExit")).toBe(beforeExitListeners);
     await expect(
       second.reportFrameworkTarget(handle, "http://127.0.0.1:3202"),

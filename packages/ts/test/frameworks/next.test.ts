@@ -288,7 +288,7 @@ test(
         path: "/v1/register",
       });
 
-      const page = await requestTestServer(port);
+      const page = await requestTestServer(port, { host: "localhost" });
       expect(page.status).toBe(200);
       expect(page.body).toContain("Next.js fixture");
       expect(page.body).toContain("url:https://api.member.example");
@@ -300,21 +300,42 @@ test(
       const assetPath = extractNextAssetPath(page.body);
       await expect(
         requestTestServer(port, {
+          host: "localhost",
           headers: { Origin: "https://api.member.example" },
           path: assetPath,
         }),
       ).resolves.toMatchObject({ status: 200 });
       await expect(
         requestTestServer(port, {
+          host: "localhost",
           headers: { Origin: "https://attacker.example" },
           path: assetPath,
         }),
       ).resolves.toMatchObject({ status: 403 });
 
+      const credential = z
+        .object({ proxy_token: z.string().regex(/^[a-f0-9]{64}$/) })
+        .parse((await fixture.request()).body).proxy_token;
+      expect(page.body).not.toContain(credential);
+      await expect(requestTestServer(port)).resolves.toMatchObject({ status: 403 });
+      const verified = await requestTestServer(port, {
+        path: "/api/provenance",
+        headers: { "X-Tnl-Proxy-Token": credential, "X-Forwarded-For": "203.0.113.9" },
+      });
+      expect(verified.status).toBe(200);
+      expect(JSON.parse(verified.body)).toEqual({ source: "203.0.113.9", credential: null });
+      const local = await requestTestServer(port, {
+        host: "localhost",
+        path: "/api/provenance",
+        headers: { "X-Forwarded-For": "198.51.100.1" },
+      });
+      expect(JSON.parse(local.body)).toMatchObject({ credential: null });
+      expect(JSON.parse(local.body).source).not.toBe("198.51.100.1");
+
       const { message: socketMessage, socket } = await openTestWebSocketWithMessage(
         port,
         "/_next/hmr?id=tnl-test",
-        { origin: "https://api.member.example" },
+        { host: "localhost", origin: "https://api.member.example" },
       );
       const message = z.object({ type: z.optional(z.string()) }).parse(JSON.parse(socketMessage));
       expect(["isrManifest", "turbopack-connected"]).toContain(message.type);
@@ -334,7 +355,7 @@ test(
       await expect
         .poll(
           async () => {
-            const updatedPage = await requestTestServer(port);
+            const updatedPage = await requestTestServer(port, { host: "localhost" });
             return updatedPage.status === 200 ? updatedPage.body : "";
           },
           { timeout: 30_000 },
@@ -342,6 +363,7 @@ test(
         .toContain("Next.js fixture refreshed");
       await expect(
         openTestWebSocket(port, "/_next/hmr?id=tnl-attacker", {
+          host: "localhost",
           origin: "https://attacker.example",
         }),
       ).rejects.toThrow();
@@ -370,7 +392,9 @@ test("registers the actual fallback port selected by Next.js", { timeout: 60_000
     expect(target).toMatch(/^http:\/\/127\.0\.0\.1:[0-9]+$/);
     const selectedPort = Number(new URL(target).port);
     expect(selectedPort).toBeGreaterThan(3000);
-    await expect(requestTestServer(selectedPort)).resolves.toMatchObject({ status: 200 });
+    await expect(requestTestServer(selectedPort, { host: "localhost" })).resolves.toMatchObject({
+      status: 200,
+    });
     expect(fixture.output()).toContain("Port 3000 is in use");
   });
 });

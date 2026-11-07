@@ -30,18 +30,19 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 		ForwardedHost  string
 		ForwardedProto string
 		RealIP         string
+		ProxyToken     string
 	}
 	requests := make(chan received, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		requests <- received{
 			Host: request.Host, Forwarded: request.Header.Get("Forwarded"), ForwardedFor: request.Header.Get("X-Forwarded-For"),
 			ForwardedHost:  request.Header.Get("X-Forwarded-Host"),
-			ForwardedProto: request.Header.Get("X-Forwarded-Proto"), RealIP: request.Header.Get("X-Real-IP"),
+			ForwardedProto: request.Header.Get("X-Forwarded-Proto"), RealIP: request.Header.Get("X-Real-IP"), ProxyToken: request.Header.Get(ProxyTokenHeader),
 		}
 		response.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
-	handler, err := New(Config{Target: upstream.URL, Hostname: "route.example"})
+	handler, err := New(Config{Target: upstream.URL, Hostname: "route.example", ProxyToken: strings.Repeat("a", 64)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,13 +53,16 @@ func TestProxyForwardsOnlyExactTrustedRequests(t *testing.T) {
 	request.Header.Set("Forwarded", "for=attacker")
 	request.Header.Set("X-Forwarded-For", "198.51.100.1")
 	request.Header.Set("X-Real-IP", "198.51.100.1")
+	request.Header.Set(ProxyTokenHeader, "attacker")
+	request.Header["X_Forwarded_For"] = []string{"attacker"}
+	request.Header["X_Tnl_Proxy_Token"] = []string{"attacker"}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
 	got := <-requests
-	if got.Host != "route.example" || got.Forwarded != "" || got.ForwardedFor != "192.0.2.10" || got.ForwardedHost != "route.example" || got.ForwardedProto != "https" || got.RealIP != "" {
+	if got.Host != "route.example" || got.Forwarded != "" || got.ForwardedFor != "192.0.2.10" || got.ForwardedHost != "route.example" || got.ForwardedProto != "https" || got.RealIP != "" || got.ProxyToken != strings.Repeat("a", 64) {
 		t.Fatalf("upstream request = %#v", got)
 	}
 

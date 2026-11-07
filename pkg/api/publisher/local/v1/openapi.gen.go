@@ -349,8 +349,11 @@ type Prepare struct {
 	Framework PrepareFramework `json:"framework"`
 	Owner     string           `json:"owner"`
 	PID       int              `json:"pid"`
-	Service   string           `json:"service,omitempty"`
-	Version   PrepareVersion   `json:"version"`
+
+	// ProxyToken Private per-registration credential supplied by the app; never included in browser metadata.
+	ProxyToken string         `json:"proxy_token"`
+	Service    string         `json:"service,omitempty"`
+	Version    PrepareVersion `json:"version"`
 }
 
 // PrepareFramework defines model for Prepare.Framework.

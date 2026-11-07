@@ -88,7 +88,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		}}
 		proxyConfig := publisherproxy.Config{
 			Target: config.Target, Hostname: hostname, Mounts: config.Mounts,
-			Hooks: hooks, TargetOptions: config.TargetOptions,
+			Hooks: hooks, TargetOptions: config.TargetOptions, ProxyToken: config.ProxyToken,
 			MaxConnsPerHost: config.Limits.Concurrency, OnTargetFailure: config.OnTargetFailure,
 		}
 		if config.ResolveTarget != nil {

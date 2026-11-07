@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import type { IncomingMessage } from "node:http";
 import * as path from "node:path";
 import { TnlError } from "../../errors.js";
 import * as z from "zod";
@@ -19,6 +20,8 @@ import {
   type EndpointSelection,
 } from "./local.js";
 import { listeningTarget, isBunServer, type LocalHTTPServer } from "./register.js";
+import { verifyProxyHeaders, verifyProxyRequest } from "./proxy_request.js";
+import { serviceHostnames } from "../project/runtime.js";
 import { projectRuntimeSchema, type ProjectRuntime } from "../project/runtime.js";
 export { startRuntime, runtimeRequest } from "./local.js";
 
@@ -35,6 +38,10 @@ export interface PreparedService extends ProjectRuntime {
   readonly service: string;
   readonly hostname: string | undefined;
   readonly publicURL: `https://${string}` | undefined;
+  /** checks the publisher's private credential and removes it; strips forwarding headers on local requests. */
+  verifyRequest(request: IncomingMessage): boolean;
+  /** verifies and sanitizes a Fetch request, or returns null when the proxy hop is invalid. */
+  verifyFetchRequest(request: Request): Request | null;
   /** acknowledges a bound listener; use tnl wait for public readiness. */
   register(server: LocalHTTPServer): Promise<void>;
   /** unregisters publication without stopping the application listener. */
@@ -86,6 +93,7 @@ interface AppRegistry {
     PreparedService,
     (target: `http://${string}`) => Promise<void>
   >;
+  readonly proxyTokens: WeakMap<PreparedService, string>;
 }
 
 declare global {
@@ -95,7 +103,14 @@ declare global {
 const registry = (globalThis.__tnlAppRegistry ??= {
   preparations: new Map<string, Promise<PreparedService>>(),
   frameworkTargets: new WeakMap<PreparedService, (target: `http://${string}`) => Promise<void>>(),
+  proxyTokens: new WeakMap<PreparedService, string>(),
 });
+
+export function proxyTokenFor(handle: PreparedService): string {
+  const token = registry.proxyTokens.get(handle);
+  if (token === undefined) throw new TnlError("sdk.registration_stale");
+  return token;
+}
 
 export function reportFrameworkTarget(
   handle: PreparedService,
@@ -149,12 +164,14 @@ async function createPreparedServiceUntraced(
     ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
   };
   const owner = randomBytes(16).toString("hex");
+  const proxyToken = randomBytes(32).toString("hex");
   const prepareRequest = {
     version: 1,
     directory,
     ...(options.service === undefined ? {} : { service: options.service }),
     framework,
     owner,
+    proxy_token: proxyToken,
     pid: process.pid,
   };
   let endpoint = await dependencies.start(directory, undefined, selection);
@@ -315,6 +332,36 @@ async function createPreparedServiceUntraced(
     service: assignment.service,
     hostname: assignment.hostname,
     publicURL: assignment.publicURL,
+    verifyRequest: (request: IncomingMessage) =>
+      verifyProxyRequest(
+        request,
+        closed || released ? "" : proxyToken,
+        new Set(
+          serviceHostnames({
+            hostname: assignment.hostname,
+            project: assignment.project,
+            service: assignment.service,
+          }),
+        ),
+      ),
+    verifyFetchRequest: (request: Request) => {
+      const headers = new Headers(request.headers);
+      if (
+        !verifyProxyHeaders(
+          headers,
+          closed || released ? "" : proxyToken,
+          new Set(
+            serviceHostnames({
+              hostname: assignment.hostname,
+              project: assignment.project,
+              service: assignment.service,
+            }),
+          ),
+        )
+      )
+        return null;
+      return new Request(request, { headers });
+    },
     register: (listener: LocalHTTPServer) =>
       operation("sdk.app.register", () =>
         enqueue(async () => {
@@ -337,6 +384,7 @@ async function createPreparedServiceUntraced(
         }),
     ),
   );
+  registry.proxyTokens.set(handle, proxyToken);
   return handle;
 }
 

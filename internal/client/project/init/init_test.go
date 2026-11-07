@@ -127,6 +127,27 @@ func TestInitApplyStopsBeforePythonAndTypesWhenGenerationFails(t *testing.T) {
 	}
 }
 
+func TestInitApplyCreatesNextProxyBeforeGeneration(t *testing.T) {
+	root := copyInitFixture(t, "next")
+	plan, err := planInit(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := plan.Apply(t.Context(), Options{NoInstall: true, Generate: func(context.Context, string, string) error {
+		data, err := os.ReadFile(filepath.Join(root, "proxy.ts"))
+		if err != nil || !bytes.Equal(data, plan.NewProxySource) {
+			t.Fatalf("proxy was not installed before generation: %q, %v", data, err)
+		}
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(result.UpdatedPaths, plan.ProxyPath) {
+		t.Fatalf("proxy absent from updated paths: %+v", result)
+	}
+}
+
 func TestInitDetectionDiagnosticsUseCallerActionsAndKeepReasons(t *testing.T) {
 	root := copyInitFixture(t, "next")
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"dependencies":{"next":"1","vite":"1"}}`), 0o600); err != nil {

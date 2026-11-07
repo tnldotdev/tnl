@@ -205,6 +205,7 @@ type appPreparation struct {
 	framework     publisherprotocol.Framework
 	assignment    publisherprotocol.Assignment
 	invocation    *publisherprotocol.Invocation
+	proxyToken    string
 }
 
 type appRuntime struct {
@@ -370,7 +371,7 @@ func (a *appRuntime) register(ctx context.Context, request publisherprotocol.Reg
 }
 
 func (a *appRuntime) prepare(ctx context.Context, request publisherprotocol.Prepare) (publisherprotocol.Assignment, error) {
-	if request.Version != 1 || !publisherprotocol.ValidOwner(request.Owner) || request.PID <= 0 || !request.Framework.Valid() {
+	if request.Version != 1 || !publisherprotocol.ValidOwner(request.Owner) || request.PID <= 0 || !request.Framework.Valid() || !validProxyToken(request.ProxyToken) {
 		return publisherprotocol.Assignment{}, errors.New("invalid app preparation")
 	}
 	name, err := a.project.AppService(request.Directory, request.Service)
@@ -398,7 +399,11 @@ func (a *appRuntime) prepare(ctx context.Context, request publisherprotocol.Prep
 	}
 	assignment := publisherprotocol.Assignment{Version: 1, RegistrationID: id, Service: name, Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{project: a.project, framework: request.Framework, assignment: assignment}
+	if previous, ok := a.prepared[id]; ok && previous.proxyToken != request.ProxyToken {
+		a.mu.Unlock()
+		return publisherprotocol.Assignment{}, publisherapp.ErrOwnerConflict
+	}
+	a.prepared[id] = appPreparation{project: a.project, framework: request.Framework, assignment: assignment, proxyToken: request.ProxyToken}
 	a.mu.Unlock()
 	return assignment, nil
 }
@@ -459,7 +464,23 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service publishera
 	if preparation.configuration.Publisher.Control != nil {
 		return preparation.configuration, nil
 	}
-	return a.operations(preparation.project).PublicConfiguration(ctx, service)
+	configured, err := a.operations(preparation.project).PublicConfiguration(ctx, service)
+	if err == nil {
+		configured.Publisher.ProxyToken = preparation.proxyToken
+	}
+	return configured, err
+}
+
+func validProxyToken(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' && character < 'a' || character > 'f' {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *appRuntime) operations(project clientproject.Project) *invocation.ProjectRuntime {

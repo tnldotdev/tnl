@@ -2,13 +2,19 @@ schemas:
   Prepare:
     type: object
     additionalProperties: false
-    required: [version, directory, framework, owner, pid]
+    required: [version, directory, framework, owner, pid, proxy_token]
     properties:
       version: { type: integer, enum: [1] }
       directory: { type: string, maxLength: 4096 }
       service: { type: string, maxLength: 63, x-go-type-skip-optional-pointer: true }
       framework: { type: string, enum: [node, bun, vite, next, python] }
       owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+      proxy_token:
+        {
+          type: string,
+          pattern: "^[a-f0-9]{64}$",
+          description: Private per-registration credential supplied by the app; never included in browser metadata.,
+        }
       pid: { type: integer, minimum: 1, x-go-name: PID }
   Assignment:
     type: object

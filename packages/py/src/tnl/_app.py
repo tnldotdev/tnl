@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import os
 import re
 import secrets
@@ -25,6 +26,59 @@ from ._protocol import (
     service_name,
     text,
 )
+
+_proxy_header = b"x-tnl-proxy-token"
+
+
+def _reserved_header(name: bytes) -> bool:
+    normalized = name.lower().replace(b"_", b"-")
+    return normalized in (_proxy_header, b"forwarded", b"x-real-ip") or normalized.startswith(
+        b"x-forwarded-"
+    )
+
+
+class _ProxyRequests:
+    def __init__(self, app: ASGIApp, server: Server) -> None:
+        self.app = app
+        self.server = server
+
+    async def __call__(self, scope: dict[str, object], receive: object, send: object) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)  # type: ignore[arg-type]
+            return
+        headers = scope["headers"]
+        assert isinstance(headers, list)
+        credential = [
+            value for name, value in headers if name.lower().replace(b"_", b"-") == _proxy_header
+        ]
+        publication = self.server._publication
+        token = publication._proxy_token.encode("ascii") if publication is not None else b""
+        verified = len(credential) == 1 and hmac.compare_digest(credential[0], token)
+        hosts = [value for name, value in headers if name.lower() == b"host"]
+        host = (
+            hosts[0].lower().split(b":", 1)[0].decode("ascii", "ignore") if len(hosts) == 1 else ""
+        )
+        allowed = (
+            verified
+            or not credential
+            and (publication is None or not publication.hostname or host != publication.hostname)
+        )
+        scope = dict(scope)
+        scope["headers"] = [
+            (name, value)
+            for name, value in headers
+            if not _reserved_header(name)
+            or verified
+            and name.lower() in (b"x-forwarded-for", b"x-forwarded-host", b"x-forwarded-proto")
+        ]
+        if not allowed:
+            if scope["type"] == "http":
+                await send({"type": "http.response.start", "status": 403, "headers": []})  # type: ignore[operator]
+                await send({"type": "http.response.body", "body": b""})  # type: ignore[operator]
+            else:
+                await send({"type": "websocket.close", "code": 1008})  # type: ignore[operator]
+            return
+        await self.app(scope, receive, send)  # type: ignore[arg-type]
 
 
 def _service_metadata(name: str, value: object) -> dict[str, object]:
@@ -75,6 +129,7 @@ class PreparedService:
         self._state_dir = state_dir
         self._native = native
         self._owner = secrets.token_hex(16)
+        self._proxy_token = secrets.token_hex(32)
         self._endpoint: Endpoint | None = None
         self._registration_id = ""
         self._target: str | None = None
@@ -94,6 +149,7 @@ class PreparedService:
             "directory": self._directory,
             "framework": "python",
             "owner": self._owner,
+            "proxy_token": self._proxy_token,
             "pid": os.getpid(),
         }
         if self._service is not None:
@@ -258,6 +314,10 @@ class Server(uvicorn.Server):
         self._publication: PreparedService | None = None
 
     async def startup(self, sockets: list[socket.socket] | None = None) -> None:
+        if not self.config.loaded:
+            self.config.load()
+        if not isinstance(self.config.loaded_app, _ProxyRequests):
+            self.config.loaded_app = _ProxyRequests(self.config.loaded_app, self)
         await super().startup(sockets)
         if not self.started or self.should_exit:
             return
