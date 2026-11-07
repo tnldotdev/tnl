@@ -18,6 +18,7 @@ type SDKCloseOptions struct {
 	ParentPID     int
 	Handle        string
 	FailureHandle string
+	RequestHandle string
 }
 
 // CloseSDK joins only the native-selected owner or failed-start observation.
@@ -27,10 +28,20 @@ func CloseSDK(ctx context.Context, options SDKCloseOptions) error {
 }
 
 func (o sdkOperations) closeSDK(ctx context.Context, options SDKCloseOptions) error {
-	if options.ParentPID <= 0 || connectorruntime.VerifyDirectory(options.Registry) != nil || (options.Handle == "") == (options.FailureHandle == "") {
+	references := 0
+	for _, reference := range []string{options.Handle, options.FailureHandle, options.RequestHandle} {
+		if reference != "" {
+			references++
+		}
+	}
+	if options.ParentPID <= 0 || connectorruntime.VerifyDirectory(options.Registry) != nil || references != 1 {
 		return connectorruntime.ErrInvalid
 	}
 	registry := SDKOptions{Registry: options.Registry, OwnerStartOptions: OwnerStartOptions{ParentPID: options.ParentPID}}
+	if options.RequestHandle != "" {
+		registry.RequestHandle = options.RequestHandle
+		return o.closeSDKRequest(ctx, registry)
+	}
 	if options.FailureHandle != "" {
 		return closeSDKFailure(ctx, registry, options.FailureHandle)
 	}

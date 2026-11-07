@@ -110,6 +110,16 @@ func TestIntegrationConnectionConnectorOwnerSDKPythonLifecycle(t *testing.T) {
 	runConnectionNativeOwnerStartup(t, "http", true, "python-lifecycle")
 }
 
+func TestIntegrationConnectionConnectorOwnerSDKPythonPrepareTimeout(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	t.Run("registered", func(t *testing.T) {
+		runConnectionNativeOwnerStartup(t, "http", true, "python-timeout")
+	})
+	t.Run("startup", func(t *testing.T) {
+		runConnectionNativeOwnerStartup(t, "http", true, "python-startup-timeout")
+	})
+}
+
 type connectorConnectionFixture struct {
 	Handle   string
 	Env      []string
@@ -177,6 +187,11 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 	}
 	ca := &x509.Certificate{Subject: pkix.Name{CommonName: "connection fixture root"}, SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(2 * time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
 	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, caPublic, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// retain the generated subject key identifier when signing strict TLS leaves.
+	ca, err = x509.ParseCertificate(caDER)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,6 +278,10 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 	var exchangeAttempts atomic.Int32
 	var isolatedSDKContexts atomic.Bool
 	var denySDKExchange, blockSDKExchange atomic.Bool
+	var blockSDKPrepare atomic.Bool
+	isolatedSDKContexts.Store(startup == "python-timeout" || startup == "python-startup-timeout")
+	blockSDKPrepare.Store(startup == "python-timeout")
+	blockSDKExchange.Store(startup == "python-startup-timeout")
 	var deniedSDKExchanges atomic.Int32
 	startupEntered, startupRelease := make(chan struct{}, 1), make(chan struct{})
 	ownerKeys := map[string]*workloadSession{}
@@ -271,9 +290,18 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 	issuer := githubtest.New(t)
 	var verifier *oidc.GitHubWorkloadVerifier
 	var providerAssertion, providerAudience string
+	var peerAssertion string
+	bindingFor := func(assertion string) string {
+		if peerAssertion != "" && assertion == peerAssertion {
+			return strings.Repeat("c", 64)
+		}
+		return strings.Repeat("b", 64)
+	}
 	var providerCalls atomic.Int32
 	authority := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/workload-sessions/exchange" && blockSDKExchange.Load() {
+		blockedExchange := r.URL.Path == "/v1/workload-sessions/exchange" && blockSDKExchange.Load()
+		blockedPrepare := strings.HasSuffix(r.URL.Path, "/authorization") && blockSDKPrepare.Load()
+		if blockedExchange || blockedPrepare {
 			select {
 			case startupEntered <- struct{}{}:
 			default:
@@ -319,7 +347,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 				w.WriteHeader(403)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(authorityv1.WorkloadIdentity{Binding: strings.Repeat("b", 64), Services: []string{serviceName}, AssertionExpiresAt: time.Unix(claims.ExpiresAt, 0)})
+			_ = json.NewEncoder(w).Encode(authorityv1.WorkloadIdentity{Binding: bindingFor(input.Assertion), Services: []string{serviceName}, AssertionExpiresAt: time.Unix(claims.ExpiresAt, 0)})
 		case r.URL.Path == "/v1/workload-sessions/"+current.Id+"/assertions":
 			var input authorityv1.WorkloadAssertion
 			if json.NewDecoder(r.Body).Decode(&input) != nil {
@@ -385,7 +413,7 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 					w.WriteHeader(500)
 					return
 				}
-				current = &workloadSession{public: ed25519.PublicKey(public), WorkloadSession: authorityv1.WorkloadSession{Id: id, TeamId: team, ProjectKey: exchange.ProjectKey, Workload: exchange.Workload, Provider: controlv1.WorkloadGitHub, Github: &authorityv1.WorkloadGitHubExecution{RepositoryId: "12345", RepositoryOwnerId: "6789", RunId: "111", RunAttempt: "1", CheckRunId: "222"}, Credential: "wlc_" + base64.RawURLEncoding.EncodeToString(credential), ExpiresAt: time.Now().Add(time.Hour), LeaseExpiresAt: time.Now().Add(90 * time.Second), RenewAfter: time.Now().Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, Binding: strings.Repeat("b", 64)}}
+				current = &workloadSession{public: ed25519.PublicKey(public), WorkloadSession: authorityv1.WorkloadSession{Id: id, TeamId: team, ProjectKey: exchange.ProjectKey, Workload: exchange.Workload, Provider: controlv1.WorkloadGitHub, Github: &authorityv1.WorkloadGitHubExecution{RepositoryId: "12345", RepositoryOwnerId: "6789", RunId: "111", RunAttempt: "1", CheckRunId: "222"}, Credential: "wlc_" + base64.RawURLEncoding.EncodeToString(credential), ExpiresAt: time.Now().Add(time.Hour), LeaseExpiresAt: time.Now().Add(90 * time.Second), RenewAfter: time.Now().Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, Binding: bindingFor(exchange.Assertion)}}
 				ownerKeys[exchange.PublicKey] = current
 				sessions[current.Credential] = current
 			}
@@ -589,6 +617,16 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 		t.Fatal(err)
 	}
 	assertion := issuer.Sign(t, githubtest.Claims(server, time.Now()))
+	if startup == "python-timeout" || startup == "python-startup-timeout" {
+		claims := githubtest.Claims(server, time.Now())
+		claims["run_id"], claims["jti"] = "112", "peer-assertion"
+		authorityMu.Lock()
+		peerAssertion = issuer.Sign(t, claims)
+		authorityMu.Unlock()
+		if err := os.WriteFile(filepath.Join(root, "peer-assertion"), []byte(peerAssertion), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if strings.HasPrefix(startup, "javascript") || strings.HasPrefix(startup, "python") {
 		manifest := workloadmanifest.Manifest{Schema: 1, Server: scope.Server, Team: scope.TeamID, ProjectKey: scope.ProjectKey, SourceFingerprint: scope.SourceID, ProjectLabel: scope.ProjectLabel,
 			Workloads: map[string]workloadmanifest.Workload{"test": {Provider: "github", Services: []string{serviceName}, MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "github-actions", Audience: scope.Server}}}, Services: map[string]string{serviceName: protocol}}
@@ -629,6 +667,13 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 			if startup == "python-lifecycle" {
 				child.Args = append(child.Args, "lifecycle")
 			}
+			if startup == "python-timeout" || startup == "python-startup-timeout" {
+				fixture, _ := filepath.Abs("../../../packages/py/tests/native_prepare_timeout.py")
+				child.Args = []string{python, fixture, binary}
+				if startup == "python-startup-timeout" {
+					child.Args = append(child.Args, "startup")
+				}
+			}
 		}
 		if strings.HasSuffix(startup, "-provider") {
 			authorityMu.Lock()
@@ -657,6 +702,27 @@ func runConnectionNativeOwnerStartup(t *testing.T, protocol string, public bool,
 			}
 		}()
 		lines := bufio.NewScanner(output)
+		if startup == "python-timeout" || startup == "python-startup-timeout" {
+			if !lines.Scan() || lines.Text() != "timed-out" {
+				t.Fatal("Python did not time out after native owner registration")
+			}
+			select {
+			case <-startupEntered:
+			case <-ctx.Done():
+				t.Fatal("native preparation did not reach its blocked boundary")
+			}
+			blockSDKPrepare.Store(false)
+			blockSDKExchange.Store(false)
+			close(startupRelease)
+			_, _ = io.WriteString(input, "released\n")
+			if !lines.Scan() || lines.Text() != "joined" {
+				t.Fatal("Python close did not join the timed-out preparation while preserving its healthy peer")
+			}
+			authorityMu.Lock()
+			calls := maps.Clone(controlCalls)
+			authorityMu.Unlock()
+			return calls
+		}
 		if !lines.Scan() || lines.Text() != "cold" {
 			t.Fatal("SDK did not complete cold selection")
 		}

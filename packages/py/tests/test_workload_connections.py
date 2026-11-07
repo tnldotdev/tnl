@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import threading
 from datetime import UTC, datetime, timedelta
@@ -100,6 +101,7 @@ class NativeFixture:
                 *,
                 sdk: bool = False,
                 requested_at: str | None = None,
+                request_handle: str | None = None,
                 selection: dict[str, object] | None = None,
                 preview: bool = False,
             ) -> object:
@@ -133,6 +135,14 @@ class NativeFixture:
                 raise tnl.TnlError("sdk.connection_unavailable", "native close did not join")
             handle = args[args.index("--failure-handle") + 1]
             self.retained = {key: value for key, value in self.retained.items() if value != handle}
+            return {"schema": 1, "state": "stopped"}
+        if args[0] == "sdk-close" and "--request-handle" in args:
+            if self.fail_close:
+                raise tnl.TnlError("sdk.connection_unavailable", "native close did not join")
+            reference = Path(args[args.index("--request-handle") + 1])
+            record = json.loads(reference.read_text())
+            if "owner_handle" in record:
+                self.closed.append(record["owner_handle"])
             return {"schema": 1, "state": "stopped"}
         if args[0] == "sdk-close":
             if self.fail_close:
@@ -805,6 +815,130 @@ def test_unretained_preparation_errors_do_not_accumulate_cleanup_operations(
     asyncio.run(scenario())
 
 
+def test_interrupted_preparation_retains_request_and_original_error_until_close_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    current = "first"
+    tnl.configure_workload("job", token=lambda: current)
+    interrupted = _connections._InterruptedError("sdk.connection_unavailable", "lost native reply")
+    references: list[str] = []
+    command = native.command
+
+    def lost(binary: Path, *args: str, input_value: object = None) -> object:
+        if (
+            args[0] == "sdk-prepare"
+            and isinstance(input_value, dict)
+            and input_value.get("assertion") == "first"
+        ):
+            reference = args[args.index("--sdk-request-handle") + 1]
+            record = json.loads(Path(reference).read_text())
+            assert record == {"schema": 1, "parent_pid": os.getpid()}
+            selected = native.select("db", "first")
+            assert isinstance(selected, dict) and isinstance(selected["owner"], dict)
+            record["owner_handle"] = selected["owner"]["connection_handle"]
+            Path(reference).write_text(json.dumps(record))
+            Path(reference + ".write-interrupted").write_text("interrupted receipt write")
+            references.append(reference)
+            raise interrupted
+        return command(binary, *args, input_value=input_value)
+
+    monkeypatch.setattr(_connections, "_command", lost)
+
+    async def scenario() -> None:
+        nonlocal current
+        failed = tnl.connect("db", directory=tmp_path)
+        with pytest.raises(tnl.TnlError) as caught:
+            await failed
+        assert caught.value is interrupted
+        scope = failed._session.scope
+        assert list(scope.request_handles) == references
+        current = "other"
+        peer = tnl.connect("db", directory=tmp_path)
+        await peer
+        native.fail_close = True
+        with pytest.raises(tnl.TnlError):
+            await failed.aclose()
+        assert not failed._lifetime.joined and list(scope.request_handles) == references
+        assert caught.value is interrupted and not native.closed
+        native.fail_close = False
+        await failed.aclose()
+        assert native.closed == [native.owners["same"]]
+        assert not scope.request_handles and not Path(references[0]).exists()
+        assert not Path(references[0] + ".write-interrupted").exists()
+        assert "sdk-stop" not in native.calls
+        await peer
+        await failed.aclose()
+        assert native.closed == [native.owners["same"]]
+        await peer.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_unresolved_request_receipts_are_bounded_and_reclaimed_on_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    tnl.configure_workload("job", token=lambda: "first")
+    attempts = 0
+    command = native.command
+
+    def interrupted(binary: Path, *args: str, input_value: object = None) -> object:
+        nonlocal attempts
+        if args[0] == "sdk-prepare":
+            attempts += 1
+            raise _connections._InterruptedError("sdk.connection_unavailable", "lost native reply")
+        return command(binary, *args, input_value=input_value)
+
+    monkeypatch.setattr(_connections, "_command", interrupted)
+
+    async def scenario() -> None:
+        handle = tnl.connect("db", directory=tmp_path)
+        scope = handle._session.scope
+        for _ in range(65):
+            with pytest.raises(tnl.TnlError):
+                await handle
+        assert attempts == 64 and len(scope.request_handles) == 64
+        await handle.aclose()
+        assert not scope.request_handles and scope.registry is None
+
+    asyncio.run(scenario())
+
+
+def test_interrupted_recovery_retains_receipt_without_replacing_original_ipc_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    tnl.configure_workload("job", token=lambda: "first")
+    original = tnl.TnlError("sdk.connection_unavailable", "the entry owner is unavailable")
+    command = native.command
+
+    def recovery(binary: Path, *args: str, input_value: object = None) -> object:
+        if "--recover-handle" in args:
+            raise _connections._InterruptedError(
+                "sdk.connection_unavailable", "recovery reply lost"
+            )
+        return command(binary, *args, input_value=input_value)
+
+    def unavailable(name: str, assertion: str | None) -> object:
+        raise original
+
+    async def scenario() -> None:
+        handle = tnl.connect("db", directory=tmp_path)
+        await handle
+        monkeypatch.setattr(native, "select", unavailable)
+        monkeypatch.setattr(_connections, "_command", recovery)
+        with pytest.raises(tnl.TnlError) as caught:
+            await handle
+        assert caught.value is original and caught.value.__cause__ is None
+        assert len(handle._session.scope.request_handles) == 1
+        assert handle._lifetime.preparations
+        await handle.aclose()
+        assert not handle._session.scope.request_handles
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("failure", ["owner", "start"])
 @pytest.mark.parametrize("retry_close", [False, True])
 def test_recovery_failure_keeps_exact_replacement_cleanup(
@@ -839,9 +973,11 @@ def test_recovery_failure_keeps_exact_replacement_cleanup(
                 diagnostic.get("sdk_failure_handle"),
                 diagnostic.get("sdk_owner_handle"),
             )
-        if args[0] in {"stop", "sdk-close-failure"}:
-            flag = "--handle" if args[0] == "stop" else "--failure-handle"
-            cleanup.append((args[0], args[args.index(flag) + 1]))
+        if args[0] == "sdk-close":
+            flag = "--handle" if "--handle" in args else "--failure-handle"
+            reference = args[args.index(flag) + 1]
+            if reference == replacement:
+                cleanup.append((args[0], reference))
         return native.command(binary, *args, input_value=input_value)
 
     monkeypatch.setattr(native, "select", unavailable)
@@ -866,12 +1002,12 @@ def test_recovery_failure_keeps_exact_replacement_cleanup(
             assert not native.closed
             native.fail_close = False
         await failed.aclose()
-        expected = "stop" if failure == "owner" else "sdk-close-failure"
+        expected = "sdk-close"
         assert cleanup == [(expected, replacement)] * (2 if retry_close else 1)
         assert native.closed == ([replacement] if failure == "owner" else [])
         assert "sdk-stop" not in native.calls
         assert set(scope.handles) == {peer_owner}
-        assert not scope.failures and not scope.failure_handles
+        assert not scope.failure_handles
         assert failed._lifetime.joined
         error = caught.value
         assert isinstance(

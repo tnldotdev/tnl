@@ -46,6 +46,7 @@ type connectionsStartOptions struct {
 	RunnerTemp                string `name:"runner-temp" env:"RUNNER_TEMP" type:"path"`
 	ParentPID                 int    `name:"parent-pid"`
 	SDKRegistry               string `name:"sdk-registry" hidden:"" type:"path"`
+	RequestHandle             string `name:"sdk-request-handle" hidden:"" type:"path"`
 	KubeTokenFile             string `name:"kube-token-file" type:"path"`
 	KubeUserConfig            string `name:"kube-user-config" type:"path"`
 	KubeUser                  string `name:"kube-user"`
@@ -88,13 +89,14 @@ type connectionsSDKCloseOptions struct {
 	connectionsSDKStopOptions `embed:""`
 	Handle                    string `name:"handle" type:"path"`
 	FailureHandle             string `name:"failure-handle"`
+	RequestHandle             string `name:"request-handle" type:"path"`
 }
 
 func (o connectionsContextOptions) options() connector.ContextOptions {
 	return connector.ContextOptions{Directory: o.Directory, Workload: o.Workload, Manifest: o.Manifest, Service: o.Service, TeamID: o.TeamID, StateDir: o.StateDir}
 }
 func (o connectionsStartOptions) options() connector.OwnerStartOptions {
-	return connector.OwnerStartOptions{ContextOptions: o.connectionsContextOptions.options(), RunnerTemp: o.RunnerTemp, ParentPID: o.ParentPID, SDKRegistry: o.SDKRegistry, KubeTokenFile: o.KubeTokenFile, KubeUserConfig: o.KubeUserConfig, KubeUser: o.KubeUser, Namespace: o.Namespace}
+	return connector.OwnerStartOptions{ContextOptions: o.connectionsContextOptions.options(), RunnerTemp: o.RunnerTemp, ParentPID: o.ParentPID, SDKRegistry: o.SDKRegistry, RequestHandle: o.RequestHandle, KubeTokenFile: o.KubeTokenFile, KubeUserConfig: o.KubeUserConfig, KubeUser: o.KubeUser, Namespace: o.Namespace}
 }
 
 func runConnections(ctx context.Context, command string, flags connectionsCommand, output io.Writer) (result error) {
@@ -140,7 +142,7 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 	case "runtime connections sdk-stop":
 		return stopped(connector.StopSDK(ctx, flags.SDKStop.Registry, flags.SDKStop.ParentPID))
 	case "runtime connections sdk-close":
-		return stopped(connector.CloseSDK(ctx, connector.SDKCloseOptions{Registry: flags.SDKClose.Registry, ParentPID: flags.SDKClose.ParentPID, Handle: flags.SDKClose.Handle, FailureHandle: flags.SDKClose.FailureHandle}))
+		return stopped(connector.CloseSDK(ctx, connector.SDKCloseOptions{Registry: flags.SDKClose.Registry, ParentPID: flags.SDKClose.ParentPID, Handle: flags.SDKClose.Handle, FailureHandle: flags.SDKClose.FailureHandle, RequestHandle: flags.SDKClose.RequestHandle}))
 	case "runtime connections status":
 		return write(connector.Status(ctx, flags.Status.Handle))
 	case "runtime connections stop":

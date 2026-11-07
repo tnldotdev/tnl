@@ -172,6 +172,11 @@ func (b *connectorConnectionBackend) cleanup() context.Context {
 }
 
 func (b *connectorConnectionBackend) Start(ctx context.Context) (meta.PublicMetadata, time.Time, error) {
+	if b.sdk != nil {
+		if err := checkSDKRequestStartup(ctx, *b.sdk, filepath.Join(b.directory, "handle.json")); err != nil {
+			return meta.PublicMetadata{}, time.Time{}, err
+		}
+	}
 	b.listeners = map[string]*ownedServiceListener{}
 	b.teamID = b.scope.TeamID
 	lifetime, cancel := context.WithCancel(observability.Independent(context.WithoutCancel(ctx)))

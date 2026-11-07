@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -76,5 +77,49 @@ def test_close_before_first_handle_joins_native_and_retains_failed_stop(
         finally:
             release.set()
             await asyncio.gather(pending, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_known_owner_is_retained_if_opening_its_ipc_client_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_connections, "_sessions", {})
+    binary = Path(sys.executable).resolve(strict=True)
+    monkeypatch.setattr(_connections, "native_binary", lambda: binary)
+    owner = str(tmp_path / "owner" / "handle.json")
+    failure = tnl.TnlError("sdk.connection_unavailable", "owner IPC client failed")
+    closed: list[str] = []
+
+    class IPC:
+        def __init__(self, path: str) -> None:
+            raise failure
+
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        if args[0] == "sdk-prepare":
+            return {
+                "schema": 1,
+                "owner": {
+                    "connection_handle": owner,
+                    "executable": str(binary),
+                    "expires_at": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
+                },
+                "prepared": {},
+            }
+        assert args[0] == "sdk-close" and args[-2:] == ("--handle", owner)
+        closed.append(owner)
+        return {"schema": 1, "state": "stopped"}
+
+    monkeypatch.setattr(_connections, "OwnerIPC", IPC)
+    monkeypatch.setattr(_connections, "_command", command)
+
+    async def scenario() -> None:
+        handle = tnl.connect("database", directory=tmp_path)
+        with pytest.raises(tnl.TnlError) as caught:
+            await handle
+        assert caught.value is failure
+        await handle.aclose()
+        assert closed == [owner]
+        assert not handle._session.scope.handles and handle._session.scope.registry is None
 
     asyncio.run(scenario())

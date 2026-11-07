@@ -75,6 +75,7 @@ def isolated_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
             sdk: bool = False,
             selection: dict[str, object] | None = None,
             requested_at: str | None = None,
+            request_handle: str | None = None,
         ) -> object:
             return _connections._command(
                 _connections.native_binary().resolve(strict=True),

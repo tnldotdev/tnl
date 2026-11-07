@@ -20,8 +20,12 @@ from ._protocol import TnlError
 _TIMEOUT = 35.0
 
 
+class _InterruptedError(TnlError):
+    """the exchange ended without a native cleanup acknowledgement."""
+
+
 def _failure() -> TnlError:
-    return TnlError("sdk.connection_unavailable", "the connector owner is unavailable")
+    return _InterruptedError("sdk.connection_unavailable", "the connector owner is unavailable")
 
 
 class OwnerIPC:
@@ -128,6 +132,7 @@ class OwnerIPC:
         *,
         sdk: bool = False,
         requested_at: str | None = None,
+        request_handle: str | None = None,
         selection: dict[str, object] | None = None,
         preview: bool = False,
     ) -> object:
@@ -173,6 +178,8 @@ class OwnerIPC:
                 body["assertion"] = assertion
             if requested_at is not None:
                 body["requested_at"] = requested_at
+            if request_handle is not None:
+                body["sdk_request_handle"] = request_handle
             encoded = json.dumps(body).encode()
             connection.request(
                 "POST",

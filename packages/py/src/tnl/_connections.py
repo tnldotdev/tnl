@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import ClassVar, Literal, cast
 from urllib.parse import urlsplit
 
-from ._connection_ipc import OwnerIPC
+from ._connection_ipc import OwnerIPC, _InterruptedError
 from ._native import native_binary
 from ._protocol import TnlError, hostname, service_name
 from ._workload import Selection, select_workload, uses_workload
@@ -286,6 +286,7 @@ def _prepared(value: object, service: str) -> Connection:
 
 def _command(binary: Path, *arguments: str, input_value: object = None) -> object:
     """bound both pipes and exit by one deadline; never expose native output."""
+    acknowledged = False
     try:
         deadline = time.monotonic() + _TIMEOUT
         encoded = b"" if input_value is None else json.dumps(input_value).encode()
@@ -353,6 +354,7 @@ def _command(binary: Path, *arguments: str, input_value: object = None) -> objec
                             owner_handle = problem.get("sdk_owner_handle")
                     except (ValueError, UnicodeDecodeError):
                         pass
+                    acknowledged = isinstance(reason, str)
                     raise _native_error(reason, retained, failure_handle, owner_handle)
                 result: object = json.loads(data)
                 return result
@@ -360,10 +362,27 @@ def _command(binary: Path, *arguments: str, input_value: object = None) -> objec
                 if child.poll() is None:
                     child.kill()
                     child.wait()
-    except (OSError, subprocess.TimeoutExpired):
-        raise _error("unavailable") from None
-    except (ValueError, UnicodeDecodeError):
-        raise _error("invalid") from None
+    except (OSError, subprocess.TimeoutExpired, ValueError, UnicodeDecodeError, TnlError) as cause:
+        error = (
+            cause
+            if isinstance(cause, TnlError)
+            else _error(
+                "unavailable"
+                if isinstance(cause, (OSError, subprocess.TimeoutExpired))
+                else "invalid"
+            )
+        )
+        if (
+            arguments
+            and arguments[0] == "sdk-prepare"
+            and (
+                not acknowledged
+                or error.code == "sdk.connection_invalid"
+                and not isinstance(error, (_OwnerPreparationFailure, _RetainedStartFailure))
+            )
+        ):
+            error = _InterruptedError(error.code, str(error))
+        raise error from None
 
 
 class _Session:
@@ -387,6 +406,27 @@ class _Session:
         self.initial_session: _Session | None = None
         self.ipc: OwnerIPC | None = None
         self.failure_handle: str | None = None
+        self.request_handle: str | None = None
+        self.interrupted = False
+
+    def resolve_request(self, target: _Session | None) -> None:
+        with self.changed:
+            reference = self.request_handle
+            if reference is None:
+                return
+            self.request_handle = None
+            self.attached = target
+            if target is None:
+                self.joined = True
+        receipt = Path(reference)
+        for file in (
+            receipt,
+            Path(reference + ".lock"),
+            *receipt.parent.glob(receipt.name + ".write-*"),
+        ):
+            file.unlink(missing_ok=True)
+        with self.scope.lock:
+            self.scope.request_handles.pop(reference, None)
 
     def prepare(self, service: str, selection: Selection | None) -> tuple[Connection, _Session]:
         # the SDK joins its worker threads; native still decides which capability
@@ -456,6 +496,8 @@ class _Session:
                 if remaining <= 0:
                     raise _error("unavailable")
                 self.changed.wait(remaining)
+            if self.joined:
+                return
             selected = self.attached or self
             failed = tuple(self.failed)
             preparations = tuple(self.preparations)
@@ -467,7 +509,9 @@ class _Session:
             selected.close()
         elif self.scope.mounted is None:
             reference = (
-                ["--failure-handle", self.failure_handle]
+                ["--request-handle", self.request_handle]
+                if self.request_handle is not None
+                else ["--failure-handle", self.failure_handle]
                 if self.failure_handle is not None
                 else ["--handle", self.handle]
                 if self.handle is not None
@@ -486,6 +530,8 @@ class _Session:
                         *reference,
                     )
                 )
+                if self.request_handle is not None:
+                    self.resolve_request(None)
         with self.changed:
             if self.ipc is not None:
                 self.ipc.close()
@@ -517,7 +563,10 @@ class _Scope:
         self._binary: Path | None = None
         self.entry: tuple[str, OwnerIPC] | None = None
         self.pending = 0
-        self.requests: dict[tuple[str, str], Future[object]] = {}
+        self.requests: dict[
+            tuple[str, str], tuple[Future[tuple[Connection, _Session]], _Session]
+        ] = {}
+        self.request_handles: dict[str, _Session] = {}
         self.failure_handles: dict[str, _FailureObservation] = {}
         self.lock = threading.Lock()
         self.handles: dict[str, _Session] = {}
@@ -583,34 +632,78 @@ class _Scope:
             selector = uuid.uuid4().hex
             key = (selector, service)
         with self.lock:
-            future = self.requests.get(key)
-            leading = future is None
-            if future is None:
-                if len(self.requests) >= 64:
+            entry = self.requests.get(key)
+            leading = entry is None
+            if entry is None:
+                self.request_handles = {
+                    path: held
+                    for path, held in self.request_handles.items()
+                    if held.request_handle is not None and not held.joined
+                }
+                if len(self.requests) >= 64 or len(self.request_handles) >= 64:
                     raise _error("unavailable")
-                future = Future()
-                self.requests[key] = future
+                request = _Session(self)
+                reference = str(Path(registry) / ("request-" + uuid.uuid4().hex + ".json"))
+                try:
+                    with open(
+                        reference, "x", opener=lambda path, flags: os.open(path, flags, 0o600)
+                    ) as file:
+                        json.dump({"schema": 1, "parent_pid": os.getpid()}, file)
+                except OSError:
+                    raise _error("unavailable") from None
+                request.request_handle = reference
+                request.pending = 1
+                entry = (Future(), request)
+                self.requests[key] = entry
+                self.request_handles[reference] = request
+            future, request = entry
+            if requester is not None:
+                with requester.changed:
+                    requester.failed.add(request)
         if leading:
+            received = False
             try:
                 raw = self._request(
-                    binary, arguments, private_input, service, selection, requested_at
+                    binary,
+                    arguments,
+                    private_input,
+                    service,
+                    selection,
+                    requested_at,
+                    request,
                 )
+                received = True
+                result = self._selected(raw, binary, service, selection, request)
             except BaseException as error:
                 with self.lock:
+                    target = None
                     if isinstance(error, _RetainedStartFailure):
                         observation = self.failure_handles.get(error.handle)
                         if observation is None:
                             observation = _FailureObservation(self, error)
                             self.failure_handles[error.handle] = observation
                         error = observation.error()
+                        target = observation.session
+                    elif isinstance(error, _OwnerPreparationFailure):
+                        target = self.handles.setdefault(error.handle, _Session(self, error.handle))
                     self.requests.pop(key, None)
+                if target is not None or (
+                    not received
+                    and not request.interrupted
+                    and not isinstance(error, _InterruptedError)
+                ):
+                    request.resolve_request(target)
                 future.set_exception(error)
             else:
                 with self.lock:
                     self.requests.pop(key, None)
-                future.set_result(raw)
+                future.set_result(result)
+            finally:
+                with request.changed:
+                    request.pending = 0
+                    request.changed.notify_all()
         try:
-            raw = future.result(timeout=_TIMEOUT)
+            connection, session = future.result(timeout=_TIMEOUT)
         except TimeoutError:
             raise _error("unavailable") from None
         except _RetainedStartFailure as error:
@@ -626,6 +719,21 @@ class _Scope:
                     with requester.changed:
                         requester.failed.add(failed_owner)
             raise
+        if requester is not None and requester is not session and requester.handle is None:
+            with requester.changed:
+                requester.attached = session
+        if session.closed:
+            raise _error("closed")
+        return connection, session
+
+    def _selected(
+        self,
+        raw: object,
+        binary: Path,
+        service: str,
+        selection: Selection | None,
+        request: _Session,
+    ) -> tuple[Connection, _Session]:
         value = _object(raw, {"schema", "owner", "prepared"})
         owner = _object(
             value.get("owner"),
@@ -658,9 +766,8 @@ class _Scope:
             self.handles[file] = session
             if selection is None:
                 self.selected = session
-            if requester is not None and requester is not session and requester.handle is None:
-                with requester.changed:
-                    requester.attached = session
+        request.resolve_request(session)
+        with self.lock:
             if self.entry is None:
                 self.entry = (file, OwnerIPC(file))
         if session.closed:
@@ -676,7 +783,11 @@ class _Scope:
         service: str,
         selection: Selection | None,
         requested_at: str,
+        request: _Session,
     ) -> object:
+        request_handle = request.request_handle
+        assert request_handle is not None
+        arguments = [*arguments, "--sdk-request-handle", request_handle]
         entry = self.entry
         if entry is None:
             raw = _command(binary, *arguments, input_value=private_input)
@@ -688,6 +799,7 @@ class _Scope:
                     sdk=True,
                     selection=selection.private_input() if selection else None,
                     requested_at=requested_at,
+                    request_handle=request_handle,
                 )
             except TnlError as original:
                 try:
@@ -697,7 +809,10 @@ class _Scope:
                 except (_OwnerPreparationFailure, _RetainedStartFailure):
                     # the requester must retain the replacement's cleanup reference.
                     raise
-                except TnlError:
+                except TnlError as recovery:
+                    # preserve the original IPC error object without losing the
+                    # recovery command's still-unacknowledged native admission.
+                    request.interrupted = isinstance(recovery, _InterruptedError)
                     raise original from None
                 with self.lock:
                     if self.entry is entry:
@@ -720,12 +835,17 @@ class _Scope:
                 or not isinstance(raw.get("reason"), str)
             ):
                 raise _error("invalid")
-            raise _native_error(
+            error = _native_error(
                 raw["reason"],
                 raw.get("sdk_retained_start_failure") is True,
                 raw.get("sdk_failure_handle"),
                 raw.get("sdk_owner_handle"),
             )
+            if error.code == "sdk.connection_invalid" and not isinstance(
+                error, (_OwnerPreparationFailure, _RetainedStartFailure)
+            ):
+                request.interrupted = True
+            raise error
         return raw
 
     def workload(self, service: str, request: dict[str, object]) -> object:
@@ -777,7 +897,17 @@ class _Scope:
                     for handle, failure in self.failure_handles.items()
                     if not failure.session.joined
                 }
-            if not self.pending and not self.handles and not self.failure_handles:
+            self.request_handles = {
+                path: held
+                for path, held in self.request_handles.items()
+                if held.request_handle is not None and not held.joined
+            }
+            if (
+                not self.pending
+                and not self.handles
+                and not self.failure_handles
+                and not self.request_handles
+            ):
                 atexit.unregister(self._cleanup)
                 self.registry = None
 
@@ -896,7 +1026,9 @@ class ConnectionHandle[C: Connection]:
             raise
         except BaseException:
             with preparation.changed:
-                retained = preparation.attached is not None or bool(preparation.failed)
+                retained = preparation.attached is not None or any(
+                    not failed.joined for failed in preparation.failed
+                )
             if not retained:
                 with self._lifetime.changed:
                     self._lifetime.preparations.discard(preparation)

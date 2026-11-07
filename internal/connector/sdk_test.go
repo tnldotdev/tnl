@@ -96,6 +96,11 @@ func newSDKFixture(t *testing.T, workload bool) *sdkFixture {
 			if err != nil {
 				return err
 			}
+			if options.beforeStart != nil {
+				if err := options.beforeStart(dir); err != nil {
+					return err
+				}
+			}
 			lock, err := filelock.Acquire(filepath.Join(dir, "owner.lock"), filelock.Nonblocking, os.Getuid())
 			if err != nil {
 				return err
