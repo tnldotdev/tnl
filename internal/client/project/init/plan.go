@@ -24,8 +24,6 @@ type Plan struct {
 	Framework            string
 	FrameworkPath        string
 	NewFrameworkConfig   []byte
-	ProxyPath            string
-	NewProxySource       []byte
 	ServerPath           string
 	ServerSource         []byte
 	ServerReplacement    []byte
@@ -118,58 +116,12 @@ func NewPlan(ctx context.Context, cwd string, actionForFailure func(error) strin
 		if err := planFrameworkConfig(&plan, root); err != nil {
 			return Plan{}, err
 		}
-		if plan.Framework == "next" {
-			if err := planNextProxy(&plan, root); err != nil {
-				return Plan{}, err
-			}
-		}
 	} else if apiKind != "" && !frameworkUnclear {
 		if err := planAPIServer(&plan, root, apiKind, packageConfig); err != nil {
 			return Plan{}, err
 		}
 	}
 	return plan, nil
-}
-
-func planNextProxy(plan *Plan, root string) error {
-	parent := root
-	if info, err := os.Stat(filepath.Join(root, "src", "app")); err == nil && info.IsDir() {
-		parent = filepath.Join(root, "src")
-	} else if info, err := os.Stat(filepath.Join(root, "src", "pages")); err == nil && info.IsDir() {
-		parent = filepath.Join(root, "src")
-	}
-	source := []byte("export { tnlProxy as proxy } from \"@tnldotdev/tnl/next\";\n")
-	for _, extension := range []string{".ts", ".js", ".mts", ".mjs"} {
-		path := filepath.Join(parent, "proxy"+extension)
-		data, err := readInitFile(path)
-		if err == nil {
-			if !bytes.Equal(data, source) {
-				plan.Actions = append(plan.Actions, fmt.Sprintf("Update %s: verify requests with tnlProxy from @tnldotdev/tnl/next before your app handles them.", path))
-			}
-			return nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	}
-	other := root
-	if parent == root {
-		other = filepath.Join(root, "src")
-	}
-	if other != parent {
-		for _, extension := range []string{".ts", ".js", ".mts", ".mjs"} {
-			path := filepath.Join(other, "proxy"+extension)
-			if _, err := os.Stat(path); err == nil {
-				plan.Actions = append(plan.Actions, fmt.Sprintf("Move %s to %s, then verify requests with tnlProxy from @tnldotdev/tnl/next.", path, parent))
-				return nil
-			} else if !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-		}
-	}
-	plan.ProxyPath = filepath.Join(parent, "proxy.ts")
-	plan.NewProxySource = source
-	return nil
 }
 
 func initConfigSource(service string) []byte {

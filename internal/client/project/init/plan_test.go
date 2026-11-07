@@ -20,9 +20,6 @@ func TestInitPlansNextProjectWithoutRewritingExistingFrameworkConfig(t *testing.
 	if plan.PackageManager != "pnpm" || plan.Framework != "next" || !slices.Equal(plan.MissingPackages, []string{"@tnldotdev/tnl"}) || len(plan.NewFrameworkConfig) != 0 || !slices.Equal(plan.Actions, []string{frameworkConfigAction("next", path)}) {
 		t.Fatalf("plan = %#v", plan)
 	}
-	if plan.ProxyPath != filepath.Join(root, "proxy.ts") || !bytes.Equal(plan.NewProxySource, []byte("export { tnlProxy as proxy } from \"@tnldotdev/tnl/next\";\n")) {
-		t.Fatalf("next proxy plan = %#v", plan)
-	}
 	for _, fragment := range []string{"app:", `target: { type: "app" }`, "defineConfig"} {
 		if !strings.Contains(string(plan.NewConfiguration), fragment) {
 			t.Fatalf("planned configuration missing %q: %s", fragment, plan.NewConfiguration)
@@ -33,56 +30,6 @@ func TestInitPlansNextProjectWithoutRewritingExistingFrameworkConfig(t *testing.
 	}
 	if _, err := os.Stat(filepath.Join(root, "tnl.config.ts")); !os.IsNotExist(err) {
 		t.Fatalf("planning wrote configuration: %v", err)
-	}
-}
-
-func TestInitPreservesExistingNextProxy(t *testing.T) {
-	root := copyInitFixture(t, "next")
-	path := filepath.Join(root, "proxy.ts")
-	source := []byte("export function proxy() { return Response.json({ ok: true }); }\n")
-	if err := os.WriteFile(path, source, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	plan, err := planInit(t.Context(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(plan.NewProxySource) != 0 || len(plan.Actions) != 2 || !strings.Contains(plan.Actions[1], "tnlProxy") {
-		t.Fatalf("plan = %#v", plan)
-	}
-	if data, err := os.ReadFile(path); err != nil || !bytes.Equal(data, source) {
-		t.Fatalf("next proxy changed: %q, %v", data, err)
-	}
-}
-
-func TestInitPlansNextProxyBesideSrcApp(t *testing.T) {
-	root := copyInitFixture(t, "next")
-	if err := os.MkdirAll(filepath.Join(root, "src", "app"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	plan, err := planInit(t.Context(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.ProxyPath != filepath.Join(root, "src", "proxy.ts") {
-		t.Fatalf("next proxy path = %q", plan.ProxyPath)
-	}
-}
-
-func TestInitDoesNotCreateSecondProxyWhenSrcAppHasRootProxy(t *testing.T) {
-	root := copyInitFixture(t, "next")
-	if err := os.MkdirAll(filepath.Join(root, "src", "app"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "proxy.ts"), []byte("export const proxy = () => {};\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	plan, err := planInit(t.Context(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(plan.NewProxySource) != 0 || len(plan.Actions) != 2 || !strings.Contains(plan.Actions[1], "Move ") {
-		t.Fatalf("plan = %#v", plan)
 	}
 }
 

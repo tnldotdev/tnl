@@ -1,7 +1,6 @@
 import { serviceHostnames, serializeRuntimePayload } from "./internal/project/runtime.js";
 import { canonicalLoopbackTarget, parseListenerPort } from "./internal/publisher/target.js";
 import type { NextConfig } from "next";
-import { NextResponse, type NextRequest } from "next/server.js";
 import { TnlError } from "./errors.js";
 import {
   prepareService,
@@ -12,7 +11,6 @@ import {
 import { operation } from "./internal/tracing.js";
 import * as z from "zod";
 import { parseValue } from "./internal/validation.js";
-import { verifyProxyHeaders } from "./internal/publisher/proxy_request.js";
 
 const developmentServerPhase = "phase-development-server";
 const runtimeEnvironmentName = "TNL_PROJECT_RUNTIME";
@@ -57,16 +55,8 @@ export function withTnl(
       return assignment;
     });
 
-    // Next's proxy runs in a server process, not in the config callback.
-    // neither value is placed in Next's browser-visible config.env payload.
-    process.env.__TNL_PRIVATE_APP_PROXY_TOKEN = proxyTokenFor(assignment);
-    process.env.__TNL_PRIVATE_APP_PROXY_HOSTS = JSON.stringify(
-      serviceHostnames({
-        hostname: assignment.hostname,
-        project: assignment,
-        service: assignment.service,
-      }),
-    );
+    // keep the credential in the server process, not Next's browser-visible config.env.
+    process.env.TNL_APP_PROXY_TOKEN = proxyTokenFor(assignment);
 
     return injectRuntime(
       {
@@ -83,28 +73,6 @@ export function withTnl(
       serializeRuntimePayload(assignment, true),
     );
   };
-}
-
-/** place `export { tnlProxy as proxy } from "@tnldotdev/tnl/next"` in proxy.ts. */
-export function tnlProxy(request: NextRequest): NextResponse {
-  if (process.env.NODE_ENV !== "development") return NextResponse.next();
-  const token = process.env.__TNL_PRIVATE_APP_PROXY_TOKEN;
-  const hosts = process.env.__TNL_PRIVATE_APP_PROXY_HOSTS;
-  if (token === undefined || hosts === undefined) return new NextResponse(null, { status: 503 });
-  const headers = new Headers(request.headers);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(hosts);
-  } catch {
-    return new NextResponse(null, { status: 503 });
-  }
-  if (!Array.isArray(parsed) || !parsed.every((host) => typeof host === "string")) {
-    return new NextResponse(null, { status: 503 });
-  }
-  if (!verifyProxyHeaders(headers, token, new Set<string>(parsed))) {
-    return new NextResponse(null, { status: 403 });
-  }
-  return NextResponse.next({ request: { headers } });
 }
 
 function injectRuntime(config: NextConfig, payload: string): NextConfig {

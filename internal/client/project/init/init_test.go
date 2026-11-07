@@ -127,24 +127,23 @@ func TestInitApplyStopsBeforePythonAndTypesWhenGenerationFails(t *testing.T) {
 	}
 }
 
-func TestInitApplyCreatesNextProxyBeforeGeneration(t *testing.T) {
+func TestInitLeavesNextProxyToApp(t *testing.T) {
 	root := copyInitFixture(t, "next")
 	plan, err := planInit(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := plan.Apply(t.Context(), Options{NoInstall: true, Generate: func(context.Context, string, string) error {
-		data, err := os.ReadFile(filepath.Join(root, "proxy.ts"))
-		if err != nil || !bytes.Equal(data, plan.NewProxySource) {
-			t.Fatalf("proxy was not installed before generation: %q, %v", data, err)
-		}
-		return nil
-	}})
+	result, err := plan.Apply(t.Context(), Options{NoInstall: true, Generate: func(context.Context, string, string) error { return nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(result.UpdatedPaths, plan.ProxyPath) {
-		t.Fatalf("proxy absent from updated paths: %+v", result)
+	if _, err := os.Stat(filepath.Join(root, "proxy.ts")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("init created a Next.js proxy: %v", err)
+	}
+	for _, path := range result.UpdatedPaths {
+		if filepath.Base(path) == "proxy.ts" {
+			t.Fatalf("init reported a Next.js proxy: %+v", result)
+		}
 	}
 }
 

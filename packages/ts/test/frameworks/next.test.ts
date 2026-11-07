@@ -125,6 +125,11 @@ describe("withTnl", () => {
               },
             },
           });
+          const credential = z
+            .object({ proxy_token: z.string().regex(/^[a-f0-9]{64}$/) })
+            .parse(bootstrap.requests[0]?.body).proxy_token;
+          expect(process.env.TNL_APP_PROXY_TOKEN).toBe(credential);
+          expect(local.env).not.toHaveProperty("TNL_APP_PROXY_TOKEN");
           expect(bootstrap.requests[0]?.body).not.toHaveProperty("service");
           await expect(withTnl(config)(productionPhase, context)).resolves.toBe(config);
         }),
@@ -270,7 +275,7 @@ describe("withTnl", () => {
 });
 
 test(
-  "runs Next.js with protected development assets, runtime metadata, and HMR",
+  "runs Next.js with protected development assets, server-only credentials, runtime metadata, and HMR",
   { timeout: 60_000 },
   async () => {
     const port = await findAvailableLoopbackPort();
@@ -317,20 +322,15 @@ test(
         .object({ proxy_token: z.string().regex(/^[a-f0-9]{64}$/) })
         .parse((await fixture.request()).body).proxy_token;
       expect(page.body).not.toContain(credential);
-      await expect(requestTestServer(port)).resolves.toMatchObject({ status: 403 });
-      const verified = await requestTestServer(port, {
-        path: "/api/provenance",
-        headers: { "X-Tnl-Proxy-Token": credential, "X-Forwarded-For": "203.0.113.9" },
+      const direct = await requestTestServer(port, { path: "/api/credential" });
+      expect(direct.status).toBe(200);
+      expect(JSON.parse(direct.body)).toEqual({ available: true, matches: false });
+      const matched = await requestTestServer(port, {
+        path: "/api/credential",
+        headers: { "X-Tnl-Proxy-Token": credential },
       });
-      expect(verified.status).toBe(200);
-      expect(JSON.parse(verified.body)).toEqual({ source: "203.0.113.9", credential: null });
-      const local = await requestTestServer(port, {
-        host: "localhost",
-        path: "/api/provenance",
-        headers: { "X-Forwarded-For": "198.51.100.1" },
-      });
-      expect(JSON.parse(local.body)).toMatchObject({ credential: null });
-      expect(JSON.parse(local.body).source).not.toBe("198.51.100.1");
+      expect(matched.status).toBe(200);
+      expect(JSON.parse(matched.body)).toEqual({ available: true, matches: true });
 
       const { message: socketMessage, socket } = await openTestWebSocketWithMessage(
         port,

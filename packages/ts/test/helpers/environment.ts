@@ -4,6 +4,7 @@ export const environmentBaseline = {
   APP_TEST_SOCKET: undefined,
   APP_TEST_ENDPOINT: undefined,
   TNL_APP_ENDPOINT: undefined,
+  TNL_APP_PROXY_TOKEN: undefined,
   TNL_STATE_DIR: undefined,
   TNL_PROJECT_RUNTIME: undefined,
   TNL_PUBLIC_HOSTNAME: undefined,
@@ -23,6 +24,7 @@ export const environmentBaseline = {
 const blockedSubprocessEnvironment = [
   "TNL_ACCESS_TOKEN",
   "TNL_PROJECT_RUNTIME",
+  "TNL_APP_PROXY_TOKEN",
   "TNL_PUBLIC_HOSTNAME",
   "TNL_PUBLIC_URL",
   "TNL_TUNNEL_ID",

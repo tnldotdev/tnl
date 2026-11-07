@@ -67,12 +67,6 @@ func (plan Plan) Apply(ctx context.Context, options Options) (Result, error) {
 		}
 		result.UpdatedPaths = append(result.UpdatedPaths, plan.FrameworkPath)
 	}
-	if len(plan.NewProxySource) != 0 {
-		if err := createInitFile(plan.ProxyPath, plan.NewProxySource); err != nil {
-			return Result{}, err
-		}
-		result.UpdatedPaths = append(result.UpdatedPaths, plan.ProxyPath)
-	}
 	if len(plan.ServerReplacement) != 0 {
 		if err := replaceRecognizedInitFile(plan.ServerPath, plan.ServerSource, plan.ServerReplacement); err != nil {
 			return Result{}, err
