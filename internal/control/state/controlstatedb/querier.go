@@ -600,6 +600,7 @@ type Querier interface {
 	SetPersonalTeamDefaultDomain(ctx context.Context, arg SetPersonalTeamDefaultDomainParams) error
 	SetPreviewTeamAccess(ctx context.Context, arg SetPreviewTeamAccessParams) error
 	SetPublicURLAccessMode(ctx context.Context, arg SetPublicURLAccessModeParams) (int64, error)
+	SetPublicURLPostQuantum(ctx context.Context, arg SetPublicURLPostQuantumParams) (int64, error)
 	SetTeamDefaultDomain(ctx context.Context, arg SetTeamDefaultDomainParams) (int64, error)
 	SetVisitorFeedbackPolicy(ctx context.Context, arg SetVisitorFeedbackPolicyParams) error
 	StartPublisherRuntime(ctx context.Context, arg StartPublisherRuntimeParams) (ControlPublisherRuntime, error)

@@ -275,16 +275,20 @@ func TestIntegrationPublisherNamespaceMemberOwnershipAndRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	invocation, _ := opaqueid.New(opaqueid.InvocationPrefix)
-	u, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://app.internal:3000", []string{}, []byte("null"), now)
+	options := PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted, RequirePostQuantum: true}
+	u, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://app.internal:3000", []string{}, []byte("null"), now, options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	retry, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://app.internal:3000", []string{}, []byte("null"), now)
-	if err != nil || retry.ID != u.ID {
+	retry, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://app.internal:3000", []string{}, []byte("null"), now, options)
+	if err != nil || retry.ID != u.ID || !retry.RequirePostQuantum {
 		t.Fatalf("allocation retry = %+v, %v", retry, err)
 	}
-	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://other.internal:3000", []string{}, []byte("null"), now); !errors.Is(err, ErrPublicURLIdempotency) {
+	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://other.internal:3000", []string{}, []byte("null"), now, options); !errors.Is(err, ErrPublicURLIdempotency) {
 		t.Fatalf("changed retry target = %v", err)
+	}
+	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://app.internal:3000", []string{}, []byte("null"), now); !errors.Is(err, ErrPublicURLIdempotency) {
+		t.Fatalf("retry changed the post-quantum requirement: %v", err)
 	}
 	if !strings.HasSuffix(u.CanonicalHostname, "."+p.Scope.Namespace) || !u.Ephemeral {
 		t.Fatal("allocation escaped its namespace")

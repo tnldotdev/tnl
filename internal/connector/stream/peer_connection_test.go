@@ -2,6 +2,7 @@ package stream
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net"
@@ -485,6 +486,9 @@ func TestConnectorPreparationPromotesStreamToOwnerLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.Close()
+	if state := p.connection.ConnectionState().TLS; state.Version != tls.VersionTLS13 || state.CurveID != tls.X25519MLKEM768 {
+		t.Fatalf("inner connector connection negotiated TLS %x with %s", state.Version, state.CurveID)
+	}
 	local, app := net.Pipe()
 	defer app.Close()
 	done := make(chan error, 1)

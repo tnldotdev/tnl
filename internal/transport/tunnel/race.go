@@ -130,6 +130,9 @@ func dialCandidate(ctx context.Context, candidate Candidate, hello tunnelv1.Mess
 	if err != nil {
 		return candidateResult{err: err}
 	}
+	if peer, ok := transport.(muxsession.AcceptedPeer); ok {
+		trace.SpanFromContext(ctx).SetAttributes(observability.TLSAttributes(peer.TLSConnectionState())...)
+	}
 	session, err := Dial(setupCtx, transport, hello)
 	if err == nil {
 		return candidateResult{session: session, transport: candidate.Transport}

@@ -27,6 +27,7 @@ schemas:
         purpose,
         service_protocol,
         access_mode,
+        require_post_quantum,
         mutation_revision,
         policy_revision,
         lifecycle_state,
@@ -53,6 +54,9 @@ schemas:
       service_protocol:
         $ref: "../openapi.yaml#/components/schemas/PublicURLServiceProtocol"
       publisher_pool: { type: boolean, default: false }
+      require_post_quantum:
+        type: boolean
+        description: Require TLS 1.3 hybrid post-quantum key agreement from public HTTPS visitors.
       public_url_scope:
         $ref: "../openapi.yaml#/components/schemas/PublicURLScope"
       purpose:
@@ -99,6 +103,7 @@ schemas:
     additionalProperties: false
     required: [invocation_id, target]
     properties:
+      require_post_quantum: { type: boolean, default: false }
       invocation_id:
         $ref: "../openapi.yaml#/components/schemas/ResourceID"
       target:
@@ -130,6 +135,7 @@ schemas:
     additionalProperties: false
     required: [team_id, domain_id, canonical_hostname, target, public_url_scope, purpose]
     properties:
+      require_post_quantum: { type: boolean, default: false }
       team_id:
         $ref: "../openapi.yaml#/components/schemas/TeamID"
       domain_id:
@@ -167,6 +173,9 @@ schemas:
     additionalProperties: false
     required: [target, allowed_ip_prefixes]
     properties:
+      require_post_quantum:
+        type: boolean
+        description: Omit to preserve the saved public URL's requirement.
       target:
         type: string
         pattern: "^$|^https?://"

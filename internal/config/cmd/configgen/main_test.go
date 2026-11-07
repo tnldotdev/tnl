@@ -93,7 +93,7 @@ func TestSchemaSourceScopesServerAndTeamToProject(t *testing.T) {
 	}
 	keys := map[string]string{}
 	collectTypeScriptKeys(reflect.TypeOf(config.TNL{}), keys)
-	if keys["allow_ip"] != "" || keys["source_ips"] != "sourceIPs" || keys["startup_timeout"] != "" || keys["request_limit"] != "" || keys["strip_prefix"] != "stripPrefix" {
+	if keys["allow_ip"] != "" || keys["source_ips"] != "sourceIPs" || keys["startup_timeout"] != "" || keys["request_limit"] != "" || keys["strip_prefix"] != "stripPrefix" || keys["require_post_quantum"] != "requirePostQuantum" {
 		t.Fatalf("TypeScript key mappings = %#v", keys)
 	}
 	duration := schemaForType(reflect.TypeOf(config.Duration(0)))

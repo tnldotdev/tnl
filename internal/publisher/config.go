@@ -36,6 +36,7 @@ type PublicURLManagementClient interface {
 }
 
 type Config struct {
+	RequirePostQuantum           *bool
 	PublisherIdentityID          string
 	Control                      PublicURLControlClient
 	VisitorControl               *clientcontrol.Client

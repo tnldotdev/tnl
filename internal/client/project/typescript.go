@@ -284,6 +284,7 @@ var typeScriptKeyMappings = map[string]string{
 	"jwks_url":             "jwksUrl",
 	"token_file":           "tokenFile",
 	"reusable_workflow":    "reusableWorkflow",
+	"require_post_quantum": "requirePostQuantum",
 }
 
 // TypeScriptKeyMappings returns the static-to-TypeScript property mappings

@@ -684,6 +684,7 @@ type ControlPublicServiceVisitor struct {
 }
 
 type ControlPublicUrl struct {
+	RequirePostQuantum          bool
 	ID                          string
 	TeamID                      string
 	DomainID                    string

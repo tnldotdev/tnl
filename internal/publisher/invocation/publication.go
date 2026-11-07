@@ -174,6 +174,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.Limits)
+	publisherConfig.RequirePostQuantum = flags.RequirePostQuantum
 	if policy.explicit {
 		publisherConfig.AccessMode = policy.access
 	}

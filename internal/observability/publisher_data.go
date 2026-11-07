@@ -50,7 +50,7 @@ func (m *Metrics) initPublisherData() {
 	m.publisherData.bytes = declare("tnl_publisher_forwarded_bytes_total", "HTTP body bytes read for target forwarding or written from accepted target responses, and opaque application copies, observed incrementally; excludes tnl-authored responses, HTTP headers, native authentication and TLS framing.", append(append([]MetricKey{}, keys...), Direction)...)
 	m.publisherData.streams = declare("tnl_publisher_visitor_stream_completions_total", "Application stream copies completed by outcome.", append(append([]MetricKey{}, keys...), OutcomeKey)...)
 	m.publisherData.authorization = declare("tnl_publisher_authorization_decisions_total", "Authorization checks distinguish denial, allowed pending admission, admission and infrastructure failure.", append(append([]MetricKey{}, keys...), OutcomeKey, State)...)
-	m.publisherData.tls = declare("tnl_publisher_tls_handshakes_total", "Completed TLS handshakes; negotiated version and resumption only on success.", append(append([]MetricKey{}, keys...), TLSLeg, TLSVersion, TLSResumed, OutcomeKey)...)
+	m.publisherData.tls = declare("tnl_publisher_tls_handshakes_total", "Completed TLS handshakes; negotiated version, key exchange and resumption only on success.", append(append([]MetricKey{}, keys...), TLSLeg, TLSVersion, TLSKeyExchange, TLSResumed, OutcomeKey)...)
 	connectionKeys := append(append([]MetricKey{}, keys...), Transport, ConnectionSlot)
 	describe(m.meter, "tnl_publisher_connections_active", "Authenticated publisher connections held by this process; sum slots for local redundancy, not control readiness.", KindGauge, nil, connectionKeys...)
 	m.publisherData.connections, _ = m.meter.Int64UpDownCounter("tnl_publisher_connections_active")

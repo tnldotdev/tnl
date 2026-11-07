@@ -21,6 +21,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/certificateidentity"
+	"github.com/tnldotdev/tnl/internal/security/tlspolicy"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/httpstream"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -125,7 +126,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		queue:           queue,
 		bodyTimeout:     httpstream.RequestBodyTimeout,
 		tls: &tls.Config{
-			MinVersion:             tls.VersionTLS12,
+			MinVersion:             tls.VersionTLS13,
 			NextProtos:             []string{"h2", "http/1.1"},
 			SessionTicketsDisabled: true,
 		},
@@ -397,6 +398,9 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		streams:            make(map[net.Conn]*publicVisitorAdmission),
 	}
 	route.tls.GetCertificate = route.getCertificate
+	if config.RequirePostQuantum {
+		route.tls = tlspolicy.RequirePostQuantum(route.tls)
+	}
 	if len(config.Certificate.Certificate) != 0 || config.Certificate.PrivateKey != nil {
 		if err := route.InstallCertificate(config.Certificate); err != nil {
 			_ = route.Close()

@@ -261,6 +261,9 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		if s.PublicURL.Hostname != "" && s.PublicURL.Hostname != u.CanonicalHostname || s.PublicURL.DomainID != "" && s.PublicURL.DomainID != u.DomainID || s.PublicURL.Ephemeral != u.Ephemeral {
 			return result, ErrProjectConfigurationInvalid
 		}
+		if s.PublicURL.RequirePostQuantum != nil && *s.PublicURL.RequirePostQuantum != u.RequirePostQuantum {
+			return result, ErrProjectConfigurationInvalid
+		}
 		if !found {
 			if e = rejectProjectManagedDefinition(ctx, tx, u.ID); e != nil {
 				return result, e

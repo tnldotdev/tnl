@@ -36,11 +36,12 @@ type ProjectPublisherGroup struct {
 	Public      bool   `json:"public,omitempty"`
 }
 type ProjectServicePublicURL struct {
-	DomainID  string               `json:"domain_id,omitempty"`
-	Hostname  string               `json:"hostname,omitempty"`
-	Access    *ProjectPublicAccess `json:"access,omitempty"`
-	Limits    *ProjectPublicLimits `json:"limits,omitempty"`
-	Ephemeral bool                 `json:"ephemeral,omitempty"`
+	RequirePostQuantum *bool                `json:"require_post_quantum,omitempty"`
+	DomainID           string               `json:"domain_id,omitempty"`
+	Hostname           string               `json:"hostname,omitempty"`
+	Access             *ProjectPublicAccess `json:"access,omitempty"`
+	Limits             *ProjectPublicLimits `json:"limits,omitempty"`
+	Ephemeral          bool                 `json:"ephemeral,omitempty"`
 }
 type ProjectPublicAccess struct {
 	Mode string   `json:"mode,omitempty"`

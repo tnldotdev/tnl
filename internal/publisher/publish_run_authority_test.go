@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -92,6 +93,17 @@ func TestBoundPublicRunRejectsSetupBeforeUseAndStillCloses(t *testing.T) {
 				t.Fatal("invalid setup escaped validation or skipped cleanup", err)
 			}
 		})
+	}
+}
+
+func TestBoundPublicRunRejectsPostQuantumPolicyMismatchAndCloses(t *testing.T) {
+	control := newCertificateTestControl(t, "route.example", publicURLCertificateTestPlan())
+	cfg := testRunConfig(control, control.setup)
+	cfg.RequirePostQuantum = new(true)
+	ready := false
+	err := runPublishRun(t.Context(), cfg, control.setup, func() error { ready = true; return nil })
+	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid || ready || len(control.closedSessions) != 1 {
+		t.Fatal("mismatched TLS policy escaped validation or skipped cleanup", err)
 	}
 }
 

@@ -369,12 +369,15 @@ func TestLoadPreservesParentDeadline(t *testing.T) {
 func TestTypeScriptServicesUseCamelCaseFields(t *testing.T) {
 	value, err := unmarshalTypeScriptTNL([]byte(`{
   "team":"Team One",
-    "services":{"web":{"publicURL":{"access":{"ip":["192.0.2.1"]},"ephemeral":true},"http":{"readiness":{"path":"/health"}}}}
+    "services":{"web":{"publicURL":{"access":{"ip":["192.0.2.1"]},"ephemeral":true,"requirePostQuantum":true},"http":{"readiness":{"path":"/health"}}}}
 }`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	service := value.Services["web"]
+	if service.Tunnel.RequirePostQuantum == nil || !*service.Tunnel.RequirePostQuantum {
+		t.Fatal("TypeScript lost the public HTTPS requirement")
+	}
 	if service.Tunnel == nil || service.Tunnel.Access == nil || len(service.Tunnel.Access.IP) != 1 || service.Tunnel.Ephemeral == nil || !*service.Tunnel.Ephemeral ||
 		service.HTTP.Readiness == nil || service.HTTP.Readiness.Path != "/health" {
 		t.Fatalf("service = %#v", service)

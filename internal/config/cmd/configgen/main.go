@@ -272,6 +272,7 @@ func tunnelSchema() *jsonschema.Schema {
 	properties.Set("hostname", &jsonschema.Schema{Type: "string", Description: "Exact public URL hostname or HTTPS origin to publish. The saved name belongs on the service, not inside publicURL."})
 	properties.Set("access", accessSchema("restricted", "anonymous"))
 	properties.Set("ephemeral", &jsonschema.Schema{Type: "boolean", Description: "Remove the public URL when this tunnel stops."})
+	properties.Set("require_post_quantum", &jsonschema.Schema{Type: "boolean", Description: "Require hybrid post-quantum key agreement for public HTTPS visitors."})
 	limits := jsonschema.NewProperties()
 	for _, protocol := range []string{"http", "tcp"} {
 		work := jsonschema.NewProperties()

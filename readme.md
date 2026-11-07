@@ -52,7 +52,7 @@ The Next.js and Vite plugins automatically handle port conflicts. And OAuth and 
 
 Connect to private services from anywhere (laptop, CI, etc.).
 
-For instance, you can run a `tnl` publisher inside your VPC. Traffic is end-to-end encrypted between your client and your publisher.
+For instance, you can run a `tnl` publisher inside your VPC. Traffic between your client and publisher uses end-to-end [post-quantum encryption](https://tnl.dev/docs/security#post-quantum-encryption).
 It tries hole-punched UDP, with relays as a fallback. Your db or Kubernetes API aren't publicly exposed:
 
 ```text

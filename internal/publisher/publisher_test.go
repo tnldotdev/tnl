@@ -492,7 +492,8 @@ func (s *publisherControlStub) CreatePublicURL(_ context.Context, body controlv1
 	}
 	publicURL := controlv1.PublicURL{
 		Id: "public_url_created", TeamId: body.TeamId, DomainId: body.DomainId, MembershipId: body.MembershipId,
-		CanonicalHostname: body.CanonicalHostname, PublicUrlScope: body.PublicUrlScope, Purpose: controlv1.PublicURLPurpose(body.Purpose), Target: body.Target, NextPublishRunNumber: 1,
+		RequirePostQuantum: body.RequirePostQuantum != nil && *body.RequirePostQuantum,
+		CanonicalHostname:  body.CanonicalHostname, PublicUrlScope: body.PublicUrlScope, Purpose: controlv1.PublicURLPurpose(body.Purpose), Target: body.Target, NextPublishRunNumber: 1,
 		Ephemeral: body.Ephemeral != nil && *body.Ephemeral, LifecycleState: controlv1.Enabled,
 	}
 	protocol := controlv1.Http
@@ -528,6 +529,9 @@ func (s *publisherControlStub) UpdatePublicURL(_ context.Context, id string, bod
 	for index := range s.routes {
 		if s.routes[index].Id == id {
 			s.routes[index].Target = body.Target
+			if body.RequirePostQuantum != nil {
+				s.routes[index].RequirePostQuantum = *body.RequirePostQuantum
+			}
 			s.routes[index].AllowedIpPrefixes = &body.AllowedIpPrefixes
 			return s.routes[index], nil
 		}

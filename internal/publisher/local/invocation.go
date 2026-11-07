@@ -103,6 +103,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		return publisherprotocol.Registration{}, err
 	}
 	allocation := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: request.InvocationId, Target: request.Target, Ip: request.Ip, Limits: request.Limits}
+	allocation.RequirePostQuantum = request.RequirePostQuantum
 	if request.AccessMode != nil {
 		mode := controlv1.VisitorAccessMode(*request.AccessMode)
 		allocation.AccessMode = &mode
@@ -142,6 +143,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
 	cfg := publisher.Config{Control: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: true, AssignedPublicURL: &publicURL, QUICConnector: muxsession.QUICConnector{TLSConfig: tlsConfig}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: tlsConfig}}
 	cfg.PublisherIdentityID = native.PublisherIdentityID()
+	cfg.RequirePostQuantum = request.RequirePostQuantum
 	if publicURL.MembershipId != nil {
 		cfg.MembershipID = *publicURL.MembershipId
 	}

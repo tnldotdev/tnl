@@ -133,6 +133,7 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		DomainID: decision.DomainID, CanonicalHostname: decision.CanonicalHostname, PublicURLScope: decision.PublicURLScope,
 		PublicURLPurpose: string(body.Purpose), ServiceProtocol: hashProtocol,
 		Target: body.Target, AllowedIPPrefixes: allowedIPPrefixes, AccessMode: string(accessMode), Ephemeral: ephemeral,
+		RequirePostQuantum: body.RequirePostQuantum != nil && *body.RequirePostQuantum,
 	})
 	if err != nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
@@ -159,9 +160,10 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		TeamID:  decision.TeamID, DomainID: decision.DomainID, MembershipID: decision.PublicURLMembershipID,
 		ActingIdentityID: decision.IdentityID, IdempotencyKey: request.Header.Get("Idempotency-Key"),
 		RequestDigest: [32]byte(digest), CanonicalHostname: decision.CanonicalHostname, Target: body.Target,
-		ServiceProtocol: storedProtocol,
-		PublisherPool:   body.PublisherPool != nil && *body.PublisherPool,
-		PublicURLScope:  controlstate.PublicURLScope(decision.PublicURLScope), Purpose: controlstate.PublicURLPurpose(body.Purpose), AccessMode: accessMode, AllowedIPPrefixes: storedIPPrefixes,
+		ServiceProtocol:    storedProtocol,
+		PublisherPool:      body.PublisherPool != nil && *body.PublisherPool,
+		RequirePostQuantum: body.RequirePostQuantum != nil && *body.RequirePostQuantum,
+		PublicURLScope:     controlstate.PublicURLScope(decision.PublicURLScope), Purpose: controlstate.PublicURLPurpose(body.Purpose), AccessMode: accessMode, AllowedIPPrefixes: storedIPPrefixes,
 		ManagedURLMode: h.config.ManagedURLMode,
 		DNSState:       dnsState, DNSAuthorityReference: dnsAuthorityReference,
 		PolicyRevision: decision.PolicyRevision,
@@ -180,8 +182,9 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		return
 	}
 	var body struct {
-		Target            *string   `json:"target"`
-		AllowedIPPrefixes *[]string `json:"allowed_ip_prefixes"`
+		RequirePostQuantum *bool     `json:"require_post_quantum"`
+		Target             *string   `json:"target"`
+		AllowedIPPrefixes  *[]string `json:"allowed_ip_prefixes"`
 	}
 	if err := decodeJSONLimited(response, request, &body, 1<<20); err != nil || body.Target == nil || body.AllowedIPPrefixes == nil {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
@@ -231,6 +234,7 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 	updated, err := h.store.UpdateAuthorizedPublicURL(request.Context(), controlstate.AuthorizedPublicURLUpdateRequest{
 		PublicURLID: publicURL.ID, TeamID: decision.TeamID, ActingIdentityID: decision.IdentityID,
 		Target: *body.Target, AllowedIPPrefixes: allowedIPPrefixes,
+		RequirePostQuantum:       body.RequirePostQuantum,
 		PolicyRevision:           decision.PolicyRevision,
 		ExpectedMutationRevision: publicURL.MutationRevision,
 	}, time.Now())

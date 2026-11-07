@@ -18,6 +18,7 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 	if config.AssignedPublicURL != nil {
 		publicURL := *config.AssignedPublicURL
 		if config.Ephemeral != publicURL.Ephemeral || publicURL.LifecycleState != controlv1.Enabled ||
+			config.RequirePostQuantum != nil && *config.RequirePostQuantum != publicURL.RequirePostQuantum ||
 			(config.ServiceProtocol != "" && config.ServiceProtocol != controlv1.Http) ||
 			(config.Ephemeral && publicURL.Target != config.Target) {
 			return controlv1.PublicURL{}, false, errors.New("publisher: allocated ad-hoc public URL does not match its target")
@@ -53,7 +54,8 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 		return controlv1.PublicURL{}, false, err
 	}
 	body := controlv1.CreatePublicURLRequest{
-		TeamId: config.TeamID, DomainId: config.DomainID, CanonicalHostname: config.Hostname,
+		RequirePostQuantum: config.RequirePostQuantum,
+		TeamId:             config.TeamID, DomainId: config.DomainID, CanonicalHostname: config.Hostname,
 		PublicUrlScope: config.PublicURLScope, Purpose: config.Purpose,
 	}
 	integration := config.Purpose == controlv1.Oauth || config.Purpose == controlv1.Webhooks
@@ -149,11 +151,12 @@ func reconcilePublicURL(ctx context.Context, config Config, publicURL controlv1.
 			return controlv1.PublicURL{}, failure.Wrap("edit saved public URL", failure.PublisherGrantMismatch, errors.New("publisher grant does not permit public URL management"))
 		}
 		updated, err := management.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{
-			Target: desiredTarget, AllowedIpPrefixes: append([]string{}, desiredPolicy...),
+			RequirePostQuantum: config.RequirePostQuantum,
+			Target:             desiredTarget, AllowedIpPrefixes: append([]string{}, desiredPolicy...),
 		})
 		return updated, classifyPublicURLConflict(err)
 	}
-	if publicURL.Target == desiredTarget {
+	if publicURL.Target == desiredTarget && (config.RequirePostQuantum == nil || *config.RequirePostQuantum == publicURL.RequirePostQuantum) {
 		return publicURL, nil
 	}
 	management, ok := config.Control.(PublicURLManagementClient)
@@ -161,7 +164,8 @@ func reconcilePublicURL(ctx context.Context, config Config, publicURL controlv1.
 		return controlv1.PublicURL{}, failure.Wrap("edit saved public URL", failure.PublisherGrantMismatch, errors.New("publisher grant does not permit public URL management"))
 	}
 	updated, err := management.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{
-		Target: desiredTarget, AllowedIpPrefixes: append([]string{}, desiredPolicy...),
+		RequirePostQuantum: config.RequirePostQuantum,
+		Target:             desiredTarget, AllowedIpPrefixes: append([]string{}, desiredPolicy...),
 	})
 	return updated, classifyPublicURLConflict(err)
 }

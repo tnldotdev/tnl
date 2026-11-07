@@ -34,6 +34,7 @@ var (
 )
 
 type PublicURL struct {
+	RequirePostQuantum            bool
 	ID                            string
 	TeamID                        string
 	DomainID                      string
@@ -62,6 +63,7 @@ type PublicURL struct {
 }
 
 type CreatePublicURLRequest struct {
+	RequirePostQuantum    bool
 	GuestID               string
 	TeamID                string
 	DomainID              string
@@ -89,6 +91,7 @@ type CreatePublicURLRequest struct {
 }
 
 type AuthorizedPublicURLUpdateRequest struct {
+	RequirePostQuantum       *bool
 	PublicURLID              string
 	TeamID                   string
 	ActingIdentityID         string
@@ -352,9 +355,10 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
 		CanonicalHostname:         request.CanonicalHostname, Namespace: namespace, Target: request.Target,
 		PublicURLScope: string(request.PublicURLScope), Purpose: string(request.Purpose), IngressPoolID: ingressPoolID,
-		ServiceProtocol: string(request.ServiceProtocol),
-		PublisherPool:   request.PublisherPool,
-		PolicyRevision:  policyRevision, AccessMode: string(request.AccessMode), IpPolicy: string(routeIPPolicy(prefixes)),
+		ServiceProtocol:    string(request.ServiceProtocol),
+		RequirePostQuantum: request.RequirePostQuantum,
+		PublisherPool:      request.PublisherPool,
+		PolicyRevision:     policyRevision, AccessMode: string(request.AccessMode), IpPolicy: string(routeIPPolicy(prefixes)),
 		AllowedIpPolicyCiphertext:   policyCiphertext,
 		AllowedIpPolicyStorageKeyID: nullableText(policyStorageKeyID),
 		AllowedIpHashes:             policyHashes, AllowedIpHashKeyID: nullableText(policyKeyID),

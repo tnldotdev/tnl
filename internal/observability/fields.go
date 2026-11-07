@@ -80,7 +80,12 @@ func TLSAttributes(state tls.ConnectionState) []attribute.KeyValue {
 	if version == "" {
 		return nil
 	}
-	return []attribute.KeyValue{TLSVersion.String(version), TLSResumed.Bool(state.DidResume)}
+	group := "other"
+	switch state.CurveID {
+	case tls.X25519MLKEM768, tls.SecP256r1MLKEM768, tls.SecP384r1MLKEM1024, tls.MLKEM1024, tls.X25519, tls.CurveP256, tls.CurveP384, tls.CurveP521:
+		group = state.CurveID.String()
+	}
+	return []attribute.KeyValue{TLSVersion.String(version), TLSResumed.Bool(state.DidResume), TLSKeyExchange.String(group)}
 }
 
 func validMetricValue(kv attribute.KeyValue) bool {

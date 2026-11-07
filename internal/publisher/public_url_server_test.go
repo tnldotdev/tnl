@@ -106,7 +106,7 @@ func TestRouteServerTerminatesTLSAndProxiesLocalHTTP(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = ingress.Close(); awaitPublisherTest(t, handled) })
 	client := tls.Client(ingress, &tls.Config{
-		ServerName: "ROUTE.EXAMPLE", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
+		ServerName: "ROUTE.EXAMPLE", MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
 		InsecureSkipVerify: true, // the test public URL certificate is self-signed.
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -114,8 +114,8 @@ func TestRouteServerTerminatesTLSAndProxiesLocalHTTP(t *testing.T) {
 	if err := client.HandshakeContext(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if client.ConnectionState().Version != tls.VersionTLS12 {
-		t.Fatalf("TLS version = %x, want TLS 1.2", client.ConnectionState().Version)
+	if client.ConnectionState().Version != tls.VersionTLS13 {
+		t.Fatalf("TLS version = %x, want TLS 1.3", client.ConnectionState().Version)
 	}
 	if _, err := fmt.Fprint(client, "GET / HTTP/1.1\r\nHost: route.example\r\nConnection: close\r\n\r\n"); err != nil {
 		t.Fatal(err)

@@ -119,7 +119,7 @@ func selectForegroundPublisher(ctx context.Context, database *clientstate.Databa
 		if err != nil {
 			return nil, err
 		}
-		body := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: invocation, Target: cfg.Target}
+		body := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: invocation, Target: cfg.Target, RequirePostQuantum: cfg.RequirePostQuantum}
 		if cfg.AccessMode != "" {
 			mode := cfg.AccessMode
 			body.AccessMode = &mode

@@ -144,7 +144,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 }
 
 func publicOptions(flags publishCommand) invocation.PublicOptions {
-	return invocation.PublicOptions{Target: flags.Target, TargetCAFile: flags.TargetCAFile, TargetTLSName: flags.TargetTLSName, ProjectRoot: flags.projectRoot, Project: flags.project.Project, Service: flags.Service, StateDir: flags.StateDir, ServerURL: flags.ServerURL, AccessToken: flags.AccessToken, PublicURL: flags.PublicURL, Name: flags.Name, Domain: flags.Domain, Team: flags.Team, SelectedTeam: flags.selectedTeam, Ephemeral: flags.Ephemeral, Demo: flags.Demo, Anonymous: flags.Anonymous, IP: flags.IP, Access: flags.access, Limits: flags.limits(), InspectionMode: flags.InspectionMode, Inspection: flags.inspection, Resolver: runtimeTargetResolver}
+	return invocation.PublicOptions{RequirePostQuantum: flags.RequirePostQuantum, Target: flags.Target, TargetCAFile: flags.TargetCAFile, TargetTLSName: flags.TargetTLSName, ProjectRoot: flags.projectRoot, Project: flags.project.Project, Service: flags.Service, StateDir: flags.StateDir, ServerURL: flags.ServerURL, AccessToken: flags.AccessToken, PublicURL: flags.PublicURL, Name: flags.Name, Domain: flags.Domain, Team: flags.Team, SelectedTeam: flags.selectedTeam, Ephemeral: flags.Ephemeral, Demo: flags.Demo, Anonymous: flags.Anonymous, IP: flags.IP, Access: flags.access, Limits: flags.limits(), InspectionMode: flags.InspectionMode, Inspection: flags.inspection, Resolver: runtimeTargetResolver}
 }
 
 func publisherAuthentication(stderr io.Writer) func(context.Context, *clientstate.Database, string, string) (*auth.Client, error) {

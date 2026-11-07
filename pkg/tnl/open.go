@@ -29,6 +29,7 @@ type Limits struct {
 }
 
 type Options struct {
+	RequirePostQuantum      bool
 	EnrollmentKey           string
 	PublisherIdentityID     string
 	PublisherCredentialFile string
@@ -91,7 +92,8 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	ready := make(chan publisher.Event, 1)
 	go func() {
 		result := adhoc.Run(runCtx, adhoc.Options{
-			ControlURL: serverURL, HTTPClient: options.HTTPClient, State: profile,
+			RequirePostQuantum: options.RequirePostQuantum,
+			ControlURL:         serverURL, HTTPClient: options.HTTPClient, State: profile,
 			Publisher: native, InvocationID: invocationID,
 			Target: "http://" + listener.Addr().String(), AccessMode: options.AccessMode, IP: slices.Clone(options.IP), Limits: limits,
 			OnAllocated: func(publicURL controlv1.PublicURL) error {

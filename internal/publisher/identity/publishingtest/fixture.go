@@ -297,7 +297,7 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		protocol, ephemeral := controlv1.Http, true
-		publicURL, err := f.seed.CreatePublicURL(r.Context(), controlv1.CreatePublicURLRequest{TeamId: e.result.TeamId, DomainId: *e.result.DomainId, CanonicalHostname: "eph-" + strings.ToLower(strings.TrimPrefix(b.InvocationId, opaqueid.InvocationPrefix)) + "." + *e.result.Namespace, Target: b.Target, Purpose: controlv1.App, PublicUrlScope: controlv1.Member, Ephemeral: &ephemeral, ServiceProtocol: &protocol}, b.InvocationId)
+		publicURL, err := f.seed.CreatePublicURL(r.Context(), controlv1.CreatePublicURLRequest{RequirePostQuantum: b.RequirePostQuantum, TeamId: e.result.TeamId, DomainId: *e.result.DomainId, CanonicalHostname: "eph-" + strings.ToLower(strings.TrimPrefix(b.InvocationId, opaqueid.InvocationPrefix)) + "." + *e.result.Namespace, Target: b.Target, Purpose: controlv1.App, PublicUrlScope: controlv1.Member, Ephemeral: &ephemeral, ServiceProtocol: &protocol}, b.InvocationId)
 		if err != nil {
 			w.WriteHeader(502)
 			return

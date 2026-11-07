@@ -104,6 +104,7 @@ type Authorizer interface {
 
 // OperationRequest contains every value included in a mutation hash.
 type OperationRequest struct {
+	RequirePostQuantum        bool
 	Operation                 Operation
 	TeamID                    string
 	MembershipID              string
@@ -134,18 +135,19 @@ func CanonicalRequestHash(request OperationRequest) (Digest, error) {
 			return Digest{}, invalid("public URL scope is invalid")
 		}
 		value = struct {
-			AllowedIPPrefixes []string `json:"allowed_ip_prefixes,omitempty"`
-			AccessMode        string   `json:"access_mode,omitempty"`
-			CanonicalHostname string   `json:"canonical_hostname"`
-			DomainID          string   `json:"domain_id"`
-			Ephemeral         bool     `json:"ephemeral,omitempty"`
-			MembershipID      string   `json:"membership_id,omitempty"`
-			PublicURLScope    string   `json:"public_url_scope"`
-			PublicURLPurpose  string   `json:"purpose,omitempty"`
-			ServiceProtocol   string   `json:"service_protocol,omitempty"`
-			Target            string   `json:"target"`
-			TeamID            string   `json:"team_id"`
-		}{request.AllowedIPPrefixes, request.AccessMode, request.CanonicalHostname, request.DomainID, request.Ephemeral, request.MembershipID, string(request.PublicURLScope), request.PublicURLPurpose, request.ServiceProtocol, request.Target, request.TeamID}
+			AllowedIPPrefixes  []string `json:"allowed_ip_prefixes,omitempty"`
+			AccessMode         string   `json:"access_mode,omitempty"`
+			CanonicalHostname  string   `json:"canonical_hostname"`
+			DomainID           string   `json:"domain_id"`
+			Ephemeral          bool     `json:"ephemeral,omitempty"`
+			RequirePostQuantum bool     `json:"require_post_quantum,omitempty"`
+			MembershipID       string   `json:"membership_id,omitempty"`
+			PublicURLScope     string   `json:"public_url_scope"`
+			PublicURLPurpose   string   `json:"purpose,omitempty"`
+			ServiceProtocol    string   `json:"service_protocol,omitempty"`
+			Target             string   `json:"target"`
+			TeamID             string   `json:"team_id"`
+		}{request.AllowedIPPrefixes, request.AccessMode, request.CanonicalHostname, request.DomainID, request.Ephemeral, request.RequirePostQuantum, request.MembershipID, string(request.PublicURLScope), request.PublicURLPurpose, request.ServiceProtocol, request.Target, request.TeamID}
 	case OperationPublicURLUpdate:
 		if request.TeamID == "" || request.DomainID == "" || request.CanonicalHostname == "" || request.PublicURLScope == "" ||
 			request.PublicURLID == "" || request.PublicURLMutationRevision == 0 || request.PolicyRevision == 0 ||

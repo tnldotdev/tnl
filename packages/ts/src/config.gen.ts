@@ -246,6 +246,10 @@ export interface TnlConfig {
               };
             };
             publisherPool?: never;
+            /**
+             * Require hybrid post-quantum key agreement for public HTTPS visitors.
+             */
+            requirePostQuantum?: boolean;
           };
           /**
            * Assigned publisher group; defaults to the built-in local publisher.
@@ -1129,6 +1133,10 @@ export interface TnlConfig {
       };
     };
     publisherPool?: never;
+    /**
+     * Require hybrid post-quantum key agreement for public HTTPS visitors.
+     */
+    requirePostQuantum?: boolean;
   };
   /**
    * Named publisher groups with a durable namespace beneath a ready team domain. local is reserved for the built-in local publisher.

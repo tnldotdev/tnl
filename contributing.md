@@ -71,9 +71,9 @@ The tunnel protocol in `pkg/protocol/tunnelv1` is handwritten.
 The control baseline requires a fresh PostgreSQL database and a coordinated
 stop/start of all server roles. `tnld migrate` accepts only
 `TNLD_DATABASE_DIRECT_URL`; serving roles use pooled `TNLD_DATABASE_URL` and
-require the exact schema version and baseline identity. The baseline without
-public URL usage accounting cannot open a database created by the previous
-baseline.
+require the exact schema version and baseline identity. The post-quantum public
+URL policy is part of the existing version 1 baseline; it cannot open a database
+created by a previous baseline.
 
 `task format-check` checks without editing. `task generate-check` regenerates
 files and compares them with `HEAD`, so commit intended generated changes first.

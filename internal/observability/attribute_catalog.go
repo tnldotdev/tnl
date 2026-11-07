@@ -69,6 +69,7 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(HTTPStatus, PolicyBounded, "HTTP response status code, 100 through 599")
 	add(HTTPRoute, PolicyBounded, "compiled matched route template only; never raw request path")
 	add(TLSVersion, PolicyBounded, "negotiated TLS version", "1.2", "1.3")
+	add(TLSKeyExchange, PolicyBounded, "negotiated TLS key exchange", "X25519MLKEM768", "SecP256r1MLKEM768", "SecP384r1MLKEM1024", "MLKEM1024", "X25519", "CurveP256", "CurveP384", "CurveP521", "other")
 	add(TLSResumed, PolicyBounded, "whether this TLS handshake resumed a session", "true", "false")
 	add(ResponseOrigin, PolicyBounded, "component authoring the HTTP response", "tnl", "local_service")
 	for _, k := range []attributeKey{VisitorConnectionID, RequestID, PublishRunID, PublishRunNumber, PublisherConnectionID, GrantID, ActorID, Revision, ImageHash, WorkloadSessionID, WorkloadRunID, WorkloadRunAttempt, WorkloadCheckRunID} {

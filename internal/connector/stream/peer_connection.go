@@ -13,6 +13,7 @@ import (
 	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/tlspolicy"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -144,7 +145,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		return nil, result
 	}
 	p.transport = &quic.Transport{Conn: p.endpoint}
-	trust := config.ServiceTLS.Clone()
+	trust := tlspolicy.RequirePostQuantum(config.ServiceTLS)
 	trust.ServerName, trust.NextProtos = p.run.Endpoint.Hostname, []string{muxsession.ALPN}
 	innerConfig := tunnel.ConnectorQUICConfig()
 	innerConfig.MaxIncomingStreams = -1

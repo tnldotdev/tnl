@@ -160,7 +160,7 @@ func (h *handler) AllocatePublisherPublicURL(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher limits")
 		return
 	}
-	u, err := store.AllocatePublisherPublicURL(r.Context(), p, b.InvocationId, b.Target, prefixes, binding, time.Now(), mode)
+	u, err := store.AllocatePublisherPublicURL(r.Context(), p, b.InvocationId, b.Target, prefixes, binding, time.Now(), controlstate.PublisherPublicURLOptions{AccessMode: mode, RequirePostQuantum: b.RequirePostQuantum != nil && *b.RequirePostQuantum})
 	if err != nil {
 		publisherProblem(w, "allocate publisher URL", err)
 		return
