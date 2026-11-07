@@ -28,7 +28,7 @@ schemas:
             kubernetes_auth: { $ref: "../openapi.yaml#/components/schemas/KubernetesAuth" }
   WorkloadProvider:
     type: string
-    enum: [github, vercel, fly, oidc, google, kubernetes]
+    enum: [github, vercel, fly, oidc, google, kubernetes, gitlab]
     x-enum-varnames:
       [
         WorkloadGitHub,
@@ -37,6 +37,7 @@ schemas:
         WorkloadOIDC,
         WorkloadGoogle,
         WorkloadKubernetes,
+        WorkloadGitLab,
       ]
   WorkloadTrust:
     type: object

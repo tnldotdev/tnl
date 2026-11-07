@@ -15,6 +15,7 @@ import (
 // workload declares provider identity constraints and exact service rights.
 type Workload struct {
 	GitHub      *WorkloadGitHub     `json:"github,omitempty" yaml:"github,omitempty"`
+	GitLab      *WorkloadGitLab     `json:"gitlab,omitempty" yaml:"gitlab,omitempty"`
 	Vercel      *WorkloadVercel     `json:"vercel,omitempty" yaml:"vercel,omitempty"`
 	Fly         *WorkloadFly        `json:"fly,omitempty" yaml:"fly,omitempty"`
 	Google      *WorkloadGoogle     `json:"google,omitempty" yaml:"google,omitempty"`
@@ -105,6 +106,7 @@ func (p Workload) Provider() string {
 		set  bool
 	}{
 		{"github", p.GitHub != nil}, {"vercel", p.Vercel != nil},
+		{"gitlab", p.GitLab != nil},
 		{"fly", p.Fly != nil}, {"oidc", p.OIDC != nil},
 		{"google", p.Google != nil},
 		{"kubernetes", p.Kubernetes != nil},
@@ -140,6 +142,9 @@ func (g WorkloadGitHub) AllowedEvents() []string {
 }
 
 func (p Workload) TokenAudience(server string) string {
+	if p.GitLab != nil && p.GitLab.Audience != "" {
+		return p.GitLab.Audience
+	}
 	if p.Kubernetes != nil && p.Kubernetes.Audience != "" {
 		return p.Kubernetes.Audience
 	}
@@ -194,6 +199,10 @@ func ValidateWorkloads(c TNL) error {
 		bad := func() error { return fmt.Errorf("workloads.%s must declare exact constraints for its provider", name) }
 		g := p.GitHub
 		switch p.Provider() {
+		case "gitlab":
+			if !p.GitLab.valid() {
+				return bad()
+			}
 		case "github":
 			if g == nil {
 				return bad()

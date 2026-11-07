@@ -57,6 +57,7 @@ export function usesWorkload(): boolean {
       Boolean(process.env.FLY_APP_NAME) ||
       Boolean(process.env.K_SERVICE) ||
       Boolean(process.env.KUBERNETES_SERVICE_HOST) ||
+      process.env.GITLAB_CI === "true" ||
       process.env.GITHUB_ACTIONS === "true")
   );
 }
@@ -82,6 +83,7 @@ export async function selectWorkload(
       github_actions: process.env.GITHUB_ACTIONS ?? "",
       cloud_run_service: process.env.K_SERVICE ?? "",
       kubernetes_service_host: process.env.KUBERNETES_SERVICE_HOST ?? "",
+      gitlab_ci: process.env.GITLAB_CI ?? "",
     },
   };
   const selection = parseValue(
