@@ -55,6 +55,11 @@ paths:
     post:
       operationId: renewWorkloadSession
       security: [{ workloadAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/WorkloadRenewal" }
       responses:
         "200":
           description: Renewed lease within the original execution window

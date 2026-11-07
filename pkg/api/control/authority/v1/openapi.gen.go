@@ -1059,6 +1059,14 @@ type WorkloadIdentityRequest struct {
 	Workload          string `json:"workload"`
 }
 
+// WorkloadRenewal defines model for WorkloadRenewal.
+type WorkloadRenewal struct {
+	Sequence int64 `json:"sequence"`
+
+	// Signature Unpadded base64url Ed25519 signature over SHA-256 of compact JSON ["tnl-workload-renew/v1", session_id, sequence]. Retrying the current sequence does not extend the lease again.
+	Signature string `json:"signature"`
+}
+
 // WorkloadSession defines model for WorkloadSession.
 type WorkloadSession = WorkloadSessionFields
 
@@ -1071,13 +1079,14 @@ type WorkloadSessionFields struct {
 	ExpiresAt          time.Time  `json:"expires_at"`
 
 	// Github Immutable GitHub execution metadata verified from the signed provider assertion. Present only for the github provider and unchanged during renewal.
-	Github         *WorkloadGitHubExecution      `json:"github,omitempty"`
-	Id             string                        `json:"id"`
-	LeaseExpiresAt time.Time                     `json:"lease_expires_at"`
-	ProjectKey     string                        `json:"project_key"`
-	Provider       externalRef0.WorkloadProvider `json:"provider"`
-	RenewAfter     time.Time                     `json:"renew_after"`
-	ServiceIds     []string                      `json:"service_ids"`
+	Github          *WorkloadGitHubExecution      `json:"github,omitempty"`
+	Id              string                        `json:"id"`
+	LeaseExpiresAt  time.Time                     `json:"lease_expires_at"`
+	ProjectKey      string                        `json:"project_key"`
+	Provider        externalRef0.WorkloadProvider `json:"provider"`
+	RenewAfter      time.Time                     `json:"renew_after"`
+	RenewalSequence int64                         `json:"renewal_sequence"`
+	ServiceIds      []string                      `json:"service_ids"`
 
 	// Subject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
 	Subject  externalRef0.VisitorSubject `json:"subject"`
@@ -1446,6 +1455,9 @@ type IdentifyWorkloadJSONRequestBody = WorkloadIdentityRequest
 
 // AttachWorkloadAssertionJSONRequestBody defines body for AttachWorkloadAssertion for application/json ContentType.
 type AttachWorkloadAssertionJSONRequestBody = WorkloadAssertion
+
+// RenewWorkloadSessionJSONRequestBody defines body for RenewWorkloadSession for application/json ContentType.
+type RenewWorkloadSessionJSONRequestBody = WorkloadRenewal
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -2042,8 +2054,13 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	AttachWorkloadAssertion(ctx context.Context, sessionId string, body AttachWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RenewWorkloadSessionWithBody performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request,
+	// with any type of body and a specified content type.
+	RenewWorkloadSessionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RenewWorkloadSession performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request.
-	RenewWorkloadSession(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Takes a body of the `application/json` content type.
+	RenewWorkloadSession(ctx context.Context, sessionId string, body RenewWorkloadSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // IssueControlBrowserHandoffWithBody performs a POST /v1/auth/browser-handoff (the `IssueControlBrowserHandoff` operationId) request,
@@ -3557,9 +3574,24 @@ func (c *Client) AttachWorkloadAssertion(ctx context.Context, sessionId string, 
 	return c.Client.Do(req)
 }
 
+// RenewWorkloadSessionWithBody performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) RenewWorkloadSessionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewWorkloadSessionRequestWithBody(c.Server, sessionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RenewWorkloadSession performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request.
-func (c *Client) RenewWorkloadSession(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRenewWorkloadSessionRequest(c.Server, sessionId)
+// Takes a body of the `application/json` content type.
+func (c *Client) RenewWorkloadSession(ctx context.Context, sessionId string, body RenewWorkloadSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewWorkloadSessionRequest(c.Server, sessionId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6580,8 +6612,19 @@ func NewAttachWorkloadAssertionRequestWithBody(server string, sessionId string, 
 	return req, nil
 }
 
-// NewRenewWorkloadSessionRequest constructs an http.Request for the RenewWorkloadSession method
-func NewRenewWorkloadSessionRequest(server string, sessionId string) (*http.Request, error) {
+// NewRenewWorkloadSessionRequest calls the generic RenewWorkloadSession builder with application/json body
+func NewRenewWorkloadSessionRequest(server string, sessionId string, body RenewWorkloadSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenewWorkloadSessionRequestWithBody(server, sessionId, "application/json", bodyReader)
+}
+
+// NewRenewWorkloadSessionRequestWithBody constructs an http.Request for the RenewWorkloadSession method, with any body, and a specified content type
+func NewRenewWorkloadSessionRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -6606,10 +6649,12 @@ func NewRenewWorkloadSessionRequest(server string, sessionId string) (*http.Requ
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -7269,10 +7314,15 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	AttachWorkloadAssertionWithResponse(ctx context.Context, sessionId string, body AttachWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachWorkloadAssertionResponse, error)
 
-	// RenewWorkloadSessionWithResponse performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request.
+	// RenewWorkloadSessionWithBodyWithResponse performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request,
+	// with any type of body and a specified content type.
 	//
 	// Returns a wrapper object for the known response body format(s).
-	RenewWorkloadSessionWithResponse(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*RenewWorkloadSessionResponse, error)
+	RenewWorkloadSessionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewWorkloadSessionResponse, error)
+
+	// RenewWorkloadSessionWithResponse performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	RenewWorkloadSessionWithResponse(ctx context.Context, sessionId string, body RenewWorkloadSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewWorkloadSessionResponse, error)
 }
 
 type IssueControlBrowserHandoffResponse struct {
@@ -11403,11 +11453,22 @@ func (c *ClientWithResponses) AttachWorkloadAssertionWithResponse(ctx context.Co
 	return ParseAttachWorkloadAssertionResponse(rsp)
 }
 
-// RenewWorkloadSessionWithResponse performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request.
+// RenewWorkloadSessionWithBodyWithResponse performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request,
+// with any type of body and a specified content type.
 //
 // Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) RenewWorkloadSessionWithResponse(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*RenewWorkloadSessionResponse, error) {
-	rsp, err := c.RenewWorkloadSession(ctx, sessionId, reqEditors...)
+func (c *ClientWithResponses) RenewWorkloadSessionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewWorkloadSessionResponse, error) {
+	rsp, err := c.RenewWorkloadSessionWithBody(ctx, sessionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewWorkloadSessionResponse(rsp)
+}
+
+// RenewWorkloadSessionWithResponse performs a POST /v1/workload-sessions/{session_id}/renew (the `RenewWorkloadSession` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RenewWorkloadSessionWithResponse(ctx context.Context, sessionId string, body RenewWorkloadSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewWorkloadSessionResponse, error) {
+	rsp, err := c.RenewWorkloadSession(ctx, sessionId, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
