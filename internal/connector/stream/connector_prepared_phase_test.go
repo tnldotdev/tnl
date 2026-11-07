@@ -1,7 +1,9 @@
 package stream
 
 import (
+	"context"
 	"errors"
+	"net"
 	"testing"
 	"time"
 )
@@ -52,5 +54,22 @@ func TestPreparedConnectorPermissionPhasesFenceWrites(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPreparedConnectorCloseJoinsPermissionFailure(t *testing.T) {
+	local, remote := net.Pipe()
+	defer remote.Close()
+	p := &PreparedConnector{ctx: t.Context(), conn: local, stream: streamPrepared{}, permission: permissionUsable{}, permissionUntil: time.Now().Add(10 * time.Millisecond), stop: func() bool { return true }}
+	p.work.Add(1)
+	done := make(chan struct{})
+	go func() { p.renewPermissions(t.Context(), make(chan preparedPermissionRenewal)); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("permission worker did not stop at its deadline")
+	}
+	if err := p.Close(); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("closing the prepared stream lost its permission failure", err)
 	}
 }
