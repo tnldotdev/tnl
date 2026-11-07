@@ -621,6 +621,132 @@ def test_unretained_preparation_errors_do_not_accumulate_cleanup_operations(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("failure", ["owner", "start"])
+@pytest.mark.parametrize("retry_close", [False, True])
+def test_recovery_failure_keeps_exact_replacement_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str, retry_close: bool
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    current = "other"
+    tnl.configure_workload("job", token=lambda: current)
+    original = tnl.TnlError("sdk.connection_unavailable", "the old owner is unavailable")
+    replacement = str(tmp_path / "replacement") if failure == "owner" else "b" * 64 + "." + "2" * 16
+    diagnostic: dict[str, object] = {"reason": "TNL_CLIENT_CONNECTION_EXPIRED"}
+    if failure == "owner":
+        diagnostic["sdk_owner_handle"] = replacement
+    else:
+        diagnostic.update(sdk_retained_start_failure=True, sdk_failure_handle=replacement)
+    recoveries: list[str] = []
+    cleanup: list[tuple[str, str]] = []
+    select = native.select
+
+    def unavailable(name: str, assertion: str | None) -> object:
+        if assertion == "first":
+            raise original
+        return select(name, assertion)
+
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        if "--recover-handle" in args:
+            assert args[0] == "sdk-prepare" and "--retain-start-failure" in args
+            recoveries.append(args[args.index("--recover-handle") + 1])
+            raise _connections._native_error(
+                diagnostic["reason"],
+                diagnostic.get("sdk_retained_start_failure") is True,
+                diagnostic.get("sdk_failure_handle"),
+                diagnostic.get("sdk_owner_handle"),
+            )
+        if args[0] in {"stop", "sdk-close-failure"}:
+            flag = "--handle" if args[0] == "stop" else "--failure-handle"
+            cleanup.append((args[0], args[args.index(flag) + 1]))
+        return native.command(binary, *args, input_value=input_value)
+
+    monkeypatch.setattr(native, "select", unavailable)
+    monkeypatch.setattr(_connections, "_command", command)
+
+    async def scenario() -> None:
+        nonlocal current
+        peer = tnl.connect("db", directory=tmp_path)
+        await peer
+        scope = peer._session.scope
+        peer_owner = peer._session.handle
+        current = "first"
+        failed = tnl.connect("db", directory=tmp_path)
+        with pytest.raises(tnl.TnlError) as caught:
+            await failed
+        assert recoveries == [peer_owner] and not cleanup
+        if retry_close:
+            native.fail_close = True
+            with pytest.raises(tnl.TnlError):
+                await failed.aclose()
+            assert failed._lifetime.closed and not failed._lifetime.joined
+            assert not native.closed
+            native.fail_close = False
+        await failed.aclose()
+        expected = "stop" if failure == "owner" else "sdk-close-failure"
+        assert cleanup == [(expected, replacement)] * (2 if retry_close else 1)
+        assert native.closed == ([replacement] if failure == "owner" else [])
+        assert "sdk-stop" not in native.calls
+        assert set(scope.handles) == {peer_owner}
+        assert not scope.failures and not scope.failure_handles
+        assert failed._lifetime.joined
+        error = caught.value
+        assert isinstance(
+            error, (_connections._OwnerPreparationFailure, _connections._RetainedStartFailure)
+        )
+        assert error.handle == replacement and error.code == "sdk.connection_expired"
+        before = list(cleanup)
+        await failed.aclose()
+        assert cleanup == before
+        current = "other"
+        await peer
+        await peer.aclose()
+        assert not scope.handles
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        {},
+        {"sdk_owner_handle": "relative-owner"},
+        {"sdk_retained_start_failure": True, "sdk_failure_handle": "invalid"},
+    ],
+)
+def test_recovery_failure_without_cleanup_reference_preserves_original_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reference: dict[str, object]
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    tnl.configure_workload("job", token=lambda: "first")
+    original = tnl.TnlError("sdk.connection_unavailable", "the old owner is unavailable")
+
+    def unavailable(name: str, assertion: str | None) -> object:
+        raise original
+
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        if "--recover-handle" in args:
+            raise _connections._native_error(
+                "TNL_SERVER_RESPONSE_INVALID",
+                reference.get("sdk_retained_start_failure") is True,
+                reference.get("sdk_failure_handle"),
+                reference.get("sdk_owner_handle"),
+            )
+        return native.command(binary, *args, input_value=input_value)
+
+    async def scenario() -> None:
+        handle = tnl.connect("db", directory=tmp_path)
+        await handle
+        monkeypatch.setattr(native, "select", unavailable)
+        monkeypatch.setattr(_connections, "_command", command)
+        with pytest.raises(tnl.TnlError) as caught:
+            await handle
+        assert caught.value is original and caught.value.__cause__ is None
+        assert not handle._lifetime.preparations
+        await handle.aclose()
+
+    asyncio.run(scenario())
+
+
 def test_callback_failures_do_not_expose_private_cause(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

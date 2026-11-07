@@ -703,6 +703,9 @@ class _Scope:
                     raw = _command(
                         binary, *arguments, "--recover-handle", entry[0], input_value=private_input
                     )
+                except (_OwnerPreparationFailure, _RetainedStartFailure):
+                    # the requester must retain the replacement's cleanup reference.
+                    raise
                 except TnlError:
                     raise original from None
                 with self.lock:
