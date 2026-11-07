@@ -1,4 +1,4 @@
-"""closing before the first capability still joins the native registry."""
+"""closing joins preparations before releasing their exact native references."""
 
 from __future__ import annotations
 
@@ -25,20 +25,22 @@ def test_close_before_first_handle_joins_native_and_retains_failed_stop(
     failure = tnl.TnlError("sdk.connection_unavailable", "cleanup did not join")
     stop_attempts = 0
     stopped_registries: list[str] = []
+    owner = str(tmp_path / "owner" / "handle.json")
 
     def command(binary: Path, *args: str, input_value: object = None) -> object:
         nonlocal stop_attempts
         if args[0] == "sdk-prepare":
             starting.set()
             assert release.wait(5)
-            raise tnl.TnlError("sdk.connection_closed", "native scope is closed")
-        assert args[0] == "sdk-stop"
+            raise _connections._OwnerPreparationFailure(
+                tnl.TnlError("sdk.connection_unavailable", "initial service failed"), owner
+            )
+        assert args[0] == "sdk-close" and args[-2:] == ("--handle", owner)
         stopped_registries.append(args[args.index("--registry") + 1])
         stopping.set()
         stop_attempts += 1
         if stop_attempts == 1:
             raise failure
-        release.set()
         return {"schema": 1, "state": "stopped"}
 
     monkeypatch.setattr(_connections, "_command", command)
@@ -50,11 +52,17 @@ def test_close_before_first_handle_joins_native_and_retains_failed_stop(
     async def scenario() -> None:
         pending = asyncio.create_task(prepare())
         assert await asyncio.to_thread(starting.wait, 5)
+        (preparation,) = handle._lifetime.preparations
         try:
+            closing = asyncio.create_task(handle.aclose())
+            while not handle._lifetime.closed:
+                await asyncio.sleep(0)
+            assert not closing.done() and not stopping.is_set()
+            release.set()
             with pytest.raises(tnl.TnlError) as error:
-                await handle.aclose()
+                await closing
             assert error.value is failure
-            assert stopping.is_set() and not pending.done()
+            assert stopping.is_set() and preparation.pending == 0
             registry = handle._session.scope.registry
             assert registry is not None
             await handle.aclose()
