@@ -46,6 +46,20 @@ type visitorPromotion struct {
 	err  error
 }
 
+type visitorPromotionPhase interface{ visitorPromotionPhase() }
+type runningVisitorPromotion struct{ work *visitorPromotion }
+type completedVisitorPromotion struct{ work *visitorPromotion }
+
+func (runningVisitorPromotion) visitorPromotionPhase()   {}
+func (completedVisitorPromotion) visitorPromotionPhase() {}
+
+type visitorSessionPhase uint8
+
+const (
+	visitorSessionServing visitorSessionPhase = iota
+	visitorSessionClosed
+)
+
 type visitorSession struct {
 	visitor   Visitor
 	promote   PromoteVisitor
@@ -54,8 +68,8 @@ type visitorSession struct {
 	cancel    context.CancelFunc
 	capacity  *publicVisitorAdmission
 	mu        sync.Mutex
-	promotion *visitorPromotion
-	closed    bool
+	promotion visitorPromotionPhase // nil until the first admitted request
+	phase     visitorSessionPhase
 	workers   sync.WaitGroup
 	requests  sync.WaitGroup
 }
@@ -65,7 +79,7 @@ func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
 		return err
 	}
 	v.mu.Lock()
-	closed := v.closed
+	closed := v.phase == visitorSessionClosed
 	v.mu.Unlock()
 	if closed {
 		return net.ErrClosed
@@ -99,13 +113,13 @@ func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
 		return err
 	}
 	v.mu.Lock()
-	if v.closed {
+	if v.phase == visitorSessionClosed {
 		v.mu.Unlock()
 		return net.ErrClosed
 	}
 	if v.promotion == nil {
 		work := &visitorPromotion{done: make(chan struct{})}
-		v.promotion = work
+		v.promotion = runningVisitorPromotion{work: work}
 		base := v.life
 		if base == nil {
 			base = context.Background()
@@ -133,10 +147,19 @@ func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
 			}
 			// one shared decision is never replayed on an ambiguous transport
 			// failure. request cancellation affects only its own waiter.
+			v.mu.Lock()
+			v.promotion = completedVisitorPromotion{work: work}
+			v.mu.Unlock()
 			close(work.done)
 		})
 	}
-	work := v.promotion
+	var work *visitorPromotion
+	switch state := v.promotion.(type) {
+	case runningVisitorPromotion:
+		work = state.work
+	case completedVisitorPromotion:
+		work = state.work
+	}
 	v.mu.Unlock()
 	select {
 	case <-ctx.Done():
@@ -155,7 +178,7 @@ func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
 func (v *visitorSession) beginRequest() bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.closed {
+	if v.phase == visitorSessionClosed {
 		return false
 	}
 	v.requests.Add(1)
@@ -164,7 +187,7 @@ func (v *visitorSession) beginRequest() bool {
 
 func (v *visitorSession) close() {
 	v.mu.Lock()
-	v.closed = true
+	v.phase = visitorSessionClosed
 	if v.cancel != nil {
 		v.cancel()
 	}

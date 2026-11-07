@@ -25,14 +25,52 @@ type publicVisitorAdmission struct {
 	live       *livePublisherSession
 	stream     net.Conn
 	connection *doneConn
-	admitted   bool         // protected by run.mu
-	stopped    bool         // protected by run.mu
-	source     netip.Prefix // protected by run.mu
+	phase      publicVisitorPhase // protected by run.mu
 	timer      *time.Timer
 	timerDone  chan struct{}
 	expiresAt  time.Time
 	closeOnce  sync.Once
 	done       chan struct{}
+}
+
+// capacity has one owner from reservation through physical close. a stopped
+// setup retains its pending source/relay charges until retire joins the close.
+type publicVisitorPhase interface{ publicVisitorPhase() }
+type unverifiedPublicSetup struct{}
+type verifiedPublicSetup struct{ source netip.Prefix }
+type committedPublicSetup struct{}
+type promotedPublicSetup struct{}
+type stoppedPublicSetup struct{ previous publicVisitorPhase }
+type retiredPublicSetup struct{}
+
+func (unverifiedPublicSetup) publicVisitorPhase() {}
+func (verifiedPublicSetup) publicVisitorPhase()   {}
+func (committedPublicSetup) publicVisitorPhase()  {}
+func (promotedPublicSetup) publicVisitorPhase()   {}
+func (stoppedPublicSetup) publicVisitorPhase()    {}
+func (retiredPublicSetup) publicVisitorPhase()    {}
+
+func (a *publicVisitorAdmission) chargedPhaseLocked() publicVisitorPhase {
+	if stopped, ok := a.phase.(stoppedPublicSetup); ok {
+		return stopped.previous
+	}
+	return a.phase
+}
+
+func (a *publicVisitorAdmission) admittedLocked() bool {
+	switch a.chargedPhaseLocked().(type) {
+	case committedPublicSetup, promotedPublicSetup:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *publicVisitorAdmission) sourceLocked() netip.Prefix {
+	if verified, ok := a.chargedPhaseLocked().(verifiedPublicSetup); ok {
+		return verified.source
+	}
+	return netip.Prefix{}
 }
 
 func (r *PublicURLServer) reservePublicSetup(live *livePublisherSession, stream net.Conn) (*publicVisitorAdmission, tunnelv1.ErrorCode) {
@@ -52,7 +90,7 @@ func (r *PublicURLServer) reservePublicSetup(live *livePublisherSession, stream 
 	r.pendingStreams++
 	r.handlers.Add(1)
 	live.visitors.Add(1)
-	a := &publicVisitorAdmission{run: r, live: live, stream: stream, connection: newDoneConn(stream), timerDone: make(chan struct{}), done: make(chan struct{}), expiresAt: time.Now().Add(visitorPromotionTimeout)}
+	a := &publicVisitorAdmission{run: r, live: live, stream: stream, connection: newDoneConn(stream), phase: unverifiedPublicSetup{}, timerDone: make(chan struct{}), done: make(chan struct{}), expiresAt: time.Now().Add(visitorPromotionTimeout)}
 	r.streams[stream] = a
 	a.timer = time.AfterFunc(visitorPromotionTimeout, func() {
 		defer close(a.timerDone)
@@ -74,7 +112,10 @@ func (a *publicVisitorAdmission) authenticateSource(stream tunnelv1.VisitorStrea
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !a.currentLocked() || a.admitted || a.source.IsValid() {
+	if !a.currentLocked() {
+		return net.ErrClosed
+	}
+	if _, unverified := a.phase.(unverifiedPublicSetup); !unverified {
 		return net.ErrClosed
 	}
 	if r.draining || !time.Now().Before(a.expiresAt) || r.pendingSources[source] >= PendingSetupsPerSource {
@@ -84,7 +125,7 @@ func (a *publicVisitorAdmission) authenticateSource(stream tunnelv1.VisitorStrea
 		r.pendingSources = make(map[netip.Prefix]int)
 	}
 	r.pendingSources[source]++
-	a.source = source
+	a.phase = verifiedPublicSetup{source: source}
 	return nil
 }
 
@@ -96,10 +137,10 @@ func (a *publicVisitorAdmission) leavePendingLocked() {
 	if r.pendingRelays[domain] == 0 {
 		delete(r.pendingRelays, domain)
 	}
-	if a.source.IsValid() {
-		r.pendingSources[a.source]--
-		if r.pendingSources[a.source] == 0 {
-			delete(r.pendingSources, a.source)
+	if source := a.sourceLocked(); source.IsValid() {
+		r.pendingSources[source]--
+		if r.pendingSources[source] == 0 {
+			delete(r.pendingSources, source)
 		}
 	}
 }
@@ -114,14 +155,14 @@ func (a *publicVisitorAdmission) commit() error {
 	if !a.currentLocked() {
 		return net.ErrClosed
 	}
-	if a.admitted {
+	if a.admittedLocked() {
 		return nil
 	}
 	if r.draining || !time.Now().Before(a.expiresAt) || r.authorizedStreams >= r.streamCapacity {
 		return &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
 	}
 	a.leavePendingLocked()
-	a.admitted = true
+	a.phase = committedPublicSetup{}
 	r.authorizedStreams++
 	return nil
 }
@@ -132,15 +173,19 @@ func (a *publicVisitorAdmission) commit() error {
 func (a *publicVisitorAdmission) completeSetup() error {
 	a.run.mu.Lock()
 	defer a.run.mu.Unlock()
-	if !a.currentLocked() || !time.Now().Before(a.expiresAt) || !a.timer.Stop() {
+	if _, committed := a.phase.(committedPublicSetup); !committed || !a.currentLocked() || !time.Now().Before(a.expiresAt) || !a.timer.Stop() {
 		return net.ErrClosed
 	}
+	a.phase = promotedPublicSetup{}
 	close(a.timerDone)
 	return nil
 }
 
 func (a *publicVisitorAdmission) currentLocked() bool {
-	if a.stopped || a.run.closed || a.live.ctx.Err() != nil || a.run.sessions[a.live.ref.ConnectionSlot] != a.live {
+	if _, stopped := a.phase.(stoppedPublicSetup); stopped {
+		return false
+	}
+	if _, retired := a.phase.(retiredPublicSetup); retired || a.run.closed || a.live.ctx.Err() != nil || a.run.sessions[a.live.ref.ConnectionSlot] != a.live {
 		return false
 	}
 	select {
@@ -154,11 +199,17 @@ func (a *publicVisitorAdmission) currentLocked() bool {
 func (a *publicVisitorAdmission) stopPending() <-chan struct{} {
 	r := a.run
 	r.mu.Lock()
-	if a.admitted {
+	if _, retired := a.phase.(retiredPublicSetup); retired {
+		r.mu.Unlock()
+		return a.done
+	}
+	if a.admittedLocked() {
 		r.mu.Unlock()
 		return nil
 	}
-	a.stopped = true
+	if _, stopped := a.phase.(stoppedPublicSetup); !stopped {
+		a.phase = stoppedPublicSetup{previous: a.phase}
+	}
 	r.mu.Unlock()
 	_ = a.connection.Close()
 	return a.done
@@ -170,7 +221,9 @@ func (a *publicVisitorAdmission) retire() {
 	a.closeOnce.Do(func() {
 		r := a.run
 		r.mu.Lock()
-		a.stopped = true
+		if _, stopped := a.phase.(stoppedPublicSetup); !stopped {
+			a.phase = stoppedPublicSetup{previous: a.phase}
+		}
 		if a.timer.Stop() {
 			close(a.timerDone)
 		}
@@ -179,11 +232,12 @@ func (a *publicVisitorAdmission) retire() {
 		<-a.timerDone
 		r.mu.Lock()
 		delete(r.streams, a.stream)
-		if a.admitted {
+		if a.admittedLocked() {
 			r.authorizedStreams--
 		} else {
 			a.leavePendingLocked()
 		}
+		a.phase = retiredPublicSetup{}
 		r.mu.Unlock()
 		a.live.visitors.Done()
 		r.handlers.Done()
