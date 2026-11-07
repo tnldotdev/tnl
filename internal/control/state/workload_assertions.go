@@ -51,6 +51,7 @@ func (d *Database) WorkloadAssertionPolicy(ctx context.Context, id, credential s
 }
 
 func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential string, c oidc.WorkloadExecution, signature []byte, now time.Time) (result WorkloadSession, retErr error) {
+	clock := newAuthorizationClock(now)
 	if c.Validate(now) != nil {
 		return result, ErrWorkloadDenied
 	}
@@ -93,13 +94,23 @@ func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential s
 	if !found || !p.matches(c) || row.Binding != workloadBinding(row.TeamID, row.ProjectKey, row.WorkloadName, project.SourceFingerprint, c) || row.RevokedAt.Valid {
 		return result, ErrWorkloadDenied
 	}
-	if !row.LeaseExpiresAt.Time.After(now) || !row.ExpiresAt.Time.After(now) {
+	current := clock.current()
+	if current.Before(row.CreatedAt.Time) || current.Before(row.RenewedAt.Time) || !row.LeaseExpiresAt.Time.After(current) || !row.ExpiresAt.Time.After(current) || !row.IdentityExpiresAt.Time.After(current) {
 		return result, ErrWorkloadExpired
+	}
+	if c.Validate(current) != nil {
+		return result, ErrWorkloadDenied
 	}
 	if err = consumeWorkloadAssertion(ctx, tx, id, c); err != nil {
 		return result, err
 	}
-	result, err = d.workloadSession(ctx, tx, id, now)
+	// fresh proof may remove an earlier proof cap, never move the accepted
+	// renewal clock or restore rights removed from this session's snapshot.
+	if _, err = tx.Exec(ctx, `UPDATE control.workload_sessions SET identity_expires_at=GREATEST(identity_expires_at,$2),
+	    lease_expires_at=GREATEST(lease_expires_at,LEAST(renewed_at+interval '90 seconds',expires_at,GREATEST(identity_expires_at,$2))) WHERE id=$1`, id, time.Unix(c.ExpiresAt, 0)); err != nil {
+		return result, err
+	}
+	result, err = d.workloadSession(ctx, tx, id, clock.current())
 	if err != nil {
 		return result, err
 	}
