@@ -19,7 +19,7 @@ import (
 
 type Store interface {
 	ClaimInvitationEmail(context.Context, string, time.Time) (controlstate.EmailDelivery, error)
-	FinishInvitationEmail(context.Context, controlstate.EmailDelivery, int, time.Time) error
+	FinishInvitationEmail(context.Context, controlstate.EmailDelivery, controlstate.EmailDeliveryOutcome, time.Time) error
 }
 
 type Worker struct {
@@ -85,6 +85,6 @@ func (w *Worker) Process(ctx context.Context) (more bool, retErr error) {
 		response.Body.Close()
 	}
 	// persist retry state without logging transport errors that can include secrets.
-	err = w.store.FinishInvitationEmail(ctx, delivery, status, time.Now())
+	err = w.store.FinishInvitationEmail(ctx, delivery, controlstate.InvitationEmailOutcome(status), time.Now())
 	return err == nil, err
 }

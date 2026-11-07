@@ -37,6 +37,31 @@ type EmailDelivery struct {
 	Payload  authorityv1.EmailDeliveryRequest
 }
 
+// a claimed delivery either completes and has its payload scrubbed, or returns
+// to the queue after a delay. the database checks the lease before either move.
+type emailDeliveryNextPhase uint8
+
+const (
+	emailDeliveryRetryQueued emailDeliveryNextPhase = iota
+	emailDeliveryCompleted
+)
+
+type EmailDeliveryOutcome struct {
+	phase  emailDeliveryNextPhase
+	status int
+}
+
+// InvitationEmailOutcome treats only the mailer's accepted or permanently
+// rejected responses as complete. transport failures use status 0 and retry.
+func InvitationEmailOutcome(status int) EmailDeliveryOutcome {
+	switch status {
+	case 204, 400, 422:
+		return EmailDeliveryOutcome{phase: emailDeliveryCompleted, status: status}
+	default:
+		return EmailDeliveryOutcome{phase: emailDeliveryRetryQueued, status: status}
+	}
+}
+
 var ErrEmailDeliveryLeaseStale = errors.New("email delivery lease is stale")
 
 func (d *Database) ClaimInvitationEmail(ctx context.Context, owner string, now time.Time) (EmailDelivery, error) {
@@ -62,12 +87,11 @@ func (d *Database) ClaimInvitationEmail(ctx context.Context, owner string, now t
 	return result, nil
 }
 
-func (d *Database) FinishInvitationEmail(ctx context.Context, delivery EmailDelivery, status int, now time.Time) error {
-	complete := status == 204 || status == 400 || status == 422
+func (d *Database) FinishInvitationEmail(ctx context.Context, delivery EmailDelivery, outcome EmailDeliveryOutcome, now time.Time) error {
 	delay := time.Second * time.Duration(1<<min(delivery.Attempts, 8))
 	rows, err := controlstatedb.New(d.pool).FinishInvitationEmail(ctx, controlstatedb.FinishInvitationEmailParams{
-		DeliveryID: delivery.ID, LeaseOwner: text(delivery.Owner), Complete: complete,
-		Now: timestamp(now), AvailableAt: timestamp(now.Add(delay)), LastHTTPStatus: int32(status),
+		DeliveryID: delivery.ID, LeaseOwner: text(delivery.Owner), Complete: outcome.phase == emailDeliveryCompleted,
+		Now: timestamp(now), AvailableAt: timestamp(now.Add(delay)), LastHTTPStatus: int32(outcome.status),
 	})
 	if err != nil {
 		return err
