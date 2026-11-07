@@ -35,6 +35,14 @@ type AcceptedPeer interface {
 	TLSConnectionState() tls.ConnectionState
 }
 
+// IPBoundPeer attests that received frames cannot change the accepted source IP.
+// an address snapshot alone cannot provide this guarantee for a migrating QUIC
+// connection. listener composition, never a remote message, grants this capability.
+type IPBoundPeer interface {
+	AcceptedPeer
+	RemoteIPBound() bool
+}
+
 var (
 	_ AcceptedPeer = (*quicSession)(nil)
 	_ AcceptedPeer = (*yamuxSession)(nil)

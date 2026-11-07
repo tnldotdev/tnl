@@ -1,5 +1,5 @@
 // package peer owns packet delivery for one end-to-end QUIC session. role owners
-// supply already-authorized carriers and the pair's short-lived introduction key.
+// supply already-authorized carriers and the pair's stable endpoint-only key.
 // this package does not select a publisher, grant access, or dial a target.
 package peer
 

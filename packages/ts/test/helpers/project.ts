@@ -43,7 +43,7 @@ export function testProjectDocument() {
         url: "https://web.member.example",
       },
     },
-    version: 2,
+    version: 1,
   };
 }
 

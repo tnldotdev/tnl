@@ -325,6 +325,7 @@ schemas:
         guest_trial_exhausted,
         not_found,
         conflict,
+        stale_network_binding,
         project_managed,
         rate_limited,
         unavailable,

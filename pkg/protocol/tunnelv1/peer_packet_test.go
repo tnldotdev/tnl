@@ -9,12 +9,12 @@ import (
 )
 
 func TestPeerPacketGoldenAndBounds(t *testing.T) {
-	p := PeerPacket{Kind: PeerData, Path: 1, Sequence: 42, Total: 3, Payload: []byte("abc")}
+	p := PeerPacket{BindingGeneration: 1, Kind: PeerData, Path: 1, Sequence: 42, Total: 3, Payload: []byte("abc")}
 	b, err := p.MarshalBinary()
 	if err != nil {
 		t.Fatal(err)
 	}
-	const golden = "0101000100000000000000002a000300036162630000000000000000000000000000000000000000000000000000000000000000"
+	const golden = "0101000100000000000000002a0003000300000000000000016162630000000000000000000000000000000000000000000000000000000000000000"
 	if hex.EncodeToString(b) != golden {
 		t.Fatalf("packet wire changed: %x", b)
 	}
@@ -35,6 +35,7 @@ func TestPeerPacketGoldenAndBounds(t *testing.T) {
 		func(b []byte) { b[12] = 0 },
 		func(b []byte) { b[14] = 4 },
 		func(b []byte) { b[16] = 4 },
+		func(b []byte) { b[24] = 0 },
 	} {
 		invalid := bytes.Clone(b)
 		mutate(invalid)
@@ -52,7 +53,7 @@ func TestPeerPacketGoldenAndBounds(t *testing.T) {
 			t.Fatal("invalid frame allocated or read its payload", err)
 		}
 	}
-	large := PeerPacket{Kind: PeerData, Sequence: 1, Total: MaxPeerPacketBytes, Payload: bytes.Repeat([]byte{1}, PeerFragmentBytes)}
+	large := PeerPacket{BindingGeneration: 1, Kind: PeerData, Sequence: 1, Total: MaxPeerPacketBytes, Payload: bytes.Repeat([]byte{1}, PeerFragmentBytes)}
 	if b, err := large.MarshalBinary(); err != nil || len(b) != MaxPeerFrameBytes || len(b) > 1100 {
 		t.Fatal("fragment cannot fit a minimum-size outer QUIC packet", len(b), err)
 	}
@@ -62,7 +63,7 @@ func TestPeerPacketGoldenAndBounds(t *testing.T) {
 }
 
 func FuzzPeerPackets(f *testing.F) {
-	b, _ := (PeerPacket{Kind: PeerData, Sequence: 1, Total: 1, Payload: []byte{1}}).MarshalBinary()
+	b, _ := (PeerPacket{BindingGeneration: 1, Kind: PeerData, Sequence: 1, Total: 1, Payload: []byte{1}}).MarshalBinary()
 	f.Add(b)
 	f.Add([]byte{})
 	f.Fuzz(func(t *testing.T, b []byte) {

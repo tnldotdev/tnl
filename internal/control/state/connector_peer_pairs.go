@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -59,6 +60,11 @@ type ConnectorPeerPair struct {
 	RunValidUntil                                    time.Time
 	Metadata                                         ServiceMetadata
 	VisitorPermission                                IssuedVisitorToken
+	SessionKey, OperationID, BindingChallenge        string
+	TrustRevision                                    int64
+	BindingState                                     string
+	SourceIP                                         netip.Addr
+	PublisherProvedUntil                             time.Time
 }
 
 func (ConnectorPeerPair) String() string   { return "connector peer pair" }
@@ -155,7 +161,8 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	if run.RunNumber != r.RunNumber || run.PublisherIdentityID != r.PublisherIdentityID || run.State != "ready" || !run.Healthy ||
+	retainedRun := r.Action == "renew" && run.State == "starting" && run.ReadyAt.Valid
+	if run.RunNumber != r.RunNumber || run.PublisherIdentityID != r.PublisherIdentityID || (run.State != "ready" && !retainedRun) || !run.Healthy ||
 		run.ClosedAt.Valid || !run.PublisherExpiresAt.Time.After(now) || !run.CertificateExpiresAt.Valid || !run.CertificateExpiresAt.Time.After(now) {
 		return result, ErrServiceAccess
 	}
@@ -164,45 +171,55 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 		return result, err
 	}
 	deadline := minTime(publisherUntil, minTime(permission.ExpiresAt, authority.ConnectorUntil))
-	// retain the entry-time serving cap. elapsed time only narrows the time left
-	// to authorize; a slow database must not mint a later deadline.
-	recheckUntil := minTime(deadline, requestAt.Add(5*time.Minute))
-	slots, err := q.ListServiceConnectionSlots(ctx, run.ID)
+	service, err := q.GetService(ctx, r.ServiceID)
 	if err != nil {
 		return result, err
 	}
-	if len(slots) != 2 || slots[0].RelayServiceID == slots[1].RelayServiceID {
-		return result, ErrServiceAccess
+	metadata, err := checkedServiceMetadata(service)
+	if err != nil {
+		return result, err
 	}
-	for i, slot := range slots {
-		if int(slot.ConnectionSlot) != i || slot.ServiceID != r.ServiceID || slot.RunNumber != r.RunNumber || slot.State != "ready" || !slot.SessionOpen ||
-			!opaqueid.Valid(slot.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || slot.ConnectionAssignmentRevision < 1 || !slot.RelayID.Valid || !slot.RelayRunID.Valid || !slot.RelayLeaseRevision.Valid || slot.RelayLeaseRevision.Int64 < 1 {
+	// retain the entry-time serving cap. elapsed time only narrows the time left
+	// to authorize; a slow database must not mint a later deadline.
+	recheckUntil := minTime(deadline, requestAt.Add(5*time.Minute))
+	if r.Action != "renew" {
+		slots, err := q.ListServiceConnectionSlots(ctx, run.ID)
+		if err != nil {
+			return result, err
+		}
+		if len(slots) != 2 || slots[0].RelayServiceID == slots[1].RelayServiceID {
 			return result, ErrServiceAccess
 		}
-		var lease RelayLeaseIdentity
-		var address, serverName string
-		var leaseRevision int64
-		var leaseUntil time.Time
-		err = tx.QueryRow(ctx, `SELECT lease.relay_service_id,lease.relay_id,lease.relay_run_id,lease.relay_lease_revision,service.relay_address,service.tls_server_name,lease.lease_expires_at
+		for i, slot := range slots {
+			if int(slot.ConnectionSlot) != i || slot.ServiceID != r.ServiceID || slot.RunNumber != r.RunNumber || slot.State != "ready" || !slot.SessionOpen ||
+				!opaqueid.Valid(slot.PublisherConnectionID, opaqueid.PublisherConnectionPrefix) || slot.ConnectionAssignmentRevision < 1 || !slot.RelayID.Valid || !slot.RelayRunID.Valid || !slot.RelayLeaseRevision.Valid || slot.RelayLeaseRevision.Int64 < 1 {
+				return result, ErrServiceAccess
+			}
+			var lease RelayLeaseIdentity
+			var address, serverName string
+			var leaseRevision int64
+			var leaseUntil time.Time
+			err = tx.QueryRow(ctx, `SELECT lease.relay_service_id,lease.relay_id,lease.relay_run_id,lease.relay_lease_revision,service.relay_address,service.tls_server_name,lease.lease_expires_at
 		    FROM control.relay_leases lease JOIN control.relay_services service ON service.relay_service_id=lease.relay_service_id
 		    WHERE lease.relay_id=$1 AND lease.relay_run_id=$2 AND lease.relay_lease_revision=$3 AND lease.relay_service_id=$4
 		    AND lease.lease_expires_at>$5 AND NOT lease.draining AND service.enabled FOR SHARE OF lease,service`, slot.RelayID.String, slot.RelayRunID.String, slot.RelayLeaseRevision.Int64, slot.RelayServiceID, now).
-			Scan(&lease.RelayServiceID, &lease.RelayID, &lease.RelayRunID, &leaseRevision, &address, &serverName, &leaseUntil)
-		if err != nil {
-			return result, publisherLookupError(err, ErrServiceAccess)
+				Scan(&lease.RelayServiceID, &lease.RelayID, &lease.RelayRunID, &leaseRevision, &address, &serverName, &leaseUntil)
+			if err != nil {
+				return result, publisherLookupError(err, ErrServiceAccess)
+			}
+			if slot.RelayAddress != address || slot.TlsServerName != serverName {
+				return ConnectorPeerPair{}, ErrServiceAccess
+			}
+			lease.RelayLeaseRevision = uint64(leaseRevision)
+			recheckUntil = minTime(recheckUntil, leaseUntil)
+			// a lease is required now and again at relay claim, but its short
+			// renewal interval is not the pair's serving authority deadline.
+			result.Relays[i] = ConnectorPeerPairRelay{PublisherConnectionID: slot.PublisherConnectionID, AssignmentRevision: slot.ConnectionAssignmentRevision,
+				RelayLease: lease, RelayAddress: address, TLSServerName: serverName}
 		}
-		if slot.RelayAddress != address || slot.TlsServerName != serverName {
+		if !recheckUntil.After(checkedNow()) || r.ExpectedRelays != result.Relays {
 			return ConnectorPeerPair{}, ErrServiceAccess
 		}
-		lease.RelayLeaseRevision = uint64(leaseRevision)
-		recheckUntil = minTime(recheckUntil, leaseUntil)
-		// a lease is required now and again at relay claim, but its short
-		// renewal interval is not the pair's serving authority deadline.
-		result.Relays[i] = ConnectorPeerPairRelay{PublisherConnectionID: slot.PublisherConnectionID, AssignmentRevision: slot.ConnectionAssignmentRevision,
-			RelayLease: lease, RelayAddress: address, TLSServerName: serverName}
-	}
-	if !recheckUntil.After(checkedNow()) || r.ExpectedRelays != result.Relays {
-		return ConnectorPeerPair{}, ErrServiceAccess
 	}
 	requestDigest := sha256.Sum256(message)
 	ownerKey := r.IdempotencyKey
@@ -224,6 +241,9 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 		if now.Before(row.LastAuthorizedAt.Time) {
 			return ConnectorPeerPair{}, ErrServiceConflict
 		}
+		if r.Action != "replace" && (len(row.SessionKeyCiphertext) == 0 || row.TrustRevision != metadata.TrustRevision) {
+			return ConnectorPeerPair{}, ErrServiceAccess
+		}
 		switch r.Action {
 		case "create":
 			if row.ParentControlSessionID != parentSession || !row.ExpiresAt.Time.After(checked) || previous != result.Relays || !requestAt.Equal(row.LastRequestAt.Time) || !bytes.Equal(row.RequestDigest, requestDigest[:]) {
@@ -233,9 +253,10 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 			row, err = q.LimitConnectorPeerPair(ctx, controlstatedb.LimitConnectorPeerPairParams{ID: row.ID, Now: timestamptz(now), AuthorityExpiresAt: timestamptz(deadline)})
 		case "renew":
 			if row.ParentControlSessionID != parentSession || !row.ExpiresAt.Time.After(checked) || row.ID != r.PreviousPairID ||
-				row.DeliveryGeneration != r.PreviousGeneration || row.IdempotencyKey != r.IdempotencyKey || previous != result.Relays {
+				row.DeliveryGeneration != r.PreviousGeneration || row.IdempotencyKey != r.IdempotencyKey {
 				return ConnectorPeerPair{}, ErrServiceAccess
 			}
+			result.Relays = previous
 			// even a fresh renewal must finish before the old authority expires.
 			recheckUntil = minTime(recheckUntil, row.ExpiresAt.Time)
 			if requestAt.After(row.LastRequestAt.Time) && requestAt.After(row.LastAuthorizedAt.Time) && now.After(row.LastAuthorizedAt.Time) {
@@ -345,6 +366,21 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 			return ConnectorPeerPair{}, err
 		}
 		result.Key = base64.RawURLEncoding.EncodeToString(secret)
+		sessionSecret := make([]byte, 32)
+		if _, err := rand.Read(sessionSecret); err != nil {
+			return ConnectorPeerPair{}, err
+		}
+		defer clear(sessionSecret)
+		sessionSealed, err := d.storageKey.Seal(connectorPeerSessionKeyContext(row.ID), sessionSecret)
+		if err != nil {
+			return ConnectorPeerPair{}, err
+		}
+		sessionDigest := sha256.Sum256(sessionSecret)
+		row, err = q.InitializeConnectorPeerSession(ctx, controlstatedb.InitializeConnectorPeerSessionParams{ID: row.ID,
+			Ciphertext: sessionSealed, Digest: sessionDigest[:], StorageKeyID: text(d.storageKey.CurrentID()), TrustRevision: metadata.TrustRevision})
+		if err != nil {
+			return ConnectorPeerPair{}, err
+		}
 	} else {
 		return ConnectorPeerPair{}, err
 	}
@@ -359,6 +395,15 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	}
 	result.ExpiresAt = row.ExpiresAt.Time
 	result.ObservedAt = now
+	result.SessionKey, err = d.connectorPeerSessionKey(row)
+	if err != nil {
+		return ConnectorPeerPair{}, err
+	}
+	result.TrustRevision, result.OperationID, result.BindingChallenge = row.TrustRevision, row.BindingOperationID, base64.RawURLEncoding.EncodeToString(row.BindingChallenge)
+	result.BindingState = "active"
+	if row.PublisherProvedUntil.Valid {
+		result.PublisherProvedUntil = row.PublisherProvedUntil.Time
+	}
 	if row.PublisherPreparedUntil.Valid && row.PublisherPreparedUntil.Time.After(now) {
 		result.PublisherPreparedUntil = minTime(row.PublisherPreparedUntil.Time, result.ExpiresAt)
 	}
@@ -412,9 +457,37 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 
 // CleanupExpiredConnectorPeerPairs removes expired delivery material after its
 // signed request can no longer be replayed. callers may repeat bounded batches.
-func (d *Database) CleanupExpiredConnectorPeerPairs(ctx context.Context, now time.Time, limit int) (int64, error) {
+func (d *Database) CleanupExpiredConnectorPeerPairs(ctx context.Context, now time.Time, limit int) (count int64, retErr error) {
 	if now.IsZero() || limit < 1 || limit > 10000 {
 		return 0, ErrServiceAccess
 	}
-	return controlstatedb.New(d.pool).CleanupExpiredConnectorPeerPairs(ctx, controlstatedb.CleanupExpiredConnectorPeerPairsParams{Now: timestamptz(now), BatchSize: int32(limit)})
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer rollback(ctx, tx, "expire connector bindings", &retErr)()
+	rows, err := tx.Query(ctx, `SELECT pair.id FROM control.connector_peer_pairs pair JOIN control.connector_peer_pending_bindings pending ON pending.pair_id=pair.id
+		WHERE pending.pending_until<=$1 OR pair.expires_at<=$1 ORDER BY pending.pending_until,pair.id LIMIT $2 FOR UPDATE OF pair SKIP LOCKED`, now, limit)
+	if err != nil {
+		return 0, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return 0, err
+	}
+	q := controlstatedb.New(tx)
+	for _, id := range ids {
+		pair, err := q.LockConnectorPeerPairForLegClaim(ctx, id)
+		if err != nil {
+			return 0, err
+		}
+		if _, err = expireConnectorPeerPending(ctx, tx, pair, now); err != nil {
+			return 0, err
+		}
+	}
+	count, err = q.CleanupExpiredConnectorPeerPairs(ctx, controlstatedb.CleanupExpiredConnectorPeerPairsParams{Now: timestamptz(now), BatchSize: int32(limit)})
+	if err != nil {
+		return 0, err
+	}
+	return count, tx.Commit(ctx)
 }

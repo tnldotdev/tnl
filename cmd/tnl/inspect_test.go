@@ -63,7 +63,7 @@ func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 		SchemaVersion int                `json:"schema_version"`
 		Inspections   []inspectionRecord `json:"inspections"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &list); err != nil || list.SchemaVersion != 2 || len(list.Inspections) != 0 {
+	if err := json.Unmarshal(stdout.Bytes(), &list); err != nil || list.SchemaVersion != 1 || len(list.Inspections) != 0 {
 		t.Fatalf("list = %+v, %v", list, err)
 	}
 	stdout.Reset()

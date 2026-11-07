@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
@@ -435,12 +436,22 @@ func newPublishRunPrerequisites(t *testing.T) (*Database, time.Time, PublishRunR
 func publishRunPrerequisitesWithRelayKeys(t *testing.T, keyForRun func(string) []byte) (*Database, time.Time, PublishRunRequest, map[string]RelayLease) {
 	t.Helper()
 	database, now := newControlStateIntegrationDatabase(t, "publish_run")
+	return publishRunPrerequisitesInDatabase(t, database, now, keyForRun)
+}
+
+func publishRunPrerequisitesInDatabase(t *testing.T, database *Database, now time.Time, keyForRun func(string) []byte) (*Database, time.Time, PublishRunRequest, map[string]RelayLease) {
+	t.Helper()
 	seedControlPublicURL(t, database, now, "session")
 	leases := make(map[string]RelayLease)
 	for slot := range publishRunConnectionCount {
 		registration := relayLifecycleRegistration(fmt.Sprintf("placement-%d", slot))
 		registration.ConnectionCapacity = 10
 		if keyForRun != nil {
+			runID, err := opaqueid.New(opaqueid.RelayRunPrefix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			registration.RelayRunID = runID
 			registration.PeerSigningPublicKey = keyForRun(registration.RelayRunID)
 		}
 		lease, err := database.RegisterRelay(t.Context(), registration, now, time.Hour)

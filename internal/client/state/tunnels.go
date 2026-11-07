@@ -20,7 +20,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-const tunnelSnapshotSchemaVersion = 3
+const tunnelSnapshotSchemaVersion = 1
 
 const (
 	tunnelLeaseDuration     = 20 * time.Second

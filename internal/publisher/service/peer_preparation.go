@@ -61,6 +61,7 @@ func (b *Bound) ServeConnectorPeers(ctx context.Context, control ConnectorPeerCo
 			delete(pending, id)
 		case <-timer.C:
 			call, stop := context.WithTimeout(life, 2*time.Second)
+			started := time.Now()
 			page, err := control.ListConnectorPeerPairs(call, b.prepared.Preparation.ServiceId, b.prepared.Preparation.ServiceRunId, after, token)
 			if err == nil {
 				err = context.Cause(call)
@@ -79,6 +80,7 @@ func (b *Bound) ServeConnectorPeers(ctx context.Context, control ConnectorPeerCo
 			if !validPeerCandidates(page, after) {
 				return failure.Wrap("reconcile connector peer pairs", failure.ServerResponseInvalid, ErrPrivateStream)
 			}
+			b.observePeerOwners(started, page)
 			for _, candidate := range page.Items {
 				if !pending[candidate.PairId] && len(pending) < maxConnectorPeerOwners && b.peerNeedsPreparation(candidate) {
 					pending[candidate.PairId] = true
@@ -102,6 +104,12 @@ func validPeerCandidates(page controlv1.ConnectorPeerPairCandidates, after strin
 		if !opaqueid.Valid(item.PairId, "cpp_") || item.PairId <= after || item.DeliveryGeneration < 1 {
 			return false
 		}
+		if observation := item.OwnerAuthority; observation != nil {
+			duration := observation.ExpiresAt.Sub(observation.ObservedAt)
+			if observation.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute {
+				return false
+			}
+		}
 		after = item.PairId
 	}
 	return page.NextAfter == nil || len(page.Items) == maxConnectorPeerOwners && *page.NextAfter == after
@@ -114,9 +122,12 @@ func (b *Bound) peerNeedsPreparation(candidate controlv1.ConnectorPeerPairCandid
 		return false
 	}
 	if p := b.connectorPeers[candidate.PairId]; p != nil {
+		if candidate.DeliveryGeneration < p.highwater || p.deliveryState == peerDeliveryRetired && candidate.DeliveryGeneration == p.highwater {
+			return false
+		}
 		// renewing local delivery does not confirm installation at control. a
 		// failed confirmation must retry against the last confirmed deadline.
-		return p.currentLocked() && p.identity.generation == candidate.DeliveryGeneration && (p.installedUntil.IsZero() || time.Until(p.installedUntil) < 15*time.Second || time.Until(p.lease.until) < 15*time.Second)
+		return p.currentLocked() && candidate.DeliveryGeneration >= p.network.generation && (p.pending != nil || candidate.DeliveryGeneration > p.network.generation || p.deliveryState != peerDeliveryActive || p.installedUntil.IsZero() || time.Until(p.installedUntil) < 15*time.Second || time.Until(p.lease.until) < 15*time.Second)
 	}
 	for _, slot := range b.packetSlots {
 		if slot == nil {
@@ -145,12 +156,34 @@ func (b *Bound) prepareConnectorPeer(ctx context.Context, control ConnectorPeerC
 	p := b.connectorPeers[candidate.PairId]
 	b.mu.Unlock()
 	if p == nil {
+		// an operation ID identifies a rebind candidate, never a new owner.
+		if binding.operation != "" || binding.state != controlv1.ConnectorPeerPairBindingActive {
+			return
+		}
 		p, err = b.BindPeer(ctx, binding)
 		if err == nil {
 			serving.Go(func() { _ = p.Serve(ctx) })
 		}
 	} else {
-		err = p.Renew(binding)
+		switch binding.state {
+		case controlv1.ConnectorPeerPairBindingActive:
+			b.mu.Lock()
+			pending := p.pending != nil
+			b.mu.Unlock()
+			if pending {
+				err = p.activateBinding(binding)
+			} else {
+				err = p.Renew(binding)
+			}
+		case controlv1.ConnectorPeerPairBindingSuspended:
+			b.mu.Lock()
+			current := p.deliveryBindingLocked().peerNetworkBinding
+			b.mu.Unlock()
+			p.detachDelivery(current)
+			return
+		default:
+			err = p.stageBinding(binding)
+		}
 	}
 	if err != nil {
 		return
@@ -165,7 +198,8 @@ func (b *Bound) prepareConnectorPeer(ctx context.Context, control ConnectorPeerC
 		return
 	}
 	b.mu.Lock()
-	current := p.currentLocked() && p.lease == binding.peerLease
+	installed := p.deliveryBindingLocked()
+	current := p.currentLocked() && installed.generation == binding.generation && installed.peerNetworkBinding.sameOperation(binding.peerNetworkBinding) && (p.pending == nil || p.deliveryState == peerDeliveryPrepared)
 	b.mu.Unlock()
 	if !current {
 		return
@@ -177,9 +211,11 @@ func (b *Bound) prepareConnectorPeer(ctx context.Context, control ConnectorPeerC
 		return
 	}
 	installation = nil
-	err = control.ConfirmConnectorPeerPairPrepared(confirm, binding.serviceID, binding.runID, binding.pairID, controlv1.ConnectorPeerPairPrepared{
-		DeliveryId: base64.RawURLEncoding.EncodeToString(binding.delivery[:]), DeliveryGeneration: binding.generation, BindingExpiresAt: binding.authorityUntil,
-	}, token)
+	report := controlv1.ConnectorPeerPairPrepared{
+		DeliveryId: base64.RawURLEncoding.EncodeToString(binding.delivery[:]), DeliveryGeneration: binding.generation, BindingExpiresAt: installed.authorityUntil,
+		Phase: controlv1.ConnectorPeerPairPreparedInstalled, OperationId: binding.operation, BindingChallenge: binding.challenge,
+	}
+	err = control.ConfirmConnectorPeerPairPrepared(confirm, binding.serviceID, binding.runID, binding.pairID, report, token)
 	if err != nil || confirm.Err() != nil {
 		return
 	}
@@ -187,7 +223,30 @@ func (b *Bound) prepareConnectorPeer(ctx context.Context, control ConnectorPeerC
 	if p.currentLocked() && p.lease == binding.peerLease {
 		p.installedUntil = binding.until
 	}
+	packets, pending := p.packets, p.pending != nil
 	b.mu.Unlock()
+	if !pending || packets == nil {
+		return
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if proofs, ready := packets.BindingProofs(binding.revision()); ready {
+			report.Phase = controlv1.ConnectorPeerPairPreparedProved
+			for _, proof := range proofs {
+				report.PathProofs = append(report.PathProofs, controlv1.ConnectorPeerPairPathProof{ConnectionSlot: proof.ConnectionSlot, ProbeNonce: proof.ProbeNonce, ReplyFrame: proof.ReplyFrame})
+			}
+			_ = control.ConfirmConnectorPeerPairPrepared(confirm, binding.serviceID, binding.runID, binding.pairID, report, token)
+			return
+		}
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-confirm.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func (b *Bound) connectorPeerPolicyCurrent(binding PeerBinding) bool {

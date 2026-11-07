@@ -346,6 +346,8 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 			resume := sync.OnceFunc(func() { close(release) })
 			var once sync.Once
 			var deadline time.Time
+			recovering := make(chan struct{})
+			var recoveringOnce sync.Once
 			signer := f.device
 			signer.Sign = func(message []byte) []byte {
 				if blocked.Load() {
@@ -357,6 +359,11 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 			control, err := NewControlWithConfig(ControlConfig{
 				Signer:  f.ConnectorSigner,
 				Resolve: f.ResolveService, Pair: f.PrepareConnectorPeerPair, Permission: f.VisitorPermission,
+				RebindPair: func(ctx context.Context, _, _ string, _ controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+					recoveringOnce.Do(func() { close(recovering) })
+					<-ctx.Done()
+					return controlv1.ConnectorPeerPairRebindState{}, context.Cause(ctx)
+				},
 				RenewPair: func(ctx context.Context, service string, request controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
 					renewal, err := f.RenewConnectorPeerPair(ctx, service, request)
 					if armed.Load() {
@@ -413,6 +420,20 @@ func TestConnectorRefreshRejectsAuthorityExpiredDuringSigning(t *testing.T) {
 			}
 			<-time.After(time.Until(deadline))
 			resume()
+			if boundary == "installation" {
+				select {
+				case <-recovering:
+				case <-time.After(time.Second):
+					t.Fatal("expired installation did not request a replacement binding")
+				}
+				p.mu.Lock()
+				retained := p.ownerCurrentLocked() && !p.currentLocked() && p.recoveryState == connectorRebinding && len(p.openings) == 0 && !p.preparedUntil.After(time.Now())
+				p.mu.Unlock()
+				if !retained {
+					t.Fatal("late installation signing either revived packet delivery or retired valid owner authority")
+				}
+				return
+			}
 			select {
 			case <-p.ctx.Done():
 			case <-time.After(time.Second):

@@ -10,12 +10,12 @@ import (
 )
 
 func permissionUpdateFixture() ConnectorPermissionUpdate {
-	return ConnectorPermissionUpdate{VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", UpdateNumber: 1, Permission: ConnectorVisitorPermission{Token: "signed-visitor-token", PublicKey: strings.Repeat("A", 43), Signature: strings.Repeat("A", 86)}}
+	return ConnectorPermissionUpdate{VisitorConnectionID: "vc_aaaaaaaaaaaaaaaaaaaaaa", UpdateNumber: 1, DeliveryGeneration: 7, Permission: ConnectorVisitorPermission{Token: "signed-visitor-token", PublicKey: strings.Repeat("A", 43), Signature: strings.Repeat("A", 86)}}
 }
 
 func TestConnectorPermissionControlGoldenAndTruncation(t *testing.T) {
 	u := permissionUpdateFixture()
-	body := `{"visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","update_number":1,"permission":{"visitor_token":"signed-visitor-token","public_key":"` + strings.Repeat("A", 43) + `","signature":"` + strings.Repeat("A", 86) + `"}}`
+	body := `{"visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","update_number":1,"delivery_generation":7,"permission":{"visitor_token":"signed-visitor-token","public_key":"` + strings.Repeat("A", 43) + `","signature":"` + strings.Repeat("A", 86) + `"}}`
 	var frame bytes.Buffer
 	if err := WriteConnectorPermissionUpdate(&frame, u); err != nil {
 		t.Fatal(err)
@@ -34,9 +34,9 @@ func TestConnectorPermissionControlGoldenAndTruncation(t *testing.T) {
 			t.Fatal("truncated control update accepted", n)
 		}
 	}
-	for _, kind := range []StreamKind{ConnectorPermissionAccepted, ConnectorPermissionRejected} {
-		result := ConnectorPermissionResult{VisitorConnectionID: u.VisitorConnectionID, UpdateNumber: 1, Kind: kind}
-		body := `{"visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","update_number":1,"kind":"` + string(kind) + `"}`
+	for _, kind := range []StreamKind{ConnectorPermissionAccepted, ConnectorPermissionRejected, ConnectorPermissionStale} {
+		result := ConnectorPermissionResult{VisitorConnectionID: u.VisitorConnectionID, UpdateNumber: 1, DeliveryGeneration: u.DeliveryGeneration, Kind: kind}
+		body := `{"visitor_connection_id":"vc_aaaaaaaaaaaaaaaaaaaaaa","update_number":1,"delivery_generation":7,"kind":"` + string(kind) + `"}`
 		wire := append(binary.BigEndian.AppendUint32(nil, uint32(len(body))), body...)
 		var encoded bytes.Buffer
 		if WriteConnectorPermissionResult(&encoded, result) != nil || !bytes.Equal(encoded.Bytes(), wire) {
@@ -112,6 +112,14 @@ func TestConnectorPermissionControlBoundsAndInvalidPayloadIsolation(t *testing.T
 			t.Fatal("invalid proof emitted control bytes", err)
 		}
 	}
+	for _, generation := range []int64{0, -1} {
+		invalid := u
+		invalid.DeliveryGeneration = generation
+		if WriteConnectorPermissionUpdate(io.Discard, invalid) == nil ||
+			WriteConnectorPermissionResult(io.Discard, ConnectorPermissionResult{VisitorConnectionID: u.VisitorConnectionID, UpdateNumber: 1, DeliveryGeneration: generation, Kind: ConnectorPermissionAccepted}) == nil {
+			t.Fatal("permission control accepted an unbound revision")
+		}
+	}
 	var old bytes.Buffer
 	if _, err := WriteConnectorPeerVisitorOpening(&old, peerOpeningFixture(), nil); err != nil {
 		t.Fatal(err)
@@ -126,7 +134,7 @@ func FuzzConnectorPermissionControl(f *testing.F) {
 	_ = WriteConnectorPermissionUpdate(&seed, permissionUpdateFixture())
 	f.Add(seed.Bytes())
 	var ack bytes.Buffer
-	_ = WriteConnectorPermissionResult(&ack, ConnectorPermissionResult{VisitorConnectionID: permissionUpdateFixture().VisitorConnectionID, UpdateNumber: 1, Kind: ConnectorPermissionAccepted})
+	_ = WriteConnectorPermissionResult(&ack, ConnectorPermissionResult{VisitorConnectionID: permissionUpdateFixture().VisitorConnectionID, UpdateNumber: 1, DeliveryGeneration: 7, Kind: ConnectorPermissionAccepted})
 	f.Add(ack.Bytes())
 	var opening bytes.Buffer
 	_ = WriteConnectorPeerVisitorAccepted(&opening, permissionUpdateFixture().VisitorConnectionID)

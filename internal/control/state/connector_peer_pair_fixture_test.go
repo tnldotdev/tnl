@@ -23,6 +23,11 @@ type connectorPairFixture struct {
 func newConnectorPairFixture(t *testing.T) connectorPairFixture {
 	t.Helper()
 	f := newConnectorPairRunFixture(t)
+	return connectorPairFixtureFromRun(t, f)
+}
+
+func connectorPairFixtureFromRun(t *testing.T, f publishRunFixture) connectorPairFixture {
+	t.Helper()
 	d, now := f.database, f.now
 	session := newOIDCSession(t, d, now)
 	principal := ControlPrincipal{IdentityID: session.Identity.Identity.ID, SessionID: session.SessionID}
@@ -100,6 +105,7 @@ func connectorPairSavedAuthority(t *testing.T, d *Database, id string) []byte {
 	t.Helper()
 	var value []byte
 	if err := d.pool.QueryRow(t.Context(), `SELECT jsonb_build_object('pair',to_jsonb(pair),
+	    'pending',(SELECT to_jsonb(pending) FROM control.connector_peer_pending_bindings pending WHERE pending.pair_id=pair.id),
 	    'claims',(SELECT jsonb_agg(to_jsonb(claim) ORDER BY connection_slot) FROM control.connector_peer_pair_leg_claims claim WHERE pair_id=pair.id),
 	    'run',to_jsonb(run),
 	    'slots',(SELECT jsonb_agg(to_jsonb(slot) ORDER BY connection_slot) FROM control.service_connection_slots slot WHERE service_run_id=run.id),

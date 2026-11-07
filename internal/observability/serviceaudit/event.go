@@ -51,6 +51,7 @@ type Observation struct {
 	RunID               string    `json:"run_id"`
 	RunNumber           int64     `json:"run_number"`
 	PairID              string    `json:"pair_id,omitempty"`
+	DeliveryGeneration  int64     `json:"delivery_generation,omitempty"`
 	VisitorConnectionID string    `json:"visitor_connection_id"`
 	SourceIP            string    `json:"source_ip,omitempty"`
 	Outcome             string    `json:"outcome"`
@@ -126,7 +127,7 @@ func (o Observation) Validate() error {
 		!opaqueid.Valid(o.VisitorConnectionID, opaqueid.VisitorConnectionPrefix) || !ValidReason(o.Reason) {
 		return ErrInvalid
 	}
-	if o.PairID != "" && (!opaqueid.Valid(o.PairID, "cpp_") || o.ServiceKind != "service" || o.RunID == "") {
+	if o.DeliveryGeneration < 0 || o.DeliveryGeneration > 0 && o.PairID == "" || o.PairID != "" && (o.DeliveryGeneration < 1 || !opaqueid.Valid(o.PairID, "cpp_") || o.ServiceKind != "service" || o.RunID == "") {
 		return ErrInvalid
 	}
 	serviceDenial := o.RunID == "" && o.RunNumber == 0 && o.EventType == "connection.open" &&

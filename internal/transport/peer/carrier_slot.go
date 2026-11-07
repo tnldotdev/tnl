@@ -165,9 +165,13 @@ func (s *CarrierSlot) sendRevision(ctx context.Context, b []byte, revision carri
 	if c == nil {
 		return err
 	}
+	return s.sendEntered(ctx, b, revision, c)
+}
+
+func (s *CarrierSlot) sendEntered(ctx context.Context, b []byte, revision carrierRevision, c *installedCarrier) error {
 	call, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(c.ctx, cancel)
-	err = c.carrier.Send(call, b)
+	err := c.carrier.Send(call, b)
 	stop()
 	cancel()
 	c.work.Done()

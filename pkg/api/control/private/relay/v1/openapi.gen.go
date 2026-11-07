@@ -41,6 +41,24 @@ func (e ClaimedPublisherConnectionState) Valid() bool {
 	}
 }
 
+// Defines values for ConnectorPeerLegBindingState.
+const (
+	ConnectorPeerLegBindingActive   ConnectorPeerLegBindingState = "active"
+	ConnectorPeerLegBindingPrepared ConnectorPeerLegBindingState = "prepared"
+)
+
+// Valid indicates whether the value is a known member of the ConnectorPeerLegBindingState enum.
+func (e ConnectorPeerLegBindingState) Valid() bool {
+	switch e {
+	case ConnectorPeerLegBindingActive:
+		return true
+	case ConnectorPeerLegBindingPrepared:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProblemCode.
 const (
 	CertificateUnavailable               ProblemCode = "certificate_unavailable"
@@ -56,6 +74,7 @@ const (
 	RelayLeaseStale                      ProblemCode = "relay_lease_stale"
 	RelayRegistrationConflict            ProblemCode = "relay_registration_conflict"
 	StaleConnectionAssignment            ProblemCode = "stale_connection_assignment"
+	StaleNetworkBinding                  ProblemCode = "stale_network_binding"
 	Unauthenticated                      ProblemCode = "unauthenticated"
 	UnsupportedMediaType                 ProblemCode = "unsupported_media_type"
 )
@@ -88,6 +107,8 @@ func (e ProblemCode) Valid() bool {
 	case RelayRegistrationConflict:
 		return true
 	case StaleConnectionAssignment:
+		return true
+	case StaleNetworkBinding:
 		return true
 	case Unauthenticated:
 		return true
@@ -122,16 +143,22 @@ type ClaimedPublisherConnection struct {
 // ClaimedPublisherConnectionState defines model for ClaimedPublisherConnection.State.
 type ClaimedPublisherConnectionState string
 
+// ConnectorPeerLegBindingState defines model for ConnectorPeerLegBindingState.
+type ConnectorPeerLegBindingState string
+
 // ConnectorPeerPairLegClaim defines model for ConnectorPeerPairLegClaim.
 type ConnectorPeerPairLegClaim struct {
-	ConnectionSlot     int   `json:"connection_slot"`
+	BindingState   ConnectorPeerLegBindingState `json:"binding_state,omitempty"`
+	ConnectionSlot int                          `json:"connection_slot"`
+
+	// DeliveryGeneration Exact network binding revision, including a pending revision that can carry only probes.
 	DeliveryGeneration int64 `json:"delivery_generation"`
 
 	// DeliveryId Canonical unpadded base64url of the nonzero 16-byte delivery header identifier; not an access grant.
 	DeliveryId string    `json:"delivery_id"`
 	ExpiresAt  time.Time `json:"expires_at"`
 
-	// Key secret pair key; never log.
+	// Key Per-binding delivery credential only. The stable endpoint SessionKey is never returned to a relay.
 	Key string `json:"key"`
 
 	// ObservedAt control observation time; convert the remaining duration using the local request start, never response arrival.
@@ -479,13 +506,13 @@ type ClientInterface interface {
 	// ClaimConnectorPeerPairLegWithBody performs a POST /internal/v1/connector-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimConnectorPeerPairLeg` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+	// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. prepared permits probes only; a current claim renewal can report active after control activation. stale_network_binding never overrides an authorization denial and does not grant delivery credentials. does not admit a visitor stream.
 	ClaimConnectorPeerPairLegWithBody(ctx context.Context, pairId string, connectionSlot int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ClaimConnectorPeerPairLeg performs a POST /internal/v1/connector-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimConnectorPeerPairLeg` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+	// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. prepared permits probes only; a current claim renewal can report active after control activation. stale_network_binding never overrides an authorization denial and does not grant delivery credentials. does not admit a visitor stream.
 	ClaimConnectorPeerPairLeg(ctx context.Context, pairId string, connectionSlot int, body ClaimConnectorPeerPairLegJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ClaimServicePublisherConnectionWithBody performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim (the `ClaimServicePublisherConnection` operationId) request,
@@ -617,7 +644,7 @@ type ClientInterface interface {
 // ClaimConnectorPeerPairLegWithBody performs a POST /internal/v1/connector-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimConnectorPeerPairLeg` operationId) request,
 // with any type of body and a specified content type.
 //
-// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. prepared permits probes only; a current claim renewal can report active after control activation. stale_network_binding never overrides an authorization denial and does not grant delivery credentials. does not admit a visitor stream.
 func (c *Client) ClaimConnectorPeerPairLegWithBody(ctx context.Context, pairId string, connectionSlot int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClaimConnectorPeerPairLegRequestWithBody(c.Server, pairId, connectionSlot, contentType, body)
 	if err != nil {
@@ -633,7 +660,7 @@ func (c *Client) ClaimConnectorPeerPairLegWithBody(ctx context.Context, pairId s
 // ClaimConnectorPeerPairLeg performs a POST /internal/v1/connector-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimConnectorPeerPairLeg` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. prepared permits probes only; a current claim renewal can report active after control activation. stale_network_binding never overrides an authorization denial and does not grant delivery credentials. does not admit a visitor stream.
 func (c *Client) ClaimConnectorPeerPairLeg(ctx context.Context, pairId string, connectionSlot int, body ClaimConnectorPeerPairLegJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClaimConnectorPeerPairLegRequest(c.Server, pairId, connectionSlot, body)
 	if err != nil {
@@ -1551,7 +1578,7 @@ type ClientWithResponsesInterface interface {
 	// ClaimConnectorPeerPairLegWithBodyWithResponse performs a POST /internal/v1/connector-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimConnectorPeerPairLeg` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+	// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. prepared permits probes only; a current claim renewal can report active after control activation. stale_network_binding never overrides an authorization denial and does not grant delivery credentials. does not admit a visitor stream.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ClaimConnectorPeerPairLegWithBodyWithResponse(ctx context.Context, pairId string, connectionSlot int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimConnectorPeerPairLegResponse, error)
@@ -1559,7 +1586,7 @@ type ClientWithResponsesInterface interface {
 	// ClaimConnectorPeerPairLegWithResponse performs a POST /internal/v1/connector-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimConnectorPeerPairLeg` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+	// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. prepared permits probes only; a current claim renewal can report active after control activation. stale_network_binding never overrides an authorization denial and does not grant delivery credentials. does not admit a visitor stream.
 	ClaimConnectorPeerPairLegWithResponse(ctx context.Context, pairId string, connectionSlot int, body ClaimConnectorPeerPairLegJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimConnectorPeerPairLegResponse, error)
 
 	// ClaimServicePublisherConnectionWithBodyWithResponse performs a POST /internal/v1/private-publisher-connections/{publisher_connection_id}/claim (the `ClaimServicePublisherConnection` operationId) request,
@@ -2234,7 +2261,7 @@ func (r RenewRelayResponse) ContentType() string {
 // ClaimConnectorPeerPairLegWithBodyWithResponse performs a POST /internal/v1/connector-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimConnectorPeerPairLeg` operationId) request,
 // with any type of body and a specified content type.
 //
-// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. prepared permits probes only; a current claim renewal can report active after control activation. stale_network_binding never overrides an authorization denial and does not grant delivery credentials. does not admit a visitor stream.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) ClaimConnectorPeerPairLegWithBodyWithResponse(ctx context.Context, pairId string, connectionSlot int, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimConnectorPeerPairLegResponse, error) {
@@ -2248,7 +2275,7 @@ func (c *ClientWithResponses) ClaimConnectorPeerPairLegWithBodyWithResponse(ctx 
 // ClaimConnectorPeerPairLegWithResponse performs a POST /internal/v1/connector-peer-pairs/{pair_id}/legs/{connection_slot}/claim (the `ClaimConnectorPeerPairLeg` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. does not admit a visitor stream.
+// release one connector peer pair leg only to its current relay process after verifying the connector proof and the relay's signature over the socket-observed source IP. prepared permits probes only; a current claim renewal can report active after control activation. stale_network_binding never overrides an authorization denial and does not grant delivery credentials. does not admit a visitor stream.
 func (c *ClientWithResponses) ClaimConnectorPeerPairLegWithResponse(ctx context.Context, pairId string, connectionSlot int, body ClaimConnectorPeerPairLegJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimConnectorPeerPairLegResponse, error) {
 	rsp, err := c.ClaimConnectorPeerPairLeg(ctx, pairId, connectionSlot, body, reqEditors...)
 	if err != nil {

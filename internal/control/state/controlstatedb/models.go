@@ -268,6 +268,8 @@ type ControlConnectorPeerAuditBinding struct {
 	SourceIp            netip.Addr
 	CreatedAt           pgtype.Timestamptz
 	ExpiresAt           pgtype.Timestamptz
+	DeliveryGeneration  int64
+	RetiredAt           pgtype.Timestamptz
 }
 
 type ControlConnectorPeerPair struct {
@@ -295,6 +297,21 @@ type ControlConnectorPeerPair struct {
 	LastRequestAt          pgtype.Timestamptz
 	ReplayFenceUntil       pgtype.Timestamptz
 	ExpiresAt              pgtype.Timestamptz
+	SessionKeyCiphertext   []byte
+	SessionKeyDigest       []byte
+	SessionKeyStorageKeyID pgtype.Text
+	TrustRevision          int64
+	HighWaterGeneration    int64
+	BindingOperationID     string
+	BindingChallenge       []byte
+	PublisherProvedUntil   pgtype.Timestamptz
+	PublisherProofDigest   []byte
+	RebindOperationID      string
+	RebindGeneration       pgtype.Int8
+	RebindStatus           pgtype.Text
+	RebindPrepareDigest    []byte
+	RebindActivateDigest   []byte
+	RebindAbortDigest      []byte
 }
 
 type ControlConnectorPeerPairLegClaim struct {
@@ -308,6 +325,23 @@ type ControlConnectorPeerPairLegClaim struct {
 	RelayID            string
 	RelayRunID         string
 	RelayLeaseRevision int64
+	DeliveryGeneration int64
+}
+
+type ControlConnectorPeerPendingBinding struct {
+	PairID                 string
+	DeliveryGeneration     int64
+	OperationID            string
+	Challenge              []byte
+	Slots                  []byte
+	KeyCiphertext          []byte
+	KeyDigest              []byte
+	StorageKeyID           string
+	CreatedAt              pgtype.Timestamptz
+	PendingUntil           pgtype.Timestamptz
+	PublisherPreparedUntil pgtype.Timestamptz
+	PublisherProvedUntil   pgtype.Timestamptz
+	PublisherProofDigest   []byte
 }
 
 type ControlControlSession struct {

@@ -34,7 +34,7 @@ func TestPeerDeliveryIdentifier(t *testing.T) {
 func TestPeerDeliveryBoundsAndGenerationFence(t *testing.T) {
 	d := PeerDelivery{Pair: [16]byte{1}, Generation: 42}
 	key := [32]byte{3}
-	frame, err := (PeerPacket{Kind: PeerData, Sequence: 1, Total: 1, Payload: []byte{7}}).MarshalBinary()
+	frame, err := (PeerPacket{BindingGeneration: 42, Kind: PeerData, Sequence: 1, Total: 1, Payload: []byte{7}}).MarshalBinary()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,9 +42,9 @@ func TestPeerDeliveryBoundsAndGenerationFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const golden = "0101000000000000000000000000000000000000000000002a010100000000000000000000010001000107000000000000000000000000000000000000000000000000000000000000000050da532275655921bba7dd65ea2b478d349bdd8ce6a9b58f026c8d2ff8e72d95"
+	const golden = "0101000000000000000000000000000000000000000000002a0101000000000000000000000100010001000000000000002a0700000000000000000000000000000000000000000000000000000000000000002a399c4b3de4b6c3d3aff36440a529b5be5de3fa18816b36d723334dd9823a20"
 	if hex.EncodeToString(b) != golden {
-		t.Fatal("peer delivery wire changed")
+		t.Fatalf("peer delivery wire changed: %x", b)
 	}
 	got, packet, err := OpenPeerDelivery(b, PeerDeliveryDatagram, key)
 	if err != nil || got != d || !bytes.Equal(packet, frame) {
@@ -84,9 +84,9 @@ func TestPeerDeliveryBoundsAndGenerationFence(t *testing.T) {
 	if err := WritePeerDeliveryFrame(&reliable, stream, PeerDeliveryStream, key); err != nil {
 		t.Fatal(err)
 	}
-	const streamGolden = "006b0101000000000000000000000000000000000000000000002a0101000000000000000000000100010001070000000000000000000000000000000000000000000000000000000000000000817c59579e7a94ec8e50caedd46a89bda16475f8fb4f38787a6d2f30a107f4fc"
+	const streamGolden = "00730101000000000000000000000000000000000000000000002a0101000000000000000000000100010001000000000000002a070000000000000000000000000000000000000000000000000000000000000000e1305ae7804c02d3e0c7fd3b84d0e9385429f3dbe711575d8d10da4d2a64545b"
 	if hex.EncodeToString(reliable.Bytes()) != streamGolden {
-		t.Fatal("peer stream wire changed")
+		t.Fatalf("peer stream wire changed: %x", reliable.Bytes())
 	}
 	streamWire := bytes.Clone(reliable.Bytes())
 	if got, payload, err := ReadPeerDeliveryFrame(&reliable, PeerDeliveryStream, key); err != nil || got != d || !bytes.Equal(payload, frame) {
@@ -100,7 +100,7 @@ func TestPeerDeliveryBoundsAndGenerationFence(t *testing.T) {
 	if _, _, err := ReadPeerDeliveryFrame(bytes.NewReader(streamWire[:len(streamWire)-1]), PeerDeliveryStream, key); !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Fatal("truncated authenticated stream frame", err)
 	}
-	large := PeerPacket{Kind: PeerData, Sequence: 1, Total: MaxPeerPacketBytes, Payload: bytes.Repeat([]byte{1}, PeerFragmentBytes)}
+	large := PeerPacket{BindingGeneration: 42, Kind: PeerData, Sequence: 1, Total: MaxPeerPacketBytes, Payload: bytes.Repeat([]byte{1}, PeerFragmentBytes)}
 	frame, _ = large.MarshalBinary()
 	if b, err := d.Seal(PeerDeliveryDatagram, key, frame); err != nil || len(b) != MaxPeerDeliveryBytes || len(b) > 1200 {
 		t.Fatal("outer datagram exceeds path MTU", err)
@@ -116,7 +116,7 @@ func TestPeerDeliveryBoundsAndGenerationFence(t *testing.T) {
 func FuzzPeerDelivery(f *testing.F) {
 	d := PeerDelivery{Pair: [16]byte{1}, Generation: 7}
 	key := [32]byte{3}
-	frame, _ := (PeerPacket{Kind: PeerData, Sequence: 1, Total: 1, Payload: []byte{1}}).MarshalBinary()
+	frame, _ := (PeerPacket{BindingGeneration: 7, Kind: PeerData, Sequence: 1, Total: 1, Payload: []byte{1}}).MarshalBinary()
 	valid, _ := d.Seal(PeerDeliveryDatagram, key, frame)
 	stream, _ := d.Seal(PeerDeliveryStream, key, frame)
 	f.Add(byte(PeerDeliveryDatagram), valid)

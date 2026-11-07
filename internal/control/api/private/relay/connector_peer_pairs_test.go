@@ -54,9 +54,11 @@ func TestConnectorPeerClaimProblemPreservesCauseAndSafeOutput(t *testing.T) {
 		canceled bool
 	}{
 		{"unexpected", fmt.Errorf("provider failure: %w", secretCause), 500, "internal", true, false},
-		{"service", controlstate.ErrServiceAccess, 409, "stale_connection_assignment", false, false},
-		{"permission", controlstate.ErrVisitorPermission, 409, "stale_connection_assignment", false, false},
-		{"workload", controlstate.ErrWorkloadDenied, 409, "stale_connection_assignment", false, false},
+		{"service", controlstate.ErrServiceAccess, 403, "unauthenticated", false, false},
+		{"permission", controlstate.ErrVisitorPermission, 403, "unauthenticated", false, false},
+		{"workload", controlstate.ErrWorkloadDenied, 403, "unauthenticated", false, false},
+		{"authorized stale binding", controlstate.ErrConnectorPeerBindingStale, 409, "stale_network_binding", false, false},
+		{"denial precedes stale", errors.Join(controlstate.ErrConnectorPeerBindingStale, controlstate.ErrServiceAccess), 403, "unauthenticated", false, false},
 		{"canceled request", fmt.Errorf("database canceled: %w", context.Canceled), 0, "", false, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {

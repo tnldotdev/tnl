@@ -25,6 +25,11 @@ type QUICConfig struct {
 	// BasicPacketConn limits listeners to net.PacketConn operations, so replies
 	// follow the socket route instead of received packet interface metadata.
 	BasicPacketConn bool
+	// PinnedRemoteIPLimit isolates accepted QUIC connections by canonical source
+	// IP before packet dispatch. a nonzero bound opts in; port rebinding remains
+	// possible, but changing IP requires a new connection. role owners select a
+	// bound consistent with their accepted connection capacity.
+	PinnedRemoteIPLimit int
 }
 
 // QUICConnector establishes QUIC multiplexed sessions.
@@ -68,6 +73,7 @@ type QUICListener struct {
 	closeOnce  sync.Once
 	closeErr   error
 	alpn       string
+	sources    *sourceQUICListener
 }
 
 // ListenQUIC starts a QUIC listener. the returned listener never accepts 0-RTT.
@@ -82,10 +88,17 @@ func ListenQUICPacket(packet net.PacketConn, tlsConfig *tls.Config, config QUICC
 	if packet == nil {
 		return nil, errors.New("muxsession: QUIC listener requires a packet socket")
 	}
+	if config.PinnedRemoteIPLimit < 0 {
+		_ = packet.Close()
+		return nil, errors.New("muxsession: source-bound QUIC requires a positive source limit")
+	}
 	serverConfig, err := transportTLSConfigForALPN(tlsConfig, "", true, ALPN)
 	if err != nil {
 		_ = packet.Close()
 		return nil, err
+	}
+	if config.PinnedRemoteIPLimit > 0 {
+		return listenSourceQUIC(packet, serverConfig, config, ALPN)
 	}
 	transport := &quic.Transport{Conn: packet}
 	listener, err := transport.Listen(serverConfig, quicConfig(config.Config))
@@ -98,6 +111,9 @@ func ListenQUICPacket(packet net.PacketConn, tlsConfig *tls.Config, config QUICC
 }
 
 func listenQUICWithALPN(address string, tlsConfig *tls.Config, config QUICConfig, alpn string) (*QUICListener, error) {
+	if config.PinnedRemoteIPLimit < 0 {
+		return nil, errors.New("muxsession: source-bound QUIC requires a positive source limit")
+	}
 	serverConfig, err := transportTLSConfigForALPN(tlsConfig, "", true, alpn)
 	if err != nil {
 		return nil, err
@@ -115,6 +131,9 @@ func listenQUICWithALPN(address string, tlsConfig *tls.Config, config QUICConfig
 		return nil, fmt.Errorf("muxsession: listen QUIC UDP: %w", err)
 	}
 	var connection net.PacketConn = packetConn
+	if config.PinnedRemoteIPLimit > 0 {
+		return listenSourceQUIC(packetConn, serverConfig, config, alpn)
+	}
 	if config.BasicPacketConn {
 		connection = struct{ net.PacketConn }{packetConn}
 	}
@@ -137,7 +156,13 @@ func quicConnectorConfig(config *quic.Config) *quic.Config {
 }
 
 func (l *QUICListener) Accept(ctx context.Context) (Session, error) {
-	connection, err := l.listener.Accept(ctx)
+	var connection *quic.Conn
+	var err error
+	if l.sources != nil {
+		connection, err = l.sources.accept(ctx)
+	} else {
+		connection, err = l.listener.Accept(ctx)
+	}
 	if err != nil {
 		return nil, normalizeQUICError(err)
 	}
@@ -149,13 +174,21 @@ func (l *QUICListener) Accept(ctx context.Context) (Session, error) {
 		_ = connection.CloseWithError(1, "unexpected publisher transport protocol")
 		return nil, err
 	}
-	return &quicSession{connection: connection}, nil
+	return &quicSession{connection: connection, remoteIPBound: l.sources != nil}, nil
 }
 
-func (l *QUICListener) Addr() net.Addr { return l.listener.Addr() }
+func (l *QUICListener) Addr() net.Addr {
+	if l.sources != nil {
+		return l.packetConn.LocalAddr()
+	}
+	return l.listener.Addr()
+}
 
 // StopAccepting leaves accepted connections alive while the relay drains them.
 func (l *QUICListener) StopAccepting() error {
+	if l.sources != nil {
+		return l.sources.stopAccepting()
+	}
 	return normalizeQUICError(l.listener.Close())
 }
 
@@ -164,6 +197,10 @@ func (l *QUICListener) StopAccepting() error {
 // timers alive, so the same UDP address may not be immediately reusable.
 func (l *QUICListener) Close() error {
 	l.closeOnce.Do(func() {
+		if l.sources != nil {
+			l.closeErr = l.sources.close()
+			return
+		}
 		l.closeErr = errors.Join(l.StopAccepting(), normalizeQUICError(l.transport.Close()), l.packetConn.Close())
 	})
 	return l.closeErr
@@ -186,9 +223,10 @@ func quicConfig(config *quic.Config) *quic.Config {
 }
 
 type quicSession struct {
-	connection *quic.Conn
-	packetOnce sync.Once
-	packets    *quicDatagramSender
+	connection    *quic.Conn
+	packetOnce    sync.Once
+	packets       *quicDatagramSender
+	remoteIPBound bool
 }
 
 // AdoptQUIC owns an established v1 QUIC connection without taking ownership of
@@ -239,6 +277,7 @@ func (s *quicSession) SupportsDatagrams() bool {
 
 func (s *quicSession) LocalAddr() net.Addr  { return s.connection.LocalAddr() }
 func (s *quicSession) RemoteAddr() net.Addr { return s.connection.RemoteAddr() }
+func (s *quicSession) RemoteIPBound() bool  { return s.remoteIPBound }
 func (s *quicSession) TLSConnectionState() tls.ConnectionState {
 	return s.connection.ConnectionState().TLS
 }

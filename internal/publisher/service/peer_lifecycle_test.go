@@ -103,6 +103,7 @@ func TestConnectorPeerRenewalChangesOnlyLeaseEvidence(t *testing.T) {
 	next := before
 	next.until = next.until.Add(time.Minute)
 	next.authorityUntil = next.authorityUntil.Add(time.Minute)
+	next.observedAt = next.observedAt.Add(time.Second)
 	if err := p.Renew(next); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +270,7 @@ func TestConnectorPeerServingOwnsFixedCarriersAndRetainedInnerSession(t *testing
 	go func() { served <- p.Serve(ctx) }()
 	defer p.Close()
 	awaitPeerSignal(t, ctx, p.ready)
-	packets, err := peer.New(ctx, peer.Config{Key: binding.key, Role: 0, Paths: paths})
+	packets, err := peer.New(ctx, peer.Config{Key: binding.sessionKey, Role: 0, Binding: binding.revision(), Paths: paths})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,6 +319,19 @@ func TestConnectorPeerServingOwnsFixedCarriersAndRetainedInnerSession(t *testing
 		t.Fatal("fixed-carrier failover reopened the target", accepted.Load())
 	}
 	_ = wires[1].Close()
+	b.mu.Lock()
+	retained := p.currentLocked() && b.reservedStreams == 1 && len(p.seen) == 1
+	b.mu.Unlock()
+	if !retained {
+		t.Fatal("temporary loss of both carriers retired the owner or its capacity")
+	}
+	select {
+	case <-p.done:
+		t.Fatal("temporary carrier loss closed retained inner QUIC")
+	default:
+	}
+	// real owner invalidation still cancels and joins every physical resource.
+	p.stop()
 	terminal, stop := context.WithTimeout(ctx, time.Second)
 	defer stop()
 	awaitPeerSignal(t, terminal, p.done)

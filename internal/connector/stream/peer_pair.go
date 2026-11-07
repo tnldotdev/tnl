@@ -111,13 +111,12 @@ func renewConnectorPair(ctx context.Context, control Control, signer Signer, run
 }
 
 func validateConnectorPair(ctx context.Context, signer Signer, run Run, body controlv1.ConnectorPeerPairRequest, pair controlv1.ConnectorPeerPair, started time.Time, previous *controlv1.ConnectorPeerPair) ([32]byte, time.Time, error) {
-	var key [32]byte
-	secret, keyErr := base64.RawURLEncoding.Strict().DecodeString(pair.Key)
-	defer clear(secret)
+	key, keyErr := connectorPairSecret(pair.Key)
+	frameKey, frameKeyErr := connectorPairSecret(pair.SessionKey)
 	_, idErr := tunnelv1.ParsePeerDeliveryIdentifier(pair.DeliveryId)
 	duration := pair.ExpiresAt.Sub(pair.ObservedAt)
 	until := started.Add(duration)
-	if keyErr != nil || len(secret) != 32 || idErr != nil || !opaqueid.Valid(pair.PairId, "cpp_") || pair.DeliveryGeneration < 1 || pair.ServiceId != run.ServiceID || pair.ServiceRunId != run.ServiceRunID || pair.RunNumber != int64(run.RunNumber) || pair.PublisherIdentityId != run.PairReady.PublisherIdentityId || !visitorsubject.Equal(pair.Subject, signer.Subject) ||
+	if keyErr != nil || frameKeyErr != nil || idErr != nil || !opaqueid.Valid(pair.PairId, "cpp_") || pair.DeliveryGeneration < 1 || pair.ServiceId != run.ServiceID || pair.ServiceRunId != run.ServiceRunID || pair.RunNumber != int64(run.RunNumber) || pair.TrustRevision != run.TrustRevision || pair.PublisherIdentityId != run.PairReady.PublisherIdentityId || !visitorsubject.Equal(pair.Subject, signer.Subject) ||
 		pair.ObservedAt.IsZero() || duration <= 0 || duration > 5*time.Minute || !until.After(time.Now()) || ctx.Err() != nil || len(pair.Relays) != 2 {
 		return key, time.Time{}, ErrServiceConnection
 	}
@@ -126,8 +125,8 @@ func validateConnectorPair(ctx context.Context, signer Signer, run Run, body con
 			return key, time.Time{}, ErrServiceConnection
 		}
 	}
-	copy(key[:], secret)
-	if key == [32]byte{} || previous != nil && (pair.PairId != previous.PairId || pair.DeliveryId != previous.DeliveryId || pair.DeliveryGeneration != previous.DeliveryGeneration || pair.Key != previous.Key) {
+	if key == [32]byte{} || key == frameKey || previous == nil && (pair.BindingState != controlv1.ConnectorPeerPairBindingActive || pair.OperationId != "" || pair.BindingChallenge != "") ||
+		previous != nil && (pair.PairId != previous.PairId || pair.DeliveryId != previous.DeliveryId || pair.DeliveryGeneration != previous.DeliveryGeneration || pair.Key != previous.Key || pair.SessionKey != previous.SessionKey || pair.TrustRevision != previous.TrustRevision || pair.OperationId != previous.OperationId || pair.BindingChallenge != previous.BindingChallenge) {
 		return [32]byte{}, time.Time{}, ErrServiceConnection
 	}
 	return key, until, nil
@@ -143,7 +142,7 @@ func awaitConnectorPublisher(ctx context.Context, control Control, service strin
 		started := time.Now()
 		pair, err := control.PrepareConnectorPeerPair(ctx, service, request)
 		if err == nil {
-			if pair.PairId != expected.PairId || pair.DeliveryId != expected.DeliveryId || pair.DeliveryGeneration != expected.DeliveryGeneration || pair.Key != expected.Key ||
+			if pair.PairId != expected.PairId || pair.DeliveryId != expected.DeliveryId || pair.DeliveryGeneration != expected.DeliveryGeneration || pair.Key != expected.Key || pair.SessionKey != expected.SessionKey || pair.TrustRevision != expected.TrustRevision || pair.OperationId != expected.OperationId || pair.BindingChallenge != expected.BindingChallenge || pair.BindingState != expected.BindingState ||
 				pair.ServiceId != expected.ServiceId || pair.ServiceRunId != expected.ServiceRunId || pair.RunNumber != expected.RunNumber || pair.PublisherIdentityId != expected.PublisherIdentityId ||
 				!visitorsubject.Same(pair.Subject, expected.Subject) || len(pair.Relays) != 2 || pair.Relays[0] != expected.Relays[0] || pair.Relays[1] != expected.Relays[1] ||
 				pair.ObservedAt.IsZero() || !pair.ExpiresAt.After(pair.ObservedAt) || pair.ExpiresAt.Sub(pair.ObservedAt) > 5*time.Minute {
@@ -209,7 +208,37 @@ func connectorLegProof(signer Signer, pair controlv1.ConnectorPeerPair, slot int
 // are passive until activation, so a losing QUIC/TCP attempt cannot spend the
 // publisher's registration or replace a sibling's replay state.
 func connectConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int) (*connectorRelayLeg, error) {
-	return prepareConnectorLeg(ctx, lifetime, config, signer, pair, key, slot, nil)
+	var operation tunnelv1.ConnectorHandoffID
+	if _, err := rand.Read(operation[:]); err != nil {
+		return nil, err
+	}
+	for {
+		attempt, stop := context.WithTimeout(ctx, 2*time.Second)
+		leg, err := prepareConnectorLeg(attempt, lifetime, config, signer, pair, key, slot, nil, operation)
+		if err == nil {
+			err = context.Cause(attempt)
+		}
+		stop()
+		if err == nil {
+			return leg, nil
+		}
+		if leg != nil {
+			_ = leg.Close()
+		}
+		if ctx.Err() != nil {
+			return nil, errors.Join(err, context.Cause(ctx))
+		}
+		if connectorReconnectError(err) != retryAttempt {
+			return nil, err
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, context.Cause(ctx)
+		case <-timer.C:
+		}
+	}
 }
 
 type connectorLegReplacement struct {
@@ -233,7 +262,24 @@ func nextConnectorLegReplacement(previous *connectorRelayLeg) (*connectorLegRepl
 	return &connectorLegReplacement{previous: previous, handoff: handoff}, nil
 }
 
-func prepareConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int, replacement *connectorLegReplacement) (*connectorRelayLeg, error) {
+func prepareConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int, replacement *connectorLegReplacement, initial tunnelv1.ConnectorHandoffID) (*connectorRelayLeg, error) {
+	l, err := dialConnectorLeg(ctx, lifetime, config, signer, pair, key, slot, replacement, initial)
+	if err != nil {
+		return nil, err
+	}
+	if err := activateConnectorLeg(ctx, l, replacement, initial); err != nil {
+		_ = l.Close()
+		return nil, err
+	}
+	return l, nil
+}
+
+// dialConnectorLeg obtains the relay's source claim without selecting packet
+// forwarding. pending bindings must wait for publisher installation first.
+func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signer, pair controlv1.ConnectorPeerPair, key [32]byte, slot int, replacement *connectorLegReplacement, initial tunnelv1.ConnectorHandoffID) (*connectorRelayLeg, error) {
+	if (replacement == nil) == (initial == (tunnelv1.ConnectorHandoffID{})) {
+		return nil, ErrServiceConnection
+	}
 	roots := config.TransportTLS
 	if roots == nil {
 		roots = &tls.Config{MinVersion: tls.VersionTLS13}
@@ -331,6 +377,9 @@ func prepareConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 		return nil, err
 	}
 	l.selectedHandoff = tunnelv1.InitialConnectorActivation(hello).SelectedHandoff()
+	if replacement == nil {
+		l.selectedHandoff = initial
+	}
 	owned := false
 	defer func() {
 		if !owned {
@@ -359,21 +408,22 @@ func prepareConnectorLeg(ctx, lifetime context.Context, config Config, signer Si
 	if failures != nil {
 		return nil, failures
 	}
+	owned = true
+	return l, nil
+}
+
+func activateConnectorLeg(ctx context.Context, l *connectorRelayLeg, replacement *connectorLegReplacement, initial tunnelv1.ConnectorHandoffID) error {
 	request, err := opaqueid.New(opaqueid.IdempotencyPrefix)
 	if err == nil {
 		if replacement == nil {
-			err = l.session.ActivateConnectorLeg(ctx, request)
+			err = l.session.ActivateConnectorBinding(ctx, request, initial)
 		} else {
 			l.selectedHandoff = replacement.handoff.Next()
 			l.handoffRevision = replacement.handoff.Revision()
 			err = l.session.ReplaceConnectorLeg(ctx, request, replacement.handoff)
 		}
 	}
-	if err != nil {
-		return nil, err
-	}
-	owned = true
-	return l, nil
+	return err
 }
 
 // a packet-carrier failure must wake the leg owner even when its control stream

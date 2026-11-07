@@ -172,6 +172,9 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &pair); err != nil || pair.Key == "" {
 		t.Fatal("missing pair key", err)
 	}
+	// public preparation uses its real authority clock. claims cannot be observed
+	// before that completed authorization even when this fixture pins later RPCs.
+	now = time.Now().UTC().Truncate(time.Microsecond)
 	conn, err := pgx.Connect(ctx, url)
 	if err != nil {
 		t.Fatal(err)
@@ -331,7 +334,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertRejected("signed stale lease", 0, staleBody, secret, http.StatusConflict)
+	assertRejected("signed stale lease", 0, staleBody, secret, http.StatusForbidden)
 	assertParity := func(name string, lease relayv1.RelayLease, proof tunnelv1.ConnectorPairLegProof, signature []byte) {
 		t.Helper()
 		t.Run(name, func(t *testing.T) {
@@ -340,7 +343,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 			var remote, local *serviceapi.ProblemError
 			if !errors.As(httpErr, &remote) || !errors.As(directErr, &local) ||
 				remote.Status != local.Status || remote.Code != local.Code || remote.Detail != local.Detail ||
-				remote.Status != http.StatusConflict {
+				remote.Status != http.StatusForbidden || remote.Code != "unauthenticated" {
 				t.Fatalf("HTTP/direct problems differ: %v, %v", httpErr, directErr)
 			}
 		})
@@ -356,11 +359,11 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad.RelaySignature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(keys[otherID], relayMessage))
-	assertRejected("wrong process signature", 0, bad, secret, http.StatusConflict)
+	assertRejected("wrong process signature", 0, bad, secret, http.StatusForbidden)
 	assertParity("wrong process parity", lease0, proof0, ed25519.Sign(keys[otherID], relayMessage))
 	bad = claimBody
 	bad.ObservedSourceIp = "192.0.2.11"
-	assertRejected("spoofed source with forwarded header", 0, bad, secret, http.StatusConflict)
+	assertRejected("spoofed source with forwarded header", 0, bad, secret, http.StatusForbidden)
 	bad.ObservedSourceIp = "192.0.2.10%eth0"
 	assertRejected("zoned source", 0, bad, secret, http.StatusBadRequest)
 	bad.ObservedSourceIp = "192.0.2.10:80"
@@ -375,7 +378,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertRejected("tampered connector signature with valid process signature", 0, bad, secret, http.StatusConflict)
+	assertRejected("tampered connector signature with valid process signature", 0, bad, secret, http.StatusForbidden)
 	bad = claimBody
 	bad.ProofFrame = "invalid*base64"
 	assertRejected("malformed proof encoding", 0, bad, secret, http.StatusBadRequest)
@@ -445,7 +448,31 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 		t.Fatal("direct sibling relay claim failed", err)
 	}
 	checkDelivery(second.PairId, second.DeliveryId)
-	assertRejected("HTTP replay", 0, claimBody, secret, http.StatusConflict)
+	t.Run("authenticated changed source requires rebinding", func(t *testing.T) {
+		changed := proof0
+		changed.RequestedAt = now.Add(time.Millisecond)
+		changed.Nonce = bytes.Repeat([]byte{19}, 32)
+		message, err := changed.Message()
+		if err != nil {
+			t.Fatal(err)
+		}
+		changed.Signature = ed25519.Sign(deviceKey, message)
+		observed := netip.MustParseAddr("192.0.2.11")
+		message, err = changed.RelayClaimMessage(observed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		signature := ed25519.Sign(keys[lease0.RelayServiceId], message)
+		_, httpErr := httpClient.ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease0, observed, changed, signature)
+		_, directErr := direct.ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease0, observed, changed, signature)
+		for _, err := range []error{httpErr, directErr} {
+			var problem *serviceapi.ProblemError
+			if !errors.As(err, &problem) || problem.Status != http.StatusConflict || problem.Code != "stale_network_binding" {
+				t.Fatal("authenticated network change lost its recoverable classification", err)
+			}
+		}
+	})
+	assertRejected("HTTP replay", 0, claimBody, secret, http.StatusForbidden)
 	assertParity("replay parity", lease0, proof0, signed0)
 	staleProof = proof0
 	staleProof.DeliveryGeneration++
@@ -462,7 +489,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertRejected("signed stale pair generation", 0, staleBody, secret, http.StatusConflict)
+	assertRejected("signed stale pair generation", 0, staleBody, secret, http.StatusForbidden)
 	assertParity("stale pair parity", lease0, staleProof, ed25519.Sign(keys[lease0.RelayServiceId], staleMessage))
 	if _, err := httpClient.ClaimConnectorPeerPairLegFromAcceptedSocket(ctx, lease1, source, proof1, signed1); err == nil {
 		t.Fatal("HTTP sibling replay recovered key")

@@ -228,7 +228,7 @@ func (s *SharedStreams) acceptIntroduction(ctx context.Context, stream muxsessio
 }
 
 // Open writes the generation header before any framed peer packet. the receiver
-// accepts the stream only after the first correctly MACed packet arrives.
+// accepts the stream only after the first authenticated delivery frame arrives.
 func (p *StreamPair) Open(ctx context.Context) (*SharedStreamCarrier, error) {
 	s := p.owner
 	s.mu.Lock()
@@ -318,8 +318,9 @@ func (s *SharedStreams) Close() error {
 	return nil
 }
 
-// SharedStreamCarrier validates direction, path, and MAC before sending and
-// receiving. closing it removes only the pair's stream, not the outer session.
+// SharedStreamCarrier validates direction, path, revision, and envelope MAC
+// before sending and receiving. only endpoints verify the inner session MAC.
+// closing it removes only the pair's stream, not the outer session.
 type SharedStreamCarrier struct {
 	*StreamCarrier
 	pair          *StreamPair
@@ -330,12 +331,16 @@ type SharedStreamCarrier struct {
 }
 
 func (c *SharedStreamCarrier) Send(ctx context.Context, b []byte) error {
-	if !c.pair.binding.authentic(b, c.pair.binding.Role) {
+	packet, valid := c.pair.binding.packet(b, c.pair.binding.Role)
+	if !valid {
 		return tunnelv1.ErrPeerPacket
+	}
+	if admit := c.pair.binding.AdmitPacket; admit != nil && !admit(packet) {
+		return nil
 	}
 	s := c.pair.owner
 	s.mu.Lock()
-	valid := s.ctx.Err() == nil && s.pairs[c.pair.binding.Delivery.Pair] == c.pair && c.pair.active == c && c.StreamCarrier != nil
+	valid = s.ctx.Err() == nil && s.pairs[c.pair.binding.Delivery.Pair] == c.pair && c.pair.active == c && c.StreamCarrier != nil
 	s.mu.Unlock()
 	if !valid {
 		return net.ErrClosed
@@ -378,30 +383,38 @@ func (c *SharedStreamCarrier) receive(ctx context.Context) (queuedFrame, error) 
 	}
 	stop := interruptOnCancel(ctx, c.Close)
 	defer stop()
-	revision := c.pair.forwardRevision()
-	d, b, err := tunnelv1.ReadPeerDeliveryFrame(c.StreamCarrier.Conn, tunnelv1.PeerDeliveryStream, c.pair.binding.Key)
-	if err != nil {
-		return queuedFrame{}, err
+	for {
+		revision := c.pair.forwardRevision()
+		d, b, err := tunnelv1.ReadPeerDeliveryFrame(c.StreamCarrier.Conn, tunnelv1.PeerDeliveryStream, c.pair.binding.Key)
+		if err != nil {
+			return queuedFrame{}, err
+		}
+		if d != c.pair.binding.Delivery {
+			return queuedFrame{}, tunnelv1.ErrPeerPacket
+		}
+		s.mu.Lock()
+		valid = s.ctx.Err() == nil && s.pairs[c.pair.binding.Delivery.Pair] == c.pair && c.pair.active == c
+		s.mu.Unlock()
+		if !valid {
+			return queuedFrame{}, net.ErrClosed
+		}
+		packet, authentic := c.pair.binding.packet(b, 1-c.pair.binding.Role)
+		if !authentic {
+			return queuedFrame{}, tunnelv1.ErrPeerPacket
+		}
+		s.mu.Lock()
+		accepted := s.pairs[c.pair.binding.Delivery.Pair] == c.pair && c.pair.active == c && c.pair.replay.accept(b)
+		s.mu.Unlock()
+		if !accepted {
+			return queuedFrame{}, tunnelv1.ErrPeerPacket
+		}
+		// a complete, authenticated frame can arrive during a packet-authority
+		// pause. drop it without poisoning the retained stream's framing.
+		if admit := c.pair.binding.AdmitPacket; admit != nil && !admit(packet) {
+			continue
+		}
+		return queuedFrame{data: b, revision: revision}, nil
 	}
-	if d != c.pair.binding.Delivery {
-		return queuedFrame{}, tunnelv1.ErrPeerPacket
-	}
-	s.mu.Lock()
-	valid = s.ctx.Err() == nil && s.pairs[c.pair.binding.Delivery.Pair] == c.pair && c.pair.active == c
-	s.mu.Unlock()
-	if !valid {
-		return queuedFrame{}, net.ErrClosed
-	}
-	if !c.pair.binding.authentic(b, 1-c.pair.binding.Role) {
-		return queuedFrame{}, tunnelv1.ErrPeerPacket
-	}
-	s.mu.Lock()
-	accepted := s.pairs[c.pair.binding.Delivery.Pair] == c.pair && c.pair.active == c && c.pair.replay.accept(b)
-	s.mu.Unlock()
-	if !accepted {
-		return queuedFrame{}, tunnelv1.ErrPeerPacket
-	}
-	return queuedFrame{data: b, revision: revision}, nil
 }
 
 func (c *SharedStreamCarrier) Close() error {

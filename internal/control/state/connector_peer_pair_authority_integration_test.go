@@ -180,7 +180,7 @@ func TestIntegrationConnectorPeerPairCompanyClaims(t *testing.T) {
 		t.Fatal("company session restoration bypassed replay protection", err)
 	}
 	proof = testConnectorLegProof(t, f.pair, 0, f.now.Add(2*time.Millisecond), f.key)
-	if _, err := testClaimConnectorPeerPairLeg(t, f.database, t.Context(), lease, netip.MustParseAddr("192.0.2.11"), proof, proof.RequestedAt); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimConnectorPeerPairLeg(t, f.database, t.Context(), lease, netip.MustParseAddr("192.0.2.11"), proof, proof.RequestedAt); !errors.Is(err, ErrConnectorPeerBindingStale) {
 		t.Fatal("company session restoration allowed a different observed source", err)
 	}
 }

@@ -63,6 +63,7 @@ type connectorFixture struct {
 	dropHelloReply        [2]atomic.Bool
 	dropActivationReply   [2]atomic.Bool
 	handoffAttempts       [2][]tunnelv1.ConnectorHandoff
+	initialOperations     [2][]tunnelv1.ConnectorHandoffID
 	tlsGate               *fixtureTLSGate
 	drainRejections       bool
 	rejectionClosing      chan struct{}
@@ -194,7 +195,7 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 	f.run.PairReady = &controlv1.ConnectorPeerPairReady{PublisherIdentityId: connectorID(t, opaqueid.PublisherIdentityPrefix)}
 	for slot, endpoint := range f.endpoints {
 		f.run.PairReady.Relays = append(f.run.PairReady.Relays, controlv1.ConnectorPeerPairRelay{PublisherConnectionId: connectorID(t, opaqueid.PublisherConnectionPrefix), AssignmentRevision: 1, RelayAddress: endpoint.Address, TlsServerName: endpoint.ServerName,
-			RelayLease: controlv1.ConnectorPeerRelayLease{RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayId: fmt.Sprintf("node-%d", slot), RelayRunId: fmt.Sprintf("run-%d", slot), RelayLeaseRevision: 1}})
+			RelayLease: controlv1.ConnectorPeerRelayLease{RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayId: fmt.Sprintf("node-%d", slot), RelayRunId: connectorID(t, opaqueid.RelayRunPrefix), RelayLeaseRevision: 1}})
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -345,7 +346,7 @@ func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Sess
 	}
 	defer packets.Close()
 	id, _ := tunnelv1.ParsePeerDeliveryIdentifier(native.pair.DeliveryId)
-	carrier, err := packets.Register(peer.PairBinding{Delivery: tunnelv1.PeerDelivery{Pair: id, Generation: 1}, Key: native.key, Role: 1, Path: slot}, false)
+	carrier, err := packets.Register(peer.PairBinding{Delivery: tunnelv1.PeerDelivery{Pair: id, Generation: uint64(native.pair.DeliveryGeneration)}, Key: native.key, Role: 1, Path: slot}, false)
 	if err != nil {
 		return
 	}
@@ -373,9 +374,15 @@ func (f *connectorFixture) accept(ctx context.Context, transport muxsession.Sess
 				return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 			}
 			native.handoffs[slot] = handoff
-		} else if native.nonces[slot] != nil {
-			f.mu.Unlock()
-			return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+		} else {
+			operation, stable := activation.InitialOperation()
+			if stable {
+				f.initialOperations[slot] = append(f.initialOperations[slot], operation)
+			}
+			if native.nonces[slot] != nil && (!stable || !bytes.Equal(native.nonces[slot], operation[:]) || native.handoffs[slot].Valid()) {
+				f.mu.Unlock()
+				return &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
+			}
 		}
 		selected := activation.SelectedHandoff()
 		native.nonces[slot] = append([]byte(nil), selected[:]...)

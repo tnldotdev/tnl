@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"errors"
 	"net"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -22,17 +22,18 @@ const (
 	packetQueue = 64
 	// a fixed ring bounds incomplete fragments independently of sender input.
 	reassemblySlots = 64
-	// connector frame authentication is independent of carrier selection.
-	connectorPacketDomain = "connector_peer"
 )
 
 var ErrConfiguration = errors.New("peer packet configuration is invalid")
 
 type Config struct {
-	// key and role belong to one exact authorized peer pair, never an installation.
+	// Key is the stable endpoint-only session key, never a relay envelope key.
 	Key   [32]byte
 	Role  uint8
 	Paths [pathCount]Carrier
+	// Binding is the initial active revision. zero defaults to revision one for
+	// fixed-carrier users; rebind-capable owners supply the control revision.
+	Binding BindingRevision
 	// intervals are configurable for network-fault qualification.
 	ProbeInterval time.Duration
 	PathTimeout   time.Duration
@@ -56,8 +57,10 @@ type path struct {
 	alive, failed bool
 	ack, sent     time.Time
 	challenge     [16]byte
+	nonce         [16]byte
+	proof         BindingPathProof
 	stats         PathStats
-	// one receiver owns this bounded reassembly ring and replay window.
+	// reassembly and replay history survive binding changes under Endpoint.mu.
 	fragments [reassemblySlots]fragment
 	highest   uint64
 	complete  [reassemblySlots]uint64
@@ -66,16 +69,26 @@ type path struct {
 type queuedFrame struct {
 	revision carrierRevision
 	data     []byte
+	epoch    uint64
 }
 
 type queuedPacket struct {
 	data     []byte
 	revision carrierRevision
+	endpoint *Endpoint
+	epoch    uint64
 }
 
 // caller-buffer copy is the input commit. replacement either follows this
 // bounded copy or discards the stale candidate, even after dequeue.
 func (p queuedPacket) copyTo(b []byte) (int, bool) {
+	if p.endpoint != nil {
+		p.endpoint.mu.Lock()
+		defer p.endpoint.mu.Unlock()
+		if p.endpoint.ctx != nil && p.endpoint.ctx.Err() != nil || !p.endpoint.bindingActive || p.endpoint.bindingEpoch != p.epoch {
+			return 0, false
+		}
+	}
 	return p.revision.copyTo(b, p.data)
 }
 
@@ -86,6 +99,7 @@ func (p *path) refreshRevisionLocked() {
 			p.alive = false
 			p.ack = time.Time{}
 			p.challenge = [16]byte{}
+			p.proof = BindingPathProof{}
 		}
 	}
 }
@@ -105,19 +119,24 @@ type PathStats struct {
 // only change encrypted packet delivery; QUIC retains every application stream.
 // key-bound round trips validate delivery, not target access.
 type Endpoint struct {
-	config Config
-	ctx    context.Context
-	cancel context.CancelFunc
-	mu     sync.Mutex
-	paths  [pathCount]*path
-	active int
-	seq    atomic.Uint64
-	input  chan queuedPacket
-	read   deadline
-	write  deadline
-	wait   sync.WaitGroup
-	once   sync.Once
-	err    error
+	config         Config
+	ctx            context.Context
+	cancel         context.CancelFunc
+	mu             sync.Mutex
+	bindingMu      sync.Mutex
+	binding        BindingRevision
+	bindingEpoch   uint64
+	bindingActive  bool
+	bindingPending bool
+	paths          [pathCount]*path
+	active         int
+	seq            atomic.Uint64
+	input          chan queuedPacket
+	read           deadline
+	write          deadline
+	wait           sync.WaitGroup
+	once           sync.Once
+	err            error
 }
 
 type logicalAddr struct {
@@ -146,7 +165,14 @@ func New(parent context.Context, config Config) (*Endpoint, error) {
 		return nil, ErrConfiguration
 	}
 	ctx, cancel := context.WithCancel(parent)
-	e := &Endpoint{config: config, ctx: ctx, cancel: cancel, active: RelayA, input: make(chan queuedPacket, packetQueue)}
+	if config.Binding == (BindingRevision{}) {
+		config.Binding.Generation = 1
+	} else if config.Binding.Generation < 1 || !opaqueid.Valid(config.Binding.PairID, "cpp_") ||
+		(config.Binding.OperationID != "" || config.Binding.Challenge != "") && !config.Binding.valid() {
+		cancel()
+		return nil, ErrConfiguration
+	}
+	e := &Endpoint{config: config, ctx: ctx, cancel: cancel, active: RelayA, input: make(chan queuedPacket, packetQueue), binding: config.Binding, bindingActive: true}
 	e.read.changed, e.write.changed = make(chan struct{}), make(chan struct{})
 	for index, carrier := range config.Paths {
 		if carrier == nil {
@@ -245,17 +271,22 @@ func (e *Endpoint) WriteTo(b []byte, addr net.Addr) (int, error) {
 		return 0, net.ErrClosed
 	}
 	e.mu.Lock()
+	if !e.bindingActive {
+		e.mu.Unlock()
+		return len(b), nil
+	}
 	for _, p := range e.paths {
 		p.refreshRevisionLocked()
 	}
 	e.chooseLocked()
 	index := e.active
 	revision := e.paths[index].revision
+	generation := uint64(e.binding.Generation)
 	e.mu.Unlock()
 	seq := e.seq.Add(1)
 	for offset := 0; offset < len(b); offset += tunnelv1.PeerFragmentBytes {
 		part := b[offset:min(offset+tunnelv1.PeerFragmentBytes, len(b))]
-		e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerData, Sequence: seq, Fragment: uint8(offset / tunnelv1.PeerFragmentBytes), Total: uint16(len(b)), Payload: part}, revision)
+		e.enqueue(index, tunnelv1.PeerPacket{BindingGeneration: generation, Kind: tunnelv1.PeerData, Sequence: seq, Fragment: uint8(offset / tunnelv1.PeerFragmentBytes), Total: uint16(len(b)), Payload: part}, revision)
 	}
 	// bounded queues intentionally drop packets; inner QUIC performs recovery.
 	return len(b), nil
@@ -263,18 +294,18 @@ func (e *Endpoint) WriteTo(b []byte, addr net.Addr) (int, error) {
 
 func (e *Endpoint) enqueue(index int, packet tunnelv1.PeerPacket, revision carrierRevision) {
 	packet.Sender, packet.Path = e.config.Role, uint8(index)
-	unsigned, err := packet.AuthenticatedBytes()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if packet.BindingGeneration == 0 {
+		packet.BindingGeneration = uint64(e.binding.Generation)
+	}
+	if packet.BindingGeneration != uint64(e.binding.Generation) || packet.Kind == tunnelv1.PeerData && !e.bindingActive {
+		return
+	}
+	frame, err := tunnelv1.SignPeerPacketFrame(packet, e.config.Key)
 	if err != nil {
 		return
 	}
-	mac := hmac.New(sha256.New, e.config.Key[:])
-	_, _ = mac.Write([]byte(connectorPacketDomain))
-	_, _ = mac.Write([]byte{0})
-	_, _ = mac.Write(unsigned)
-	copy(packet.MAC[:], mac.Sum(nil))
-	frame, _ := packet.MarshalBinary()
-	e.mu.Lock()
-	defer e.mu.Unlock()
 	p := e.paths[index]
 	if p == nil || p.failed {
 		return
@@ -285,7 +316,7 @@ func (e *Endpoint) enqueue(index int, packet tunnelv1.PeerPacket, revision carri
 		return
 	}
 	select {
-	case p.queue <- queuedFrame{revision: revision, data: frame}:
+	case p.queue <- queuedFrame{revision: revision, data: frame, epoch: e.bindingEpoch}:
 		p.stats.PeakQueuedFrames = max(p.stats.PeakQueuedFrames, len(p.queue))
 	default:
 		p.stats.DroppedFrames++
@@ -300,9 +331,21 @@ func (e *Endpoint) sendLoop(index int, p *path) {
 		case frame := <-p.queue:
 			ctx, cancel := context.WithTimeout(e.ctx, e.config.PathTimeout)
 			var err error
+			e.mu.Lock()
+			if frame.epoch != e.bindingEpoch {
+				e.mu.Unlock()
+				cancel()
+				continue
+			}
 			if slot, ok := p.carrier.(*CarrierSlot); ok {
-				err = slot.sendRevision(ctx, frame.data, frame.revision)
+				var entered *installedCarrier
+				entered, err = slot.enter(ctx, frame.revision)
+				e.mu.Unlock()
+				if entered != nil {
+					err = slot.sendEntered(ctx, frame.data, frame.revision, entered)
+				}
 			} else {
+				e.mu.Unlock()
 				err = p.carrier.Send(ctx, frame.data)
 			}
 			cancel()
@@ -373,17 +416,22 @@ func (e *Endpoint) probeLoop() {
 			// retain a challenge until answered or expired, so a slow path can
 			// still prove a round trip without matching only the newest tick.
 			if p.challenge == [16]byte{} || now.Sub(p.sent) >= e.config.PathTimeout {
-				if _, err := rand.Read(p.challenge[:]); err != nil {
+				if _, err := rand.Read(p.nonce[:]); err != nil {
 					e.mu.Unlock()
 					continue
+				}
+				p.challenge = p.nonce
+				if e.binding.valid() {
+					p.challenge, _ = tunnelv1.ConnectorPeerBindingProbe(e.binding.PairID, e.binding.OperationID, e.binding.Generation, e.binding.Challenge, e.config.Role, uint8(index), p.nonce[:])
 				}
 				p.sent = now
 			}
 			challenge := p.challenge
 			revision := p.revision
+			generation := uint64(e.binding.Generation)
 			e.chooseLocked()
 			e.mu.Unlock()
-			e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerProbe, Sequence: e.seq.Add(1), Total: 16, Payload: challenge[:]}, revision)
+			e.enqueue(index, tunnelv1.PeerPacket{BindingGeneration: generation, Kind: tunnelv1.PeerProbe, Sequence: e.seq.Add(1), Total: 16, Payload: challenge[:]}, revision)
 		}
 		select {
 		case <-e.ctx.Done():
@@ -412,18 +460,24 @@ func (e *Endpoint) receiveLoop(index int, p *path) {
 			continue
 		}
 		e.mu.Lock()
+		p.refreshRevisionLocked()
+		if packet.BindingGeneration != uint64(e.binding.Generation) || p.revision != revision {
+			e.mu.Unlock()
+			continue
+		}
 		p.stats.ReceivedFrames++
 		e.mu.Unlock()
 		switch packet.Kind {
 		case tunnelv1.PeerProbe:
-			e.enqueue(index, tunnelv1.PeerPacket{Kind: tunnelv1.PeerProbeReply, Sequence: e.seq.Add(1), Total: 16, Payload: packet.Payload}, revision)
+			e.enqueue(index, tunnelv1.PeerPacket{BindingGeneration: packet.BindingGeneration, Kind: tunnelv1.PeerProbeReply, Sequence: e.seq.Add(1), Total: 16, Payload: packet.Payload}, revision)
 		case tunnelv1.PeerProbeReply:
 			e.mu.Lock()
 			p.refreshRevisionLocked()
-			if !p.failed && p.revision == revision && p.challenge != [16]byte{} && hmac.Equal(p.challenge[:], packet.Payload) {
+			if packet.BindingGeneration == uint64(e.binding.Generation) && !p.failed && p.revision == revision && p.challenge != [16]byte{} && hmac.Equal(p.challenge[:], packet.Payload) {
 				p.ack, p.alive = time.Now(), true
 				p.stats.RTT = p.ack.Sub(p.sent)
 				p.challenge = [16]byte{}
+				p.proof = bindingProof(index, p.nonce, frame)
 				e.chooseLocked()
 			}
 			e.mu.Unlock()
@@ -434,19 +488,22 @@ func (e *Endpoint) receiveLoop(index int, p *path) {
 }
 
 func authenticatePacket(frame []byte, key [32]byte, role uint8, index int) (tunnelv1.PeerPacket, bool) {
-	packet, err := tunnelv1.ParsePeerPacket(frame)
+	packet, err := tunnelv1.VerifyPeerPacketFrame(frame, key)
 	if err != nil || packet.Sender == role || int(packet.Path) != index {
 		return packet, false
 	}
-	unsigned, _ := packet.AuthenticatedBytes()
-	mac := hmac.New(sha256.New, key[:])
-	_, _ = mac.Write([]byte(connectorPacketDomain))
-	_, _ = mac.Write([]byte{0})
-	_, _ = mac.Write(unsigned)
-	return packet, hmac.Equal(packet.MAC[:], mac.Sum(nil))
+	return packet, true
 }
 
 func (e *Endpoint) assemble(p *path, packet tunnelv1.PeerPacket, revision carrierRevision) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.ctx != nil {
+		p.refreshRevisionLocked()
+		if !e.bindingActive || packet.BindingGeneration != uint64(e.binding.Generation) || p.revision != revision {
+			return
+		}
+	}
 	if packet.Sequence < p.highest && p.highest-packet.Sequence >= reassemblySlots {
 		return
 	}
@@ -474,11 +531,9 @@ func (e *Endpoint) assemble(p *path, packet tunnelv1.PeerPacket, revision carrie
 	p.complete[slot] = packet.Sequence
 	b := append([]byte(nil), f.data[:f.total]...)
 	select {
-	case e.input <- queuedPacket{data: b, revision: revision}:
+	case e.input <- queuedPacket{data: b, revision: revision, endpoint: e, epoch: e.bindingEpoch}:
 	default:
-		e.mu.Lock()
 		p.stats.DroppedFrames++
-		e.mu.Unlock()
 	}
 }
 

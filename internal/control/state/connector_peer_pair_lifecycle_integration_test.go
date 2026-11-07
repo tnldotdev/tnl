@@ -265,15 +265,34 @@ func TestIntegrationConnectorPeerPairIndependentClaimBoundsAndReports(t *testing
 			if _, err := f.d.DeliverConnectorPeerPair(t.Context(), pair.ServiceID, pair.ServiceRunID, pair.ID, pair.DeliveryGeneration, f.run.Token, f.now.Add(6*time.Second)); !errors.Is(err, ErrServiceAccess) {
 				t.Fatal("expired claim revived by pair renewal", err)
 			}
-			f.claim(t, pair, shortSlot, f.now.Add(7*time.Second))
-			binding, err = f.binding(t, pair, f.now.Add(8*time.Second))
-			if err != nil || !binding.claimsCurrent || !binding.preparedUntil.IsZero() {
-				t.Fatal("fresh claims silently renewed expired installation", err)
+			before = connectorPairSavedAuthority(t, f.d, pair.ID)
+			at := f.now.Add(7 * time.Second)
+			if _, err := testClaimConnectorPeerPairLeg(t, f.d, t.Context(), pair.Relays[shortSlot].RelayLease, netip.MustParseAddr("192.0.2.10"), testConnectorLegProof(t, pair, shortSlot, at, f.key), at); !errors.Is(err, ErrConnectorPeerBindingStale) {
+				t.Fatal("expired claim revived the old binding", err)
 			}
-			f.report(t, pair, binding.expiresAt, f.now.Add(8*time.Second))
+			if !bytes.Equal(before, connectorPairSavedAuthority(t, f.d, pair.ID)) {
+				t.Fatal("expired claim recovery changed authority")
+			}
+			prepare := connectorRebindRequest(t, f, pair, "prepare", at)
+			state, err := f.d.RebindConnectorPeerPair(f.visitor, pair.ServiceID, pair.ID, prepare, at)
+			if err != nil || state.Pending == nil {
+				t.Fatal("new binding after expired installation", err)
+			}
+			pending := *state.Pending
+			connectorRebindClaimBoth(t, f, pending, netip.MustParseAddr("192.0.2.10"), at)
+			connectorRebindReport(t, f, pending, "installed", f.now.Add(8*time.Second))
+			connectorRebindReport(t, f, pending, "proved", f.now.Add(8*time.Second))
+			activate := prepare.Proof
+			activate.Phase, activate.ExpectedGeneration, activate.ExpectedRelays = "activate", pending.DeliveryGeneration, nil
+			activate.BindingChallenge, activate.PathProofs, activate.RequestedAt = pending.BindingChallenge, connectorRebindProofs(t, pending, 0), f.now.Add(9*time.Second)
+			state, err = f.d.RebindConnectorPeerPair(f.visitor, pair.ServiceID, pair.ID, signConnectorRebind(t, f, activate), activate.RequestedAt)
+			if err != nil || state.Active == nil {
+				t.Fatal("activation after a fresh installation", err)
+			}
+			pair = *state.Active
 			installed, err := f.binding(t, pair, f.now.Add(9*time.Second))
-			if err != nil || !installed.preparedUntil.Equal(binding.expiresAt) {
-				t.Fatal("new report failed to record only the checked snapshot", err)
+			if err != nil || !installed.claimsCurrent || !installed.preparedUntil.Equal(pending.ExpiresAt) {
+				t.Fatal("new report did not retain its independent pending bound", err)
 			}
 			shorter := f.now.Add(12 * time.Second)
 			if _, err := f.d.pool.Exec(t.Context(), `UPDATE control.control_sessions SET access_expires_at=$2 WHERE id=$1`, principal.SessionID, shorter); err != nil {
@@ -284,7 +303,7 @@ func TestIntegrationConnectorPeerPairIndependentClaimBoundsAndReports(t *testing
 				t.Fatal(err)
 			}
 			clipped, err := f.binding(t, pair, f.now.Add(11*time.Second))
-			if err != nil || !clipped.preparedUntil.Equal(shorter) || !installed.preparedUntil.Equal(binding.expiresAt) {
+			if err != nil || !clipped.preparedUntil.Equal(shorter) || !installed.preparedUntil.Equal(pending.ExpiresAt) {
 				t.Fatal("shorter fresh claim did not clip only current installation snapshot", err)
 			}
 		})
@@ -303,12 +322,12 @@ func TestIntegrationConnectorPeerPairClaimOrderSourceDenial(t *testing.T) {
 			}
 			second := 1 - first
 			at := f.now.Add(time.Second)
-			if _, err := testClaimConnectorPeerPairLeg(t, f.d, t.Context(), pair.Relays[second].RelayLease, netip.MustParseAddr("192.0.2.11"), testConnectorLegProof(t, pair, second, at, f.key), at); err != nil {
-				t.Fatal("second independently signed source claim", err)
-			}
 			before := connectorPairSavedAuthority(t, f.d, pair.ID)
-			if _, err := f.binding(t, pair, f.now.Add(2*time.Second)); !errors.Is(err, ErrServiceAccess) {
-				t.Fatal("different source claims became pending instead of denial", err)
+			if _, err := testClaimConnectorPeerPairLeg(t, f.d, t.Context(), pair.Relays[second].RelayLease, netip.MustParseAddr("192.0.2.11"), testConnectorLegProof(t, pair, second, at, f.key), at); !errors.Is(err, ErrConnectorPeerBindingStale) {
+				t.Fatal("second independently signed source claim did not require rebinding", err)
+			}
+			if binding, err := f.binding(t, pair, f.now.Add(2*time.Second)); err != nil || binding.claimsCurrent {
+				t.Fatal("different source claim gained delivery authority", err)
 			}
 			if _, err := f.d.DeliverConnectorPeerPair(t.Context(), pair.ServiceID, pair.ServiceRunID, pair.ID, pair.DeliveryGeneration, f.run.Token, f.now.Add(2*time.Second)); !errors.Is(err, ErrServiceAccess) {
 				t.Fatal("different source claims delivered key", err)

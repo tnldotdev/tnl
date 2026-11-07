@@ -64,7 +64,10 @@ func (s *service) ClaimConnectorPeerPairLeg(ctx context.Context, pairID string, 
 			return relayv1.ConnectorPeerPairLegClaim{}, context.Cause(ctx)
 		}
 		if errors.Is(err, controlstate.ErrServiceAccess) || errors.Is(err, controlstate.ErrVisitorPermission) || errors.Is(err, controlstate.ErrWorkloadDenied) {
-			return relayv1.ConnectorPeerPairLegClaim{}, serviceapi.NewProblemError(http.StatusConflict, "stale_connection_assignment", "connector peer pair leg is no longer authorized")
+			return relayv1.ConnectorPeerPairLegClaim{}, serviceapi.NewProblemError(http.StatusForbidden, "unauthenticated", "connector peer pair leg is no longer authorized")
+		}
+		if errors.Is(err, controlstate.ErrConnectorPeerBindingStale) {
+			return relayv1.ConnectorPeerPairLegClaim{}, serviceapi.NewProblemError(http.StatusConflict, "stale_network_binding", "connector network binding changed")
 		}
 		// the operator adapter emits authored text and safe fields, retaining the
 		// provider cause for classification rather than printing it to the caller.
@@ -72,7 +75,7 @@ func (s *service) ClaimConnectorPeerPairLeg(ctx context.Context, pairID string, 
 		return relayv1.ConnectorPeerPairLegClaim{}, serviceapi.NewProblemError(http.StatusInternalServerError, "internal", "connector peer pair claim failed")
 	}
 	return relayv1.ConnectorPeerPairLegClaim{PairId: claim.PairID, DeliveryId: base64.RawURLEncoding.EncodeToString(claim.DeliveryID[:]), DeliveryGeneration: claim.DeliveryGeneration,
-		ConnectionSlot: claim.ConnectionSlot, Key: claim.Key, SourceIp: claim.SourceIP.String(), ObservedAt: claim.ObservedAt, ExpiresAt: claim.ExpiresAt}, nil
+		ConnectionSlot: claim.ConnectionSlot, Key: claim.Key, SourceIp: claim.SourceIP.String(), ObservedAt: claim.ObservedAt, ExpiresAt: claim.ExpiresAt, BindingState: relayv1.ConnectorPeerLegBindingState(claim.BindingState)}, nil
 }
 
 func (h *handler) claimConnectorPeerPairLeg(w http.ResponseWriter, r *http.Request, pairID string, slot int) {

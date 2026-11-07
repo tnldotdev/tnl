@@ -186,6 +186,11 @@ func (r *ServiceRegistry) Drain(ctx context.Context) error {
 				c.packets.Close()
 			}
 			err := c.paths.Drain(ctx)
+			if err == net.ErrClosed {
+				// packet retirement may already be closing this connection. join
+				// that close rather than treating a completed drain as a failure.
+				err = c.paths.Close()
+			}
 			mu.Lock()
 			result = errors.Join(result, err)
 			mu.Unlock()

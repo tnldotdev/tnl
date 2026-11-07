@@ -198,7 +198,7 @@ func (d *daemon) startStandalone(
 		selected.GetConfigForClient = nil
 		return selected, nil
 	}}
-	udpListener, err := listenRelayQUIC(settings.relayUDPListen, settings.relayUDPPacket, sharedTLS, settings.quic)
+	udpListener, err := listenRelayQUIC(settings.relayUDPListen, settings.relayUDPPacket, sharedTLS, settings.quic, settings.relay.publisherConnectionLimit)
 	if err != nil {
 		return fmt.Errorf("listen for standalone QUIC infrastructure: %w", err)
 	}

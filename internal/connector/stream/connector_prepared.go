@@ -41,6 +41,7 @@ type PreparedConnector struct {
 	permissionUpdates  chan preparedPermissionRenewal
 	permissionCancel   context.CancelFunc
 	permissionRenewing bool
+	permissionUntil    time.Time
 }
 
 type preparedPermissionRenewal struct {
@@ -131,8 +132,11 @@ func prepareConnector(lifetime, setup context.Context, session muxsession.Sessio
 		return nil, ErrServiceConnection
 	}
 	setupStopped = true
-	p := &PreparedConnector{ctx: ctx, conn: connection, callbackDone: make(chan struct{})}
+	p := &PreparedConnector{ctx: ctx, conn: connection, callbackDone: make(chan struct{}), permissionUntil: run.ValidUntil}
 	p.stop = context.AfterFunc(ctx, func() { defer close(p.callbackDone); _ = p.closePhysical() })
+	p.mu.Lock()
+	p.startPermissionWorkerLocked()
+	p.mu.Unlock()
 	owned = true
 	return p, nil
 }
@@ -166,19 +170,13 @@ func (p *PreparedConnector) finish() {
 func (p *PreparedConnector) queuePermission(renewal preparedPermissionRenewal) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed || p.ctx.Err() != nil || p.permissionErr != nil {
+	if p.closed || p.ctx.Err() != nil || p.permissionErr != nil || !p.permissionUntil.IsZero() && !p.permissionUntil.After(time.Now()) {
 		return ErrServiceConnection
 	}
 	if p.permissionPending == nil {
 		p.permissionPending = make(chan struct{})
 	}
-	if p.permissionUpdates == nil {
-		ctx, cancel := context.WithCancel(p.ctx)
-		p.permissionCancel = cancel
-		p.permissionUpdates = make(chan preparedPermissionRenewal, 1)
-		p.work.Add(1)
-		go p.renewPermissions(ctx, p.permissionUpdates)
-	}
+	p.startPermissionWorkerLocked()
 	select {
 	case p.permissionUpdates <- renewal:
 	default:
@@ -193,17 +191,60 @@ func (p *PreparedConnector) queuePermission(renewal preparedPermissionRenewal) e
 	return nil
 }
 
+func (p *PreparedConnector) startPermissionWorkerLocked() {
+	if p.permissionUpdates != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(p.ctx)
+	p.permissionCancel = cancel
+	p.permissionUpdates = make(chan preparedPermissionRenewal, 1)
+	p.work.Add(1)
+	go p.renewPermissions(ctx, p.permissionUpdates)
+}
+
+func (p *PreparedConnector) suspendPermission() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.ctx.Err() != nil || p.permissionErr != nil || !p.permissionUntil.IsZero() && !p.permissionUntil.After(time.Now()) {
+		return ErrServiceConnection
+	}
+	if p.permissionPending == nil {
+		p.permissionPending = make(chan struct{})
+	}
+	p.startPermissionWorkerLocked()
+	return nil
+}
+
 func (p *PreparedConnector) renewPermissions(ctx context.Context, updates <-chan preparedPermissionRenewal) {
 	defer p.work.Done()
 	for {
+		p.mu.Lock()
+		until := p.permissionUntil
+		p.mu.Unlock()
+		wait, stopWait := context.WithCancel(ctx)
+		if !until.IsZero() {
+			stopWait()
+			wait, stopWait = context.WithDeadline(ctx, until)
+		}
 		select {
-		case <-ctx.Done():
+		case <-wait.Done():
+			stopWait()
+			p.finish()
 			return
 		case renewal := <-updates:
-			until := earliestConnectorDeadline(renewal.until, time.Now().Add(10*time.Second))
-			call, cancel := context.WithDeadline(ctx, until)
-			err := p.renewPermission(call, func() error { return renewal.writer.Renew(call, renewal.update) })
+			stopWait()
+			// the writer owns the short exchange budget so a staged packet binding
+			// can pause delivery without borrowing the unacknowledged new authority.
+			bound := renewal.until
+			if !until.IsZero() {
+				bound = earliestConnectorDeadline(bound, until)
+			}
+			call, cancel := context.WithDeadline(ctx, bound)
+			err := p.renewPermission(call, func() error { return renewal.writer.Renew(call, renewal.update) }, renewal.until)
 			cancel()
+			if errors.Is(err, tunnel.ErrConnectorPermissionStale) {
+				continue // keep the write fence until a fresh binding proof is ACKed.
+			}
 			if err != nil {
 				p.finish() // the owner joins this worker; it never joins itself.
 				return
@@ -224,7 +265,7 @@ func (p *PreparedConnector) Close() error {
 // renewPermission fences only new writes for this visitor until the publisher
 // acknowledges its signed update. an already-entered write never delays control
 // renewal. denial leaves a permanent fence before any waiting write is released.
-func (p *PreparedConnector) renewPermission(ctx context.Context, renew func() error) error {
+func (p *PreparedConnector) renewPermission(ctx context.Context, renew func() error, nextUntil time.Time) error {
 	p.mu.Lock()
 	if p.closed || p.ctx.Err() != nil || ctx.Err() != nil || p.permissionRenewing || p.permissionErr != nil {
 		p.mu.Unlock()
@@ -237,11 +278,22 @@ func (p *PreparedConnector) renewPermission(ctx context.Context, renew func() er
 	p.mu.Unlock()
 	err := renew()
 	p.mu.Lock()
-	if err != nil {
+	if err == nil && !p.permissionUntil.IsZero() && !p.permissionUntil.After(time.Now()) {
+		err = context.DeadlineExceeded
+	}
+	if err == nil {
+		if !nextUntil.After(time.Now()) {
+			err = context.DeadlineExceeded
+		} else {
+			p.permissionUntil = nextUntil
+		}
+	}
+	stale := errors.Is(err, tunnel.ErrConnectorPermissionStale)
+	if err != nil && !stale {
 		p.permissionErr = err
 	}
 	p.permissionRenewing = false
-	if p.permissionPending != nil && (err != nil || len(p.permissionUpdates) == 0) {
+	if p.permissionPending != nil && !stale && (err != nil || len(p.permissionUpdates) == 0) {
 		close(p.permissionPending)
 		p.permissionPending = nil
 	}
@@ -253,7 +305,7 @@ func (p *PreparedConnector) waitPermission(ctx context.Context) error {
 	for {
 		p.mu.Lock()
 		pending := p.permissionPending
-		invalid := p.closed || p.ctx.Err() != nil || ctx.Err() != nil || p.permissionErr != nil
+		invalid := p.closed || p.ctx.Err() != nil || ctx.Err() != nil || p.permissionErr != nil || !p.permissionUntil.IsZero() && !p.permissionUntil.After(time.Now())
 		p.mu.Unlock()
 		if invalid {
 			return ErrServiceConnection
@@ -321,7 +373,7 @@ type preparedConnectorUse struct {
 func (c *preparedConnectorUse) current() error {
 	c.owner.mu.Lock()
 	defer c.owner.mu.Unlock()
-	if c.owner.closed || c.owner.ctx.Err() != nil || c.ctx.Err() != nil || c.owner.permissionErr != nil {
+	if c.owner.closed || c.owner.ctx.Err() != nil || c.ctx.Err() != nil || c.owner.permissionErr != nil || !c.owner.permissionUntil.IsZero() && !c.owner.permissionUntil.After(time.Now()) {
 		return ErrServiceConnection
 	}
 	return nil

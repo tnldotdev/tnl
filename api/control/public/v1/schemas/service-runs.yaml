@@ -7,6 +7,16 @@ schemas:
     properties:
       pair_id: { type: string, pattern: "^cpp_[A-Za-z0-9]{22}$" }
       delivery_generation: { type: integer, format: int64, minimum: 1 }
+      owner_authority:
+        $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairOwnerAuthority"
+  ConnectorPeerPairOwnerAuthority:
+    type: object
+    additionalProperties: false
+    description: Current authority for an already installed retained owner in this exact publisher run. This observation contains no delivery key, does not authorize packets or application bytes, and does not renew a relay claim, installation, path proof, or application permission. It remains available during temporary relay loss; an expired local owner cannot be revived by a later observation.
+    required: [observed_at, expires_at]
+    properties:
+      observed_at: { type: string, format: date-time }
+      expires_at: { type: string, format: date-time }
   ConnectorPeerPairCandidates:
     type: object
     additionalProperties: false
@@ -26,12 +36,28 @@ schemas:
     description: Report installation of the exact independently prepared binding; this does not renew pair or application authority.
     required: [delivery_id, delivery_generation, binding_expires_at]
     properties:
+      phase:
+        $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairPreparedPhase"
+        x-go-type-skip-optional-pointer: true
+      operation_id: { type: string, maxLength: 25, x-go-type-skip-optional-pointer: true }
+      binding_challenge: { type: string, maxLength: 43, x-go-type-skip-optional-pointer: true }
+      path_proofs:
+        type: array
+        maxItems: 2
+        description: Empty for installed; two ordered publisher-initiated proofs for proved. A duplicate proof cannot extend its freshness bound.
+        x-go-type-skip-optional-pointer: true
+        items: { $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairPathProof" }
       delivery_id: { type: string, pattern: "^[A-Za-z0-9_-]{21}[AQgw]$" }
       delivery_generation: { type: integer, format: int64, minimum: 1 }
       binding_expires_at:
         type: string
         format: date-time
         description: The original control-clock expires_at from the installed delivery response, not a new local deadline.
+  ConnectorPeerPairPreparedPhase:
+    type: string
+    description: An absent phase is the legacy installation report; it is never a rebind path proof.
+    enum: [installed, proved]
+    x-enum-varnames: [ConnectorPeerPairPreparedInstalled, ConnectorPeerPairPreparedProved]
   ConnectorPeerPairDelivery:
     type: object
     additionalProperties: false
@@ -61,7 +87,18 @@ schemas:
       subject: { $ref: "../openapi.yaml#/components/schemas/VisitorSubject" }
       delivery_id: { type: string, pattern: "^[A-Za-z0-9_-]{21}[AQgw]$" }
       delivery_generation: { type: integer, format: int64, minimum: 1 }
-      key: { type: string, description: Secret for this delivery; do not log or persist. }
+      key: { type: string, description: Per-binding delivery credential; do not log or persist. }
+      session_key:
+        type: string
+        x-go-type-skip-optional-pointer: true
+        description: Stable retained endpoint frame key; never returned by the private relay claim API.
+      trust_revision:
+        { type: integer, format: int64, minimum: 1, x-go-type-skip-optional-pointer: true }
+      operation_id: { type: string, maxLength: 25, x-go-type-skip-optional-pointer: true }
+      binding_challenge: { type: string, maxLength: 43, x-go-type-skip-optional-pointer: true }
+      binding_state:
+        $ref: "../openapi.yaml#/components/schemas/ConnectorPeerPairBindingState"
+        x-go-type-skip-optional-pointer: true
       source_ip: { type: string, description: Canonical source observed by both relays. }
       observed_at:
         type: string

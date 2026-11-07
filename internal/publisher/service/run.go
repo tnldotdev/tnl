@@ -170,11 +170,14 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 		return ErrPrivateStream
 	}
 	b.mu.Lock()
-	var obsolete []*PeerSession
+	var obsolete []struct {
+		p       *PeerSession
+		network peerNetworkBinding
+	}
 	defer func() {
 		b.mu.Unlock()
-		for _, p := range obsolete {
-			p.Close()
+		for _, old := range obsolete {
+			old.p.detachDelivery(old.network)
 		}
 	}()
 	if b.closed {
@@ -202,8 +205,15 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 	}
 	b.connections = next
 	for _, p := range b.connectorPeers {
-		if !b.peerRelaysCurrentLocked(p.bindingLocked()) {
-			obsolete = append(obsolete, p)
+		binding := p.deliveryBindingLocked()
+		if !b.peerRelaysCurrentLocked(binding) {
+			if p.deliveryState == peerDeliveryActive {
+				p.deliveryState = peerDeliverySuspended
+			}
+			obsolete = append(obsolete, struct {
+				p       *PeerSession
+				network peerNetworkBinding
+			}{p, binding.peerNetworkBinding})
 		}
 	}
 	return nil
@@ -335,15 +345,33 @@ func (c *Claimed) Drain(ctx context.Context) error {
 }
 
 func (c *Claimed) Close() error {
-	if c == nil || c.session == nil {
+	if c == nil || c.bound == nil {
 		return nil
 	}
 	c.closeOnce.Do(func() {
 		c.bound.mu.Lock()
+		var obsolete []struct {
+			p       *PeerSession
+			network peerNetworkBinding
+		}
 		if c.bound.packetSlots[c.ref.ConnectionSlot] == c {
 			c.bound.packetSlots[c.ref.ConnectionSlot] = nil
 		}
+		for _, p := range c.bound.connectorPeers {
+			if p.deliverySlots[c.ref.ConnectionSlot] == c {
+				if p.deliveryState == peerDeliveryActive {
+					p.deliveryState = peerDeliverySuspended
+				}
+				obsolete = append(obsolete, struct {
+					p       *PeerSession
+					network peerNetworkBinding
+				}{p, p.deliveryBindingLocked().peerNetworkBinding})
+			}
+		}
 		c.bound.mu.Unlock()
+		for _, old := range obsolete {
+			old.p.detachDelivery(old.network)
+		}
 		if c.endObservation != nil {
 			c.endObservation(nil, true)
 		}
@@ -353,7 +381,9 @@ func (c *Claimed) Close() error {
 		if c.packets != nil {
 			c.closeErr = errors.Join(c.closeErr, c.packets.Close())
 		}
-		c.closeErr = errors.Join(c.closeErr, c.session.Close())
+		if c.session != nil {
+			c.closeErr = errors.Join(c.closeErr, c.session.Close())
+		}
 	})
 	return c.closeErr
 }

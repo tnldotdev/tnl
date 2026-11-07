@@ -2,8 +2,6 @@ package peer
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"errors"
 	"net"
 	"sync"
@@ -28,6 +26,10 @@ type PairBinding struct {
 	Key      [32]byte
 	Role     uint8
 	Path     uint8
+	// AdmitPacket is an optional role-owned admission fence. it runs before
+	// queueing, not just when a later consumer dequeues a packet. callbacks must
+	// be nonblocking, concurrency-safe, and never call back into this session.
+	AdmitPacket func(tunnelv1.PeerPacket) bool
 }
 
 func (b PairBinding) valid() bool {
@@ -35,19 +37,15 @@ func (b PairBinding) valid() bool {
 }
 
 func (b PairBinding) authentic(frame []byte, sender uint8) bool {
+	p, valid := b.packet(frame, sender)
+	return valid && (b.AdmitPacket == nil || b.AdmitPacket(p))
+}
+
+func (b PairBinding) packet(frame []byte, sender uint8) (tunnelv1.PeerPacket, bool) {
 	p, err := tunnelv1.ParsePeerPacket(frame)
-	if err != nil || p.Sender != sender || p.Path != b.Path {
-		return false
-	}
-	unsigned, err := p.AuthenticatedBytes()
-	if err != nil {
-		return false
-	}
-	mac := hmac.New(sha256.New, b.Key[:])
-	_, _ = mac.Write([]byte(connectorPacketDomain))
-	_, _ = mac.Write([]byte{0})
-	_, _ = mac.Write(unsigned)
-	return hmac.Equal(p.MAC[:], mac.Sum(nil))
+	// only endpoints possess the session key. relays check the authenticated
+	// envelope, shape, direction, revision, and replay, never the inner MAC.
+	return p, err == nil && p.Sender == sender && p.Path == b.Path && p.BindingGeneration == b.Delivery.Generation
 }
 
 type sharedPeer struct {
@@ -314,8 +312,12 @@ func (c *SharedDatagramCarrier) Send(ctx context.Context, frame []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if !c.peer.binding.authentic(frame, c.peer.binding.Role) {
+	packet, valid := c.peer.binding.packet(frame, c.peer.binding.Role)
+	if !valid {
 		return tunnelv1.ErrPeerPacket
+	}
+	if admit := c.peer.binding.AdmitPacket; admit != nil && !admit(packet) {
+		return nil // packet authority can pause without retiring this registration.
 	}
 	b, err := c.peer.binding.Delivery.Seal(tunnelv1.PeerDeliveryDatagram, c.peer.binding.Key, frame)
 	if err != nil {

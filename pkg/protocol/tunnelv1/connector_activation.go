@@ -9,8 +9,9 @@ import (
 // ConnectorLegBinding selects one authenticated carrier candidate by the nonce in
 // its signed hello. it neither refreshes authority nor admits an application.
 type ConnectorLegBinding struct {
-	Nonce         []byte `json:"nonce"`
-	PreviousNonce []byte `json:"previous_nonce,omitempty"`
+	Nonce            []byte `json:"nonce"`
+	InitialHandoffID []byte `json:"initial_handoff_id,omitempty"`
+	PreviousNonce    []byte `json:"previous_nonce,omitempty"`
 	// replacement_nonce identifies one handoff across fresh hello attempts.
 	ReplacementNonce []byte                   `json:"replacement_nonce,omitempty"`
 	HandoffRevision  ConnectorHandoffRevision `json:"handoff_revision,omitempty"`
@@ -75,36 +76,58 @@ func (h ConnectorHandoff) Valid() bool                        { return h.previou
 // ConnectorActivation is the validated initial-or-replacement wire selection.
 // its fixed-size identities are copied at the boundary, never aliased wire bytes.
 type ConnectorActivation struct {
-	hello   ConnectorHelloNonce
-	handoff ConnectorHandoff
-	replace bool
+	hello      ConnectorHelloNonce
+	handoff    ConnectorHandoff
+	replace    bool
+	initial    ConnectorHandoffID
+	initialSet bool
 }
 
 func InitialConnectorActivation(hello ConnectorHelloNonce) ConnectorActivation {
 	return ConnectorActivation{hello: hello}
 }
 
+// InitialConnectorBindingActivation selects a stable initial operation across
+// fresh hellos. the relay binds it to the authenticated delivery generation and
+// envelope key; it is not an authority credential or a new numbered handoff.
+func InitialConnectorBindingActivation(hello ConnectorHelloNonce, operation ConnectorHandoffID) (ConnectorActivation, error) {
+	if operation == (ConnectorHandoffID{}) {
+		return ConnectorActivation{}, ErrConnectorLegBinding
+	}
+	return ConnectorActivation{hello: hello, initial: operation, initialSet: true}, nil
+}
+
 func (a ConnectorActivation) Replacing(handoff ConnectorHandoff) ConnectorActivation {
 	a.handoff, a.replace = handoff, true
+	a.initial, a.initialSet = ConnectorHandoffID{}, false
 	return a
 }
 
 func (a ConnectorActivation) Hello() ConnectorHelloNonce            { return a.hello }
 func (a ConnectorActivation) Replacement() (ConnectorHandoff, bool) { return a.handoff, a.replace }
+func (a ConnectorActivation) InitialOperation() (ConnectorHandoffID, bool) {
+	return a.initial, a.initialSet
+}
 func (a ConnectorActivation) SelectedHandoff() ConnectorHandoffID {
 	if a.replace {
 		return a.handoff.Next()
+	}
+	if a.initialSet {
+		return a.initial
 	}
 	return ConnectorHandoffID(a.hello)
 }
 
 func (a ConnectorActivation) Matches(proof ConnectorPairLegProof) bool {
 	hello, err := ParseConnectorHelloNonce(proof.Nonce)
-	return err == nil && a.hello == hello && (!a.replace || a.handoff.Valid())
+	return err == nil && a.hello == hello && (!a.replace || a.handoff.Valid()) && (!a.initialSet || a.initial != (ConnectorHandoffID{}) && !a.replace)
 }
 
 func (a ConnectorActivation) Binding() ConnectorLegBinding {
 	b := ConnectorLegBinding{Nonce: append([]byte(nil), a.hello[:]...)}
+	if a.initialSet {
+		b.InitialHandoffID = append([]byte(nil), a.initial[:]...)
+	}
 	if a.replace {
 		b.PreviousNonce = append([]byte(nil), a.handoff.previous[:]...)
 		b.ReplacementNonce = append([]byte(nil), a.handoff.next[:]...)
@@ -119,6 +142,12 @@ func (b ConnectorLegBinding) Activation() (ConnectorActivation, error) {
 		return ConnectorActivation{}, err
 	}
 	a := InitialConnectorActivation(hello)
+	if len(b.InitialHandoffID) != 0 {
+		if len(b.InitialHandoffID) != 32 || len(b.PreviousNonce) != 0 || len(b.ReplacementNonce) != 0 || b.HandoffRevision != 0 {
+			return ConnectorActivation{}, ErrConnectorLegBinding
+		}
+		return InitialConnectorBindingActivation(hello, ConnectorHandoffID(b.InitialHandoffID))
+	}
 	if len(b.PreviousNonce) == 0 && len(b.ReplacementNonce) == 0 && b.HandoffRevision == 0 {
 		return a, nil
 	}

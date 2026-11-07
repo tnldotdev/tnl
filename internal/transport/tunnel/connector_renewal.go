@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -49,6 +50,9 @@ func (s *Session) RenewConnectorLeg(ctx context.Context, requestID string, proof
 		return receipt, errors.New("tunnel: connector renewal response does not match request")
 	}
 	if response.Type == tunnelv1.Error {
+		if response.Code != tunnelv1.Unavailable {
+			_ = s.control.CloseWrite()
+		}
 		return receipt, &ProtocolError{Code: response.Code}
 	}
 	if response.Type != tunnelv1.ConnectorLegRenewed || response.ConnectorPairLegAccepted == nil ||
@@ -94,6 +98,9 @@ func (s *Session) HandleConnectorLegControl(ctx context.Context, activate func(c
 					code = rejected.Code
 				}
 				writeErr := tunnelv1.WriteControl(s.control, tunnelv1.Message{Type: tunnelv1.Error, ProtocolVersion: tunnelv1.Version, RequestID: request.RequestID, Code: code})
+				if writeErr == nil {
+					drainConnectorRejection(ctx, s.control)
+				}
 				return errors.Join(authErr, writeErr)
 			}
 			s.connectorActivated = true
@@ -118,6 +125,7 @@ func (s *Session) HandleConnectorLegControl(ctx context.Context, activate func(c
 			if code == tunnelv1.Unavailable {
 				continue
 			}
+			drainConnectorRejection(ctx, s.control)
 			return authErr
 		}
 		if receipt.Validate() != nil || receipt.PairID != request.ConnectorPairLegProof.PairID ||
@@ -128,4 +136,19 @@ func (s *Session) HandleConnectorLegControl(ctx context.Context, activate func(c
 			return err
 		}
 	}
+}
+
+// closing an outer QUIC or yamux session immediately after WriteControl can
+// discard the queued rejection. wait for the peer to close its rejected stream,
+// spending at most one second of the current control exchange's budget.
+func drainConnectorRejection(ctx context.Context, control muxsession.Stream) {
+	until := time.Now().Add(time.Second)
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(until) {
+		until = deadline
+	}
+	if ctx.Err() != nil || control.SetDeadline(until) != nil || control.CloseWrite() != nil {
+		return
+	}
+	var ignored [1]byte
+	_, _ = control.Read(ignored[:])
 }

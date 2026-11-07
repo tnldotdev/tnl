@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -16,9 +17,9 @@ import (
 // hold delivery keys, authorize a visitor, or transfer authority to a replacement.
 func saveConnectorPeerAuditBinding(ctx context.Context, tx pgx.Tx, pair controlstatedb.ControlConnectorPeerPair, binding connectorPeerBinding, until time.Time) error {
 	result, err := tx.Exec(ctx, `INSERT INTO control.connector_peer_audit_bindings
-		(pair_id,service_id,service_run_id,run_number,publisher_identity_id,identity_id,device_id,source_ip,created_at,expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-		ON CONFLICT (pair_id) DO UPDATE SET expires_at=EXCLUDED.expires_at
+		(pair_id,service_id,service_run_id,run_number,publisher_identity_id,identity_id,device_id,source_ip,created_at,expires_at,delivery_generation)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		ON CONFLICT (pair_id,delivery_generation) DO UPDATE SET expires_at=GREATEST(control.connector_peer_audit_bindings.expires_at,EXCLUDED.expires_at)
 		WHERE control.connector_peer_audit_bindings.service_id=EXCLUDED.service_id
 		AND control.connector_peer_audit_bindings.service_run_id=EXCLUDED.service_run_id
 		AND control.connector_peer_audit_bindings.run_number=EXCLUDED.run_number
@@ -28,7 +29,7 @@ func saveConnectorPeerAuditBinding(ctx context.Context, tx pgx.Tx, pair controls
 		AND control.connector_peer_audit_bindings.source_ip=EXCLUDED.source_ip
 		AND control.connector_peer_audit_bindings.created_at=EXCLUDED.created_at`,
 		pair.ID, pair.ServiceID, pair.ServiceRunID, pair.RunNumber, pair.PublisherIdentityID,
-		nullableText(binding.subject.IdentityID), nullableText(binding.subject.DeviceID), binding.source, pair.CreatedAt.Time, until)
+		nullableText(binding.subject.IdentityID), nullableText(binding.subject.DeviceID), binding.source, pair.CreatedAt.Time, until, pair.DeliveryGeneration)
 	if err != nil {
 		return err
 	}
@@ -88,14 +89,15 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 		e := observationEvent(o)
 		e.TeamID, e.PublisherIdentityID = run.TeamID, run.PublisherIdentityID
 		var created, expires time.Time
+		var retired pgtype.Timestamptz
 		// installation checked both claims and their immutable source agreement.
 		// its credential-free audit scope survives replacing or removing the pair.
-		err = tx.QueryRow(ctx, `SELECT created_at,expires_at,identity_id,device_id
+		err = tx.QueryRow(ctx, `SELECT created_at,expires_at,identity_id,device_id,retired_at
 			FROM control.connector_peer_audit_bindings
 			WHERE pair_id=$1 AND service_id=$2 AND service_run_id=$3 AND run_number=$4
-			AND publisher_identity_id=$5 AND host(source_ip)=$6`,
-			o.PairID, serviceID, runID, number, run.PublisherIdentityID, o.SourceIP).
-			Scan(&created, &expires, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID))
+			AND publisher_identity_id=$5 AND host(source_ip)=$6 AND delivery_generation=$7`,
+			o.PairID, serviceID, runID, number, run.PublisherIdentityID, o.SourceIP, o.DeliveryGeneration).
+			Scan(&created, &expires, (*nullableAuditString)(&e.ActorIdentityID), (*nullableAuditString)(&e.DeviceID), &retired)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ServiceObservationResult{}, ErrServiceAuditAccess
 		}
@@ -103,7 +105,13 @@ func (d *Database) IngestServiceRunObservations(ctx context.Context, serviceID, 
 			return ServiceObservationResult{}, err
 		}
 		deadline := minTime(until, expires)
+		if retired.Valid && o.EventType == "connection.open" && o.Outcome == "allowed" {
+			deadline = minTime(deadline, retired.Time)
+		}
 		if o.EventType == "connection.close" || o.Outcome != "allowed" {
+			if retired.Valid {
+				deadline = until
+			}
 			// physical cleanup and denial can follow the authority deadline;
 			// neither event claims permission to send application bytes.
 			deadline = deadline.Add(serviceObservationDeliveryGrace)

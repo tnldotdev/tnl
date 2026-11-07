@@ -52,6 +52,8 @@ components:
       $ref: "./schemas/connector-peer-pairs.yaml#/schemas/ConnectorPeerPairLegClaimRequest"
     ConnectorPeerPairLegClaim:
       $ref: "./schemas/connector-peer-pairs.yaml#/schemas/ConnectorPeerPairLegClaim"
+    ConnectorPeerLegBindingState:
+      $ref: "./schemas/connector-peer-pairs.yaml#/schemas/ConnectorPeerLegBindingState"
     ServiceID:
       $ref: "./schemas/service-connections.yaml#/schemas/ServiceID"
     ServiceRunID:

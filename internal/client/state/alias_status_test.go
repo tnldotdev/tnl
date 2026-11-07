@@ -26,7 +26,7 @@ func TestAliasStatusIgnoresStaleReadyRunsAndRetainsStoppedDefault(t *testing.T) 
 		t.Fatal(err)
 	}
 	snapshot, err := state.SnapshotProject(t.Context(), scope.ProjectKey)
-	if err != nil || snapshot.SchemaVersion != 3 || len(snapshot.Aliases) != 1 || snapshot.Aliases[0].State != "ready" {
+	if err != nil || snapshot.SchemaVersion != 1 || len(snapshot.Aliases) != 1 || snapshot.Aliases[0].State != "ready" {
 		t.Fatalf("ready alias status = %v, %v", snapshot.Aliases, err)
 	}
 	if err := state.RecordAliasFailure(t.Context(), selection, failure.MemberHostnameDepthExceeded); err != nil {

@@ -18,11 +18,11 @@ import (
 
 func TestIntegrationConnectorPeerPairRenewalSignsSameAuthorityTransaction(t *testing.T) {
 	f := newConnectorPairFixture(t)
-	pair := f.create(t)
-	if _, err := f.d.ConfigureService(f.visitor, pair.ServiceID, pair.Subject.IdentityID,
-		ServiceMetadata{Protocol: "tcp", PublisherPool: true, TrustRevision: 1}, f.now.Add(500*time.Millisecond)); err != nil {
+	if _, err := f.d.ConfigureService(f.visitor, f.request.ServiceID, f.request.Subject.IdentityID,
+		ServiceMetadata{Protocol: "tcp", PublisherPool: true, TrustRevision: 1}, f.now); err != nil {
 		t.Fatal(err)
 	}
+	pair := f.create(t)
 	if err := f.d.PrepareVisitorSigningKeys(f.visitor, testVisitorIssuer, f.now); err != nil {
 		t.Fatal(err)
 	}

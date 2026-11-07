@@ -56,6 +56,7 @@ const (
 	Unauthenticated              ErrorCode = "unauthenticated"
 	StalePublishRunNumber        ErrorCode = "stale_publish_run_number"
 	StaleConnectionAssignment    ErrorCode = "stale_connection_assignment"
+	StaleNetworkBinding          ErrorCode = "stale_network_binding"
 	DuplicatePublisherConnection ErrorCode = "duplicate_publisher_connection"
 	DrainingPublisherConnection  ErrorCode = "draining"
 	CapacityExceeded             ErrorCode = "capacity_exceeded"
@@ -234,7 +235,7 @@ func ReadControl(reader io.Reader) (Message, error) {
 			return Message{}, ErrConnectorLegBinding
 		}
 		for name := range selection {
-			if name != "nonce" && name != "previous_nonce" && name != "replacement_nonce" && name != "handoff_revision" {
+			if name != "nonce" && name != "initial_handoff_id" && name != "previous_nonce" && name != "replacement_nonce" && name != "handoff_revision" {
 				return Message{}, ErrConnectorLegBinding
 			}
 			if name == "handoff_revision" {
@@ -243,7 +244,7 @@ func ReadControl(reader io.Reader) (Message, error) {
 					return Message{}, ErrConnectorLegBinding
 				}
 			}
-			if name == "previous_nonce" || name == "replacement_nonce" {
+			if name == "previous_nonce" || name == "replacement_nonce" || name == "initial_handoff_id" {
 				var nonce []byte
 				if json.Unmarshal(selection[name], &nonce) != nil || len(nonce) != 32 {
 					return Message{}, ErrConnectorLegBinding
@@ -430,7 +431,7 @@ func validIdentifier(value string) bool {
 
 func validErrorCode(code ErrorCode) bool {
 	switch code {
-	case InvalidMessage, Unauthenticated, StalePublishRunNumber, StaleConnectionAssignment,
+	case InvalidMessage, Unauthenticated, StalePublishRunNumber, StaleConnectionAssignment, StaleNetworkBinding,
 		DuplicatePublisherConnection, DrainingPublisherConnection, CapacityExceeded, HandoffRevisionExhausted, Unavailable, Internal:
 		return true
 	default:

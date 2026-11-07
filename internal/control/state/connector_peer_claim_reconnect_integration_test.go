@@ -31,7 +31,7 @@ func TestIntegrationConnectorPeerClaimRecoversCommittedLostResponse(t *testing.T
 	}
 	changedAt := nextAt.Add(time.Millisecond)
 	changed := testConnectorLegProof(t, pair, 0, changedAt, f.key)
-	if _, err := testClaimConnectorPeerPairLeg(t, f.d, f.visitor, pair.Relays[0].RelayLease, netip.MustParseAddr("192.0.2.2"), changed, changedAt); !errors.Is(err, ErrServiceAccess) {
+	if _, err := testClaimConnectorPeerPairLeg(t, f.d, f.visitor, pair.Relays[0].RelayLease, netip.MustParseAddr("192.0.2.2"), changed, changedAt); !errors.Is(err, ErrConnectorPeerBindingStale) {
 		t.Fatal("recovery changed observed source", err)
 	}
 	if err := f.d.RevokeVisitorDevice(f.visitor, f.request.Subject.IdentityID, f.request.Subject.DeviceID, changedAt); err != nil {

@@ -12,7 +12,36 @@ import (
 // candidates remain passive until their owner joins the losers and chooses one.
 // activation does not sign another proof, contact control, or extend a deadline.
 func (s *Session) ActivateConnectorLeg(ctx context.Context, requestID string) (err error) {
-	return s.activateConnectorLeg(ctx, requestID, tunnelv1.ConnectorHandoff{}, false)
+	hello, err := s.connectorActivationHello()
+	if err != nil {
+		return err
+	}
+	return s.activateConnectorLeg(ctx, requestID, tunnelv1.InitialConnectorActivation(hello))
+}
+
+// ActivateConnectorBinding retains one initial operation across lost replies on
+// fresh authenticated hellos. each physical candidate still activates only once.
+func (s *Session) ActivateConnectorBinding(ctx context.Context, requestID string, operation tunnelv1.ConnectorHandoffID) error {
+	hello, err := s.connectorActivationHello()
+	if err != nil {
+		return err
+	}
+	activation, err := tunnelv1.InitialConnectorBindingActivation(hello, operation)
+	if err != nil {
+		return &ProtocolError{Code: tunnelv1.InvalidMessage}
+	}
+	return s.activateConnectorLeg(ctx, requestID, activation)
+}
+
+func (s *Session) connectorActivationHello() (tunnelv1.ConnectorHelloNonce, error) {
+	if s == nil || s.role != tunnelv1.Connector || s.connectorLeg == nil {
+		return tunnelv1.ConnectorHelloNonce{}, &ProtocolError{Code: tunnelv1.Unauthenticated}
+	}
+	hello, err := tunnelv1.ParseConnectorHelloNonce(s.connectorLeg.Nonce)
+	if err != nil {
+		return hello, &ProtocolError{Code: tunnelv1.InvalidMessage}
+	}
+	return hello, nil
 }
 
 // ReplaceConnectorLeg selects a successor on its authenticated control stream.
@@ -21,10 +50,14 @@ func (s *Session) ReplaceConnectorLeg(ctx context.Context, requestID string, han
 	if !handoff.Valid() {
 		return &ProtocolError{Code: tunnelv1.InvalidMessage}
 	}
-	return s.activateConnectorLeg(ctx, requestID, handoff, true)
+	hello, err := s.connectorActivationHello()
+	if err != nil {
+		return err
+	}
+	return s.activateConnectorLeg(ctx, requestID, tunnelv1.InitialConnectorActivation(hello).Replacing(handoff))
 }
 
-func (s *Session) activateConnectorLeg(ctx context.Context, requestID string, handoff tunnelv1.ConnectorHandoff, replacement bool) (err error) {
+func (s *Session) activateConnectorLeg(ctx context.Context, requestID string, activation tunnelv1.ConnectorActivation) (err error) {
 	if s == nil || s.role != tunnelv1.Connector || s.connectorLeg == nil {
 		return &ProtocolError{Code: tunnelv1.Unauthenticated}
 	}
@@ -54,14 +87,6 @@ func (s *Session) activateConnectorLeg(ctx context.Context, requestID string, ha
 	// an ambiguous response cannot be retried on this control stream. the role
 	// owner closes this candidate rather than risking a second installation.
 	s.connectorActivated = true
-	hello, err := tunnelv1.ParseConnectorHelloNonce(s.connectorLeg.Nonce)
-	if err != nil {
-		return &ProtocolError{Code: tunnelv1.InvalidMessage}
-	}
-	activation := tunnelv1.InitialConnectorActivation(hello)
-	if replacement {
-		activation = activation.Replacing(handoff)
-	}
 	binding := activation.Binding()
 	if err := tunnelv1.WriteControl(s.control, tunnelv1.Message{Type: tunnelv1.ConnectorLegActivate, ProtocolVersion: tunnelv1.Version,
 		RequestID: requestID, Role: tunnelv1.Connector, ConnectorLegBinding: &binding}); err != nil {
@@ -75,6 +100,7 @@ func (s *Session) activateConnectorLeg(ctx context.Context, requestID string, ha
 		return &ProtocolError{Code: tunnelv1.InvalidMessage}
 	}
 	if response.Type == tunnelv1.Error {
+		_ = s.control.CloseWrite()
 		return &ProtocolError{Code: response.Code}
 	}
 	if response.Type != tunnelv1.ConnectorLegActivated || response.ConnectorLegBinding == nil {

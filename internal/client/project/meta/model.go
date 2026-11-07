@@ -17,7 +17,7 @@ import (
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 )
 
-const Version = 2
+const Version = 1
 
 // Parse reads the complete local metadata file.
 func Parse(data []byte) (Metadata, error) {

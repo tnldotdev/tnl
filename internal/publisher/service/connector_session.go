@@ -15,7 +15,9 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -29,7 +31,17 @@ const maxConnectorPeerStreams = tunnel.MaxConnectorApplicationStreams
 type PeerSession struct {
 	bound          *Bound
 	identity       peerIdentity
+	network        peerNetworkBinding
 	lease          peerLease
+	owner          peerLease
+	pending        *PeerBinding
+	deliveryState  peerDeliveryState
+	highwater      int64
+	installMu      sync.Mutex
+	packets        *peer.Endpoint
+	permissionGate tunnel.ConnectorPermissionGate
+	packetPaths    [2]*peer.CarrierSlot
+	deliverySlots  [2]*Claimed
 	ctx            context.Context
 	cancel         context.CancelFunc
 	seen           map[string]struct{}
@@ -49,7 +61,7 @@ func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if !b.peerCurrentLocked(binding) || !b.peerRelaysCurrentLocked(binding) {
+	if !b.peerCurrentLocked(binding) || !b.peerRelaysCurrentLocked(binding) || binding.state != controlv1.ConnectorPeerPairBindingActive || binding.operation != "" {
 		return nil, ErrPrivateStream
 	}
 	for id, old := range b.connectorPeers {
@@ -68,7 +80,7 @@ func (b *Bound) BindPeer(ctx context.Context, binding PeerBinding) (*PeerSession
 		b.connectorPeers = make(map[string]*PeerSession)
 	}
 	life, cancel := context.WithCancel(ctx)
-	p := &PeerSession{bound: b, identity: binding.peerIdentity, lease: binding.peerLease, ctx: life, cancel: cancel, seen: make(map[string]struct{}), streams: make(map[*connectorAdmission]struct{}), done: make(chan struct{}), changed: make(chan struct{}), ready: make(chan struct{})}
+	p := &PeerSession{bound: b, identity: binding.peerIdentity, network: binding.peerNetworkBinding, lease: binding.peerLease, owner: binding.peerLease, highwater: binding.generation, deliveryState: peerDeliveryActive, ctx: life, cancel: cancel, seen: make(map[string]struct{}), streams: make(map[*connectorAdmission]struct{}), done: make(chan struct{}), changed: make(chan struct{}), ready: make(chan struct{})}
 	b.connectorPeers[binding.pairID] = p
 	return p, nil
 }
@@ -83,20 +95,33 @@ func (p *PeerSession) Renew(binding PeerBinding) error {
 	b := p.bound
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	valid := p.currentLocked() && b.peerCurrentLocked(binding) && b.peerRelaysCurrentLocked(binding) &&
-		binding.peerIdentity == p.identity
+	valid := p.deliveryCurrentLocked() && b.peerCurrentLocked(binding) && b.peerRelaysCurrentLocked(binding) &&
+		binding.peerIdentity == p.identity && binding.peerNetworkBinding == p.network && binding.state == controlv1.ConnectorPeerPairBindingActive && p.pending == nil
 	if !valid {
 		return ErrPrivateStream
 	}
-	p.lease = binding.peerLease
+	if !binding.observedAt.After(p.lease.observedAt) {
+		return nil
+	}
+	next := binding.peerLease
+	if !next.authorityUntil.After(p.lease.authorityUntil) {
+		next.until = peerDeadline(next.until, p.lease.until)
+	}
+	p.lease = next
+	p.observeOwnerLocked(next)
 	close(p.changed)
 	p.changed = make(chan struct{})
 	return nil
 }
 
 func (p *PeerSession) currentLocked() bool {
-	binding := p.bindingLocked()
-	return p.replayUntil.IsZero() && p.ctx.Err() == nil && p.bound.connectorPeers[p.identity.pairID] == p && p.bound.peerCurrentLocked(binding) && p.bound.peerRelaysCurrentLocked(binding)
+	return p.replayUntil.IsZero() && p.ctx.Err() == nil && p.owner.until.After(time.Now()) &&
+		p.bound.connectorPeers[p.identity.pairID] == p && p.bound.peerIdentityCurrentLocked(p.identity)
+}
+
+func (p *PeerSession) deliveryCurrentLocked() bool {
+	return p.currentLocked() && p.deliveryState == peerDeliveryActive && p.pending == nil && p.lease.until.After(time.Now()) &&
+		(p.installedUntil.IsZero() || p.installedUntil.After(time.Now())) && p.bound.peerRelaysCurrentLocked(p.bindingLocked())
 }
 
 func (p *PeerSession) watch() {
@@ -104,10 +129,26 @@ func (p *PeerSession) watch() {
 	for {
 		p.bound.mu.Lock()
 		current := p.currentLocked()
-		until, changed := p.lease.until, p.changed
+		until, changed := p.owner.until, p.changed
+		binding := p.deliveryBindingLocked()
+		suspend := false
+		if p.pending != nil && p.deliveryState != peerDeliveryRetired {
+			until = peerDeadline(until, p.pending.until)
+			suspend = !p.pending.until.After(time.Now())
+		} else if p.deliveryState == peerDeliveryActive {
+			until = peerDeadline(until, p.lease.until)
+			if !p.installedUntil.IsZero() {
+				until = peerDeadline(until, p.installedUntil)
+			}
+			suspend = !until.After(time.Now())
+		}
 		p.bound.mu.Unlock()
 		if !current {
 			return
+		}
+		if suspend {
+			p.detachDelivery(binding.peerNetworkBinding)
+			continue
 		}
 		timer := time.NewTimer(time.Until(until))
 		select {
@@ -128,7 +169,7 @@ func (p *PeerSession) bindingSnapshot() PeerBinding {
 }
 
 func (p *PeerSession) bindingLocked() PeerBinding {
-	return PeerBinding{peerIdentity: p.identity, peerLease: p.lease}
+	return PeerBinding{peerIdentity: p.identity, peerNetworkBinding: p.network, peerLease: p.lease}
 }
 
 func (p *PeerSession) stop() {
@@ -200,7 +241,7 @@ func (p *PeerSession) serveSession(session muxsession.Session) error {
 	controlDone := make(chan struct{})
 	go func() {
 		defer close(controlDone)
-		_ = tunnel.ServeConnectorPermissionControl(control, permissions, p.dispatchPermission, p.stop)
+		_ = tunnel.ServeConnectorPermissionControl(control, permissions, p.dispatchPermission, p.stop, &p.permissionGate)
 	}()
 	defer func() { cancelControl(); <-controlDone }()
 	for {
@@ -255,7 +296,7 @@ func (p *PeerSession) reserve(caller context.Context, stream net.Conn) (*connect
 	if limit == 0 {
 		limit = 64
 	}
-	if caller.Err() != nil || !p.currentLocked() || b.connectorPending >= min(limit, 4096) || len(p.streams) >= maxConnectorPeerStreams {
+	if caller.Err() != nil || !p.deliveryCurrentLocked() || b.connectorPending >= min(limit, 4096) || len(p.streams) >= maxConnectorPeerStreams {
 		return nil, ErrPrivateStream
 	}
 	life, cancel := context.WithCancel(p.ctx)
@@ -290,8 +331,8 @@ func (a *connectorAdmission) CheckUse(ctx context.Context) (time.Time, error) {
 		return time.Time{}, ErrPrivateStream
 	}
 	until, err := a.guard.Current()
-	if a.peer.lease.until.Before(until) {
-		until = a.peer.lease.until
+	if a.peer.owner.until.Before(until) {
+		until = a.peer.owner.until
 	}
 	if !a.ready && a.setupUntil.Before(until) {
 		until = a.setupUntil
@@ -314,9 +355,9 @@ func (a *connectorAdmission) FinishSetup() error {
 	}
 	first := !a.ready
 	a.ready = true
+	allowed := a.audit
 	b.mu.Unlock()
 	if first {
-		allowed := a.audit
 		allowed.Outcome, allowed.Reason = "allowed", ""
 		serviceaudit.Emit(b.audit, allowed)
 	}
@@ -355,9 +396,11 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 		// the reservation still belongs to this worker until joined cleanup.
 		a.cancel()
 	}
+	b.mu.Lock()
 	a.audit = serviceaudit.Observation{ServiceID: binding.serviceID, ServiceKind: "service", RunID: binding.runID,
-		RunNumber: int64(binding.number), PairID: binding.pairID, VisitorConnectionID: visitorID,
+		RunNumber: int64(binding.number), PairID: binding.pairID, DeliveryGeneration: binding.generation, VisitorConnectionID: visitorID,
 		SourceIP: binding.source.String(), EventType: "connection.open", Outcome: "denied", Reason: "authorization"}
+	b.mu.Unlock()
 	callerDone := make(chan struct{})
 	stopCaller := context.AfterFunc(a.caller, func() { defer close(callerDone); a.stopAndClose() })
 	defer func() {
@@ -384,14 +427,15 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 		if a.authorized {
 			b.reservedStreams--
 		}
+		audit := a.audit
 		b.mu.Unlock()
 		if ready {
-			a.audit.EventType, a.audit.Outcome, a.audit.Reason = "connection.close", "closed", "closed"
+			audit.EventType, audit.Outcome, audit.Reason = "connection.close", "closed", "closed"
 			if result != nil {
-				a.audit.Outcome, a.audit.Reason = "failed", "forwarding"
+				audit.Outcome, audit.Reason = "failed", "forwarding"
 			}
 		}
-		serviceaudit.Emit(b.audit, a.audit)
+		serviceaudit.Emit(b.audit, audit)
 	}()
 	if err != nil {
 		return err
@@ -411,7 +455,9 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 	if err != nil {
 		return err
 	}
+	b.mu.Lock()
 	a.audit.VisitorConnectionID = entry.VisitorConnectionID
+	b.mu.Unlock()
 	a.guard, err = b.prepared.policy.BindConnector(permission, binding.source, int64(entry.MetadataRevision), a.stopAndClose)
 	if err != nil {
 		return err
@@ -421,7 +467,7 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 	}
 	b.mu.Lock()
 	_, replay := p.seen[entry.VisitorConnectionID]
-	valid := !a.retiring && a.ctx.Err() == nil && a.caller.Err() == nil && p.currentLocked() && !replay && len(p.seen) < maxConnectorPeerHistory
+	valid := !a.retiring && a.ctx.Err() == nil && a.caller.Err() == nil && p.deliveryCurrentLocked() && p.network == binding.peerNetworkBinding && !replay && len(p.seen) < maxConnectorPeerHistory
 	if valid {
 		// valid acceptance spends history even when C or final handoff fails.
 		p.seen[entry.VisitorConnectionID] = struct{}{}
@@ -478,6 +524,7 @@ func (a *connectorAdmission) forwardPeer() (result error) {
 type connectorPermissionRenewal struct {
 	update    tunnelv1.ConnectorPermissionUpdate
 	responder *tunnel.ConnectorPermissionResponder
+	entry     tunnelv1.ConnectorPeerVisitorEntry
 }
 
 func (p *PeerSession) dispatchPermission(update tunnelv1.ConnectorPermissionUpdate, responder *tunnel.ConnectorPermissionResponder) {
@@ -493,8 +540,12 @@ func (p *PeerSession) dispatchPermission(update tunnelv1.ConnectorPermissionUpda
 				break
 			}
 			a.lastUpdate = update.UpdateNumber
+			entry := a.entry
+			if p.pending != nil && p.deliveryState != peerDeliveryRetired && update.DeliveryGeneration == p.pending.generation {
+				entry.SourceIP = p.pending.source.String()
+			}
 			select {
-			case a.renewals <- connectorPermissionRenewal{update: update, responder: responder}:
+			case a.renewals <- connectorPermissionRenewal{update: update, responder: responder, entry: entry}:
 			default:
 				a.retiring = true
 				overloaded = a
@@ -517,9 +568,17 @@ func (a *connectorAdmission) renewPermissions() {
 		case <-a.ctx.Done():
 			return
 		case renewal := <-a.renewals:
-			entry := a.entry
+			entry := renewal.entry
+			entry.DeliveryGeneration = renewal.update.DeliveryGeneration
 			entry.Permission = renewal.update.Permission
 			err := a.renewPermission(entry, a.permission)
+			if errors.Is(err, tunnel.ErrConnectorPermissionStale) {
+				if ackErr := renewal.responder.RespondStale(renewal.update); ackErr != nil {
+					a.stopAndClose()
+					return
+				}
+				continue
+			}
 			if err != nil {
 				a.Stop()
 			}
@@ -546,7 +605,20 @@ func (a *connectorAdmission) renewPermission(entry tunnelv1.ConnectorPeerVisitor
 		if !enabled {
 			return ErrPrivateStream
 		}
-		binding := a.peer.bindingSnapshot()
+		b := a.peer.bound
+		b.mu.Lock()
+		binding := a.peer.bindingLocked()
+		if a.peer.pending != nil && a.peer.deliveryState != peerDeliveryRetired && entry.DeliveryGeneration == a.peer.pending.generation {
+			binding = *a.peer.pending
+		}
+		stale := entry.DeliveryGeneration < max(a.peer.highwater, a.peer.network.generation) || a.peer.deliveryState == peerDeliveryRetired && entry.DeliveryGeneration == a.peer.highwater ||
+			entry.DeliveryGeneration == a.peer.network.generation && !a.peer.deliveryCurrentLocked()
+		b.mu.Unlock()
+		if stale {
+			// a superseded proof grants no authority. the original guard remains
+			// bounded by its existing deadline while a current proof follows.
+			return a.stalePermission()
+		}
 		next, err := visitortoken.VerifyConnectorPeerRenewalProof(entry, nil, binding.expected(), view, time.Now())
 		if err != nil {
 			return err
@@ -557,19 +629,33 @@ func (a *connectorAdmission) renewPermission(entry tunnelv1.ConnectorPeerVisitor
 		if !until.After(time.Now()) {
 			return ErrPrivateStream
 		}
-		err = a.guard.Renew(next)
-		if err == nil {
+		b.mu.Lock()
+		current := a.peer.deliveryCurrentLocked() && a.peer.network.generation == entry.DeliveryGeneration && a.peer.network.source.String() == entry.SourceIP && !a.retiring && a.ctx.Err() == nil
+		pending := a.peer.currentLocked() && a.peer.pending != nil && a.peer.deliveryState != peerDeliveryRetired && a.peer.pending.until.After(time.Now()) &&
+			a.peer.pending.generation == entry.DeliveryGeneration && a.peer.pending.source.String() == entry.SourceIP && !a.retiring && a.ctx.Err() == nil
+		stale = entry.DeliveryGeneration < max(a.peer.highwater, a.peer.network.generation) || a.peer.deliveryState == peerDeliveryRetired && entry.DeliveryGeneration == a.peer.highwater ||
+			entry.DeliveryGeneration == a.peer.network.generation && !a.peer.deliveryCurrentLocked()
+		if current {
+			err = a.guard.Renew(next)
+		}
+		b.mu.Unlock()
+		if !current && !pending {
+			if stale {
+				return a.stalePermission()
+			}
+			return ErrPrivateStream
+		}
+		if current && err == nil {
 			return nil
 		}
-		current, _, _ := a.peer.bound.prepared.policy.Current()
-		if next.Facts().VisitorPolicyRevision < current.VisitorPolicyRevision {
+		currentView, _, _ := a.peer.bound.prepared.policy.Current()
+		if current && next.Facts().VisitorPolicyRevision < currentView.VisitorPolicyRevision {
 			// an independent snapshot can overtake an authentic in-flight proof.
 			// it grants no renewal, but must not retire a still-current admission.
 			// the original guard deadline bounds the wait for a current proof.
-			_, err := a.CheckUse(a.ctx)
-			return err
+			return a.stalePermission()
 		}
-		if next.Facts().VisitorPolicyRevision <= view.VisitorPolicyRevision {
+		if current && next.Facts().VisitorPolicyRevision <= view.VisitorPolicyRevision {
 			return err
 		}
 		// control may issue a newer revision before the independent background
@@ -590,4 +676,11 @@ func (a *connectorAdmission) renewPermission(entry tunnelv1.ConnectorPeerVisitor
 		case <-timer.C:
 		}
 	}
+}
+
+func (a *connectorAdmission) stalePermission() error {
+	if _, err := a.CheckUse(a.ctx); err != nil {
+		return err
+	}
+	return tunnel.ErrConnectorPermissionStale
 }

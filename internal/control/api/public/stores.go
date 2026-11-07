@@ -105,6 +105,7 @@ type ServiceAuditStore interface {
 
 type ConnectorPeerPairStore interface {
 	connectorPeerPairStore
+	RebindConnectorPeerPair(context.Context, string, string, controlstate.ConnectorPeerPairRebindRequest, time.Time) (controlstate.ConnectorPeerPairRebindState, error)
 	ListConnectorPeerPairs(context.Context, string, string, string, string, time.Time) (controlstate.ConnectorPeerPairCandidates, error)
 	ConfirmConnectorPeerPairPrepared(context.Context, string, string, string, string, controlstate.ConnectorPeerPairPrepared, time.Time) error
 	DeliverConnectorPeerPair(context.Context, string, string, string, int64, string, time.Time) (controlstate.ConnectorPeerPairDelivery, error)
