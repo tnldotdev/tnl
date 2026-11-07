@@ -373,15 +373,15 @@ Here's how `tnl` compares to Tailscale, Cloudflare, and ngrok.
 
 ### in dev
 
-|                                                    | tnl                             | tailscale             | cloudflare        | ngrok           |
-| -------------------------------------------------- | ------------------------------- | --------------------- | ----------------- | --------------- |
-| Open your app in a browser w/o installing a client | Yes                             | w/ Funnel             | Yes               | Yes             |
-| Control who can visit                              | Sign-in, share links, or tokens | Access rules w/ Serve | Cloudflare Access | OAuth/passwords |
-| Where public HTTPS is decrypted                    | Your device                     | Your device           | Cloudflare        | ngrok           |
-| Unique worktree URLs                               | Yes                             | Set up yourself       | Set up yourself   | Set up yourself |
-| One dynamic OAuth callback URL across worktrees    | Yes                             | Set up yourself       | Set up yourself   | Set up yourself |
-| Send one webhook event to all worktrees            | Yes                             | Set up yourself       | Set up yourself   | Set up yourself |
-| Leave inline feedback and read it from the CLI     | Yes                             | Set up yourself       | Set up yourself   | Set up yourself |
+|                                                    | tnl                             | tailscale             | cloudflare        | ngrok                              |
+| -------------------------------------------------- | ------------------------------- | --------------------- | ----------------- | ---------------------------------- |
+| Open your app in a browser w/o installing a client | Yes                             | w/ Funnel             | Yes               | Yes                                |
+| Control who can visit                              | Sign-in, share links, or tokens | Access rules w/ Serve | Cloudflare Access | OAuth/passwords                    |
+| Where TLS is terminated                            | Your device                     | Your device           | Cloudflare        | Your device (but you manage certs) |
+| Unique worktree URLs                               | Yes                             | Set up yourself       | Set up yourself   | Set up yourself                    |
+| One dynamic OAuth callback URL across worktrees    | Yes                             | Set up yourself       | Set up yourself   | Set up yourself                    |
+| Send one webhook event to all worktrees            | Yes                             | Set up yourself       | Set up yourself   | Set up yourself                    |
+| Leave inline feedback and read it from the CLI     | Yes                             | Set up yourself       | Set up yourself   | Set up yourself                    |
 
 ### in prod
 
