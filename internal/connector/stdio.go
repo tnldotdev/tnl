@@ -70,6 +70,7 @@ type connectStdio struct {
 	input     *os.File
 	output    io.WriteCloser
 	readEnded atomic.Bool
+	aborting  atomic.Bool
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -97,6 +98,14 @@ func (c *connectStdio) Write(p []byte) (int, error) {
 func (c *connectStdio) Close() error {
 	c.closeOnce.Do(func() { c.closeErr = errors.Join(c.input.Close(), c.output.Close()) })
 	return c.closeErr
+}
+func (c *connectStdio) Abort(error) error {
+	c.aborting.Store(true)
+	return c.Close()
+}
+func (c *connectStdio) OwnsAbortError(err error) bool {
+	_, file := c.output.(*os.File)
+	return file && c.aborting.Load() && err == net.ErrClosed
 }
 func (c *connectStdio) CloseWrite() error {
 	// the remote stream has ended. stop waiting for an ssh process that may

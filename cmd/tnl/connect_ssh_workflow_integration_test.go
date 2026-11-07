@@ -14,6 +14,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -143,12 +144,60 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 					}
 				}
 			}
+			for _, signal := range []os.Signal{os.Interrupt, syscall.SIGTERM} {
+				t.Run(signal.String(), func(t *testing.T) {
+					ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+					defer cancel()
+					command := exec.CommandContext(ctx, bin, "--no-telemetry", "--config", configuration, "connect", name, "--stdio", "--state-dir", person)
+					input, err := command.StdinPipe()
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer input.Close()
+					output, err := command.StdoutPipe()
+					if err != nil {
+						t.Fatal(err)
+					}
+					var diagnostics bytes.Buffer
+					command.Stderr = &diagnostics
+					if err := command.Start(); err != nil {
+						t.Fatal(err)
+					}
+					banner := make(chan error, 1)
+					go func() {
+						prefix := make([]byte, len("SSH-2.0"))
+						_, err := io.ReadFull(output, prefix)
+						if err == nil && string(prefix) != "SSH-2.0" {
+							err = fmt.Errorf("unexpected SSH banner %q", prefix)
+						}
+						banner <- err
+					}()
+					select {
+					case err := <-banner:
+						if err != nil {
+							_ = command.Process.Kill()
+							_ = command.Wait()
+							t.Fatal("stdio never carried the SSH banner", err, diagnostics.String())
+						}
+					case <-ctx.Done():
+						_ = command.Wait()
+						t.Fatal("stdio never became active", ctx.Err(), diagnostics.String())
+					}
+					if err := command.Process.Signal(signal); err != nil {
+						_ = command.Wait()
+						t.Fatal(err)
+					}
+					if err := command.Wait(); err != nil || ctx.Err() != nil {
+						t.Fatal("signal did not join the active stdio stream cleanly", err, ctx.Err(), diagnostics.String())
+					}
+				})
+			}
 			var after int
 			if err := inspect.QueryRow(t.Context(), `SELECT count(*) FROM control.connector_peer_pairs pair WHERE pair.publisher_prepared_until IS NOT NULL AND (SELECT count(*) FROM control.connector_peer_pair_leg_claims claim WHERE claim.pair_id=pair.id)=2`).Scan(&after); err != nil {
 				t.Fatal(err)
 			}
-			if after != before+2 {
-				t.Fatal("SSH did not install two independent connector owners with both relay claims")
+			if after != before+4 {
+				t.Fatal("SSH and signal tests did not install four independent connector owners with both relay claims")
 			}
 		})
 	}

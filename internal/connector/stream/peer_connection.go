@@ -767,7 +767,7 @@ func connectorReconnectError(err error) reconnectDisposition {
 	return terminateConnection
 }
 
-func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) error {
+func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) (result error) {
 	p.mu.Lock()
 	if !p.currentLocked() || ctx.Err() != nil || len(p.active) >= p.config.MaxConnections && p.warm == nil {
 		p.mu.Unlock()
@@ -824,7 +824,12 @@ func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) error
 			return ErrServiceConnection
 		}
 	}
-	defer use.prepared.Close()
+	if operation := stdioOperationFor(ctx); operation != nil {
+		if err := operation.activate(use.prepared.stdio); err != nil {
+			return err
+		}
+	}
+	defer func() { result = errors.Join(result, use.prepared.Close()) }()
 	return use.prepared.Forward(ctx, local)
 }
 

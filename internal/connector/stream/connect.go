@@ -92,17 +92,7 @@ func Stream(ctx context.Context, local net.Conn, config Config) error {
 	if local == nil || config.Protocol != "tcp" {
 		return ErrServiceConnection
 	}
-	defer local.Close()
-	closed := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() { defer close(closed); _ = local.Close() })
-	defer func() {
-		if !stop() {
-			<-closed
-		}
-	}()
-	return serveConnections(ctx, config, func(ctx context.Context, forward func(context.Context, net.Conn) error) error {
-		return forward(ctx, local)
-	})
+	return newStdioOperation(ctx, local).serve(config)
 }
 
 type connectionConsumer func(context.Context, func(context.Context, net.Conn) error) error
@@ -152,8 +142,8 @@ func serveConnections(ctx context.Context, config Config, consume connectionCons
 	finish(nil)
 	err = consume(p.ctx, p.Forward)
 	if ctx.Err() != nil {
-		if errors.Is(context.Cause(ctx), context.Canceled) {
-			return nil
+		if context.Cause(ctx) == context.Canceled {
+			return err // the consumer already joins its owned work and classifies its stop.
 		}
 		return errors.Join(context.Cause(ctx), err)
 	}
