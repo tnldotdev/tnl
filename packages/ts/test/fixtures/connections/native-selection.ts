@@ -35,8 +35,8 @@ if (process.argv.includes("copies")) {
   const second: typeof import("@tnldotdev/tnl") = await import(
     pathToFileURL(path.join(copy, "dist/index.js")).href
   );
-  const common: typeof import("@tnldotdev/tnl") = createRequire(import.meta.url)(
-    path.join(copy, "dist/index.cjs"),
+  const common: typeof import("@tnldotdev/tnl") = createRequire(path.join(copy, "package.json"))(
+    "@tnldotdev/tnl",
   );
   const unbundled: typeof import("../../../src/internal/connector/connection.js") = await import(
     pathToFileURL(path.join(copy, "dist/internal/connector/connection.js")).href
