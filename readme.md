@@ -22,6 +22,7 @@
                              your browser
                                    |
                      https://*.calm-otter.tnl.dev
+                          (or your subdomain)
                                    v
                               tnl ingress
                          (hosted/self-hosted)
@@ -50,10 +51,11 @@ The Next.js and Vite plugins automatically handle port conflicts. And OAuth and 
 
 ### in prod
 
-Connect to private services from anywhere (laptop, CI, etc.).
+Connect to your services from anywhere (laptop, CI, etc.).
 
-For instance, you can run a `tnl` publisher inside your VPC. Traffic between your client and publisher uses end-to-end [post-quantum encryption](https://tnl.dev/docs/security#post-quantum-encryption).
-It tries hole-punched UDP, with relays as a fallback. Your db or Kubernetes API aren't publicly exposed:
+For instance, you can run a `tnl` publisher inside your VPC. Traffic between the `tnl` client and publisher uses end-to-end [post-quantum encryption](https://tnl.dev/docs/security#post-quantum-encryption) with publicly trusted TLS certificates (from Let's Encrypt).
+
+The connection will attempt P2P hole-punched UDP and fall back to using relays (which can't read your encrypted traffic). Your db or Kubernetes API aren't publicly exposed:
 
 ```text
     tnl (your laptop)    tnl (GitHub Actions)      tnl (Vercel fn)
@@ -68,17 +70,44 @@ It tries hole-punched UDP, with relays as a fallback. Your db or Kubernetes API 
                 +------------------+------------------+
                                    |
 +----------------------------------v----------------------------------+
-|                          aws / private vpc                          |
+|                           your private vpc                          |
 |                                  |                                  |
 |                            tnl publisher                            |
 |                                  |                                  |
 |                 +----------------+-----------------+                |
 |                 v                                  v                |
-|        postgres (e.g. RDS)               kubernetes (e.g. EKS)      |
+|           db (e.g. RDS)                  kubernetes (e.g. EKS)      |
 +---------------------------------------------------------------------+
 ```
 
-Read below for more details.
+If you can't install `tnl` on a client, you can give your service a public hostname and port instead. For example:
+
+```text
+               your app or database client
+                            |
+              api.calm-otter.tnl.dev:15443
+                   (or your subdomain)
+                            v
+                       tnl ingress
+                            |
+                +-----------+-----------+
+                |                       |
+           direct UDP               tnl relay
+        (when possible)             (fallback)
+                |                       |
+                +-----------+-----------+
+                            |
++---------------------------v---------------------------+
+|                     your private VPC                  |
+|                            |                          |
+|                      tnl publisher                    |
+|                            |                          |
+|                            v                          |
+|                        API or db                      |
++-------------------------------------------------------+
+```
+
+Browsers/HTTP clients can use sign-in, a share link, or a token. PostgreSQL and MySQL clients use a `tnl`-issued client certificate alongside their normal database credentials.
 
 ## start developing
 
@@ -344,15 +373,15 @@ Here's how `tnl` compares to Tailscale, Cloudflare, and ngrok.
 
 ### in dev
 
-|                                                    | tnl                             | tailscale                               | cloudflare        | ngrok                                   |
-| -------------------------------------------------- | ------------------------------- | --------------------------------------- | ----------------- | --------------------------------------- |
-| Open your app in a browser w/o installing a client | Yes                             | w/ Funnel                               | Yes               | Yes                                     |
-| Control who can visit                              | Sign-in, share links, or tokens | Serve access rules; app auth for Funnel | Cloudflare Access | OAuth, passwords, or other access rules |
-| Where public HTTPS is decrypted                    | Your device                     | Your device                             | Cloudflare        | ngrok                                   |
-| Unique worktree URLs                               | Yes                             | Set up yourself                         | Set up yourself   | Set up yourself                         |
-| One dynamic OAuth callback URL across worktrees    | Yes                             | Set up yourself                         | Set up yourself   | Set up yourself                         |
-| Send one webhook event to all worktrees            | Yes                             | Set up yourself                         | Set up yourself   | Set up yourself                         |
-| Leave inline feedback and read it from the CLI     | Yes                             | Use another tool                        | Use another tool  | Use another tool                        |
+|                                                    | tnl                             | tailscale             | cloudflare        | ngrok           |
+| -------------------------------------------------- | ------------------------------- | --------------------- | ----------------- | --------------- |
+| Open your app in a browser w/o installing a client | Yes                             | w/ Funnel             | Yes               | Yes             |
+| Control who can visit                              | Sign-in, share links, or tokens | Access rules w/ Serve | Cloudflare Access | OAuth/passwords |
+| Where public HTTPS is decrypted                    | Your device                     | Your device           | Cloudflare        | ngrok           |
+| Unique worktree URLs                               | Yes                             | Set up yourself       | Set up yourself   | Set up yourself |
+| One dynamic OAuth callback URL across worktrees    | Yes                             | Set up yourself       | Set up yourself   | Set up yourself |
+| Send one webhook event to all worktrees            | Yes                             | Set up yourself       | Set up yourself   | Set up yourself |
+| Leave inline feedback and read it from the CLI     | Yes                             | Set up yourself       | Set up yourself   | Set up yourself |
 
 ### in prod
 
