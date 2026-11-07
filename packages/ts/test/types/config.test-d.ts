@@ -673,6 +673,10 @@ test("configuration enforces service ownership and references for literals and f
         google: { serviceAccount: "orders@project.iam.gserviceaccount.com" },
         services: ["models"],
       },
+      pod: {
+        kubernetes: { serviceAccount: "orders", namespace: "production" },
+        services: ["models"],
+      },
     },
   });
   defineConfig({
