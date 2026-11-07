@@ -98,7 +98,7 @@ func permissionAdmission(t *testing.T, b *Bound, p *PeerSession, id string) *con
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for a := range p.streams {
-		if a.entry.VisitorConnectionID == id && a.admitted {
+		if a.entry.VisitorConnectionID == id && a.admittedLocked() {
 			return a
 		}
 	}

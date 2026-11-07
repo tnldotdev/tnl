@@ -162,7 +162,7 @@ func TestConnectorPeerRebindingRetainsQUICApplicationTargetAndCapacity(t *testin
 		_ = wire.Close()
 	}
 	b.mu.Lock()
-	retained := p.currentLocked() && b.reservedStreams == 1 && len(p.seen) == 1 && !a.retiring
+	retained := p.currentLocked() && b.reservedStreams == 1 && len(p.seen) == 1 && !a.retiringLocked()
 	b.mu.Unlock()
 	if !retained || accepted.Load() != 1 {
 		t.Fatal("delivery loss ended retained ownership")
@@ -204,7 +204,7 @@ func TestConnectorPeerRebindingRetainsQUICApplicationTargetAndCapacity(t *testin
 		t.Fatal("binding activation changed application permission", err)
 	}
 	b.mu.Lock()
-	retained = p.currentLocked() && b.reservedStreams == 1 && b.connectorPending == 0 && len(p.seen) == 1 && !a.retiring && a.entry.DeliveryGeneration == active.generation
+	retained = p.currentLocked() && b.reservedStreams == 1 && b.connectorPending == 0 && len(p.seen) == 1 && !a.retiringLocked() && a.entry.DeliveryGeneration == active.generation
 	current := a.entry
 	b.mu.Unlock()
 	if !retained || accepted.Load() != 1 || connection.Context().Err() != nil {
