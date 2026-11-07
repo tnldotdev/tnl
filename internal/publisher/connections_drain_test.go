@@ -22,7 +22,7 @@ func TestPublisherDrainObservesClosedConnectionBeforeSessionNotification(t *test
 		wantFailure bool
 	}{
 		{name: "acknowledged"},
-		{name: "closed socket", failure: net.ErrClosed},
+		{name: "closed socket", failure: errors.Join(muxsession.ErrClosed, net.ErrClosed)},
 		{name: "remote QUIC close", failure: errors.Join(muxsession.ErrClosed, &quic.ApplicationError{Remote: true})},
 		{name: "short write", failure: io.ErrShortWrite, wantFailure: true},
 		{name: "rejection", failure: &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}, wantFailure: true},
@@ -140,7 +140,8 @@ func (s *drainWriteFailureStream) Write(p []byte) (int, error) {
 }
 
 func TestPublisherSlotDrainPreservesNonClosureFailures(t *testing.T) {
-	for _, cause := range []error{context.Canceled, context.DeadlineExceeded, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}, io.ErrUnexpectedEOF} {
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded, &tunnel.ProtocolError{Code: tunnelv1.Unauthenticated}, io.ErrUnexpectedEOF,
+		&quic.ApplicationError{ErrorCode: 7, Remote: true}, &quic.TransportError{ErrorCode: 1, Remote: true}, &quic.IdleTimeoutError{}, &quic.HandshakeTimeoutError{}} {
 		t.Run(cause.Error(), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
@@ -283,7 +282,7 @@ func (c *publicPublisherSlot) Drain(ctx context.Context) error {
 	}
 	// a normal transport close already stopped admission and visitor streams.
 	// stream i/o can report that close before the session notification arrives.
-	if err != nil && context.Cause(ctx) == nil && (err == net.ErrClosed || errors.Is(err, muxsession.ErrClosed) || errors.Is(c.session.Err(), muxsession.ErrClosed)) {
+	if err != nil && context.Cause(ctx) == nil && (errors.Is(err, muxsession.ErrClosed) || errors.Is(c.session.Err(), muxsession.ErrClosed)) {
 		return nil
 	}
 	return err
