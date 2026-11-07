@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"reflect"
 	"time"
@@ -89,7 +90,7 @@ func Identify(ctx context.Context, options ContextOptions, input io.Reader) (aut
 		if hints.TokenFile != "" && !filepath.IsAbs(hints.TokenFile) {
 			hints.TokenFile = filepath.Join(scope.Directory, hints.TokenFile)
 		}
-		request.Assertion, err = workload.Acquire(ctx, hints, nil)
+		request.Assertion, err = workload.Acquire(ctx, hints, nil, os.Getenv)
 		if err != nil {
 			return authorityv1.WorkloadIdentity{}, err
 		}

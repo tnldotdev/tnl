@@ -113,6 +113,13 @@ tasks:
       - go test -race -v ./internal/connector -run='^TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget$' -count=1 -timeout=1m
       - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwnerSDKSelectionBudget$' -count=1 -timeout=1m -args -tnl-test-tier=integration
 
+  test:connections:workload:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check real SDK native provider acquisition, concurrent selection, and warm request inputs
+    deps: [":js:build", ":py:sync"]
+    cmds:
+      - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwnerSDKNativeWorkloadAcquisition$' -count=1 -timeout=1m -args -tnl-test-tier=integration
+
   test:owner-lifecycle:
     desc: Check connection owner isolation, replacement, bounded cleanup and issued login cancellation
     vars:

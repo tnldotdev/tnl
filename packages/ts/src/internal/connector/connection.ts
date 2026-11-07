@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, realpath } from "node:fs/promises";
 import { connect as connectTCP } from "node:net";
 import { tmpdir } from "node:os";
@@ -15,7 +15,8 @@ import type { ConnectionSnapshot } from "./snapshot.js";
 import * as z from "zod";
 import { parseValue } from "../validation.js";
 import { sdkPreparationSchema, preparedConnectionSchema } from "./contract.js";
-import { usesWorkload, selectWorkload, acquireAssertion } from "./workload/provider.js";
+import { usesWorkload, selectWorkload } from "./workload/provider.js";
+import type { SelectionOptions, WorkloadRequest } from "./workload/contract.js";
 export { configureWorkload } from "./workload/provider.js";
 import { resolveNativeBinary } from "../native/launcher.js";
 import { launchEnvironment, operation, operationSync, independent } from "../tracing.js";
@@ -44,6 +45,16 @@ function machineError(cause: unknown, operation?: string): TnlError {
         return new TnlError("sdk.authentication_required");
       if (problem.reason === "TNL_SERVER_RESPONSE_INVALID")
         return new TnlError("sdk.response_invalid");
+      switch (problem.reason) {
+        case "TNL_CLIENT_WORKLOAD_REQUIRED":
+          return new TnlError("sdk.workload_required");
+        case "TNL_CLIENT_WORKLOAD_MANIFEST_INVALID":
+          return new TnlError("sdk.workload_manifest_invalid");
+        case "TNL_CLIENT_WORKLOAD_SERVICE_DENIED":
+          return new TnlError("sdk.workload_denied");
+        case "TNL_CLIENT_WORKLOAD_ASSERTION_UNAVAILABLE":
+          return new TnlError("sdk.workload_assertion_unavailable");
+      }
       if (problem.reason === "TNL_CLIENT_CONNECTION_CLEANUP_FAILED" && operation === "sdk-prepare")
         return new TnlCleanupError(
           new TnlError("sdk.response_invalid"),
@@ -132,18 +143,21 @@ function readArgs(file: string, name: string): string[] {
 
 function nativeScope(key: string): Promise<NativeScope> {
   const binary = resolveNativeBinary();
+  const directory = process.cwd();
   const nativeKey = JSON.stringify([key, binary]);
   let loading = scopes.get(nativeKey);
   if (loading === undefined) {
     if (scopes.size >= 32) throw new TnlError("sdk.connection_unavailable");
     loading = (async () => {
       const scope: NativeScope = {
+        directory,
         registry: await mkdtemp(path.join(await realpath(tmpdir()), "tnl-sdk-")),
         binary,
         requests: new Map(),
         open: ownerIPC,
         // keep native error classification with the copy that owns this IPC.
         select: (...args) => requestSelection(scope, ...args),
+        workload: (name, request) => requestWorkload(scope, name, request),
       };
       const cleanup = independent("sdk.app.cleanup", async () => {
         await machine(scope.binary, [
@@ -183,36 +197,13 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
     return parsePrepared(await prepareExternal(externalFile, name), name, externalFile);
   }
   const scope = await nativeScope(base);
-  let assertion: string | undefined;
-  let manifest: unknown;
-  let selectionOptions: { workload?: string; manifest?: string; requested_at: string } = {
+  const workload = usesWorkload();
+  const selectionOptions: SelectionOptions = {
+    ...(workload ? await selectWorkload((request) => scope.workload(name, request)) : {}),
     requested_at: requestedAt,
   };
-  let startArgs = ["--directory", process.cwd()];
-  if (usesWorkload()) {
-    const selection = await selectWorkload();
-    manifest = selection.manifest;
-    if (!selection.selected.services.includes(name)) throw new TnlError("sdk.workload_denied");
-    assertion = await acquireAssertion(
-      selection.name,
-      selection.selected,
-      selection.directory,
-      AbortSignal.timeout(10_000),
-    );
-    startArgs = [
-      "--directory",
-      selection.directory,
-      "--workload",
-      selection.name,
-      "--workload-manifest",
-      path.join(selection.directory, ".tnl/generated/workloads.json"),
-    ];
-    selectionOptions = {
-      requested_at: requestedAt,
-      workload: selection.name,
-      manifest: path.join(selection.directory, ".tnl/generated/workloads.json"),
-    };
-  }
+  const assertion = selectionOptions.assertion;
+  const startArgs = ["--directory", scope.directory];
   const args = [
     "sdk-prepare",
     ...startArgs,
@@ -225,10 +216,16 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
     "--selected-service",
     name,
   ];
-  const input = { schema: 1, ...(assertion === undefined ? {} : { assertion }) };
-  const key = createHash("sha256")
-    .update(JSON.stringify([startArgs, name, manifest, assertion]))
-    .digest("hex");
+  const { requested_at: _requestedAt, ...privateInput } = selectionOptions;
+  const input = { schema: 1, ...privateInput };
+  // native sources must acquire each request's assertion before owner startup
+  // can be coalesced. only an already acquired callback assertion shares a wait.
+  const key =
+    workload && assertion === undefined
+      ? randomUUID()
+      : createHash("sha256")
+          .update(JSON.stringify([startArgs, name, privateInput]))
+          .digest("hex");
   let request = scope.requests.get(key);
   if (request === undefined) {
     if (scope.requests.size >= 64) throw new TnlError("sdk.connection_unavailable");
@@ -265,7 +262,7 @@ async function requestSelection(
   input: unknown,
   name: string,
   assertion: string | undefined,
-  selectionOptions: { workload?: string; manifest?: string; requested_at: string },
+  selectionOptions: SelectionOptions,
 ): Promise<unknown> {
   const entry = scope.entry;
   let raw: unknown;
@@ -297,6 +294,30 @@ async function requestSelection(
       }
     }
   }
+  return raw;
+}
+
+async function requestWorkload(
+  scope: NativeScope,
+  name: string,
+  request: WorkloadRequest,
+): Promise<unknown> {
+  let raw: unknown;
+  try {
+    if (scope.entry === undefined) throw new Error("cold selection");
+    raw = await (await scope.entry.ipc).workload(name, request);
+  } catch {
+    // preview reads a local artifact only; owner recovery remains gated inside
+    // sdk-prepare before any provider acquisition or control request.
+    raw = await machine(
+      scope.binary,
+      ["sdk-workload", "--directory", scope.directory, "--service", name],
+      undefined,
+      { schema: 1, sdk_workload: request },
+    );
+  }
+  if (typeof raw === "object" && raw !== null && "reason" in raw)
+    throw machineError({ stderr: JSON.stringify(raw) });
   return raw;
 }
 

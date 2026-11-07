@@ -6,14 +6,12 @@ import { TnlError } from "../../errors.js";
 import { connectionHandleSchema } from "./contract.js";
 import { operation, traceHeaders } from "../tracing.js";
 import { context, type CachedIPC } from "./context.js";
+import type { SelectionOptions, WorkloadRequest } from "./workload/contract.js";
 
 export interface OwnerIPC {
   readonly expiresAt: number;
-  prepare(
-    service: string,
-    assertion?: string,
-    selection?: { workload?: string; manifest?: string; requested_at?: string },
-  ): Promise<unknown>;
+  prepare(service: string, assertion?: string, selection?: SelectionOptions): Promise<unknown>;
+  workload(service: string, request: WorkloadRequest): Promise<unknown>;
   close(): void;
 }
 
@@ -129,82 +127,82 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
     };
     const expiry = setTimeout(close, Math.min(expires - Date.now(), 2 ** 31 - 1));
     expiry.unref();
+    const send = (
+      operationName: "prepare" | "sdk-prepare" | "sdk-workload",
+      service: string,
+      assertion?: string,
+      selection?: SelectionOptions,
+    ): Promise<unknown> => {
+      return operation("sdk.native.request", async () => {
+        if (closed || pending >= 64 || Date.now() >= expires)
+          throw new TnlError("sdk.connection_unavailable");
+        pending++;
+        try {
+          return await new Promise<unknown>((resolve, reject) => {
+            const body = JSON.stringify({
+              ...scope,
+              service,
+              ...(assertion === undefined ? {} : { assertion }),
+              ...selection,
+            });
+            const req = request(
+              new URL(`/v1/connections/${operationName}`, endpoint),
+              {
+                method: "POST",
+                agent,
+                headers: {
+                  ...traceHeaders(),
+                  authorization: `Bearer ${key}`,
+                  "content-type": "application/json",
+                  "content-length": Buffer.byteLength(body),
+                },
+              },
+              (response) => {
+                const chunks: Buffer[] = [];
+                let size = 0;
+                response.on("data", (chunk: Buffer) => {
+                  size += chunk.length;
+                  if (size > 128 * 1024) {
+                    response.destroy();
+                    reject(new TnlError("sdk.response_invalid"));
+                  } else chunks.push(chunk);
+                });
+                response.on("error", () => reject(new TnlError("sdk.connection_unavailable")));
+                response.on("end", () => {
+                  if (
+                    (response.statusCode !== 200 && operationName === "prepare") ||
+                    response.headers["content-type"]?.split(";")[0] !== "application/json"
+                  ) {
+                    reject(new TnlError("sdk.connection_unavailable"));
+                    return;
+                  }
+                  try {
+                    const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+                    resolve(value);
+                  } catch {
+                    reject(new TnlError("sdk.response_invalid"));
+                  }
+                });
+              },
+            );
+            const timer = setTimeout(() => req.destroy(new Error("owner IPC deadline")), 35_000);
+            req.once("close", () => clearTimeout(timer));
+            req.once("error", () => reject(new TnlError("sdk.connection_unavailable")));
+            req.end(body);
+          });
+        } catch (cause) {
+          throw cause instanceof TnlError ? cause : new TnlError("sdk.connection_unavailable");
+        } finally {
+          pending--;
+        }
+      });
+    };
     return Object.freeze({
       expiresAt: expires,
-      prepare(
-        service: string,
-        assertion?: string,
-        selection?: { workload?: string; manifest?: string; requested_at?: string },
-      ): Promise<unknown> {
-        return operation("sdk.native.request", async () => {
-          if (closed || pending >= 64 || Date.now() >= expires)
-            throw new TnlError("sdk.connection_unavailable");
-          pending++;
-          try {
-            return await new Promise<unknown>((resolve, reject) => {
-              const body = JSON.stringify({
-                ...scope,
-                service,
-                ...(assertion === undefined ? {} : { assertion }),
-                ...selection,
-              });
-              const req = request(
-                new URL(
-                  selection === undefined
-                    ? "/v1/connections/prepare"
-                    : "/v1/connections/sdk-prepare",
-                  endpoint,
-                ),
-                {
-                  method: "POST",
-                  agent,
-                  headers: {
-                    ...traceHeaders(),
-                    authorization: `Bearer ${key}`,
-                    "content-type": "application/json",
-                    "content-length": Buffer.byteLength(body),
-                  },
-                },
-                (response) => {
-                  const chunks: Buffer[] = [];
-                  let size = 0;
-                  response.on("data", (chunk: Buffer) => {
-                    size += chunk.length;
-                    if (size > 128 * 1024) {
-                      response.destroy();
-                      reject(new TnlError("sdk.response_invalid"));
-                    } else chunks.push(chunk);
-                  });
-                  response.on("error", () => reject(new TnlError("sdk.connection_unavailable")));
-                  response.on("end", () => {
-                    if (
-                      (response.statusCode !== 200 && selection === undefined) ||
-                      response.headers["content-type"]?.split(";")[0] !== "application/json"
-                    ) {
-                      reject(new TnlError("sdk.connection_unavailable"));
-                      return;
-                    }
-                    try {
-                      const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-                      resolve(value);
-                    } catch {
-                      reject(new TnlError("sdk.response_invalid"));
-                    }
-                  });
-                },
-              );
-              const timer = setTimeout(() => req.destroy(new Error("owner IPC deadline")), 35_000);
-              req.once("close", () => clearTimeout(timer));
-              req.once("error", () => reject(new TnlError("sdk.connection_unavailable")));
-              req.end(body);
-            });
-          } catch (cause) {
-            throw cause instanceof TnlError ? cause : new TnlError("sdk.connection_unavailable");
-          } finally {
-            pending--;
-          }
-        });
-      },
+      prepare: (service: string, assertion?: string, selection?: SelectionOptions) =>
+        send(selection === undefined ? "prepare" : "sdk-prepare", service, assertion, selection),
+      workload: (service: string, request: WorkloadRequest) =>
+        send("sdk-workload", service, undefined, { sdk_workload: request }),
       close,
     });
   } catch {

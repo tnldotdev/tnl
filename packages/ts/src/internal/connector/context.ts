@@ -3,8 +3,10 @@ import type { TnlFetch } from "../../project.js";
 import type { WorkloadConfiguration } from "./workload/provider.js";
 import { TnlError } from "../../errors.js";
 import type { OwnerIPC } from "./connection_ipc.js";
+import type { SelectionOptions, WorkloadRequest } from "./workload/contract.js";
 
 export interface NativeScope {
+  readonly directory: string;
   readonly registry: string;
   readonly binary: string;
   readonly requests: Map<string, Promise<unknown>>;
@@ -14,8 +16,9 @@ export interface NativeScope {
     input: unknown,
     name: string,
     assertion: string | undefined,
-    options: { workload?: string; manifest?: string; requested_at: string },
+    options: SelectionOptions,
   ): Promise<unknown>;
+  workload(name: string, request: WorkloadRequest): Promise<unknown>;
   entry?: { readonly file: string; readonly ipc: Promise<OwnerIPC> };
   selected?: { readonly file: string; readonly expiresAt: number };
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
+	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
@@ -57,15 +58,67 @@ func (StartRequest) String() string   { return "private connection startup reque
 func (StartRequest) GoString() string { return "private connection startup request" }
 
 type Request struct {
-	Schema           int    `json:"schema"`
-	Directory        string `json:"directory"`
-	ConfigDigest     string `json:"config_digest"`
-	Service          string `json:"service,omitempty"`
-	Assertion        string `json:"assertion,omitempty"`
-	AcquireAssertion bool   `json:"acquire_assertion,omitempty"`
-	Workload         string `json:"workload,omitempty"`
-	Manifest         string `json:"manifest,omitempty"`
-	RequestedAt      string `json:"requested_at,omitempty"`
+	Schema            int                 `json:"schema"`
+	Directory         string              `json:"directory"`
+	ConfigDigest      string              `json:"config_digest"`
+	Service           string              `json:"service,omitempty"`
+	Assertion         string              `json:"assertion,omitempty"`
+	AcquireAssertion  bool                `json:"acquire_assertion,omitempty"`
+	Workload          string              `json:"workload,omitempty"`
+	Manifest          string              `json:"manifest,omitempty"`
+	RequestedAt       string              `json:"requested_at,omitempty"`
+	SDKWorkload       *SDKWorkloadRequest `json:"sdk_workload,omitempty"`
+	SDKWorkloadPolicy string              `json:"sdk_workload_policy,omitempty"`
+	SDKEnvironment    *SDKEnvironment     `json:"sdk_environment,omitempty"`
+}
+
+// SDKWorkloadRequest carries application selection hints, never provider tokens.
+type SDKWorkloadRequest struct {
+	Name      string                   `json:"name,omitempty"`
+	Callback  bool                     `json:"callback,omitempty"`
+	TokenFile string                   `json:"token_file,omitempty"`
+	Runtime   workloadmanifest.Runtime `json:"runtime"`
+}
+
+// SDKWorkload describes the language callback needed after native selection.
+// native acquisition returns no assertion to the language binding.
+type SDKWorkload struct {
+	Schema    int    `json:"schema"`
+	Name      string `json:"name"`
+	Directory string `json:"directory"`
+	Manifest  string `json:"manifest"`
+	Policy    string `json:"policy"`
+	Source    string `json:"source"`
+}
+
+// SDKEnvironment is request-private provider input from the application process.
+// owner startup snapshots and registry records must never retain these values.
+type SDKEnvironment struct {
+	GitHubActions      string `json:"github_actions,omitempty"`
+	GitHubRequestURL   string `json:"github_request_url,omitempty"`
+	GitHubRequestToken string `json:"github_request_token,omitempty"`
+	VercelTokenFile    string `json:"vercel_token_file,omitempty"`
+	VercelToken        string `json:"vercel_token,omitempty"`
+}
+
+func (SDKEnvironment) String() string   { return "private SDK provider environment" }
+func (SDKEnvironment) GoString() string { return "private SDK provider environment" }
+
+func (e SDKEnvironment) Getenv(name string) string {
+	switch name {
+	case "GITHUB_ACTIONS":
+		return e.GitHubActions
+	case "ACTIONS_ID_TOKEN_REQUEST_URL":
+		return e.GitHubRequestURL
+	case "ACTIONS_ID_TOKEN_REQUEST_TOKEN":
+		return e.GitHubRequestToken
+	case "VERCEL_OIDC_TOKEN_FILE":
+		return e.VercelTokenFile
+	case "VERCEL_OIDC_TOKEN":
+		return e.VercelToken
+	default:
+		return ""
+	}
 }
 
 func (Request) String() string   { return "private connection request" }
