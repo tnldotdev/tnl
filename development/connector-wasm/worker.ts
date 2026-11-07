@@ -4,9 +4,10 @@ import { createWorkerHost } from "./host-worker.ts";
 import { mapFixtureHost, parseLocalFixture, prepareFixture } from "./fixture.ts";
 import { startConnectorWasm } from "./loader.ts";
 import { runFixture, runnerScenario, safeFixtureError } from "./run.ts";
-import { queryCount } from "./postgres.ts";
+import { queryCount, responseBytes } from "./postgres.ts";
 import { parseVariant, tuning } from "./variant.ts";
 import { observeBridge } from "./diagnostics.ts";
+import { createPumpHost } from "./host-pump.ts";
 
 export default {
   async fetch(request: Request): Promise<Response> {
@@ -40,6 +41,8 @@ export default {
       fixture.options.bridge_reuse_buffers = settings.reuseBuffers;
       fixture.options.bridge_compact_promises = settings.compactPromises;
       fixture.reuseReadView = settings.reuseBuffers;
+      fixture.applicationPump = settings.applicationPump;
+      fixture.payloadBytes = responseBytes(searchParams.get("payload_bytes"));
       if (searchParams.get("diagnostics") === "true")
         fixture.observeWarm = (label, sample) =>
           label === "wasm" ? observeBridge(bridge, sample) : sample();
@@ -52,7 +55,8 @@ export default {
           eventLoopDelayMs: "unsupported-worker",
         });
       };
-      const host = mapFixtureHost(createWorkerHost(signal), local);
+      const rawHost = mapFixtureHost(createWorkerHost(signal), local);
+      const host = settings.socketPump ? createPumpHost(rawHost) : rawHost;
       phase = "PostgreSQL qualification";
       const result = await runFixture(bridge, host, fixture, signal);
       return Response.json({

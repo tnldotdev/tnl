@@ -120,6 +120,25 @@ categories; raw profiles are needed to audit the categories. The crypto target
 compares synthetic AEAD operations natively, with Go assembly disabled, and in
 WASM. Primitive speed ratios do not measure crypto's share of a query.
 
+To compare persistent byte pumps against the optimized Promise bridge:
+
+```sh
+mise exec -- task go:test:load:connector-wasm-profile STREAMING=true
+mise exec -- task go:test:load:connector-wasm-profile STREAMING=true CPU=true
+mise exec -- task go:test:load:connector-wasm-profile STREAMING=true QUERIES=100 PAYLOAD_BYTES=16384
+mise exec -- task go:test:integration:connector-wasm VARIANT=streaming RUNTIME=workerd
+```
+
+The streaming comparison runs `optimized`, `application-pump`, `socket-pump`,
+and `streaming` in forward and reverse order. The middle cases enable one
+boundary at a time; `streaming` enables both. Pumps use bounded queues, read
+credits, and persistent callbacks. Write completion still means the underlying
+write finished. TLS, authorization, and relay recovery stay with Go.
+`PAYLOAD_BYTES` adds a checked response string to each measured SQL query;
+the same query and warm-up count run through WASM and the native baseline.
+Use `VARIANTS=optimized,streaming` for a smaller forward/reverse comparison.
+With `STREAMING=true CPU=true`, profiling samples only `optimized` and `streaming`.
+
 ## edit generated sources
 
 Edit the source named in a generated file's header, then regenerate:

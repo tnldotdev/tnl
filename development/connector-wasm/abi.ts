@@ -11,7 +11,20 @@ export type JsonValue =
 // go validates the options and owns authorization; this is not another credential model.
 export type PrepareOptions = { [key: string]: JsonValue };
 
+// writes are accepted only while the bounded queue has room. keep accepted input
+// unchanged until event 2 acknowledges completed bytes, not just acceptance.
+export interface ApplicationPump {
+  write(bytes: Uint8Array): boolean;
+  resume(): void;
+}
+
+// 1: data, 2: completed write bytes, 3: EOF, 4: failure.
+export type PumpReceiver = (kind: number, value: Uint8Array | number | null) => void;
+export type HostPumpReceiver = (kind: number, value: Uint8Array | number | null | Error) => void;
+
 export interface ByteStream {
+  // host resume returns the drained 64 kib read window; reads may fill it in chunks.
+  startPump?(receive: HostPumpReceiver): ApplicationPump;
   // one read and one write may run concurrently; reads never return an empty chunk.
   read(max: number): Promise<Uint8Array | null>;
   write(bytes: Uint8Array): Promise<void>;
@@ -25,6 +38,8 @@ export interface ConnectorHost {
 }
 
 export interface ConnectorStream extends ByteStream {
+  // application resume grants one owned chunk, after verified TLS setup.
+  pump?(receive: PumpReceiver): ApplicationPump | null;
   // for postgres, go sends SSLRequest, requires S, and completes verified TLS.
   // resolving this promise is the boundary after which pg may send credentials.
   startTls(): Promise<void>;

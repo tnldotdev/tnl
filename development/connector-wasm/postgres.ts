@@ -12,6 +12,7 @@ export interface QueryMeasurements {
   warmupQueries?: number;
   runtime?: WarmRuntimeMetrics;
   diagnostics?: WarmDiagnostics;
+  payloadBytes?: number;
 }
 
 export type ObserveWarm = (
@@ -68,7 +69,13 @@ export async function measurePostgres(
   client: QueryClient,
   queries: number,
   instrument?: WarmInstrumentation,
+  payloadBytes = 0,
 ): Promise<QueryMeasurements> {
+  const size = responseBytes(String(payloadBytes));
+  const sql =
+    "select 1::int as value, pg_backend_pid()::int as backend_pid" +
+    (size ? `, repeat('x', ${size}) as payload` : "");
+  const expected = "x".repeat(size);
   const times: number[] = [];
   let backendPid = 0;
   const stop = instrument?.();
@@ -78,9 +85,7 @@ export async function measurePostgres(
   try {
     for (let index = 0; index < queries; index += 1) {
       const started = performance.now();
-      const result = await client.query(
-        "select 1::int as value, pg_backend_pid()::int as backend_pid",
-      );
+      const result = await client.query(sql);
       times.push(performance.now() - started);
       const row = result.rows[0];
       if (
@@ -94,6 +99,8 @@ export async function measurePostgres(
         throw new Error("fixture requires one retained PostgreSQL connection");
       }
       backendPid = row.backend_pid;
+      if (size && row.payload !== expected)
+        throw new Error("PostgreSQL response payload changed or was truncated");
     }
   } finally {
     elapsedMs = performance.now() - intervalStarted;
@@ -112,6 +119,7 @@ export async function measurePostgres(
   return {
     backendPid,
     queries,
+    ...(size ? { payloadBytes: size } : {}),
     elapsedMs,
     queriesPerSecond: elapsedMs > 0 ? (queries * 1000) / elapsedMs : null,
     latencyMs: {
@@ -131,11 +139,12 @@ export async function measureWarmPostgres(
   instrument?: WarmInstrumentation,
   warmupQueries = 1,
   observe?: (sample: () => Promise<QueryMeasurements>) => Promise<QueryMeasurements>,
+  payloadBytes = 0,
 ): Promise<QueryMeasurements> {
   if (!Number.isSafeInteger(warmupQueries) || warmupQueries < 1 || warmupQueries > 10000)
     throw new Error("warmup queries must be an integer between 1 and 10000");
-  const warmup = await measurePostgres(client, warmupQueries);
-  const sample = () => measurePostgres(client, queries, instrument);
+  const warmup = await measurePostgres(client, warmupQueries, undefined, payloadBytes);
+  const sample = () => measurePostgres(client, queries, instrument, payloadBytes);
   const measured = await (observe ? observe(sample) : sample());
   if (warmup.backendPid !== measured.backendPid)
     throw new Error("PostgreSQL backend changed after warmup");
@@ -148,6 +157,13 @@ export function queryCount(value: string | undefined | null): number {
     throw new Error("use --queries with an integer between 1 and 10000");
   }
   return count;
+}
+
+export function responseBytes(value: string | undefined | null): number {
+  const bytes = value == null ? 0 : Number(value);
+  if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > 256 * 1024)
+    throw new Error("payload bytes must be an integer between 0 and 262144");
+  return bytes;
 }
 
 function fixturePostgresClient(

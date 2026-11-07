@@ -43,8 +43,9 @@ tasks:
       QUERIES: '{{default "1000" .QUERIES}}'
       VARIANT: '{{default "baseline" .VARIANT}}'
       WARMUP: '{{default "1" .WARMUP}}'
+      PAYLOAD_BYTES: '{{default "0" .PAYLOAD_BYTES}}'
     cmds:
-      - go -C tools/testharness run . postgres -- go test -v ./internal/daemon -run='^TestLoadConnectorWASMFixture$' -count=1 -timeout=10m -args -tnl-test-tier=runtime-load -tnl-wasm-fixture-command='["node","scripts/test/connector-wasm.ts","--runtime","{{.RUNTIME}}","--queries","{{.QUERIES}}","--variant","{{.VARIANT}}","--warmup","{{.WARMUP}}","--fixture","{fixture}"]'
+      - go -C tools/testharness run . postgres -- go test -v ./internal/daemon -run='^TestLoadConnectorWASMFixture$' -count=1 -timeout=10m -args -tnl-test-tier=runtime-load -tnl-wasm-fixture-command='["node","scripts/test/connector-wasm.ts","--runtime","{{.RUNTIME}}","--queries","{{.QUERIES}}","--variant","{{.VARIANT}}","--warmup","{{.WARMUP}}","--payload-bytes","{{.PAYLOAD_BYTES}}","--fixture","{fixture}"]'
 
   profile:
     dir: "{{.ROOT_DIR}}"
@@ -53,9 +54,12 @@ tasks:
     vars:
       QUERIES: '{{default "1000" .QUERIES}}'
       CPU: '{{default "false" .CPU}}'
+      STREAMING: '{{default "false" .STREAMING}}'
+      VARIANTS: '{{default "" .VARIANTS}}'
+      PAYLOAD_BYTES: '{{default "0" .PAYLOAD_BYTES}}'
     cmds:
       - node scripts/build/connector-wasm.ts --profile
-      - go -C tools/testharness run . postgres -- go test -v ./internal/daemon -run='^TestLoadConnectorWASMFixture$' -count=1 -timeout=10m -args -tnl-test-tier=runtime-load -tnl-wasm-fixture-command='["node","scripts/test/connector-wasm-profile.ts","--queries","{{.QUERIES}}","--fixture","{fixture}"{{if eq .CPU "true"}},"--cpu","--variant","baseline","--variant","optimized","--repeats","1"{{end}}]'
+      - go -C tools/testharness run . postgres -- go test -v ./internal/daemon -run='^TestLoadConnectorWASMFixture$' -count=1 -timeout=10m -args -tnl-test-tier=runtime-load -tnl-wasm-fixture-command='["node","scripts/test/connector-wasm-profile.ts","--queries","{{.QUERIES}}","--payload-bytes","{{.PAYLOAD_BYTES}}","--fixture","{fixture}"{{if eq .STREAMING "true"}},"--streaming"{{end}}{{if ne .VARIANTS ""}},"--variants","{{.VARIANTS}}"{{end}}{{if eq .CPU "true"}},"--cpu"{{end}}]'
 
   benchmark:crypto:
     dir: "{{.ROOT_DIR}}"

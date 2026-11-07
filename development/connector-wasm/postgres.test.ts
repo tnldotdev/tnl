@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { measureWarmPostgres, proveCommittedWrite, queryCount } from "./postgres.ts";
+import { measureWarmPostgres, proveCommittedWrite, queryCount, responseBytes } from "./postgres.ts";
 import type { QueryClient } from "./postgres.ts";
 
 function result(
@@ -112,5 +112,25 @@ describe("SQL qualification with fake pg query results (not PostgreSQL integrati
     expect(queryCount("10000")).toBe(10000);
     for (const value of ["0", "1.5", "10001", "secret"])
       expect(() => queryCount(value)).toThrow("use --queries");
+  });
+
+  it("validates every byte of larger responses across warmup and measurement", async () => {
+    const client = fakeClient();
+    client.query.mockResolvedValue(
+      result([{ value: 1, backend_pid: 123, payload: "x".repeat(16384) }]),
+    );
+    const measured = await measureWarmPostgres(client, 2, undefined, 2, undefined, 16384);
+    expect(measured.payloadBytes).toBe(16384);
+    expect(new Set(client.query.mock.calls.map(([sql]) => sql)).size).toBe(1);
+    expect(client.query).toHaveBeenCalledTimes(4);
+    client.query.mockResolvedValue(
+      result([{ value: 1, backend_pid: 123, payload: "x".repeat(16383) + "y" }]),
+    );
+    await expect(measureWarmPostgres(client, 1, undefined, 1, undefined, 16384)).rejects.toThrow(
+      "payload changed",
+    );
+    expect(responseBytes(undefined)).toBe(0);
+    for (const value of ["-1", "1.5", "262145", "secret"])
+      expect(() => responseBytes(value)).toThrow("payload bytes");
   });
 });

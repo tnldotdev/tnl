@@ -48,9 +48,42 @@ describe("experimental profile metadata", () => {
   it("keeps buffer and async experiments independent", () => {
     expect(parseVariant(undefined)).toBe("baseline");
     expect(() => parseVariant("unknown")).toThrow();
-    expect(tuning("buffers")).toEqual({ reuseBuffers: true, compactPromises: false });
-    expect(tuning("promises")).toEqual({ reuseBuffers: false, compactPromises: true });
-    expect(tuning("optimized")).toEqual({ reuseBuffers: true, compactPromises: true });
+    expect(tuning("buffers")).toEqual({
+      reuseBuffers: true,
+      compactPromises: false,
+      applicationPump: false,
+      socketPump: false,
+    });
+    expect(tuning("promises")).toEqual({
+      reuseBuffers: false,
+      compactPromises: true,
+      applicationPump: false,
+      socketPump: false,
+    });
+    expect(tuning("optimized")).toEqual({
+      reuseBuffers: true,
+      compactPromises: true,
+      applicationPump: false,
+      socketPump: false,
+    });
+    expect(tuning("application-pump")).toEqual({
+      reuseBuffers: true,
+      compactPromises: true,
+      applicationPump: true,
+      socketPump: false,
+    });
+    expect(tuning("socket-pump")).toEqual({
+      reuseBuffers: true,
+      compactPromises: true,
+      applicationPump: false,
+      socketPump: true,
+    });
+    expect(tuning("streaming")).toEqual({
+      reuseBuffers: true,
+      compactPromises: true,
+      applicationPump: true,
+      socketPump: true,
+    });
   });
 
   it("retains sampled self time separately from heuristic stack categories", () => {
@@ -105,7 +138,7 @@ describe("experimental profile metadata", () => {
     expect(result.categoriesMs).toEqual({ "js-value-bookkeeping": 0.1 });
   });
 
-  it("classifies baseline and compact waiters under the same bridge category", () => {
+  it("classifies promise waiters and persistent pumps under the same bridge category", () => {
     const frame = (functionName: string) => ({
       functionName,
       scriptId: "1",
@@ -119,9 +152,11 @@ describe("experimental profile metadata", () => {
       nodes: [
         { id: 1, callFrame: frame("main.watchPromise") },
         { id: 2, callFrame: frame("main.watchCompactPromise") },
+        { id: 3, callFrame: frame("main.__applicationPump_.notify") },
+        { id: 4, callFrame: frame("main.__hostConn_.readPump") },
       ],
-      samples: [1, 2],
-      timeDeltas: [50, 50],
+      samples: [1, 2, 3, 4],
+      timeDeltas: [25, 25, 25, 25],
     });
     expect(result.categoriesMs).toEqual({ "bridge-runtime-stack": 0.1 });
   });

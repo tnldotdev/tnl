@@ -288,6 +288,9 @@ type byteStream struct {
 	mu                      sync.Mutex
 	closed                  bool
 	operations              sync.WaitGroup
+	legacyIO                bool
+	application             *applicationPump
+	applicationID           uint64
 	phase                   streamPhase
 	eof                     chan struct{}
 	eofOnce                 sync.Once
@@ -332,9 +335,13 @@ func (s *byteStream) enter() error {
 	if s.closed {
 		return net.ErrClosed
 	}
+	if s.application != nil {
+		return errors.New("connector WASM: application pump owns stream I/O")
+	}
 	if s.owner.prepared.protocol == "postgres" && s.phase != streamSecure {
 		return errors.New("connector WASM: postgres requires completed startTls before application I/O")
 	}
+	s.legacyIO = true
 	s.operations.Add(1)
 	return nil
 }
@@ -429,6 +436,7 @@ func (s *byteStream) export() js.Value {
 		return nil, nil
 	})
 	bind(s.object, "close", &s.funcs, func([]js.Value) (any, error) { return nil, s.close() })
+	s.exportApplicationPump()
 	return s.object
 }
 
@@ -445,7 +453,11 @@ func (s *byteStream) close() error {
 	s.once.Do(func() {
 		s.mu.Lock()
 		s.closed = true
+		pump := s.application
 		s.mu.Unlock()
+		if pump != nil {
+			pump.stop()
+		}
 		// close the raw pipe first so TLS close-notify and active operations cannot
 		// prevent joined forwarding. closing one child never closes its sibling.
 		_ = s.raw.Close()
@@ -455,6 +467,9 @@ func (s *byteStream) close() error {
 		delete(s.owner.streams, s)
 		s.owner.mu.Unlock()
 		s.funcs.retire()
+		applicationRegistryMu.Lock()
+		delete(applicationRegistry, s.applicationID)
+		applicationRegistryMu.Unlock()
 	})
 	return nil
 }

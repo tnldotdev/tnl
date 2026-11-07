@@ -34,6 +34,8 @@ export interface Fixture {
   warmupQueries?: number;
   observeWarm?: ObserveWarm;
   reuseReadView?: boolean;
+  applicationPump?: boolean;
+  payloadBytes?: number;
 }
 
 export interface FixtureReport {
@@ -168,7 +170,12 @@ export async function runFixture(
     if (signal?.aborted) throw abortError();
     phase = "PostgreSQL TLS";
     const opening = performance.now();
-    stream = await openPostgresStream(handle, signal, !fixture.reuseReadView);
+    stream = await openPostgresStream(
+      handle,
+      signal,
+      !fixture.reuseReadView,
+      fixture.applicationPump,
+    );
     const streamTlsMs = performance.now() - opening;
     streamClosed = new Promise<void>((resolve) => stream?.once("close", resolve));
     // also cover the short interval before pg installs its stream error listener.
@@ -197,6 +204,7 @@ export async function runFixture(
       fixture.instrumentWarm,
       fixture.warmupQueries,
       observeWarm && ((sample) => observeWarm("wasm", sample)),
+      fixture.payloadBytes,
     );
     report = {
       ok: true,
@@ -237,6 +245,7 @@ export async function runFixture(
           fixture.instrumentWarm,
           fixture.warmupQueries,
           observeWarm && ((sample) => observeWarm("native", sample)),
+          fixture.payloadBytes,
         )),
         baseline: "already-ready in-process Go stream.Serve",
         pgConnectMs: nativeConnectMs,
@@ -291,27 +300,36 @@ export async function runFixture(
   signal?.removeEventListener("abort", onAbort);
   // join pg, visitor stream, connector renewal, then host sockets in that order.
   if (!succeeded) stream?.destroy();
-  const cleanup = [
-    async () => {
-      if (faultRelay && fixture.local) {
-        // restoration must not inherit an already-aborted caller signal.
-        await setRelayBlocked(fixture.local, faultRelay, false, AbortSignal.timeout(5000));
-      }
-    },
-    () => client?.end(),
-    ...additionalClients.map((client) => () => client.end()),
-    async () => {
-      stream?.destroy();
-      await streamClosed;
-    },
-    closeHandle,
-    () => host.close(),
+  const cleanup: Array<[string, () => Promise<unknown> | undefined]> = [
+    [
+      "relay restoration",
+      async () => {
+        if (faultRelay && fixture.local) {
+          // restoration must not inherit an already-aborted caller signal.
+          await setRelayBlocked(fixture.local, faultRelay, false, AbortSignal.timeout(5000));
+        }
+      },
+    ],
+    ["PostgreSQL client cleanup", () => client?.end()],
+    ...additionalClients.map((client): [string, () => Promise<void>] => [
+      "observer client cleanup",
+      () => client.end(),
+    ]),
+    [
+      "visitor stream cleanup",
+      async () => {
+        stream?.destroy();
+        await streamClosed;
+      },
+    ],
+    ["connector cleanup", closeHandle],
+    ["host cleanup", () => host.close()],
   ];
-  for (const close of cleanup) {
+  for (const [stage, close] of cleanup) {
     try {
       await close();
     } catch {
-      failure ??= new FixtureFailure("cleanup");
+      failure ??= new FixtureFailure(stage);
     }
   }
   if (failure) throw failure;

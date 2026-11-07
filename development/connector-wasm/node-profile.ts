@@ -13,7 +13,7 @@ const frameCategories: ReadonlyArray<readonly [RegExp, string]> = [
   ],
   [/runtime[._/](?:gc|malloc|scan|mark|sweep|newobject|makeslice)/, "go-allocation-gc-stack"],
   [
-    /syscall[._/]js|watch(?:Compact)?Promise|main[._/]promise|valueCall|copyBytes|loadString|storeValue|wasm-to-js/,
+    /syscall[._/]js|watch(?:Compact)?Promise|main[._/](?:promise|.*(?:applicationPump|hostPump|readPump|writePump|waitHostEvent))|valueCall|copyBytes|loadString|storeValue|wasm-to-js/,
     "bridge-runtime-stack",
   ],
   [/runtime[._/](?:selectgo|schedule|findRunnable|gogo|gopark)/, "go-scheduler-stack"],

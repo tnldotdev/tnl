@@ -227,7 +227,13 @@ func hostDial(host js.Value, compact ...bool) func(context.Context, string, stri
 		if socket.Type() != js.TypeObject || socket.Get("read").Type() != js.TypeFunction || socket.Get("write").Type() != js.TypeFunction || socket.Get("close").Type() != js.TypeFunction {
 			return nil, errors.New("connector WASM: host returned an invalid socket")
 		}
-		return newHostConn(socket, address, compact...), nil
+		c := newHostConn(socket, address, compact...)
+		if socket.Get("startPump").Type() == js.TypeFunction {
+			if err := c.startHostPump(); err != nil {
+				return nil, errors.Join(err, c.Close())
+			}
+		}
+		return c, nil
 	}
 }
 
@@ -245,6 +251,7 @@ type hostConn struct {
 	closing         *hostCloseAttempt
 	closeSucceeded  bool
 	compact         bool
+	pump            *hostPump
 }
 
 type hostCloseAttempt struct {
@@ -259,10 +266,18 @@ func newHostConn(socket js.Value, remote string, compact ...bool) *hostConn {
 func (c *hostConn) wait(p js.Value, read bool) (js.Value, error) {
 	pending := watchPromise(p, c.compact)
 	defer pending.release()
-	stop := func(cause error) (js.Value, error) {
-		result, cleanup := pending.settle(c.Close)
-		return js.Undefined(), errors.Join(cause, result.err, cleanup)
+	result, cause := waitHostEvent(c, pending.result, read)
+	if cause == nil {
+		return result.value, result.err
 	}
+	result, cleanup := pending.settle(c.Close)
+	return js.Undefined(), errors.Join(cause, result.err, cleanup)
+}
+
+// promise I/O and the persistent pump share deadline changes and close fencing.
+// the pump supplies a coalesced readiness channel, without a Go promise waiter.
+func waitHostEvent[T any](c *hostConn, pending <-chan T, read bool) (T, error) {
+	var zero T
 	for {
 		c.mu.Lock()
 		at, changed := c.writeAt, c.changed
@@ -271,7 +286,7 @@ func (c *hostConn) wait(p js.Value, read bool) (js.Value, error) {
 		}
 		c.mu.Unlock()
 		if !at.IsZero() && !time.Now().Before(at) {
-			return stop(os.ErrDeadlineExceeded)
+			return zero, os.ErrDeadlineExceeded
 		}
 		var timer *time.Timer
 		var expired <-chan time.Time
@@ -285,16 +300,16 @@ func (c *hostConn) wait(p js.Value, read bool) (js.Value, error) {
 			}
 		}
 		select {
-		case result := <-pending.result:
+		case result := <-pending:
 			stopTimer()
-			return result.value, result.err
+			return result, nil
 		case <-changed:
 			stopTimer()
 		case <-c.done:
 			stopTimer()
-			return stop(net.ErrClosed)
+			return zero, net.ErrClosed
 		case <-expired:
-			return stop(os.ErrDeadlineExceeded)
+			return zero, os.ErrDeadlineExceeded
 		}
 	}
 }
@@ -311,6 +326,9 @@ func (c *hostConn) Read(data []byte) (int, error) {
 	default:
 	}
 	counters.HostReads++
+	if c.pump != nil {
+		return c.readPump(data)
+	}
 	p, err := call(c.socket, "read", len(data))
 	if err != nil {
 		return 0, err
@@ -343,9 +361,12 @@ func (c *hostConn) Write(data []byte) (int, error) {
 		return 0, net.ErrClosed
 	default:
 	}
-	bytes := bytesConstructor(c.compact).New(len(data))
 	counters.HostWrites++
 	counters.HostWriteBytes += uint64(len(data))
+	if c.pump != nil {
+		return c.writePump(data)
+	}
+	bytes := bytesConstructor(c.compact).New(len(data))
 	js.CopyBytesToJS(bytes, data)
 	p, err := call(c.socket, "write", bytes)
 	if err != nil {
@@ -358,7 +379,15 @@ func (c *hostConn) Write(data []byte) (int, error) {
 }
 
 func (c *hostConn) Close() error {
-	c.closeFence.Do(func() { close(c.done) })
+	c.closeFence.Do(func() {
+		if c.pump != nil {
+			c.pump.stop()
+			// callback dispatch does not own cleanup. keep retries on this conn
+			// and the JS socket owner, including when startup returns no conn.
+			c.pump.retire()
+		}
+		close(c.done)
+	})
 	c.closeMu.Lock()
 	if c.closeSucceeded {
 		c.closeMu.Unlock()

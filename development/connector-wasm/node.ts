@@ -5,10 +5,11 @@ import { createNodeHost } from "./host-node.ts";
 import { mapFixtureHost, parseLocalFixture, prepareFixture } from "./fixture.ts";
 import { startConnectorWasm } from "./loader.ts";
 import { runFixture, safeFixtureError } from "./run.ts";
-import { queryCount } from "./postgres.ts";
+import { queryCount, responseBytes } from "./postgres.ts";
 import { memorySnapshot, nodeWarmInstrumentation } from "./node-measurements.ts";
 import { observeQueries } from "./node-profile.ts";
 import { parseVariant, tuning } from "./variant.ts";
+import { createPumpHost } from "./host-pump.ts";
 
 export async function main(args: string[]): Promise<void> {
   const { values } = parseArgs({
@@ -22,6 +23,7 @@ export async function main(args: string[]): Promise<void> {
       variant: { type: "string", default: "baseline" },
       diagnostics: { type: "boolean", default: false },
       "cpu-profile": { type: "string" },
+      "payload-bytes": { type: "string", default: "0" },
     },
     strict: true,
     allowPositionals: false,
@@ -66,9 +68,12 @@ export async function main(args: string[]): Promise<void> {
     fixture.options.bridge_reuse_buffers = settings.reuseBuffers;
     fixture.options.bridge_compact_promises = settings.compactPromises;
     fixture.reuseReadView = settings.reuseBuffers;
+    fixture.applicationPump = settings.applicationPump;
+    fixture.payloadBytes = responseBytes(values["payload-bytes"]);
     if (values.diagnostics || values["cpu-profile"])
       fixture.observeWarm = observeQueries(runtime.bridge, values["cpu-profile"]);
-    const host = mapFixtureHost(createNodeHost(combined), local);
+    const rawHost = mapFixtureHost(createNodeHost(combined), local);
+    const host = settings.socketPump ? createPumpHost(rawHost) : rawHost;
     const result = await runFixture(runtime.bridge, host, fixture, combined);
     process.stdout.write(
       `${JSON.stringify({ ...result, variant, runtime: { engine, compileMs, instantiateAndStartMs: runtime.instantiateAndStartMs }, memory: { scope: "caller-process-only; native Go daemon excluded", gc: "not-forced", beforeWasm, afterWasmInit, afterCleanup: memorySnapshot() } })}\n`,

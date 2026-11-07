@@ -143,7 +143,7 @@ describe("fixture lifecycle with fake pg and bridge (not PostgreSQL integration)
     const { bridge, handle, host } = setup();
     client.end.mockRejectedValue(new Error("private cleanup detail"));
     await expect(runFixture(bridge, host, fixture)).rejects.toThrow(
-      "fixture failed during cleanup",
+      "fixture failed during PostgreSQL client cleanup",
     );
     expect(handle.close).toHaveBeenCalledOnce();
     expect(host.close).toHaveBeenCalledOnce();

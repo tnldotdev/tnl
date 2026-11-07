@@ -11,6 +11,7 @@ const { values } = parseArgs({
     variant: { type: "string", default: "baseline" },
     warmup: { type: "string", default: "1" },
     diagnostics: { type: "boolean", default: false },
+    "payload-bytes": { type: "string", default: "0" },
   },
 });
 if (!values.fixture || !["node", "bun", "workerd"].includes(values.runtime))
@@ -33,6 +34,8 @@ const child = spawn(
     values.variant,
     "--warmup",
     values.warmup,
+    "--payload-bytes",
+    values["payload-bytes"],
     ...(values.diagnostics ? ["--diagnostics"] : []),
   ],
   { cwd: root, stdio: "inherit" },
