@@ -38,11 +38,27 @@ type SlotsConfig struct {
 }
 
 type slotWorker struct {
-	key     string
-	cancel  context.CancelFunc
-	session SlotSession
-	ready   bool
+	key    string
+	cancel context.CancelFunc
+	phase  slotPhase
 }
+
+type slotPhase interface{ slotPhase() }
+type slotConnecting struct{}
+type slotServing struct{ session SlotSession }
+type slotAwaitingAssignment struct{}
+
+func (slotConnecting) slotPhase()         {}
+func (slotServing) slotPhase()            {}
+func (slotAwaitingAssignment) slotPhase() {}
+
+type slotsPhase uint8
+
+const (
+	slotsAccepting slotsPhase = iota
+	slotsDraining
+	slotsClosed
+)
 
 // Slots maintains two independent paths for either tunnel role. assignment
 // keys contain only identity/revision, never credentials or mutable readiness.
@@ -54,8 +70,7 @@ type Slots struct {
 	workers   [2]*slotWorker
 	preferTCP [2]bool
 	changed   chan struct{}
-	closed    bool
-	draining  bool
+	phase     slotsPhase
 	group     sync.WaitGroup
 }
 
@@ -81,7 +96,7 @@ func (s *Slots) Set(slot uint8, key string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.draining {
+	if s.phase != slotsAccepting {
 		return errors.New("tunnel: slots closed or draining")
 	}
 	if old := s.workers[slot]; old != nil {
@@ -90,13 +105,15 @@ func (s *Slots) Set(slot uint8, key string) error {
 		}
 		// control can replace an assignment before its QUIC failure reaches
 		// Serve. keep that replacement's transport preference in the slot.
-		if transport, ok := old.session.(interface{ Transport() Transport }); old.ready && ok {
-			s.preferTCP[slot] = transport.Transport() == TransportQUIC
+		if serving, ok := old.phase.(slotServing); ok {
+			if transport, ok := serving.session.(interface{ Transport() Transport }); ok {
+				s.preferTCP[slot] = transport.Transport() == TransportQUIC
+			}
 		}
 		old.cancel()
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
-	w := &slotWorker{key: key, cancel: cancel}
+	w := &slotWorker{key: key, cancel: cancel, phase: slotConnecting{}}
 	s.workers[slot] = w
 	s.notifyLocked()
 	s.group.Go(func() { s.run(ctx, slot, w) })
@@ -107,7 +124,7 @@ func (s *Slots) run(ctx context.Context, slot uint8, w *slotWorker) {
 	backoff := s.config.BackoffMin
 	for ctx.Err() == nil {
 		s.mu.Lock()
-		if s.closed || s.draining {
+		if s.phase != slotsAccepting {
 			s.mu.Unlock()
 			return
 		}
@@ -116,9 +133,9 @@ func (s *Slots) run(ctx context.Context, slot uint8, w *slotWorker) {
 		session, err := s.config.Connect(ctx, slot, preferTCP)
 		if err == nil && session != nil {
 			s.mu.Lock()
-			current := s.workers[slot] == w && !s.closed && !s.draining && ctx.Err() == nil
+			current := s.workers[slot] == w && s.phase == slotsAccepting && ctx.Err() == nil
 			if current {
-				w.session, w.ready = session, true
+				w.phase = slotServing{session: session}
 				if transport, ok := session.(interface{ Transport() Transport }); ok && transport.Transport() == TransportTLSTCP {
 					s.preferTCP[slot] = false
 				}
@@ -135,7 +152,11 @@ func (s *Slots) run(ctx context.Context, slot uint8, w *slotWorker) {
 			stop()
 			rotate := !s.config.SingleUse && ctx.Err() == nil && errors.Is(serveErr, ErrRotateSession)
 			s.mu.Lock()
-			w.ready, w.session = false, nil
+			if s.config.SingleUse {
+				w.phase = slotAwaitingAssignment{}
+			} else {
+				w.phase = slotConnecting{}
+			}
 			if s.workers[slot] == w {
 				// a failed QUIC path gives TLS/TCP the first attempt on its
 				// replacement. successful TCP recovery restores QUIC-first.
@@ -171,6 +192,11 @@ func (s *Slots) run(ctx context.Context, slot uint8, w *slotWorker) {
 			backoff = s.config.BackoffMin
 		}
 		if errors.Is(err, ErrAwaitAssignment) || IsTerminalHandshakeError(err) {
+			s.mu.Lock()
+			if s.workers[slot] == w {
+				w.phase = slotAwaitingAssignment{}
+			}
+			s.mu.Unlock()
 			return
 		}
 		timer := time.NewTimer(backoff)
@@ -191,8 +217,10 @@ func (s *Slots) Snapshot() ([2]SlotSession, <-chan struct{}) {
 	defer s.mu.Unlock()
 	var sessions [2]SlotSession
 	for slot, w := range s.workers {
-		if !s.draining && !s.closed && w != nil && w.ready {
-			sessions[slot] = w.session
+		if s.phase == slotsAccepting && w != nil {
+			if serving, ok := w.phase.(slotServing); ok {
+				sessions[slot] = serving.session
+			}
 		}
 	}
 	return sessions, s.changed
@@ -205,17 +233,19 @@ func (s *Slots) notifyLocked() { close(s.changed); s.changed = make(chan struct{
 // the role owning those visitors decides when to Close the paths afterward.
 func (s *Slots) StopAdmissions(ctx context.Context) error {
 	s.mu.Lock()
-	if s.closed || s.draining {
+	if s.phase != slotsAccepting {
 		s.mu.Unlock()
 		return nil
 	}
-	s.draining = true
+	s.phase = slotsDraining
 	var sessions [2]SlotSession
 	for slot, w := range s.workers {
-		if w != nil && w.ready {
-			sessions[slot] = w.session
-		} else if w != nil {
-			w.cancel()
+		if w != nil {
+			if serving, ok := w.phase.(slotServing); ok {
+				sessions[slot] = serving.session
+			} else {
+				w.cancel()
+			}
 		}
 	}
 	s.notifyLocked()
@@ -241,7 +271,7 @@ func (s *Slots) Drain(ctx context.Context) error {
 
 func (s *Slots) Close() error {
 	s.mu.Lock()
-	s.closed = true
+	s.phase = slotsClosed
 	for _, w := range s.workers {
 		if w != nil {
 			w.cancel()
