@@ -32,7 +32,10 @@ func connectorRebindRequest(signer Signer, run Run, pair controlv1.ConnectorPeer
 // inspect supplies hints for the original owner, never a second run selection.
 // deadlines from observations may narrow a local fence, but cannot renew it.
 func validateConnectorRebindState(ctx context.Context, signer Signer, run Run, original controlv1.ConnectorPeerPair, request controlv1.ConnectorPeerPairRebindRequest, state controlv1.ConnectorPeerPairRebindState, started time.Time, highWater int64) (time.Time, error) {
-	if ctx.Err() != nil || state.Active == nil || state.HighWaterGeneration < highWater || state.HighWaterGeneration < original.DeliveryGeneration ||
+	if err := context.Cause(ctx); err != nil {
+		return time.Time{}, err
+	}
+	if state.Active == nil || state.HighWaterGeneration < highWater || state.HighWaterGeneration < original.DeliveryGeneration ||
 		len(state.ReadyRelays) != 0 && len(state.ReadyRelays) != 2 {
 		return time.Time{}, ErrServiceConnection
 	}
