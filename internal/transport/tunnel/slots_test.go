@@ -240,6 +240,13 @@ func TestSingleUseSlotsWaitForReplacementAndResetFallbackPreference(t *testing.T
 	}
 	initial.result <- errors.New("QUIC carrier lost")
 	wait(nil)
+	paths.mu.Lock()
+	_, waiting := paths.workers[0].phase.(slotAwaitingAssignment)
+	_, sibling := paths.workers[1].phase.(slotServing)
+	paths.mu.Unlock()
+	if !waiting || !sibling {
+		t.Fatal("spent assignment did not wait while its sibling kept serving")
+	}
 	if err := paths.Set(0, "initial"); err != nil {
 		t.Fatal(err)
 	}
