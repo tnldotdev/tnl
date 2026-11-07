@@ -135,7 +135,7 @@ function prepared(owner: Owner) {
 let originalListeners = new Set(process.listeners("beforeExit"));
 beforeEach(() => {
   vi.resetModules();
-  delete globalThis.__tnlConnectorContextV1;
+  globalThis.__tnlConnectorContextV1 = undefined;
   fixture.launches.length = 0;
   fixture.owners.clear();
   fixture.scopeGate = undefined;
@@ -149,7 +149,7 @@ beforeEach(() => {
   originalListeners = new Set(process.listeners("beforeExit"));
 });
 afterEach(() => {
-  delete globalThis.__tnlConnectorContextV1;
+  globalThis.__tnlConnectorContextV1 = undefined;
   for (const listener of process.listeners("beforeExit"))
     if (!originalListeners.has(listener)) process.removeListener("beforeExit", listener);
 });
