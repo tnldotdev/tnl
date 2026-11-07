@@ -101,7 +101,10 @@ func (a *ConnectorAcceptor) claim(ctx context.Context, outer muxsession.Session,
 	source := observed.ip
 	lease, valid := a.currentLease(proof)
 	if !valid {
-		return connectorClaim{}, denied
+		// a restarted relay can receive a proof for its predecessor before the
+		// connector observes replacement assignments. reject this path without
+		// claiming that control revoked the retained subject's authority.
+		return connectorClaim{}, &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 	}
 	message, err := proof.RelayClaimMessage(source)
 	if err != nil {
@@ -125,7 +128,7 @@ func (a *ConnectorAcceptor) claim(ctx context.Context, outer muxsession.Session,
 		return connectorClaim{}, denied
 	}
 	if _, current := a.currentLease(proof); !current {
-		return connectorClaim{}, denied
+		return connectorClaim{}, &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 	}
 	if err := observed.check(); err != nil {
 		return connectorClaim{}, err
