@@ -46,7 +46,7 @@ func TestInvalidRuntimeReplyCannotStartOrRenew(t *testing.T) {
 		}
 		_, err = o.Renew(t.Context())
 		reason, _ := failure.ReasonOf(err)
-		if reason != failure.ServerResponseInvalid || o.started || epoch != 0 && calls != 1 {
+		if _, running := o.stage.(runtimeRunning); reason != failure.ServerResponseInvalid || running || epoch != 0 && calls != 1 {
 			t.Fatal("invalid runtime reply advanced startup", epoch, err)
 		}
 	}
@@ -113,6 +113,15 @@ func TestRuntimeDeploymentRetainedAcrossLostReply(t *testing.T) {
 	}
 	if id := observability.IdentityFromContext(owner.ObservabilityContext(scoped, "team", "scope")); id != (observability.Identity{}) {
 		t.Fatal("stopped runtime retained deployment scope", id)
+	}
+	if _, err := owner.Renew(t.Context()); err == nil {
+		t.Fatal("stopped runtime renewed without a new process run")
+	}
+	if err := owner.Stop(t.Context()); err != nil {
+		t.Fatal("stopped runtime was not idempotent", err)
+	}
+	if len(control.requests) != 5 {
+		t.Fatal("stopped runtime sent another request", len(control.requests))
 	}
 	for _, request := range control.requests {
 		if request.Deployment == nil || *request.Deployment != expected {

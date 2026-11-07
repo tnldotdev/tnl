@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"math"
 	"strings"
 	"sync"
@@ -28,10 +29,33 @@ type Owner struct {
 	control                     Control
 	server, id, key, scope, run string
 	private                     ed25519.PrivateKey
-	epoch                       int64
-	prepared, started           bool
+	stage                       publisherRuntimeStage
 	deployment                  *controlv1.PublisherDeploymentReport
-	leaseExpires                time.Time
+}
+
+// the epoch belongs to the inspected process run. only a confirmed start owns
+// a lease; stop is terminal for this Owner even if another process starts later.
+type publisherRuntimeStage interface{ publisherRuntimeStage() }
+type runtimeInspected struct{ epoch int64 }
+type runtimeRunning struct {
+	epoch        int64
+	leaseExpires time.Time
+}
+type runtimeStopped struct{}
+
+func (runtimeInspected) publisherRuntimeStage() {}
+func (runtimeRunning) publisherRuntimeStage()   {}
+func (runtimeStopped) publisherRuntimeStage()   {}
+
+func (o *Owner) expectedEpochLocked() int64 {
+	switch stage := o.stage.(type) {
+	case runtimeInspected:
+		return stage.epoch
+	case runtimeRunning:
+		return stage.epoch
+	default:
+		return 0
+	}
 }
 
 func (*Owner) String() string   { return "publisher runtime" }
@@ -60,7 +84,8 @@ func New(control Control, server, id, key, scope string, private ed25519.Private
 }
 
 func (o *Owner) call(ctx context.Context, action controlv1.PublisherRuntimeRequestAction) (controlv1.PublisherRuntimeResponse, error) {
-	proof, err := publisherproof.Sign(o.id, o.key, publisherproof.RuntimeScope(o.scope, string(action), o.run, o.epoch, publisherprovenance.Digest(o.deployment)), o.server+"/v1/publisher-runtime", o.private, time.Now())
+	epoch := o.expectedEpochLocked()
+	proof, err := publisherproof.Sign(o.id, o.key, publisherproof.RuntimeScope(o.scope, string(action), o.run, epoch, publisherprovenance.Digest(o.deployment)), o.server+"/v1/publisher-runtime", o.private, time.Now())
 	if err != nil {
 		return controlv1.PublisherRuntimeResponse{}, err
 	}
@@ -71,13 +96,16 @@ func (o *Owner) call(ctx context.Context, action controlv1.PublisherRuntimeReque
 		copy := *o.deployment
 		report = &copy
 	}
-	return o.control.PublisherRuntime(call, controlv1.PublisherRuntimeRequest{PublisherIdentityId: o.id, ScopeId: o.scope, ProcessRunId: o.run, ExpectedEpoch: o.epoch, Action: action, Assertion: proof, Deployment: report})
+	return o.control.PublisherRuntime(call, controlv1.PublisherRuntimeRequest{PublisherIdentityId: o.id, ScopeId: o.scope, ProcessRunId: o.run, ExpectedEpoch: epoch, Action: action, Assertion: proof, Deployment: report})
 }
 
 func (o *Owner) Renew(ctx context.Context) (controlv1.PublisherRuntimeResponse, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if !o.prepared {
+	if _, stopped := o.stage.(runtimeStopped); stopped {
+		return controlv1.PublisherRuntimeResponse{}, failure.Wrap("renew stopped publisher runtime", failure.ServerConflict, errors.New("publisher runtime stopped"))
+	}
+	if o.stage == nil {
 		r, err := o.call(ctx, controlv1.RuntimeInspect)
 		if err != nil {
 			return r, err
@@ -85,25 +113,25 @@ func (o *Owner) Renew(ctx context.Context) (controlv1.PublisherRuntimeResponse, 
 		if r.Epoch < 0 || r.Epoch == math.MaxInt64 {
 			return r, failure.Wrap("read publisher runtime epoch", failure.ServerResponseInvalid, publisherproof.ErrProof)
 		}
-		o.epoch, o.prepared = r.Epoch, true
+		o.stage = runtimeInspected{epoch: r.Epoch}
 	}
 	action := controlv1.RuntimeRenew
-	if !o.started {
+	_, starting := o.stage.(runtimeInspected)
+	if starting {
 		action = controlv1.RuntimeStart
 	}
 	r, err := o.call(ctx, action)
 	if err != nil {
 		return r, err
 	}
-	expected := o.epoch
-	if !o.started {
+	expected := o.expectedEpochLocked()
+	if starting {
 		expected++
 	}
 	if r.Epoch != expected || r.LeaseExpiresAt == nil || !r.LeaseExpiresAt.After(time.Now()) {
 		return r, failure.Wrap("read publisher runtime lease", failure.ServerResponseInvalid, publisherproof.ErrProof)
 	}
-	o.epoch, o.started = r.Epoch, true
-	o.leaseExpires = *r.LeaseExpiresAt
+	o.stage = runtimeRunning{epoch: r.Epoch, leaseExpires: *r.LeaseExpiresAt}
 	return r, nil
 }
 
@@ -114,7 +142,7 @@ func (o *Owner) ObservabilityContext(ctx context.Context, teamID, groupID string
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	id := observability.Identity{}
-	if o.started && o.leaseExpires.After(time.Now()) && groupID == o.scope && teamID != "" {
+	if running, ok := o.stage.(runtimeRunning); ok && running.leaseExpires.After(time.Now()) && groupID == o.scope && teamID != "" {
 		id.TeamID, id.PublisherGroupID, id.PublisherIdentityID = teamID, groupID, o.id
 		if o.deployment != nil {
 			id.DeploymentID, id.ReplicaKey = o.deployment.DeploymentId, o.deployment.ReplicaKey
@@ -126,12 +154,12 @@ func (o *Owner) ObservabilityContext(ctx context.Context, teamID, groupID string
 func (o *Owner) Stop(ctx context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if !o.started {
+	if _, running := o.stage.(runtimeRunning); !running {
 		return nil
 	}
 	_, err := o.call(ctx, controlv1.RuntimeStop)
 	if err == nil {
-		o.leaseExpires = time.Time{}
+		o.stage = runtimeStopped{}
 	}
 	return err
 }
