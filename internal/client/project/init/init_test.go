@@ -127,26 +127,6 @@ func TestInitApplyStopsBeforePythonAndTypesWhenGenerationFails(t *testing.T) {
 	}
 }
 
-func TestInitLeavesNextProxyToApp(t *testing.T) {
-	root := copyInitFixture(t, "next")
-	plan, err := planInit(t.Context(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := plan.Apply(t.Context(), Options{NoInstall: true, Generate: func(context.Context, string, string) error { return nil }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "proxy.ts")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("init created a Next.js proxy: %v", err)
-	}
-	for _, path := range result.UpdatedPaths {
-		if filepath.Base(path) == "proxy.ts" {
-			t.Fatalf("init reported a Next.js proxy: %+v", result)
-		}
-	}
-}
-
 func TestInitDetectionDiagnosticsUseCallerActionsAndKeepReasons(t *testing.T) {
 	root := copyInitFixture(t, "next")
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"dependencies":{"next":"1","vite":"1"}}`), 0o600); err != nil {

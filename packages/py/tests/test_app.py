@@ -56,10 +56,6 @@ def test_worker_registers_after_bind_and_joins_before_lifespan_stop(
                     active.update(payload)
                     active["registration_id"] = "reg_" + str(len(requests) % 10) * 32
                     assert payload["framework"] == "python"
-                    assert (
-                        isinstance(payload["proxy_token"], str)
-                        and len(payload["proxy_token"]) == 64
-                    )
                     native_app_assignment["registration_id"] = active["registration_id"]
                     if service:
                         native_app_assignment["hostname"] = ""
@@ -78,31 +74,6 @@ def test_worker_registers_after_bind_and_joins_before_lifespan_stop(
                     async with httpx.AsyncClient(trust_env=False) as client:
                         result = await client.get(str(payload["target"]))
                         assert result.status_code == 200 and result.text == "worker"
-                        local = await client.get(
-                            str(payload["target"]), headers={"X-Forwarded-For": "198.51.100.7"}
-                        )
-                        assert local.headers["x-observed-forwarded-for"] == ""
-                        if not service:
-                            denied = await client.get(
-                                str(payload["target"]), headers={"Host": "web.member.example"}
-                            )
-                            assert denied.status_code == 403
-                            forged = await client.get(
-                                str(payload["target"]),
-                                headers={"X-Tnl-Proxy-Token": "0" * 64},
-                            )
-                            assert forged.status_code == 403
-                            verified = await client.get(
-                                str(payload["target"]),
-                                headers={
-                                    "Host": "web.member.example",
-                                    "X-Tnl-Proxy-Token": str(active["proxy_token"]),
-                                    "X-Forwarded-For": "203.0.113.9",
-                                },
-                            )
-                            assert verified.status_code == 200
-                            assert verified.headers["x-observed-forwarded-for"] == "203.0.113.9"
-                            assert verified.headers["x-observed-credential"] == ""
                     log({"event": "register", "pid": active["pid"]})
                 elif path == "/v1/unregister":
                     assert payload["registration_id"] == active["registration_id"]
@@ -159,11 +130,7 @@ async def app(scope, receive, send):
                 await send({{"type": "lifespan.shutdown.complete"}})
                 return
     elif scope["type"] == "http":
-        headers = dict(scope["headers"])
-        await send({{"type": "http.response.start", "status": 200, "headers": [
-            (b"x-observed-forwarded-for", headers.get(b"x-forwarded-for", b"")),
-            (b"x-observed-credential", headers.get(b"x-tnl-proxy-token", b"")),
-        ]}})
+        await send({{"type": "http.response.start", "status": 200, "headers": []}})
         await send({{"type": "http.response.body", "body": b"worker"}})
 """)
         runner = tmp_path / "run.py"

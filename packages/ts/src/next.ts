@@ -5,7 +5,6 @@ import { TnlError } from "./errors.js";
 import {
   prepareService,
   reportFrameworkTarget,
-  proxyTokenFor,
   type PrepareOptions,
 } from "./internal/publisher/app.js";
 import { operation } from "./internal/tracing.js";
@@ -54,9 +53,6 @@ export function withTnl(
       await reportFrameworkTarget(assignment, target);
       return assignment;
     });
-
-    // keep the credential in the server process, not Next's browser-visible config.env.
-    process.env.TNL_APP_PROXY_TOKEN = proxyTokenFor(assignment);
 
     return injectRuntime(
       {

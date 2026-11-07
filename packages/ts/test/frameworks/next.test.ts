@@ -125,11 +125,6 @@ describe("withTnl", () => {
               },
             },
           });
-          const credential = z
-            .object({ proxy_token: z.string().regex(/^[a-f0-9]{64}$/) })
-            .parse(bootstrap.requests[0]?.body).proxy_token;
-          expect(process.env.TNL_APP_PROXY_TOKEN).toBe(credential);
-          expect(local.env).not.toHaveProperty("TNL_APP_PROXY_TOKEN");
           expect(bootstrap.requests[0]?.body).not.toHaveProperty("service");
           await expect(withTnl(config)(productionPhase, context)).resolves.toBe(config);
         }),
@@ -275,7 +270,7 @@ describe("withTnl", () => {
 });
 
 test(
-  "runs Next.js with protected development assets, server-only credentials, runtime metadata, and HMR",
+  "runs Next.js with protected development assets, runtime metadata, and HMR",
   { timeout: 60_000 },
   async () => {
     const port = await findAvailableLoopbackPort();
@@ -293,7 +288,7 @@ test(
         path: "/v1/register",
       });
 
-      const page = await requestTestServer(port, { host: "localhost" });
+      const page = await requestTestServer(port);
       expect(page.status).toBe(200);
       expect(page.body).toContain("Next.js fixture");
       expect(page.body).toContain("url:https://api.member.example");
@@ -305,37 +300,21 @@ test(
       const assetPath = extractNextAssetPath(page.body);
       await expect(
         requestTestServer(port, {
-          host: "localhost",
           headers: { Origin: "https://api.member.example" },
           path: assetPath,
         }),
       ).resolves.toMatchObject({ status: 200 });
       await expect(
         requestTestServer(port, {
-          host: "localhost",
           headers: { Origin: "https://attacker.example" },
           path: assetPath,
         }),
       ).resolves.toMatchObject({ status: 403 });
 
-      const credential = z
-        .object({ proxy_token: z.string().regex(/^[a-f0-9]{64}$/) })
-        .parse((await fixture.request()).body).proxy_token;
-      expect(page.body).not.toContain(credential);
-      const direct = await requestTestServer(port, { path: "/api/credential" });
-      expect(direct.status).toBe(200);
-      expect(JSON.parse(direct.body)).toEqual({ available: true, matches: false });
-      const matched = await requestTestServer(port, {
-        path: "/api/credential",
-        headers: { "X-Tnl-Proxy-Token": credential },
-      });
-      expect(matched.status).toBe(200);
-      expect(JSON.parse(matched.body)).toEqual({ available: true, matches: true });
-
       const { message: socketMessage, socket } = await openTestWebSocketWithMessage(
         port,
         "/_next/hmr?id=tnl-test",
-        { host: "localhost", origin: "https://api.member.example" },
+        { origin: "https://api.member.example" },
       );
       const message = z.object({ type: z.optional(z.string()) }).parse(JSON.parse(socketMessage));
       expect(["isrManifest", "turbopack-connected"]).toContain(message.type);
@@ -355,7 +334,7 @@ test(
       await expect
         .poll(
           async () => {
-            const updatedPage = await requestTestServer(port, { host: "localhost" });
+            const updatedPage = await requestTestServer(port);
             return updatedPage.status === 200 ? updatedPage.body : "";
           },
           { timeout: 30_000 },
@@ -363,7 +342,6 @@ test(
         .toContain("Next.js fixture refreshed");
       await expect(
         openTestWebSocket(port, "/_next/hmr?id=tnl-attacker", {
-          host: "localhost",
           origin: "https://attacker.example",
         }),
       ).rejects.toThrow();
@@ -392,9 +370,7 @@ test("registers the actual fallback port selected by Next.js", { timeout: 60_000
     expect(target).toMatch(/^http:\/\/127\.0\.0\.1:[0-9]+$/);
     const selectedPort = Number(new URL(target).port);
     expect(selectedPort).toBeGreaterThan(3000);
-    await expect(requestTestServer(selectedPort, { host: "localhost" })).resolves.toMatchObject({
-      status: 200,
-    });
+    await expect(requestTestServer(selectedPort)).resolves.toMatchObject({ status: 200 });
     expect(fixture.output()).toContain("Port 3000 is in use");
   });
 });

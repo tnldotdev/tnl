@@ -55,7 +55,6 @@ type Config struct {
 	ProjectRoot                  string
 	Service                      string
 	Target                       string
-	ProxyToken                   string // private app registration credential, never included in project metadata.
 	ResolveTarget                func(context.Context) (string, string, error)
 	ServiceProtocol              controlv1.PublicURLServiceProtocol
 	AccessMode                   controlv1.VisitorAccessMode

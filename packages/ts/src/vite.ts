@@ -57,18 +57,7 @@ export default function tnl(options: PrepareOptions = {}): Plugin {
       if (server.httpServer === null) {
         throw new TnlError("sdk.target_invalid");
       }
-      server.middlewares.use((request, response, next) => {
-        if (!configured.verifyRequest(request)) {
-          response.writeHead(403);
-          response.end();
-          return;
-        }
-        next();
-      });
       const listener = server.httpServer;
-      listener.prependListener("upgrade", (request, socket) => {
-        if (!configured.verifyRequest(request)) socket.destroy();
-      });
       const originalListen = server.listen.bind(server);
       server.listen = (port, isRestart) =>
         operation(isRestart === true ? "vite.restart" : "vite.register", async () => {

@@ -36,7 +36,6 @@ type PublicURLServerConfig struct {
 	RequirePostQuantum    bool
 	TargetTLSName         string
 	TargetOptions         publisherproxy.TargetOptions
-	ProxyToken            string
 	Handler               http.Handler
 	AdmitRequest          func(*http.Request) error
 	ObserveResponse       func(*http.Response) error

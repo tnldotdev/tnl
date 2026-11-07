@@ -120,7 +120,7 @@ func TestAppWorkflowProcessShutdownReleasesOwnershipAndPendingRegistration(t *te
 		t.Fatal(err)
 	}
 	var assignment publisherprotocol.Assignment
-	if err := publisherprotocol.Call(t.Context(), scoped, "POST", "/v1/prepare", publisherprotocol.Prepare{Version: 1, Directory: project.Root, Service: name, Owner: strings.Repeat("a", 32), ProxyToken: strings.Repeat("b", 64), PID: os.Getpid(), Framework: publisherprotocol.FrameworkNode}, &assignment); err != nil {
+	if err := publisherprotocol.Call(t.Context(), scoped, "POST", "/v1/prepare", publisherprotocol.Prepare{Version: 1, Directory: project.Root, Service: name, Owner: strings.Repeat("a", 32), PID: os.Getpid(), Framework: publisherprotocol.FrameworkNode}, &assignment); err != nil {
 		t.Fatal(err)
 	}
 	if assignment.RegistrationID == "" || assignment.Service != name {

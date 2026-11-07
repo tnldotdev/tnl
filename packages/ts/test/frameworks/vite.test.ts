@@ -12,7 +12,6 @@ import {
 } from "../helpers/project.js";
 import {
   holdLoopbackPort,
-  openTestWebSocket,
   openTestWebSocketWithMessage,
   requestTestServer,
   findAvailableLoopbackPort,
@@ -195,8 +194,7 @@ describe("tnl", () => {
     });
     const server = {
       close,
-      middlewares: { use: vi.fn() },
-      httpServer: { address: () => null, prependListener: vi.fn() },
+      httpServer: { address: () => null },
       listen: vi.fn(async () => undefined),
     };
     const configureServer = plugin.configureServer;
@@ -226,14 +224,12 @@ describe("tnl", () => {
     const close = vi.fn(async () => {});
     const server = {
       close,
-      middlewares: { use: vi.fn() },
       httpServer: {
         listening: true,
         address: () => ({ address: "127.0.0.1", port }),
         once: () => {},
         off: () => {},
         close: () => {},
-        prependListener: vi.fn(),
       },
       listen: vi.fn(async () => undefined),
     };
@@ -270,14 +266,11 @@ test(
       const selectedPort = Number(new URL(target).port);
       expect(selectedPort).toBeGreaterThanOrEqual(port);
 
-      const page = await requestTestServer(selectedPort, { host: "localhost" });
+      const page = await requestTestServer(selectedPort);
       expect(page.status).toBe(200);
       expect(page.body).toContain("Vite fixture");
       expect(page.headers["x-tnl-fixture"]).toBe("vite");
-      const appModule = await requestTestServer(selectedPort, {
-        host: "localhost",
-        path: "/src/main.ts",
-      });
+      const appModule = await requestTestServer(selectedPort, { path: "/src/main.ts" });
       expect(appModule.status).toBe(200);
       await expect(
         requestTestServer(selectedPort, { host: "existing.example" }),
@@ -290,39 +283,10 @@ test(
         status: 403,
       });
 
-      const credential = z
-        .object({ proxy_token: z.string().regex(/^[a-f0-9]{64}$/) })
-        .parse((await fixture.request()).body).proxy_token;
-      await expect(
-        requestTestServer(selectedPort, { host: "api.member.example" }),
-      ).resolves.toMatchObject({ status: 403 });
-      await expect(
-        requestTestServer(selectedPort, {
-          headers: { "X-Tnl-Proxy-Token": credential, "X-Forwarded-For": "203.0.113.10" },
-        }),
-      ).resolves.toMatchObject({ status: 200 });
-      await expect(
-        requestTestServer(selectedPort, {
-          host: "localhost",
-          headers: { "X-Forwarded-For": "203.0.113.10" },
-        }),
-      ).resolves.toMatchObject({ status: 200 });
-
-      const client = await requestTestServer(selectedPort, {
-        host: "localhost",
-        path: "/@vite/client",
-      });
+      const client = await requestTestServer(selectedPort, { path: "/@vite/client" });
       expect(client.status).toBe(200);
       const { environmentPath, token } = viteClientConnection(client.body);
-      await expect(
-        openTestWebSocket(selectedPort, `/?token=${encodeURIComponent(token)}`, {
-          protocol: "vite-hmr",
-        }),
-      ).rejects.toThrow();
-      const environment = await requestTestServer(selectedPort, {
-        host: "localhost",
-        path: environmentPath,
-      });
+      const environment = await requestTestServer(selectedPort, { path: environmentPath });
       expect(environment.status).toBe(200);
       // execute the browser defines without depending on Vite's serialization or host globals.
       const payload = runInNewContext(
@@ -335,7 +299,7 @@ test(
       const { message: socketMessage, socket } = await openTestWebSocketWithMessage(
         selectedPort,
         `/?token=${encodeURIComponent(token)}`,
-        { host: "localhost", origin: "https://api.member.example", protocol: "vite-hmr" },
+        { origin: "https://api.member.example", protocol: "vite-hmr" },
       );
       const message = z.object({ type: z.string() }).parse(JSON.parse(socketMessage));
       expect(message.type).toBe("connected");
@@ -347,7 +311,6 @@ test(
         updates: [expect.objectContaining({ acceptedPath: "/src/main.ts", path: "/src/main.ts" })],
       });
       const updatedModule = await requestTestServer(selectedPort, {
-        host: "localhost",
         path: `/src/main.ts?t=${Date.now()}`,
       });
       expect(updatedModule.status).toBe(200);
@@ -371,9 +334,7 @@ test("registers the actual next port selected by Vite", async () => {
     expect(selectedTarget).toMatch(/^http:\/\/127\.0\.0\.1:[0-9]+$/);
     const selectedPort = Number(new URL(selectedTarget).port);
     expect(selectedPort).toBeGreaterThan(port);
-    await expect(requestTestServer(selectedPort, { host: "localhost" })).resolves.toMatchObject({
-      status: 200,
-    });
+    await expect(requestTestServer(selectedPort)).resolves.toMatchObject({ status: 200 });
     expect(fixture.output()).toContain(`Port ${port} is in use, trying another one`);
   });
 });
@@ -389,9 +350,7 @@ test("registers and serves an IPv6 localhost target", async () => {
     expect(new URL(target).hostname).toBe("[::1]");
     const selectedPort = Number(new URL(target).port);
     expect(selectedPort).toBeGreaterThanOrEqual(port);
-    await expect(
-      requestTestServer(selectedPort, { address: "::1", host: "localhost" }),
-    ).resolves.toMatchObject({
+    await expect(requestTestServer(selectedPort, { address: "::1" })).resolves.toMatchObject({
       status: 200,
     });
   });
