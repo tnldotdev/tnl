@@ -296,18 +296,43 @@ def _command(binary: Path, *arguments: str, input_value: object = None) -> objec
         raise _error("invalid") from None
 
 
+@dataclass(frozen=True, slots=True)
+class _AbsentOwner:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class _MountedOwner:
+    handle: str
+
+
+@dataclass(frozen=True, slots=True)
+class _OwnedOwner:
+    handle: str
+    expires_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class _FailedOwner:
+    error: TnlError
+
+
+@dataclass(frozen=True, slots=True)
+class _ClosedOwner:
+    pass
+
+
+type _OwnerPhase = _AbsentOwner | _MountedOwner | _OwnedOwner | _FailedOwner | _ClosedOwner
+
+
 class _Session:
     def __init__(self, directory: str, service: str, mounted: str | None) -> None:
         self.directory = directory
         self.creator_pid = os.getpid()
         self.service = service
         self.mounted = mounted
-        self.handle = mounted
+        self.state: _OwnerPhase = _MountedOwner(mounted) if mounted is not None else _AbsentOwner()
         self.binary: Path | None = None
-        self.owned = False
-        self.expires_at: datetime | None = None
-        self.closed = False
-        self.failure: TnlError | None = None
         self.lock = threading.RLock()
         self.ipc: OwnerIPC | None = None
         self.context: object = None
@@ -325,21 +350,21 @@ class _Session:
         with self.lock:
             name = service or self.service
             started = False
-            if self.closed:
+            if isinstance(self.state, _ClosedOwner):
                 raise _error("closed")
-            if self.failure is not None:
-                raise self.failure
-            if self.owned and self.expires_at is not None and self.expires_at <= datetime.now(UTC):
+            if isinstance(self.state, _FailedOwner):
+                raise self.state.error
+            if isinstance(self.state, _OwnedOwner) and self.state.expires_at <= datetime.now(UTC):
                 if not prepare:
                     raise _error("expired")
                 # join the old owner before reusing its port. a new start uses
                 # current native identity and authorization, not old credentials.
                 self._stop_owner()
-            if self.handle is None and not prepare:
+            if isinstance(self.state, _AbsentOwner) and not prepare:
                 raise _error("not_prepared")
             if self.binary is None:
                 self.binary = native_binary().resolve(strict=True)
-            if self.handle is None:
+            if isinstance(self.state, _AbsentOwner):
                 try:
                     arguments = [
                         "start",
@@ -407,35 +432,37 @@ class _Session:
                         or not isinstance(status.get("project_runtime"), dict)
                     ):
                         raise _error("invalid")
-                    self.expires_at = _expiry(status.get("expires_at"))
-                    self.handle, self.owned = handle, True
+                    self.state = _OwnedOwner(handle, _expiry(status.get("expires_at")))
                     started = True
                     atexit.register(self._cleanup)
                 except TnlError as error:
-                    self.failure = error
+                    self.state = _FailedOwner(error)
                     raise
             try:
+                owner = self.state
+                if not isinstance(owner, (_MountedOwner, _OwnedOwner)):
+                    raise _error("not_prepared")
                 if prepare:
                     if self.ipc is None:
-                        self.ipc = OwnerIPC(self.handle)
+                        self.ipc = OwnerIPC(owner.handle)
                     raw = self.ipc.prepare(
                         name, selection.assertion if selection is not None else None
                     )
                 else:
-                    raw = _command(self.binary, "read", "--handle", self.handle, "--service", name)
+                    raw = _command(self.binary, "read", "--handle", owner.handle, "--service", name)
                 return _prepared(raw, name)
             except TnlError as error:
-                if prepare and self.owned and not started:
+                if prepare and isinstance(self.state, _OwnedOwner) and not started:
                     try:
                         recovered = _object(
-                            _command(self.binary, "recover", "--handle", self.handle),
+                            _command(self.binary, "recover", "--handle", owner.handle),
                             {"schema", "state"},
                         )
                         if recovered.get("schema") != 1 or recovered.get("state") != "stopped":
                             raise _error("invalid")
                     except TnlError:
                         raise error from None
-                    self.handle, self.owned, self.expires_at = None, False, None
+                    self.state = _AbsentOwner()
                     if self.ipc is not None:
                         self.ipc.close()
                         self.ipc = None
@@ -446,9 +473,10 @@ class _Session:
     def _stop_owner(self) -> None:
         if self.creator_pid != os.getpid():
             raise _error("closed")
-        assert self.binary is not None and self.handle is not None
+        owner = self.state
+        assert self.binary is not None and isinstance(owner, _OwnedOwner)
         stopped = _object(
-            _command(self.binary, "stop", "--handle", self.handle), {"schema", "state"}
+            _command(self.binary, "stop", "--handle", owner.handle), {"schema", "state"}
         )
         if (
             type(stopped.get("schema")) is not int
@@ -456,7 +484,7 @@ class _Session:
             or stopped.get("state") != "stopped"
         ):
             raise _error("invalid")
-        self.handle, self.owned, self.expires_at = None, False, None
+        self.state = _AbsentOwner()
         if self.ipc is not None:
             self.ipc.close()
             self.ipc = None
@@ -467,15 +495,15 @@ class _Session:
         if self.creator_pid != os.getpid():
             return
         with self.lock:
-            if self.closed:
+            if isinstance(self.state, _ClosedOwner):
                 return
-            if self.owned:
+            if isinstance(self.state, _OwnedOwner):
                 self._stop_owner()
             if self.ipc is not None:
                 self.ipc.close()
                 self.ipc = None
             with _sessions_lock:
-                self.closed = True
+                self.state = _ClosedOwner()
                 key = (self.directory, self.service, self.mounted)
                 if _sessions.get(key) is self:
                     del _sessions[key]
@@ -545,7 +573,7 @@ def _workload_session(directory: str, selection: Selection) -> _Session:
         approved = _identities.get(identity_key) if selection.assertion else None
         if approved is not None and approved[1] > datetime.now(UTC):
             cached = _sessions.get((directory, approved[0], None))
-            if cached is not None and not cached.closed:
+            if cached is not None and not isinstance(cached.state, _ClosedOwner):
                 return cached
         if policy not in _policy_locks:
             if len(_policy_locks) >= 32:
@@ -572,7 +600,7 @@ def _identify_workload_session(
         approved = _identities.get(identity_key) if selection.assertion else None
         if approved is not None and approved[1] > datetime.now(UTC):
             cached = _sessions.get((directory, approved[0], None))
-            if cached is not None and not cached.closed:
+            if cached is not None and not isinstance(cached.state, _ClosedOwner):
                 return cached
     binary = native_binary().resolve(strict=True)
     arguments = [
@@ -658,7 +686,9 @@ class ConnectionHandle[C: Connection]:
         return cast(C, connection)
 
     async def _prepare(self) -> C:
-        if self._session.creator_pid != os.getpid() or self._session.closed:
+        if self._session.creator_pid != os.getpid() or isinstance(
+            self._session.state, _ClosedOwner
+        ):
             raise _error("closed")
         selection = None
         if uses_workload():

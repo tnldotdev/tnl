@@ -375,8 +375,11 @@ def test_known_owned_expiry_requires_await_and_coalesces_joined_replacement(
     async def scenario() -> None:
         first = await handle
         original_deadline = first.expires_at
-        assert handle._session.expires_at == deadline
-        handle._session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        owner = handle._session.state
+        assert isinstance(owner, _connections._OwnedOwner) and owner.expires_at == deadline
+        handle._session.state = _connections._OwnedOwner(
+            owner.handle, datetime.now(UTC) - timedelta(seconds=1)
+        )
         before = list(calls)
         with pytest.raises(tnl.TnlError) as caught:
             handle.snapshot()
@@ -424,7 +427,11 @@ def test_expiry_cleanup_must_acknowledge_join_before_replacement(
     async def scenario() -> None:
         nonlocal joined
         await handle
-        handle._session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        owner = handle._session.state
+        assert isinstance(owner, _connections._OwnedOwner)
+        handle._session.state = _connections._OwnedOwner(
+            owner.handle, datetime.now(UTC) - timedelta(seconds=1)
+        )
         with pytest.raises(tnl.TnlError) as caught:
             await handle
         assert caught.value.code == "sdk.connection_invalid"
@@ -467,7 +474,11 @@ def test_expiry_restart_observes_current_authentication_denial_without_retrying_
     async def scenario() -> None:
         nonlocal allowed
         await handle
-        handle._session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        owner = handle._session.state
+        assert isinstance(owner, _connections._OwnedOwner)
+        handle._session.state = _connections._OwnedOwner(
+            owner.handle, datetime.now(UTC) - timedelta(seconds=1)
+        )
         allowed = False
         failures = await asyncio.gather(*(one() for _ in range(8)), return_exceptions=True)
         assert all(error is denied for error in failures)
