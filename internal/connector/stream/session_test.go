@@ -18,6 +18,9 @@ func TestPreparedSessionForwardCloseAndSiblingIsolation(t *testing.T) {
 	if got := s.SelectedRelayAddress(); got != f.run.PairReady.Relays[0].RelayAddress {
 		t.Fatalf("initial signed slot-zero relay = %q", got)
 	}
+	if got := s.InnerCipherSuite(); got == 0 || got != s.connection.connection.ConnectionState().TLS.CipherSuite {
+		t.Fatal("inner cipher metadata did not match the retained QUIC connection", got)
+	}
 	app, local := net.Pipe()
 	t.Cleanup(func() { _ = app.Close() })
 	done := make(chan error, 1)

@@ -7,6 +7,8 @@ import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 import { build } from "esbuild";
 import * as z from "zod";
+import { parseVariant } from "../../development/connector-wasm/variant.ts";
+import { queryCount } from "../../development/connector-wasm/postgres.ts";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const source = path.join(root, "development/connector-wasm");
@@ -17,6 +19,9 @@ const { values } = parseArgs({
     fixture: { type: "string" },
     preflight: { type: "boolean", default: false },
     queries: { type: "string", default: "10" },
+    warmup: { type: "string", default: "1" },
+    variant: { type: "string", default: "baseline" },
+    diagnostics: { type: "boolean", default: false },
   },
 });
 if (values.fixture === undefined && !values.preflight)
@@ -28,6 +33,8 @@ const serviceRoot = values.preflight
   ? undefined
   : z.object({ service_root_pem: z.string().min(1) }).parse(fixture).service_root_pem;
 const queries = Number(values.queries);
+const variant = parseVariant(values.variant);
+const warmup = queryCount(values.warmup);
 if (!Number.isSafeInteger(queries) || queries < 1 || queries > 10_000)
   throw new Error("--queries must be an integer between 1 and 10000");
 const output = path.join(source, "dist");
@@ -149,7 +156,7 @@ const config :Workerd.Config = (
         .passthrough();
       const run = async (fault: boolean, holdMs: number) => {
         const response = await fetch(
-          `http://127.0.0.1:${port}/run?queries=${queries}&fault=${fault}&hold_ms=${holdMs}`,
+          `http://127.0.0.1:${port}/run?queries=${queries}&fault=${fault}&hold_ms=${holdMs}&variant=${variant}&warmup=${warmup}&diagnostics=${values.diagnostics}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },

@@ -7,8 +7,9 @@ tasks:
     deps: [":wasm:build"]
     vars:
       RUNTIME: '{{default "node" .RUNTIME}}'
+      VARIANT: '{{default "baseline" .VARIANT}}'
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationConnectorWASMFixture$' -count=1 -timeout=10m -args -tnl-test-tier=integration -tnl-wasm-fixture-command='["node","scripts/test/connector-wasm.ts","--runtime","{{.RUNTIME}}","--fixture","{fixture}"]'
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationConnectorWASMFixture$' -count=1 -timeout=10m -args -tnl-test-tier=integration -tnl-wasm-fixture-command='["node","scripts/test/connector-wasm.ts","--runtime","{{.RUNTIME}}","--variant","{{.VARIANT}}","--fixture","{fixture}"]'
 
   connector-wasm:native:
     dir: "{{.ROOT_DIR}}"

@@ -188,6 +188,12 @@ tasks:
     cmds:
       - task: wasm:benchmark
 
+  go:test:load:connector-wasm-profile:
+    dir: "{{.ROOT_DIR}}"
+    desc: Attribute WASM costs and compare buffer/async variants locally (CPU=true enables separate sampling)
+    cmds:
+      - task: wasm:profile
+
   package:
     dir: "{{.ROOT_DIR}}"
     desc: Build a local release snapshot

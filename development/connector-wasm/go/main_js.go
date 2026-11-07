@@ -20,9 +20,35 @@ var dispatcher js.Func
 var dispatcherOnce sync.Once
 var methodMu sync.Mutex
 var nextMethodID uint64
-var methodRegistry = make(map[string]map[string]func([]js.Value) (any, error))
+var methodRegistry = make(map[string]registeredMethods)
 
-type methodSet struct{ id string }
+type registeredMethods struct {
+	compact bool
+	work    map[string]func([]js.Value) (any, error)
+}
+
+type methodSet struct {
+	id      string
+	compact bool
+}
+
+var compactConstructorsOnce sync.Once
+var compactPromiseConstructor, compactBytesConstructor js.Value
+
+func initializeCompactConstructors() {
+	compactConstructorsOnce.Do(func() {
+		compactPromiseConstructor = js.Global().Get("Promise")
+		compactBytesConstructor = js.Global().Get("Uint8Array")
+	})
+}
+
+func bytesConstructor(compact bool) js.Value {
+	if compact {
+		initializeCompactConstructors()
+		return compactBytesConstructor
+	}
+	return js.Global().Get("Uint8Array")
+}
 
 // bound JS functions retain only an immutable id, never a per-resource Go Func.
 // retired ids reject saved read/write refs and make saved close refs idempotent.
@@ -30,10 +56,18 @@ type methodSet struct{ id string }
 // the JS function that an application may have saved before close.
 func initializeDispatcher() {
 	dispatcherOnce.Do(func() {
+		counters.PersistentCallbacks++
 		dispatcher = js.FuncOf(func(_ js.Value, args []js.Value) any {
 			id, name := args[0].String(), args[1].String()
+			// retain the mode in bound JS arguments too, so saved methods need no
+			// registry tombstone after their resource has joined and retired.
+			compact := args[2].Bool()
 			methodMu.Lock()
-			work := methodRegistry[id][name]
+			methods, exists := methodRegistry[id]
+			work := methods.work[name]
+			if exists {
+				compact = methods.compact
+			}
 			methodMu.Unlock()
 			if work == nil {
 				return promise(func() (any, error) {
@@ -41,9 +75,9 @@ func initializeDispatcher() {
 						return nil, nil
 					}
 					return nil, net.ErrClosed
-				})
+				}, compact)
 			}
-			return promise(func() (any, error) { return work(args[2:]) })
+			return promise(func() (any, error) { return work(args[3:]) }, compact)
 		})
 	})
 }
@@ -54,17 +88,20 @@ func (m methodSet) retire() {
 	methodMu.Unlock()
 }
 
-func promise(work func() (any, error)) js.Value {
+func promise(work func() (any, error), compact ...bool) js.Value {
+	counters.ApplicationPromises++
+	if len(compact) == 1 && compact[0] {
+		initializeCompactConstructors()
+		deferred := compactPromiseConstructor.Call("withResolvers")
+		resolve, reject := deferred.Get("resolve"), deferred.Get("reject")
+		go settleApplicationPromise(work, resolve, reject)
+		return deferred.Get("promise")
+	}
+	counters.PromiseExecutors++
+	counters.CallbackRegistrations++
 	executor := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		resolve, reject := args[0], args[1]
-		go func() {
-			value, err := work()
-			if err != nil {
-				reject.Invoke(js.Global().Get("Error").New(err.Error()))
-			} else {
-				resolve.Invoke(value)
-			}
-		}()
+		go settleApplicationPromise(work, resolve, reject)
 		return nil
 	})
 	p := js.Global().Get("Promise").New(executor)
@@ -72,8 +109,20 @@ func promise(work func() (any, error)) js.Value {
 	return p
 }
 
+// both modes retain one application goroutine per operation; only callback
+// setup changes. completion and backpressure stay owned by the operation.
+func settleApplicationPromise(work func() (any, error), resolve, reject js.Value) {
+	value, err := work()
+	if err != nil {
+		reject.Invoke(js.Global().Get("Error").New(err.Error()))
+	} else {
+		resolve.Invoke(value)
+	}
+}
+
 func main() {
 	initializeDispatcher()
+	counters.PersistentCallbacks++
 	prepareFunc := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		if len(args) < 2 || len(args) > 3 {
 			return promise(func() (any, error) { return nil, errors.New("prepare requires options and host") })
@@ -88,6 +137,7 @@ func main() {
 		return promise(func() (any, error) {
 			ctx, cancel := context.WithCancelCause(context.Background())
 			if !signal.IsUndefined() && !signal.IsNull() {
+				counters.CallbackRegistrations++
 				onAbort := js.FuncOf(func(js.Value, []js.Value) any { cancel(context.Canceled); return nil })
 				signal.Call("addEventListener", "abort", onAbort)
 				defer func() { signal.Call("removeEventListener", "abort", onAbort); onAbort.Release() }()
@@ -100,7 +150,7 @@ func main() {
 				cancel(err)
 				return nil, err
 			}
-			p, err := prepare(ctx, o, hostDial(host))
+			p, err := prepare(ctx, o, hostDial(host, o.CompactPromises))
 			if err != nil {
 				cancel(err)
 				return nil, err
@@ -109,8 +159,10 @@ func main() {
 			return h.export(), nil
 		})
 	})
-	exported = append(exported, prepareFunc, dispatcher)
-	js.Global().Set("tnlConnectorWasm", map[string]any{"prepare": prepareFunc})
+	counters.PersistentCallbacks++
+	diagnosticFunc := js.FuncOf(func(js.Value, []js.Value) any { return diagnostics() })
+	exported = append(exported, prepareFunc, dispatcher, diagnosticFunc)
+	js.Global().Set("tnlConnectorWasm", map[string]any{"prepare": prepareFunc, "diagnostics": diagnosticFunc})
 	select {}
 }
 
@@ -134,14 +186,15 @@ func bind(object js.Value, name string, methods *methodSet, work func([]js.Value
 	if methods.id == "" {
 		nextMethodID++
 		methods.id = strconv.FormatUint(nextMethodID, 10)
-		methodRegistry[methods.id] = make(map[string]func([]js.Value) (any, error))
+		methodRegistry[methods.id] = registeredMethods{compact: methods.compact, work: make(map[string]func([]js.Value) (any, error))}
 	}
-	methodRegistry[methods.id][name] = work
+	methodRegistry[methods.id].work[name] = work
 	methodMu.Unlock()
-	object.Set(name, dispatcher.Value.Call("bind", js.Null(), methods.id, name))
+	object.Set(name, dispatcher.Value.Call("bind", js.Null(), methods.id, name, methods.compact))
 }
 
 func (h *handle) export() js.Value {
+	h.funcs.compact = h.prepared.compactPromises
 	h.object = js.Global().Get("Object").New()
 	js.Global().Get("Object").Call("defineProperty", h.object, "selectedRelayAddress", map[string]any{"value": h.prepared.session.SelectedRelayAddress(), "writable": false, "enumerable": true})
 	bind(h.object, "open", &h.funcs, func([]js.Value) (any, error) { return h.open() })
@@ -227,22 +280,23 @@ func (h *handle) close() error {
 }
 
 type byteStream struct {
-	owner           *handle
-	ctx             context.Context
-	conn            net.Conn
-	raw             net.Conn
-	readMu, writeMu sync.Mutex
-	mu              sync.Mutex
-	closed          bool
-	operations      sync.WaitGroup
-	phase           streamPhase
-	eof             chan struct{}
-	eofOnce         sync.Once
-	done            chan struct{}
-	forwardErr      error // read only after done closes.
-	once            sync.Once
-	object          js.Value
-	funcs           methodSet
+	owner                   *handle
+	ctx                     context.Context
+	conn                    net.Conn
+	raw                     net.Conn
+	readMu, writeMu         sync.Mutex
+	mu                      sync.Mutex
+	closed                  bool
+	operations              sync.WaitGroup
+	phase                   streamPhase
+	eof                     chan struct{}
+	eofOnce                 sync.Once
+	done                    chan struct{}
+	forwardErr              error // read only after done closes.
+	readBuffer, writeBuffer []byte
+	once                    sync.Once
+	object                  js.Value
+	funcs                   methodSet
 }
 
 type streamPhase uint8
@@ -286,6 +340,7 @@ func (s *byteStream) enter() error {
 }
 
 func (s *byteStream) export() js.Value {
+	s.funcs.compact = s.owner.prepared.compactPromises
 	s.object = js.Global().Get("Object").New()
 	bind(s.object, "read", &s.funcs, func(args []js.Value) (any, error) {
 		if err := s.enter(); err != nil {
@@ -297,10 +352,21 @@ func (s *byteStream) export() js.Value {
 		}
 		s.readMu.Lock()
 		defer s.readMu.Unlock()
-		b := make([]byte, args[0].Int())
+		counters.ApplicationReads++
+		max := args[0].Int()
+		b := s.readBuffer
+		if cap(b) < max {
+			b = make([]byte, max)
+			counters.ApplicationReadAllocated += uint64(max)
+		}
+		b = b[:max]
+		if s.owner.prepared.reuseBuffers {
+			s.readBuffer = b
+		}
 		n, err := s.conn.Read(b)
 		if n > 0 {
-			v := js.Global().Get("Uint8Array").New(n)
+			counters.ApplicationReadBytes += uint64(n)
+			v := bytesConstructor(s.owner.prepared.compactPromises).New(n)
 			js.CopyBytesToJS(v, b[:n])
 			return v, nil
 		}
@@ -314,13 +380,24 @@ func (s *byteStream) export() js.Value {
 			return nil, err
 		}
 		defer s.operations.Done()
-		if len(args) != 1 || !args[0].InstanceOf(js.Global().Get("Uint8Array")) || args[0].Length() > 1<<20 {
+		if len(args) != 1 || !args[0].InstanceOf(bytesConstructor(s.owner.prepared.compactPromises)) || args[0].Length() > 1<<20 {
 			return nil, errors.New("write requires Uint8Array of at most 1048576 bytes")
 		}
-		b := make([]byte, args[0].Length())
-		js.CopyBytesToGo(b, args[0])
 		s.writeMu.Lock()
 		defer s.writeMu.Unlock()
+		counters.ApplicationWrites++
+		size := args[0].Length()
+		b := s.writeBuffer
+		if cap(b) < size {
+			b = make([]byte, size)
+			counters.ApplicationWriteAllocated += uint64(size)
+		}
+		b = b[:size]
+		if s.owner.prepared.reuseBuffers {
+			s.writeBuffer = b
+		}
+		js.CopyBytesToGo(b, args[0])
+		counters.ApplicationWriteBytes += uint64(len(b))
 		for len(b) > 0 {
 			n, err := s.conn.Write(b)
 			if err != nil {

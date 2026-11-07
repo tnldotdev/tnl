@@ -11,7 +11,12 @@ import {
   observerPostgresClient,
   proveCommittedWrite,
 } from "./postgres.ts";
-import type { QueryMeasurements, WarmInstrumentation, WriteProof } from "./postgres.ts";
+import type {
+  ObserveWarm,
+  QueryMeasurements,
+  WarmInstrumentation,
+  WriteProof,
+} from "./postgres.ts";
 
 export interface Fixture {
   options: PrepareOptions;
@@ -26,6 +31,9 @@ export interface Fixture {
   // experimental qualification controls only; Node leaves fault injection enabled.
   injectFault?: boolean;
   renewalHoldMs?: number;
+  warmupQueries?: number;
+  observeWarm?: ObserveWarm;
+  reuseReadView?: boolean;
 }
 
 export interface FixtureReport {
@@ -136,6 +144,7 @@ export async function runFixture(
   let renewalHoldMs = 3000;
   const additionalClients: pg.Client[] = [];
   let faultRelay: string | undefined;
+  const observeWarm = fixture.observeWarm;
   const closeHandle = (): Promise<void> => {
     closingHandle ??= handle?.close() ?? Promise.resolve();
     return closingHandle;
@@ -159,7 +168,7 @@ export async function runFixture(
     if (signal?.aborted) throw abortError();
     phase = "PostgreSQL TLS";
     const opening = performance.now();
-    stream = await openPostgresStream(handle, signal);
+    stream = await openPostgresStream(handle, signal, !fixture.reuseReadView);
     const streamTlsMs = performance.now() - opening;
     streamClosed = new Promise<void>((resolve) => stream?.once("close", resolve));
     // also cover the short interval before pg installs its stream error listener.
@@ -182,7 +191,13 @@ export async function runFixture(
     await client.connect();
     const pgConnectMs = performance.now() - connecting;
     phase = "PostgreSQL query";
-    const measured = await measureWarmPostgres(client, fixture.queries, fixture.instrumentWarm);
+    const measured = await measureWarmPostgres(
+      client,
+      fixture.queries,
+      fixture.instrumentWarm,
+      fixture.warmupQueries,
+      observeWarm && ((sample) => observeWarm("wasm", sample)),
+    );
     report = {
       ok: true,
       value: 1,
@@ -216,7 +231,13 @@ export async function runFixture(
       await native.connect();
       const nativeConnectMs = performance.now() - nativeConnecting;
       report.native = {
-        ...(await measureWarmPostgres(native, fixture.queries, fixture.instrumentWarm)),
+        ...(await measureWarmPostgres(
+          native,
+          fixture.queries,
+          fixture.instrumentWarm,
+          fixture.warmupQueries,
+          observeWarm && ((sample) => observeWarm("native", sample)),
+        )),
         baseline: "already-ready in-process Go stream.Serve",
         pgConnectMs: nativeConnectMs,
         fullNativeHelperComparison: "not-measured",

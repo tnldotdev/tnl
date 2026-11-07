@@ -1,6 +1,7 @@
 import pg from "pg";
 import type { LocalFixture } from "./fixture.ts";
 import { parseTCPAddress } from "./host.ts";
+import type { WarmDiagnostics } from "./diagnostics.ts";
 
 export interface QueryMeasurements {
   backendPid: number;
@@ -8,9 +9,15 @@ export interface QueryMeasurements {
   latencyMs: { min: number; p50: number; p95: number; p99: number; max: number };
   elapsedMs: number;
   queriesPerSecond: number | null;
-  warmupQueries?: 1;
+  warmupQueries?: number;
   runtime?: WarmRuntimeMetrics;
+  diagnostics?: WarmDiagnostics;
 }
+
+export type ObserveWarm = (
+  label: "wasm" | "native",
+  sample: () => Promise<QueryMeasurements>,
+) => Promise<QueryMeasurements>;
 
 export type WarmRuntimeMetrics = {
   scope: "caller-process-only; native Go daemon excluded";
@@ -122,12 +129,17 @@ export async function measureWarmPostgres(
   client: QueryClient,
   queries: number,
   instrument?: WarmInstrumentation,
+  warmupQueries = 1,
+  observe?: (sample: () => Promise<QueryMeasurements>) => Promise<QueryMeasurements>,
 ): Promise<QueryMeasurements> {
-  const warmup = await measurePostgres(client, 1);
-  const measured = await measurePostgres(client, queries, instrument);
+  if (!Number.isSafeInteger(warmupQueries) || warmupQueries < 1 || warmupQueries > 10000)
+    throw new Error("warmup queries must be an integer between 1 and 10000");
+  const warmup = await measurePostgres(client, warmupQueries);
+  const sample = () => measurePostgres(client, queries, instrument);
+  const measured = await (observe ? observe(sample) : sample());
   if (warmup.backendPid !== measured.backendPid)
     throw new Error("PostgreSQL backend changed after warmup");
-  return { ...measured, warmupQueries: 1 };
+  return { ...measured, warmupQueries };
 }
 
 export function queryCount(value: string | undefined | null): number {

@@ -1,12 +1,14 @@
 import { execFile } from "node:child_process";
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
+import { parseArgs, promisify } from "node:util";
 
 const exec = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "../..");
 const output = path.join(root, "development/connector-wasm/dist");
 const started = performance.now();
+const { values } = parseArgs({ options: { profile: { type: "boolean", default: false } } });
+const stem = values.profile ? "connector-profile" : "connector";
 
 await mkdir(output, { recursive: true });
 const { stdout: goroot } = await exec("go", ["env", "GOROOT"], { cwd: root });
@@ -15,9 +17,9 @@ await exec(
   [
     "build",
     "-trimpath",
-    "-ldflags=-s -w",
+    values.profile ? "-ldflags=-w" : "-ldflags=-s -w",
     "-o",
-    path.join(output, "connector.wasm"),
+    path.join(output, `${stem}.wasm`),
     "./development/connector-wasm/go",
   ],
   { cwd: root, env: { ...process.env, GOOS: "js", GOARCH: "wasm", CGO_ENABLED: "0" } },
@@ -32,7 +34,7 @@ const { stdout: goVersion } = await exec("go", ["version"], { cwd: root });
 const { stdout: quicVersion } = await exec("go", ["list", "-m", "github.com/quic-go/quic-go"], {
   cwd: root,
 });
-const { size: wasmBytes } = await stat(path.join(output, "connector.wasm"));
+const { size: wasmBytes } = await stat(path.join(output, `${stem}.wasm`));
 const versions = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as {
   devDependencies: Record<string, string>;
 };
@@ -42,6 +44,10 @@ const result = {
   workerd: versions.devDependencies.workerd,
   wasmBytes,
   buildMilliseconds: performance.now() - started,
+  functionNames: values.profile,
 };
-await writeFile(path.join(output, "build.json"), `${JSON.stringify(result, null, 2)}\n`);
+await writeFile(
+  path.join(output, values.profile ? "build-profile.json" : "build.json"),
+  `${JSON.stringify(result, null, 2)}\n`,
+);
 console.log(JSON.stringify(result));

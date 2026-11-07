@@ -41,6 +41,8 @@ type options struct {
 	CAPEM             string   `json:"ca_pem"`
 	RelayCAPEM        string   `json:"relay_ca_pem"`
 	ServiceCAPEM      string   `json:"service_ca_pem"`
+	ReuseBuffers      bool     `json:"bridge_reuse_buffers"`
+	CompactPromises   bool     `json:"bridge_compact_promises"`
 }
 
 type backend struct {
@@ -55,11 +57,13 @@ type backend struct {
 }
 
 type prepared struct {
-	backend  *backend
-	session  *connectorstream.Session
-	trust    *tls.Config
-	hostname string
-	protocol string
+	backend         *backend
+	session         *connectorstream.Session
+	trust           *tls.Config
+	hostname        string
+	protocol        string
+	reuseBuffers    bool
+	compactPromises bool
 }
 
 func roots(pem string) (*x509.CertPool, error) {
@@ -76,6 +80,7 @@ func prepare(ctx context.Context, o options, dial func(context.Context, string, 
 		return nil, err
 	}
 	trust := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}
+	trust.VerifyConnection = func(state tls.ConnectionState) error { observeTLS("control", state); return nil }
 	transport := &http.Transport{DialContext: dial, TLSClientConfig: trust, ForceAttemptHTTP2: false}
 	client, err := workload.New(o.ControlURL, &http.Client{Transport: transport})
 	if err != nil {
@@ -105,6 +110,8 @@ func prepare(ctx context.Context, o options, dial func(context.Context, string, 
 		return nil, err
 	}
 	relayTrust, serviceTrust := trust.Clone(), trust.Clone()
+	relayTrust.VerifyConnection = func(state tls.ConnectionState) error { observeTLS("relay", state); return nil }
+	serviceTrust.VerifyConnection = func(state tls.ConnectionState) error { observeTLS("visitor", state); return nil }
 	if o.RelayCAPEM != "" {
 		relayTrust.RootCAs, err = roots(o.RelayCAPEM)
 		if err != nil {
@@ -124,7 +131,8 @@ func prepare(ctx context.Context, o options, dial func(context.Context, string, 
 	if err != nil {
 		return nil, err
 	}
-	return &prepared{b, session, serviceTrust, run.Endpoint.Hostname, run.Protocol}, nil
+	negotiated["inner-quic"] = tls.CipherSuiteName(session.InnerCipherSuite())
+	return &prepared{backend: b, session: session, trust: serviceTrust, hostname: run.Endpoint.Hostname, protocol: run.Protocol, reuseBuffers: o.ReuseBuffers, compactPromises: o.CompactPromises}, nil
 }
 
 type noHostUDP struct{}

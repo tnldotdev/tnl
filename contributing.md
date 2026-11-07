@@ -92,6 +92,34 @@ Use `bun` or `workerd` for the other runtimes. The native baseline is an already
 prepared Go connector in the same topology, not the SDK's native helper process;
 its query timings do not measure helper startup, IPC, CPU, or memory.
 
+To compare the byte bridge changes under the same local topology:
+
+```sh
+mise exec -- task go:test:load:connector-wasm-profile
+mise exec -- task go:test:load:connector-wasm-profile CPU=true
+mise exec -- task wasm:benchmark:crypto
+```
+
+The first command runs `baseline`, `buffers`, `promises`, and `optimized` in forward
+and reverse order. Each sample uses a fresh Node process, 100 warm-up queries,
+and the same native connector baseline. `buffers` reuses Go application buffers
+and views the returned, independently owned JS array without another copy;
+`promises` reuses Go callback dispatchers and creates Promise resolvers in JS,
+avoiding per-operation Go executor callbacks.
+`optimized` combines them. All variants still use verified TLS and the same
+transaction/fault proof. No variant changes the SDK's backend selection.
+To qualify the combined variant on a runtime, pass `VARIANT=optimized` to
+`go:test:integration:connector-wasm` alongside `RUNTIME=node`, `bun`, or `workerd`.
+
+`CPU=true` samples only the baseline and combined WASM query intervals, using
+a separate module with function names. It saves private `.cpuprofile` files in
+the ignored `development/connector-wasm/dist/profiles` directory. Do not compare
+those instrumented timings to ordinary runs. The reports include byte/call
+counts, Go allocation/GC deltas, negotiated ciphers, and heuristic CPU stack
+categories; raw profiles are needed to audit the categories. The crypto target
+compares synthetic AEAD operations natively, with Go assembly disabled, and in
+WASM. Primitive speed ratios do not measure crypto's share of a query.
+
 ## edit generated sources
 
 Edit the source named in a generated file's header, then regenerate:

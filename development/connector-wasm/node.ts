@@ -7,6 +7,8 @@ import { startConnectorWasm } from "./loader.ts";
 import { runFixture, safeFixtureError } from "./run.ts";
 import { queryCount } from "./postgres.ts";
 import { memorySnapshot, nodeWarmInstrumentation } from "./node-measurements.ts";
+import { observeQueries } from "./node-profile.ts";
+import { parseVariant, tuning } from "./variant.ts";
 
 export async function main(args: string[]): Promise<void> {
   const { values } = parseArgs({
@@ -16,12 +18,20 @@ export async function main(args: string[]): Promise<void> {
       wasm: { type: "string" },
       runtime: { type: "string" },
       queries: { type: "string" },
+      warmup: { type: "string", default: "1" },
+      variant: { type: "string", default: "baseline" },
+      diagnostics: { type: "boolean", default: false },
+      "cpu-profile": { type: "string" },
     },
     strict: true,
     allowPositionals: false,
   });
   if (!values.fixture) throw new Error("use --fixture <private JSON file>");
   const queries = queryCount(values.queries);
+  const warmup = queryCount(values.warmup);
+  const variant = parseVariant(values.variant);
+  const settings = tuning(variant);
+  if (values["cpu-profile"] && process.versions.bun) throw new Error("CPU sampling requires Node");
   const runtimeURL = values.runtime
     ? pathToFileURL(values.runtime)
     : new URL("./dist/wasm_exec.js", import.meta.url);
@@ -52,10 +62,16 @@ export async function main(args: string[]): Promise<void> {
       queries,
     );
     fixture.instrumentWarm = nodeWarmInstrumentation();
+    fixture.warmupQueries = warmup;
+    fixture.options.bridge_reuse_buffers = settings.reuseBuffers;
+    fixture.options.bridge_compact_promises = settings.compactPromises;
+    fixture.reuseReadView = settings.reuseBuffers;
+    if (values.diagnostics || values["cpu-profile"])
+      fixture.observeWarm = observeQueries(runtime.bridge, values["cpu-profile"]);
     const host = mapFixtureHost(createNodeHost(combined), local);
     const result = await runFixture(runtime.bridge, host, fixture, combined);
     process.stdout.write(
-      `${JSON.stringify({ ...result, runtime: { engine, compileMs, instantiateAndStartMs: runtime.instantiateAndStartMs }, memory: { scope: "caller-process-only; native Go daemon excluded", gc: "not-forced", beforeWasm, afterWasmInit, afterCleanup: memorySnapshot() } })}\n`,
+      `${JSON.stringify({ ...result, variant, runtime: { engine, compileMs, instantiateAndStartMs: runtime.instantiateAndStartMs }, memory: { scope: "caller-process-only; native Go daemon excluded", gc: "not-forced", beforeWasm, afterWasmInit, afterCleanup: memorySnapshot() } })}\n`,
     );
   } finally {
     process.removeListener("SIGINT", onSignal);

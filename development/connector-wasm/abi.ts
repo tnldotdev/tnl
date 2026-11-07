@@ -38,6 +38,7 @@ export interface ConnectorHandle {
 }
 
 export interface ConnectorBridge {
+  diagnostics?(): unknown;
   prepare(
     options: PrepareOptions,
     host: ConnectorHost,

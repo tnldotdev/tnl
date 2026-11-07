@@ -14,11 +14,13 @@ class PostgresStream extends Duplex {
   private readonly stream: ConnectorStream;
   private readonly signal: AbortSignal | undefined;
   private closing: Promise<void> | undefined;
+  private readonly copyReads: boolean;
 
-  constructor(stream: ConnectorStream, signal?: AbortSignal) {
+  constructor(stream: ConnectorStream, signal?: AbortSignal, copyReads = true) {
     super({ highWaterMark: MAX_CHUNK_BYTES, allowHalfOpen: false, autoDestroy: true });
     this.stream = stream;
     this.signal = signal;
+    this.copyReads = copyReads;
     signal?.addEventListener("abort", this.onAbort, { once: true });
     if (signal?.aborted) this.onAbort();
   }
@@ -69,7 +71,13 @@ class PostgresStream extends Duplex {
           return;
         }
         // push's false result stops reads until node calls _read again.
-        this.push(bytes === null ? null : Buffer.from(bytes));
+        this.push(
+          bytes === null
+            ? null
+            : this.copyReads
+              ? Buffer.from(bytes)
+              : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+        );
       },
       () => {
         this.reading = false;
@@ -119,6 +127,7 @@ class PostgresStream extends Duplex {
 export async function openPostgresStream(
   handle: ConnectorHandle,
   signal?: AbortSignal,
+  copyReads = true,
 ): Promise<PostgresStream> {
   if (signal?.aborted) throw abortError();
   let stream: ConnectorStream;
@@ -140,7 +149,7 @@ export async function openPostgresStream(
     if (signal?.aborted) throw abortError();
     await stream.startTls();
     if (signal?.aborted) throw abortError();
-    return new PostgresStream(stream, signal);
+    return new PostgresStream(stream, signal, copyReads);
   } catch {
     try {
       await close();

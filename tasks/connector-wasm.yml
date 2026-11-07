@@ -41,5 +41,35 @@ tasks:
     vars:
       RUNTIME: '{{default "node" .RUNTIME}}'
       QUERIES: '{{default "1000" .QUERIES}}'
+      VARIANT: '{{default "baseline" .VARIANT}}'
+      WARMUP: '{{default "1" .WARMUP}}'
     cmds:
-      - go -C tools/testharness run . postgres -- go test -v ./internal/daemon -run='^TestLoadConnectorWASMFixture$' -count=1 -timeout=10m -args -tnl-test-tier=runtime-load -tnl-wasm-fixture-command='["node","scripts/test/connector-wasm.ts","--runtime","{{.RUNTIME}}","--queries","{{.QUERIES}}","--fixture","{fixture}"]'
+      - go -C tools/testharness run . postgres -- go test -v ./internal/daemon -run='^TestLoadConnectorWASMFixture$' -count=1 -timeout=10m -args -tnl-test-tier=runtime-load -tnl-wasm-fixture-command='["node","scripts/test/connector-wasm.ts","--runtime","{{.RUNTIME}}","--queries","{{.QUERIES}}","--variant","{{.VARIANT}}","--warmup","{{.WARMUP}}","--fixture","{fixture}"]'
+
+  profile:
+    dir: "{{.ROOT_DIR}}"
+    desc: Compare isolated bridge variants with counters and allocation deltas (CPU=true for separate sampled runs)
+    deps: [build]
+    vars:
+      QUERIES: '{{default "1000" .QUERIES}}'
+      CPU: '{{default "false" .CPU}}'
+    cmds:
+      - node scripts/build/connector-wasm.ts --profile
+      - go -C tools/testharness run . postgres -- go test -v ./internal/daemon -run='^TestLoadConnectorWASMFixture$' -count=1 -timeout=10m -args -tnl-test-tier=runtime-load -tnl-wasm-fixture-command='["node","scripts/test/connector-wasm-profile.ts","--queries","{{.QUERIES}}","--fixture","{fixture}"{{if eq .CPU "true"}},"--cpu","--variant","baseline","--variant","optimized","--repeats","1"{{end}}]'
+
+  benchmark:crypto:
+    dir: "{{.ROOT_DIR}}"
+    desc: Measure synthetic AEAD primitives natively, without assembly, and inside WASM
+    cmds:
+      - go test ./development/connector-wasm/go -run='^TestCryptoAEADRoundTrip$' -bench='^BenchmarkCryptoAEAD$' -benchmem -benchtime=100ms -count=3 -cpu=1
+      - go test -tags=purego ./development/connector-wasm/go -run='^TestCryptoAEADRoundTrip$' -bench='^BenchmarkCryptoAEAD$' -benchmem -benchtime=100ms -count=3 -cpu=1
+      - task: benchmark:crypto:wasm
+
+  benchmark:crypto:wasm:
+    internal: true
+    dir: "{{.ROOT_DIR}}"
+    env:
+      GOOS: js
+      GOARCH: wasm
+    cmds:
+      - go test -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./development/connector-wasm/go -run='^TestCryptoAEADRoundTrip$' -bench='^BenchmarkCryptoAEAD$' -benchmem -benchtime=100ms -count=3 -cpu=1

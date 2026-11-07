@@ -26,6 +26,12 @@ func (s *Session) Context() context.Context { return s.connection.ctx }
 // preparation. it does not predict a later failover or select another relay.
 func (s *Session) SelectedRelayAddress() string { return s.initialRelayAddress }
 
+// InnerCipherSuite observes the retained QUIC connection's negotiated cipher.
+// it is diagnostic metadata, not a way to choose or replace connection trust.
+func (s *Session) InnerCipherSuite() uint16 {
+	return s.connection.connection.ConnectionState().TLS.CipherSuite
+}
+
 func (s *Session) Forward(ctx context.Context, local net.Conn) error {
 	return s.connection.Forward(ctx, local)
 }

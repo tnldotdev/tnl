@@ -5,6 +5,8 @@ import { mapFixtureHost, parseLocalFixture, prepareFixture } from "./fixture.ts"
 import { startConnectorWasm } from "./loader.ts";
 import { runFixture, runnerScenario, safeFixtureError } from "./run.ts";
 import { queryCount } from "./postgres.ts";
+import { parseVariant, tuning } from "./variant.ts";
+import { observeBridge } from "./diagnostics.ts";
 
 export default {
   async fetch(request: Request): Promise<Response> {
@@ -23,6 +25,8 @@ export default {
       const local = parseLocalFixture(await request.json());
       const signal = AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]);
       const queries = queryCount(searchParams.get("queries"));
+      const variant = parseVariant(searchParams.get("variant"));
+      const settings = tuning(variant);
       const scenario = runnerScenario(searchParams);
       phase = "assertion acquisition";
       const fixture = await prepareFixture(
@@ -32,6 +36,13 @@ export default {
         queries,
       );
       Object.assign(fixture, scenario);
+      fixture.warmupQueries = queryCount(searchParams.get("warmup"));
+      fixture.options.bridge_reuse_buffers = settings.reuseBuffers;
+      fixture.options.bridge_compact_promises = settings.compactPromises;
+      fixture.reuseReadView = settings.reuseBuffers;
+      if (searchParams.get("diagnostics") === "true")
+        fixture.observeWarm = (label, sample) =>
+          label === "wasm" ? observeBridge(bridge, sample) : sample();
       fixture.instrumentWarm = () => {
         const started = performance.now();
         return () => ({
@@ -46,6 +57,7 @@ export default {
       const result = await runFixture(bridge, host, fixture, signal);
       return Response.json({
         ...result,
+        variant,
         runtime: { engine: "workerd", compile: "precompiled-module-import", instantiateAndStartMs },
       });
     } catch (error) {

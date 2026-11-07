@@ -30,6 +30,20 @@ async function destroy(stream: Duplex): Promise<void> {
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 describe("pg custom Duplex with fake connector bytes (not PostgreSQL integration)", () => {
+  it("can retain owned JS byte buffers without copying or including adjacent bytes", async () => {
+    const backing = new Uint8Array([9, 1, 2, 8]);
+    const reads: Array<Uint8Array | null> = [backing.subarray(1, 3), null];
+    const raw = fakeStream({ read: vi.fn(async () => reads.shift() ?? null) });
+    const stream = await openPostgresStream(handle(raw), undefined, false);
+    const chunks: Buffer[] = [];
+    stream.on("data", (bytes: Buffer) => chunks.push(bytes));
+    const closed = new Promise<void>((resolve) => stream.once("close", resolve));
+    stream.connect();
+    await closed;
+    expect(chunks[0]).toEqual(Buffer.from([1, 2]));
+    expect(chunks[0]?.buffer).toBe(backing.buffer);
+    expect(chunks[0]?.byteOffset).toBe(1);
+  });
   it("cannot expose a pg stream before mandatory go TLS finishes", async () => {
     const tls = Promise.withResolvers<void>();
     const raw = fakeStream({ startTls: vi.fn(() => tls.promise) });

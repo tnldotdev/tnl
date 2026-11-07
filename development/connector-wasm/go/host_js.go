@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"syscall/js"
 	"time"
@@ -70,8 +71,14 @@ type hostPromise struct {
 // race before installing Go callbacks. after the bounded race settles, a late
 // original promise invokes only native JavaScript promise reactions, never a
 // released js.Func. a timed-out host operation is not claimed to have joined.
-func watchPromise(p js.Value) hostPromise {
+func watchPromise(p js.Value, compact ...bool) hostPromise {
+	counters.PromiseWaits++
+	if len(compact) == 1 && compact[0] {
+		return watchCompactPromise(p)
+	}
 	var rejectGate js.Value
+	counters.PromiseExecutors++
+	counters.CallbackRegistrations++
 	executor := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		rejectGate = args[1]
 		return nil
@@ -80,6 +87,7 @@ func watchPromise(p js.Value) hostPromise {
 	executor.Release()
 	raced := js.Global().Get("Promise").Call("race", []any{p, gate})
 	ch := make(chan jsResult, 1)
+	counters.CallbackRegistrations += 2
 	resolve := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		ch <- jsResult{value: args[0]}
 		return nil
@@ -97,6 +105,64 @@ func watchPromise(p js.Value) hostPromise {
 	}}
 }
 
+var hostPromiseDispatcherOnce sync.Once
+var hostPromiseDispatcher js.Func
+var hostWaiterMu sync.Mutex
+var nextHostWaiterID uint64
+var hostWaiters = make(map[string]chan jsResult)
+
+func initializeHostPromiseDispatcher() {
+	hostPromiseDispatcherOnce.Do(func() {
+		counters.PersistentCallbacks++
+		hostPromiseDispatcher = js.FuncOf(func(_ js.Value, args []js.Value) any {
+			hostWaiterMu.Lock()
+			ch := hostWaiters[args[0].String()]
+			hostWaiterMu.Unlock()
+			if ch == nil {
+				return nil
+			}
+			result := jsResult{value: args[2]}
+			if args[1].Bool() {
+				result = jsResult{err: hostRejection(args[2])}
+			}
+			select {
+			case ch <- result:
+			default:
+			}
+			return nil
+		})
+	})
+}
+
+func watchCompactPromise(p js.Value) hostPromise {
+	initializeCompactConstructors()
+	initializeHostPromiseDispatcher()
+	counters.SharedPromiseWaits++
+	gate := compactPromiseConstructor.Call("withResolvers")
+	rejectGate := gate.Get("reject")
+	// keep the same native race as baseline. abandoning a waiter consumes late
+	// settlement without invoking any Go callback associated with that operation.
+	raced := compactPromiseConstructor.Call("race", []any{p, gate.Get("promise")})
+	ch := make(chan jsResult, 1)
+	hostWaiterMu.Lock()
+	nextHostWaiterID++
+	id := strconv.FormatUint(nextHostWaiterID, 10)
+	hostWaiters[id] = ch
+	hostWaiterMu.Unlock()
+	resolve := hostPromiseDispatcher.Value.Call("bind", js.Null(), id, false)
+	reject := hostPromiseDispatcher.Value.Call("bind", js.Null(), id, true)
+	raced.Call("then", resolve, reject)
+	return hostPromise{result: ch, release: func() {
+		hostWaiterMu.Lock()
+		delete(hostWaiters, id)
+		hostWaiterMu.Unlock()
+	}, abandon: func() {
+		err := js.Global().Get("Error").New("connector host cleanup did not settle")
+		err.Set("name", hostCleanupErrorName)
+		rejectGate.Invoke(err)
+	}}
+}
+
 func (p hostPromise) settle(cancel func() error) (jsResult, error) {
 	finished := make(chan struct{})
 	timer := time.AfterFunc(hostSettlementTimeout, func() { defer close(finished); p.abandon() })
@@ -108,8 +174,8 @@ func (p hostPromise) settle(cancel func() error) (jsResult, error) {
 	return result, err
 }
 
-func await(ctx context.Context, promise js.Value, cancel func()) (js.Value, error) {
-	p := watchPromise(promise)
+func await(ctx context.Context, promise js.Value, cancel func(), compact ...bool) (js.Value, error) {
+	p := watchPromise(promise, compact...)
 	defer p.release()
 	select {
 	case result := <-p.result:
@@ -137,7 +203,7 @@ func call(object js.Value, method string, args ...any) (value js.Value, err erro
 	return object.Call(method, args...), nil
 }
 
-func hostDial(host js.Value) func(context.Context, string, string) (net.Conn, error) {
+func hostDial(host js.Value, compact ...bool) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		if network != "tcp" {
 			return nil, errors.New("connector WASM: host supports TCP only")
@@ -150,10 +216,10 @@ func hostDial(host js.Value) func(context.Context, string, string) (net.Conn, er
 		if err != nil {
 			return nil, err
 		}
-		socket, err := await(ctx, p, func() { abort.Call("abort") })
+		socket, err := await(ctx, p, func() { abort.Call("abort") }, compact...)
 		if err != nil {
 			if !socket.IsUndefined() && !socket.IsNull() {
-				c := newHostConn(socket, address)
+				c := newHostConn(socket, address, compact...)
 				err = errors.Join(err, c.Close())
 			}
 			return nil, err
@@ -161,7 +227,7 @@ func hostDial(host js.Value) func(context.Context, string, string) (net.Conn, er
 		if socket.Type() != js.TypeObject || socket.Get("read").Type() != js.TypeFunction || socket.Get("write").Type() != js.TypeFunction || socket.Get("close").Type() != js.TypeFunction {
 			return nil, errors.New("connector WASM: host returned an invalid socket")
 		}
-		return newHostConn(socket, address), nil
+		return newHostConn(socket, address, compact...), nil
 	}
 }
 
@@ -178,6 +244,7 @@ type hostConn struct {
 	closeMu         sync.Mutex
 	closing         *hostCloseAttempt
 	closeSucceeded  bool
+	compact         bool
 }
 
 type hostCloseAttempt struct {
@@ -185,12 +252,12 @@ type hostCloseAttempt struct {
 	err  error
 }
 
-func newHostConn(socket js.Value, remote string) *hostConn {
-	return &hostConn{socket: socket, remote: remote, changed: make(chan struct{}), done: make(chan struct{})}
+func newHostConn(socket js.Value, remote string, compact ...bool) *hostConn {
+	return &hostConn{socket: socket, remote: remote, changed: make(chan struct{}), done: make(chan struct{}), compact: len(compact) == 1 && compact[0]}
 }
 
 func (c *hostConn) wait(p js.Value, read bool) (js.Value, error) {
-	pending := watchPromise(p)
+	pending := watchPromise(p, c.compact)
 	defer pending.release()
 	stop := func(cause error) (js.Value, error) {
 		result, cleanup := pending.settle(c.Close)
@@ -243,6 +310,7 @@ func (c *hostConn) Read(data []byte) (int, error) {
 		return 0, net.ErrClosed
 	default:
 	}
+	counters.HostReads++
 	p, err := call(c.socket, "read", len(data))
 	if err != nil {
 		return 0, err
@@ -251,14 +319,20 @@ func (c *hostConn) Read(data []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	return c.readResult(data, v)
+}
+
+func (c *hostConn) readResult(data []byte, v js.Value) (int, error) {
 	if v.IsNull() {
 		return 0, io.EOF
 	}
-	if !v.InstanceOf(js.Global().Get("Uint8Array")) || v.Length() == 0 || v.Length() > len(data) {
+	if !v.InstanceOf(bytesConstructor(c.compact)) || v.Length() == 0 || v.Length() > len(data) {
 		_ = c.Close()
 		return 0, errors.New("connector WASM: host read violated byte bounds")
 	}
-	return js.CopyBytesToGo(data, v), nil
+	n := js.CopyBytesToGo(data, v)
+	counters.HostReadBytes += uint64(n)
+	return n, nil
 }
 
 func (c *hostConn) Write(data []byte) (int, error) {
@@ -269,7 +343,9 @@ func (c *hostConn) Write(data []byte) (int, error) {
 		return 0, net.ErrClosed
 	default:
 	}
-	bytes := js.Global().Get("Uint8Array").New(len(data))
+	bytes := bytesConstructor(c.compact).New(len(data))
+	counters.HostWrites++
+	counters.HostWriteBytes += uint64(len(data))
 	js.CopyBytesToJS(bytes, data)
 	p, err := call(c.socket, "write", bytes)
 	if err != nil {
@@ -298,7 +374,7 @@ func (c *hostConn) Close() error {
 	c.closeMu.Unlock()
 	p, err := call(c.socket, "close")
 	if err == nil {
-		pending := watchPromise(p)
+		pending := watchPromise(p, c.compact)
 		defer pending.release()
 		result, _ := pending.settle(func() error { return nil })
 		err = result.err
