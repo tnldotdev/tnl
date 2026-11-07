@@ -164,3 +164,20 @@ func TestConnectorRebindExpiredAndAbortedRevisionCannotReinstallPredecessor(t *t
 		t.Fatal("an old observation rolled back the aborted revision")
 	}
 }
+
+func TestConnectorRebindSnapshotPreservesExpiredCallCause(t *testing.T) {
+	signer, run, original, request, state := rebindFixture(t)
+	for _, cause := range []error{context.DeadlineExceeded, context.Canceled, errors.New("caller stopped rebinding")} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(t.Context())
+			cancel(cause)
+			until, err := validateConnectorRebindState(ctx, signer, run, original, request, state, time.Now(), 1)
+			if !errors.Is(err, cause) || !until.IsZero() {
+				t.Fatalf("spent call lost its cause or installed binding: until=%s error=%v", until, err)
+			}
+			if cause == context.DeadlineExceeded && !connectorTemporary(err) {
+				t.Fatal("short binding timeout became a terminal owner rejection", err)
+			}
+		})
+	}
+}

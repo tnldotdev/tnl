@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -225,7 +226,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 				return
 			case <-p.refill:
 				if err := p.fillOpenings(); err != nil {
-					cancel(err)
+					cancel(fmt.Errorf("refill connector openings: %w", err))
 					return
 				}
 			}
@@ -357,7 +358,14 @@ func (p *connectorConnection) watch() {
 		}
 		changed := p.changed
 		if !current {
-			p.cancel(ErrServiceConnection)
+			cause := context.Cause(p.ctx)
+			if p.permissions != nil {
+				cause = errors.Join(cause, p.permissions.Err())
+			}
+			if cause == nil {
+				cause = fmt.Errorf("connector authority expired (pair=%s run=%s permission=%s): %w", p.until.Format(time.RFC3339Nano), p.run.ValidUntil.Format(time.RFC3339Nano), p.permission.ExpiresAt.Format(time.RFC3339Nano), ErrServiceConnection)
+			}
+			p.cancel(cause)
 		}
 		p.mu.Unlock()
 		if expiredDelivery {
@@ -371,7 +379,7 @@ func (p *connectorConnection) watch() {
 			return
 		case <-p.session.Done():
 			timer.Stop()
-			p.cancel(ErrServiceConnection)
+			p.cancel(errors.Join(ErrServiceConnection, p.session.Err()))
 			return
 		case <-changed:
 			timer.Stop()
@@ -403,7 +411,7 @@ func (p *connectorConnection) refresh() {
 		}
 		if err := p.recoverBinding(); err != nil {
 			if !connectorTemporary(err) && p.ctx.Err() == nil {
-				p.cancel(err)
+				p.cancel(fmt.Errorf("recover connector binding: %w", err))
 				return
 			}
 		}
@@ -420,7 +428,7 @@ func (p *connectorConnection) refresh() {
 				pending := p.rebind != nil
 				p.mu.Unlock()
 				if !connectorTemporary(err) && !(pending && connectorPhaseConflict(err)) && p.ctx.Err() == nil {
-					p.cancel(err)
+					p.cancel(fmt.Errorf("renew connector authority: %w", err))
 					return
 				}
 			}
@@ -571,7 +579,7 @@ func (p *connectorConnection) maintainLeg(slot int) {
 		p.legUses.Done()
 		if binding.Err() != nil {
 			if connectorTerminalProtocol(err) {
-				p.cancel(err)
+				p.cancel(fmt.Errorf("maintain connector leg %d: %w", slot, err))
 				return
 			}
 			continue // the coordinator joins old work before staging replacements.
@@ -580,7 +588,7 @@ func (p *connectorConnection) maintainLeg(slot int) {
 			p.requestRecovery(connectorRebinding)
 		}
 		if disposition == terminateConnection {
-			p.cancel(err)
+			p.cancel(fmt.Errorf("maintain connector leg %d: %w", slot, err))
 			return
 		}
 	}

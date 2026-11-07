@@ -164,7 +164,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			}
 			revokedPaths.denied(t, 31*time.Second)
 			for i, at := range []time.Time{session.LeaseExpiresAt.Add(5 * time.Second), session.LeaseExpiresAt.Add(95 * time.Second)} {
-				waitRuntimeTime(t, at)
+				paths.wait(t, at)
 				paths.step(t, int(time.Until(session.ExpiresAt).Seconds()))
 				if workloadNativeRuntimeBinding(t, f, session.Id, session.ExpiresAt) != nativeBinding {
 					t.Fatal("workload renewal replaced its connector owners or exact bindings")
@@ -467,6 +467,7 @@ func waitRuntimeTime(t *testing.T, at time.Time) {
 }
 
 type workloadRuntimePaths struct {
+	ended       chan error
 	connections []net.Conn
 	clients     []*http.Client
 	urls        []string
@@ -482,7 +483,7 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &workloadRuntimePaths{}
+	p := &workloadRuntimePaths{ended: make(chan error, len(services))}
 	for _, name := range []string{"private-tcp", "private-http", "public-tcp", "public-http", "db"} {
 		service := services[name]
 		control, err := connectorstream.NewWorkloadControl(job)
@@ -512,8 +513,8 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 		}
 		go func() {
 			err := connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(ready); return nil }})
-			if err != nil && ctx.Err() == nil {
-				t.Logf("workload connector %s/%s source=%s ended: %v", transport, name, source.Id, err)
+			if ctx.Err() == nil {
+				p.ended <- fmt.Errorf("workload connector %s/%s source=%s ended: %v", transport, name, source.Id, err)
 			}
 			done <- err
 		}()
@@ -597,8 +598,26 @@ func workloadNativeRuntimeBinding(t *testing.T, f *privateSeparatedFixture, sess
 	return binding
 }
 
+func (p *workloadRuntimePaths) wait(t *testing.T, at time.Time) {
+	t.Helper()
+	timer := time.NewTimer(max(time.Nanosecond, time.Until(at)))
+	defer timer.Stop()
+	select {
+	case err := <-p.ended:
+		t.Fatal(err)
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	case <-timer.C:
+	}
+}
+
 func (p *workloadRuntimePaths) step(t *testing.T, step int) {
 	t.Helper()
+	select {
+	case err := <-p.ended:
+		t.Fatal(err)
+	default:
+	}
 	for _, conn := range p.connections {
 		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 		line := fmt.Sprintf("step-%d\n", step)

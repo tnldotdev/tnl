@@ -2,6 +2,7 @@ package stream
 
 import (
 	"context"
+	"errors"
 	"io"
 	"reflect"
 	"sync/atomic"
@@ -172,6 +173,79 @@ func TestConnectorPairRenewalRejectsPermissionIntervalSpentInTransit(t *testing.
 	}}
 	if _, _, err := renewConnectorPair(t.Context(), control, f.device, f.run, "renewal-owner", pair); err == nil {
 		t.Fatal("future authority timestamp revived a permission interval already spent in transit")
+	}
+}
+
+func TestConnectorPairRenewalPreservesExpiredCallCause(t *testing.T) {
+	f := newConnectorFixture(t, "quic")
+	pair, _, _, _, err := prepareConnectorPair(t.Context(), f, f.device, f.run, "renewal-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cause := range []error{context.DeadlineExceeded, context.Canceled, errors.New("caller stopped renewal")} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+			control := renewalControl{renew: func(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+				reply, err := f.RenewConnectorPeerPair(ctx, service, body)
+				// a successful reply races the call's cancellation before validation.
+				cancel(cause)
+				return reply, err
+			}}
+			_, until, err := renewConnectorPair(ctx, control, f.device, f.run, "renewal-owner", pair)
+			if !errors.Is(err, cause) || !until.IsZero() {
+				t.Fatalf("spent call lost its cause or installed authority: until=%s error=%v", until, err)
+			}
+			if cause == context.DeadlineExceeded && !connectorTemporary(err) {
+				t.Fatal("short renewal timeout became a terminal owner rejection", err)
+			}
+		})
+	}
+}
+
+func TestConnectorRenewalReplyAfterCallTimeoutRetainsApplication(t *testing.T) {
+	for _, transport := range []string{"quic", "tls-tcp"} {
+		t.Run(transport, func(t *testing.T) {
+			var renewals atomic.Int32
+			retried := make(chan struct{})
+			f := newConfiguredConnectorFixture(t, transport, "", func(f *connectorFixture, config *Config) {
+				config.Control = renewalControl{Control: f, renew: func(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
+					reply, err := f.RenewConnectorPeerPair(ctx, service, body)
+					switch renewals.Add(1) {
+					case 1:
+						<-ctx.Done()
+					case 2:
+						close(retried)
+					}
+					return reply, err
+				}}
+			})
+			local := f.local(t)
+			exchange := func(message string) {
+				t.Helper()
+				_ = local.SetDeadline(time.Now().Add(time.Second))
+				if _, err := io.WriteString(local, message); err != nil {
+					t.Fatal(err)
+				}
+				response := make([]byte, len(message))
+				if _, err := io.ReadFull(local, response); err != nil || string(response) != message {
+					t.Fatal("renewal timeout closed the retained application", err)
+				}
+				_ = local.SetDeadline(time.Time{})
+			}
+			exchange("before renewal")
+			select {
+			case <-retried:
+			case <-f.finished:
+				t.Fatal("short call timeout retired the connection owner", f.serveErr)
+			case <-time.After(6 * time.Second):
+				t.Fatal("timed-out authority call did not retry")
+			}
+			exchange("after renewal")
+			if f.opened.Load() != 1 || f.assignments[0].Load() != 1 || f.assignments[1].Load() != 1 {
+				t.Fatal("renewal timeout replaced the application or relay connections")
+			}
+		})
 	}
 }
 
