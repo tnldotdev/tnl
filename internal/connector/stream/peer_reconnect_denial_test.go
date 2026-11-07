@@ -15,7 +15,6 @@ import (
 func TestConnectorReconnectStopsOnAuthorizationDenial(t *testing.T) {
 	f := newConfiguredConnectorFixture(t, "quic", "", func(f *connectorFixture, _ *Config) {
 		f.drainRejections = true
-		f.rejectionClosing = make(chan struct{}, 2)
 	})
 	setup, stop := context.WithTimeout(t.Context(), 3*time.Second)
 	p, err := prepareConnectorConnection(t.Context(), setup, f.config, f.device)

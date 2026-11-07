@@ -114,7 +114,7 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 	now := time.Now()
 	f := &connectorFixture{device: Signer{Subject: tunnelv1.VisitorSubject{Kind: tunnelv1.VisitorHumanDevice, DeviceID: "vdev_aaaaaaaaaaaaaaaaaaaaaa", IdentityID: connectorID(t, opaqueid.IdentityPrefix)}, PublicKey: deviceKey.Public().(ed25519.PublicKey), Sign: func(d []byte) []byte { return ed25519.Sign(deviceKey, d) }},
 		run:     Run{ServiceID: connectorID(t, opaqueid.ServicePrefix), ServiceRunID: connectorID(t, opaqueid.ServiceRunPrefix), RunNumber: 3, ValidUntil: now.Add(time.Minute), Protocol: "tcp", TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: "db.example", Port: 25443}},
-		expires: now.Add(time.Minute)}
+		expires: now.Add(time.Minute), rejectionClosing: make(chan struct{}, 2)}
 	f.target = target
 	root, certificate := providerCertificate(t)
 	f.certificate = certificate
