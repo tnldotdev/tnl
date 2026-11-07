@@ -27,6 +27,10 @@ type Prepared = ReturnType<typeof parsePrepared>;
 interface NativeScope {
   readonly registry: string;
   readonly binary: string;
+  readonly environment: Pick<
+    NodeJS.ProcessEnv,
+    "TNL_STATE_DIR" | "TNL_SERVER" | "TNL_CONNECTION_HANDLE"
+  >;
   readonly requests: Map<string, Promise<unknown>>;
   entry?: { readonly file: string; readonly ipc: Promise<OwnerIPC> };
   selected?: { readonly file: string; readonly expiresAt: number };
@@ -66,16 +70,16 @@ function machineError(cause: unknown, operation?: string): TnlError {
 }
 
 function machine(
-  binary: string,
+  scope: NativeScope,
   args: string[],
   signal?: AbortSignal,
   input?: unknown,
 ): Promise<unknown> {
-  return operation("sdk.native.command", () => machineUntraced(binary, args, signal, input));
+  return operation("sdk.native.command", () => machineUntraced(scope, args, signal, input));
 }
 
 async function machineUntraced(
-  binary: string,
+  scope: NativeScope,
   args: string[],
   signal?: AbortSignal,
   input?: unknown,
@@ -83,13 +87,13 @@ async function machineUntraced(
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
       const child = execFile(
-        binary,
+        scope.binary,
         [...command, ...args],
         {
           timeout: args[0] === "sdk-prepare" ? 45_000 : 25_000,
           maxBuffer: maximumBytes,
           encoding: "utf8",
-          env: launchEnvironment(),
+          env: { ...launchEnvironment(), ...scope.environment },
           ...(signal === undefined ? {} : { signal }),
         },
         (error, stdout, stderr) =>
@@ -157,14 +161,21 @@ function nativeScope(key: string): Promise<NativeScope> {
   let loading = scopes.get(key);
   if (loading === undefined) {
     if (scopes.size >= 32) throw new TnlError("sdk.connection_unavailable");
+    // pin the cache key's selection before yielding, not provider inputs or traces.
+    const environment = {
+      TNL_STATE_DIR: process.env.TNL_STATE_DIR,
+      TNL_SERVER: process.env.TNL_SERVER,
+      TNL_CONNECTION_HANDLE: process.env.TNL_CONNECTION_HANDLE,
+    };
     loading = (async () => {
       const scope: NativeScope = {
         registry: await mkdtemp(path.join(await realpath(tmpdir()), "tnl-sdk-")),
         binary: resolveNativeBinary(),
+        environment,
         requests: new Map(),
       };
       const cleanup = independent("sdk.app.cleanup", async () => {
-        await machine(scope.binary, [
+        await machine(scope, [
           "sdk-stop",
           "--registry",
           scope.registry,
@@ -195,13 +206,13 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
     readArgs(externalFile, name);
     return parsePrepared(await prepareExternal(externalFile, name), name, externalFile);
   }
+  let startArgs = ["--directory", process.cwd()];
   const scope = await nativeScope(base);
   let assertion: string | undefined;
   let manifest: unknown;
   let selectionOptions: { workload?: string; manifest?: string; requested_at: string } = {
     requested_at: requestedAt,
   };
-  let startArgs = ["--directory", process.cwd()];
   if (usesWorkload()) {
     const selection = await selectWorkload();
     manifest = selection.manifest;
@@ -282,7 +293,7 @@ async function requestSelection(
 ): Promise<unknown> {
   const entry = scope.entry;
   let raw: unknown;
-  if (entry === undefined) raw = await machine(scope.binary, args, undefined, input);
+  if (entry === undefined) raw = await machine(scope, args, undefined, input);
   else {
     try {
       raw = await (await entry.ipc).prepare(name, assertion, selectionOptions);
@@ -290,12 +301,7 @@ async function requestSelection(
       // native recovery checks the kernel lock before doing any selection or
       // network work. a timeout or service denial cannot authorize replacement.
       try {
-        raw = await machine(
-          scope.binary,
-          [...args, "--recover-handle", entry.file],
-          undefined,
-          input,
-        );
+        raw = await machine(scope, [...args, "--recover-handle", entry.file], undefined, input);
       } catch (recovery) {
         if (recovery instanceof TnlError && recovery.code === "sdk.authentication_required")
           throw recovery;
