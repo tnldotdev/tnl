@@ -338,6 +338,37 @@ Or, you can even run the whole stack yourself (control, ingress, and relays), fo
 
 The hosted tnl.dev is free for now. Accounts and teams created while it is free will keep a free plan if paid options arrive.
 
+## how does it compare?
+
+### in dev
+
+Here's what each tool handles when you're developing locally:
+
+| Feature                                                | tnl                                | Cloudflare       | Tailscale        | ngrok            |
+| ------------------------------------------------------ | ---------------------------------- | ---------------- | ---------------- | ---------------- |
+| Open your app in a browser without installing a client | Yes                                | Yes              | With Funnel      | Yes              |
+| Give each worktree its own URL automatically           | Yes                                | Set up yourself  | Set up yourself  | Set up yourself  |
+| Use one OAuth callback URL across worktrees            | Yes, returns to the right worktree | Set up yourself  | Set up yourself  | Set up yourself  |
+| Send one webhook event to all running worktrees        | Yes                                | Set up yourself  | Set up yourself  | Set up yourself  |
+| Leave inline feedback and read it from the CLI         | Yes                                | Use another tool | Use another tool | Use another tool |
+
+ngrok also lets you inspect and replay HTTP requests. Cloudflare Tunnel works with Cloudflare Access to control who can visit. Tailscale Serve shares apps within your Tailscale network; Funnel makes them reachable from the internet.
+
+### in prod
+
+You can also connect to private services from your laptop or CI.
+
+| Feature                                              | tnl                | Cloudflare                             | Tailscale               | ngrok                                       |
+| ---------------------------------------------------- | ------------------ | -------------------------------------- | ----------------------- | ------------------------------------------- |
+| Connect without giving the service a public endpoint | `tnl connect`      | Cloudflare One Client or `cloudflared` | Tailscale client        | `ngrokd` or Kubernetes                      |
+| Use your own domain for public HTTPS                 | Yes                | Yes                                    | Funnel uses `*.ts.net`  | Yes                                         |
+| Where public HTTPS is decrypted                      | Your `tnl` process | Cloudflare                             | Your device with Funnel | ngrok by default; can be your agent or app¹ |
+| Run the server infrastructure yourself               | Yes                | No                                     | With Headscale²         | No                                          |
+
+¹ With ngrok, use a TLS or TCP endpoint to keep traffic encrypted through its servers. You manage the certificates when your agent or app decrypts it.
+
+² Headscale is a separate project that lets you run a server for Tailscale clients. It supports private networking, but not Funnel.
+
 ## license
 
 This project is [BSD-3-Clause licensed](LICENSE).
