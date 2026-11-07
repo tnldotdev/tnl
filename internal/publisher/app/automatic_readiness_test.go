@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -118,58 +119,125 @@ func TestAutomaticReadinessStopsAfterSuccessAndOnlyRearmsForNewRun(t *testing.T)
 }
 
 func TestAutomaticReadinessBudgetCancelsProbeWithoutStoppingPublication(t *testing.T) {
-	w, ready, exited := automaticWorkers(t, 250*time.Millisecond)
-	var gets atomic.Int32
-	deadlineReached := make(chan struct{})
-	var deadlineOnce sync.Once
-	retries := make(chan int, 8)
-	w.readinessDelay = func(attempt int) time.Duration { retries <- attempt; return automaticTestDelay }
-	w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
-		if gets.Add(1) <= 2 {
-			return automaticResponse(503), nil
-		}
-		<-r.Context().Done()
-		deadlineOnce.Do(func() { close(deadlineReached) })
-		return nil, r.Context().Err()
-	})
-	cfg, id := registerAutomaticWorker(t, w, ready)
-	select {
-	case <-deadlineReached:
-	case <-time.After(2 * time.Second):
-		t.Fatal("automatic readiness did not enforce its overall budget")
-	}
-	count := gets.Load()
-	for _, want := range []int{0, 1} {
+	synctest.Test(t, func(t *testing.T) {
+		const budget = 250 * time.Millisecond
+		w, ready, exited := automaticWorkers(t, budget)
+		var gets atomic.Int32
+		deadlineReached := make(chan struct{})
+		var deadlineOnce sync.Once
+		retries := make(chan int, 8)
+		w.readinessDelay = func(attempt int) time.Duration { retries <- attempt; return automaticTestDelay }
+		w.HTTPTransport = trip(func(r *http.Request) (*http.Response, error) {
+			if gets.Add(1) <= 2 {
+				return automaticResponse(503), nil
+			}
+			<-r.Context().Done()
+			deadlineOnce.Do(func() { close(deadlineReached) })
+			return nil, r.Context().Err()
+		})
+		started := time.Now()
+		cfg, id := registerAutomaticWorker(t, w, ready)
 		select {
-		case got := <-retries:
-			if got != want {
-				t.Fatalf("retry attempt = %d, want %d", got, want)
+		case <-deadlineReached:
+		case <-time.After(2 * time.Second):
+			t.Fatal("automatic readiness did not enforce its overall budget")
+		}
+		if elapsed := time.Since(started); elapsed != budget {
+			t.Fatalf("automatic readiness canceled after %s, want %s", elapsed, budget)
+		}
+		synctest.Wait()
+		count := gets.Load()
+		if count != 3 {
+			t.Fatalf("automatic readiness issued %d GETs, want two failures and one canceled probe", count)
+		}
+		for _, want := range []int{0, 1} {
+			select {
+			case got := <-retries:
+				if got != want {
+					t.Fatalf("retry attempt = %d, want %d", got, want)
+				}
+			default:
+				t.Fatal("failed probe did not retry")
+			}
+		}
+		if err := cfg.Observe(publisher.Event{Type: publisher.EventReady, PublishRunNumber: 1, PublicURL: "https://public.example"}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(8 * automaticTestDelay)
+		if gets.Load() != count {
+			t.Fatal("automatic readiness retried after exhausting its budget")
+		}
+		select {
+		case <-retries:
+			t.Fatal("automatic readiness scheduled another retry after its budget")
+		default:
+		}
+		service := w.Manager.Snapshot().Services[0]
+		if !service.Registered || !service.Routable || service.Ready || !w.Manager.CurrentRun("web", id, service.Target, 1) {
+			t.Fatalf("readiness budget changed publication lifetime: %+v", service)
+		}
+		select {
+		case <-exited:
+			t.Fatal("readiness failure stopped the publisher")
+		default:
+		}
+	})
+}
+
+func TestAutomaticReadinessBudgetExpiresBeforeNextProbe(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const budget = 250 * time.Millisecond
+		w, ready, exited := automaticWorkers(t, budget)
+		var gets atomic.Int32
+		retries := make(chan int, 8)
+		w.readinessDelay = func(attempt int) time.Duration {
+			retries <- attempt
+			return 2 * budget
+		}
+		w.HTTPTransport = trip(func(*http.Request) (*http.Response, error) {
+			gets.Add(1)
+			return automaticResponse(503), nil
+		})
+		cfg, id := registerAutomaticWorker(t, w, ready)
+		synctest.Wait()
+		if gets.Load() != 1 {
+			t.Fatalf("initial GETs = %d, want 1", gets.Load())
+		}
+		select {
+		case attempt := <-retries:
+			if attempt != 0 {
+				t.Fatalf("retry attempt = %d, want 0", attempt)
 			}
 		default:
-			t.Fatal("failed probe did not retry")
+			t.Fatal("failed probe did not schedule a retry")
 		}
-	}
-	if err := cfg.Observe(publisher.Event{Type: publisher.EventReady, PublishRunNumber: 1, PublicURL: "https://public.example"}); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(8 * automaticTestDelay)
-	if gets.Load() != count {
-		t.Fatal("automatic readiness retried after exhausting its budget")
-	}
-	select {
-	case <-retries:
-		t.Fatal("automatic readiness scheduled another retry after its budget")
-	default:
-	}
-	service := w.Manager.Snapshot().Services[0]
-	if !service.Registered || !service.Routable || service.Ready || !w.Manager.CurrentRun("web", id, service.Target, 1) {
-		t.Fatalf("readiness budget changed publication lifetime: %+v", service)
-	}
-	select {
-	case <-exited:
-		t.Fatal("readiness failure stopped the publisher")
-	default:
-	}
+		// let both the budget and the retry delay pass. expiry must prevent the
+		// next GET without requiring another probe to observe cancellation.
+		time.Sleep(3 * budget)
+		synctest.Wait()
+		if err := cfg.Observe(publisher.Event{Type: publisher.EventReady, PublishRunNumber: 1, PublicURL: "https://public.example"}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(3 * budget)
+		synctest.Wait()
+		if gets.Load() != 1 {
+			t.Fatalf("GETs after budget expiry = %d, want 1", gets.Load())
+		}
+		select {
+		case <-retries:
+			t.Fatal("automatic readiness scheduled another retry after its budget")
+		default:
+		}
+		service := w.Manager.Snapshot().Services[0]
+		if !service.Registered || !service.Routable || service.Ready || !w.Manager.CurrentRun("web", id, service.Target, 1) {
+			t.Fatalf("readiness budget changed publication lifetime: %+v", service)
+		}
+		select {
+		case <-exited:
+			t.Fatal("readiness failure stopped the publisher")
+		default:
+		}
+	})
 }
 
 func TestAutomaticReadinessReplacementJoinsOldRunBeforeCheckingNewRun(t *testing.T) {
