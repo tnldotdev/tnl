@@ -93,7 +93,7 @@ func (c WorkloadExecution) Validate(now time.Time) error {
 		if c.Subject != f.Org+":"+f.App+":"+f.Machine || c.Issuer != "https://oidc.fly.io/"+f.Org {
 			return ErrUnauthenticated
 		}
-	case "oidc":
+	case "oidc", "google":
 		if c.Fly != nil || c.Vercel != nil || len(c.Claims) > 32 {
 			return ErrUnauthenticated
 		}
@@ -209,7 +209,7 @@ func (v *WorkloadVerifier) Verify(ctx context.Context, p WorkloadTrust, raw stri
 	// nbf is optional in generic OIDC. retain an effective start time in the
 	// verified execution, but reject present null, malformed, or zero values.
 	notBefore := times.IssuedAt
-	if len(times.NotBefore) != 0 || p.Provider != "oidc" {
+	if len(times.NotBefore) != 0 || p.Provider != "oidc" && p.Provider != "google" {
 		if json.Unmarshal(times.NotBefore, &notBefore) != nil || string(times.NotBefore) == "null" || notBefore <= 0 {
 			return c, ErrUnauthenticated
 		}
@@ -222,7 +222,7 @@ func (v *WorkloadVerifier) Verify(ctx context.Context, p WorkloadTrust, raw stri
 	case "fly":
 		c.Fly = &FlyExecution{}
 		err = t.Claims(c.Fly)
-	case "oidc":
+	case "oidc", "google":
 		var claims map[string]json.RawMessage
 		err = t.Claims(&claims)
 		c.Claims = map[string]string{}

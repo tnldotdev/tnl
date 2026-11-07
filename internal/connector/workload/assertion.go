@@ -121,6 +121,11 @@ func Acquire(ctx context.Context, hints workloadmanifest.Acquisition, callback f
 			return "", ErrAssertionSource
 		}
 		source.Callback = func(ctx context.Context) (string, error) { return flyAssertion(ctx, hints.Audience, "/.fly/api") }
+	case "google-metadata":
+		if callback != nil {
+			return "", ErrAssertionSource
+		}
+		source.Callback = func(ctx context.Context) (string, error) { return googleAssertion(ctx, hints.Audience, nil) }
 	default:
 		return "", ErrAssertionSource
 	}

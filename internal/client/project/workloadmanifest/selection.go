@@ -17,10 +17,11 @@ var ErrDenied = errors.New("the selected workload does not include this service"
 // Runtime contains only selection hints from the application process. authority
 // still verifies the acquired assertion against saved trust and service policy.
 type Runtime struct {
-	Workload      *string `json:"workload,omitempty"`
-	Vercel        string  `json:"vercel,omitempty"`
-	FlyAppName    string  `json:"fly_app_name,omitempty"`
-	GitHubActions string  `json:"github_actions,omitempty"`
+	Workload        *string `json:"workload,omitempty"`
+	Vercel          string  `json:"vercel,omitempty"`
+	FlyAppName      string  `json:"fly_app_name,omitempty"`
+	GitHubActions   string  `json:"github_actions,omitempty"`
+	CloudRunService string  `json:"cloud_run_service,omitempty"`
 }
 
 type Selection struct {
@@ -72,6 +73,9 @@ func Select(directory, configured, service string, runtime Runtime) (Selection, 
 		}
 		if runtime.GitHubActions == "true" {
 			providers = append(providers, "github")
+		}
+		if runtime.CloudRunService != "" {
+			providers = append(providers, "google")
 		}
 		if len(providers) != 1 {
 			return Selection{}, ErrRequired

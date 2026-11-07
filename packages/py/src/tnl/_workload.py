@@ -35,6 +35,7 @@ def uses_workload() -> bool:
         or "TNL_WORKLOAD" in os.environ
         or os.environ.get("VERCEL") == "1"
         or bool(os.environ.get("FLY_APP_NAME"))
+        or bool(os.environ.get("K_SERVICE"))
         or os.environ.get("GITHUB_ACTIONS") == "true"
     )
 
@@ -66,6 +67,7 @@ async def select_workload(
             "vercel": os.environ.get("VERCEL", ""),
             "fly_app_name": os.environ.get("FLY_APP_NAME", ""),
             "github_actions": os.environ.get("GITHUB_ACTIONS", ""),
+            "cloud_run_service": os.environ.get("K_SERVICE", ""),
         }
     }
     if configuration is not None:

@@ -12,7 +12,7 @@ import (
 )
 
 func TestGeneratedDeclarationsTypecheckSourceUnionsAndStaticShape(t *testing.T) {
-	repository, err := filepath.Abs("../..")
+	repository, err := filepath.Abs("../../../..")
 	if err != nil {
 		t.Fatal(err)
 	}
