@@ -69,6 +69,6 @@ tasks:
       - task: :js:format-check
 
   test:packaging:
-    desc: Check manifest-driven npm export targets
+    desc: Check manifest-driven npm exports and Python wheel metadata
     cmds:
-      - pnpm exec vitest run scripts/package/npm-artifacts.test.ts
+      - pnpm exec vitest run scripts/package/npm-artifacts.test.ts scripts/package/python-version.test.ts scripts/package/python-wheels.test.ts

@@ -17,7 +17,20 @@ export function wheelTag(target: Pick<NativeTarget, "platform" | "architecture">
     : `manylinux_2_17_${target.architecture === "x64" ? "x86_64" : "aarch64"}`;
 }
 
-// keep the tag helper importable without running a build.
+export function wheelProject(config: string, version: string, target: NativeTarget): string {
+  const developmentVersion = 'version = "1.0.0.dev0"';
+  assert(config.includes(developmentVersion), "Python project development version changed");
+  return (
+    config
+      .replace(developmentVersion, `version = "${version}"`)
+      .replace(
+        'license = "BSD-3-Clause"',
+        `license = "BSD-3-Clause"\nlicense-files = ${JSON.stringify(legalFiles)}`,
+      ) + `\n[tool.hatch.build.hooks.custom]\ntag = "py3-none-${wheelTag(target)}"\n`
+  );
+}
+
+// keep metadata helpers importable without running a build.
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   assert(process.argv[2], "usage: pack-python-wheels.ts OUTPUT_DIRECTORY [EXPECTED_VERSION]");
   const output = path.resolve(process.argv[2]);
@@ -48,15 +61,7 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
         binary,
       );
       await chmod(binary, 0o755);
-      await writeFile(
-        path.join(stage, "pyproject.toml"),
-        config
-          .replace('version = "0.0.0.dev0"', `version = "${version}"`)
-          .replace(
-            'license = "BSD-3-Clause"',
-            `license = "BSD-3-Clause"\nlicense-files = ${JSON.stringify(legalFiles)}`,
-          ) + `\n[tool.hatch.build.hooks.custom]\ntag = "py3-none-${wheelTag(target)}"\n`,
-      );
+      await writeFile(path.join(stage, "pyproject.toml"), wheelProject(config, version, target));
       execFileSync("uv", ["build", "--wheel", "--out-dir", output, stage], { stdio: "inherit" });
     }
   } finally {
