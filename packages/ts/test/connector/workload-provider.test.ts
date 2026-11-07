@@ -13,9 +13,19 @@ import type { Workload } from "../../src/internal/connector/workload/contract.js
 let directory: string;
 beforeEach(async () => {
   vi.resetModules();
+  vi.stubGlobal("__tnlConnectorContextV1", undefined);
+  for (const name of [
+    "TNL_CONNECTION_HANDLE",
+    "TNL_WORKLOAD",
+    "VERCEL",
+    "FLY_APP_NAME",
+    "GITHUB_ACTIONS",
+  ])
+    vi.stubEnv(name, undefined);
   directory = await mkdtemp(path.join(tmpdir(), "tnl-provider-"));
 });
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await rm(directory, { force: true, recursive: true });
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
@@ -102,6 +112,37 @@ test("generic callback registration is fixed, request-scoped, and never verifies
   await expect(acquireAssertion("worker", oidc, directory, signal)).rejects.toMatchObject({
     code: "sdk.workload_assertion_unavailable",
   });
+});
+
+test("independent copies share request callbacks only within the selected context", async () => {
+  const first = await import("../../src/internal/connector/workload/provider.js");
+  vi.resetModules();
+  const second = await import("../../src/internal/connector/workload/provider.js");
+  const storage = new AsyncLocalStorage<string>();
+  const callback = async () => storage.getStore() ?? "";
+  first.configureWorkload({ name: "worker", token: callback });
+  second.configureWorkload({ name: "worker", token: callback });
+  expect(() =>
+    second.configureWorkload({ name: "worker", token: async () => "replacement" }),
+  ).toThrow(expect.objectContaining({ code: "sdk.workload_required" }));
+  for (const variable of ["TNL_SERVER", "TNL_STATE_DIR", "TNL_CONNECTION_HANDLE"]) {
+    const previous = process.env[variable];
+    vi.stubEnv(variable, "/another/context");
+    expect(second.usesWorkload()).toBe(false);
+    second.configureWorkload({ name: "worker", token: async () => "isolated" });
+    expect(
+      await second.acquireAssertion("worker", oidc, directory, AbortSignal.timeout(1000)),
+    ).toBe("isolated");
+    vi.stubEnv(variable, previous);
+  }
+  const values = await Promise.all(
+    ["one", "two"].map((token) =>
+      storage.run(token, () =>
+        second.acquireAssertion("worker", oidc, directory, AbortSignal.timeout(1000)),
+      ),
+    ),
+  );
+  expect(values).toEqual(["one", "two"]);
 });
 
 test("generic token files are bounded, reread, and never fall back after a selected file fails", async () => {

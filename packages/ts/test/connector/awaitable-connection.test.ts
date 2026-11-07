@@ -88,6 +88,7 @@ beforeEach(() => {
       if (!exitListeners.has(listener)) process.removeListener("beforeExit", listener);
   });
   vi.resetModules();
+  vi.stubGlobal("__tnlConnectorContextV1", undefined);
   vi.stubEnv("TNL_CONNECTION_HANDLE", undefined);
   for (const name of ["TNL_WORKLOAD", "GITHUB_ACTIONS", "VERCEL", "FLY_APP_NAME"])
     vi.stubEnv(name, undefined);
@@ -107,11 +108,77 @@ beforeEach(() => {
   native.sync.mockReset().mockImplementation(() => JSON.stringify(prepared()));
 });
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.useRealTimers();
 });
 
 describe("awaitable root connection handles", () => {
+  test("compatible module copies coalesce cold work and retain prepared reads", async () => {
+    const first = await import("../../src/internal/connector/connection.js");
+    const { TnlError } = await import("../../src/errors.js");
+    vi.resetModules();
+    const second = await import("../../src/internal/connector/connection.js");
+    expect(first.connectionHandle).not.toBe(second.connectionHandle);
+    const [a, b] = await Promise.all([
+      first.connectionHandle("database", vi.fn()),
+      second.connectionHandle("database", vi.fn()),
+    ]);
+    expect(a).toEqual(b);
+    expect(native.async).toHaveBeenCalledTimes(1);
+    expect({ ...second.connectionHandle("database", vi.fn()) }).toEqual(a);
+    const failure = new TnlError("sdk.response_invalid");
+    native.async.mockRejectedValueOnce(failure);
+    await expect(Promise.resolve(second.connectionHandle("database", vi.fn()))).rejects.toBe(
+      failure,
+    );
+    expect(await first.connectionHandle("database", vi.fn())).toEqual(a);
+  });
+
+  test.each(["TNL_SERVER", "TNL_STATE_DIR"])(
+    "native selection is isolated by %s across copies",
+    async (variable) => {
+      const first = await import("../../src/internal/connector/connection.js");
+      vi.resetModules();
+      const second = await import("../../src/internal/connector/connection.js");
+      const initial = await first.connectionHandle("database", vi.fn());
+      const registry = native.async.mock.calls.at(-1)?.[1];
+      const previous = process.env[variable];
+      vi.stubEnv(variable, variable === "TNL_SERVER" ? "https://other.example" : "/other/state");
+      expect(() => ({ ...second.connectionHandle("database", vi.fn()) })).toThrow(
+        expect.objectContaining({ code: "sdk.connection_unprepared" }),
+      );
+      await second.connectionHandle("database", vi.fn());
+      expect(native.async.mock.calls.at(-1)?.[1]).not.toEqual(registry);
+      vi.stubEnv(variable, previous);
+      expect({ ...second.connectionHandle("database", vi.fn()) }).toEqual(initial);
+      await second.connectionHandle("database", vi.fn());
+      expect(native.async.mock.calls.at(-1)?.[1]).toContain("--handle");
+    },
+  );
+
+  test("SDK copies with different native executables select separate owners", async () => {
+    const { connectionHandle } = await import("../../src/internal/connector/connection.js");
+    await connectionHandle("database", vi.fn());
+    const initial = native.async.mock.calls.at(-1)?.[1];
+    native.resolve.mockReturnValueOnce("/installed/other/tnl");
+    expect(() => ({ ...connectionHandle("database", vi.fn()) })).toThrow(
+      expect.objectContaining({ code: "sdk.connection_unprepared" }),
+    );
+    native.resolve.mockReturnValueOnce("/installed/other/tnl");
+    native.async.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        schema: 1,
+        owner: { ...started(), executable: "/installed/other/tnl" },
+        prepared: prepared(),
+      }),
+    });
+    await connectionHandle("database", vi.fn());
+    expect(native.async.mock.calls.at(-1)?.[1]).not.toEqual(initial);
+    await connectionHandle("database", vi.fn());
+    expect(native.async.mock.calls.at(-1)?.[1]).toContain("--handle");
+  });
+
   test("malformed warm selection replies cannot replace or retire an established shared owner", async () => {
     const { connectionHandle } = await import("../../src/internal/connector/connection.js");
     const handle = connectionHandle("database", vi.fn());
