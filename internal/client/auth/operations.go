@@ -99,7 +99,7 @@ func StartLogin(ctx context.Context, config Config) (clientstate.AuthOperation, 
 	}
 	if session, found, err := store.ControlSession(ctx); err != nil {
 		return op, err
-	} else if found && session.RefreshExpiresAt.After(time.Now()) && !session.RefreshPending {
+	} else if found && session.RefreshExpiresAt.After(time.Now()) && session.RefreshPhase(time.Now()) == clientstate.RefreshAvailable {
 		selection.RefreshToken = &session.RefreshToken
 	}
 	challenge, err := resolved.rawAuthority.StartDeviceLogin(ctx, selection)
@@ -325,8 +325,8 @@ func cleanupCancelledOperation(ctx context.Context, config Config, store *client
 	defer cancel()
 	resolved := control{rawAuthority: authority}
 	err = authority.LogoutWithAccessToken(cleanupCtx, credentials.AccessToken(p.Session.AccessToken))
-	if errors.Is(err, clientauthority.ErrUnauthenticated) && refreshUsable(*p.Session, time.Now()) {
-		if p.Session.RefreshPending {
+	if errors.Is(err, clientauthority.ErrUnauthenticated) && p.Session.RefreshPhase(time.Now()) != clientstate.RefreshExpired {
+		if p.Session.RefreshPhase(time.Now()) == clientstate.RefreshRecoveryRequired {
 			return failure.Wrap("recover cancelled session refresh", failure.AuthRecoveryRequired, err)
 		}
 		p.Session.RefreshPending = true

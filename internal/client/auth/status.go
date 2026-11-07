@@ -50,7 +50,7 @@ func Status(ctx context.Context, config Config, check bool) (StatusResult, error
 			if !session.RefreshExpiresAt.After(time.Now()) {
 				result.Status = "expired"
 			}
-			if session.RefreshPending {
+			if session.RefreshPhase(time.Now()) == clientstate.RefreshRecoveryRequired {
 				result.Status = "recovery_required"
 			}
 		}

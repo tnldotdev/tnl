@@ -195,14 +195,14 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 		return "", err
 	}
 	now := time.Now()
-	if found && stored.RefreshPending {
+	if found && stored.RefreshPhase(now) == clientstate.RefreshRecoveryRequired {
 		return "", failure.Wrap("recover control session refresh", failure.AuthRecoveryRequired, errors.New("a previous refresh has an uncertain outcome"))
 	}
 	if found && (!force || usedToken != stored.AccessToken) &&
 		stored.AccessExpiresAt.After(now.Add(refreshSafetyMargin)) {
 		return stored.AccessToken, nil
 	}
-	if found && refreshUsable(stored, now) {
+	if found && stored.RefreshPhase(now) == clientstate.RefreshAvailable {
 		refreshed, refreshErr := protectedRefresh(ctx, s.control, stored, s.store)
 		if refreshErr == nil {
 			if err := s.store.SaveControlSession(ctx, refreshed); err != nil {
@@ -221,10 +221,10 @@ func (s *tokenSource) accessToken(ctx context.Context, force bool, usedToken str
 // protectedRefresh checkpoints the single-use refresh credential before sending
 // it. a lost response must never cause a later command to replay that credential.
 func protectedRefresh(ctx context.Context, resolved control, stored clientstate.ControlSession, store *clientstate.Store) (clientstate.ControlSession, error) {
-	if stored.RefreshPending {
+	if stored.RefreshPhase(time.Now()) == clientstate.RefreshRecoveryRequired {
 		return clientstate.ControlSession{}, failure.Wrap("recover control session refresh", failure.AuthRecoveryRequired, errors.New("refresh outcome is uncertain"))
 	}
-	if err := store.SetControlSessionRefreshPending(ctx, true); err != nil {
+	if err := store.MarkControlSessionRefreshPending(ctx); err != nil {
 		return clientstate.ControlSession{}, err
 	}
 	refreshed, err := refreshSession(ctx, resolved, stored)
@@ -234,7 +234,7 @@ func protectedRefresh(ctx context.Context, resolved control, stored clientstate.
 	if definiteRefreshFailure(err) {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), issuedSessionCleanupTimeout)
 		defer cancel()
-		return clientstate.ControlSession{}, errors.Join(err, store.SetControlSessionRefreshPending(cleanupCtx, false))
+		return clientstate.ControlSession{}, errors.Join(err, store.ClearControlSessionRefreshPending(cleanupCtx))
 	}
 	return clientstate.ControlSession{}, failure.Wrap("refresh control session", failure.AuthRecoveryRequired, err)
 }
@@ -289,7 +289,7 @@ func revokeSession(
 	store *clientstate.Store,
 ) error {
 	err := resolved.rawAuthority.LogoutWithAccessToken(ctx, credentials.AccessToken(stored.AccessToken))
-	if !errors.Is(err, clientauthority.ErrUnauthenticated) || stored.RefreshPending || !refreshUsable(stored, time.Now()) {
+	if !errors.Is(err, clientauthority.ErrUnauthenticated) || stored.RefreshPhase(time.Now()) != clientstate.RefreshAvailable {
 		return err
 	}
 	var refreshed clientstate.ControlSession
@@ -330,10 +330,6 @@ func authoritySession(
 		return clientstate.ControlSession{}, err
 	}
 	return stored, nil
-}
-
-func refreshUsable(session clientstate.ControlSession, now time.Time) bool {
-	return session.RefreshExpiresAt.IsZero() || session.RefreshExpiresAt.After(now)
 }
 
 func refreshRejected(err error) bool {

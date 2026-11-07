@@ -27,6 +27,28 @@ type ControlSession struct {
 	RefreshPending   bool
 }
 
+// refresh_pending is a persisted checkpoint, not a network-in-flight signal.
+// a process that reads it cannot tell whether the one-use token was spent, so
+// recovery takes precedence even if the refresh credential has since expired.
+type ControlSessionRefreshPhase uint8
+
+const (
+	RefreshAvailable ControlSessionRefreshPhase = iota
+	RefreshExpired
+	RefreshRecoveryRequired
+)
+
+func (session ControlSession) RefreshPhase(now time.Time) ControlSessionRefreshPhase {
+	switch {
+	case session.RefreshPending:
+		return RefreshRecoveryRequired
+	case !session.RefreshExpiresAt.IsZero() && !session.RefreshExpiresAt.After(now):
+		return RefreshExpired
+	default:
+		return RefreshAvailable
+	}
+}
+
 func (s *Store) ControlSession(ctx context.Context) (ControlSession, bool, error) {
 	stored, err := s.database.queries.GetControlSession(ctx, s.controlEndpoint)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -127,7 +149,15 @@ func (s *Store) RemoveControlSession(ctx context.Context) error {
 	return nil
 }
 
-func (s *Store) SetControlSessionRefreshPending(ctx context.Context, pending bool) error {
+func (s *Store) MarkControlSessionRefreshPending(ctx context.Context) error {
+	return s.setControlSessionRefreshPending(ctx, true)
+}
+
+func (s *Store) ClearControlSessionRefreshPending(ctx context.Context) error {
+	return s.setControlSessionRefreshPending(ctx, false)
+}
+
+func (s *Store) setControlSessionRefreshPending(ctx context.Context, pending bool) error {
 	var value int64
 	if pending {
 		value = 1
