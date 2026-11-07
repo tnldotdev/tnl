@@ -38,7 +38,8 @@ type PreparedConnector struct {
 	closeErr           error
 	work               sync.WaitGroup
 	permissionUpdates  chan preparedPermissionRenewal
-	permissionCancel   context.CancelFunc
+	permissionCancel   context.CancelCauseFunc
+	permissionStop     *preparedPermissionStop
 	permissionUntil    time.Time
 	permissionErr      error
 	stdioClosedOnAbort bool
@@ -89,9 +90,19 @@ func (p *PreparedConnector) permissionDeniedLocked() bool {
 }
 
 type preparedPermissionRenewal struct {
-	writer *tunnel.ConnectorPermissionWriter
+	writer interface {
+		Renew(context.Context, tunnelv1.ConnectorPermissionUpdate) error
+	}
 	update tunnelv1.ConnectorPermissionUpdate
 	until  time.Time
+}
+
+// each prepared stream identifies its own finished renewal work. a caller's
+// cancellation, a denial, or a transport failure is not this shutdown cause.
+type preparedPermissionStop struct{ owner *PreparedConnector }
+
+func (*preparedPermissionStop) Error() string {
+	return "the prepared stream finished its permission work"
 }
 
 // PrepareConnector consumes a source-prepared opening without RPC or signing.
@@ -207,7 +218,7 @@ func (p *PreparedConnector) finish() {
 			p.permission = permissionUsable{}
 		}
 		if p.permissionCancel != nil {
-			p.permissionCancel()
+			p.permissionCancel(p.permissionStop)
 		}
 		p.mu.Unlock()
 		p.closeErr = p.closePhysical()
@@ -247,8 +258,9 @@ func (p *PreparedConnector) startPermissionWorkerLocked() {
 	if p.permissionUpdates != nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(p.ctx)
+	ctx, cancel := context.WithCancelCause(p.ctx)
 	p.permissionCancel = cancel
+	p.permissionStop = &preparedPermissionStop{owner: p}
 	p.permissionUpdates = make(chan preparedPermissionRenewal, 1)
 	p.work.Add(1)
 	go p.renewPermissions(ctx, p.permissionUpdates)
@@ -280,7 +292,7 @@ func (p *PreparedConnector) renewPermissions(ctx context.Context, updates <-chan
 		}
 		select {
 		case <-wait.Done():
-			if cause := context.Cause(wait); cause != context.Canceled {
+			if cause := context.Cause(wait); cause != p.permissionStop {
 				p.mu.Lock()
 				p.permissionErr = cause
 				p.mu.Unlock()
@@ -304,7 +316,9 @@ func (p *PreparedConnector) renewPermissions(ctx context.Context, updates <-chan
 			}
 			if err != nil {
 				p.mu.Lock()
-				p.permissionErr = err
+				if err != p.permissionStop || context.Cause(ctx) != p.permissionStop {
+					p.permissionErr = err
+				}
 				p.mu.Unlock()
 				p.finish() // the owner joins this worker; it never joins itself.
 				return
@@ -330,7 +344,11 @@ func (p *PreparedConnector) Close() error {
 // renewal. denial leaves a permanent fence before any waiting write is released.
 func (p *PreparedConnector) renewPermission(ctx context.Context, renew func() error, nextUntil time.Time) error {
 	p.mu.Lock()
-	if p.closedLocked() || p.ctx.Err() != nil || ctx.Err() != nil || p.permissionDeniedLocked() {
+	if cause := context.Cause(ctx); cause != nil {
+		p.mu.Unlock()
+		return cause
+	}
+	if p.closedLocked() || p.ctx.Err() != nil || p.permissionDeniedLocked() {
 		p.mu.Unlock()
 		return ErrServiceConnection
 	}
