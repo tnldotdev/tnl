@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -29,7 +30,10 @@ func (p *relabeledQUICSocket) ReadFrom(buffer []byte) (int, net.Addr, error) {
 	if err != nil {
 		return n, address, err
 	}
-	physical := address.(*net.UDPAddr)
+	return n, p.relabel(address.(*net.UDPAddr)), nil
+}
+
+func (p *relabeledQUICSocket) relabel(physical *net.UDPAddr) *net.UDPAddr {
 	ip, port := physical.AddrPort().Addr(), uint16(physical.Port)
 	if p.moved.Load() {
 		ip = netip.MustParseAddr("127.0.0.2")
@@ -39,7 +43,7 @@ func (p *relabeledQUICSocket) ReadFrom(buffer []byte) (int, net.Addr, error) {
 	}
 	advertised := netip.AddrPortFrom(ip, port)
 	p.physical.Store(advertised, net.UDPAddrFromAddrPort(physical.AddrPort()))
-	return n, net.UDPAddrFromAddrPort(advertised), nil
+	return net.UDPAddrFromAddrPort(advertised)
 }
 
 func (p *relabeledQUICSocket) WriteTo(buffer []byte, address net.Addr) (int, error) {
@@ -51,6 +55,13 @@ func (p *relabeledQUICSocket) WriteTo(buffer []byte, address net.Addr) (int, err
 }
 
 func TestQUICSourcePinRejectsMigratedFramesBeforeDispatch(t *testing.T) {
+	for _, mode := range []string{"basic", "metadata", "fly"} {
+		t.Run(mode, func(t *testing.T) { testQUICSourcePinRejectsMigratedFramesBeforeDispatch(t, mode) })
+	}
+}
+
+func testQUICSourcePinRejectsMigratedFramesBeforeDispatch(t *testing.T, mode string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	packet, err := net.ListenPacket("udp4", "127.0.0.1:0")
@@ -58,8 +69,12 @@ func TestQUICSourcePinRejectsMigratedFramesBeforeDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	relabeled := &relabeledQUICSocket{PacketConn: packet}
+	var socket net.PacketConn = relabeled
+	if mode != "basic" {
+		socket = &relabeledQUICOOBSocket{relabeled}
+	}
 	serverTLS, clientTLS := testTLSConfigs(t)
-	listener, err := ListenQUICPacket(relabeled, serverTLS, QUICConfig{PinnedRemoteIPLimit: 4, Config: &quic.Config{EnableDatagrams: true}})
+	listener, err := ListenQUICPacket(socket, serverTLS, QUICConfig{PinnedRemoteIPLimit: 4, BasicPacketConn: mode == "fly", Config: &quic.Config{EnableDatagrams: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,6 +151,34 @@ func TestQUICSourcePinRejectsMigratedFramesBeforeDispatch(t *testing.T) {
 	if _, err := listener.Accept(ctx); !errors.Is(err, ErrClosed) {
 		t.Fatal("draining listener accepted another connection", err)
 	}
+}
+
+// preserve real socket metadata while changing only the source identity seen by
+// the filter. a raw-descriptor batch read would bypass this fixture and fail it.
+type relabeledQUICOOBSocket struct{ *relabeledQUICSocket }
+
+func (p *relabeledQUICOOBSocket) SyscallConn() (syscall.RawConn, error) {
+	return p.PacketConn.(*net.UDPConn).SyscallConn()
+}
+
+func (p *relabeledQUICOOBSocket) SetReadBuffer(size int) error {
+	return p.PacketConn.(*net.UDPConn).SetReadBuffer(size)
+}
+
+func (p *relabeledQUICOOBSocket) ReadMsgUDP(buffer, oob []byte) (int, int, int, *net.UDPAddr, error) {
+	n, oobn, flags, address, err := p.PacketConn.(*net.UDPConn).ReadMsgUDP(buffer, oob)
+	if err == nil {
+		address = p.relabel(address)
+	}
+	return n, oobn, flags, address, err
+}
+
+func (p *relabeledQUICOOBSocket) WriteMsgUDP(buffer, oob []byte, address *net.UDPAddr) (int, int, error) {
+	physical, ok := p.physical.Load(address.AddrPort())
+	if !ok {
+		return 0, 0, errors.New("test: missing physical UDP destination")
+	}
+	return p.PacketConn.(*net.UDPConn).WriteMsgUDP(buffer, oob, physical.(*net.UDPAddr))
 }
 
 type scriptedQUICSocket struct {

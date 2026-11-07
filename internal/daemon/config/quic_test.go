@@ -12,6 +12,7 @@ func TestRelayQUICProfiles(t *testing.T) {
 	for _, profile := range []string{"", "standard", "fly"} {
 		t.Run("profile="+profile, func(t *testing.T) {
 			t.Setenv("TNLD_RELAY_QUIC_PROFILE", profile)
+			t.Setenv("TNLD_RELAY_UDP_LISTEN", "127.0.0.1:443")
 			cfg := validCertificateConfig(t, RoleRelay)
 			wantProfile := profile
 			if wantProfile == "" {
@@ -40,6 +41,42 @@ func TestRelayQUICProfiles(t *testing.T) {
 				config.Config.InitialPacketSize = 1400
 				if cfg.RelayQUICConfig().Config.InitialPacketSize != size {
 					t.Fatal("resolved listeners share mutable QUIC configuration")
+				}
+			}
+		})
+	}
+}
+
+func TestRelayQUICFlyRequiresSpecificListenAddress(t *testing.T) {
+	for _, role := range []Role{RoleRelay, RoleStandalone} {
+		t.Run(string(role), func(t *testing.T) {
+			base := validCertificateConfig(t, role)
+			for _, profile := range []string{"standard", "fly"} {
+				for _, address := range []string{
+					"", ":443", "0.0.0.0:443", "[::]:443", "[0:0:0:0:0:0:0:0]:443", "[::ffff:0.0.0.0]:443",
+					"127.0.0.1:443", "fly-global-services:443",
+				} {
+					t.Run(profile+"/"+address, func(t *testing.T) {
+						cfg := base
+						cfg.RelayQUICProfile, cfg.RelayUDPListen = profile, address
+						wantError := profile == "fly" && address != "127.0.0.1:443" && address != "fly-global-services:443"
+						for _, validate := range []func() error{cfg.Validate, func() error { _, err := Resolve(cfg); return err }} {
+							err := validate()
+							if !wantError {
+								if err != nil {
+									t.Fatal(err)
+								}
+								continue
+							}
+							typed, ok := failure.Of(err)
+							if !ok || typed.Reason() != failure.ServerConfigInvalid || typed.Setting() != failure.SettingRelayUDPListen {
+								t.Fatalf("wildcard fly listener lost its diagnostic setting: %v", err)
+							}
+							if definition, _ := failure.DefinitionFor(typed.Reason()); definition.Retry != failure.RetryAfterChange {
+								t.Fatal("wildcard fly listener must require a configuration change")
+							}
+						}
+					})
 				}
 			}
 		})

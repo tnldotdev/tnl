@@ -244,15 +244,29 @@ func TestQUICListenerSocketModes(t *testing.T) {
 				config.Config.InitialPacketSize = 1200
 				config.Config.DisablePathMTUDiscovery = true
 			}
-			testQUICListenerSocketMode(t, config)
+			for _, reserved := range []bool{false, true} {
+				t.Run(fmt.Sprintf("reserved=%t", reserved), func(t *testing.T) {
+					testQUICListenerSocketMode(t, config, reserved)
+				})
+			}
 		})
 	}
 }
 
-func testQUICListenerSocketMode(t *testing.T, config QUICConfig) {
+func testQUICListenerSocketMode(t *testing.T, config QUICConfig, reserved bool) {
 	t.Helper()
 	serverTLS, clientTLS := testTLSConfigs(t)
-	wrapped, err := ListenQUIC("127.0.0.1:0", serverTLS, config)
+	var wrapped *QUICListener
+	var err error
+	if reserved {
+		packet, listenErr := net.ListenPacket("udp4", "127.0.0.1:0")
+		if listenErr != nil {
+			t.Fatal(listenErr)
+		}
+		wrapped, err = ListenQUICPacket(packet, serverTLS, config)
+	} else {
+		wrapped, err = ListenQUIC("127.0.0.1:0", serverTLS, config)
+	}
 	if err != nil {
 		t.Fatalf("listen QUIC: %v", err)
 	}
@@ -347,6 +361,47 @@ func TestQUICListenerUDPNetwork(t *testing.T) {
 	if listener, err := ListenQUIC("[::1]:0", serverTLS, QUICConfig{UDPNetwork: "udp4"}); err == nil {
 		_ = listener.Close()
 		t.Fatal("IPv4 listener accepted an IPv6 listen address")
+	}
+}
+
+func TestQUICBasicListenerRejectsWildcardAddress(t *testing.T) {
+	serverTLS, _ := testTLSConfigs(t)
+	for _, address := range []string{":0", "0.0.0.0:0", "[::]:0", "[::ffff:0.0.0.0]:0"} {
+		t.Run(address, func(t *testing.T) {
+			listener, err := ListenQUIC(address, serverTLS, QUICConfig{BasicPacketConn: true})
+			if listener != nil {
+				_ = listener.Close()
+			}
+			if !errors.Is(err, errQUICWildcardListen) {
+				t.Fatalf("wildcard basic listener = %v; want %v", err, errQUICWildcardListen)
+			}
+		})
+	}
+}
+
+func TestQUICBasicReservedListenerRejectsWildcardAddress(t *testing.T) {
+	serverTLS, _ := testTLSConfigs(t)
+	for _, limit := range []int{0, 4} {
+		t.Run(fmt.Sprintf("source-limit=%d", limit), func(t *testing.T) {
+			packet, err := net.ListenPacket("udp4", ":0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = packet.Close() })
+			address := packet.LocalAddr().String()
+			listener, err := ListenQUICPacket(packet, serverTLS, QUICConfig{BasicPacketConn: true, PinnedRemoteIPLimit: limit})
+			if listener != nil {
+				_ = listener.Close()
+			}
+			if !errors.Is(err, errQUICWildcardListen) {
+				t.Fatalf("wildcard basic listener = %v; want %v", err, errQUICWildcardListen)
+			}
+			rebound, err := net.ListenPacket("udp4", address)
+			if err != nil {
+				t.Fatalf("invalid basic listener retained its socket: %v", err)
+			}
+			_ = rebound.Close()
+		})
 	}
 }
 
