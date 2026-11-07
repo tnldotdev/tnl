@@ -70,6 +70,11 @@ const assignmentSchema = z
   }))
   .readonly();
 type Assignment = z.output<typeof assignmentSchema>;
+type AppRegistration = { readonly endpoint: RuntimeEndpoint; readonly assignment: Assignment };
+type AppRegistrationState =
+  | { readonly phase: "prepared"; readonly registration: AppRegistration }
+  | { readonly phase: "released"; readonly registration: AppRegistration }
+  | { readonly phase: "closed"; readonly registration: AppRegistration };
 interface Dependencies {
   start(
     directory: string,
@@ -157,28 +162,33 @@ async function createPreparedServiceUntraced(
     owner,
     pid: process.pid,
   };
-  let endpoint = await dependencies.start(directory, undefined, selection);
-  let assignment = parseAssignment(await dependencies.request(endpoint, "prepare", prepareRequest));
+  const endpoint = await dependencies.start(directory, undefined, selection);
+  const assignment = parseAssignment(
+    await dependencies.request(endpoint, "prepare", prepareRequest),
+  );
   if (endpoint.scope !== "app" || assignment.service !== endpoint.service)
     throw new TnlError("sdk.response_invalid");
   const initial = assignment;
+  let state: AppRegistrationState = {
+    phase: "prepared",
+    registration: { endpoint, assignment },
+  };
   let target: CanonicalTarget | undefined;
   let server: LocalHTTPServer | undefined;
-  let closed = false;
-  let released = false;
   let revision = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending = Promise.resolve();
   let closing: Promise<void> | undefined;
   const lifetime = new AbortController();
+  const isClosed = () => state.phase === "closed";
   const enqueue = (operation: () => Promise<void>) => {
     const result = pending.catch(() => {}).then(operation);
     pending = result;
     return result;
   };
-  const registration = () => ({
+  const registration = (current: AppRegistration = state.registration) => ({
     version: 1,
-    registration_id: assignment.registrationID,
+    registration_id: current.assignment.registrationID,
     owner,
     ...(target === undefined ? {} : { target }),
   });
@@ -201,37 +211,40 @@ async function createPreparedServiceUntraced(
         });
         throw new TnlError("sdk.response_invalid");
       }
-      endpoint = replacementEndpoint;
-      assignment = replacement;
-      released = false;
+      if (state.phase !== "closed")
+        state = {
+          phase: "prepared",
+          registration: { endpoint: replacementEndpoint, assignment: replacement },
+        };
     });
   const release = async () => {
     clearTimeout(timer);
+    const current = state.registration;
     try {
-      await dependencies.request(endpoint, "unregister", registration());
+      await dependencies.request(current.endpoint, "unregister", registration(current));
     } catch (error) {
       if (!recoverable(error)) throw error;
     }
-    released = true;
+    if (state.phase !== "closed") state = { phase: "released", registration: current };
   };
   const schedule = () => {
-    if (closed || released) return;
+    if (state.phase !== "prepared") return;
     clearTimeout(timer);
     const renew = independent("sdk.app.renew", () =>
       enqueue(async () => {
-        if (closed || released) return;
+        if (state.phase !== "prepared") return;
         try {
           if (server !== undefined && !isBunServer(server) && !server.listening) {
             await release();
             return;
           }
-          await dependencies.request(endpoint, "renew", registration());
+          await dependencies.request(state.registration.endpoint, "renew", registration());
         } catch (error) {
           if (recoverable(error)) {
             try {
               await reconnect();
-              if (!closed && target !== undefined)
-                await dependencies.request(endpoint, "register", registration());
+              if (state.phase === "prepared" && target !== undefined)
+                await dependencies.request(state.registration.endpoint, "register", registration());
             } catch {
               /* the next renewal retries a restarting owner. */
             }
@@ -247,15 +260,15 @@ async function createPreparedServiceUntraced(
     timer.unref();
   };
   const setTarget = async (bound: CanonicalTarget, listener?: LocalHTTPServer) => {
-    if (closed) throw new TnlError("sdk.registration_stale");
-    if (released) await reconnect();
+    if (state.phase === "closed") throw new TnlError("sdk.registration_stale");
+    if (state.phase === "released") await reconnect();
     if (target !== bound || server !== listener) observeBound();
     target = bound;
     server = listener;
     const current = ++revision;
     if (listener !== undefined) {
       const stopped = independent("sdk.app.cleanup", async () => {
-        if (server === listener && revision === current && !closed)
+        if (server === listener && revision === current && state.phase !== "closed")
           return enqueue(async () => {
             if (server === listener && revision === current) await release();
           });
@@ -276,20 +289,20 @@ async function createPreparedServiceUntraced(
         });
     }
     try {
-      await dependencies.request(endpoint, "register", registration());
+      await dependencies.request(state.registration.endpoint, "register", registration());
     } catch (error) {
-      if (!recoverable(error) || closed) throw error;
+      if (!recoverable(error) || isClosed()) throw error;
       await reconnect();
-      if (closed) throw new TnlError("sdk.registration_stale");
-      await dependencies.request(endpoint, "register", registration());
+      if (isClosed()) throw new TnlError("sdk.registration_stale");
+      await dependencies.request(state.registration.endpoint, "register", registration());
     }
-    if (closed || (listener !== undefined && !isBunServer(listener) && !listener.listening))
+    if (isClosed() || (listener !== undefined && !isBunServer(listener) && !listener.listening))
       throw new TnlError("sdk.listener_failed");
     schedule();
   };
   const close = (): Promise<void> => {
     if (closing !== undefined) return closing;
-    closed = true;
+    state = { phase: "closed", registration: state.registration };
     lifetime.abort(new TnlError("sdk.registration_stale"));
     clearTimeout(timer);
     process.off("beforeExit", beforeExit);

@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import socket
+from dataclasses import dataclass
 from pathlib import Path
 
 import uvicorn
@@ -66,6 +67,25 @@ def _service_metadata(name: str, value: object) -> dict[str, object]:
     return item
 
 
+@dataclass(frozen=True, slots=True)
+class _Preparing:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class _Prepared:
+    endpoint: Endpoint
+    registration_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class _Closed:
+    registration: _Prepared | None
+
+
+type _RegistrationPhase = _Preparing | _Prepared | _Closed
+
+
 class PreparedService:
     def __init__(
         self, directory: str, service: str | None, state_dir: str | None, native: NativeRuntime
@@ -75,10 +95,8 @@ class PreparedService:
         self._state_dir = state_dir
         self._native = native
         self._owner = secrets.token_hex(16)
-        self._endpoint: Endpoint | None = None
-        self._registration_id = ""
+        self._phase: _RegistrationPhase = _Preparing()
         self._target: str | None = None
-        self._closed = False
         self._lock = asyncio.Lock()
         self._renewal: asyncio.Task[None] | None = None
         self.service = ""
@@ -153,14 +171,19 @@ class PreparedService:
                 {"version": 1, "registration_id": ident, "owner": self._owner},
             )
             raise InvalidResponse()
-        self._endpoint = endpoint
-        self._registration_id = ident
+        if isinstance(self._phase, _Closed):
+            raise RegistrationLost()
+        self._phase = _Prepared(endpoint, ident)
         self.service, self.hostname, self.public_url = name, host, url
 
-    def _registration(self) -> dict[str, object]:
+    def _registration(self, prepared: _Prepared | None = None) -> dict[str, object]:
+        if prepared is None:
+            if not isinstance(self._phase, _Prepared):
+                raise RegistrationLost()
+            prepared = self._phase
         value: dict[str, object] = {
             "version": 1,
-            "registration_id": self._registration_id,
+            "registration_id": prepared.registration_id,
             "owner": self._owner,
         }
         if self._target is not None:
@@ -173,33 +196,43 @@ class PreparedService:
 
     async def register(self, target: str) -> None:
         async with self._lock:
-            if self._closed:
+            if isinstance(self._phase, _Closed):
                 raise RegistrationLost()
             self._target = target
-            assert self._endpoint is not None
+            prepared = self._phase
+            assert isinstance(prepared, _Prepared)
             try:
-                await self._native.request(self._endpoint, "register", self._registration())
+                await self._native.request(
+                    prepared.endpoint, "register", self._registration(prepared)
+                )
             except (NativeUnavailable, RegistrationLost):
                 await self._prepare()
-                assert self._endpoint is not None
-                await self._native.request(self._endpoint, "register", self._registration())
+                prepared = self._phase
+                assert isinstance(prepared, _Prepared)
+                await self._native.request(
+                    prepared.endpoint, "register", self._registration(prepared)
+                )
 
     async def _renew(self) -> None:
-        while not self._closed:
+        while not isinstance(self._phase, _Closed):
             await asyncio.sleep(5)
             async with self._lock:
-                if self._closed:
+                prepared = self._phase
+                if isinstance(prepared, _Closed):
                     return
-                assert self._endpoint is not None
+                assert isinstance(prepared, _Prepared)
                 try:
-                    await self._native.request(self._endpoint, "renew", self._registration())
+                    await self._native.request(
+                        prepared.endpoint, "renew", self._registration(prepared)
+                    )
                 except (NativeUnavailable, RegistrationLost):
                     try:
                         await self._prepare()
-                        assert self._endpoint is not None
+                        prepared = self._phase
+                        assert isinstance(prepared, _Prepared)
                         if self._target is not None:
                             await self._native.request(
-                                self._endpoint, "register", self._registration()
+                                prepared.endpoint, "register", self._registration(prepared)
                             )
                     except TnlError:
                         pass
@@ -208,18 +241,21 @@ class PreparedService:
 
     async def close(self) -> None:
         async with self._lock:
-            if self._closed:
+            if isinstance(self._phase, _Closed):
                 return
-            self._closed = True
+            prepared = self._phase if isinstance(self._phase, _Prepared) else None
+            self._phase = _Closed(prepared)
             if self._renewal is not None:
                 self._renewal.cancel()
                 try:
                     await self._renewal
                 except asyncio.CancelledError:
                     pass
-            if self._endpoint is not None:
+            if prepared is not None:
                 try:
-                    await self._native.request(self._endpoint, "unregister", self._registration())
+                    await self._native.request(
+                        prepared.endpoint, "unregister", self._registration(prepared)
+                    )
                 except (RegistrationLost, NativeUnavailable):
                     pass
 

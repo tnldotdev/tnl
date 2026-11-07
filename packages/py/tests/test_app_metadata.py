@@ -12,6 +12,7 @@ from typing import cast
 import pytest
 
 import tnl
+from tnl import _app
 from tnl._native import NativeRuntime
 from tnl._protocol import Endpoint, InvalidResponse, parse_endpoint
 
@@ -63,12 +64,17 @@ def test_native_assignment_is_http_only_for_selected_app(
     async def scenario() -> None:
         native = AssignmentRuntime(native_app_assignment)
         publication = tnl.PreparedService("/project", "web", None, native)
+        assert isinstance(publication._phase, _app._Preparing)
         await publication.start()
         try:
+            assert isinstance(publication._phase, _app._Prepared)
             assert publication.public_url == "https://web.member.example:25443"
             await publication.register("http://127.0.0.1:8000")
         finally:
             await publication.close()
+        assert isinstance(publication._phase, _app._Closed)
+        with pytest.raises(_app.RegistrationLost):
+            await publication.register("http://127.0.0.1:8000")
         assert native.operations == ["prepare", "register", "unregister"]
 
     asyncio.run(scenario())
