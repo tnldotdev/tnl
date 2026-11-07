@@ -251,7 +251,7 @@ func ValidWorkloadRef(ref string) bool {
 		return false
 	}
 	name := strings.TrimPrefix(ref, prefix)
-	if !ExactWorkloadValue(name) || strings.ContainsAny(name, "\\ :~^@{") || strings.Contains(name, "..") || strings.Contains(name, "//") {
+	if !ExactWorkloadValue(name) || strings.ContainsAny(name, "\\ :~^") || strings.Contains(name, "@{") || strings.Contains(name, "..") || strings.Contains(name, "//") {
 		return false
 	}
 	for _, part := range strings.Split(name, "/") {
