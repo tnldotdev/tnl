@@ -101,8 +101,8 @@ func (r *PublicURLServer) consumeVisitorSource(proof tunnelv1.VisitorSourceProof
 	return history.consume(proof.Sequence)
 }
 
-// consume after metadata arrives: ingress may choose another relay before its
-// first byte, but cannot replay or rewrite a committed connection.
+// the stream owner waits for a visitor byte before consuming source evidence.
+// metadata-only setup may be attempted through more than one relay.
 func (r *PublicURLServer) authenticateVisitorSource(stream tunnelv1.VisitorStreamHeader, header proxyproto.Header) error {
 	if r.policy == nil || r.run.PublicURLID == "" || r.run.PublishRunID == "" || r.run.Number == 0 ||
 		stream.PublicURLID != r.run.PublicURLID || stream.PublishRunID != r.run.PublishRunID || stream.PublishRunNumber != r.run.Number {

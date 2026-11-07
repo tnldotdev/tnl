@@ -34,6 +34,7 @@ type fixtureConnectorPeer struct {
 	session         muxsession.Session
 	updates         chan tunnelv1.ConnectorPermissionUpdate
 	control         muxsession.Stream
+	renewalGate     [2]*fixtureTLSGate
 	permissionReply func(tunnelv1.ConnectorPermissionUpdate, *tunnel.ConnectorPermissionResponder)
 }
 

@@ -26,8 +26,8 @@ func (s *Session) OpenVisitorStream(ctx context.Context, h tunnelv1.VisitorStrea
 	return s.openStream(ctx, h.ConfirmBeforeBytes, events, func(w muxsession.Stream) (int, error) { return tunnelv1.WriteVisitorOpening(w, h, initial) }, nil)
 }
 
-// confirmation is one phase of the same opening. only an unconfirmed exact
-// session/assignment sends metadata first; subsequent openings carry the prefix.
+// confirmation is one phase of the same opening. when requested, send metadata
+// first and wait for acceptance before writing the visitor prefix.
 func (s *Session) OpenInternalForwardingStream(ctx context.Context, h tunnelv1.InternalForwardingHeader, proxy, initial []byte, events ReturnEvents) (muxsession.Stream, error) {
 	if len(proxy) > tunnelv1.MaxInitialBytes || len(initial) > tunnelv1.MaxInitialBytes-len(proxy) {
 		return nil, &OpeningError{Err: tunnelv1.ErrOpeningSize}

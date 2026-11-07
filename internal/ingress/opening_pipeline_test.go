@@ -65,12 +65,12 @@ func TestPublicOpeningMaximumClientHelloAndForwardedBytes(t *testing.T) {
 		t.Fatal("fixture did not reach ClientHello limit", len(hello))
 	}
 	worker := ingressWorker(t, func() { _ = f.publisher.Close() }, func() error {
-		for i := range 2 {
+		for range 2 {
 			incoming, err := f.publisher.AcceptVisitorStream(ingressContext(t))
 			if err != nil {
 				return err
 			}
-			if incoming.Header.ConfirmBeforeBytes != (i == 0) {
+			if !incoming.Header.ConfirmBeforeBytes {
 				return errors.New("wrong assignment confirmation phase")
 			}
 			if err := incoming.Accept(); err != nil {
@@ -132,52 +132,6 @@ func TestPublicOpeningMaximumClientHelloAndForwardedBytes(t *testing.T) {
 	}
 }
 
-func TestPublicOpeningConfirmationIsExactAndSessionScoped(t *testing.T) {
-	f := newForwarder(nil)
-	session := &tunnel.Session{}
-	key := relaySessionKey{}
-	f.sessions[key] = &relaySession{session: session}
-	h := forwardingTestHeader(forwardingTestEntry(time.Now(), "relay"), "visitor")
-	f.confirmAssignment(key, session, h)
-	for _, change := range []func(*tunnelv1.InternalForwardingHeader){
-		func(h *tunnelv1.InternalForwardingHeader) { h.PublicURLID = "other" },
-		func(h *tunnelv1.InternalForwardingHeader) { h.PublishRunID = "other" },
-		func(h *tunnelv1.InternalForwardingHeader) { h.PublishRunNumber++ },
-		func(h *tunnelv1.InternalForwardingHeader) { h.PublisherConnectionID = "other" },
-		func(h *tunnelv1.InternalForwardingHeader) { h.ConnectionSlot = 1 },
-		func(h *tunnelv1.InternalForwardingHeader) { h.ConnectionAssignmentRevision++ },
-		func(h *tunnelv1.InternalForwardingHeader) { h.RelayServiceID = "other" },
-		func(h *tunnelv1.InternalForwardingHeader) { h.RelayRunID = "other" },
-		func(h *tunnelv1.InternalForwardingHeader) { h.RelayLeaseRevision++ },
-	} {
-		changed := h
-		change(&changed)
-		if f.confirmedAssignment(key, session, changed) {
-			t.Fatal("confirmation crossed assignment identity")
-		}
-	}
-	newer := h
-	newer.ConnectionAssignmentRevision++
-	f.confirmAssignment(key, session, newer)
-	f.confirmAssignment(key, session, h)
-	if !f.confirmedAssignment(key, session, newer) || f.confirmedAssignment(key, session, h) {
-		t.Fatal("late old confirmation evicted newer assignment")
-	}
-	replacement := &tunnel.Session{}
-	f.sessions[key] = &relaySession{session: replacement}
-	f.confirmAssignment(key, session, newer)
-	if f.confirmedAssignment(key, replacement, newer) {
-		t.Fatal("confirmation survived session replacement")
-	}
-	for i := range 4100 {
-		h.PublicURLID = fmt.Sprintf("url-%d", i)
-		f.confirmAssignment(key, replacement, h)
-	}
-	if len(f.sessions[key].confirmed) != 4096 || f.confirmedAssignment(key, replacement, h) {
-		t.Fatal("confirmation cache exceeded bound")
-	}
-}
-
 type overflowFailureConnector struct {
 	relayConnector
 	failure error
@@ -208,6 +162,7 @@ type overflowFailureStream struct {
 	muxsession.Stream
 	failure error
 	opening bool
+	prefix  int
 }
 
 func (s *overflowFailureStream) Write(p []byte) (int, error) {
@@ -215,9 +170,16 @@ func (s *overflowFailureStream) Write(p []byte) (int, error) {
 		n, err := s.Stream.Write(p[:1])
 		return n, errors.Join(s.failure, err)
 	}
+	if s.prefix > 0 {
+		s.prefix -= len(p)
+		s.opening = s.prefix == 0
+		return s.Stream.Write(p)
+	}
 	// the real control handshake is not a public opening.
 	_, service, initial, err := tunnelv1.ReadForwardingOpening(bytes.NewReader(p))
-	s.opening = err == nil && service == nil && len(initial) == tunnelv1.MaxInitialBytes
+	if err == nil && service == nil {
+		s.prefix = tunnelv1.MaxInitialBytes - len(initial)
+	}
 	return s.Stream.Write(p)
 }
 

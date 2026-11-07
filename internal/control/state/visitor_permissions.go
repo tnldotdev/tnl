@@ -35,6 +35,10 @@ type VisitorPermission struct {
 // lockVisitorURL follows team -> URL -> run -> session -> identity lock order.
 // grant and membership mutations take the same team lock.
 func lockVisitorURL(ctx context.Context, q *controlstatedb.Queries, id string) (controlstatedb.ControlPublicUrl, error) {
+	return lockVisitorURLWithTeamGuard(ctx, q, id, q.LockLocalTeamForMutation)
+}
+
+func lockVisitorURLWithTeamGuard(ctx context.Context, q *controlstatedb.Queries, id string, lockTeam func(context.Context, string) (string, error)) (controlstatedb.ControlPublicUrl, error) {
 	candidate, err := q.GetFeedbackPublicURL(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return candidate, ErrPreviewAccess
@@ -53,7 +57,7 @@ func lockVisitorURL(ctx context.Context, q *controlstatedb.Queries, id string) (
 		if guestErr != nil {
 			return candidate, guestErr
 		}
-	} else if _, err = q.LockLocalTeamForMutation(ctx, candidate.TeamID); errors.Is(err, pgx.ErrNoRows) {
+	} else if _, err = lockTeam(ctx, candidate.TeamID); errors.Is(err, pgx.ErrNoRows) {
 		return candidate, ErrPreviewAccess
 	} else if err != nil {
 		return candidate, err

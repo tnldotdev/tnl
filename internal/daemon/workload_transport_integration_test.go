@@ -530,8 +530,10 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 		case err := <-done:
 			done <- err
 			t.Fatal(err)
-		case <-time.After(10 * time.Second):
-			t.Fatal("workload connector not ready")
+		// match Serve's fixed startup budget; preparation includes the
+		// publisher's background policy snapshot and both relay paths.
+		case <-time.After(30 * time.Second):
+			t.Fatalf("workload connector %s/%s source=%s not ready within 30s", transport, name, source.Id)
 		}
 		dial = func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, network, address)

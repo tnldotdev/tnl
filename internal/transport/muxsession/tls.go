@@ -161,13 +161,17 @@ func newYamuxSession(network net.Conn, client bool, maxIncoming int) (Session, e
 		session *yamux.Session
 		err     error
 	)
+	// yamux closes its connection from inside the failed writer before publishing
+	// shutdown. TLS close-notify can block there and make OpenStream ignore its
+	// context while waiting for shutdown; close the owned socket without an alert.
+	owned := yamuxNetwork{Conn: network}
 	if client {
-		session, err = yamux.Client(network, yamuxConfig(maxIncoming), nil)
+		session, err = yamux.Client(owned, yamuxConfig(maxIncoming), nil)
 	} else {
-		session, err = yamux.Server(network, yamuxConfig(maxIncoming), nil)
+		session, err = yamux.Server(owned, yamuxConfig(maxIncoming), nil)
 	}
 	if err != nil {
-		_ = network.Close()
+		_ = owned.Close()
 		return nil, fmt.Errorf("muxsession: start yamux: %w", err)
 	}
 	result := &yamuxSession{
@@ -178,6 +182,15 @@ func newYamuxSession(network net.Conn, client bool, maxIncoming int) (Session, e
 	}
 	go result.acceptLoop()
 	return result, nil
+}
+
+type yamuxNetwork struct{ net.Conn }
+
+func (c yamuxNetwork) Close() error {
+	if secure, ok := c.Conn.(*tls.Conn); ok {
+		return secure.NetConn().Close()
+	}
+	return c.Conn.Close()
 }
 
 func (s *yamuxSession) OpenStream(ctx context.Context) (Stream, error) {
@@ -204,11 +217,7 @@ func (s *yamuxSession) Close() error {
 	s.closeOnce.Do(func() {
 		// close the socket before TLS close-notify or yamux cleanup can block
 		// behind a write. session shutdown joins its I/O loops.
-		network := s.network
-		if secure, ok := network.(*tls.Conn); ok {
-			network = secure.NetConn()
-		}
-		err := network.Close()
+		err := (yamuxNetwork{Conn: s.network}).Close()
 		if errors.Is(err, net.ErrClosed) {
 			err = nil
 		}

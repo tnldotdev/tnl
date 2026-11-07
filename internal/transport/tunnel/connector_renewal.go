@@ -22,8 +22,16 @@ func (s *Session) RenewConnectorLeg(ctx context.Context, requestID string, proof
 	if err != nil {
 		return receipt, err
 	}
+	replied := false
 	defer func() {
 		err = errors.Join(err, finish(err == nil))
+		if !replied {
+			// a partial exchange cannot be retried on this control stream:
+			// a late reply or frame tail would belong to the next request.
+			// retire only this physical leg; its owner retains the previous
+			// authority deadline when reconnecting.
+			err = errors.Join(err, s.Close())
+		}
 		if err != nil {
 			receipt = tunnelv1.ConnectorPairLegAccepted{}
 		}
@@ -36,6 +44,7 @@ func (s *Session) RenewConnectorLeg(ctx context.Context, requestID string, proof
 	if err != nil {
 		return receipt, err
 	}
+	replied = true
 	if response.RequestID != requestID {
 		return receipt, errors.New("tunnel: connector renewal response does not match request")
 	}
