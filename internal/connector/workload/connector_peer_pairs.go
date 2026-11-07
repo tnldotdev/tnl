@@ -17,7 +17,7 @@ func (c *Client) PrepareConnectorPeerPair(ctx context.Context, service string, b
 	if err != nil {
 		return controlv1.ConnectorPeerPair{}, err
 	}
-	if !r.LeaseExpiresAt.After(time.Now()) || !r.ExpiresAt.After(time.Now()) {
+	if !r.LeaseExpiresAt.After(time.Now()) || !SessionDeadline(r).After(time.Now()) {
 		return controlv1.ConnectorPeerPair{}, ErrSessionExpired
 	}
 	if !slices.Contains(r.ServiceIds, service) {
@@ -34,7 +34,7 @@ func (c *Client) RenewConnectorPeerPair(ctx context.Context, service string, bod
 	if err != nil {
 		return controlv1.ConnectorPeerPairRenewal{}, err
 	}
-	if !r.LeaseExpiresAt.After(time.Now()) || !r.ExpiresAt.After(time.Now()) {
+	if !r.LeaseExpiresAt.After(time.Now()) || !SessionDeadline(r).After(time.Now()) {
 		return controlv1.ConnectorPeerPairRenewal{}, ErrSessionExpired
 	}
 	if !slices.Contains(r.ServiceIds, service) || body.Action != "renew" || body.PreviousPairId == nil {

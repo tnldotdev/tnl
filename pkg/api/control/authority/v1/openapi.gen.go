@@ -1076,7 +1076,9 @@ type WorkloadSessionFields struct {
 	AssertionExpiresAt *time.Time `json:"assertion_expires_at,omitempty"`
 	Binding            string     `json:"binding"`
 	Credential         string     `json:"credential"`
-	ExpiresAt          time.Time  `json:"expires_at"`
+
+	// ExpiresAt Absolute hard session deadline when maxDuration was configured. Omitted otherwise. Refresh and renewal cannot extend or remove an existing deadline.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 
 	// Github Immutable GitHub execution metadata verified from the signed provider assertion. Present only for the github provider and unchanged during renewal.
 	Github *WorkloadGitHubExecution `json:"github,omitempty"`

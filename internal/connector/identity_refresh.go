@@ -32,7 +32,7 @@ func (b *connectorConnectionBackend) publishWorkloadAssertion(client *workload.C
 	if b.closed || b.workload != client {
 		return connectorruntime.ErrExpired
 	}
-	b.deadline = session.ExpiresAt
+	b.deadline = workload.SessionDeadline(session)
 	if session.AssertionExpiresAt != nil {
 		b.rememberAssertion(assertion, *session.AssertionExpiresAt, session)
 	} else {
@@ -76,7 +76,7 @@ func (b *connectorConnectionBackend) refreshWorkloadIdentity(ctx context.Context
 		if err != nil {
 			return
 		}
-		expiry := minTime(session.IdentityExpiresAt, minTime(session.LeaseExpiresAt, session.ExpiresAt))
+		expiry := minTime(session.LeaseExpiresAt, workload.SessionDeadline(session))
 		if !expiry.After(time.Now()) {
 			return
 		}
@@ -102,7 +102,7 @@ func (b *connectorConnectionBackend) refreshWorkloadIdentity(ctx context.Context
 		}
 		// a shortened lease or an unavailable authority cannot give acquisition
 		// extra time. a later request must explicitly establish fresh authority.
-		until := minTime(time.Now().Add(10*time.Second), minTime(latest.LeaseExpiresAt, minTime(latest.IdentityExpiresAt, latest.ExpiresAt)))
+		until := minTime(time.Now().Add(10*time.Second), minTime(latest.LeaseExpiresAt, workload.SessionDeadline(latest)))
 		call, cancel := context.WithDeadline(ctx, until)
 		err = b.refreshWorkloadProof(call, client, acquire)
 		cancel()
@@ -149,7 +149,7 @@ func (b *connectorConnectionBackend) refreshWorkloadProof(ctx context.Context, c
 	if err != nil {
 		return err
 	}
-	if !session.LeaseExpiresAt.After(time.Now()) || !session.IdentityExpiresAt.After(time.Now()) || !session.ExpiresAt.After(time.Now()) {
+	if !session.LeaseExpiresAt.After(time.Now()) || !workload.SessionDeadline(session).After(time.Now()) {
 		return connectorruntime.ErrExpired
 	}
 	if known {

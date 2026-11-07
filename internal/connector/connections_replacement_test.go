@@ -57,7 +57,7 @@ func runConnectionReplacement(t *testing.T, options replacementTestOptions) {
 	oldID, newID := "wls_"+strings.Repeat("s", 22), "wls_"+strings.Repeat("n", 22)
 	makeSession := func(id string) authorityv1.WorkloadSession {
 		now := time.Now()
-		return authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat(string(id[len(id)-1]), 43), Binding: binding, TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: []string{service}, ExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second), IdentityExpiresAt: now.Add(2 * time.Hour)}
+		return authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat(string(id[len(id)-1]), 43), Binding: binding, TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: []string{service}, ExpiresAt: new(now.Add(time.Hour)), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second), IdentityExpiresAt: now.Add(2 * time.Hour)}
 	}
 	oldSession, newSession := makeSession(oldID), makeSession(newID)
 	var mu sync.Mutex
@@ -207,7 +207,7 @@ func runConnectionReplacement(t *testing.T, options replacementTestOptions) {
 	if options.raceExchange {
 		httpClient = &http.Client{Transport: &lateReplacementExchange{transport: httpClient.Transport, entered: entered, release: release}}
 	}
-	b := &connectorConnectionBackend{scope: connectorruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: []string{"db", "removed"}}, httpClient: httpClient, connectorConnectionSession: connectorConnectionSession{workload: client, deadline: oldSession.ExpiresAt}, listeners: map[string]*ownedServiceListener{}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"db": {Protocol: new("postgres")}}}}}}
+	b := &connectorConnectionBackend{scope: connectorruntime.Context{Schema: 1, Server: server.URL, TeamID: team, ProjectKey: "project", SourceID: strings.Repeat("a", 64), Workload: "worker", Services: []string{"db", "removed"}}, httpClient: httpClient, connectorConnectionSession: connectorConnectionSession{workload: client, deadline: workload.SessionDeadline(oldSession)}, listeners: map[string]*ownedServiceListener{}, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"db": {Protocol: new("postgres")}}}}}}
 	// a replacement session invalidates old snapshots without rebuilding their
 	// listeners. only a later Connect for the requested service may do that work.
 	b.listeners["db"] = &ownedServiceListener{attempt: &servicePreparation{state: &servingService{sessionID: oldID}, service: controlv1.Service{Id: service, Protocol: controlv1.Postgres, Enabled: true, Endpoint: &controlv1.ServiceEndpoint{Hostname: "db.example.test", Port: 15443}}}}

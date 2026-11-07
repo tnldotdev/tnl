@@ -92,7 +92,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 		t.Fatal("GitHub session omitted signed execution metadata")
 	}
 	retry, err := job.Exchange(ctx, team, "example", body.SourceFingerprint, "test", assertion, nil)
-	if err != nil || retry.Id != session.Id || retry.Credential != session.Credential || !retry.ExpiresAt.Equal(session.ExpiresAt) {
+	if err != nil || retry.Id != session.Id || retry.Credential != session.Credential || !retry.ExpiresAt.Equal(*session.ExpiresAt) {
 		t.Fatal("HTTP lost-reply recovery changed execution", err)
 	}
 	services, err := job.ListServices(ctx)
@@ -123,7 +123,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	if t.Failed() {
 		return
 	}
-	if renewed, err := job.Renew(ctx); err != nil || !renewed.ExpiresAt.Equal(session.ExpiresAt) || !renewed.LeaseExpiresAt.Equal(session.LeaseExpiresAt) {
+	if renewed, err := job.Renew(ctx); err != nil || !renewed.ExpiresAt.Equal(*session.ExpiresAt) || !renewed.LeaseExpiresAt.Equal(session.LeaseExpiresAt) {
 		t.Fatal("early renewal extended execution", err)
 	}
 	t.Run("renewal proof HTTP boundary", func(t *testing.T) {
@@ -178,7 +178,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 				continue
 			}
 			var renewed authorityv1.WorkloadSession
-			if err := json.Unmarshal(data, &renewed); err != nil || renewed.RenewalSequence != sequence || !renewed.LeaseExpiresAt.Equal(current.LeaseExpiresAt) || !renewed.ExpiresAt.Equal(current.ExpiresAt) {
+			if err := json.Unmarshal(data, &renewed); err != nil || renewed.RenewalSequence != sequence || !renewed.LeaseExpiresAt.Equal(current.LeaseExpiresAt) || !renewed.ExpiresAt.Equal(*current.ExpiresAt) {
 				t.Fatal("HTTP early renewal or retry changed its lease", err)
 			}
 		}

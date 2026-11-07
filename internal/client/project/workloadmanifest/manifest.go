@@ -114,7 +114,7 @@ func (m Manifest) Validate() error {
 		}
 	}
 	for name, w := range m.Workloads {
-		if !naming.ValidServiceName(name) || w.MaxDurationSeconds < 1 || w.MaxDurationSeconds > 21600 || len(w.Services) == 0 || len(w.Services) > 32 {
+		if !naming.ValidServiceName(name) || w.MaxDurationSeconds < 0 || int64(w.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds || len(w.Services) == 0 || len(w.Services) > 32 {
 			return ErrInvalid
 		}
 		seen := map[string]bool{}

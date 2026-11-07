@@ -220,11 +220,11 @@ func (b *connectorConnectionBackend) promoteReplacement(r *workloadReplacement, 
 	if b.replacement != r || b.workload != r.previous || r.progress != validated {
 		return connectorruntime.ErrInvalid
 	}
-	if !validated.session.ExpiresAt.After(time.Now()) || !validated.session.LeaseExpiresAt.After(time.Now()) {
+	if !workload.SessionDeadline(validated.session).After(time.Now()) || !validated.session.LeaseExpiresAt.After(time.Now()) {
 		return connectorruntime.ErrExpired
 	}
 	b.workload = r.client
-	b.deadline = validated.session.ExpiresAt
+	b.deadline = workload.SessionDeadline(validated.session)
 	b.services, b.metadata = validated.services, validated.metadata
 	b.rememberAssertion(assertion, identity.AssertionExpiresAt, validated.session)
 	b.replacement = nil

@@ -45,7 +45,7 @@ func TestConnectorPeerRebindRetainsWorkloadSubjectAndCurrentRights(t *testing.T)
 			case "lease":
 				client.session.LeaseExpiresAt = time.Now().Add(-time.Second)
 			case "expiry":
-				client.session.ExpiresAt = time.Now().Add(-time.Second)
+				client.session.ExpiresAt = new(time.Now().Add(-time.Second))
 			case "service":
 				client.session.ServiceIds = nil
 			case "subject":

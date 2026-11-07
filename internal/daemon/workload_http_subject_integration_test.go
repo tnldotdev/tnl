@@ -95,7 +95,7 @@ func TestIntegrationWorkloadHTTPReplacementKeepsSubjectsSeparate(t *testing.T) {
 			return false, nil
 		})
 		t.Cleanup(func() { _ = response.Body.Close() })
-		return response, session.Id, session.ExpiresAt
+		return response, session.Id, *session.ExpiresAt
 	}
 	old, oldID, expires := open("old", "401")
 	current, currentID, _ := open("new", "402")
