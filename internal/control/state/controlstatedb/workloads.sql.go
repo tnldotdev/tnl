@@ -76,6 +76,42 @@ func (q *Queries) ListWorkloadSessionServices(ctx context.Context, workloadSessi
 	return items, nil
 }
 
+const lockWorkloadSession = `-- name: LockWorkloadSession :one
+SELECT id, team_id, project_key, workload_name, provider, session_nonce, repository_id, run_id, run_attempt, check_run_id, public_key, request_digest, claims, binding, credential_digest, credential_ciphertext, storage_key_id, created_at, renewed_at, lease_expires_at, expires_at, revoked_at, renewal_sequence, identity_expires_at FROM control.workload_sessions WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockWorkloadSession(ctx context.Context, id string) (ControlWorkloadSession, error) {
+	row := q.db.QueryRow(ctx, lockWorkloadSession, id)
+	var i ControlWorkloadSession
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.ProjectKey,
+		&i.WorkloadName,
+		&i.Provider,
+		&i.SessionNonce,
+		&i.RepositoryID,
+		&i.RunID,
+		&i.RunAttempt,
+		&i.CheckRunID,
+		&i.PublicKey,
+		&i.RequestDigest,
+		&i.Claims,
+		&i.Binding,
+		&i.CredentialDigest,
+		&i.CredentialCiphertext,
+		&i.StorageKeyID,
+		&i.CreatedAt,
+		&i.RenewedAt,
+		&i.LeaseExpiresAt,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.RenewalSequence,
+		&i.IdentityExpiresAt,
+	)
+	return i, err
+}
+
 const visitorServiceConfiguration = `-- name: VisitorServiceConfiguration :one
 SELECT project.team_id,project.project_key,project.configuration_ciphertext,project.storage_key_id,service.service
 FROM control.applied_project_services service

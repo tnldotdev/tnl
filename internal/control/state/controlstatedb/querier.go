@@ -453,6 +453,7 @@ type Querier interface {
 	LockVisitorInvitation(ctx context.Context, id string) (ControlVisitorInvitation, error)
 	LockVisitorTokenIssuer(ctx context.Context) (string, error)
 	LockVisitorTokenSigningKey(ctx context.Context) (ControlVisitorTokenKey, error)
+	LockWorkloadSession(ctx context.Context, id string) (ControlWorkloadSession, error)
 	LoginTeamRequiresCompany(ctx context.Context, id string) (bool, error)
 	MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderInstalledParams) (ControlAcmeOrder, error)
 	MarkCustomDomainReleasing(ctx context.Context, arg MarkCustomDomainReleasingParams) (int64, error)

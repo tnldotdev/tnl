@@ -30,7 +30,17 @@ func TestSessionUpdatesShareImmutableAndNarrowingBoundary(t *testing.T) {
 			{"fresh identity proof", func(s *authorityv1.WorkloadSession) { s.IdentityExpiresAt = s.IdentityExpiresAt.Add(time.Minute) }, true},
 			{"identity expiry rollback", func(s *authorityv1.WorkloadSession) { s.IdentityExpiresAt = s.IdentityExpiresAt.Add(-time.Minute) }, false},
 			{"lease beyond proof", func(s *authorityv1.WorkloadSession) { s.IdentityExpiresAt = time.Now().Add(time.Second) }, false},
-			{"supplied proof beyond saved identity", func(s *authorityv1.WorkloadSession) { s.AssertionExpiresAt = new(s.IdentityExpiresAt.Add(time.Minute)) }, false},
+			{"verified proof beyond saved identity", func(s *authorityv1.WorkloadSession) { s.AssertionExpiresAt = new(s.IdentityExpiresAt.Add(time.Minute)) }, true},
+			{"expired verified proof", func(s *authorityv1.WorkloadSession) { s.AssertionExpiresAt = new(time.Now().Add(-time.Second)) }, false},
+			{"unbounded verified proof", func(s *authorityv1.WorkloadSession) { s.AssertionExpiresAt = new(time.Now().Add(13 * time.Hour)) }, false},
+			{"fresh hint cannot extend accepted identity", func(s *authorityv1.WorkloadSession) {
+				s.AssertionExpiresAt = new(s.IdentityExpiresAt.Add(time.Minute))
+				s.IdentityExpiresAt = s.LeaseExpiresAt.Add(-time.Second)
+			}, false},
+			{"fresh hint cannot revive expired identity", func(s *authorityv1.WorkloadSession) {
+				s.AssertionExpiresAt = new(s.IdentityExpiresAt.Add(time.Minute))
+				s.IdentityExpiresAt = time.Now().Add(-time.Second)
+			}, false},
 			{"negative sequence", func(s *authorityv1.WorkloadSession) { s.RenewalSequence = -1 }, false},
 			{"sequence rollback", func(s *authorityv1.WorkloadSession) { s.RenewalSequence = 1 }, false},
 			{"sequence jump", func(s *authorityv1.WorkloadSession) { s.RenewalSequence += 2 }, false},

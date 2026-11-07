@@ -123,7 +123,9 @@ func validateSession(r authorityv1.WorkloadSession) error {
 	if r.RenewalSequence < 0 {
 		return invalidSession()
 	}
-	if r.AssertionExpiresAt != nil && (!r.AssertionExpiresAt.After(time.Now()) || r.AssertionExpiresAt.After(r.IdentityExpiresAt) || r.AssertionExpiresAt.After(time.Now().Add(12*time.Hour+time.Minute))) {
+	// supplied proof expiry is verification metadata. exchange retries may
+	// verify a newer proof without attaching it to the saved session's authority.
+	if r.AssertionExpiresAt != nil && (!r.AssertionExpiresAt.After(time.Now()) || r.AssertionExpiresAt.After(time.Now().Add(12*time.Hour+time.Minute))) {
 		return invalidSession()
 	}
 	if r.Provider == controlv1.WorkloadGitHub {

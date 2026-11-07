@@ -71,7 +71,9 @@ func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential s
 	if _, err := controlstatedb.New(tx).LockLocalTeamForMutation(ctx, row.TeamID); err != nil {
 		return result, err
 	}
-	row, err = controlstatedb.New(tx).GetWorkloadSession(ctx, id)
+	// storage rotation can hold the session row without the team gate. take
+	// its row lock before checking the old proof cap, not while extending it.
+	row, err = controlstatedb.New(tx).LockWorkloadSession(ctx, id)
 	if err != nil {
 		return result, err
 	}
