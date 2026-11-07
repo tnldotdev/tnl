@@ -1,5 +1,11 @@
 import { context, ROOT_CONTEXT, trace } from "@opentelemetry/api";
+import { realpathSync } from "node:fs";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import {
+  workloadSelectionSchema,
+  type SelectionOptions,
+  type WorkloadRequest,
+} from "../../src/internal/connector/workload/contract.js";
 
 interface Owner {
   file: string;
@@ -18,44 +24,12 @@ const fixture = vi.hoisted(() => ({
     | typeof import("../../src/internal/connector/workload/provider.js")
     | undefined,
   failIPC: false,
-  acquireAssertion: vi.fn<() => Promise<string>>(),
 }));
 vi.mock("../../src/internal/native/launcher.js", () => ({
   resolveNativeBinary: () => "/fixture/tnl",
 }));
 vi.mock("node:fs/promises", async (original) => ({
   ...(await original<typeof import("node:fs/promises")>()),
-  async open() {
-    const manifest = Buffer.from(
-      JSON.stringify({
-        schema: 1,
-        server: "https://a.example",
-        team: "team",
-        project_key: "project",
-        source_fingerprint: "a".repeat(64),
-        project_label: "project",
-        services: { database: "postgres" },
-        workloads: {
-          job: {
-            provider: "oidc",
-            services: ["database"],
-            max_duration_seconds: 3600,
-            acquisition: { method: "callback", audience: "trusted-audience" },
-          },
-        },
-      }),
-    );
-    let position = 0;
-    return {
-      stat: async () => ({ isFile: () => true, size: manifest.length }),
-      async read(buffer: Buffer, offset: number, length: number) {
-        const bytesRead = manifest.copy(buffer, offset, position, position + length);
-        position += bytesRead;
-        return { bytesRead };
-      },
-      async close() {},
-    };
-  },
   async realpath(value: string) {
     fixture.scopeStarted();
     await fixture.scopeGate;
@@ -69,24 +43,35 @@ vi.mock("../../src/internal/connector/workload/provider.js", () => ({
   ) => actualProvider().configureWorkload(...args),
   usesWorkload: (...args: Parameters<ReturnType<typeof actualProvider>["usesWorkload"]>) =>
     fixture.realWorkload ? actualProvider().usesWorkload(...args) : fixture.workload,
-  acquireAssertion: (...args: Parameters<ReturnType<typeof actualProvider>["acquireAssertion"]>) =>
-    fixture.realWorkload ? actualProvider().acquireAssertion(...args) : fixture.acquireAssertion(),
-  selectWorkload: async (
+  async selectWorkload(
     ...args: Parameters<ReturnType<typeof actualProvider>["selectWorkload"]>
-  ) =>
-    fixture.realWorkload
-      ? actualProvider().selectWorkload(...args)
-      : {
-          name: "job",
-          directory: process.cwd(),
-          selected: { services: ["database"] },
-          manifest: { schema: 1 },
-        },
+  ): Promise<SelectionOptions> {
+    if (fixture.realWorkload) return actualProvider().selectWorkload(...args);
+    return mockSelection(args[0]);
+  },
 }));
 
 function actualProvider() {
   if (fixture.provider === undefined) throw new Error("provider not loaded");
   return fixture.provider;
+}
+
+async function mockSelection(
+  preview: (request: WorkloadRequest) => Promise<unknown>,
+): Promise<SelectionOptions> {
+  const request: WorkloadRequest = { name: "job", runtime: {} };
+  const selection = workloadSelectionSchema.parse(await preview(request));
+  return {
+    sdk_workload: request,
+    sdk_workload_policy: selection.policy,
+    sdk_environment: {
+      github_actions: process.env.GITHUB_ACTIONS ?? "",
+      github_request_url: process.env.ACTIONS_ID_TOKEN_REQUEST_URL ?? "",
+      github_request_token: process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN ?? "",
+      vercel_token_file: process.env.VERCEL_OIDC_TOKEN_FILE ?? "",
+      vercel_token: process.env.VERCEL_OIDC_TOKEN ?? "",
+    },
+  };
 }
 vi.mock("../../src/internal/connector/connection_ipc.js", () => ({
   ownerIPC: async (file: string) => ({
@@ -95,6 +80,10 @@ vi.mock("../../src/internal/connector/connection_ipc.js", () => ({
       const owner = [...fixture.owners.values()].find((owner) => owner.file === file);
       if (owner === undefined) throw new Error("unknown owner");
       return prepared(owner);
+    },
+    async workload() {
+      if (fixture.failIPC) throw new Error("owner disconnected");
+      return workloadSelection();
     },
     close() {},
   }),
@@ -117,6 +106,10 @@ vi.mock("node:child_process", () => ({
             input: input === undefined ? undefined : (JSON.parse(input) as unknown),
           });
           queueMicrotask(() => {
+            if (args[3] === "sdk-workload") {
+              callback(null, JSON.stringify(workloadSelection()));
+              return;
+            }
             if (args[3] === "sdk-stop") {
               callback(null, JSON.stringify({ schema: 1, state: "stopped" }));
               return;
@@ -145,6 +138,17 @@ vi.mock("node:child_process", () => ({
     throw new Error("no synchronous read in this fixture");
   },
 }));
+
+function workloadSelection() {
+  return {
+    schema: 1,
+    name: "job",
+    directory: process.cwd(),
+    manifest: `${process.cwd()}/.tnl/generated/workloads.json`,
+    policy: "a".repeat(64),
+    source: fixture.realWorkload ? "callback" : "native",
+  };
+}
 
 function prepared(owner: Owner) {
   return {
@@ -185,7 +189,7 @@ function prepared(owner: Owner) {
 let originalListeners = new Set(process.listeners("beforeExit"));
 beforeEach(async () => {
   vi.resetModules();
-  globalThis.__tnlConnectorContextV1 = undefined;
+  vi.stubGlobal("__tnlConnectorContextV2", undefined);
   fixture.provider = await vi.importActual("../../src/internal/connector/workload/provider.js");
   fixture.launches.length = 0;
   fixture.owners.clear();
@@ -194,7 +198,6 @@ beforeEach(async () => {
   fixture.workload = false;
   fixture.realWorkload = false;
   fixture.failIPC = false;
-  fixture.acquireAssertion.mockImplementation(async () => process.env.VERCEL_OIDC_TOKEN ?? "");
   vi.stubEnv("TNL_SERVER", "https://a.example");
   vi.stubEnv("TNL_STATE_DIR", "/fixture/state-a");
   vi.stubEnv("TNL_CONNECTION_HANDLE", undefined);
@@ -203,7 +206,7 @@ beforeEach(async () => {
   originalListeners = new Set(process.listeners("beforeExit"));
 });
 afterEach(() => {
-  globalThis.__tnlConnectorContextV1 = undefined;
+  vi.unstubAllGlobals();
   for (const listener of process.listeners("beforeExit"))
     if (!originalListeners.has(listener)) process.removeListener("beforeExit", listener);
 });
@@ -273,9 +276,11 @@ test.each([
     gate.resolve();
 
     expect(await Promise.all([first, second])).toMatchObject([{ port: 20001 }, { port: 20002 }]);
-    expect(fixture.launches.map((launch) => [launch.environment[name], launch.input])).toEqual([
-      [initial, { schema: 1, assertion: "assertion-a" }],
-      [changed, { schema: 1, assertion: "assertion-b" }],
+    const launches = fixture.launches.filter((launch) => launch.args[3] === "sdk-prepare");
+    expect(launches.map((launch) => launch.environment[name])).toEqual([initial, changed]);
+    expect(launches.map((launch) => launch.input)).toMatchObject([
+      { assertion: "assertion-a", sdk_workload: { name: "job", callback: true } },
+      { assertion: "assertion-b", sdk_workload: { name: "job", callback: true } },
     ]);
     expect(callbackA).toHaveBeenCalledOnce();
     expect(callbackB).toHaveBeenCalledOnce();
@@ -296,9 +301,61 @@ test("pending workload detection does not switch to an unconfigured context", as
   gate.resolve();
 
   await pending;
-  expect(fixture.launches[0]?.input).toEqual({ schema: 1, assertion: "assertion-a" });
+  const launch = fixture.launches.find((launch) => launch.args[3] === "sdk-prepare");
+  expect(launch?.input).toMatchObject({ assertion: "assertion-a" });
   expect(callback).toHaveBeenCalledOnce();
 });
+
+test.each([false, true])(
+  "incompatible scopes stay isolated while current copies share (workload=%s)",
+  async (workload) => {
+    fixture.workload = workload;
+    const key = JSON.stringify([
+      realpathSync(process.cwd()),
+      process.env.TNL_STATE_DIR,
+      process.env.TNL_SERVER,
+      process.env.TNL_CONNECTION_HANDLE,
+    ]);
+    const nativeKey = JSON.stringify([key, "/fixture/tnl"]);
+    // the previous ABI had neither directory nor workload on its native scopes.
+    const legacyScope = {
+      registry: "/fixture/legacy-registry",
+      binary: "/fixture/tnl",
+      environment: {},
+      requests: new Map<string, Promise<unknown>>(),
+      open: vi.fn(async () => ({ close() {} })),
+      select: vi.fn(async () => prepared({ file: "/fixture/legacy/handle.json", port: 20003 })),
+    };
+    const legacyContext = {
+      scopes: new Map([[nativeKey, Promise.resolve(legacyScope)]]),
+      selectedScopes: new Map([[key, new Map([["/fixture/tnl", legacyScope]])]]),
+      fetches: new Map(),
+      external: new Map(),
+      workloads: new Map(),
+    };
+    vi.stubGlobal("__tnlConnectorContextV1", legacyContext);
+    const first = await import("../../src/internal/connector/connection.js");
+    const firstContext = await import("../../src/internal/connector/context.js");
+    expect(await first.connectionHandle("database", vi.fn())).toHaveProperty("port", 20001);
+
+    vi.resetModules();
+    const second = await import("../../src/internal/connector/connection.js");
+    const secondContext = await import("../../src/internal/connector/context.js");
+    expect(first.connectionHandle).not.toBe(second.connectionHandle);
+    expect(secondContext.context).toBe(firstContext.context);
+    expect(secondContext.context).not.toBe(legacyContext);
+    expect(Reflect.get(globalThis, "__tnlConnectorContextV1")).toBe(legacyContext);
+    expect(await second.connectionHandle("database", vi.fn())).toHaveProperty("port", 20001);
+    expect(fixture.scopeStarted).toHaveBeenCalledOnce();
+    expect(fixture.owners.size).toBe(1);
+    expect(fixture.launches.filter((launch) => launch.args[3] === "sdk-prepare")).toHaveLength(1);
+    expect(fixture.launches.every((launch) => launch.args.includes(process.cwd()))).toBe(true);
+    expect(legacyContext.scopes.size).toBe(1);
+    expect(legacyScope.select).not.toHaveBeenCalled();
+    expect(legacyScope.open).not.toHaveBeenCalled();
+    expect(legacyScope.requests.size).toBe(0);
+  },
+);
 
 test("workload recovery and cleanup keep scope selection but refresh launch inputs", async () => {
   fixture.workload = true;
@@ -313,10 +370,19 @@ test("workload recovery and cleanup keep scope selection but refresh launch inpu
   const active = vi.spyOn(context, "active").mockReturnValue(caller("1"));
   const { connectionHandle } = await import("../../src/internal/connector/connection.js");
   await connectionHandle("database", vi.fn());
-  expect(fixture.launches[0]?.input).toEqual({ schema: 1, assertion: "first-assertion" });
-  expect(fixture.launches[0]?.environment.TNL_TRACEPARENT).toBe(
-    `00-${"1".repeat(32)}-${"1".repeat(16)}-01`,
-  );
+  expect(fixture.launches.map((launch) => launch.args[3])).toEqual(["sdk-workload", "sdk-prepare"]);
+  expect(fixture.launches[0]?.input).toEqual({
+    schema: 1,
+    sdk_workload: { name: "job", runtime: {} },
+  });
+  expect(fixture.launches[1]?.input).toMatchObject({
+    schema: 1,
+    sdk_workload: { name: "job", runtime: {} },
+    sdk_workload_policy: "a".repeat(64),
+    sdk_environment: { vercel_token: "first-assertion" },
+  });
+  for (const launch of fixture.launches)
+    expect(launch.environment.TNL_TRACEPARENT).toBe(`00-${"1".repeat(32)}-${"1".repeat(16)}-01`);
 
   fixture.failIPC = true;
   active.mockReturnValue(caller("2"));
@@ -325,24 +391,30 @@ test("workload recovery and cleanup keep scope selection but refresh launch inpu
   vi.stubEnv("TNL_STATE_DIR", "/fixture/state-b");
   vi.stubEnv("VERCEL_OIDC_TOKEN", "current-assertion");
   await recovery;
-  expect(fixture.launches[1]?.args).toContain("--recover-handle");
-  expect(fixture.launches[1]?.args).toContain("--workload");
-  expect(fixture.launches[1]?.input).toEqual({ schema: 1, assertion: "current-assertion" });
-  expect(fixture.launches[1]?.environment).toMatchObject({
-    TNL_SERVER: "https://a.example",
-    TNL_STATE_DIR: "/fixture/state-a",
-    VERCEL_OIDC_TOKEN: "current-assertion",
-    TNL_TRACEPARENT: `00-${"2".repeat(32)}-${"2".repeat(16)}-01`,
+  expect(fixture.launches[2]?.args[3]).toBe("sdk-workload");
+  expect(fixture.launches[3]?.args).toContain("--recover-handle");
+  expect(fixture.launches[3]?.input).toMatchObject({
+    schema: 1,
+    sdk_workload: { name: "job", runtime: {} },
+    sdk_workload_policy: "a".repeat(64),
+    sdk_environment: { vercel_token: "current-assertion" },
   });
+  for (const launch of fixture.launches.slice(2))
+    expect(launch.environment).toMatchObject({
+      TNL_SERVER: "https://a.example",
+      TNL_STATE_DIR: "/fixture/state-a",
+      VERCEL_OIDC_TOKEN: "current-assertion",
+      TNL_TRACEPARENT: `00-${"2".repeat(32)}-${"2".repeat(16)}-01`,
+    });
 
   for (const listener of process.listeners("beforeExit"))
     if (!originalListeners.has(listener)) listener(0);
-  await vi.waitFor(() => expect(fixture.launches).toHaveLength(3));
-  expect(fixture.launches[2]?.args[3]).toBe("sdk-stop");
-  expect(fixture.launches[2]?.environment).toMatchObject({
+  await vi.waitFor(() => expect(fixture.launches).toHaveLength(5));
+  expect(fixture.launches[4]?.args[3]).toBe("sdk-stop");
+  expect(fixture.launches[4]?.environment).toMatchObject({
     TNL_SERVER: "https://a.example",
     TNL_STATE_DIR: "/fixture/state-a",
     VERCEL_OIDC_TOKEN: "current-assertion",
   });
-  expect(fixture.launches[2]?.environment.TNL_TRACEPARENT).toBeUndefined();
+  expect(fixture.launches[4]?.environment.TNL_TRACEPARENT).toBeUndefined();
 });

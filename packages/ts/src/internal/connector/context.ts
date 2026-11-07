@@ -44,12 +44,13 @@ interface ConnectorContext {
 }
 
 declare global {
-  var __tnlConnectorContextV1: ConnectorContext | undefined;
+  var __tnlConnectorContextV2: ConnectorContext | undefined;
 }
 
 // this version describes the shared in-memory shape, not the native wire schema.
 // independently loaded compatible SDK copies share waits, IPC, and cleanup.
-export const context: ConnectorContext = (globalThis.__tnlConnectorContextV1 ??= {
+// v2 scopes add directory and workload; do not reuse older copies' v1 scopes.
+export const context: ConnectorContext = (globalThis.__tnlConnectorContextV2 ??= {
   scopes: new Map(),
   selectedScopes: new Map(),
   fetches: new Map(),
