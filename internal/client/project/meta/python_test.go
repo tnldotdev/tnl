@@ -13,7 +13,7 @@ import (
 )
 
 func TestPythonFacadePortableSourceShapeAndStrictMypy(t *testing.T) {
-	repository, err := filepath.Abs("../..")
+	repository, err := filepath.Abs("../../../..")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +76,33 @@ tnl.connect("missing")  # type: ignore[arg-type]
 import tnl as native
 from tnl_project import tnl
 assert_type(tnl.connect("only-in-another-worktree").snapshot(), native.Connection)
+`
+			}
+			if scenario == "static" || scenario == "single" {
+				usage += `
+class DatabaseClient:
+    def query(self) -> int:
+        return 42
+
+def create_database(connection: native.PostgresConnection) -> DatabaseClient:
+    assert_type(connection.port, int)
+    return DatabaseClient()
+
+async def create_async_database(connection: native.PostgresConnection) -> DatabaseClient:
+    return create_database(connection)
+
+async def close_database(client: DatabaseClient) -> None:
+    assert_type(client.query(), int)
+
+get_database = tnl.client("database", create=create_database, close=close_database)
+assert_type(get_database, native.ClientFactory[DatabaseClient])
+get_async_database = tnl.client("database", create=create_async_database, close=close_database)
+assert_type(get_async_database, native.ClientFactory[DatabaseClient])
+
+async def use_clients() -> None:
+    assert_type(await get_database(), DatabaseClient)
+    assert_type(await get_async_database(), DatabaseClient)
+    await get_database.aclose()
 `
 			}
 			files, err := PythonFacade(configuration, path)

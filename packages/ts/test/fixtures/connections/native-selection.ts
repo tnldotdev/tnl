@@ -78,7 +78,23 @@ if (nativeProvider) {
 }
 console.log("warm");
 if (rotatingFile) {
-  const response = await first.fetch("/refresh-stream");
+  let created = 0;
+  let closed = 0;
+  const getClient = tnl.client("api", {
+    create(connection) {
+      assert.ok("fetch" in connection);
+      created++;
+      return connection.fetch;
+    },
+    close() {
+      closed++;
+    },
+  });
+  const client = await getClient();
+  for (let i = 0; i < 3; i++) assert.equal(await getClient(), client);
+  assert.equal(created, 1);
+  assert.equal(closed, 0);
+  const response = await client("/refresh-stream");
   const reader = response.body?.getReader();
   assert.ok(reader);
   const before = await reader.read();
@@ -96,6 +112,8 @@ if (rotatingFile) {
   assert.ok("fetch" in refreshed);
   assert.equal(refreshed.url, first.url);
   assert.equal(refreshed.fetch, first.fetch);
+  await getClient.close();
+  assert.equal(closed, 1);
   console.log("retained");
 }
 if (copiedWorkload !== undefined) {
