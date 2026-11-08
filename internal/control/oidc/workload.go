@@ -199,14 +199,22 @@ func (v *WorkloadVerifier) Verify(ctx context.Context, p WorkloadTrust, raw stri
 		return c, fmt.Errorf("%w: %w", ErrUnauthenticated, e)
 	}
 	var times struct {
-		IssuedAt  int64 `json:"iat"`
-		NotBefore int64 `json:"nbf"`
-		ExpiresAt int64 `json:"exp"`
+		IssuedAt  int64           `json:"iat"`
+		NotBefore json.RawMessage `json:"nbf"`
+		ExpiresAt int64           `json:"exp"`
 	}
 	if t.Claims(&times) != nil || len(t.Audience) != 1 || t.Audience[0] != p.Audience {
 		return c, ErrUnauthenticated
 	}
-	c = WorkloadExecution{Provider: p.Provider, Issuer: t.Issuer, Subject: t.Subject, Audience: p.Audience, TrustDigest: p.Digest(), IssuedAt: times.IssuedAt, NotBefore: times.NotBefore, ExpiresAt: times.ExpiresAt, AssertionDigest: sha256.Sum256([]byte(raw))}
+	// nbf is optional in generic OIDC. retain an effective start time in the
+	// verified execution, but reject present null, malformed, or zero values.
+	notBefore := times.IssuedAt
+	if len(times.NotBefore) != 0 || p.Provider != "oidc" {
+		if json.Unmarshal(times.NotBefore, &notBefore) != nil || string(times.NotBefore) == "null" || notBefore <= 0 {
+			return c, ErrUnauthenticated
+		}
+	}
+	c = WorkloadExecution{Provider: p.Provider, Issuer: t.Issuer, Subject: t.Subject, Audience: p.Audience, TrustDigest: p.Digest(), IssuedAt: times.IssuedAt, NotBefore: notBefore, ExpiresAt: times.ExpiresAt, AssertionDigest: sha256.Sum256([]byte(raw))}
 	switch p.Provider {
 	case "vercel":
 		c.Vercel = &VercelExecution{}
