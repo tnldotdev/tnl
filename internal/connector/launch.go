@@ -47,27 +47,9 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 				}
 				hints = m.Workloads[options.Workload].Acquisition
 			} else {
-				p := project.Config.Workloads[options.Workload]
-				switch p.Provider() {
-				case "github":
-					hints.Method, hints.Audience = "github-actions", scope.Audience
-				case "vercel":
-					hints.Method = "vercel-oidc"
-				case "fly":
-					hints.Method = "fly-machine-api"
-					hints.Audience = scope.Audience
-				case "oidc":
-					hints.Method, hints.Audience = "callback", p.TokenAudience(scope.Audience)
-				default:
+				hints, err = workloadmanifest.AcquisitionFor(project.Config.Workloads[options.Workload], scope.Audience)
+				if err != nil {
 					return connectorruntime.ErrInvalid
-				}
-				if p.Token != nil {
-					if p.Token.File != nil {
-						hints.Method, hints.TokenFile = "token-file", *p.Token.File
-					}
-					if p.Token.Env != nil {
-						hints.Method, hints.TokenEnv = "token-env", *p.Token.Env
-					}
 				}
 			}
 			if hints.TokenFile != "" && !filepath.IsAbs(hints.TokenFile) {

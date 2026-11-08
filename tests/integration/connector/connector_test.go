@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
+	"github.com/tnldotdev/tnl/internal/config"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	connectorworkload "github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
@@ -97,6 +98,15 @@ func TestIntegrationConnectionConnectorOwnerSDKNativeWorkloadAcquisition(t *test
 				t.Fatalf("native provider changed the cold control budget: got %v, want twelve calls matching both SDKs", actual)
 			}
 			baseline = actual
+		})
+	}
+}
+
+func TestIntegrationConnectionConnectorOwnerGoogleConfigAcquisition(t *testing.T) {
+	testutil.RequireTestTier(t, testutil.TestTierIntegration)
+	for _, source := range []string{"caller-assertion", "token-file", "token-env"} {
+		t.Run(source, func(t *testing.T) {
+			runConnectionNativeOwnerStartup(t, "http", true, "config-google-"+source)
 		})
 	}
 }
@@ -319,8 +329,14 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	ownerKeys := map[string]*workloadSession{}
 	var authorityMu sync.Mutex
 	controlCalls := map[string]int{}
-	issuer := githubtest.New(t)
-	var verifier *oidc.GitHubWorkloadVerifier
+	googleConfig := strings.HasPrefix(startup, "config-google-")
+	var issuer *githubtest.Issuer
+	if googleConfig {
+		issuer = githubtest.NewKeySet(t, config.GoogleWorkloadJWKS)
+	} else {
+		issuer = githubtest.New(t)
+	}
+	var verifyAssertion func(context.Context, string) (oidc.WorkloadExecution, error)
 	var providerAssertion, providerAudience string
 	var peerAssertion string
 	bindingFor := func(assertion string) string {
@@ -455,7 +471,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 				w.WriteHeader(400)
 				return
 			}
-			claims, err := verifier.Verify(r.Context(), input.Assertion)
+			claims, err := verifyAssertion(r.Context(), input.Assertion)
 			if err != nil {
 				w.WriteHeader(403)
 				return
@@ -467,14 +483,15 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 				w.WriteHeader(400)
 				return
 			}
-			claims, err := verifier.Verify(r.Context(), input.Assertion)
+			claims, err := verifyAssertion(r.Context(), input.Assertion)
 			signature, decodeErr := base64.RawURLEncoding.DecodeString(input.Signature)
 			if err != nil || decodeErr != nil || current.revoked || !ed25519.Verify(current.public, workloadproof.Attach(current.Id, claims.AssertionDigest), signature) {
 				w.WriteHeader(403)
 				return
 			}
 			// attachment may extend proof time, never replace the original job.
-			if current.Github == nil || claims.RepositoryID != current.Github.RepositoryId || claims.RepositoryOwnerID != current.Github.RepositoryOwnerId || claims.RunID != current.Github.RunId || claims.RunAttempt != current.Github.RunAttempt || claims.CheckRunID != current.Github.CheckRunId {
+			g := claims.GitHub
+			if current.Provider == controlv1.WorkloadGitHub && (current.Github == nil || g == nil || g.RepositoryID != current.Github.RepositoryId || g.RepositoryOwnerID != current.Github.RepositoryOwnerId || g.RunID != current.Github.RunId || g.RunAttempt != current.Github.RunAttempt || g.CheckRunID != current.Github.CheckRunId) {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
@@ -505,7 +522,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 				w.WriteHeader(400)
 				return
 			}
-			claims, err := verifier.Verify(r.Context(), exchange.Assertion)
+			claims, err := verifyAssertion(r.Context(), exchange.Assertion)
 			if err != nil {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
@@ -540,7 +557,14 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 					w.WriteHeader(500)
 					return
 				}
-				current = &workloadSession{public: ed25519.PublicKey(public), WorkloadSession: authorityv1.WorkloadSession{Id: id, TeamId: team, ProjectKey: exchange.ProjectKey, Workload: exchange.Workload, Provider: controlv1.WorkloadGitHub, Github: &authorityv1.WorkloadGitHubExecution{RepositoryId: claims.RepositoryID, RepositoryOwnerId: claims.RepositoryOwnerID, RunId: claims.RunID, RunAttempt: claims.RunAttempt, CheckRunId: claims.CheckRunID}, Credential: "wlc_" + base64.RawURLEncoding.EncodeToString(credential), ExpiresAt: new(time.Now().Add(time.Hour)), IdentityExpiresAt: time.Unix(claims.ExpiresAt, 0), LeaseExpiresAt: time.Now().Add(90 * time.Second), RenewAfter: time.Now().Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, Binding: bindingFor(exchange.Assertion)}}
+				var github *authorityv1.WorkloadGitHubExecution
+				if g := claims.GitHub; g != nil {
+					github = &authorityv1.WorkloadGitHubExecution{RepositoryId: g.RepositoryID, RepositoryOwnerId: g.RepositoryOwnerID, RunId: g.RunID, RunAttempt: g.RunAttempt, CheckRunId: g.CheckRunID}
+				}
+				current = &workloadSession{public: ed25519.PublicKey(public), WorkloadSession: authorityv1.WorkloadSession{Id: id, TeamId: team, ProjectKey: exchange.ProjectKey, Workload: exchange.Workload, Provider: controlv1.WorkloadGitHub, Github: github, Credential: "wlc_" + base64.RawURLEncoding.EncodeToString(credential), ExpiresAt: new(time.Now().Add(time.Hour)), IdentityExpiresAt: time.Unix(claims.ExpiresAt, 0), LeaseExpiresAt: time.Now().Add(90 * time.Second), RenewAfter: time.Now().Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, Binding: bindingFor(exchange.Assertion)}}
+				if googleConfig {
+					current.Provider, current.Github = controlv1.WorkloadGoogle, nil
+				}
 				ownerKeys[exchange.PublicKey] = current
 				if strings.HasSuffix(startup, "-refresh") {
 					current.ExpiresAt = nil
@@ -653,9 +677,23 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		authority.Close()
 	}()
 	server := strings.Replace(authority.URL, "127.0.0.1", "localhost", 1)
-	verifier, err = oidc.NewGitHubWorkloadVerifier(server, issuer.Client)
+	verifier, err := oidc.NewGitHubWorkloadVerifier(server, issuer.Client)
 	if err != nil {
 		t.Fatal(err)
+	}
+	verifyAssertion = func(ctx context.Context, raw string) (oidc.WorkloadExecution, error) {
+		claims, err := verifier.Verify(ctx, raw)
+		return oidc.WorkloadExecution{GitHub: &claims, ExpiresAt: claims.ExpiresAt, AssertionDigest: claims.AssertionDigest}, err
+	}
+	if googleConfig {
+		verifier, err := oidc.NewWorkloadVerifier(server, issuer.Client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		trust := oidc.WorkloadTrust{Provider: "google", Issuer: config.GoogleWorkloadIssuer, JWKSURL: config.GoogleWorkloadJWKS, Audience: server, Claims: map[string]string{"sub": "112010400000000710080"}}
+		verifyAssertion = func(ctx context.Context, raw string) (oidc.WorkloadExecution, error) {
+			return verifier.Verify(ctx, trust, raw)
+		}
 	}
 	target := "http://unused.invalid:3000"
 	targetDefinition := map[string]any{"type": "address", "address": target}
@@ -666,11 +704,20 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	if startup == "borrowed-refresh" {
 		workloadPolicy["token"] = map[string]any{"file": "assertion"}
 	}
-	config := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publisher_groups": map[string]any{"remote": map[string]any{"public": public}}, "services": map[string]any{serviceName: map[string]any{"publisher_group": "remote", "protocol": protocol, "target": targetDefinition}}, "workloads": map[string]any{"test": workloadPolicy}}}
-	if startup == "action-wrong-provider" {
-		config["tnl"].(map[string]any)["workloads"] = map[string]any{"test": map[string]any{"fly": map[string]any{"app": "fixture", "org": "example"}, "services": []string{serviceName}}}
+	if googleConfig {
+		delete(workloadPolicy, "github")
+		workloadPolicy["google"] = map[string]any{"service_account": "112010400000000710080"}
+		if startup == "config-google-token-file" {
+			workloadPolicy["token"] = map[string]any{"file": "assertion"}
+		} else if startup == "config-google-token-env" {
+			workloadPolicy["token"] = map[string]any{"env": "FIXTURE_GOOGLE_ASSERTION"}
+		}
 	}
-	data, _ := json.Marshal(config)
+	configuration := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publisher_groups": map[string]any{"remote": map[string]any{"public": public}}, "services": map[string]any{serviceName: map[string]any{"publisher_group": "remote", "protocol": protocol, "target": targetDefinition}}, "workloads": map[string]any{"test": workloadPolicy}}}
+	if startup == "action-wrong-provider" {
+		configuration["tnl"].(map[string]any)["workloads"] = map[string]any{"test": map[string]any{"fly": map[string]any{"app": "fixture", "org": "example"}, "services": []string{serviceName}}}
+	}
+	data, _ := json.Marshal(configuration)
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -780,6 +827,9 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		t.Fatal(err)
 	}
 	initialClaims := githubtest.Claims(server, time.Now())
+	if googleConfig {
+		initialClaims = map[string]any{"iss": config.GoogleWorkloadIssuer, "aud": server, "sub": "112010400000000710080", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix()}
+	}
 	var initialProofExpiry time.Time
 	if strings.HasSuffix(startup, "-refresh") {
 		initialProofExpiry = time.Now().Add(35 * time.Second).Truncate(time.Second)
@@ -805,6 +855,15 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		proofMu.Lock()
 		actionProofs = append(actionProofs, assertion)
 		proofMu.Unlock()
+	}
+	if googleConfig {
+		if startup == "config-google-token-file" {
+			if err := os.WriteFile(filepath.Join(root, "assertion"), []byte(assertion), 0600); err != nil {
+				t.Fatal(err)
+			}
+		} else if startup == "config-google-token-env" {
+			env = append(env, "FIXTURE_GOOGLE_ASSERTION="+assertion)
+		}
 	}
 	if strings.HasPrefix(startup, "javascript") || strings.HasPrefix(startup, "python") {
 		manifest := workloadmanifest.Manifest{Schema: 1, Server: scope.Server, Team: scope.TeamID, ProjectKey: scope.ProjectKey, SourceFingerprint: scope.SourceID, ProjectLabel: scope.ProjectLabel,
@@ -1062,6 +1121,11 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		// exercise normal CLI acquisition and native refresh-source selection.
 		startRequest.Assertion = ""
 	}
+	if googleConfig && startup != "config-google-caller-assertion" {
+		// leave the assertion empty to exercise config acquisition, not the SDK
+		// manifest path or the caller-supplied assertion fast path.
+		startRequest.Assertion = ""
+	}
 	request, _ := json.Marshal(startRequest)
 	if strings.HasPrefix(startup, "action-") && startup != "action-static" {
 		// proposed action-only private stdin contract. keep runtime credentials
@@ -1092,7 +1156,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		}
 		startArgs = append(startArgs, "--kube-token-file", path, "--namespace", "runtime-test")
 	}
-	if startup != "caller-prepared" && startup != "borrowed-refresh" && !strings.HasPrefix(startup, "action-") {
+	if startup != "caller-prepared" && startup != "borrowed-refresh" && !strings.HasPrefix(startup, "action-") && !googleConfig {
 		// reproduce d0825a78's SDK sequence against the same real native owner,
 		// authority, signed assertion, relay carriers, and TLS preflight. this is
 		// a baseline operation sequence, not a separately built historical SDK.
@@ -1310,6 +1374,22 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	}
 	if state.PID == os.Getpid() || state.State != "ready" {
 		t.Fatal("no detached connector owner")
+	}
+	if googleConfig {
+		var prepared connectorruntime.Prepared
+		if err := connectorruntime.ReadJSON(bytes.NewReader(call(nil, "read", "--handle", state.ConnectionHandle, "--service", serviceName)), &prepared); err != nil {
+			t.Fatal(err)
+		}
+		if err := connectorruntime.ValidatePrepared(prepared, serviceName); err != nil {
+			t.Fatal(err)
+		}
+		call(nil, "stop", "--handle", state.ConnectionHandle)
+		state.ConnectionHandle = ""
+		if !revoked.Load() || exchangeAttempts.Load() != 2 {
+			t.Fatal("Google config owner did not recover signed exchange and revoke on stop")
+		}
+		t.Logf("%s started a real owner from config with a verified Google assertion and no manifest", startup)
+		return nil
 	}
 	if data, err := os.ReadFile(state.ConnectionHandle); err != nil || bytes.Contains(data, []byte("traceparent")) || bytes.Contains(data, []byte("1111111111111111")) {
 		t.Fatal("launch parent persisted in handle")

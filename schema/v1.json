@@ -2406,6 +2406,7 @@
                   "vercel": false,
                   "fly": false,
                   "oidc": false,
+                  "google": false,
                   "services": {
                     "items": {
                       "type": "string"
@@ -2610,6 +2611,7 @@
                   "github": false,
                   "fly": false,
                   "oidc": false,
+                  "google": false,
                   "services": {
                     "items": {
                       "type": "string"
@@ -2685,6 +2687,7 @@
                   "github": false,
                   "vercel": false,
                   "oidc": false,
+                  "google": false,
                   "services": {
                     "items": {
                       "type": "string"
@@ -2758,6 +2761,7 @@
                   "github": false,
                   "vercel": false,
                   "fly": false,
+                  "google": false,
                   "services": {
                     "items": {
                       "type": "string"
@@ -2832,6 +2836,78 @@
                 "additionalProperties": false,
                 "type": "object",
                 "required": ["oidc", "services"]
+              },
+              {
+                "properties": {
+                  "github": false,
+                  "vercel": false,
+                  "fly": false,
+                  "oidc": false,
+                  "services": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                  },
+                  "max_duration": {
+                    "type": "string",
+                    "pattern": "^([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h)(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|\\u00b5s|ms|s|m|h))*$",
+                    "description": "Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof."
+                  },
+                  "token": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "file": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "minLength": 1
+                          },
+                          "env": false
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["file"]
+                      },
+                      {
+                        "properties": {
+                          "file": false,
+                          "env": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": ["env"]
+                      }
+                    ]
+                  },
+                  "google": {
+                    "properties": {
+                      "service_account": {
+                        "type": "string",
+                        "description": "Google service account email or immutable numeric ID. Trusted apply resolves an email with gcloud and saves the numeric identity."
+                      },
+                      "audience": {
+                        "type": "string",
+                        "description": "Intended token recipient; defaults to the control URL."
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": ["service_account"]
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": ["google", "services"]
               }
             ]
           },

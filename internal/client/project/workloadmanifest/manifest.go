@@ -64,30 +64,9 @@ func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error)
 		return nil, err
 	}
 	for name, p := range c.Workloads {
-		a := Acquisition{}
-		switch p.Provider() {
-		case "github":
-			a.Method = "github-actions"
-			a.Audience = m.Server
-		case "vercel":
-			a.Method = "vercel-oidc"
-		case "fly":
-			a.Method = "fly-machine-api"
-			a.Audience = m.Server
-		case "oidc":
-			a.Method = "callback"
-			a.Audience = p.TokenAudience(m.Server)
-		}
-		if p.Token != nil {
-			if (p.Token.File == nil) == (p.Token.Env == nil) {
-				return nil, ErrInvalid
-			}
-			if p.Token.File != nil {
-				a = Acquisition{Method: "token-file", Audience: a.Audience, TokenFile: *p.Token.File}
-			}
-			if p.Token.Env != nil {
-				a = Acquisition{Method: "token-env", Audience: a.Audience, TokenEnv: *p.Token.Env}
-			}
+		a, err := AcquisitionFor(p, m.Server)
+		if err != nil {
+			return nil, err
 		}
 		services := slices.Clone(p.Services)
 		slices.Sort(services)
@@ -124,7 +103,7 @@ func (m Manifest) Validate() error {
 			}
 			seen[s] = true
 		}
-		if !slices.Contains([]string{"github", "vercel", "fly", "oidc"}, w.Provider) {
+		if !slices.Contains([]string{"github", "vercel", "fly", "oidc", "google"}, w.Provider) {
 			return ErrInvalid
 		}
 		if a := w.Acquisition; a.Method == "token-file" || a.Method == "token-env" {
@@ -166,6 +145,10 @@ func (m Manifest) Validate() error {
 			}
 		case "oidc":
 			if !config.ExactWorkloadValue(w.Acquisition.Audience) || w.Acquisition.Method != "callback" && w.Acquisition.Method != "token-file" || (w.Acquisition.Method == "token-file") != (w.Acquisition.TokenFile != "") || len(w.Acquisition.TokenFile) > 4096 || strings.ContainsRune(w.Acquisition.TokenFile, 0) {
+				return ErrInvalid
+			}
+		case "google":
+			if w.Acquisition.Method != "google-metadata" || !config.ExactWorkloadValue(w.Acquisition.Audience) || w.Acquisition.TokenFile != "" {
 				return ErrInvalid
 			}
 		default:

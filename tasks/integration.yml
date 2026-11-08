@@ -68,6 +68,7 @@ tasks:
       - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwner(HTTP|Kubernetes|SDKSelectionBudget|SDKProcessContext|SDKNativeWorkloadAcquisition|SDKPythonLifecycle|SDKBackgroundRefresh)$' -count=1 -timeout=6m -args -tnl-test-tier=integration
       - task: :go:test:integration:sdk-python-prepare-timeout
       - task: :go:test:integration:action-background-refresh
+      - task: :go:test:integration:connections-google-config
 
   action-background-refresh:
     dir: "{{.ROOT_DIR}}"
@@ -76,6 +77,14 @@ tasks:
       RUN: '{{default "^TestIntegrationConnectionConnectorOwnerActionBackgroundRefresh$" .RUN}}'
     cmds:
       - go test -race -v ./tests/integration/connector -run='{{.RUN}}' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
+  connections-google-config:
+    desc: Check config-based Google owner startup with signed token-file and token-env overrides
+    vars:
+      RUN: '{{default "^TestIntegrationConnectionConnectorOwnerGoogleConfigAcquisition$" .RUN}}'
+    cmds:
+      - go test -race -v ./internal/connector -run='^TestConnectionStartOwnerGoogleMetadataFromConfig$' -count=1 -timeout=1m
+      - go test -race -v ./tests/integration/connector -run='{{.RUN}}' -count=1 -timeout=2m -args -tnl-test-tier=integration
 
   sdk-background-refresh:
     dir: "{{.ROOT_DIR}}"
