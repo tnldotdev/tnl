@@ -13,6 +13,8 @@ from . import _connections
 from ._connections import Connection, ConnectionHandle
 from ._protocol import TnlError
 
+_MAX_BINDINGS = 64
+
 
 class ClientFactory[T](Protocol):
     async def __call__(self) -> T: ...
@@ -43,12 +45,15 @@ class _Factory[C, T]:
         *,
         create: Callable[[C], T | Awaitable[T]],
         close: Callable[[T], None | Awaitable[None]],
+        finalize: Callable[[], Awaitable[list[BaseException]]] | None = None,
     ) -> None:
         if not callable(create) or not callable(close):
             raise TnlError("sdk.configuration_invalid", "supply create and close client callbacks")
         self._acquire = acquire
         self._create = create
         self._close = close
+        self._finalize = finalize
+        self._finalized = finalize is None
         self._pid = os.getpid()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._closed = False
@@ -106,7 +111,7 @@ class _Factory[C, T]:
             raise self._closed_error
         entry = self._entries.get(key)
         if entry is None:
-            if len(self._entries) >= 64:
+            if len(self._entries) >= _MAX_BINDINGS:
                 raise TnlError(
                     "sdk.client_capacity",
                     "the client factory has too many retained bindings; "
@@ -142,7 +147,13 @@ class _Factory[C, T]:
         # a forked child must not close its parent's ordinary driver or native IPC.
         if self._pid != os.getpid():
             return
-        if self._closed and not self._entries and not self._pending and self._closing is None:
+        if (
+            self._closed
+            and not self._entries
+            and not self._pending
+            and self._closing is None
+            and self._finalized
+        ):
             return
         self._context()
         self._closed = True
@@ -183,7 +194,60 @@ class _Factory[C, T]:
             *(close_entry(key, entry) for key, entry in tuple(self._entries.items())),
             return_exceptions=True,
         )
-        return [result for result in results if isinstance(result, BaseException)]
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if self._finalize is not None and not self._finalized:
+            try:
+                final = await self._finalize()
+            except BaseException as error:
+                final = [error]
+            self._finalized = not final
+            failures.extend(final)
+        return failures
+
+
+class _FailedAcquisitions:
+    """retain only exact failed native capabilities, never successful owners."""
+
+    def __init__(self) -> None:
+        self._sessions: set[_connections._Session] = set()
+        self._pending = 0
+
+    def _prune(self) -> None:
+        self._sessions = {
+            reference for session in self._sessions for reference in session.cleanup_references()
+        }
+
+    def begin(self) -> None:
+        # reserve before native can allocate cleanup. repeated observations of
+        # one failure share its session rather than retaining every getter.
+        self._prune()
+        if len(self._sessions) + self._pending >= _MAX_BINDINGS:
+            raise TnlError(
+                "sdk.client_capacity",
+                "the client factory has too many pending or failed acquisitions; "
+                "await pending getters or close it before retrying",
+            )
+        self._pending += 1
+
+    def retain(self, handle: ConnectionHandle[Connection]) -> None:
+        self._sessions.update(handle._failed_cleanup())
+
+    def end(self) -> None:
+        self._pending -= 1
+
+    async def close(self) -> list[BaseException]:
+        # the factory joins every acquisition before calling this finalizer.
+        # keep failed joins reachable even when no ordinary driver was created.
+        self._prune()
+        failures: list[BaseException] = []
+        for session in tuple(self._sessions):
+            try:
+                await asyncio.to_thread(session.close)
+            except BaseException as error:
+                failures.append(error)
+            if session.joined:
+                self._sessions.discard(session)
+        return failures
 
 
 def connection_client[C: Connection, T](
@@ -192,9 +256,19 @@ def connection_client[C: Connection, T](
     create: Callable[[C], T | Awaitable[T]],
     close: Callable[[T], None | Awaitable[None]],
 ) -> ClientFactory[T]:
+    failed = _FailedAcquisitions()
+
     async def acquire() -> tuple[Hashable, C]:
-        handle = selected()
-        connection = await handle
+        failed.begin()
+        try:
+            handle = selected()
+            try:
+                connection = await handle
+            except BaseException:
+                failed.retain(handle)
+                raise
+        finally:
+            failed.end()
         owner = handle._session.handle
         if owner is None or not connection._transport_id:
             raise _connections._error("invalid")
@@ -213,7 +287,7 @@ def connection_client[C: Connection, T](
             key += (connection.kubeconfig, connection.context)
         return key, connection
 
-    return _Factory(acquire, create=create, close=close)
+    return _Factory(acquire, create=create, close=close, finalize=failed.close)
 
 
 def client[T](

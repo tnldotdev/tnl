@@ -492,6 +492,21 @@ class _Session:
         finally:
             self.cleanup_lock.release()
 
+    def cleanup_references(self) -> set[_Session]:
+        # aliases do not add a cleanup capability. retain pending work itself so
+        # its close can join whatever native eventually selects for that request.
+        if self.creator_pid != os.getpid():
+            return set()
+        with self.changed:
+            if self.joined:
+                return set()
+            children = self.failed | self.preparations
+            if self.attached is not None:
+                children = children | {self.attached}
+            if self.pending or not children:
+                return {self}
+        return {reference for child in children for reference in child.cleanup_references()}
+
     def _close(self) -> None:
         deadline = time.monotonic() + _TIMEOUT
         with self.scope.lock, self.changed:
@@ -1056,6 +1071,19 @@ class ConnectionHandle[C: Connection]:
 
     def __await__(self) -> Generator[object, None, C]:
         return self._prepare().__await__()
+
+    def _failed_cleanup(self) -> set[_Session]:
+        # only a failed preparation owns these references. the handle's initial
+        # session may instead alias an unrelated, already-prepared human owner.
+        if self._session.creator_pid != os.getpid():
+            return set()
+        with self._lifetime.changed:
+            preparations = tuple(self._lifetime.preparations)
+        return {
+            reference
+            for preparation in preparations
+            for reference in preparation.cleanup_references()
+        }
 
     @property
     def protocol(self) -> str:
