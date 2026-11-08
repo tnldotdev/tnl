@@ -64,32 +64,9 @@ func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error)
 		return nil, err
 	}
 	for name, p := range c.Workloads {
-		a := Acquisition{}
-		switch p.Provider() {
-		case "github":
-			a.Method = "github-actions"
-			a.Audience = m.Server
-		case "vercel":
-			a.Method = "vercel-oidc"
-		case "fly":
-			a.Method = "fly-machine-api"
-			a.Audience = m.Server
-		case "google":
-			a.Method, a.Audience = "google-metadata", p.TokenAudience(m.Server)
-		case "oidc":
-			a.Method = "callback"
-			a.Audience = p.TokenAudience(m.Server)
-		}
-		if p.Token != nil {
-			if (p.Token.File == nil) == (p.Token.Env == nil) {
-				return nil, ErrInvalid
-			}
-			if p.Token.File != nil {
-				a = Acquisition{Method: "token-file", Audience: a.Audience, TokenFile: *p.Token.File}
-			}
-			if p.Token.Env != nil {
-				a = Acquisition{Method: "token-env", Audience: a.Audience, TokenEnv: *p.Token.Env}
-			}
+		a, err := AcquisitionFor(p, m.Server)
+		if err != nil {
+			return nil, err
 		}
 		services := slices.Clone(p.Services)
 		slices.Sort(services)

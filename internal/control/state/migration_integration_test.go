@@ -162,6 +162,7 @@ func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, previous := range []string{
+		"tnl-control-fresh-v1-workload-optional-duration",
 		"tnl-control-fresh-v1-workload-identity-expiry",
 		"tnl-control-fresh-v1-workload-renewal-proof",
 		"tnl-control-fresh-v1-connector-rebinding",
