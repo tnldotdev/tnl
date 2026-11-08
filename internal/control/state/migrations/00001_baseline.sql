@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-workload-renewal-proof')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-workload-identity-expiry')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-workload-renewal-proof');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-workload-identity-expiry');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -1853,13 +1853,15 @@ CREATE TABLE control.workload_sessions (
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz,
     renewal_sequence bigint NOT NULL DEFAULT 0 CHECK (renewal_sequence >= 0),
+    identity_expires_at timestamptz NOT NULL,
     UNIQUE(team_id,project_key,repository_id,run_id,run_attempt,check_run_id),
     UNIQUE(team_id,project_key,session_nonce),
     CHECK ((provider='github' AND repository_id IS NOT NULL AND run_id IS NOT NULL AND run_attempt IS NOT NULL AND check_run_id IS NOT NULL) OR
            (provider<>'github' AND repository_id IS NULL AND run_id IS NULL AND run_attempt IS NULL AND check_run_id IS NULL)),
     CHECK (jsonb_typeof(claims)='object' AND COALESCE(claims->>'provider'=provider,false)),
     CHECK (expires_at>created_at AND expires_at<=created_at+interval '6 hours'),
-    CHECK (lease_expires_at>created_at AND lease_expires_at<=expires_at)
+    CHECK (lease_expires_at>created_at AND lease_expires_at<=expires_at),
+    CONSTRAINT workload_identity_expiry CHECK (identity_expires_at>created_at AND lease_expires_at<=identity_expires_at)
 );
 CREATE INDEX workload_sessions_retention ON control.workload_sessions(expires_at,id);
 CREATE TABLE control.workload_session_services (

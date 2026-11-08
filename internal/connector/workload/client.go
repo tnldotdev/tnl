@@ -117,9 +117,14 @@ func (c *Client) Exchange(ctx context.Context, team, project, source, workload, 
 }
 
 func validateSession(r authorityv1.WorkloadSession) error {
+	if !r.IdentityExpiresAt.After(time.Now()) || r.IdentityExpiresAt.After(time.Now().Add(12*time.Hour+time.Minute)) || r.LeaseExpiresAt.After(r.IdentityExpiresAt) {
+		return invalidSession()
+	}
 	if r.RenewalSequence < 0 {
 		return invalidSession()
 	}
+	// supplied proof expiry is verification metadata. exchange retries may
+	// verify a newer proof without attaching it to the saved session's authority.
 	if r.AssertionExpiresAt != nil && (!r.AssertionExpiresAt.After(time.Now()) || r.AssertionExpiresAt.After(time.Now().Add(12*time.Hour+time.Minute))) {
 		return invalidSession()
 	}
@@ -252,7 +257,7 @@ func validateSessionUpdate(current, next authorityv1.WorkloadSession) error {
 	if err := validateSession(next); err != nil {
 		return err
 	}
-	if next.RenewalSequence < current.RenewalSequence || next.Binding != current.Binding || next.Id != current.Id || next.Credential != current.Credential ||
+	if next.IdentityExpiresAt.Before(current.IdentityExpiresAt) || next.RenewalSequence < current.RenewalSequence || next.Binding != current.Binding || next.Id != current.Id || next.Credential != current.Credential ||
 		next.ExpiresAt.After(current.ExpiresAt) || next.TeamId != current.TeamId || next.ProjectKey != current.ProjectKey ||
 		next.Workload != current.Workload || next.Provider != current.Provider || !reflect.DeepEqual(next.Github, current.Github) {
 		return invalidSession()

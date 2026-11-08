@@ -27,8 +27,8 @@ import (
 )
 
 func TestIntegrationWorkloadAuthorizationAfterLockWait(t *testing.T) {
-	for _, operation := range []string{"inventory", "pair permission", "pair renewal", "session renewal"} {
-		for _, change := range []string{"renewal", "revocation", "lease expiry", "fixed expiry", "clock rollback"} {
+	for _, operation := range []string{"inventory", "pair permission", "pair renewal", "session renewal", "assertion attachment", "exchange retry"} {
+		for _, change := range []string{"renewal", "revocation", "lease expiry", "identity expiry", "fixed expiry", "clock rollback"} {
 			t.Run(operation+"/"+change, func(t *testing.T) {
 				d, now, _, leases := newConnectorPairPrerequisites(t)
 				created := now.Add(-31 * time.Second)
@@ -66,6 +66,14 @@ func TestIntegrationWorkloadAuthorizationAfterLockWait(t *testing.T) {
 					}
 					if operation == "session renewal" {
 						_, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, signWorkloadRenewal(session, key), at)
+						return err
+					}
+					if operation == "assertion attachment" {
+						_, err := d.AttachWorkloadAssertion(ctx, session.ID, session.Credential, exchange.Execution, ed25519.Sign(key, workloadproof.Attach(session.ID, exchange.Execution.AssertionDigest)), at)
+						return err
+					}
+					if operation == "exchange retry" {
+						_, err := d.ExchangeWorkload(ctx, exchange, at)
 						return err
 					}
 					if operation == "pair renewal" {
@@ -114,6 +122,8 @@ func TestIntegrationWorkloadAuthorizationAfterLockWait(t *testing.T) {
 					query = `UPDATE control.workload_sessions SET revoked_at=$2 WHERE id=$1`
 				case "lease expiry":
 					query = `UPDATE control.workload_sessions SET lease_expires_at=$2 WHERE id=$1`
+				case "identity expiry":
+					query = `UPDATE control.workload_sessions SET identity_expires_at=$2,lease_expires_at=LEAST(lease_expires_at,$2) WHERE id=$1`
 				case "fixed expiry":
 					query = `UPDATE control.workload_sessions SET expires_at=$2,lease_expires_at=$2 WHERE id=$1`
 				}

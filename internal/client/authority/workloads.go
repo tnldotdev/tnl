@@ -23,6 +23,9 @@ func validateWorkloadSessionWire(payload []byte, session authorityv1.WorkloadSes
 	if !present || string(sequence) == "null" || session.RenewalSequence < 0 {
 		return errors.New("invalid workload renewal sequence")
 	}
+	if session.IdentityExpiresAt.IsZero() {
+		return errors.New("missing workload identity expiry")
+	}
 	return nil
 }
 

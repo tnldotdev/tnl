@@ -1645,6 +1645,7 @@ type ControlWorkloadSession struct {
 	ExpiresAt            pgtype.Timestamptz
 	RevokedAt            pgtype.Timestamptz
 	RenewalSequence      int64
+	IdentityExpiresAt    pgtype.Timestamptz
 }
 
 type ControlWorkloadSessionService struct {

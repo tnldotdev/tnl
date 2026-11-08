@@ -35,6 +35,7 @@ type WorkloadSession struct {
 	Provider           string                   `json:"provider"`
 	Subject            VisitorSubject           `json:"subject"`
 	LeaseExpiresAt     time.Time                `json:"lease_expires_at"`
+	IdentityExpiresAt  time.Time                `json:"identity_expires_at"`
 	ExpiresAt          time.Time                `json:"expires_at"`
 	RenewAfter         time.Time                `json:"renew_after"`
 	ServiceIDs         []string                 `json:"service_ids"`
@@ -67,6 +68,7 @@ func workloadCredentialContext(id string) string { return "workload-credential/"
 // exchange is called only after provider signature/issuer/audience verification.
 // jobs cannot establish repository metadata or alter applied policy here.
 func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadRequest, now time.Time) (result WorkloadSession, retErr error) {
+	clock := newAuthorizationClock(now)
 	c := r.Execution
 	if c.Validate(now) != nil || !workloadproof.ValidNonce(r.Nonce) || !fingerprintPattern.MatchString(r.SourceFingerprint) || len(r.PublicKey) != 32 || len(r.Signature) != 64 || !ed25519.Verify(r.PublicKey, workloadproof.Exchange(r.TeamID, r.ProjectKey, r.Workload, r.SourceFingerprint, r.Nonce, c.AssertionDigest, r.Services), r.Signature) {
 		return result, ErrWorkloadDenied
@@ -94,7 +96,7 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 		return result, err
 	}
 	p, found := configuration.Workloads[r.Workload]
-	if !found || project.SourceFingerprint != r.SourceFingerprint || !p.matches(c) {
+	if !found || project.SourceFingerprint != r.SourceFingerprint || !p.matches(c) || c.Validate(clock.current()) != nil {
 		return result, ErrWorkloadDenied
 	}
 	services := slices.Clone(r.Services)
@@ -145,8 +147,9 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 		}
 		claims, _ := json.Marshal(c)
 		deadline := now.Add(time.Duration(p.MaxDurationSeconds) * time.Second)
-		lease := minTime(now.Add(WorkloadLease), deadline)
-		_, err = tx.Exec(ctx, `INSERT INTO control.workload_sessions(id,team_id,project_key,workload_name,repository_id,run_id,run_attempt,check_run_id,public_key,request_digest,claims,credential_digest,credential_ciphertext,storage_key_id,created_at,renewed_at,lease_expires_at,expires_at,provider,session_nonce,binding) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,convert_from($11::bytea,'UTF8')::jsonb,$12,$13,$14,$15,$15,$16,$17,$18,$19,$20)`, id, r.TeamID, r.ProjectKey, r.Workload, nullableText(repository), nullableText(run), nullableText(attempt), nullableText(check), []byte(r.PublicKey), requestDigest[:], claims, digestValue[:], sealed, d.storageKey.CurrentID(), now, lease, deadline, c.Provider, r.Nonce, workloadBinding(r.TeamID, r.ProjectKey, r.Workload, r.SourceFingerprint, c))
+		identityExpiry := time.Unix(c.ExpiresAt, 0)
+		lease := minTime(minTime(now.Add(WorkloadLease), deadline), identityExpiry)
+		_, err = tx.Exec(ctx, `INSERT INTO control.workload_sessions(id,team_id,project_key,workload_name,repository_id,run_id,run_attempt,check_run_id,public_key,request_digest,claims,credential_digest,credential_ciphertext,storage_key_id,created_at,renewed_at,lease_expires_at,expires_at,provider,session_nonce,binding,identity_expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,convert_from($11::bytea,'UTF8')::jsonb,$12,$13,$14,$15,$15,$16,$17,$18,$19,$20,$21)`, id, r.TeamID, r.ProjectKey, r.Workload, nullableText(repository), nullableText(run), nullableText(attempt), nullableText(check), []byte(r.PublicKey), requestDigest[:], claims, digestValue[:], sealed, d.storageKey.CurrentID(), now, lease, deadline, c.Provider, r.Nonce, workloadBinding(r.TeamID, r.ProjectKey, r.Workload, r.SourceFingerprint, c), identityExpiry)
 		if err != nil {
 			return result, err
 		}
@@ -178,7 +181,7 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 			return result, err
 		}
 	}
-	result, err = d.workloadSession(ctx, tx, id, now)
+	result, err = d.workloadSession(ctx, tx, id, clock.current())
 	if err != nil {
 		return result, err
 	}
@@ -198,6 +201,7 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 	}
 	r = WorkloadSession{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, Workload: row.WorkloadName, Provider: row.Provider, LeaseExpiresAt: row.LeaseExpiresAt.Time, ExpiresAt: row.ExpiresAt.Time, RenewAfter: minTime(row.RenewedAt.Time.Add(WorkloadRenewAfter), row.ExpiresAt.Time), RenewalSequence: row.RenewalSequence}
 	r.Binding = row.Binding
+	r.IdentityExpiresAt = row.IdentityExpiresAt.Time
 	if row.Provider == "github" {
 		var claims oidc.WorkloadExecution
 		if err = json.Unmarshal(row.Claims, &claims); err != nil {
@@ -212,7 +216,7 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 	if row.RevokedAt.Valid {
 		return r, ErrWorkloadDenied
 	}
-	if now.Before(row.CreatedAt.Time) || now.Before(row.RenewedAt.Time) || !r.LeaseExpiresAt.After(now) || !r.ExpiresAt.After(now) {
+	if now.Before(row.CreatedAt.Time) || now.Before(row.RenewedAt.Time) || !r.LeaseExpiresAt.After(now) || !r.ExpiresAt.After(now) || !r.IdentityExpiresAt.After(now) {
 		return r, ErrWorkloadExpired
 	}
 	secret, _, err := d.storageKey.Open(row.StorageKeyID, workloadCredentialContext(id), row.CredentialCiphertext)
@@ -267,7 +271,7 @@ func (d *Database) RenewWorkloadSession(ctx context.Context, id, credential stri
 			return r, ErrWorkloadDenied
 		}
 		_, err = tx.Exec(ctx, `UPDATE control.workload_sessions SET renewal_sequence=$3,
-		    lease_expires_at=CASE WHEN renewed_at<=$2::timestamptz-interval '30 seconds' THEN LEAST($2::timestamptz+interval '90 seconds',expires_at) ELSE lease_expires_at END,
+		    lease_expires_at=CASE WHEN renewed_at<=$2::timestamptz-interval '30 seconds' THEN LEAST($2::timestamptz+interval '90 seconds',expires_at,identity_expires_at) ELSE lease_expires_at END,
 		    renewed_at=CASE WHEN renewed_at<=$2::timestamptz-interval '30 seconds' THEN $2 ELSE renewed_at END
 		    WHERE id=$1`, id, now, proof.Sequence)
 		if err == nil {
