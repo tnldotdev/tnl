@@ -67,18 +67,14 @@ type WorkloadKubernetes struct {
 }
 
 var kubernetesUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var kubernetesName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
 
 func ValidKubernetesUID(value string) bool { return kubernetesUID.MatchString(value) }
+
+// kubernetes service-account and pod names use DNS subdomain syntax with only
+// a total length limit, not the per-label 63-character DNS limit.
 func ValidKubernetesName(value string) bool {
-	if value == "" || len(value) > 253 {
-		return false
-	}
-	for _, label := range strings.Split(value, ".") {
-		if !naming.ValidAuthorityLabel(label) {
-			return false
-		}
-	}
-	return true
+	return len(value) <= 253 && kubernetesName.MatchString(value)
 }
 
 const GoogleWorkloadIssuer = "https://accounts.google.com"
