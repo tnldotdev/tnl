@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -124,6 +126,68 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	if renewed, err := job.Renew(ctx); err != nil || !renewed.ExpiresAt.Equal(session.ExpiresAt) || !renewed.LeaseExpiresAt.Equal(session.LeaseExpiresAt) {
 		t.Fatal("early renewal extended execution", err)
 	}
+	t.Run("renewal proof HTTP boundary", func(t *testing.T) {
+		current, err := job.Session()
+		if err != nil {
+			t.Fatal(err)
+		}
+		sequence := current.RenewalSequence + 1
+		proof := authorityv1.WorkloadRenewal{Sequence: sequence, Signature: base64.RawURLEncoding.EncodeToString(job.Sign(workloadproof.Renew(current.Id, sequence)))}
+		encoded, _ := json.Marshal(proof)
+		_, otherKey, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wrongKey := proof
+		wrongKey.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(otherKey, workloadproof.Renew(current.Id, sequence)))
+		wrongBody, _ := json.Marshal(wrongKey)
+		for _, test := range []struct {
+			body   string
+			status int
+		}{
+			{"", 400}, {"null", 400}, {"{}", 400},
+			{`{"sequence":0,"signature":"` + proof.Signature + `"}`, 400},
+			{`{"sequence":9223372036854775808,"signature":"` + proof.Signature + `"}`, 400},
+			{`{"sequence":2,"signature":"invalid"}`, 400},
+			{string(encoded) + ` {}`, 400},
+			{strings.Repeat(" ", 65<<10) + string(encoded), 400},
+			{string(wrongBody), 403},
+			{`{"sequence":3,"signature":"` + proof.Signature + `"}`, 403},
+			{`{"sequence":2,"signature":"` + base64.RawURLEncoding.EncodeToString(job.Sign(workloadproof.Renew("other", sequence))) + `"}`, 403},
+			{string(encoded), 200}, {string(encoded), 200},
+		} {
+			request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/workload-sessions/"+current.Id+"/renew", strings.NewReader(test.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Authorization", "Bearer "+current.Credential)
+			response, err := server.Client().Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := io.ReadAll(response.Body)
+			response.Body.Close()
+			if err != nil || response.StatusCode != test.status || response.Header.Get("Cache-Control") != "no-store" {
+				t.Fatal("unexpected renewal response", response.StatusCode, test.status, err)
+			}
+			if response.StatusCode != 200 {
+				if bytes.Contains(data, []byte(current.Credential)) || bytes.Contains(data, []byte(proof.Signature)) {
+					t.Fatal("renewal error exposed private proof")
+				}
+				continue
+			}
+			var renewed authorityv1.WorkloadSession
+			if err := json.Unmarshal(data, &renewed); err != nil || renewed.RenewalSequence != sequence || !renewed.LeaseExpiresAt.Equal(current.LeaseExpiresAt) || !renewed.ExpiresAt.Equal(current.ExpiresAt) {
+				t.Fatal("HTTP early renewal or retry changed its lease", err)
+			}
+		}
+		// the native adapter can acknowledge the raw request's committed step
+		// by retrying the same next proof; it must not skip over it.
+		if renewed, err := job.Renew(ctx); err != nil || renewed.RenewalSequence != sequence {
+			t.Fatal("native retry did not recover committed HTTP renewal", err)
+		}
+	})
 	for _, bad := range []struct {
 		field string
 		value any
@@ -188,11 +252,16 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	t.Run("retained and collected deletion ownership", func(t *testing.T) {
 		requestStatus := func(method, path, credential string, want int) {
 			t.Helper()
-			req, err := http.NewRequestWithContext(ctx, method, server.URL+path, nil)
+			var body io.Reader
+			if strings.HasSuffix(path, "/renew") {
+				body = strings.NewReader(`{"sequence":1,"signature":"` + base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.SignatureSize)) + `"}`)
+			}
+			req, err := http.NewRequestWithContext(ctx, method, server.URL+path, body)
 			if err != nil {
 				t.Fatal(err)
 			}
 			req.Header.Set("Authorization", "Bearer "+credential)
+			req.Header.Set("Content-Type", "application/json")
 			response, err := server.Client().Do(req)
 			if err != nil {
 				t.Fatal(err)

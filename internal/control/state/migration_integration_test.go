@@ -11,6 +11,49 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func TestIntegrationWorkloadRenewalMigration(t *testing.T) {
+	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "workload_renewal_migration")
+	ctx := t.Context()
+	r := appliedProjectRequest(t, d, now)
+	r.Configuration = workloadConfiguration()
+	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	exchange, key := workloadExchange(t, r, now)
+	session, err := d.ExchangeWorkload(ctx, exchange, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := func() string {
+		t.Helper()
+		var value string
+		if err := d.pool.QueryRow(ctx, `SELECT to_jsonb(w)::text FROM control.workload_sessions w WHERE id=$1`, session.ID).Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	before := row()
+	if err := Migrate(ctx, url); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Readiness(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if row() != before {
+		t.Fatal("migration changed existing session authority")
+	}
+	recovered, err := d.ExchangeWorkload(ctx, exchange, now)
+	if err != nil || recovered.RenewalSequence != 0 || recovered.ID != session.ID || recovered.Credential != session.Credential || !recovered.LeaseExpiresAt.Equal(session.LeaseExpiresAt) {
+		t.Fatal("migration lost committed session or initial counter", err)
+	}
+	if next, err := d.RenewWorkloadSession(ctx, session.ID, session.Credential, signWorkloadRenewal(recovered, key), now.Add(31*time.Second)); err != nil || next.RenewalSequence != 1 {
+		t.Fatal("baseline session could not renew with its original key", err)
+	}
+	if err := Migrate(ctx, url); err != nil {
+		t.Fatal("repeat migration failed", err)
+	}
+}
+
 func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	databaseURL := newDisposableControlStateDatabaseURL(t, "migration")
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
@@ -119,6 +162,7 @@ func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, previous := range []string{
+		"tnl-control-fresh-v1-connector-rebinding",
 		"tnl-control-fresh-v1-post-quantum",
 		"tnl-control-fresh-v1-guest-ready-without-usage-accounting",
 		"tnl-control-fresh-v1-without-usage-accounting",

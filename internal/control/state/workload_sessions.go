@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"math"
 	"slices"
 	"time"
 
@@ -25,6 +26,7 @@ const WorkloadLease = 90 * time.Second
 const WorkloadRenewAfter = 30 * time.Second
 
 type WorkloadSession struct {
+	RenewalSequence    int64                    `json:"renewal_sequence"`
 	ID                 string                   `json:"id"`
 	Credential         string                   `json:"credential"`
 	TeamID             string                   `json:"team_id"`
@@ -194,7 +196,7 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 	if err != nil {
 		return r, publisherLookupError(err, ErrWorkloadDenied)
 	}
-	r = WorkloadSession{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, Workload: row.WorkloadName, Provider: row.Provider, LeaseExpiresAt: row.LeaseExpiresAt.Time, ExpiresAt: row.ExpiresAt.Time, RenewAfter: minTime(row.RenewedAt.Time.Add(WorkloadRenewAfter), row.ExpiresAt.Time)}
+	r = WorkloadSession{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, Workload: row.WorkloadName, Provider: row.Provider, LeaseExpiresAt: row.LeaseExpiresAt.Time, ExpiresAt: row.ExpiresAt.Time, RenewAfter: minTime(row.RenewedAt.Time.Add(WorkloadRenewAfter), row.ExpiresAt.Time), RenewalSequence: row.RenewalSequence}
 	r.Binding = row.Binding
 	if row.Provider == "github" {
 		var claims oidc.WorkloadExecution
@@ -233,7 +235,15 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 	return r, nil
 }
 
-func (d *Database) RenewWorkloadSession(ctx context.Context, id, credential string, now time.Time) (r WorkloadSession, retErr error) {
+type WorkloadRenewal struct {
+	Sequence  int64
+	Signature []byte
+}
+
+func (d *Database) RenewWorkloadSession(ctx context.Context, id, credential string, proof WorkloadRenewal, now time.Time) (r WorkloadSession, retErr error) {
+	if proof.Sequence <= 0 || len(proof.Signature) != ed25519.SignatureSize {
+		return r, ErrWorkloadDenied
+	}
 	clock := newAuthorizationClock(now)
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
@@ -244,14 +254,27 @@ func (d *Database) RenewWorkloadSession(ctx context.Context, id, credential stri
 	if err != nil {
 		return r, err
 	}
-	if current.ID != id {
+	if current.ID != id || !ed25519.Verify(current.PublicKey, workloadproof.Renew(id, proof.Sequence), proof.Signature) {
 		return r, ErrWorkloadDenied
 	}
-	_, err = tx.Exec(ctx, `UPDATE control.workload_sessions SET renewed_at=$2,lease_expires_at=LEAST($2::timestamptz+interval '90 seconds',expires_at) WHERE id=$1 AND renewed_at<=$2::timestamptz-interval '30 seconds'`, id, now)
-	if err != nil {
+	var sequence int64
+	if err = tx.QueryRow(ctx, `SELECT renewal_sequence FROM control.workload_sessions WHERE id=$1`, id).Scan(&sequence); err != nil {
 		return r, err
 	}
-	if err = workloadAudit(ctx, tx, id, "renew", "", now); err != nil {
+	// the current proof is an idempotent retry, not another lease extension.
+	if proof.Sequence != sequence {
+		if sequence == math.MaxInt64 || proof.Sequence != sequence+1 {
+			return r, ErrWorkloadDenied
+		}
+		_, err = tx.Exec(ctx, `UPDATE control.workload_sessions SET renewal_sequence=$3,
+		    lease_expires_at=CASE WHEN renewed_at<=$2::timestamptz-interval '30 seconds' THEN LEAST($2::timestamptz+interval '90 seconds',expires_at) ELSE lease_expires_at END,
+		    renewed_at=CASE WHEN renewed_at<=$2::timestamptz-interval '30 seconds' THEN $2 ELSE renewed_at END
+		    WHERE id=$1`, id, now, proof.Sequence)
+		if err == nil {
+			err = workloadAudit(ctx, tx, id, "renew", "", now)
+		}
+	}
+	if err != nil {
 		return r, err
 	}
 	r, err = d.workloadSession(ctx, tx, id, clock.current())

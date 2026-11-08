@@ -716,7 +716,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(30*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, now.Add(31*time.Second)); err != nil {
+	if workload, err = d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, signWorkloadRenewal(workload, private), now.Add(31*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	unchanged, err := d.PrepareConnectorPeerPair(ctx, request, now.Add(31*time.Second))
@@ -741,7 +741,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(60*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, now.Add(62*time.Second)); err != nil {
+	if workload, err = d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, signWorkloadRenewal(workload, private), now.Add(62*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	uncertain, err := d.RenewConnectorPeerPair(ctx, "https://control.example.test", renew, now.Add(63*time.Second))
@@ -777,7 +777,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if _, err := d.HeartbeatServiceRun(ctx, serviceID, run.RunID, run.Token, now.Add(90*time.Second), ServiceRunHealth{Healthy: true, StreamCapacity: 64, ActiveStreams: 0}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, now.Add(93*time.Second)); err != nil {
+	if workload, err = d.RenewWorkloadSession(ctx, workload.ID, workload.Credential, signWorkloadRenewal(workload, private), now.Add(93*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	late := now.Add(106 * time.Second)

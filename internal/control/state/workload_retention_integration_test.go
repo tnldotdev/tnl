@@ -115,7 +115,7 @@ func TestIntegrationWorkloadRetentionReplayAndStop(t *testing.T) {
 		if _, err := d.ExchangeWorkload(t.Context(), test.request, now); !errors.Is(err, test.want) {
 			t.Fatal("exchange resurrected terminal session", err)
 		}
-		if _, err := d.RenewWorkloadSession(t.Context(), test.session.ID, test.session.Credential, now); !errors.Is(err, ErrWorkloadDenied) {
+		if _, err := d.RenewWorkloadSession(t.Context(), test.session.ID, test.session.Credential, signWorkloadRenewal(test.session, test.key), now); !errors.Is(err, ErrWorkloadDenied) {
 			t.Fatal("renew resurrected terminal session", err)
 		}
 		// a fresh assertion for the same job still cannot attach to an expired,

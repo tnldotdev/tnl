@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-connector-rebinding')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-workload-renewal-proof')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-connector-rebinding');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-workload-renewal-proof');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -1852,6 +1852,7 @@ CREATE TABLE control.workload_sessions (
     lease_expires_at timestamptz NOT NULL,
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz,
+    renewal_sequence bigint NOT NULL DEFAULT 0 CHECK (renewal_sequence >= 0),
     UNIQUE(team_id,project_key,repository_id,run_id,run_attempt,check_run_id),
     UNIQUE(team_id,project_key,session_nonce),
     CHECK ((provider='github' AND repository_id IS NOT NULL AND run_id IS NOT NULL AND run_attempt IS NOT NULL AND check_run_id IS NOT NULL) OR
