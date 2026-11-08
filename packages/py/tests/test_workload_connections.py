@@ -64,6 +64,7 @@ class NativeFixture:
         self.fail_prepare: set[str] = set()
         self.retained: dict[str, str] = {}
         self.fail_close = False
+        self.human = False
         monkeypatch.setattr(_connections, "_sessions", {})
         monkeypatch.setattr(_workload, "_configuration", None)
         monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
@@ -102,7 +103,7 @@ class NativeFixture:
                 manifest: str | None = None,
                 requested_at: str | None = None,
             ) -> object:
-                if sdk:
+                if sdk and not fixture.human:
                     assert workload == "job" and manifest is not None and requested_at is not None
                 return fixture.select(name, assertion) if sdk else prepared(name, fixture.deadline)
 
@@ -117,7 +118,7 @@ class NativeFixture:
         if args[0] == "sdk-prepare":
             assert "--retain-start-failure" in args
             assertion = input_value.get("assertion") if isinstance(input_value, dict) else None
-            assert isinstance(assertion, str)
+            assert isinstance(assertion, str) or self.human and assertion is None
             return self.select(args[args.index("--selected-service") + 1], assertion)
         if args[0] == "sdk-close-failure":
             if self.fail_close:
@@ -138,6 +139,8 @@ class NativeFixture:
         return prepared(args[-1], self.deadline)
 
     def select(self, name: str, assertion: str | None) -> object:
+        if self.human and assertion is None:
+            assertion = "human"
         self.requests.append((name, assertion))
         if self.pause:
             self.identifying.set()
@@ -179,6 +182,169 @@ class NativeFixture:
             },
             "prepared": prepared(name, self.deadline),
         }
+
+
+@pytest.mark.parametrize("peer_owner", [False, True])
+@pytest.mark.parametrize("retry_close", [False, True])
+@pytest.mark.parametrize("cancel_getter", [False, True])
+def test_human_alias_close_retains_the_late_owner_until_exact_cleanup_joins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    peer_owner: bool,
+    retry_close: bool,
+    cancel_getter: bool,
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    close_attempts: list[str] = []
+    close_errors: list[tnl.TnlError] = []
+
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        if args[0] in {"stop", "sdk-close"} and "--handle" in args:
+            close_attempts.append(args[args.index("--handle") + 1])
+        try:
+            return native.command(binary, *args, input_value=input_value)
+        except tnl.TnlError as error:
+            close_errors.append(error)
+            raise
+
+    monkeypatch.setattr(_connections, "_command", command)
+
+    async def scenario() -> None:
+        peer: _connections.ConnectionHandle[_connections.Connection] | None = None
+        if peer_owner:
+            tnl.configure_workload("job", token=lambda: "other")
+            peer = tnl.connect("db", directory=tmp_path)
+            await peer
+        configuration = _workload._configuration
+        monkeypatch.setattr(_workload, "_configuration", None)
+        monkeypatch.delenv("TNL_WORKLOAD")
+        native.human = True
+        handle, alias = tnl.connect("db", directory=tmp_path), tnl.connect("db", directory=tmp_path)
+        original = handle._session
+        scope = original.scope
+        assert alias._session is original and original.handle is None
+        native.pause = True
+
+        async def prepare() -> _connections.Connection:
+            return await handle
+
+        pending = asyncio.create_task(prepare())
+        fresh: _connections.ConnectionHandle[_connections.Connection] | None = None
+        try:
+            assert await asyncio.to_thread(native.identifying.wait, 5)
+            registry = scope.registry
+            assert registry is not None
+            await alias.aclose()
+            assert original.closed and original.joined and original.handle is None
+            assert not pending.done() and scope.pending == 1
+            if cancel_getter:
+                pending.cancel("only this await")
+                with pytest.raises(asyncio.CancelledError) as canceled:
+                    await pending
+                assert canceled.value.args == ("only this await",)
+            native.release.set()
+            if not cancel_getter:
+                with pytest.raises(tnl.TnlError) as caught:
+                    await pending
+                assert caught.value.code == "sdk.connection_closed"
+            if retry_close:
+                native.fail_close = True
+                with pytest.raises(tnl.TnlError) as failed:
+                    await handle.aclose()
+                assert failed.value is close_errors[-1]
+                owner = native.owners["human"]
+                assert scope.registry == registry and scope.handles[owner].handle == owner
+                assert not scope.handles[owner].joined and not handle._lifetime.joined
+                assert not native.closed
+                native.fail_close = False
+            await handle.aclose()
+            owner = native.owners["human"]
+            assert close_attempts == [owner] * (2 if retry_close else 1)
+            assert native.closed == [owner] and "sdk-stop" not in native.calls
+            assert original.closed and original.joined and original.handle is None
+            assert handle._lifetime.joined and alias._lifetime.joined
+            assert not scope.pending and not scope.requests and not scope.failure_handles
+            assert set(scope.handles) == ({native.owners["other"]} if peer_owner else set())
+            assert (scope.registry == registry) if peer_owner else scope.registry is None
+            with pytest.raises(tnl.TnlError) as closed:
+                await alias
+            assert closed.value.code == "sdk.connection_closed"
+            native.pause = False
+            fresh = tnl.connect("db", directory=tmp_path)
+            await fresh
+            replacement = native.owners["human"]
+            assert replacement != owner and fresh._session is not original
+            before = list(close_attempts)
+            await alias.aclose()
+            await handle.aclose()
+            assert close_attempts == before and not fresh._session.closed
+            await fresh.aclose()
+            assert native.closed == [owner, replacement]
+            if peer is not None:
+                native.human = False
+                monkeypatch.setattr(_workload, "_configuration", configuration)
+                monkeypatch.setenv("TNL_WORKLOAD", "job")
+                assert peer.snapshot().protocol == "postgres"
+                await peer
+                await peer.aclose()
+            assert not scope.handles and not scope.failure_handles and scope.registry is None
+        finally:
+            native.release.set()
+            native.fail_close = False
+            await asyncio.gather(pending, return_exceptions=True)
+            await handle.aclose()
+            await alias.aclose()
+            if fresh is not None:
+                await fresh.aclose()
+            if peer is not None:
+                await peer.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_human_alias_close_does_not_replace_the_original_acquisition_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    native = NativeFixture(tmp_path, monkeypatch)
+    monkeypatch.delenv("TNL_WORKLOAD")
+    native.human = True
+    native.pause = True
+    native.failure = "denied"
+    errors: list[tnl.TnlError] = []
+
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        try:
+            return native.command(binary, *args, input_value=input_value)
+        except tnl.TnlError as error:
+            errors.append(error)
+            raise
+
+    monkeypatch.setattr(_connections, "_command", command)
+
+    async def scenario() -> None:
+        handle, alias = tnl.connect("db", directory=tmp_path), tnl.connect("db", directory=tmp_path)
+
+        async def prepare() -> _connections.Connection:
+            return await handle
+
+        pending = asyncio.create_task(prepare())
+        try:
+            assert await asyncio.to_thread(native.identifying.wait, 5)
+            await alias.aclose()
+            native.release.set()
+            with pytest.raises(tnl.TnlError) as caught:
+                await pending
+            assert caught.value is errors[0] and caught.value.code == "sdk.workload_denied"
+            await handle.aclose()
+            assert not native.closed and "sdk-stop" not in native.calls
+            assert not handle._session.scope.handles
+        finally:
+            native.release.set()
+            await asyncio.gather(pending, return_exceptions=True)
+            await handle.aclose()
+            await alias.aclose()
+
+    asyncio.run(scenario())
 
 
 def test_policy_reclamation_pins_identity_waiters_and_preserves_active_capacity(

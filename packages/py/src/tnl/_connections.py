@@ -375,6 +375,7 @@ class _Session:
         self.attached: _Session | None = None
         self.failed: set[_Session] = set()
         self.preparations: set[_Session] = set()
+        self.initial_session: _Session | None = None
         self.ipc: OwnerIPC | None = None
         self.failure_handle: str | None = None
 
@@ -441,6 +442,7 @@ class _Session:
                 and not self.scope.failure_handles
                 and not self.scope.handles
                 and self.scope.pending == self.pending
+                and (self.initial_session is None or not self.initial_session.closed)
             )
         if stop_scope:
             self.scope.stop()
@@ -660,8 +662,11 @@ class _Scope:
         connection = _prepared(value.get("prepared"), service)
         with self.lock:
             session = self.selected if selection is None else self.handles.get(file)
-            if session is None:
-                session = _Session(self, file)
+            if session is None or session.closed:
+                # a closed placeholder cannot acquire a new native capability.
+                session = self.handles.get(file)
+                if session is None:
+                    session = _Session(self, file)
             session.handle = file
             session.expires_at = expiry
             self.handles = {
@@ -670,6 +675,11 @@ class _Scope:
                 if held is not session or old == file
             }
             self.handles[file] = session
+            if selection is None:
+                self.selected = session
+            if requester is not None and requester is not session and requester.handle is None:
+                with requester.changed:
+                    requester.attached = session
             if self.entry is None:
                 self.entry = (file, OwnerIPC(file))
         if session.closed:
@@ -864,6 +874,7 @@ class ConnectionHandle[C: Connection]:
             or self._session.closed
         ):
             raise _error("closed")
+        unprepared = self._session if self._session.handle is None else None
         selection = None
         if uses_workload():
             selection = await select_workload(self._session.directory, self._service)
@@ -871,6 +882,7 @@ class ConnectionHandle[C: Connection]:
             if self._lifetime.closed:
                 raise _error("closed")
             preparation = _Session(self._session.scope)
+            preparation.initial_session = unprepared
             self._lifetime.preparations.add(preparation)
         try:
             connection, session = await asyncio.to_thread(
@@ -888,7 +900,11 @@ class ConnectionHandle[C: Connection]:
                     self._lifetime.preparations.discard(preparation)
             raise
         with self._lifetime.changed:
-            if self._lifetime.closed:
+            if self._lifetime.closed or (
+                preparation.initial_session is not None and preparation.initial_session.closed
+            ):
+                # retain this preparation's late owner for joined close. only
+                # the initial shared session fences an alias's pending selection.
                 raise _error("closed")
             self._session = session
             self._lifetime.attached = session
