@@ -45,13 +45,14 @@ func TestIntegrationWorkloadExchangeFreshAssertionRetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			claims := githubtest.Claims(f.server.URL, time.Now())
-			oldExpiry := time.Now().Add(test.proofLifetime).Truncate(time.Second)
+			issuedAt := time.Now().Truncate(time.Second)
+			claims := githubtest.Claims(f.server.URL, issuedAt)
+			oldExpiry := issuedAt.Add(test.proofLifetime)
 			claims["exp"] = oldExpiry.Unix()
 			initial := f.issuer.Sign(t, claims)
 			first, err := job.Exchange(t.Context(), f.team, "example", f.body.SourceFingerprint, "test", initial, nil)
 			if len(transport.responses) != 1 {
-				t.Fatal("initial exchange did not return a committed server session")
+				t.Fatalf("initial exchange did not return a committed server session: requests=%d successful_responses=%d http_statuses=%v native_error=%v", len(transport.requests), len(transport.responses), transport.statuses, err)
 			}
 			committed := transport.responses[0]
 			if test.loseFirst {
@@ -79,12 +80,15 @@ func TestIntegrationWorkloadExchangeFreshAssertionRetry(t *testing.T) {
 			f.apply(t)
 			before := f.saved(t, committed.Id)
 			claims["jti"] = "fresh-same-execution"
-			freshExpiry := time.Now().Add(10 * time.Minute).Truncate(time.Second)
-			claims["exp"] = freshExpiry.Unix()
+			// a fresh assertion needs fresh issuance times too. retaining the old
+			// iat makes exp-iat exceed GitHub's ten-minute cap across a second boundary.
+			freshIssuedAt := time.Now().Truncate(time.Second)
+			freshExpiry := freshIssuedAt.Add(10 * time.Minute)
+			claims["iat"], claims["nbf"], claims["exp"] = freshIssuedAt.Unix(), freshIssuedAt.Unix(), freshExpiry.Unix()
 			fresh := f.issuer.Sign(t, claims)
 			next, retryErr := job.Exchange(t.Context(), f.team, "example", f.body.SourceFingerprint, "test", fresh, nil)
 			if len(transport.requests) != 2 || len(transport.responses) != 2 {
-				t.Fatal("fresh-token retry did not reach the real exchange API")
+				t.Fatalf("fresh-token exchange retry failed: requests=%d want=2 successful_responses=%d want=2 http_statuses=%v native_error=%v proof_lifetime=%s lease_remaining=%s identity_remaining=%s", len(transport.requests), len(transport.responses), transport.statuses, retryErr, freshExpiry.Sub(time.Unix(claims["iat"].(int64), 0)), time.Until(committed.LeaseExpiresAt), time.Until(committed.IdentityExpiresAt))
 			}
 			oldRequest, newRequest := transport.requests[0], transport.requests[1]
 			if oldRequest.Nonce != newRequest.Nonce || oldRequest.PublicKey != newRequest.PublicKey || oldRequest.Assertion == newRequest.Assertion || oldRequest.Signature == newRequest.Signature {
@@ -164,7 +168,9 @@ func TestIntegrationWorkloadExchangeFreshAssertionRetryCannotResurrect(t *testin
 				t.Fatal(err)
 			}
 			before := f.saved(t, initial.Id)
-			claims["jti"], claims["exp"] = "fresh-after-authority-ended", time.Now().Add(10*time.Minute).Unix()
+			freshIssuedAt := time.Now().Truncate(time.Second)
+			claims["jti"] = "fresh-after-authority-ended"
+			claims["iat"], claims["nbf"], claims["exp"] = freshIssuedAt.Unix(), freshIssuedAt.Unix(), freshIssuedAt.Add(10*time.Minute).Unix()
 			_, err = job.Exchange(t.Context(), f.team, "example", f.body.SourceFingerprint, "test", f.issuer.Sign(t, claims), nil)
 			var problem *clientauthority.ProblemError
 			if !errors.As(err, &problem) || problem.Status != want {
@@ -190,6 +196,7 @@ type workloadExchangeRetryTransport struct {
 	loseFirst bool
 	requests  []authorityv1.WorkloadExchange
 	responses []authorityv1.WorkloadSession
+	statuses  []int
 }
 
 func (transport *workloadExchangeRetryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -208,6 +215,9 @@ func (transport *workloadExchangeRetryTransport) RoundTrip(r *http.Request) (*ht
 	}
 	transport.requests = append(transport.requests, request)
 	response, err := transport.base.RoundTrip(r)
+	if response != nil {
+		transport.statuses = append(transport.statuses, response.StatusCode)
+	}
 	if err != nil || response.StatusCode != http.StatusOK {
 		return response, err
 	}
