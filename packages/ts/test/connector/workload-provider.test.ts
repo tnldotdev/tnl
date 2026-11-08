@@ -24,30 +24,37 @@ beforeEach(async () => {
     "FLY_APP_NAME",
     "GITHUB_ACTIONS",
     "K_SERVICE",
+    "KUBERNETES_SERVICE_HOST",
   ])
     vi.stubEnv(name, undefined);
   directory = await mkdtemp(path.join(tmpdir(), "tnl-provider-"));
 });
 
-test("Cloud Run forwards only native selection hints, not SDK metadata acquisition", async () => {
-  const { usesWorkload, selectWorkload } =
-    await import("../../src/internal/connector/workload/provider.js");
-  expect(usesWorkload()).toBe(false);
-  vi.stubEnv("K_SERVICE", "orders");
-  expect(usesWorkload()).toBe(true);
-  const preview = vi.fn(async () => ({
-    schema: 1,
-    name: "app",
-    directory,
-    manifest: path.join(directory, ".tnl/generated/workloads.json"),
-    source: "native",
-    policy: "a".repeat(64),
-  }));
-  const selected = await selectWorkload(preview);
-  expect(selected.sdk_workload?.runtime.cloud_run_service).toBe("orders");
-  expect(selected.assertion).toBeUndefined();
-  expect(vercel.token).not.toHaveBeenCalled();
-});
+test.each([
+  ["K_SERVICE", "cloud_run_service", "orders"],
+  ["KUBERNETES_SERVICE_HOST", "kubernetes_service_host", "10.0.0.1"],
+] as const)(
+  "%s forwards only native selection hints, not SDK acquisition",
+  async (environment, key, hint) => {
+    const { usesWorkload, selectWorkload } =
+      await import("../../src/internal/connector/workload/provider.js");
+    expect(usesWorkload()).toBe(false);
+    vi.stubEnv(environment, hint);
+    expect(usesWorkload()).toBe(true);
+    const preview = vi.fn(async () => ({
+      schema: 1,
+      name: "app",
+      directory,
+      manifest: path.join(directory, ".tnl/generated/workloads.json"),
+      source: "native",
+      policy: "a".repeat(64),
+    }));
+    const selected = await selectWorkload(preview);
+    expect(selected.sdk_workload?.runtime[key]).toBe(hint);
+    expect(selected.assertion).toBeUndefined();
+    expect(vercel.token).not.toHaveBeenCalled();
+  },
+);
 
 test("native selection receives hints and current private provider inputs without SDK acquisition", async () => {
   const { selectWorkload, configureWorkload } =

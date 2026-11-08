@@ -56,6 +56,19 @@ func Declarations(configuration config.TNL, configPath, outputDir string) ([]byt
 		policies := map[string]any{}
 		for name, policy := range configuration.Workloads {
 			value := map[string]any{"services": policy.Services}
+			if k := policy.Kubernetes; k != nil {
+				block := map[string]any{"serviceAccount": k.ServiceAccount}
+				if k.Context != "" {
+					block["context"] = k.Context
+				}
+				if k.Namespace != "" {
+					block["namespace"] = k.Namespace
+				}
+				if k.Audience != "" {
+					block["audience"] = k.Audience
+				}
+				value["kubernetes"] = block
+			}
 			if g := policy.Google; g != nil {
 				block := map[string]any{"serviceAccount": g.ServiceAccount}
 				if g.Audience != "" {

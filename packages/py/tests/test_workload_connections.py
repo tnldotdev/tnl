@@ -16,7 +16,16 @@ import tnl
 from tnl import _connections, _workload
 
 
-def test_cloud_run_selection_hints_stay_native(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("environment", "key", "hint"),
+    [
+        ("K_SERVICE", "cloud_run_service", "orders"),
+        ("KUBERNETES_SERVICE_HOST", "kubernetes_service_host", "10.0.0.1"),
+    ],
+)
+def test_platform_selection_hints_stay_native(
+    monkeypatch: pytest.MonkeyPatch, environment: str, key: str, hint: str
+) -> None:
     monkeypatch.setattr(_workload, "_configuration", None)
     for name in (
         "TNL_CONNECTION_HANDLE",
@@ -25,16 +34,17 @@ def test_cloud_run_selection_hints_stay_native(monkeypatch: pytest.MonkeyPatch) 
         "FLY_APP_NAME",
         "GITHUB_ACTIONS",
         "K_SERVICE",
+        "KUBERNETES_SERVICE_HOST",
     ):
         monkeypatch.delenv(name, raising=False)
     assert not _workload.uses_workload()
-    monkeypatch.setenv("K_SERVICE", "orders")
+    monkeypatch.setenv(environment, hint)
     assert _workload.uses_workload()
 
     def preview(service: str, request: dict[str, object]) -> object:
         assert service == "db"
         runtime = request["runtime"]
-        assert isinstance(runtime, dict) and runtime["cloud_run_service"] == "orders"
+        assert isinstance(runtime, dict) and runtime[key] == hint
         return {
             "schema": 1,
             "name": "app",

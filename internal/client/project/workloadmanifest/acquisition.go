@@ -15,6 +15,8 @@ func AcquisitionFor(p config.Workload, server string) (Acquisition, error) {
 		a.Method, a.Audience = "fly-machine-api", server
 	case "google":
 		a.Method, a.Audience = "google-metadata", p.TokenAudience(server)
+	case "kubernetes":
+		a.Method, a.Audience, a.TokenFile = "token-file", p.TokenAudience(server), KubernetesTokenFile
 	case "oidc":
 		a.Method, a.Audience = "callback", p.TokenAudience(server)
 	default:
