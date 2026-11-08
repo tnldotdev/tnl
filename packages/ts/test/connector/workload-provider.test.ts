@@ -164,6 +164,32 @@ test("generic token files are bounded, reread, and never fall back after a selec
   }
 });
 
+test.each([
+  { name: "TNL_SERVER", changed: "https://other.example" },
+  { name: "TNL_STATE_DIR", changed: "/other/state" },
+])(
+  "deferred assertion callbacks keep the acquisition's captured $name context",
+  async ({ name, changed }) => {
+    const { configureWorkload, acquireAssertion } =
+      await import("../../src/internal/connector/workload/provider.js");
+    const callbackA = vi.fn(async () => "assertion-a");
+    const callbackB = vi.fn(async () => "assertion-b");
+    configureWorkload({ name: "worker", token: callbackA });
+    const pending = acquireAssertion("worker", oidc, directory, AbortSignal.timeout(1000));
+    expect(callbackA).not.toHaveBeenCalled();
+    vi.stubEnv(name, changed);
+    configureWorkload({ name: "worker", token: callbackB });
+
+    expect(await pending).toBe("assertion-a");
+    expect(callbackA).toHaveBeenCalledOnce();
+    expect(callbackB).not.toHaveBeenCalled();
+    expect(await acquireAssertion("worker", oidc, directory, AbortSignal.timeout(1000))).toBe(
+      "assertion-b",
+    );
+    expect(callbackB).toHaveBeenCalledOnce();
+  },
+);
+
 test("callback and parser causes stay private under normal Node error inspection", async () => {
   const { configureWorkload, acquireAssertion } =
     await import("../../src/internal/connector/workload/provider.js");

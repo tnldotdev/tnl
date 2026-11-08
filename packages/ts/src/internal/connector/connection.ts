@@ -190,14 +190,15 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
     return parsePrepared(await prepareExternal(externalFile, name), name, externalFile);
   }
   let startArgs = ["--directory", process.cwd()];
+  const workload = usesWorkload(base);
   const scope = await nativeScope(base);
   let assertion: string | undefined;
   let manifest: unknown;
   let selectionOptions: { workload?: string; manifest?: string; requested_at: string } = {
     requested_at: requestedAt,
   };
-  if (usesWorkload()) {
-    const selection = await selectWorkload();
+  if (workload) {
+    const selection = await selectWorkload(base);
     manifest = selection.manifest;
     if (!selection.selected.services.includes(name)) throw new TnlError("sdk.workload_denied");
     assertion = await acquireAssertion(
@@ -205,6 +206,7 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
       selection.selected,
       selection.directory,
       AbortSignal.timeout(10_000),
+      base,
     );
     startArgs = [
       "--directory",

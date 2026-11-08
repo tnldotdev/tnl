@@ -54,11 +54,11 @@ function runtimeProviders(): string[] {
   ];
 }
 
-export function usesWorkload(): boolean {
+export function usesWorkload(key = contextKey()): boolean {
   return (
     process.env.TNL_CONNECTION_HANDLE === undefined &&
     (process.env.TNL_WORKLOAD !== undefined ||
-      context.workloads.has(contextKey()) ||
+      context.workloads.has(key) ||
       runtimeProviders().length > 0)
   );
 }
@@ -89,7 +89,7 @@ export async function boundedFile(
   }
 }
 
-export async function selectWorkload(): Promise<{
+export async function selectWorkload(key = contextKey()): Promise<{
   manifest: WorkloadManifest;
   name: string;
   selected: Workload;
@@ -112,7 +112,7 @@ export async function selectWorkload(): Promise<{
   } catch (cause) {
     throw privateTnlError("sdk.workload_manifest_invalid", cause);
   }
-  const configuration = context.workloads.get(contextKey());
+  const configuration = context.workloads.get(key);
   const explicit = process.env.TNL_WORKLOAD ?? configuration?.name;
   if (configuration !== undefined && explicit !== configuration.name)
     throw new TnlError("sdk.workload_required");
@@ -225,11 +225,12 @@ export async function acquireAssertion(
   selected: Workload,
   directory: string,
   signal: AbortSignal,
+  key = contextKey(),
 ): Promise<string> {
   const lifetime = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
   try {
     return await cancellable(lifetime, () =>
-      acquireCurrentAssertion(name, selected, directory, lifetime),
+      acquireCurrentAssertion(name, selected, directory, lifetime, key),
     );
   } catch (cause) {
     if (lifetime.aborted) throw lifetime.reason;
@@ -242,10 +243,11 @@ async function acquireCurrentAssertion(
   selected: Workload,
   directory: string,
   signal: AbortSignal,
+  key: string,
 ): Promise<string> {
   try {
     signal.throwIfAborted();
-    const configuration = context.workloads.get(contextKey());
+    const configuration = context.workloads.get(key);
     const source = configuration?.name === name ? configuration : undefined;
     if (source !== undefined) {
       if (
