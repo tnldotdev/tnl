@@ -75,6 +75,8 @@ async def main() -> None:
                 print("streaming", flush=True)
                 assert await asyncio.to_thread(input) == "refreshed"
                 assert await asyncio.to_thread(response.read) == b"after-proof\n"
+                refreshed = await handle
+                assert refreshed.port == first.port
                 print("retained", flush=True)
             finally:
                 response.close()

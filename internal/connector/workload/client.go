@@ -141,11 +141,14 @@ func validateSession(r authorityv1.WorkloadSession) error {
 	} else if r.Github != nil {
 		return invalidSession()
 	}
-	if !bindingID.MatchString(r.Binding) || !naming.ValidServiceName(r.Workload) || !slices.Contains([]string{"github", "vercel", "fly", "oidc"}, string(r.Provider)) || r.LeaseExpiresAt.After(time.Now().Add(91*time.Second)) || r.ExpiresAt.After(time.Now().Add(6*time.Hour+time.Second)) {
+	if !bindingID.MatchString(r.Binding) || !naming.ValidServiceName(r.Workload) || !slices.Contains([]string{"github", "vercel", "fly", "oidc"}, string(r.Provider)) || r.LeaseExpiresAt.After(time.Now().Add(91*time.Second)) {
+		return invalidSession()
+	}
+	if r.ExpiresAt != nil && (!r.ExpiresAt.After(time.Now()) || r.LeaseExpiresAt.After(*r.ExpiresAt)) {
 		return invalidSession()
 	}
 	subject := tunnelv1.VisitorSubject{Kind: string(r.Subject.Kind), WorkloadSessionID: r.Id}
-	if subject.Validate() != nil || r.Subject.WorkloadSessionId == nil || *r.Subject.WorkloadSessionId != r.Id || string(r.Subject.Kind) != tunnelv1.VisitorWorkloadSession || r.Subject.IdentityId != nil || r.Subject.DeviceId != nil || len(r.Credential) != 47 || r.Credential[:4] != "wlc_" || !r.LeaseExpiresAt.After(time.Now()) || r.LeaseExpiresAt.After(r.ExpiresAt) || len(r.ServiceIds) > 32 {
+	if subject.Validate() != nil || r.Subject.WorkloadSessionId == nil || *r.Subject.WorkloadSessionId != r.Id || string(r.Subject.Kind) != tunnelv1.VisitorWorkloadSession || r.Subject.IdentityId != nil || r.Subject.DeviceId != nil || len(r.Credential) != 47 || r.Credential[:4] != "wlc_" || !r.LeaseExpiresAt.After(time.Now()) || len(r.ServiceIds) > 32 {
 		return invalidSession()
 	}
 	seen := map[string]bool{}
@@ -263,8 +266,11 @@ func validateSessionUpdate(current, next authorityv1.WorkloadSession) error {
 	if err := validateSession(next); err != nil {
 		return err
 	}
+	if current.ExpiresAt != nil && (next.ExpiresAt == nil || next.ExpiresAt.After(*current.ExpiresAt)) {
+		return invalidSession()
+	}
 	if next.IdentityExpiresAt.Before(current.IdentityExpiresAt) || next.RenewalSequence < current.RenewalSequence || next.Binding != current.Binding || next.Id != current.Id || next.Credential != current.Credential ||
-		next.ExpiresAt.After(current.ExpiresAt) || next.TeamId != current.TeamId || next.ProjectKey != current.ProjectKey ||
+		next.TeamId != current.TeamId || next.ProjectKey != current.ProjectKey ||
 		next.Workload != current.Workload || next.Provider != current.Provider || !reflect.DeepEqual(next.Github, current.Github) {
 		return invalidSession()
 	}
@@ -374,6 +380,9 @@ func (workloadSigner) String() string   { return "workload TLS signer" }
 func (workloadSigner) GoString() string { return "workload TLS signer" }
 
 func cloneSession(r authorityv1.WorkloadSession) authorityv1.WorkloadSession {
+	if r.ExpiresAt != nil {
+		r.ExpiresAt = new(*r.ExpiresAt)
+	}
 	if r.AssertionExpiresAt != nil {
 		r.AssertionExpiresAt = new(*r.AssertionExpiresAt)
 	}
@@ -391,6 +400,16 @@ func cloneSession(r authorityv1.WorkloadSession) authorityv1.WorkloadSession {
 		r.Subject.DeviceId = new(*r.Subject.DeviceId)
 	}
 	return r
+}
+
+// sessionDeadline is the current finite proof horizon, bounded by an optional
+// absolute limit. permission leases remain independently bounded and renewed.
+func SessionDeadline(r authorityv1.WorkloadSession) time.Time {
+	until := r.IdentityExpiresAt
+	if r.ExpiresAt != nil && r.ExpiresAt.Before(until) {
+		until = *r.ExpiresAt
+	}
+	return until
 }
 func (c *Client) Subject() (tunnelv1.VisitorSubject, error) {
 	r, err := c.Session()

@@ -117,7 +117,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if current, err := job.Identify(ctx, team, "store", body.SourceFingerprint, "storefront", rotated); err != nil || current != binding {
 				t.Fatal("rotating assertion changed owner identity", err)
 			}
-			if attached, err := job.Attach(ctx, rotated); err != nil || attached.Id != session.Id || attached.Binding != binding || !attached.ExpiresAt.Equal(session.ExpiresAt) || attached.AssertionExpiresAt == nil || attached.AssertionExpiresAt.Unix() != now.Add(11*time.Minute).Unix() {
+			if attached, err := job.Attach(ctx, rotated); err != nil || attached.Id != session.Id || attached.Binding != binding || !attached.ExpiresAt.Equal(*session.ExpiresAt) || attached.AssertionExpiresAt == nil || attached.AssertionExpiresAt.Unix() != now.Add(11*time.Minute).Unix() {
 				t.Fatal("authenticated assertion attachment changed session", err)
 			}
 			encoded, err := json.Marshal(session)
@@ -134,7 +134,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				}
 			}
 			retry, err := job.Exchange(ctx, team, "store", body.SourceFingerprint, "storefront", token, nil)
-			if err != nil || retry.Id != session.Id || retry.Credential != session.Credential || !retry.ExpiresAt.Equal(session.ExpiresAt) {
+			if err != nil || retry.Id != session.Id || retry.Credential != session.Credential || !retry.ExpiresAt.Equal(*session.ExpiresAt) {
 				t.Fatal("nonce retry changed fixed session", err)
 			}
 			other, err := workload.New(server.URL, server.Client())
@@ -185,7 +185,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if err != nil || len(inventory.Services) != 1 {
 				t.Fatal("issued snapshot expanded", err)
 			}
-			if renewed, err := job.Renew(ctx); err != nil || !renewed.ExpiresAt.Equal(session.ExpiresAt) {
+			if renewed, err := job.Renew(ctx); err != nil || !renewed.ExpiresAt.Equal(*session.ExpiresAt) {
 				t.Fatal("renew extended fixed window", err)
 			}
 			body.ExpectedRevision = applied.Revision

@@ -44,7 +44,7 @@ func TestSessionUpdatesShareImmutableAndNarrowingBoundary(t *testing.T) {
 			{"negative sequence", func(s *authorityv1.WorkloadSession) { s.RenewalSequence = -1 }, false},
 			{"sequence rollback", func(s *authorityv1.WorkloadSession) { s.RenewalSequence = 1 }, false},
 			{"sequence jump", func(s *authorityv1.WorkloadSession) { s.RenewalSequence += 2 }, false},
-			{"shorter expiry", func(s *authorityv1.WorkloadSession) { s.ExpiresAt = s.ExpiresAt.Add(-time.Minute) }, true},
+			{"shorter expiry", func(s *authorityv1.WorkloadSession) { s.ExpiresAt = new(s.ExpiresAt.Add(-time.Minute)) }, true},
 			{"fewer rights", func(s *authorityv1.WorkloadSession) { s.ServiceIds = []string{} }, true},
 			{"binding", func(s *authorityv1.WorkloadSession) { s.Binding = strings.Repeat("c", 64) }, false},
 			{"id", func(s *authorityv1.WorkloadSession) {
@@ -52,7 +52,8 @@ func TestSessionUpdatesShareImmutableAndNarrowingBoundary(t *testing.T) {
 				s.Subject.WorkloadSessionId = new(s.Id)
 			}, false},
 			{"credential", func(s *authorityv1.WorkloadSession) { s.Credential = "wlc_" + strings.Repeat("z", 43) }, false},
-			{"longer expiry", func(s *authorityv1.WorkloadSession) { s.ExpiresAt = s.ExpiresAt.Add(time.Minute) }, false},
+			{"longer expiry", func(s *authorityv1.WorkloadSession) { s.ExpiresAt = new(s.ExpiresAt.Add(time.Minute)) }, false},
+			{"removed hard expiry", func(s *authorityv1.WorkloadSession) { s.ExpiresAt = nil }, false},
 			{"team", func(s *authorityv1.WorkloadSession) { s.TeamId = "tm_" + strings.Repeat("a", 22) }, false},
 			{"project", func(s *authorityv1.WorkloadSession) { s.ProjectKey = "other" }, false},
 			{"workload", func(s *authorityv1.WorkloadSession) { s.Workload = "other" }, false},
@@ -114,7 +115,7 @@ func TestSessionUpdatesShareImmutableAndNarrowingBoundary(t *testing.T) {
 					}
 					return
 				}
-				if !reflect.DeepEqual(saved, updated) || !saved.ExpiresAt.Equal(next.ExpiresAt) || len(saved.ServiceIds) != len(next.ServiceIds) {
+				if !reflect.DeepEqual(saved, updated) || !saved.ExpiresAt.Equal(*next.ExpiresAt) || len(saved.ServiceIds) != len(next.ServiceIds) {
 					t.Fatal("successful narrowing was not retained")
 				}
 				updated.Github.RunId = "777"
@@ -295,7 +296,7 @@ func TestSessionSequenceUpdatesAndOverflow(t *testing.T) {
 func sessionFixture(provider controlv1.WorkloadProvider) authorityv1.WorkloadSession {
 	id := "wls_" + strings.Repeat("s", 22)
 	now := time.Now()
-	s := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: "tm_" + strings.Repeat("t", 22), ProjectKey: "store", Workload: "storefront", Provider: provider, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, LeaseExpiresAt: now.Add(90 * time.Second), ExpiresAt: now.Add(time.Hour), RenewAfter: now.Add(30 * time.Second), ServiceIds: []string{"svc_" + strings.Repeat("p", 22)}}
+	s := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: "tm_" + strings.Repeat("t", 22), ProjectKey: "store", Workload: "storefront", Provider: provider, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, LeaseExpiresAt: now.Add(90 * time.Second), ExpiresAt: new(now.Add(time.Hour)), RenewAfter: now.Add(30 * time.Second), ServiceIds: []string{"svc_" + strings.Repeat("p", 22)}}
 	s.Binding = strings.Repeat("b", 64)
 	s.IdentityExpiresAt = now.Add(5 * time.Minute)
 	if provider == controlv1.WorkloadGitHub {

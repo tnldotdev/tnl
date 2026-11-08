@@ -38,21 +38,21 @@ DELETE FROM control.workload_audit WHERE ctid IN (
 DELETE FROM control.workload_session_services WHERE (workload_session_id, service_id) IN (
     SELECT rights.workload_session_id, rights.service_id FROM control.workload_session_services rights
     JOIN control.workload_sessions session ON session.id = rights.workload_session_id
-    WHERE session.expires_at < sqlc.arg(before_time) AND session.lease_expires_at < sqlc.arg(before_time)
+    WHERE COALESCE(session.expires_at,session.identity_expires_at) < sqlc.arg(before_time) AND session.lease_expires_at < sqlc.arg(before_time)
       AND (session.revoked_at IS NULL OR session.revoked_at < sqlc.arg(before_time))
       AND to_timestamp((session.claims->>'exp')::double precision) < sqlc.arg(before_time)
       AND NOT EXISTS (SELECT 1 FROM control.workload_assertions child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.public_service_visitors child WHERE child.workload_session_id = session.id)
-    ORDER BY session.expires_at, rights.workload_session_id, rights.service_id LIMIT sqlc.arg(batch_size)
+    ORDER BY COALESCE(session.expires_at,session.identity_expires_at), rights.workload_session_id, rights.service_id LIMIT sqlc.arg(batch_size)
     FOR UPDATE OF rights SKIP LOCKED
 );
 
 -- name: CleanupWorkloadSessions :execrows
 DELETE FROM control.workload_sessions WHERE id IN (
     SELECT session.id FROM control.workload_sessions session
-    WHERE session.expires_at < sqlc.arg(before_time) AND session.lease_expires_at < sqlc.arg(before_time)
+    WHERE COALESCE(session.expires_at,session.identity_expires_at) < sqlc.arg(before_time) AND session.lease_expires_at < sqlc.arg(before_time)
       AND (session.revoked_at IS NULL OR session.revoked_at < sqlc.arg(before_time))
       AND to_timestamp((session.claims->>'exp')::double precision) < sqlc.arg(before_time)
       AND NOT EXISTS (SELECT 1 FROM control.workload_session_services child WHERE child.workload_session_id = session.id)
@@ -60,6 +60,6 @@ DELETE FROM control.workload_sessions WHERE id IN (
       AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.public_service_visitors child WHERE child.workload_session_id = session.id)
-    ORDER BY session.expires_at, session.id LIMIT sqlc.arg(batch_size)
+    ORDER BY COALESCE(session.expires_at,session.identity_expires_at), session.id LIMIT sqlc.arg(batch_size)
     FOR UPDATE SKIP LOCKED
 );

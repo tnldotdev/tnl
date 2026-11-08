@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-workload-identity-expiry')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-workload-optional-duration')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-workload-identity-expiry');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-workload-optional-duration');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -1850,7 +1850,7 @@ CREATE TABLE control.workload_sessions (
     created_at timestamptz NOT NULL,
     renewed_at timestamptz NOT NULL,
     lease_expires_at timestamptz NOT NULL,
-    expires_at timestamptz NOT NULL,
+    expires_at timestamptz,
     revoked_at timestamptz,
     renewal_sequence bigint NOT NULL DEFAULT 0 CHECK (renewal_sequence >= 0),
     identity_expires_at timestamptz NOT NULL,
@@ -1859,11 +1859,11 @@ CREATE TABLE control.workload_sessions (
     CHECK ((provider='github' AND repository_id IS NOT NULL AND run_id IS NOT NULL AND run_attempt IS NOT NULL AND check_run_id IS NOT NULL) OR
            (provider<>'github' AND repository_id IS NULL AND run_id IS NULL AND run_attempt IS NULL AND check_run_id IS NULL)),
     CHECK (jsonb_typeof(claims)='object' AND COALESCE(claims->>'provider'=provider,false)),
-    CHECK (expires_at>created_at AND expires_at<=created_at+interval '6 hours'),
+    CONSTRAINT workload_session_hard_expiry CHECK (expires_at IS NULL OR expires_at>created_at),
     CHECK (lease_expires_at>created_at AND lease_expires_at<=expires_at),
     CONSTRAINT workload_identity_expiry CHECK (identity_expires_at>created_at AND lease_expires_at<=identity_expires_at)
 );
-CREATE INDEX workload_sessions_retention ON control.workload_sessions(expires_at,id);
+CREATE INDEX workload_sessions_retention ON control.workload_sessions(COALESCE(expires_at,identity_expires_at),id);
 CREATE TABLE control.workload_session_services (
     workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
     service_id text NOT NULL REFERENCES control.services(id),

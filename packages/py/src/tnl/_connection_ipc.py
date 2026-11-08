@@ -39,80 +39,13 @@ class OwnerIPC:
         self.available: queue.LifoQueue[http.client.HTTPConnection] = queue.LifoQueue()
         self.pending = threading.BoundedSemaphore(64)
         self.closed = False
+        self._filename = filename
+        self._identity: dict[str, object] | None = None
+        self._expiry_lock = threading.Lock()
         try:
-            file = Path(filename)
-            if not file.is_absolute() or "\0" in filename or len(filename) > 4096:
-                raise ValueError("invalid handle path")
-            for directory in (file.parent, *file.parent.parents):
-                info = directory.lstat()
-                if (
-                    not stat.S_ISDIR(info.st_mode)
-                    or info.st_mode & 0o022
-                    and not info.st_mode & stat.S_ISVTX
-                ):
-                    raise ValueError("unsafe ancestor")
-                if directory == file.parent and (
-                    stat.S_IMODE(info.st_mode) != 0o700 or info.st_uid != os.getuid()
-                ):
-                    raise ValueError("unowned directory")
-            with os.fdopen(
-                os.open(file, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW), "rb"
-            ) as stream:
-                info = os.fstat(stream.fileno())
-                if (
-                    not stat.S_ISREG(info.st_mode)
-                    or stat.S_IMODE(info.st_mode) != 0o600
-                    or info.st_uid != os.getuid()
-                    or info.st_size > 128 << 10
-                ):
-                    raise ValueError("unowned handle")
-                data = stream.read((128 << 10) + 1)
-            if len(data) > 128 << 10:
-                raise ValueError("oversized handle")
-            raw: object = json.loads(data)
-            if not isinstance(raw, dict) or set(raw) - {
-                "schema",
-                "url",
-                "key",
-                "directory",
-                "config_digest",
-                "expires_at",
-                "executable",
-                "workload",
-                "team_id",
-            }:
-                raise ValueError("invalid handle")
-            url, key, scope_directory, digest, expiry = (
-                raw.get(k) for k in ("url", "key", "directory", "config_digest", "expires_at")
-            )
-            if (
-                raw.get("schema") != 1
-                or not isinstance(url, str)
-                or not re.fullmatch(r"http://127\.0\.0\.1:[1-9][0-9]{0,4}", url)
-                or not isinstance(key, str)
-                or not re.fullmatch(r"[0-9a-f]{64}", key)
-                or not isinstance(scope_directory, str)
-                or not Path(scope_directory).is_absolute()
-                or not isinstance(digest, str)
-                or not re.fullmatch(r"[0-9a-f]{64}", digest)
-                or not isinstance(expiry, str)
-            ):
-                raise ValueError("invalid handle scope")
-            endpoint = urlsplit(url)
-            if endpoint.port is None or not 1 <= endpoint.port <= 65535:
-                raise ValueError("invalid local port")
-            self.expires = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
-            if self.expires.tzinfo is None or self.expires <= datetime.now(UTC):
-                raise ValueError("expired capability")
-            self.key = key
-            self.port = endpoint.port
-            self.scope: dict[str, object] = {
-                "schema": 1,
-                "directory": scope_directory,
-                "config_digest": digest,
-            }
+            self._load()
             self.connections = [
-                http.client.HTTPConnection("127.0.0.1", endpoint.port, timeout=_TIMEOUT)
+                http.client.HTTPConnection("127.0.0.1", self.port, timeout=_TIMEOUT)
                 for _ in range(4)
             ]
             for connection in reversed(self.connections):
@@ -121,6 +54,99 @@ class OwnerIPC:
         except Exception:
             self.close()
         raise _failure() from None
+
+    def _load(self) -> None:
+        # renewal uses the same ownership, symlink, bounds, and scope checks
+        # as startup, and may change only the retained capability's expiry.
+        file = Path(self._filename)
+        if not file.is_absolute() or "\0" in self._filename or len(self._filename) > 4096:
+            raise ValueError("invalid handle path")
+        for directory in (file.parent, *file.parent.parents):
+            info = directory.lstat()
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or info.st_mode & 0o022
+                and not info.st_mode & stat.S_ISVTX
+            ):
+                raise ValueError("unsafe ancestor")
+            if directory == file.parent and (
+                stat.S_IMODE(info.st_mode) != 0o700 or info.st_uid != os.getuid()
+            ):
+                raise ValueError("unowned directory")
+        with os.fdopen(os.open(file, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW), "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or stat.S_IMODE(info.st_mode) != 0o600
+                or info.st_uid != os.getuid()
+                or info.st_size > 128 << 10
+            ):
+                raise ValueError("unowned handle")
+            data = stream.read((128 << 10) + 1)
+        if len(data) > 128 << 10:
+            raise ValueError("oversized handle")
+        raw: object = json.loads(data)
+        if not isinstance(raw, dict) or set(raw) - {
+            "schema",
+            "url",
+            "key",
+            "directory",
+            "config_digest",
+            "expires_at",
+            "executable",
+            "workload",
+            "team_id",
+        }:
+            raise ValueError("invalid handle")
+        url, key, scope_directory, digest, expiry = (
+            raw.get(k) for k in ("url", "key", "directory", "config_digest", "expires_at")
+        )
+        if (
+            type(raw.get("schema")) is not int
+            or raw.get("schema") != 1
+            or not isinstance(url, str)
+            or not re.fullmatch(r"http://127\.0\.0\.1:[1-9][0-9]{0,4}", url)
+            or not isinstance(key, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", key)
+            or not isinstance(scope_directory, str)
+            or not Path(scope_directory).is_absolute()
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or not isinstance(expiry, str)
+        ):
+            raise ValueError("invalid handle scope")
+        endpoint = urlsplit(url)
+        if endpoint.port is None or not 1 <= endpoint.port <= 65535:
+            raise ValueError("invalid local port")
+        expires = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+        if expires.tzinfo is None or expires <= datetime.now(UTC):
+            raise ValueError("expired capability")
+        del raw["expires_at"]
+        if self.closed or self._identity is not None and self._identity != raw:
+            raise ValueError("changed capability")
+        self.expires = expires
+        self._identity = raw
+        self.key = key
+        self.port = endpoint.port
+        self.scope: dict[str, object] = {
+            "schema": 1,
+            "directory": scope_directory,
+            "config_digest": digest,
+        }
+        # native may have closed idle sockets before the old capability expired.
+        # reopen only idle connections before sending, never replay a request or
+        # interrupt a sibling's in-flight preparation.
+        idle = []
+        while True:
+            try:
+                idle.append(self.available.get_nowait())
+            except queue.Empty:
+                break
+        for connection in idle:
+            try:
+                connection.close()
+            finally:
+                self.available.put_nowait(connection)
 
     def __repr__(self) -> str:
         return "<tnl native IPC (private)>"
@@ -146,8 +172,11 @@ class OwnerIPC:
         watchdog: threading.Timer | None = None
         expired = threading.Event()
         try:
-            if self.closed or self.expires <= datetime.now(UTC):
-                raise ValueError("closed capability")
+            with self._expiry_lock:
+                if self.closed:
+                    raise ValueError("closed capability")
+                if self.expires <= datetime.now(UTC):
+                    self._load()
             connection = self.available.get(timeout=max(0.001, deadline - time.monotonic()))
             if self.closed:
                 raise ValueError("closed capability")
@@ -220,7 +249,8 @@ class OwnerIPC:
         if self.creator_pid != os.getpid():
             self.discard_inherited()
             return
-        self.closed = True
+        with self._expiry_lock:
+            self.closed = True
         for connection in self.connections:
             connection.close()
 

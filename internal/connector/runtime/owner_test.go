@@ -70,18 +70,18 @@ func TestConnectionOwnerRenewalOnlyShortensOriginalDeadline(t *testing.T) {
 	// turn renewal into a new now+remaining countdown in either direction.
 	for _, offset := range []time.Duration{-30 * time.Minute, 30 * time.Minute} {
 		previous := deadline.Add(offset)
-		unchanged, err := renewedOwnerDeadline(now, deadline, previous, previous)
+		unchanged, err := renewedOwnerDeadline(now, deadline, previous, previous, false)
 		if err != nil || !unchanged.Equal(deadline) {
 			t.Fatal("unchanged authority moved the local deadline", unchanged, err)
 		}
-		shorter, err := renewedOwnerDeadline(now, deadline, previous, previous.Add(-time.Minute))
+		shorter, err := renewedOwnerDeadline(now, deadline, previous, previous.Add(-time.Minute), false)
 		if err != nil || !shorter.Equal(deadline.Add(-time.Minute)) {
 			t.Fatal("authority reduction did not shorten the original deadline", shorter, err)
 		}
-		if _, err := renewedOwnerDeadline(now, deadline, previous, previous.Add(time.Minute)); !errors.Is(err, ErrExpired) {
+		if _, err := renewedOwnerDeadline(now, deadline, previous, previous.Add(time.Minute), false); !errors.Is(err, ErrExpired) {
 			t.Fatal("renewal enlarged the execution window", err)
 		}
-		if _, err := renewedOwnerDeadline(deadline, deadline, previous, previous); !errors.Is(err, ErrExpired) {
+		if _, err := renewedOwnerDeadline(deadline, deadline, previous, previous, false); !errors.Is(err, ErrExpired) {
 			t.Fatal("late renewal revived the expired owner", err)
 		}
 	}

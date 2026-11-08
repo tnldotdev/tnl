@@ -68,6 +68,9 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	}
 	group, protocol := "production", controlv1.Kubernetes
 	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}, Environment: new("ci"), JobWorkflowRef: new("example/shared/.github/workflows/reuse.yml@refs/tags/v1")}, Services: []string{"cluster"}, MaxDurationSeconds: 3600}}
+	continuous := policies["test"]
+	continuous.MaxDurationSeconds = 0
+	policies["continuous"] = continuous
 	body := controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"cluster": {PublisherGroup: &group, Protocol: &protocol, Target: "", TargetDiscovery: &controlv1.ProjectTargetDiscovery{Type: controlv1.Eks, Region: "us-east-1", Cluster: new("production")}}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}
 	applied, err := owner.ApplyProjectConfiguration(ctx, "example", body)
 	if err != nil {
@@ -92,7 +95,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 		t.Fatal("GitHub session omitted signed execution metadata")
 	}
 	retry, err := job.Exchange(ctx, team, "example", body.SourceFingerprint, "test", assertion, nil)
-	if err != nil || retry.Id != session.Id || retry.Credential != session.Credential || !retry.ExpiresAt.Equal(session.ExpiresAt) {
+	if err != nil || retry.Id != session.Id || retry.Credential != session.Credential || !retry.ExpiresAt.Equal(*session.ExpiresAt) {
 		t.Fatal("HTTP lost-reply recovery changed execution", err)
 	}
 	services, err := job.ListServices(ctx)
@@ -119,11 +122,28 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 	}
 	t.Run("connector peer pair", func(t *testing.T) {
 		exerciseWorkloadConnectorPeerPair(t, d, job, server, human.Identity.Identity.ID, team, service, session.Credential, databaseURL)
+		if t.Failed() {
+			return
+		}
+		t.Run("uncapped rebinding", func(t *testing.T) {
+			uncapped, err := workload.New(server.URL, server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			uncappedClaims := githubtest.Claims(server.URL, time.Now())
+			uncappedClaims["environment"], uncappedClaims["job_workflow_ref"] = claims["environment"], claims["job_workflow_ref"]
+			uncappedClaims["check_run_id"], uncappedClaims["jti"] = "223", "uncapped-rebinding"
+			current, err := uncapped.Exchange(t.Context(), team, "example", body.SourceFingerprint, "continuous", issuer.Sign(t, uncappedClaims), nil)
+			if err != nil || current.ExpiresAt != nil {
+				t.Fatal("uncapped session acquired a hard limit", err)
+			}
+			exerciseUncappedWorkloadConnectorRebind(t, uncapped, service, databaseURL)
+		})
 	})
 	if t.Failed() {
 		return
 	}
-	if renewed, err := job.Renew(ctx); err != nil || !renewed.ExpiresAt.Equal(session.ExpiresAt) || !renewed.LeaseExpiresAt.Equal(session.LeaseExpiresAt) {
+	if renewed, err := job.Renew(ctx); err != nil || !renewed.ExpiresAt.Equal(*session.ExpiresAt) || !renewed.LeaseExpiresAt.Equal(session.LeaseExpiresAt) {
 		t.Fatal("early renewal extended execution", err)
 	}
 	t.Run("renewal proof HTTP boundary", func(t *testing.T) {
@@ -178,7 +198,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 				continue
 			}
 			var renewed authorityv1.WorkloadSession
-			if err := json.Unmarshal(data, &renewed); err != nil || renewed.RenewalSequence != sequence || !renewed.LeaseExpiresAt.Equal(current.LeaseExpiresAt) || !renewed.ExpiresAt.Equal(current.ExpiresAt) {
+			if err := json.Unmarshal(data, &renewed); err != nil || renewed.RenewalSequence != sequence || !renewed.LeaseExpiresAt.Equal(current.LeaseExpiresAt) || !renewed.ExpiresAt.Equal(*current.ExpiresAt) {
 				t.Fatal("HTTP early renewal or retry changed its lease", err)
 			}
 		}

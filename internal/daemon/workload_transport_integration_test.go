@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
+	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
@@ -85,6 +87,9 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			}
 			keys := []string{"private-tcp", "public-tcp", "private-http", "public-http", "db"}
 			policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: keys, MaxDurationSeconds: 205}}
+			continuousPolicy := policies["test"]
+			continuousPolicy.MaxDurationSeconds = 0
+			policies["continuous"] = continuousPolicy
 			applied, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{private: {}, public: {Public: new(true)}}, Services: services, Webhooks: map[string]controlv1.ProjectWebhook{}}})
 			if err != nil {
 				t.Fatal(err)
@@ -126,13 +131,21 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				defer cancel()
 				var bindings string
-				err := f.inspect.QueryRowContext(ctx, `SELECT COALESCE(jsonb_agg(jsonb_build_object(
-					'service_id',service_id,'expires_at',expires_at,'publisher_prepared_until',publisher_prepared_until))::text,'[]')
-					FROM control.connector_peer_pairs WHERE subject_kind='workload_session' AND subject_id=$1`, session.Id).Scan(&bindings)
+				var authority string
+				err := f.inspect.QueryRowContext(ctx, `SELECT jsonb_build_object(
+					'lease_expires_at',lease_expires_at,'identity_expires_at',identity_expires_at,
+					'expires_at',expires_at,'renewed_at',renewed_at,'renewal_sequence',renewal_sequence)::text
+					FROM control.workload_sessions WHERE id=$1`, session.Id).Scan(&authority)
+				t.Logf("workload current authority: %s: %v", authority, err)
+				err = f.inspect.QueryRowContext(ctx, `SELECT COALESCE(jsonb_agg(jsonb_build_object(
+					'service_id',service_id,'expires_at',expires_at,'publisher_prepared_until',publisher_prepared_until,
+					'claims',(SELECT jsonb_agg(jsonb_build_object('slot',connection_slot,'checked_at',checked_at,'confirmed_until',confirmed_until))
+					FROM control.connector_peer_pair_leg_claims WHERE pair_id=pair.id)))::text,'[]')
+					FROM control.connector_peer_pairs pair WHERE subject_kind='workload_session' AND subject_id=$1`, session.Id).Scan(&bindings)
 				t.Logf("workload retained bindings: %s: %v", bindings, err)
 			})
 			paths.step(t, 0)
-			nativeBinding := workloadNativeRuntimeBinding(t, f, session.Id, session.ExpiresAt)
+			nativeBinding := workloadNativeRuntimeBinding(t, f, session.Id, *session.ExpiresAt)
 			unrenewed, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
 			if err != nil {
 				t.Fatal(err)
@@ -165,6 +178,24 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			revokedPaths.denied(t, 31*time.Second)
+			// join the revoked fixture before adding continuous traffic, keeping
+			// the smoke topology at the original three active sets of connectors.
+			revokedPaths.stop()
+			continuous, err := workload.New(f.controlConfig.ControlOrigin(), f.publicHTTP)
+			if err != nil {
+				t.Fatal(err)
+			}
+			continuousClaims := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
+			continuousClaims["check_run_id"], continuousClaims["jti"] = "555", "continuous-initial-proof"
+			continuousClaims["exp"] = time.Now().Add(135 * time.Second).Unix()
+			continuousSession, err := continuous.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "continuous", issuer.Sign(t, continuousClaims), keys)
+			if err != nil || continuousSession.ExpiresAt != nil {
+				t.Fatal("continuous session acquired a hard limit", err)
+			}
+			stopContinuous := renewRuntimeWorkload(t, continuous, nil)
+			continuousPaths := openWorkloadPaths(t, f, continuous, byName, pg, transport)
+			continuousPaths.step(t, 0)
+			continuousBinding := workloadNativeRuntimeBinding(t, f, continuousSession.Id, continuousSession.IdentityExpiresAt)
 			for i, at := range []time.Time{session.LeaseExpiresAt.Add(5 * time.Second), session.LeaseExpiresAt.Add(95 * time.Second)} {
 				paths.wait(t, at)
 				if i == 0 {
@@ -172,19 +203,30 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 					fresh["jti"] = "rotated-platform-proof"
 					assertion = issuer.Sign(t, fresh)
 					refreshed, err := job.Attach(t.Context(), assertion)
-					if err != nil || refreshed.Id != session.Id || !refreshed.IdentityExpiresAt.After(session.IdentityExpiresAt) || !refreshed.ExpiresAt.Equal(session.ExpiresAt) {
+					if err != nil || refreshed.Id != session.Id || !refreshed.IdentityExpiresAt.After(session.IdentityExpiresAt) || !refreshed.ExpiresAt.Equal(*session.ExpiresAt) {
 						t.Fatal("fresh platform proof changed the original session or fixed window", err)
+					}
+					continuousProof := githubtest.Claims(f.controlConfig.ControlOrigin(), time.Now())
+					continuousProof["check_run_id"], continuousProof["jti"] = "555", "continuous-refreshed-proof"
+					updated, err := continuous.Attach(t.Context(), issuer.Sign(t, continuousProof))
+					if err != nil || updated.ExpiresAt != nil || updated.Id != continuousSession.Id || !updated.IdentityExpiresAt.After(continuousSession.IdentityExpiresAt) {
+						t.Fatal("uncapped refresh replaced original authority", err)
 					}
 				} else if !time.Now().After(session.IdentityExpiresAt) {
 					t.Fatal("retained streams did not cross the original platform proof deadline")
 				}
-				paths.step(t, int(time.Until(session.ExpiresAt).Seconds()))
-				if workloadNativeRuntimeBinding(t, f, session.Id, session.ExpiresAt) != nativeBinding {
+				paths.step(t, int(time.Until(*session.ExpiresAt).Seconds()))
+				continuousPaths.step(t, i+1)
+				currentContinuous, err := continuous.Session()
+				if err != nil || workloadNativeRuntimeBinding(t, f, continuousSession.Id, workload.SessionDeadline(currentContinuous)) != continuousBinding {
+					t.Fatal("uncapped refresh replaced connector owners or exact bindings", err)
+				}
+				if workloadNativeRuntimeBinding(t, f, session.Id, *session.ExpiresAt) != nativeBinding {
 					t.Fatal("workload renewal replaced its connector owners or exact bindings")
 				}
 				before, _ := job.Session()
 				replayed, err := job.Exchange(t.Context(), f.identity.teamID, "workload", strings.Repeat("a", 64), "test", assertion, keys)
-				if err != nil || !replayed.ExpiresAt.Equal(session.ExpiresAt) || !replayed.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
+				if err != nil || !replayed.ExpiresAt.Equal(*session.ExpiresAt) || !replayed.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
 					t.Fatal("replay extended fixed expiry", err)
 				}
 				if i == 0 {
@@ -217,6 +259,17 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 			if _, err = job.ClientTLSCertificate(t.Context(), byName["public-tcp"]); err == nil {
 				t.Fatal("hard-expired job received a certificate")
 			}
+			continuousPaths.step(t, 3)
+			currentContinuous, err := continuous.Session()
+			if err != nil || currentContinuous.ExpiresAt != nil || !time.Now().After(continuousSession.IdentityExpiresAt) || workloadNativeRuntimeBinding(t, f, continuousSession.Id, workload.SessionDeadline(currentContinuous)) != continuousBinding {
+				t.Fatal("continuous streams ended at the sibling's hard limit or startup proof", err)
+			}
+			stopContinuous()
+			if err := continuous.Revoke(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			continuousPaths.denied(t, 31*time.Second)
+			t.Log("uncapped original HTTP, PostgreSQL and opaque streams crossed startup-proof expiry and a capped sibling's deadline with exact native bindings; revocation still closed them")
 		})
 	}
 }
@@ -425,7 +478,7 @@ func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, tr
 	}
 }
 
-func renewRuntimeWorkload(t *testing.T, job *workload.Client, expires time.Time) func() {
+func renewRuntimeWorkload(t *testing.T, job *workload.Client, expires *time.Time) func() {
 	t.Helper()
 	ctx, stop := context.WithCancel(t.Context())
 	done := make(chan error, 1)
@@ -446,13 +499,13 @@ func renewRuntimeWorkload(t *testing.T, job *workload.Client, expires time.Time)
 			}
 			next, err := job.Renew(ctx)
 			if err != nil {
-				if ctx.Err() != nil || !time.Now().Before(expires) {
+				if ctx.Err() != nil || expires != nil && !time.Now().Before(*expires) {
 					err = nil
 				}
 				done <- err
 				return
 			}
-			if !next.ExpiresAt.Equal(expires) {
+			if (next.ExpiresAt == nil) != (expires == nil) || expires != nil && !next.ExpiresAt.Equal(*expires) {
 				done <- errors.New("renewal changed fixed expiry")
 				return
 			}
@@ -480,14 +533,22 @@ func waitRuntimeTime(t *testing.T, at time.Time) {
 }
 
 type workloadRuntimePaths struct {
-	ended       chan error
-	connections []net.Conn
-	clients     []*http.Client
-	urls        []string
-	streams     []io.ReadCloser
-	streamDone  []<-chan error
-	streamNames []string
-	database    *pgx.Conn
+	ended           chan error
+	stops           []func()
+	connections     []net.Conn
+	connectionNames []string
+	clients         []*http.Client
+	urls            []string
+	streams         []io.ReadCloser
+	streamDone      []<-chan error
+	streamNames     []string
+	database        *pgx.Conn
+}
+
+func (p *workloadRuntimePaths) stop() {
+	for _, stop := range p.stops {
+		stop()
+	}
 }
 
 func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.Client, services map[string]string, pg *pgx.ConnConfig, transport string) *workloadRuntimePaths {
@@ -515,8 +576,22 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { _ = listener.Close() })
 		address = listener.Addr().String()
 		ctx, cancel := context.WithCancel(t.Context())
+		started := time.Now()
+		var requestStarted, acquired, written, responseStarted atomic.Int64
+		traceContext := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+			GetConn: func(string) {
+				requestStarted.Store(time.Now().UnixNano())
+				acquired.Store(0)
+				written.Store(0)
+				responseStarted.Store(0)
+			},
+			GotConn:              func(httptrace.GotConnInfo) { acquired.Store(time.Now().UnixNano()) },
+			WroteRequest:         func(httptrace.WroteRequestInfo) { written.Store(time.Now().UnixNano()) },
+			GotFirstResponseByte: func() { responseStarted.Store(time.Now().UnixNano()) },
+		})
 		ready, done := make(chan struct{}), make(chan error, 1)
 		quic, tcp := f.connectors()
 		if transport == "quic" {
@@ -525,20 +600,23 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 			quic = privateDisabledConnector()
 		}
 		go func() {
-			err := connectorstream.Serve(ctx, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(ready); return nil }})
+			err := connectorstream.Serve(traceContext, listener, connectorstream.Config{Control: control, ServiceID: service, Protocol: run.Protocol, TrustRevision: run.TrustRevision, Endpoint: run.Endpoint, ServiceTLS: verification, TransportTLS: f.roots, RelayQUIC: quic, RelayTCP: tcp, Ready: func() error { close(ready); return nil }})
 			if ctx.Err() == nil {
 				p.ended <- fmt.Errorf("workload connector %s/%s source=%s ended: %v", transport, name, source.Id, err)
 			}
 			done <- err
 		}()
-		t.Cleanup(func() {
+		var stoppedError error
+		stop := sync.OnceFunc(func() {
 			cancel()
 			select {
-			case <-done:
+			case stoppedError = <-done:
 			case <-time.After(10 * time.Second):
 				t.Error("workload connector did not join")
 			}
 		})
+		p.stops = append(p.stops, stop)
+		t.Cleanup(stop)
 		select {
 		case <-ready:
 		case err := <-done:
@@ -547,7 +625,25 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 		// match Serve's fixed startup budget; preparation includes the
 		// publisher's background policy snapshot and both relay paths.
 		case <-time.After(30 * time.Second):
-			t.Fatalf("workload connector %s/%s source=%s not ready within 30s", transport, name, source.Id)
+			// capture the blocked request before cancellation releases its database
+			// locks. this independent, bounded snapshot cannot make setup pass late.
+			elapsed := func(at int64) time.Duration {
+				if at == 0 {
+					return -1
+				}
+				return time.Duration(at - started.UnixNano())
+			}
+			pool := f.database.PoolStats()
+			t.Logf("workload startup elapsed=%s last request=%s connection=%s write=%s response=%s pool acquired=%d idle=%d total=%d empty acquisitions=%d cancelled acquisitions=%d", time.Since(started), elapsed(requestStarted.Load()), elapsed(acquired.Load()), elapsed(written.Load()), elapsed(responseStarted.Load()), pool.AcquiredConns(), pool.IdleConns(), pool.TotalConns(), pool.EmptyAcquireCount(), pool.CanceledAcquireCount())
+			diagnostics, diagnosticErr := f.database.Diagnostics(t.Context())
+			encoded, encodeErr := json.Marshal(diagnostics)
+			if len(encoded) <= controlstate.MaxDatabaseDiagnosticBytes && encodeErr == nil {
+				t.Logf("workload startup database diagnostics: %s; error=%v", encoded, diagnosticErr)
+			} else {
+				t.Logf("workload startup database diagnostics omitted: bytes=%d error=%v", len(encoded), encodeErr)
+			}
+			stop()
+			t.Fatalf("workload connector %s/%s source=%s not ready within 30s; joined setup: %v", transport, name, source.Id, stoppedError)
 		}
 		dial = func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, network, address)
@@ -569,6 +665,7 @@ func openWorkloadPaths(t *testing.T, f *privateSeparatedFixture, job *workload.C
 				t.Fatal(err)
 			}
 			p.connections = append(p.connections, conn)
+			p.connectionNames = append(p.connectionNames, name)
 			t.Cleanup(func() { _ = conn.Close() })
 		} else {
 			// step probes cross a 95-second gap, beyond the server's one-minute
@@ -631,15 +728,15 @@ func (p *workloadRuntimePaths) step(t *testing.T, step int) {
 		t.Fatal(err)
 	default:
 	}
-	for _, conn := range p.connections {
+	for i, conn := range p.connections {
 		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 		line := fmt.Sprintf("step-%d\n", step)
 		if _, err := io.WriteString(conn, line); err != nil {
-			t.Fatal("active workload TCP", err)
+			t.Fatal("active workload TCP", p.connectionNames[i], err)
 		}
 		got := make([]byte, len(line))
 		if _, err := io.ReadFull(conn, got); err != nil || string(got) != line {
-			t.Fatal("workload TCP step", err)
+			t.Fatal("workload TCP step", p.connectionNames[i], err)
 		}
 		_ = conn.SetDeadline(time.Time{})
 	}

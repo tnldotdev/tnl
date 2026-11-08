@@ -323,7 +323,7 @@ func TestIntegrationVisitorTokenWorkloadKeepsSelectedServicesKeyAndFixedDeadline
 		t.Fatal("workload permission omitted service metadata revision")
 	}
 	parent, ok := issued.Permission.Subject.(visitortoken.Workload)
-	if !ok || parent.SessionID != session.ID || issued.Permission.ExpiresAt.After(session.LeaseExpiresAt) || issued.Permission.ExpiresAt.After(session.ExpiresAt) {
+	if !ok || parent.SessionID != session.ID || issued.Permission.ExpiresAt.After(session.LeaseExpiresAt) || issued.Permission.ExpiresAt.After(*session.ExpiresAt) {
 		t.Fatal("workload permission changed its authority-confirmed parent")
 	}
 	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, visitorscope.Scope{Kind: visitorscope.Service, ID: excluded}, source, now); !errors.Is(err, ErrVisitorPermission) {

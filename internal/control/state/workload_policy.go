@@ -20,7 +20,7 @@ var (
 	ErrWorkloadDenied   = errors.New("workload is not authorized by the saved workload policy")
 	ErrWorkloadConflict = errors.New("workload execution is already bound to another key or scope")
 	ErrWorkloadBinding  = errors.New("workload binding requires verified provider metadata")
-	ErrWorkloadExpired  = fmt.Errorf("%w: workload session lease or fixed window has expired", ErrWorkloadDenied)
+	ErrWorkloadExpired  = fmt.Errorf("%w: workload session lease, platform proof, or hard deadline has expired", ErrWorkloadDenied)
 	appliedNumericID    = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 )
 
@@ -59,10 +59,7 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 			if err := p.validateTrust(); err != nil {
 				return err
 			}
-			if p.MaxDurationSeconds == 0 {
-				p.MaxDurationSeconds = 3600
-			}
-			if !serviceName.MatchString(name) || p.MaxDurationSeconds < 1 || p.MaxDurationSeconds > 21600 || len(p.Services) == 0 || len(p.Services) > 32 {
+			if !serviceName.MatchString(name) || p.MaxDurationSeconds < 0 || int64(p.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds || len(p.Services) == 0 || len(p.Services) > 32 {
 				return ErrProjectConfigurationInvalid
 			}
 			seen := map[string]bool{}
@@ -110,10 +107,7 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 		if g.JobWorkflowRef != "" {
 			policy.GitHub.ReusableWorkflow = &g.JobWorkflowRef
 		}
-		if p.MaxDurationSeconds == 0 {
-			p.MaxDurationSeconds = 3600
-		}
-		if p.MaxDurationSeconds < 1 || p.MaxDurationSeconds > 6*60*60 || len(g.WorkflowRef) > 1024 || len(g.Ref) > 512 || len(g.Environment) > 256 || len(g.JobWorkflowRef) > 1024 {
+		if p.MaxDurationSeconds < 0 || int64(p.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds || len(g.WorkflowRef) > 1024 || len(g.Ref) > 512 || len(g.Environment) > 256 || len(g.JobWorkflowRef) > 1024 {
 			return ErrProjectConfigurationInvalid
 		}
 		if err := config.ValidateWorkloads(config.TNL{Services: services, Workloads: map[string]config.Workload{name: policy}}); err != nil {
@@ -167,8 +161,10 @@ func reconcileWorkloadPolicies(ctx context.Context, tx pgx.Tx, r ApplyProjectCon
 		if _, err = tx.Exec(ctx, `DELETE FROM control.workload_session_services right_ WHERE right_.workload_session_id=$1 AND NOT EXISTS(SELECT 1 FROM control.applied_project_services applied WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=ANY($4::text[]) AND applied.service_id=right_.service_id)`, s.id, r.TeamID, r.ProjectKey, p.Services); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE control.workload_sessions SET expires_at=LEAST(expires_at,created_at+($2::bigint*interval '1 second')),lease_expires_at=LEAST(lease_expires_at,created_at+($2::bigint*interval '1 second')) WHERE id=$1`, s.id, p.MaxDurationSeconds); err != nil {
-			return err
+		if p.MaxDurationSeconds > 0 {
+			if _, err = tx.Exec(ctx, `UPDATE control.workload_sessions SET expires_at=LEAST(expires_at,created_at+($2::bigint*interval '1 second')),lease_expires_at=LEAST(lease_expires_at,created_at+($2::bigint*interval '1 second')) WHERE id=$1`, s.id, p.MaxDurationSeconds); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

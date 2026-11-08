@@ -92,6 +92,10 @@ if (rotatingFile) {
     after += new TextDecoder().decode(chunk.value);
   }
   assert.equal(after, "after-proof\n");
+  const refreshed = await handle;
+  assert.ok("fetch" in refreshed);
+  assert.equal(refreshed.url, first.url);
+  assert.equal(refreshed.fetch, first.fetch);
   console.log("retained");
 }
 if (copiedWorkload !== undefined) {
