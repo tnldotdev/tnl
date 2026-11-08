@@ -15,9 +15,10 @@ import (
 )
 
 type Repository struct {
-	Repository   string
-	RepositoryID string
-	OwnerID      string
+	Repository    string
+	RepositoryID  string
+	OwnerID       string
+	DefaultBranch string
 }
 
 var repositoryName = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
@@ -67,9 +68,10 @@ func Resolve(ctx context.Context, repository string) (Repository, error) {
 
 func decode(data []byte) (Repository, error) {
 	var body struct {
-		ID       json.Number `json:"id"`
-		FullName string      `json:"full_name"`
-		Owner    struct {
+		ID            json.Number `json:"id"`
+		FullName      string      `json:"full_name"`
+		DefaultBranch string      `json:"default_branch"`
+		Owner         struct {
 			ID json.Number `json:"id"`
 		} `json:"owner"`
 	}
@@ -82,5 +84,5 @@ func decode(data []byte) (Repository, error) {
 	if !repositoryName.MatchString(body.FullName) || !numericID.MatchString(body.ID.String()) || !numericID.MatchString(body.Owner.ID.String()) {
 		return Repository{}, &MetadataError{errors.New("repository metadata is incomplete")}
 	}
-	return Repository{Repository: body.FullName, RepositoryID: body.ID.String(), OwnerID: body.Owner.ID.String()}, nil
+	return Repository{Repository: body.FullName, RepositoryID: body.ID.String(), OwnerID: body.Owner.ID.String(), DefaultBranch: body.DefaultBranch}, nil
 }

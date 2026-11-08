@@ -75,6 +75,29 @@ test("Vercel request context precedes native fallback and never invokes developm
   });
   expect(vercel.token).toHaveBeenCalledTimes(1);
 });
+
+test("a selected environment source forwards only the named current value privately", async () => {
+  const { selectWorkload } = await import("../../src/internal/connector/workload/provider.js");
+  const preview = vi.fn(async () => ({
+    schema: 1,
+    name: "worker",
+    directory,
+    manifest: path.join(directory, ".tnl/generated/workloads.json"),
+    source: "native",
+    policy: "a".repeat(64),
+    token_env: "JOB_ID_TOKEN",
+  }));
+  for (const token of ["first.private.jwt", "second.private.jwt", ""]) {
+    vi.stubEnv("JOB_ID_TOKEN", token);
+    vi.stubEnv("UNRELATED_SECRET", "unrelated.private.secret");
+    const selected = await selectWorkload(preview);
+    expect(selected.assertion).toBeUndefined();
+    expect(selected.sdk_environment?.token_env).toBe("JOB_ID_TOKEN");
+    expect(selected.sdk_environment?.token_value).toBe(token);
+    expect(JSON.stringify(preview.mock.calls)).not.toContain("private.jwt");
+    expect(JSON.stringify(selected)).not.toContain("unrelated.private.secret");
+  }
+});
 afterEach(async () => {
   vi.unstubAllGlobals();
   await rm(directory, { force: true, recursive: true });

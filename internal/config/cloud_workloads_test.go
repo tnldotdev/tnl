@@ -11,7 +11,7 @@ func TestCloudSelectorsAndWorkloadReferences(t *testing.T) {
 	configuration := TNL{PublisherGroups: map[string]PublisherGroup{"production": {}}, Services: Services{
 		"cluster": {PublisherGroup: text("production"), Protocol: text("kubernetes"), Target: &ServiceTarget{Type: "eks", Cluster: text("development"), Region: text("us-east-1")}},
 		"db":      {PublisherGroup: text("production"), Protocol: text("postgres"), Target: &ServiceTarget{Type: "rds", Cluster: text("orders"), Region: text("eu-west-1"), Endpoint: text("reader")}},
-	}, Workloads: map[string]Workload{"deploy": {Provider: "github", GitHub: &WorkloadGitHub{Workflow: ".github/workflows/deploy.yml", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"cluster", "db"}}}}
+	}, Workloads: map[string]Workload{"deploy": {GitHub: &WorkloadGitHub{Workflow: ".github/workflows/deploy.yml", Branch: new("main"), Events: []string{"push"}}, Services: []string{"cluster", "db"}}}}
 	if err := ValidateTNL(configuration); err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestCloudSelectorsAndWorkloadReferences(t *testing.T) {
 			p.GitHub.Workflow = ".github/workflows/*.yml"
 			c.Workloads["deploy"] = p
 		}},
-		{"ref wildcard", func(c *TNL) { p := c.Workloads["deploy"]; p.GitHub.Ref = "refs/heads/*"; c.Workloads["deploy"] = p }},
+		{"ref wildcard", func(c *TNL) { p := c.Workloads["deploy"]; p.GitHub.Branch = new("*"); c.Workloads["deploy"] = p }},
 		{"event unsupported", func(c *TNL) {
 			p := c.Workloads["deploy"]
 			p.GitHub.Events = []string{"anything"}

@@ -40,11 +40,11 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				t.Fatal(err)
 			}
 			team := human.Identity.Memberships[0].TeamID
-			trust := oidc.WorkloadTrust{Provider: provider, Issuer: "https://oidc.vercel.com/acme", Audience: "https://vercel.com/acme", Claims: map[string]string{"owner": "acme", "owner_id": "team_one", "project_id": "prj_store", "environment": "production"}}
+			trust := oidc.WorkloadTrust{Provider: provider, Issuer: "https://oidc.vercel.com/acme", Audience: "https://vercel.com/acme", Claims: map[string]string{"owner": "acme", "owner_id": "team_one", "project": "storefront", "project_id": "prj_store", "environment": "production"}}
 			claims := map[string]any{"iss": trust.Issuer, "aud": trust.Audience, "sub": "owner:acme:project:storefront:environment:production", "owner": "acme", "owner_id": "team_one", "project": "storefront", "project_id": "prj_store", "environment": "production"}
 			if provider == "fly" {
 				trust.Issuer = "https://oidc.fly.io/acme"
-				trust.Audience = "https://fly.io/acme"
+				trust.Audience = "https://control.example"
 				trust.Claims = map[string]string{"org_name": "acme", "org_id": "123", "app_name": "store", "app_id": "456", "machine_id": "148e21ea7e46e8"}
 				claims = map[string]any{"iss": trust.Issuer, "aud": trust.Audience, "sub": "acme:store:store-one", "org_name": "acme", "org_id": "123", "app_name": "store", "app_id": "456", "machine_name": "store-one", "machine_id": "148e21ea7e46e8"}
 			}
