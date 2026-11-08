@@ -101,7 +101,8 @@ func TestIntegrationWorkloadExchangeFreshAssertionRetry(t *testing.T) {
 			t.Logf("real exchange retry: identity_expires_at=%s; assertion_expires_at=%s; lease_expires_at=%s; native error=%v", raw.IdentityExpiresAt.Format(time.RFC3339Nano), raw.AssertionExpiresAt.Format(time.RFC3339Nano), raw.LeaseExpiresAt.Format(time.RFC3339Nano), retryErr)
 			// assertion_expires_at reports verification of the supplied token, not
 			// attachment to the saved session. exchange recovery must not renew it.
-			if raw.Id != committed.Id || raw.Credential != committed.Credential || raw.Binding != committed.Binding || !reflect.DeepEqual(raw.Subject, committed.Subject) || !reflect.DeepEqual(raw.Github, committed.Github) || !raw.ExpiresAt.Equal(committed.ExpiresAt) || raw.RenewalSequence != committed.RenewalSequence || !raw.IdentityExpiresAt.Equal(committed.IdentityExpiresAt) || !raw.LeaseExpiresAt.Equal(committed.LeaseExpiresAt) || raw.AssertionExpiresAt == nil || !raw.AssertionExpiresAt.Equal(freshExpiry) {
+			sameHardExpiry := raw.ExpiresAt == nil && committed.ExpiresAt == nil || raw.ExpiresAt != nil && committed.ExpiresAt != nil && raw.ExpiresAt.Equal(*committed.ExpiresAt)
+			if raw.Id != committed.Id || raw.Credential != committed.Credential || raw.Binding != committed.Binding || !reflect.DeepEqual(raw.Subject, committed.Subject) || !reflect.DeepEqual(raw.Github, committed.Github) || !sameHardExpiry || raw.RenewalSequence != committed.RenewalSequence || !raw.IdentityExpiresAt.Equal(committed.IdentityExpiresAt) || !raw.LeaseExpiresAt.Equal(committed.LeaseExpiresAt) || raw.AssertionExpiresAt == nil || !raw.AssertionExpiresAt.Equal(freshExpiry) {
 				t.Fatal("exchange retry changed accepted authority or misreported verified proof expiry")
 			}
 			if len(raw.ServiceIds) != 1 {

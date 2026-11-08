@@ -123,8 +123,11 @@ func TestIntegrationConnectionConnectorOwnerSDKPythonPrepareTimeout(t *testing.T
 
 func TestIntegrationConnectionConnectorOwnerSDKBackgroundRefresh(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	for _, language := range []string{"javascript-refresh", "python-refresh"} {
-		t.Run(language, func(t *testing.T) { runConnectionNativeOwnerStartup(t, "http", true, language) })
+	for _, language := range []string{"javascript-refresh", "python-refresh", "borrowed-refresh"} {
+		t.Run(language, func(t *testing.T) {
+			t.Parallel()
+			runConnectionNativeOwnerStartup(t, "http", true, language)
+		})
 	}
 }
 
@@ -337,7 +340,23 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		return slices.Clone(actionProofs)
 	}
 	refreshedProof := make(chan struct{}, 1)
+	borrowedCrossing := make(chan struct{}, 1)
+	borrowedRelease := make(chan struct{})
+	var borrowedReleaseOnce sync.Once
+	defer borrowedReleaseOnce.Do(func() { close(borrowedRelease) })
+	var blockBorrowed atomic.Bool
 	authority := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/authorization") && blockBorrowed.Load() {
+			select {
+			case borrowedCrossing <- struct{}{}:
+			default:
+			}
+			select {
+			case <-borrowedRelease:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		// this is the job runtime API, not the public GitHub token endpoint. it
 		// shares only the fixture's TLS listener, never authority credentials.
 		if r.URL.Path == "/action-provider-token" {
@@ -625,6 +644,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	authority.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}
 	authority.StartTLS()
 	defer func() {
+		borrowedReleaseOnce.Do(func() { close(borrowedRelease) })
 		select {
 		case <-startupRelease:
 		default:
@@ -642,7 +662,11 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	if protocol == "kubernetes" {
 		targetDefinition = map[string]any{"type": "eks", "cluster": "fixture", "region": "us-east-1"}
 	}
-	config := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publisher_groups": map[string]any{"remote": map[string]any{"public": public}}, "services": map[string]any{serviceName: map[string]any{"publisher_group": "remote", "protocol": protocol, "target": targetDefinition}}, "workloads": map[string]any{"test": map[string]any{"github": map[string]any{"workflow": ".github/workflows/test.yml", "branch": "main", "events": []string{"push"}}, "services": []string{serviceName}}}}}
+	workloadPolicy := map[string]any{"github": map[string]any{"workflow": ".github/workflows/test.yml", "branch": "main", "events": []string{"push"}}, "services": []string{serviceName}}
+	if startup == "borrowed-refresh" {
+		workloadPolicy["token"] = map[string]any{"file": "assertion"}
+	}
+	config := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publisher_groups": map[string]any{"remote": map[string]any{"public": public}}, "services": map[string]any{serviceName: map[string]any{"publisher_group": "remote", "protocol": protocol, "target": targetDefinition}}, "workloads": map[string]any{"test": workloadPolicy}}}
 	if startup == "action-wrong-provider" {
 		config["tnl"].(map[string]any)["workloads"] = map[string]any{"test": map[string]any{"fly": map[string]any{"app": "fixture", "org": "example"}, "services": []string{serviceName}}}
 	}
@@ -897,6 +921,10 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			t.Fatal("SDK did not complete cold selection")
 		}
 		owner, first := readSDKSelection(t, root, serviceName)
+		initialHandle, err := connectorruntime.ReadHandle(owner.ConnectionHandle)
+		if err != nil {
+			t.Fatal(err)
+		}
 		authorityMu.Lock()
 		cold := maps.Clone(controlCalls)
 		authorityMu.Unlock()
@@ -951,6 +979,12 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			if owner != afterOwner || first.TransportID != after.TransportID || first.Port != after.Port || !after.ExpiresAt.After(first.ExpiresAt) || refreshStreams.Load() != 1 || exchangeAttempts.Load() != 2 {
 				t.Fatal("background refresh replaced the owner, stream or transport")
 			}
+			afterHandle, err := connectorruntime.ReadHandle(afterOwner.ConnectionHandle)
+			nonexpiring := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
+			if err != nil || !initialHandle.ExpiresAt.Equal(nonexpiring) || !afterHandle.ExpiresAt.Equal(nonexpiring) || initialHandle.URL != afterHandle.URL || initialHandle.Key != afterHandle.Key {
+				t.Fatal("SDK-owned handle did not retain its nonexpiring capability", err)
+			}
+			t.Logf("native SDK handle: before=%s after=%s; connection before=%s after=%s", initialHandle.ExpiresAt.Format(time.RFC3339Nano), afterHandle.ExpiresAt.Format(time.RFC3339Nano), first.ExpiresAt.Format(time.RFC3339Nano), after.ExpiresAt.Format(time.RFC3339Nano))
 			t.Log("quiet native owner reread a rotating file; original SDK stream crossed proof expiry without a request callback, owner replacement or replay")
 		}
 		if startup == "javascript-copies" {
@@ -1019,7 +1053,16 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		t.Logf("%s SDK decoded cold and ten warm native responses with stable transport and expiry; cold=%v warm=0", startup, cold)
 		return cold
 	}
-	request, _ := json.Marshal(connectorruntime.StartRequest{Schema: 1, Context: scope, Assertion: assertion})
+	startRequest := connectorruntime.StartRequest{Schema: 1, Context: scope, Assertion: assertion}
+	if startup == "borrowed-refresh" {
+		file := filepath.Join(root, "assertion")
+		if err := os.WriteFile(file, []byte(assertion), 0600); err != nil {
+			t.Fatal(err)
+		}
+		// exercise normal CLI acquisition and native refresh-source selection.
+		startRequest.Assertion = ""
+	}
+	request, _ := json.Marshal(startRequest)
 	if strings.HasPrefix(startup, "action-") && startup != "action-static" {
 		// proposed action-only private stdin contract. keep runtime credentials
 		// out of workload manifests, ordinary SDK inputs and the owner's env.
@@ -1049,7 +1092,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		}
 		startArgs = append(startArgs, "--kube-token-file", path, "--namespace", "runtime-test")
 	}
-	if startup != "caller-prepared" && !strings.HasPrefix(startup, "action-") {
+	if startup != "caller-prepared" && startup != "borrowed-refresh" && !strings.HasPrefix(startup, "action-") {
 		// reproduce d0825a78's SDK sequence against the same real native owner,
 		// authority, signed assertion, relay carriers, and TLS preflight. this is
 		// a baseline operation sequence, not a separately built historical SDK.
@@ -1162,6 +1205,109 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			call(nil, "stop", "--handle", state.ConnectionHandle)
 		}
 	}()
+	if startup == "borrowed-refresh" {
+		before, err := connectorruntime.ReadHandle(state.ConnectionHandle)
+		if err != nil || !before.ExpiresAt.Equal(initialProofExpiry) {
+			t.Fatal("CLI-started workload owner did not issue the finite proof deadline", before.ExpiresAt, initialProofExpiry, err)
+		}
+		type externalClient struct {
+			name        string
+			wait        func() error
+			input       io.WriteCloser
+			lines       *bufio.Scanner
+			diagnostics *bytes.Buffer
+		}
+		var clients []externalClient
+		ctx, cancel := context.WithTimeout(t.Context(), 70*time.Second)
+		defer cancel()
+		for _, language := range []string{"javascript", "python"} {
+			fixture, _ := filepath.Abs("../../../packages/ts/test/fixtures/connections/borrowed-expiry.ts")
+			child := exec.CommandContext(ctx, "node", fixture)
+			child.Env = append(slices.Clone(env), "TNL_CONNECTION_HANDLE="+state.ConnectionHandle)
+			if language == "python" {
+				python, _ := filepath.Abs("../../../packages/py/.venv/bin/python")
+				fixture, _ := filepath.Abs("../../../packages/py/tests/native_borrowed_expiry.py")
+				source, _ := filepath.Abs("../../../packages/py/src")
+				child = exec.CommandContext(ctx, python, fixture, binary)
+				child.Env = append(slices.Clone(env), "TNL_CONNECTION_HANDLE="+state.ConnectionHandle, "PYTHONPATH="+source)
+			}
+			child.Dir = root
+			input, err := child.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, err := child.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			diagnostics := new(bytes.Buffer)
+			child.Stderr = diagnostics
+			if err := child.Start(); err != nil {
+				t.Fatal(err)
+			}
+			clients = append(clients, externalClient{language, sync.OnceValue(child.Wait), input, bufio.NewScanner(output), diagnostics})
+		}
+		defer func() {
+			for _, child := range clients {
+				_, _ = io.WriteString(child.input, "stop\n")
+				_ = child.input.Close()
+				_ = child.wait()
+			}
+		}()
+		for _, child := range clients {
+			if !child.lines.Scan() || child.lines.Text() != "cold" {
+				t.Fatal(child.name, "did not cache external IPC")
+			}
+		}
+		freshClaims := githubtest.Claims(server, time.Now())
+		freshClaims["jti"] = "borrowed-refreshed-proof"
+		file := filepath.Join(root, "assertion")
+		if err := os.WriteFile(file+".next", []byte(issuer.Sign(t, freshClaims)), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(file+".next", file); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-refreshedProof:
+		case <-ctx.Done():
+			t.Fatal("borrowed owner did not refresh its proof")
+		}
+		<-time.After(time.Until(initialProofExpiry.Add(-time.Second)))
+		blockBorrowed.Store(true)
+		_, _ = io.WriteString(clients[0].input, "cross\n")
+		select {
+		case <-borrowedCrossing:
+		case <-ctx.Done():
+			t.Fatal("TypeScript did not enter its crossing preparation")
+		}
+		<-time.After(time.Until(initialProofExpiry.Add(300 * time.Millisecond)))
+		blockBorrowed.Store(false)
+		borrowedReleaseOnce.Do(func() { close(borrowedRelease) })
+		for _, child := range clients {
+			t.Run(child.name, func(t *testing.T) {
+				_, _ = io.WriteString(child.input, "after\nstop\n")
+				_ = child.input.Close()
+				retained := child.lines.Scan() && child.lines.Text() == "retained"
+				err := child.wait()
+				if err != nil || !retained {
+					t.Fatalf("borrowed SDK did not prepare across renewed expiry: %v\n%s", err, child.diagnostics.String())
+				}
+			})
+		}
+		after, err := connectorruntime.ReadHandle(state.ConnectionHandle)
+		expected := before
+		expected.ExpiresAt = after.ExpiresAt
+		if err != nil || !after.ExpiresAt.After(before.ExpiresAt) || expected != after {
+			t.Fatal("borrowed handle did not advance in place", err)
+		}
+		var current connectorruntime.Status
+		if err := connectorruntime.Call(ctx, state.ConnectionHandle, "status", connectorruntime.Request{Schema: 1, Directory: scope.Directory, ConfigDigest: scope.ConfigDigest}, &current); err != nil || current.PID != state.PID {
+			t.Fatal("closing borrowed SDK clients stopped the original native owner", err)
+		}
+		t.Logf("native borrowed handle: before=%s after=%s status=%s; same PID=%d, URL, key, path", before.ExpiresAt.Format(time.RFC3339Nano), after.ExpiresAt.Format(time.RFC3339Nano), current.ExpiresAt.Format(time.RFC3339Nano), current.PID)
+		return nil
+	}
 	if state.PID == os.Getpid() || state.State != "ready" {
 		t.Fatal("no detached connector owner")
 	}

@@ -1,9 +1,9 @@
-import { createServer } from "node:http";
-import { chmod, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer, type RequestListener } from "node:http";
+import { chmod, mkdtemp, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { inspect } from "node:util";
-import { test, expect } from "vitest";
+import { test, expect, vi } from "vitest";
 import { ownerIPC, prepareExternal } from "../../src/internal/connector/connection_ipc.js";
 
 test("direct async IPC reuses one authenticated socket and rejects unsafe handles before requests", async () => {
@@ -132,6 +132,121 @@ test("more than 32 sequential external handles retire idle agents and preserve a
     release?.();
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  "renewed",
+  "unchanged",
+  "missing",
+  "key",
+  "url",
+  "directory",
+  "config_digest",
+  "executable",
+  "workload",
+  "team_id",
+  "unsafe",
+  "symlink",
+  "oversized",
+  "closed",
+] as const)("expired borrowed IPC accepts only an exact renewed capability: %s", async (change) => {
+  const directory = await realpath(await mkdtemp(path.join(tmpdir(), "tnl-ipc-renewal-")));
+  let requests = 0;
+  const reply: RequestListener = (request, response) => {
+    requests++;
+    expect(request.url).toBe("/v1/connections/prepare");
+    request.resume();
+    response.writeHead(200, { "content-type": "application/json" }).end('{"schema":1}');
+  };
+  const server = createServer(reply),
+    replacement = createServer(reply);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve) => replacement.listen(0, "127.0.0.1", resolve));
+  const clock = vi.spyOn(Date, "now");
+  let client: Awaited<ReturnType<typeof ownerIPC>> | undefined;
+  try {
+    const address = server.address(),
+      other = replacement.address();
+    if (
+      address === null ||
+      typeof address === "string" ||
+      other === null ||
+      typeof other === "string"
+    )
+      throw new Error("missing listener");
+    const expires = Date.now() + 3600_000;
+    const handle = {
+      schema: 1,
+      url: `http://127.0.0.1:${address.port}`,
+      key: "a".repeat(64),
+      directory,
+      config_digest: "c".repeat(64),
+      expires_at: new Date(expires).toISOString(),
+      executable: "/installed/tnl",
+      workload: "job",
+      team_id: `tm_${"a".repeat(22)}`,
+    };
+    const file = path.join(directory, "handle.json");
+    await writeFile(file, JSON.stringify(handle), { mode: 0o600 });
+    client = await ownerIPC(file);
+    await expect(client.prepare("db")).resolves.toEqual({ schema: 1 });
+    const next = { ...handle, expires_at: new Date(expires + 3600_000).toISOString() };
+    switch (change) {
+      case "key":
+        next.key = "b".repeat(64);
+        break;
+      case "url":
+        next.url = `http://127.0.0.1:${other.port}`;
+        break;
+      case "directory":
+        next.directory = path.join(directory, "other");
+        break;
+      case "config_digest":
+        next.config_digest = "d".repeat(64);
+        break;
+      case "executable":
+        next.executable = "/installed/other-tnl";
+        break;
+      case "workload":
+        next.workload = "other";
+        break;
+      case "team_id":
+        next.team_id = `tm_${"b".repeat(22)}`;
+        break;
+    }
+    if (change === "missing") await rm(file);
+    else if (change !== "unchanged") {
+      await writeFile(
+        `${file}.next`,
+        JSON.stringify(next) + (change === "oversized" ? " ".repeat(128 * 1024) : ""),
+        { mode: 0o600 },
+      );
+      if (change === "unsafe") await chmod(`${file}.next`, 0o644);
+      if (change === "symlink") {
+        await rm(file);
+        await symlink(`${file}.next`, file);
+      } else await rename(`${file}.next`, file);
+    }
+    if (change === "closed") client.close();
+    clock.mockReturnValue(expires + 1);
+    if (change === "renewed") {
+      await expect(client.prepare("db")).resolves.toEqual({ schema: 1 });
+      expect(client.expiresAt).toBe(expires + 3600_000);
+      clock.mockReturnValue(expires + 3600_001);
+    }
+    await expect(client.prepare("db")).rejects.toMatchObject({
+      code: "sdk.connection_unavailable",
+    });
+    expect(requests).toBe(change === "renewed" ? 2 : 1);
+  } finally {
+    clock.mockRestore();
+    client?.close();
+    for (const listener of [server, replacement]) {
+      listener.closeAllConnections();
+      await new Promise<void>((resolve) => listener.close(() => resolve()));
+    }
     await rm(directory, { recursive: true, force: true });
   }
 });

@@ -2,6 +2,7 @@ package workload
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,7 +12,7 @@ import (
 )
 
 func TestConnectorPeerRebindRetainsWorkloadSubjectAndCurrentRights(t *testing.T) {
-	for _, boundary := range []string{"valid", "no session", "lease", "expiry", "service", "subject"} {
+	for _, boundary := range []string{"valid", "uncapped", "no session", "lease", "expiry", "identity expiry", "uncapped lease", "uncapped identity expiry", "service", "subject"} {
 		t.Run(boundary, func(t *testing.T) {
 			session := sessionFixture(controlv1.WorkloadOIDC)
 			calls := 0
@@ -40,24 +41,39 @@ func TestConnectorPeerRebindRetainsWorkloadSubjectAndCurrentRights(t *testing.T)
 			service := session.ServiceIds[0]
 			client.session = cloneSession(session)
 			switch boundary {
+			case "uncapped":
+				client.session.ExpiresAt = nil
 			case "no session":
 				client.session.Id = ""
 			case "lease":
 				client.session.LeaseExpiresAt = time.Now().Add(-time.Second)
+			case "uncapped lease":
+				client.session.ExpiresAt = nil
+				client.session.LeaseExpiresAt = time.Now().Add(-time.Second)
 			case "expiry":
 				client.session.ExpiresAt = new(time.Now().Add(-time.Second))
+			case "identity expiry":
+				client.session.IdentityExpiresAt = time.Now().Add(-time.Second)
+			case "uncapped identity expiry":
+				client.session.ExpiresAt = nil
+				client.session.IdentityExpiresAt = time.Now().Add(-time.Second)
 			case "service":
 				client.session.ServiceIds = nil
 			case "subject":
 				body.Subject.WorkloadSessionId = new("wls_aaaaaaaaaaaaaaaaaaaaaa")
 			}
 			state, err := client.RebindConnectorPeerPair(t.Context(), service, "cpp_bbbbbbbbbbbbbbbbbbbbbb", body)
-			if boundary == "valid" {
+			if boundary == "valid" || boundary == "uncapped" {
 				if err != nil || calls != 1 || state.HighWaterGeneration != 2 {
 					t.Fatal("valid workload rebind failed", err)
 				}
 			} else if err == nil || calls != 0 {
 				t.Fatal("invalid workload authority reached rebind control", err)
+			}
+			if boundary == "lease" || boundary == "expiry" || boundary == "identity expiry" || boundary == "uncapped lease" || boundary == "uncapped identity expiry" {
+				if !errors.Is(err, ErrSessionExpired) {
+					t.Fatal("expired workload lost its expiry error", err)
+				}
 			}
 		})
 	}

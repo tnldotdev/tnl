@@ -48,7 +48,7 @@ func (c *Client) RebindConnectorPeerPair(ctx context.Context, service, pair stri
 	if err != nil {
 		return controlv1.ConnectorPeerPairRebindState{}, err
 	}
-	if !r.LeaseExpiresAt.After(time.Now()) || !r.ExpiresAt.After(time.Now()) {
+	if !r.LeaseExpiresAt.After(time.Now()) || !SessionDeadline(r).After(time.Now()) {
 		return controlv1.ConnectorPeerPairRebindState{}, ErrSessionExpired
 	}
 	if !slices.Contains(r.ServiceIds, service) || !visitorsubject.Same(body.Subject, r.Subject) {

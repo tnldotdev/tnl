@@ -20,6 +20,7 @@ import (
 	"time"
 
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
+	connectorworkload "github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -81,10 +82,27 @@ type actionRefreshFixture struct {
 
 func qualifyActionBackgroundRefresh(t *testing.T, f actionRefreshFixture) {
 	t.Helper()
+	t.Cleanup(func() {
+		if !t.Failed() || f.mode == "action-fresh" {
+			return
+		}
+		data, readErr := os.ReadFile(filepath.Join(filepath.Dir(f.state.ConnectionHandle), "stopped.json"))
+		var stopped struct {
+			Schema int  `json:"schema"`
+			Clean  bool `json:"clean"`
+		}
+		decodeErr := json.Unmarshal(data, &stopped)
+		calls, _, _ := f.inspect()
+		t.Logf("expired-owner cleanup: record=%t decoded=%t schema=%d clean=%t revoke_calls=%d", readErr == nil, decodeErr == nil, stopped.Schema, stopped.Clean, calls["DELETE /v1/workload-sessions/{session}"])
+	})
 	_, original, _ := f.inspect()
 	first := f.prepared.Connection
 	if !original.IdentityExpiresAt.Equal(f.expiry) || first.ExpiresAt.After(f.expiry) {
 		t.Fatal("startup did not retain the initial finite proof boundary")
+	}
+	initialHandle, err := connectorruntime.ReadHandle(f.state.ConnectionHandle)
+	if err != nil || !initialHandle.ExpiresAt.Equal(f.state.ExpiresAt) || !initialHandle.ExpiresAt.Equal(connectorworkload.SessionDeadline(original)) {
+		t.Fatal("startup handle did not retain the accepted proof and optional hard deadline", err)
 	}
 	argv, err := exec.CommandContext(t.Context(), "ps", "-p", strconv.Itoa(f.state.PID), "-o", "command=").Output()
 	if err != nil {
@@ -151,15 +169,28 @@ func qualifyActionBackgroundRefresh(t *testing.T, f actionRefreshFixture) {
 			t.Fatal(err)
 		}
 		calls, current, keys := f.inspect()
-		if state.PID != f.state.PID || state.ConnectionHandle != f.state.ConnectionHandle || !state.ExpiresAt.Equal(f.state.ExpiresAt) || first.TransportID != after.Connection.TransportID || first.Port != after.Connection.Port || !after.Connection.ExpiresAt.After(first.ExpiresAt) || f.streams.Load() != 1 {
-			t.Fatal("refresh replaced the Action owner, listener, transport, fixed deadline or original stream")
+		if state.PID != f.state.PID || state.ConnectionHandle != f.state.ConnectionHandle || first.TransportID != after.Connection.TransportID || first.Host != after.Connection.Host || first.Port != after.Connection.Port || !after.Connection.ExpiresAt.After(first.ExpiresAt) || f.streams.Load() != 1 {
+			t.Fatal("refresh replaced the Action owner, listener, transport or original stream")
 		}
-		if current.Id != original.Id || current.Credential != original.Credential || current.Binding != original.Binding || !reflect.DeepEqual(current.Github, original.Github) || !reflect.DeepEqual(current.ServiceIds, original.ServiceIds) || !reflect.DeepEqual(current.Subject, original.Subject) || !current.ExpiresAt.Equal(original.ExpiresAt) || !current.IdentityExpiresAt.After(original.IdentityExpiresAt) || keys != 1 || calls["POST /v1/workload-sessions/exchange"] != 2 || calls["POST /v1/workload-sessions/identity"] != 1 || calls["POST /v1/workload-sessions/{session}/assertions"] != 1 || f.providerCalls.Load() != 1 {
+		afterHandle, err := connectorruntime.ReadHandle(f.state.ConnectionHandle)
+		expectedHandle := initialHandle
+		expectedHandle.ExpiresAt = afterHandle.ExpiresAt
+		if err != nil || expectedHandle != afterHandle || !afterHandle.ExpiresAt.Equal(state.ExpiresAt) {
+			t.Fatal("refresh replaced or failed to publish the exact local capability", err)
+		}
+		if current.Id != original.Id || current.Credential != original.Credential || current.Binding != original.Binding || !reflect.DeepEqual(current.Github, original.Github) || !reflect.DeepEqual(current.ServiceIds, original.ServiceIds) || !reflect.DeepEqual(current.Subject, original.Subject) || !reflect.DeepEqual(current.ExpiresAt, original.ExpiresAt) || !current.IdentityExpiresAt.After(original.IdentityExpiresAt) || keys != 1 || calls["POST /v1/workload-sessions/exchange"] != 2 || calls["POST /v1/workload-sessions/identity"] != 1 || calls["POST /v1/workload-sessions/{session}/assertions"] != 1 || f.providerCalls.Load() != 1 {
 			t.Fatal("refresh replaced identity, broadened rights or repeated exchange instead of attaching one fresh proof")
 		}
-		if current.LeaseExpiresAt.After(current.IdentityExpiresAt) || after.Connection.ExpiresAt.After(current.LeaseExpiresAt) || after.Connection.ExpiresAt.After(current.ExpiresAt) {
+		// the owner handle follows accepted proof, bounded by the optional hard
+		// deadline. prepared connections also retain their shorter permission lease.
+		accepted := connectorworkload.SessionDeadline(current)
+		if !state.ExpiresAt.After(f.state.ExpiresAt) || !state.ExpiresAt.Equal(accepted) {
+			t.Fatalf("local expiry did not advance to accepted authority: before=%s after=%s accepted=%s", f.state.ExpiresAt.Format(time.RFC3339Nano), state.ExpiresAt.Format(time.RFC3339Nano), accepted.Format(time.RFC3339Nano))
+		}
+		if state.ExpiresAt.After(current.IdentityExpiresAt) || current.LeaseExpiresAt.After(current.IdentityExpiresAt) || after.Connection.ExpiresAt.After(current.LeaseExpiresAt) || after.Connection.ExpiresAt.After(current.IdentityExpiresAt) || current.ExpiresAt != nil && (state.ExpiresAt.After(*current.ExpiresAt) || current.LeaseExpiresAt.After(*current.ExpiresAt) || after.Connection.ExpiresAt.After(*current.ExpiresAt)) {
 			t.Fatal("refresh relaxed a proof, lease or fixed session expiry")
 		}
+		t.Logf("Action expiry: handle before=%s after=%s; connection=%s lease=%s proof=%s", f.state.ExpiresAt.Format(time.RFC3339Nano), state.ExpiresAt.Format(time.RFC3339Nano), after.Connection.ExpiresAt.Format(time.RFC3339Nano), current.LeaseExpiresAt.Format(time.RFC3339Nano), current.IdentityExpiresAt.Format(time.RFC3339Nano))
 	} else {
 		select {
 		case read := <-result:
@@ -170,7 +201,7 @@ func qualifyActionBackgroundRefresh(t *testing.T, f actionRefreshFixture) {
 			t.Fatal("failed refresh did not close the quiet stream at accepted proof expiry")
 		}
 		calls, current, keys := f.inspect()
-		if !current.IdentityExpiresAt.Equal(original.IdentityExpiresAt) || current.LeaseExpiresAt.After(f.expiry) || !current.ExpiresAt.Equal(original.ExpiresAt) || current.Id != original.Id || !reflect.DeepEqual(current.Github, original.Github) || keys != 1 || calls["POST /v1/workload-sessions/exchange"] != 2 {
+		if !current.IdentityExpiresAt.Equal(original.IdentityExpiresAt) || current.LeaseExpiresAt.After(f.expiry) || !reflect.DeepEqual(current.ExpiresAt, original.ExpiresAt) || current.Id != original.Id || !reflect.DeepEqual(current.Github, original.Github) || keys != 1 || calls["POST /v1/workload-sessions/exchange"] != 2 {
 			t.Fatal("failed refresh extended accepted authority or replaced the original job")
 		}
 		if f.mode == "action-static" {
