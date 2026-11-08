@@ -74,6 +74,38 @@ func TestGitHubBindingDefaultsReuseAndErrors(t *testing.T) {
 	}
 }
 
+func TestGitHubBindingDefaultBranchNonFinalDots(t *testing.T) {
+	for _, branch := range []string{"release./candidate", "team./release./candidate"} {
+		t.Run(branch, func(t *testing.T) {
+			r := newResolver()
+			r.github = func(_ context.Context, repository string) (githubmetadata.Repository, error) {
+				return githubmetadata.Repository{Repository: repository, RepositoryID: "12345", OwnerID: "6789", DefaultBranch: branch}, nil
+			}
+			o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"test": {
+				GitHub:   &config.WorkloadGitHub{Repository: new("example/repository"), Workflow: ".github/workflows/test.yml"},
+				Services: []string{"cluster"},
+			}}}
+			first, err := r.resolve(t.Context(), o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			g := first["test"].Github
+			ref := "refs/heads/" + branch
+			if g.DefaultBranch == nil || *g.DefaultBranch != branch || g.Ref != ref || g.WorkflowRef != "example/repository/.github/workflows/test.yml@"+ref {
+				t.Fatal("default branch changed during binding", g)
+			}
+			o.Previous = first
+			r.github = func(context.Context, string) (githubmetadata.Repository, error) {
+				t.Fatal("unchanged apply required authentication")
+				return githubmetadata.Repository{}, nil
+			}
+			if second, err := r.resolve(t.Context(), o); err != nil || !reflect.DeepEqual(first, second) {
+				t.Fatal("saved default branch binding changed", err)
+			}
+		})
+	}
+}
+
 type roundTrip func(*http.Request) (*http.Response, error)
 
 func (f roundTrip) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }

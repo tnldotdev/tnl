@@ -240,7 +240,7 @@ func ValidateWorkloads(c TNL) error {
 }
 
 func ValidWorkloadRef(ref string) bool {
-	if len(ref) > 512 {
+	if len(ref) > 512 || strings.HasSuffix(ref, ".") {
 		return false
 	}
 	prefix := "refs/heads/"
@@ -255,7 +255,7 @@ func ValidWorkloadRef(ref string) bool {
 		return false
 	}
 	for _, part := range strings.Split(name, "/") {
-		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".") || strings.HasSuffix(part, ".lock") {
+		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
 			return false
 		}
 	}

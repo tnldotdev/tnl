@@ -2,6 +2,34 @@ package config
 
 import "testing"
 
+func TestWorkloadRefComponents(t *testing.T) {
+	for _, prefix := range []string{"refs/heads/", "refs/tags/"} {
+		for _, test := range []struct {
+			name  string
+			valid bool
+		}{
+			{"release./candidate", true},
+			{"team./release./candidate", true},
+			{"Release_Candidate/v1.0", true},
+			{"-release/candidate-", true},
+			{"release/candidate.", false},
+			{"release./candidate.", false},
+			{".release/candidate", false},
+			{"release/.candidate", false},
+			{"release.lock/candidate", false},
+			{"release/candidate.lock", false},
+			{"release//candidate", false},
+			{"release/candidate/", false},
+		} {
+			t.Run(prefix+test.name, func(t *testing.T) {
+				if got := ValidWorkloadRef(prefix + test.name); got != test.valid {
+					t.Errorf("ValidWorkloadRef(%q) = %v, want %v", prefix+test.name, got, test.valid)
+				}
+			})
+		}
+	}
+}
+
 func TestWorkloadRefsAllowLiteralAtAndBrace(t *testing.T) {
 	for _, prefix := range []string{"refs/heads/", "refs/tags/"} {
 		for _, name := range []string{"release@canary", "release{canary", "team/release@canary", "@"} {
