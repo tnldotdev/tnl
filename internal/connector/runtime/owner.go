@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
@@ -134,6 +135,45 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			return
 		}
 		switch operation {
+		case "sdk-prepare":
+			provider, ok := backend.(interface {
+				SDKPrepare(context.Context, Request) (SDKPrepared, error)
+			})
+			if !ok {
+				writeConnectionFailure(w, ErrInvalid)
+				return
+			}
+			bounded, done := context.WithTimeout(r.Context(), 25*time.Second)
+			defer done()
+			prepared, err := provider.SDKPrepare(bounded, request)
+			if err != nil {
+				reason, known := failure.ReasonOf(err)
+				if !known {
+					reason = failure.ConnectionUnavailable
+				}
+				w.WriteHeader(http.StatusServiceUnavailable)
+				var retained interface{ RetainSDKFailure() bool }
+				sticky := errors.As(err, &retained) && retained.RetainSDKFailure()
+				var handle interface{ SDKFailureHandle() string }
+				var failureHandle string
+				if sticky && errors.As(err, &handle) {
+					failureHandle = handle.SDKFailureHandle()
+				}
+				var owner interface{ SDKOwnerHandle() string }
+				var ownerHandle string
+				if errors.As(err, &owner) {
+					ownerHandle = owner.SDKOwnerHandle()
+				}
+				_ = json.NewEncoder(w).Encode(struct {
+					Schema        int            `json:"schema"`
+					Reason        failure.Reason `json:"reason"`
+					Retained      bool           `json:"sdk_retained_start_failure,omitempty"`
+					FailureHandle string         `json:"sdk_failure_handle,omitempty"`
+					OwnerHandle   string         `json:"sdk_owner_handle,omitempty"`
+				}{Schema: 1, Reason: reason, Retained: sticky, FailureHandle: failureHandle, OwnerHandle: ownerHandle})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(prepared)
 		case "attach":
 			provider, ok := backend.(interface {
 				Attach(context.Context, string) error
@@ -163,69 +203,29 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			defer done()
 			stop := context.AfterFunc(lifetime, done)
 			defer stop()
-			var connection Connection
+			var prepared Prepared
 			var err error
 			if operation == "prepared" {
+				var connection Connection
 				connection, err = backend.Prepared(request.Service)
-			} else {
-				if request.Assertion != "" || request.AcquireAssertion {
-					if provider, ok := backend.(interface {
-						UseAssertion(context.Context, string) error
-					}); ok {
-						err = provider.UseAssertion(bounded, request.Assertion)
-					} else {
-						provider, ok := backend.(interface {
-							Attach(context.Context, string) error
-						})
-						if !ok {
-							err = ErrInvalid
-						} else {
-							err = provider.Attach(bounded, request.Assertion)
-						}
-					}
-				}
 				if err == nil {
-					connection, err = backend.Connect(bounded, request.Service)
+					prepared, err = preparedSnapshot(backend, request, current.ProjectRuntime, connection)
 				}
+			} else {
+				prepared, err = PrepareSnapshot(bounded, backend, request, current.ProjectRuntime)
 			}
 			if err != nil {
 				writeConnectionFailure(w, err)
 				return
 			}
-			if err := connection.Validate(); err != nil {
+			if err := prepared.Validate(); err != nil {
 				writeConnectionFailure(w, err)
 				return
 			}
 			if operation != "connect" {
-				if provider, ok := backend.(interface {
-					SnapshotFor(string, string) (Prepared, error)
-				}); ok {
-					// pair metadata, transport identity and assertion proof from one
-					// immutable publication, even if another request replaces a session.
-					prepared, err := provider.SnapshotFor(request.Service, request.Assertion)
-					if err != nil {
-						writeConnectionFailure(w, err)
-						return
-					}
-					if err := prepared.Validate(); err != nil {
-						writeConnectionFailure(w, err)
-						return
-					}
-					_ = json.NewEncoder(w).Encode(prepared)
-					return
-				}
-				if provider, ok := backend.(interface {
-					ProjectRuntime() meta.PublicMetadata
-				}); ok {
-					current.ProjectRuntime = provider.ProjectRuntime()
-				}
-				result := Prepared{Schema: Schema, ProjectRuntime: current.ProjectRuntime, Connection: connection}
-				if provider, ok := backend.(interface{ Verification() *AssertionVerification }); ok {
-					result.Verification = provider.Verification()
-				}
-				_ = json.NewEncoder(w).Encode(result)
+				_ = json.NewEncoder(w).Encode(prepared)
 			} else {
-				_ = json.NewEncoder(w).Encode(connection)
+				_ = json.NewEncoder(w).Encode(prepared.Connection)
 			}
 		case "kube-credential":
 			provider, ok := backend.(interface {

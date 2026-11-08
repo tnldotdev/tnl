@@ -11,6 +11,7 @@ import socket
 import ssl
 import struct
 import subprocess
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -107,7 +108,44 @@ def test_owned_deadline_recovery_joins_real_native_owner_before_same_port_restar
     calls: list[str] = []
     command = _connections._command
 
-    def native(binary: Path, *args: str) -> object:
+    lock = threading.Lock()
+    current: dict[str, object] | None = None
+
+    def selected(binary: Path, arguments: tuple[str, ...]) -> object:
+        nonlocal current
+        with lock:
+            if "--recover-handle" in arguments:
+                command(
+                    binary,
+                    "recover",
+                    "--handle",
+                    arguments[arguments.index("--recover-handle") + 1],
+                )
+            if current is not None and datetime.fromisoformat(
+                str(current["expires_at"]).replace("Z", "+00:00")
+            ) <= datetime.now(UTC):
+                native(binary, "stop", "--handle", str(current["connection_handle"]))
+                current = None
+            if current is None:
+                current = cast(dict[str, object], native(binary, "start"))
+            return {
+                "schema": 1,
+                "owner": {
+                    key: current[key] for key in ("connection_handle", "executable", "expires_at")
+                },
+                "prepared": command(
+                    binary,
+                    "prepare",
+                    "--handle",
+                    str(current["connection_handle"]),
+                    "--service",
+                    "database",
+                ),
+            }
+
+    def native(binary: Path, *args: str, input_value: object = None) -> object:
+        if args[0] == "sdk-prepare":
+            return selected(binary, args)
         calls.append(args[0])
         if args[0] != "start":
             result = command(binary, *args)

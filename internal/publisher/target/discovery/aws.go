@@ -64,7 +64,17 @@ func Load(ctx context.Context, region string) (Clients, error) {
 // Secrets Manager, master user credentials, kube tokens, or database passwords.
 type AWS struct{ Load LoadClients }
 
-func (p AWS) Discover(ctx context.Context, request Request) (ResolvedTarget, error) {
+func (p AWS) Discover(ctx context.Context, request Request) (target ResolvedTarget, err error) {
+	defer func() {
+		// an SDK response can race cancellation without wrapping its cause.
+		// retain both errors and never return target metadata after cancellation.
+		if canceled := ctx.Err(); canceled != nil {
+			target = ResolvedTarget{}
+			if !errors.Is(err, canceled) {
+				err = discoveryError(Unavailable, errors.Join(err, canceled))
+			}
+		}
+	}()
 	r, err := request.Normalize()
 	if err != nil {
 		return ResolvedTarget{}, err
@@ -88,7 +98,6 @@ func (p AWS) Discover(ctx context.Context, request Request) (ResolvedTarget, err
 		return ResolvedTarget{}, discoveryError(Metadata, nil)
 	}
 	r.Account = aws.ToString(identity.Account)
-	var target ResolvedTarget
 	if r.Type == "eks" {
 		target, err = discoverEKS(ctx, clients.EKS, r)
 	} else {

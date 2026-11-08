@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -52,69 +53,73 @@ func TestPublicServiceLiveVisitorOutageHonorsLastSuccessfulDeadline(t *testing.T
 			name = "earlier grant"
 		}
 		t.Run(name, func(t *testing.T) {
-			p, c, f, _ := publicServiceTestSetup(t)
-			p.config.RecheckInterval, p.config.RecheckTimeout = 20*time.Millisecond, 10*time.Millisecond
-			p.config.HardAuthorizationTTL = 125 * time.Millisecond
-			bound := 300 * time.Millisecond
-			if grant {
-				p.config.HardAuthorizationTTL = 250 * time.Millisecond
-				c.recheckValidUntil = time.Now().Add(135 * time.Millisecond)
-				bound = 190 * time.Millisecond
-			}
-			stream, stop := publicServiceActiveStream(t, p, f)
-			publicServiceWaitAuthorized(t, p)
-			c.mu.Lock()
-			c.recheckErr = errors.New("control unavailable after last check")
-			c.mu.Unlock()
-			started := time.Now()
-			_ = stream.SetReadDeadline(time.Now().Add(time.Second))
-			if _, err := stream.Read(make([]byte, 1)); err == nil {
-				t.Fatal("outage left visitor open")
-			}
-			if elapsed := time.Since(started); elapsed > bound || !grant && elapsed < 35*time.Millisecond {
-				t.Fatalf("outage deadline = %v", elapsed)
-			}
-			stop()
-			c.mu.Lock()
-			checks := c.rechecks
-			c.mu.Unlock()
-			if checks < 2 || c.recheckActive.Load() != 0 {
-				t.Fatalf("recheck retries/join: checks=%d active=%d", checks, c.recheckActive.Load())
-			}
-			select {
-			case <-f.relayDone:
-			case <-time.After(time.Second):
-				t.Fatal("relay copy survived deadline")
-			}
+			synctest.Test(t, func(t *testing.T) {
+				p, c, f, _ := publicServiceTestSetup(t)
+				p.config.RecheckInterval, p.config.RecheckTimeout = 20*time.Millisecond, 10*time.Millisecond
+				p.config.HardAuthorizationTTL = 125 * time.Millisecond
+				bound := 300 * time.Millisecond
+				if grant {
+					p.config.HardAuthorizationTTL = 250 * time.Millisecond
+					c.recheckValidUntil = time.Now().Add(135 * time.Millisecond)
+					bound = 190 * time.Millisecond
+				}
+				stream, stop := publicServiceActiveStream(t, p, f)
+				publicServiceWaitAuthorized(t, p)
+				c.mu.Lock()
+				c.recheckErr = errors.New("control unavailable after last check")
+				c.mu.Unlock()
+				started := time.Now()
+				_ = stream.SetReadDeadline(time.Now().Add(time.Second))
+				if _, err := stream.Read(make([]byte, 1)); err == nil {
+					t.Fatal("outage left visitor open")
+				}
+				if elapsed := time.Since(started); elapsed > bound || !grant && elapsed < 35*time.Millisecond {
+					t.Fatalf("outage deadline = %v", elapsed)
+				}
+				stop()
+				c.mu.Lock()
+				checks := c.rechecks
+				c.mu.Unlock()
+				if checks < 2 || c.recheckActive.Load() != 0 {
+					t.Fatalf("recheck retries/join: checks=%d active=%d", checks, c.recheckActive.Load())
+				}
+				select {
+				case <-f.relayDone:
+				case <-time.After(time.Second):
+					t.Fatal("relay copy survived deadline")
+				}
+			})
 		})
 	}
 }
 
 func TestPublicServiceLiveVisitorOutageHonorsInitialClaimDeadline(t *testing.T) {
-	p, c, f, _ := publicServiceTestSetup(t)
-	c.initialValidUntil = time.Now().Add(175 * time.Millisecond)
-	c.recheckErr = errors.New("control unavailable immediately after admission")
-	stream, stop := publicServiceActiveStream(t, p, f)
-	started := time.Now()
-	_ = stream.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err := stream.Read(make([]byte, 1)); err == nil {
-		t.Fatal("initial expiry did not end visitor")
-	}
-	if elapsed := time.Since(started); elapsed > 230*time.Millisecond {
-		t.Fatalf("ignored initial deadline for %v", elapsed)
-	}
-	stop()
-	c.mu.Lock()
-	checks := c.rechecks
-	c.mu.Unlock()
-	if checks < 2 || c.recheckActive.Load() != 0 {
-		t.Fatalf("initial outage scheduling/join: checks=%d active=%d", checks, c.recheckActive.Load())
-	}
-	select {
-	case <-f.relayDone:
-	case <-time.After(time.Second):
-		t.Fatal("relay copy survived initial expiry")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		p, c, f, _ := publicServiceTestSetup(t)
+		c.initialValidUntil = time.Now().Add(175 * time.Millisecond)
+		c.recheckErr = errors.New("control unavailable immediately after admission")
+		stream, stop := publicServiceActiveStream(t, p, f)
+		started := time.Now()
+		_ = stream.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := stream.Read(make([]byte, 1)); err == nil {
+			t.Fatal("initial expiry did not end visitor")
+		}
+		if elapsed := time.Since(started); elapsed > 230*time.Millisecond {
+			t.Fatalf("ignored initial deadline for %v", elapsed)
+		}
+		stop()
+		c.mu.Lock()
+		checks := c.rechecks
+		c.mu.Unlock()
+		if checks < 2 || c.recheckActive.Load() != 0 {
+			t.Fatalf("initial outage scheduling/join: checks=%d active=%d", checks, c.recheckActive.Load())
+		}
+		select {
+		case <-f.relayDone:
+		case <-time.After(time.Second):
+			t.Fatal("relay copy survived initial expiry")
+		}
+	})
 }
 
 func TestPublicServiceLiveVisitorDefaultsRefreshShortInitialLease(t *testing.T) {

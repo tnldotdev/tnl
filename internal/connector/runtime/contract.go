@@ -63,6 +63,9 @@ type Request struct {
 	Service          string `json:"service,omitempty"`
 	Assertion        string `json:"assertion,omitempty"`
 	AcquireAssertion bool   `json:"acquire_assertion,omitempty"`
+	Workload         string `json:"workload,omitempty"`
+	Manifest         string `json:"manifest,omitempty"`
+	RequestedAt      string `json:"requested_at,omitempty"`
 }
 
 func (Request) String() string   { return "private connection request" }
@@ -113,6 +116,26 @@ type Prepared struct {
 	ProjectRuntime meta.PublicMetadata    `json:"project_runtime"`
 	Connection     Connection             `json:"connection"`
 	Verification   *AssertionVerification `json:"verification,omitempty"`
+}
+
+// SDKPrepared is the private native selection adapter; public start/read outputs
+// retain their separate schema-1 shapes.
+type SDKPrepared struct {
+	Schema   int      `json:"schema"`
+	Owner    SDKOwner `json:"owner"`
+	Prepared Prepared `json:"prepared"`
+}
+
+// SDKOwner is the same capability reference on cold startup and warm selection.
+// project metadata belongs to the prepared snapshot, not the owner reference.
+type SDKOwner struct {
+	ConnectionHandle string    `json:"connection_handle"`
+	Executable       string    `json:"executable"`
+	ExpiresAt        time.Time `json:"expires_at"`
+}
+
+func (s Status) SDKOwner() SDKOwner {
+	return SDKOwner{ConnectionHandle: s.ConnectionHandle, Executable: s.Executable, ExpiresAt: s.ExpiresAt}
 }
 
 // AssertionVerification comes only from authority-confirmed exact assertion

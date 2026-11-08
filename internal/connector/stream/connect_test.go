@@ -136,6 +136,8 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 		f.mu.Unlock()
 		workers.Wait()
 	})
+	var listeners [2]net.Listener
+	var datagrams [2]*muxsession.QUICListener
 	for slot := range uint8(2) {
 		var listener net.Listener
 		var udp *muxsession.QUICListener
@@ -163,8 +165,34 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 		}
 		t.Cleanup(func() { _ = listener.Close() })
 		f.endpoints[slot] = muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "db.example"}
+		listeners[slot], datagrams[slot] = listener, udp
 		if udp != nil {
 			t.Cleanup(func() { _ = udp.Close() })
+		}
+	}
+	f.run.PairReady = &controlv1.ConnectorPeerPairReady{PublisherIdentityId: connectorID(t, opaqueid.PublisherIdentityPrefix)}
+	for slot, endpoint := range f.endpoints {
+		f.run.PairReady.Relays = append(f.run.PairReady.Relays, controlv1.ConnectorPeerPairRelay{PublisherConnectionId: connectorID(t, opaqueid.PublisherConnectionPrefix), AssignmentRevision: 1, RelayAddress: endpoint.Address, TlsServerName: endpoint.ServerName,
+			RelayLease: controlv1.ConnectorPeerRelayLease{RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayId: fmt.Sprintf("node-%d", slot), RelayRunId: connectorID(t, opaqueid.RelayRunPrefix), RelayLeaseRevision: 1}})
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	ready := make(chan struct{})
+	f.finished = make(chan struct{})
+	configuration := Config{Control: f, ServiceID: f.run.ServiceID, IdentityID: f.device.Subject.IdentityID, Protocol: "tcp", TrustRevision: 1, TransportTLS: &tls.Config{RootCAs: roots}, Ready: func() error { close(ready); return nil }}
+	configuration.Endpoint = f.run.Endpoint
+	configuration.ServiceTLS = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: "db.example"}
+	if configure != nil {
+		configure(f, &configuration)
+	}
+	f.config = configuration
+	// configure the fixture before starting workers that read its settings.
+	for slot := range uint8(2) {
+		listener := listeners[slot]
+		if udp := datagrams[slot]; udp != nil {
 			workers.Go(func() {
 				for {
 					session, err := udp.Accept(ctx)
@@ -192,25 +220,6 @@ func newConfiguredConnectorFixture(t *testing.T, transport, target string, confi
 			}
 		})
 	}
-	f.run.PairReady = &controlv1.ConnectorPeerPairReady{PublisherIdentityId: connectorID(t, opaqueid.PublisherIdentityPrefix)}
-	for slot, endpoint := range f.endpoints {
-		f.run.PairReady.Relays = append(f.run.PairReady.Relays, controlv1.ConnectorPeerPairRelay{PublisherConnectionId: connectorID(t, opaqueid.PublisherConnectionPrefix), AssignmentRevision: 1, RelayAddress: endpoint.Address, TlsServerName: endpoint.ServerName,
-			RelayLease: controlv1.ConnectorPeerRelayLease{RelayServiceId: fmt.Sprintf("relay-%d", slot), RelayId: fmt.Sprintf("node-%d", slot), RelayRunId: connectorID(t, opaqueid.RelayRunPrefix), RelayLeaseRevision: 1}})
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = listener.Close() })
-	ready := make(chan struct{})
-	f.finished = make(chan struct{})
-	configuration := Config{Control: f, ServiceID: f.run.ServiceID, IdentityID: f.device.Subject.IdentityID, Protocol: "tcp", TrustRevision: 1, TransportTLS: &tls.Config{RootCAs: roots}, Ready: func() error { close(ready); return nil }}
-	configuration.Endpoint = f.run.Endpoint
-	configuration.ServiceTLS = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: "db.example"}
-	if configure != nil {
-		configure(f, &configuration)
-	}
-	f.config = configuration
 	go func() {
 		f.serveErr = Serve(ctx, listener, configuration)
 		close(f.finished)

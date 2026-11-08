@@ -1,11 +1,12 @@
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { createServer as createTCPServer } from "node:net";
-import { appendFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, unlink, writeFile, open } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import * as z from "zod";
+import { promisify } from "node:util";
 
 export const connectionFixturePlan = z.object({
   protocol: z.enum(["kubernetes", "http"]).default("kubernetes"),
@@ -35,6 +36,16 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
     connectionFixturePlan.parse(
       JSON.parse(await readFile(path.join(root, "plan.json"), "utf8")) as unknown,
     );
+  const run = async (arguments_: string[]) => {
+    const entry = process.argv[1];
+    if (entry === undefined) throw new Error("missing fixture entry");
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [entry, "--no-telemetry", "runtime", "connections", ...arguments_],
+      { timeout: 25_000 },
+    );
+    return stdout;
+  };
   try {
     if (args[0] === "--fixture-owner") {
       const protocol = (await plan()).protocol;
@@ -59,6 +70,7 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
       const key = randomBytes(32).toString("hex");
       let release: (() => void) | undefined;
       let held: Promise<void> | undefined;
+      let heldRead = false;
       let finishStop: (() => void) | undefined;
       let stopGate: Promise<void> | undefined;
       let stopping: Promise<void> | undefined;
@@ -107,9 +119,18 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
             return;
           }
           const operation = request.url;
+          if (operation === "/v1/connections/sdk-prepare") {
+            const registry = args[1];
+            if (registry === undefined) throw new Error("missing SDK registry");
+            const raw = await run(["sdk-prepare", "--registry", registry]);
+            response.setHeader("Content-Type", "application/json");
+            response.end(raw);
+            return;
+          }
           if (operation === "/fixture/release") {
             release?.();
             held = undefined;
+            heldRead = false;
           } else if (operation === "/fixture/release-stop") {
             finishStop?.();
           } else if (operation === "/v1/connections/kube-credential") {
@@ -122,7 +143,8 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
             operation === "/v1/connections/prepared" ||
             operation === "/v1/connections/prepare"
           ) {
-            await event("read");
+            if (held === undefined || !heldRead) await event("read");
+            if (held !== undefined) heldRead = true;
             response.once("close", () => {
               if (!response.writableEnded) void event("read-canceled").catch(() => {});
             });
@@ -213,6 +235,144 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
       return;
     }
     const operation = args[3];
+    if (
+      operation === "sdk-prepare" ||
+      operation === "fixture-rollback" ||
+      operation === "sdk-stop"
+    ) {
+      const registry = args[args.indexOf("--registry") + 1];
+      if (registry === undefined) throw new Error("missing SDK registry");
+      const filename = path.join(registry, "fixture-owner.json");
+      const lockPath = path.join(registry, "fixture-owner.lock");
+      const failedBeforeWait = await readFile(filename, "utf8")
+        .then((data) => {
+          const status = z
+            .object({ state: z.string(), connection_handle: z.string() })
+            .parse(JSON.parse(data) as unknown);
+          return status.state === "failed" && status.connection_handle !== "";
+        })
+        .catch(() => false);
+      let lock;
+      for (;;) {
+        try {
+          lock = await open(lockPath, "wx", 0o600);
+          break;
+        } catch (error) {
+          if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+          await delay(10);
+        }
+      }
+      let selected;
+      let created = false;
+      try {
+        const schema = z.object({
+          schema: z.literal(1),
+          state: z.string(),
+          pid: z.number(),
+          expires_at: z.string(),
+          project_runtime: z.unknown(),
+          connection_handle: z.string(),
+          executable: z.string(),
+        });
+        const previous = await readFile(filename, "utf8").catch(() => undefined);
+        selected =
+          previous === undefined ? undefined : schema.parse(JSON.parse(previous) as unknown);
+        const requestedAt = args.includes("--requested-at")
+          ? Date.parse(args[args.indexOf("--requested-at") + 1] ?? "")
+          : Date.now();
+        if (
+          operation === "sdk-prepare" &&
+          selected?.state === "failed" &&
+          selected.connection_handle === ""
+        ) {
+          if (requestedAt <= Date.parse(selected.expires_at)) {
+            process.stderr.write(JSON.stringify({ reason: "TNL_SERVER_RESPONSE_INVALID" }));
+            process.exitCode = 1;
+            return;
+          }
+          selected = undefined;
+        }
+        if (operation === "sdk-prepare" && failedBeforeWait) {
+          if (selected !== undefined) {
+            await run(["stop", "--handle", selected.connection_handle]);
+            await unlink(filename);
+          }
+          process.stderr.write(JSON.stringify({ reason: "TNL_SERVER_RESPONSE_INVALID" }));
+          process.exitCode = 1;
+          return;
+        }
+        if (operation === "fixture-rollback" && selected !== undefined) {
+          selected.state = "failed";
+          await writeFile(filename, JSON.stringify(selected));
+        }
+        if (
+          selected !== undefined &&
+          (operation !== "sdk-prepare" ||
+            selected.state !== "ready" ||
+            Date.parse(selected.expires_at) <= Date.now())
+        ) {
+          if (selected.connection_handle !== "")
+            await run(["stop", "--handle", selected.connection_handle]);
+          if (operation === "fixture-rollback")
+            await writeFile(
+              filename,
+              JSON.stringify({
+                ...selected,
+                state: "failed",
+                connection_handle: "",
+                expires_at: new Date().toISOString(),
+              }),
+            );
+          selected = undefined;
+        }
+        if (operation !== "sdk-prepare") {
+          if (operation === "sdk-stop") await unlink(filename).catch(() => {});
+          process.stdout.write(JSON.stringify({ schema: 1, state: "stopped" }));
+          return;
+        }
+        if (args.includes("--recover-handle")) {
+          const recovered = args[args.indexOf("--recover-handle") + 1];
+          if (recovered === undefined) throw new Error("missing recovery handle");
+          await readFile(path.join(path.dirname(recovered), "closed"));
+        }
+        if (selected === undefined) {
+          created = true;
+          selected = schema.parse(
+            JSON.parse(await run(["start", "--registry", registry])) as unknown,
+          );
+          await writeFile(filename, JSON.stringify(selected));
+        }
+      } finally {
+        await lock.close();
+        await unlink(lockPath);
+      }
+      if (selected === undefined) throw new Error("missing selected owner");
+      const handle = fixtureHandle.parse(
+        JSON.parse(await readFile(selected.connection_handle, "utf8")) as unknown,
+      );
+      const response = await fetch(`${handle.url}/v1/connections/prepare`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${handle.key}` },
+        signal: AbortSignal.timeout(6000),
+      });
+      if (!response.ok) throw new Error("fixture preparation failed");
+      const prepared: unknown = await response.json();
+      if (!z.object({ schema: z.literal(1) }).safeParse(prepared).success) {
+        if (created) await run(["fixture-rollback", "--registry", registry]);
+        process.stderr.write(JSON.stringify({ reason: "TNL_SERVER_RESPONSE_INVALID" }));
+        process.exitCode = 1;
+        return;
+      }
+      const { connection_handle, executable, expires_at } = selected;
+      process.stdout.write(
+        JSON.stringify({
+          schema: 1,
+          owner: { connection_handle, executable, expires_at },
+          prepared,
+        }),
+      );
+      return;
+    }
     if (operation === "start") {
       await event("start");
       if ((await plan()).authorization === "deny") {
@@ -222,10 +382,17 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
       }
       const entry = process.argv[1];
       if (entry === undefined) throw new Error("missing fixture entry");
-      const child = spawn(process.execPath, [entry, "--fixture-owner"], {
-        detached: true,
-        stdio: ["ignore", "pipe", "ignore"],
-      });
+      const registry = args.includes("--registry")
+        ? args[args.indexOf("--registry") + 1]
+        : undefined;
+      const child = spawn(
+        process.execPath,
+        [entry, "--fixture-owner", ...(registry === undefined ? [] : [registry])],
+        {
+          detached: true,
+          stdio: ["ignore", "pipe", "ignore"],
+        },
+      );
       const chunks: Buffer[] = [];
       for await (const chunk of child.stdout) {
         if (!Buffer.isBuffer(chunk)) throw new Error("invalid fixture output");
@@ -279,8 +446,17 @@ export async function runConnectionOwnerFixture(root: string): Promise<void> {
     });
     if (!response.ok) throw new Error("fixture read failed");
     process.stdout.write(await response.text());
-  } catch {
-    process.stderr.write(JSON.stringify({ reason: "TNL_CLIENT_CONNECTION_UNAVAILABLE" }));
+  } catch (cause) {
+    let reason = "TNL_CLIENT_CONNECTION_UNAVAILABLE";
+    if (cause instanceof Error && "stderr" in cause && typeof cause.stderr === "string") {
+      try {
+        const problem = z.object({ reason: z.string() }).parse(JSON.parse(cause.stderr) as unknown);
+        if (problem.reason === "TNL_CLIENT_AUTHENTICATION_REQUIRED") reason = problem.reason;
+      } catch {
+        /* redact malformed subprocess output. */
+      }
+    }
+    process.stderr.write(JSON.stringify({ reason }));
     process.exitCode = 1;
   }
 }

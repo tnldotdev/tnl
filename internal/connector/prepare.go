@@ -277,13 +277,16 @@ func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name s
 }
 
 func (b *connectorConnectionBackend) finishPreparationLocked(name string, owner *ownedServiceListener, p *servicePreparation, err error) {
+	// cleanup belongs to the backend even if this attempt has been replaced.
+	// lifetime cancellation cannot distinguish retirement from a failed close.
+	var cleanup *connectorstream.CleanupError
+	if errors.As(err, &cleanup) {
+		b.cleanupErr = errors.Join(b.cleanupErr, cleanup.Err)
+	}
 	if b.listeners[name] != owner || owner.attempt != p {
 		return
 	}
 	p.fail(errors.Join(connectorruntime.ErrUnavailable, err))
-	if b.lifetime.Err() != nil && err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
-		b.cleanupErr = errors.Join(b.cleanupErr, err)
-	}
 	b.publishLocked()
 }
 

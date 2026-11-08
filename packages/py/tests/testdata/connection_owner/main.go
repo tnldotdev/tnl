@@ -30,6 +30,7 @@ import (
 )
 
 type backend struct {
+	status            connectorruntime.Status
 	expires           time.Time
 	ca                string
 	port              int
@@ -37,6 +38,18 @@ type backend struct {
 	transportID       string
 	streamTransportID string
 	listeners         []net.Listener
+}
+
+func (b *backend) SDKPrepare(ctx context.Context, request connectorruntime.Request) (connectorruntime.SDKPrepared, error) {
+	metadata, _, err := b.Start(ctx)
+	if err != nil {
+		return connectorruntime.SDKPrepared{}, err
+	}
+	connection, err := b.Connect(ctx, request.Service)
+	if err != nil {
+		return connectorruntime.SDKPrepared{}, err
+	}
+	return connectorruntime.SDKPrepared{Schema: 1, Owner: b.status.SDKOwner(), Prepared: connectorruntime.Prepared{Schema: 1, ProjectRuntime: metadata, Connection: connection}}, nil
 }
 
 func (b *backend) Start(context.Context) (meta.PublicMetadata, time.Time, error) {
@@ -130,6 +143,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	metadata, _, err := b.Start(ctx)
+	if err != nil {
+		return err
+	}
+	b.status = connectorruntime.Status{Schema: 1, State: "ready", PID: os.Getpid(), ExpiresAt: expires, ConnectionHandle: filepath.Join(directory, "handle.json"), Executable: flags.Arg(1), ProjectRuntime: metadata}
 	return connectorruntime.Serve(ctx, scope, directory, flags.Arg(1), b, os.Stdout)
 }
 

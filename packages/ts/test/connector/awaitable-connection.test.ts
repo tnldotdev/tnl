@@ -24,12 +24,12 @@ vi.mock("../../src/internal/connector/connection_ipc.js", () => ({
     return value;
   },
   ownerIPC: async (file: string) => ({
-    async prepare(name: string) {
+    async prepare(name: string, _assertion?: string, selection?: object) {
       const { stdout } = await native.async("/installed/matching/tnl", [
         "--no-telemetry",
         "runtime",
         "connections",
-        "prepare",
+        selection === undefined ? "prepare" : "sdk-prepare",
         "--handle",
         file,
         "--service",
@@ -76,11 +76,7 @@ const connection = () => ({
 });
 const prepared = () => ({ schema: 1, project_runtime: project, connection: connection() });
 const started = () => ({
-  schema: 1,
-  state: "ready",
-  pid: 123,
   expires_at: new Date(Date.now() + 60_000).toISOString(),
-  project_runtime: project,
   connection_handle: "/private/prepared/handle.json",
   executable: "/installed/matching/tnl",
 });
@@ -96,15 +92,18 @@ beforeEach(() => {
   for (const name of ["TNL_WORKLOAD", "GITHUB_ACTIONS", "VERCEL", "FLY_APP_NAME"])
     vi.stubEnv(name, undefined);
   native.resolve.mockClear();
-  native.async.mockReset().mockImplementation(async (_binary, args) => ({
-    stdout: JSON.stringify(
-      args.includes("start")
-        ? started()
-        : args.includes("stop")
-          ? { schema: 1, state: "stopped" }
-          : prepared(),
-    ),
-  }));
+  native.async.mockReset().mockImplementation(async (_binary, args) => {
+    if (args.includes("--recover-handle")) throw new Error("fixture owner remains alive");
+    return {
+      stdout: JSON.stringify(
+        args.includes("sdk-prepare")
+          ? { schema: 1, owner: started(), prepared: prepared() }
+          : args.includes("stop") || args.includes("sdk-reject")
+            ? { schema: 1, state: "stopped" }
+            : prepared(),
+      ),
+    };
+  });
   native.sync.mockReset().mockImplementation(() => JSON.stringify(prepared()));
 });
 afterEach(() => {
@@ -113,6 +112,78 @@ afterEach(() => {
 });
 
 describe("awaitable root connection handles", () => {
+  test("malformed warm selection replies cannot replace or retire an established shared owner", async () => {
+    const { connectionHandle } = await import("../../src/internal/connector/connection.js");
+    const handle = connectionHandle("database", vi.fn());
+    const first = await handle;
+    for (const invalid of [
+      {
+        schema: 1,
+        owner: started(),
+        prepared: { ...prepared(), schema: 2 },
+      },
+      {
+        schema: 1,
+        owner: { ...started(), pid: "private-invalid-pid" },
+        prepared: prepared(),
+      },
+      {
+        schema: 1,
+        owner: { ...started(), project_runtime: { ...project, token: "private-token" } },
+        prepared: prepared(),
+      },
+      {
+        schema: 1,
+        owner: { ...started(), extra: "private-owner-data" },
+        prepared: prepared(),
+      },
+      {
+        schema: 1,
+        reason: "TNL_CLIENT_AUTHENTICATION_REQUIRED",
+        sdk_retained_start_failure: "private-invalid-marker",
+      },
+      {
+        schema: 1,
+        reason: "TNL_CLIENT_AUTHENTICATION_REQUIRED",
+        sdk_failure_handle: { key: "private-invalid-reference" },
+      },
+    ]) {
+      native.async.mockResolvedValueOnce({ stdout: JSON.stringify(invalid) });
+      await expect(Promise.resolve(handle)).rejects.toMatchObject({ code: "sdk.response_invalid" });
+      expect({ ...handle }).toEqual(first);
+    }
+    expect(native.async.mock.calls.filter(([, args]) => args.includes("sdk-reject"))).toHaveLength(
+      0,
+    );
+    expect(await handle).toEqual(first);
+    expect({ ...handle }).toEqual(first);
+  });
+  test.each([
+    ["TNL_CLIENT_AUTHENTICATION_REQUIRED", "sdk.authentication_required"],
+    ["TNL_SERVER_RESPONSE_INVALID", "sdk.response_invalid"],
+    ["TNL_CLIENT_CONNECTION_CLEANUP_FAILED", "sdk.cleanup_failed"],
+  ])("native IPC failure %s retains its classification", async (reason, code) => {
+    const { connectionHandle } = await import("../../src/internal/connector/connection.js");
+    const handle = connectionHandle("database", vi.fn());
+    const first = await handle;
+    native.async.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        schema: 1,
+        reason,
+        sdk_retained_start_failure: true,
+        sdk_failure_handle: "private-failure-reference",
+      }),
+    });
+    try {
+      await handle;
+      throw new Error("expected native failure");
+    } catch (error) {
+      expect(error).toMatchObject({ code });
+      expect(JSON.stringify(error)).not.toContain("private-failure-reference");
+    }
+    expect(await handle).toEqual(first);
+    expect(native.async.mock.calls.every(([, args]) => args.includes("sdk-prepare"))).toBe(true);
+  });
   test("an explicit handle stays bound when another caller changes the environment", async () => {
     vi.stubEnv("TNL_CONNECTION_HANDLE", "/private/first/handle.json");
     const { connectionHandle } = await import("../../src/internal/connector/connection.js");
@@ -154,7 +225,7 @@ describe("awaitable root connection handles", () => {
     expect(native.sync).not.toHaveBeenCalled();
   });
 
-  test("Promise.resolve and concurrent awaits prepare only the requested service once", async () => {
+  test("Promise.resolve and concurrent awaits request only the selected service", async () => {
     const { connectionHandle } = await import("../../src/internal/connector/connection.js");
     const update = vi.fn();
     const handle = connectionHandle("database", update);
@@ -172,10 +243,12 @@ describe("awaitable root connection handles", () => {
       port: 24567,
       ssl: { servername: service.hostname, rejectUnauthorized: true },
     });
-    const starts = native.async.mock.calls.filter(([, args]) => args.includes("start"));
-    expect(starts).toHaveLength(1);
-    expect(starts[0]?.[1]).not.toContain("--service");
-    expect(native.async).toHaveBeenCalledTimes(2);
+    const preparations = native.async.mock.calls.map(([, args]) => args);
+    expect(preparations).toHaveLength(1);
+    expect(
+      preparations.every((args) => args.includes("sdk-prepare") && args.at(-1) === "database"),
+    ).toBe(true);
+    expect(new Set(preparations.map((args) => args[args.indexOf("--registry") + 1])).size).toBe(1);
     expect(update).toHaveBeenCalledWith(project);
 
     expect({ ...connectionHandle("database", update) }).toEqual(first);
@@ -366,29 +439,41 @@ describe("awaitable root connection handles", () => {
     });
     expect(await connectionHandle("database", vi.fn())).toEqual(first);
     expect({ ...handle }).toEqual(first);
-    expect(native.async.mock.calls.filter(([, args]) => args.includes("start"))).toHaveLength(1);
+    expect(native.async.mock.calls.every(([, args]) => args.includes("sdk-prepare"))).toBe(true);
     expect(native.async.mock.calls.filter(([, args]) => args.includes("stop"))).toHaveLength(0);
   });
 
   test.each(["startup", "snapshot"])(
-    "new-owner %s validation failures stop and join before retry",
+    "malformed %s wire responses cannot make SDK retirement decisions",
     async (phase) => {
       const { connectionHandle } = await import("../../src/internal/connector/connection.js");
       const handle = connectionHandle("database", vi.fn());
       if (phase === "startup")
-        native.async.mockResolvedValueOnce({ stdout: JSON.stringify({ ...started(), schema: 2 }) });
+        native.async.mockResolvedValueOnce({
+          stdout: JSON.stringify({
+            schema: 1,
+            owner: { ...started(), schema: 2 },
+            prepared: prepared(),
+          }),
+        });
       else
-        native.async
-          .mockResolvedValueOnce({ stdout: JSON.stringify(started()) })
-          .mockResolvedValueOnce({ stdout: JSON.stringify({ ...prepared(), schema: 2 }) });
+        native.async.mockResolvedValueOnce({
+          stdout: JSON.stringify({
+            schema: 1,
+            owner: started(),
+            prepared: { ...prepared(), schema: 2 },
+          }),
+        });
       await expect(Promise.resolve(handle)).rejects.toMatchObject({ code: "sdk.response_invalid" });
-      expect(native.async.mock.calls.filter(([, args]) => args.includes("stop"))).toHaveLength(1);
+      expect(
+        native.async.mock.calls.filter(([, args]) => args.includes("sdk-reject")),
+      ).toHaveLength(0);
       expect(() => ({ ...handle })).toThrow(
         expect.objectContaining({ code: "sdk.connection_unprepared" }),
       );
       expect(await handle).toHaveProperty("port", 24567);
       const operations = native.async.mock.calls.map(([, args]) => args[3]);
-      expect(operations.indexOf("stop")).toBeLessThan(operations.lastIndexOf("start"));
+      expect(operations).toEqual(["sdk-prepare", "sdk-prepare"]);
     },
   );
 
@@ -397,10 +482,15 @@ describe("awaitable root connection handles", () => {
     const { TnlCleanupError, TnlError } = await import("../../src/errors.js");
     const handle = connectionHandle("database", vi.fn());
     native.async
-      .mockResolvedValueOnce({ stdout: JSON.stringify(started()) })
-      .mockResolvedValueOnce({ stdout: JSON.stringify({ ...prepared(), schema: 2 }) })
-      .mockRejectedValueOnce({ code: "ETIMEDOUT", stderr: "private-cleanup-detail" })
-      .mockResolvedValueOnce({ stdout: JSON.stringify({ schema: 1, state: "stopping" }) });
+      .mockRejectedValueOnce({
+        stderr: JSON.stringify({
+          reason: "TNL_CLIENT_CONNECTION_CLEANUP_FAILED",
+          message: "private-cleanup-detail",
+        }),
+      })
+      .mockRejectedValueOnce({
+        stderr: JSON.stringify({ reason: "TNL_CLIENT_CONNECTION_CLEANUP_FAILED" }),
+      });
     let failure: unknown;
     try {
       await handle;
@@ -420,16 +510,11 @@ describe("awaitable root connection handles", () => {
       code: "sdk.cleanup_failed",
       cause: failure.cause,
     });
-    expect(native.async.mock.calls.filter(([, args]) => args.includes("start"))).toHaveLength(1);
     expect(await handle).toHaveProperty("port", 24567);
     expect(native.async.mock.calls.map(([, args]) => args[3])).toEqual([
-      "start",
-      "prepare",
-      "stop",
-      "stop",
-      "stop",
-      "start",
-      "prepare",
+      "sdk-prepare",
+      "sdk-prepare",
+      "sdk-prepare",
     ]);
   });
 
@@ -462,16 +547,12 @@ describe("awaitable root connection handles", () => {
     );
     expect(settings.every((value) => Object.isFrozen(value))).toBe(true);
     expect(JSON.stringify(first)).toBe(previous);
-    expect(native.async.mock.calls.map(([, args]) => args[3])).toEqual([
-      "start",
-      "prepare",
-      "stop",
-      "start",
-      "prepare",
-    ]);
+    expect(native.async.mock.calls.map(([, args]) => args[3])).toEqual(
+      Array.from({ length: 2 }, () => "sdk-prepare"),
+    );
   });
 
-  test("expired owner cleanup retains its capability until joined stop is confirmed", async () => {
+  test("failed native expiry preparation does not trigger SDK stop or replacement commands", async () => {
     const { connectionHandle } = await import("../../src/internal/connector/connection.js");
     const handle = connectionHandle("database", vi.fn());
     await handle;
@@ -479,25 +560,22 @@ describe("awaitable root connection handles", () => {
     vi.setSystemTime(Date.now() + 120_000);
     native.async
       .mockRejectedValueOnce({ code: "ETIMEDOUT" })
-      .mockResolvedValueOnce({ stdout: JSON.stringify({ schema: 1, state: "stopping" }) });
+      .mockRejectedValueOnce({ code: "ETIMEDOUT" })
+      .mockRejectedValueOnce({ code: "ETIMEDOUT" })
+      .mockRejectedValueOnce({ code: "ETIMEDOUT" });
     await expect(Promise.resolve(handle)).rejects.toMatchObject({
       code: "sdk.connection_unavailable",
     });
-    await expect(Promise.resolve(handle)).rejects.toMatchObject({ code: "sdk.response_invalid" });
-    expect(native.async.mock.calls.filter(([, args]) => args.includes("start"))).toHaveLength(1);
+    await expect(Promise.resolve(handle)).rejects.toMatchObject({
+      code: "sdk.connection_unavailable",
+    });
     expect(() => ({ ...handle })).toThrow(
       expect.objectContaining({ code: "sdk.connection_unprepared" }),
     );
     await handle;
-    expect(native.async.mock.calls.map(([, args]) => args[3])).toEqual([
-      "start",
-      "prepare",
-      "stop",
-      "stop",
-      "stop",
-      "start",
-      "prepare",
-    ]);
+    expect(native.async.mock.calls.map(([, args]) => args[3])).toEqual(
+      Array.from({ length: 6 }, () => "sdk-prepare"),
+    );
   });
 
   test("snapshot expiry cannot replace a live owner or extend its validated deadline", async () => {
@@ -507,19 +585,19 @@ describe("awaitable root connection handles", () => {
     await handle;
     vi.useFakeTimers();
     vi.setSystemTime(now + 30_000);
-    native.async.mockResolvedValueOnce({
-      stdout: JSON.stringify({
-        ...prepared(),
-        connection: { ...connection(), expires_at: new Date(now - 1).toISOString() },
-      }),
+    native.async.mockRejectedValueOnce({
+      stderr: JSON.stringify({ reason: "TNL_CLIENT_CONNECTION_EXPIRED" }),
     });
-    await expect(Promise.resolve(handle)).rejects.toMatchObject({ code: "sdk.response_invalid" });
+    await expect(Promise.resolve(handle)).rejects.toMatchObject({
+      code: "sdk.connection_unavailable",
+    });
     await handle;
-    expect(native.async.mock.calls.filter(([, args]) => args.includes("start"))).toHaveLength(1);
     expect(native.async.mock.calls.filter(([, args]) => args.includes("stop"))).toHaveLength(0);
     vi.setSystemTime(now + 61_000);
     await handle;
-    expect(native.async.mock.calls.filter(([, args]) => args.includes("stop"))).toHaveLength(1);
-    expect(native.async.mock.calls.filter(([, args]) => args.includes("start"))).toHaveLength(2);
+    expect(native.async.mock.calls.filter(([, args]) => args.includes("stop"))).toHaveLength(0);
+    expect(native.async.mock.calls.filter(([, args]) => args.includes("sdk-prepare"))).toHaveLength(
+      5,
+    );
   });
 });

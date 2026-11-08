@@ -18,6 +18,13 @@ import (
 
 var ErrServiceConnection = errors.New("service: authenticated connection is unavailable")
 
+// CleanupError distinguishes a failed resource close from the operation that
+// stopped the connector. callers retain both through normal error unwrapping.
+type CleanupError struct{ Err error }
+
+func (e *CleanupError) Error() string { return "connector cleanup: " + e.Err.Error() }
+func (e *CleanupError) Unwrap() error { return e.Err }
+
 // Signer binds one tagged subject to its enrolled key. signing is preparation
 // work; neither local application arrival nor a copied application stream signs.
 type Signer struct {
@@ -119,10 +126,14 @@ func serveConnections(ctx context.Context, config Config, consume connectionCons
 		}
 		bounded, stop := context.WithTimeout(cleanup, 5*time.Second)
 		defer stop()
+		var err error
 		if closer, ok := config.Control.(interface{ CloseContext(context.Context) error }); ok {
-			result = errors.Join(result, closer.CloseContext(bounded))
+			err = closer.CloseContext(bounded)
 		} else if closer, ok := config.Control.(interface{ Close() error }); ok {
-			result = errors.Join(result, closer.Close())
+			err = closer.Close()
+		}
+		if err != nil {
+			result = errors.Join(result, &CleanupError{Err: err})
 		}
 	}()
 	setup, stop := context.WithTimeout(startup, 30*time.Second)

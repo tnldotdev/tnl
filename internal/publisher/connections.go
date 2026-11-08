@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
@@ -277,9 +276,13 @@ func (c *publicPublisherSlot) Drain(ctx context.Context) error {
 	if err == nil {
 		err = c.session.RequestPublisherDrain(ctx, requestID)
 	}
-	// a connection-level write failure can precede the session's close
-	// notification. either proves the transport can no longer admit visitors.
-	if err != nil && context.Cause(ctx) == nil && (errors.Is(err, net.ErrClosed) || errors.Is(c.session.Err(), muxsession.ErrClosed)) {
+	var protocol *tunnel.ProtocolError
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &protocol) {
+		return err
+	}
+	// a normal transport close already stopped admission and visitor streams.
+	// stream i/o can report that close before the session notification arrives.
+	if err != nil && context.Cause(ctx) == nil && (errors.Is(err, muxsession.ErrClosed) || errors.Is(c.session.Err(), muxsession.ErrClosed)) {
 		return nil
 	}
 	return err
