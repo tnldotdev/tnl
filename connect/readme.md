@@ -116,6 +116,17 @@ its temporary directory after cleanup succeeds. It uses a saved copy of the
 binary, so later installs or checkout changes do not break cleanup. A cleanup
 failure is reported and retains the temporary files.
 
+Before a GitHub proof expires, the native connector process requests a fresh
+proof from this job's runtime API and attaches it to the same workload session.
+Later steps do not need to request another proof or reopen their connections.
+Each proof must still match the saved policy and the original GitHub job.
+
+Refresh does not extend the workload's fixed deadline or remove permission-lease
+limits. If GitHub cannot supply an accepted proof before the current proof or
+lease expires, the connections stop at that accepted expiry. Another job's proof
+cannot replace the session. The connector keeps its copy of the runtime credential
+only in memory, not in the handle, action state, or exported environment.
+
 ## work on the action
 
 Edit [src/](src/); [scripts/build.ts](scripts/build.ts) generates the committed
@@ -123,6 +134,7 @@ Edit [src/](src/); [scripts/build.ts](scripts/build.ts) generates the committed
 
 ```sh
 mise exec -- task connect:check
+mise exec -- task go:test:integration:action-background-refresh
 mise exec -- task connect:generate-check
 mise exec -- actionlint connect/test/workflow.yml
 mise exec -- zizmor connect

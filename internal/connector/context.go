@@ -216,6 +216,9 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 	if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) || (scope.Workload == "") != (request.Assertion == "") {
 		return connectorruntime.ErrInvalid
 	}
+	if err := validateGitHubActionsRefresh(options.OwnerStartOptions, project, request); err != nil {
+		return err
+	}
 	backend := &connectorConnectionBackend{openSession: o.OpenSession, project: project, scope: scope, stateDir: options.StateDir, assertion: request.Assertion, directory: options.OwnerDirectory, runnerTemp: options.RunnerTemp, parentPID: options.ParentPID}
 	if request.Refresh != nil {
 		if scope.Workload == "" || workload.ValidateRefreshSource(*request.Refresh) != nil {
@@ -225,6 +228,13 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 		backend.refreshAssertion = func(ctx context.Context) (string, error) {
 			return workload.Acquire(ctx, source, nil, func(string) string { return "" })
 		}
+	}
+	if request.GitHubActionsRefresh != nil {
+		source := *request.GitHubActionsRefresh
+		backend.refreshAssertion = func(ctx context.Context) (string, error) {
+			return workload.Acquire(ctx, workloadmanifest.Acquisition{Method: "github-actions", Audience: scope.Audience}, nil, source.Getenv)
+		}
+		request.GitHubActionsRefresh = nil
 	}
 	if options.SDKRegistry != "" {
 		if options.ParentPID <= 0 || connectorruntime.VerifyDirectory(options.SDKRegistry) != nil {

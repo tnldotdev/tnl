@@ -178,6 +178,7 @@ func TestConnectionSDKRefreshKeepsSelectedSource(t *testing.T) {
 		{name: "explicit runtime file", source: "native", hints: workloadmanifest.Acquisition{Method: "github-actions"}, request: connectorruntime.SDKWorkloadRequest{TokenFile: "current.jwt"}, want: &workloadmanifest.Acquisition{Method: "token-file", TokenFile: filepath.Join(directory, "current.jwt")}},
 		{name: "declared file", source: "native", hints: workloadmanifest.Acquisition{Method: "token-file", TokenFile: "current.jwt"}, want: &workloadmanifest.Acquisition{Method: "token-file", TokenFile: filepath.Join(directory, "current.jwt")}},
 		{name: "static selected environment", source: "native", hints: workloadmanifest.Acquisition{Method: "token-env", TokenEnv: "JWT"}, environment: connectorruntime.SDKEnvironment{TokenEnv: "JWT", TokenValue: "private.jwt"}},
+		{name: "SDK GitHub request bearer is not Action ownership", source: "native", hints: workloadmanifest.Acquisition{Method: "github-actions", Audience: "https://control.example"}, environment: connectorruntime.SDKEnvironment{GitHubActions: "true", GitHubRequestURL: "https://runtime.example/token", GitHubRequestToken: "private-request-bearer"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			selected := workloadmanifest.Selection{Directory: directory, Workload: workloadmanifest.Workload{Acquisition: test.hints}}

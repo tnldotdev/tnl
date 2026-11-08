@@ -35,6 +35,9 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 		if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) {
 			return connectorruntime.ErrInvalid
 		}
+		if err := validateGitHubActionsRefresh(options, project, request); err != nil {
+			return err
+		}
 		if request.Assertion == "" {
 			var hints workloadmanifest.Acquisition
 			if options.Manifest != "" {

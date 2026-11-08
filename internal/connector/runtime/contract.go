@@ -55,10 +55,37 @@ type StartRequest struct {
 	// refresh carries only a selected native file or local platform source.
 	// callbacks, environment token values and provider request bearers stay out.
 	Refresh *workloadmanifest.Acquisition `json:"refresh,omitempty"`
+	// github_actions_refresh is an explicit job-owned source from the action,
+	// not an SDK request environment. it travels only over private startup stdin.
+	GitHubActionsRefresh *GitHubActionsRefresh `json:"github_actions_refresh,omitempty"`
 }
 
 func (StartRequest) String() string   { return "private connection startup request" }
 func (StartRequest) GoString() string { return "private connection startup request" }
+
+type GitHubActionsRefresh struct {
+	Audience     string `json:"audience"`
+	RequestURL   string `json:"request_url"`
+	RequestToken string `json:"request_token"`
+}
+
+func (GitHubActionsRefresh) String() string   { return "private GitHub Actions refresh source" }
+func (GitHubActionsRefresh) GoString() string { return "private GitHub Actions refresh source" }
+
+// Getenv exposes only the explicitly transferred job runtime, never ambient
+// process input or a later SDK request's provider credentials.
+func (s GitHubActionsRefresh) Getenv(name string) string {
+	switch name {
+	case "GITHUB_ACTIONS":
+		return "true"
+	case "ACTIONS_ID_TOKEN_REQUEST_URL":
+		return s.RequestURL
+	case "ACTIONS_ID_TOKEN_REQUEST_TOKEN":
+		return s.RequestToken
+	default:
+		return ""
+	}
+}
 
 type Request struct {
 	Schema            int                 `json:"schema"`
