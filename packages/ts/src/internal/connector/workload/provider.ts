@@ -8,6 +8,7 @@ import type { WorkloadOptions } from "../../../workload.js";
 import { manifestSchema, parseWorkload, type Workload, type WorkloadManifest } from "./contract.js";
 import { cancellable } from "../cancellation.js";
 import { isServiceName, pathTextSchema, serviceNameSchema } from "../../values.js";
+import { context, contextKey } from "../context.js";
 
 const workloadOptionsSchema = z
   .union([
@@ -26,11 +27,13 @@ const workloadOptionsSchema = z
   ])
   .readonly();
 
-let configuration: z.output<typeof workloadOptionsSchema> | undefined;
+export type WorkloadConfiguration = z.output<typeof workloadOptionsSchema>;
 
 /** register a fixed request-scoped source, never a mutable current token. */
 export function configureWorkload(options: WorkloadOptions): void {
   const selected = parseWorkload(workloadOptionsSchema, options, "sdk.workload_required");
+  const key = contextKey();
+  const configuration = context.workloads.get(key);
   if (
     configuration !== undefined &&
     (configuration.name !== selected.name ||
@@ -38,7 +41,9 @@ export function configureWorkload(options: WorkloadOptions): void {
       configuration.tokenFile !== selected.tokenFile)
   )
     throw new TnlError("sdk.workload_required");
-  configuration = selected;
+  if (configuration === undefined && context.workloads.size >= 32)
+    throw new TnlError("sdk.workload_required");
+  context.workloads.set(key, selected);
 }
 
 function runtimeProviders(): string[] {
@@ -49,11 +54,11 @@ function runtimeProviders(): string[] {
   ];
 }
 
-export function usesWorkload(): boolean {
+export function usesWorkload(key = contextKey()): boolean {
   return (
     process.env.TNL_CONNECTION_HANDLE === undefined &&
     (process.env.TNL_WORKLOAD !== undefined ||
-      configuration !== undefined ||
+      context.workloads.has(key) ||
       runtimeProviders().length > 0)
   );
 }
@@ -84,7 +89,7 @@ export async function boundedFile(
   }
 }
 
-export async function selectWorkload(): Promise<{
+export async function selectWorkload(key = contextKey()): Promise<{
   manifest: WorkloadManifest;
   name: string;
   selected: Workload;
@@ -107,6 +112,7 @@ export async function selectWorkload(): Promise<{
   } catch (cause) {
     throw privateTnlError("sdk.workload_manifest_invalid", cause);
   }
+  const configuration = context.workloads.get(key);
   const explicit = process.env.TNL_WORKLOAD ?? configuration?.name;
   if (configuration !== undefined && explicit !== configuration.name)
     throw new TnlError("sdk.workload_required");
@@ -219,11 +225,12 @@ export async function acquireAssertion(
   selected: Workload,
   directory: string,
   signal: AbortSignal,
+  key = contextKey(),
 ): Promise<string> {
   const lifetime = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
   try {
     return await cancellable(lifetime, () =>
-      acquireCurrentAssertion(name, selected, directory, lifetime),
+      acquireCurrentAssertion(name, selected, directory, lifetime, key),
     );
   } catch (cause) {
     if (lifetime.aborted) throw lifetime.reason;
@@ -236,9 +243,11 @@ async function acquireCurrentAssertion(
   selected: Workload,
   directory: string,
   signal: AbortSignal,
+  key: string,
 ): Promise<string> {
   try {
     signal.throwIfAborted();
+    const configuration = context.workloads.get(key);
     const source = configuration?.name === name ? configuration : undefined;
     if (source !== undefined) {
       if (

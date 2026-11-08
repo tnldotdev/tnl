@@ -33,13 +33,14 @@ var errConnectorFixture = errors.New("connector fixture rejected preparation")
 // consumers. the target still owns application TLS and authentication. real
 // authority, policy and process claims remain covered by the daemon/state tiers.
 type Connector struct {
-	Ready                          controlv1.ConnectorPeerPairReady
-	service, run, workload, target string
-	ctx                            context.Context
-	tls                            *tls.Config
-	mu                             sync.Mutex
-	pairs                          map[string]*connectorPair
-	workers                        sync.WaitGroup
+	Ready                controlv1.ConnectorPeerPairReady
+	service, run, target string
+	ctx                  context.Context
+	tls                  *tls.Config
+	mu                   sync.Mutex
+	pairs                map[string]*connectorPair
+	workloads            map[string]bool
+	workers              sync.WaitGroup
 }
 
 type connectorPair struct {
@@ -65,7 +66,7 @@ func NewConnector(t *testing.T, ca *x509.Certificate, caKey ed25519.PrivateKey, 
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	n := &Connector{ctx: ctx, service: service, run: run, workload: workload, target: target, pairs: make(map[string]*connectorPair), tls: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}}
+	n := &Connector{ctx: ctx, service: service, run: run, workloads: map[string]bool{workload: true}, target: target, pairs: make(map[string]*connectorPair), tls: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}}
 	n.Ready.PublisherIdentityId, err = opaqueid.New(opaqueid.PublisherIdentityPrefix)
 	if err != nil {
 		t.Fatal(err)
@@ -113,11 +114,11 @@ func (n *Connector) Prepare(ctx context.Context, body controlv1.ConnectorPeerPai
 	message, err := controlv1.ConnectorPeerPairProofMessage(n.service, body)
 	signature, decodeErr := base64.RawURLEncoding.Strict().DecodeString(body.Signature)
 	subject, subjectErr := visitorsubject.Parse(body.Subject)
-	if err != nil || decodeErr != nil || subjectErr != nil || subject.Kind != tunnelv1.VisitorWorkloadSession || subject.WorkloadSessionID != n.workload || len(public) != ed25519.PublicKeySize || !ed25519.Verify(public, message, signature) || body.ServiceRunId != n.run || body.RunNumber != 1 || body.PublisherIdentityId != n.Ready.PublisherIdentityId || !slices.Equal(body.ExpectedRelays, n.Ready.Relays) {
-		return controlv1.ConnectorPeerPair{}, errConnectorFixture
-	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if err != nil || decodeErr != nil || subjectErr != nil || subject.Kind != tunnelv1.VisitorWorkloadSession || !n.workloads[subject.WorkloadSessionID] || len(public) != ed25519.PublicKeySize || !ed25519.Verify(public, message, signature) || body.ServiceRunId != n.run || body.RunNumber != 1 || body.PublisherIdentityId != n.Ready.PublisherIdentityId || !slices.Equal(body.ExpectedRelays, n.Ready.Relays) {
+		return controlv1.ConnectorPeerPair{}, errConnectorFixture
+	}
 	if n.ctx.Err() != nil || ctx.Err() != nil {
 		return controlv1.ConnectorPeerPair{}, context.Canceled
 	}
@@ -165,6 +166,13 @@ func (n *Connector) Prepare(ctx context.Context, body controlv1.ConnectorPeerPai
 	case <-ctx.Done():
 		return controlv1.ConnectorPeerPair{}, context.Cause(ctx)
 	}
+}
+
+// AllowWorkload admits another session exchanged by the fixture authority.
+func (n *Connector) AllowWorkload(session string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.workloads[session] = true
 }
 
 func (n *Connector) accept(connection net.Conn, slot int) {

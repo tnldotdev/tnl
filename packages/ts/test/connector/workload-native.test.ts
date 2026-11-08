@@ -264,6 +264,7 @@ function project() {
 let originalListeners = new Set(process.listeners("beforeExit"));
 beforeEach(() => {
   vi.resetModules();
+  vi.stubGlobal("__tnlConnectorContextV1", undefined);
   fixture.assertion = "first";
   fixture.owners.clear();
   fixture.calls.length = 0;
