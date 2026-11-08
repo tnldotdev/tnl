@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -161,5 +162,82 @@ func TestConnectorTerminalPermissionControlPreservesEarlierAuthorizationCause(t 
 	p.Close()
 	if cause := context.Cause(p.ctx); cause != denied || !errors.Is(cause, io.ErrClosedPipe) {
 		t.Fatal("terminal control cleanup replaced the first authorization cause", cause)
+	}
+}
+
+func TestConnectorTerminalPermissionControlWatchWinsRetirement(t *testing.T) {
+	for _, transport := range []string{"quic", "tls-tcp"} {
+		for _, mode := range []string{"eof", "session closed"} {
+			t.Run(transport+"/"+mode, func(t *testing.T) {
+				client, server := stdioTransportSessions(t, transport)
+				ctx, cancel := context.WithCancelCause(t.Context())
+				defer cancel(nil)
+				setup, stop := context.WithTimeout(ctx, 3*time.Second)
+				defer stop()
+				accepted := make(chan muxsession.Stream, 1)
+				failed := make(chan error, 1)
+				var workers sync.WaitGroup
+				workers.Go(func() {
+					control, err := tunnel.AcceptConnectorPermissionControl(setup, server)
+					if err != nil {
+						failed <- err
+						return
+					}
+					accepted <- control
+				})
+				defer func() { stop(); workers.Wait() }()
+				writer, err := tunnel.OpenConnectorPermissionControl(ctx, setup, client)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer writer.Close()
+				var control muxsession.Stream
+				select {
+				case control = <-accepted:
+				case err := <-failed:
+					t.Fatal(err)
+				case <-setup.Done():
+					t.Fatal(context.Cause(setup))
+				}
+				defer control.Close()
+				until := time.Now().Add(time.Minute)
+				p := &connectorConnection{ctx: ctx, cancel: cancel, session: client, permissions: writer, until: until, preparedUntil: until, changed: make(chan struct{})}
+				p.run.ValidUntil, p.permission.ExpiresAt = until, until
+				defer p.Close()
+				if mode == "eof" {
+					err = control.CloseWrite()
+				} else {
+					err = client.Close()
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case <-writer.Done():
+				case <-setup.Done():
+					t.Fatal("permission reader did not observe terminal control", context.Cause(setup))
+				}
+				underlying := writer.Err()
+				if underlying == nil || errors.Is(underlying, ErrServiceConnection) || context.Cause(ctx) != nil {
+					t.Fatal("fixture did not isolate an unclassified permission failure", underlying, context.Cause(ctx))
+				}
+				// the permission notification worker has not run. force watch to
+				// observe the terminal reader first, with every authority still current.
+				watched := make(chan struct{})
+				p.workers.Go(func() { defer close(watched); p.watch() })
+				select {
+				case <-watched:
+				case <-time.After(time.Second):
+					t.Fatal("watch did not retire terminal permission control")
+				}
+				cause := context.Cause(ctx)
+				if !errors.Is(cause, ErrServiceConnection) || !errors.Is(cause, underlying) {
+					t.Fatal("watch lost terminal control classification or its underlying cause", cause)
+				}
+				if mode == "eof" && !errors.Is(cause, io.EOF) {
+					t.Fatal("watch discarded control EOF", cause)
+				}
+			})
+		}
 	}
 }

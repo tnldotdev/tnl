@@ -371,8 +371,11 @@ func (p *connectorConnection) watch() {
 		changed := p.changed
 		if !current {
 			cause := context.Cause(p.ctx)
-			if p.permissions != nil {
-				cause = errors.Join(cause, p.permissions.Err())
+			if cause == nil && p.permissions != nil {
+				if err := p.permissions.Err(); err != nil {
+					// watch may retire the owner before its permission worker runs.
+					cause = fmt.Errorf("connector permission owner ended: %w", errors.Join(ErrServiceConnection, err))
+				}
 			}
 			if cause == nil {
 				cause = fmt.Errorf("connector authority expired (pair=%s run=%s permission=%s): %w", p.until.Format(time.RFC3339Nano), p.run.ValidUntil.Format(time.RFC3339Nano), p.permission.ExpiresAt.Format(time.RFC3339Nano), ErrServiceConnection)
