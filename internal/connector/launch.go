@@ -91,6 +91,12 @@ func launchOwner(ctx context.Context, options OwnerStartOptions, request connect
 	if err != nil {
 		return err
 	}
+	if options.beforeStart != nil {
+		if err := options.beforeStart(directory); err != nil {
+			_ = os.RemoveAll(directory)
+			return err
+		}
+	}
 	owned := false
 	defer func() {
 		if !owned {
@@ -126,6 +132,9 @@ func launchOwner(ctx context.Context, options OwnerStartOptions, request connect
 	}
 	if options.SDKRegistry != "" {
 		args = append(args, "--sdk-registry", options.SDKRegistry)
+	}
+	if options.RequestHandle != "" {
+		args = append(args, "--sdk-request-handle", options.RequestHandle)
 	}
 	for _, flag := range [][2]string{{"--kube-token-file", options.KubeTokenFile}, {"--kube-user-config", options.KubeUserConfig}, {"--kube-user", options.KubeUser}, {"--namespace", options.Namespace}} {
 		if flag[1] != "" {

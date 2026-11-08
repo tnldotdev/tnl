@@ -47,6 +47,10 @@ async def main() -> None:
             assert (await handle).port == first.port
             assert handle._session.handle == owner
         print("warm", flush=True)
+        if "lifecycle" in sys.argv:
+            from native_lifecycle import run
+
+            await run(handle, first)
         assert await asyncio.to_thread(input) == "stop"
     finally:
         await handle.aclose()

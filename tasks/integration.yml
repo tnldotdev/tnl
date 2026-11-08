@@ -65,7 +65,22 @@ tasks:
     desc: Check the built connector owner and SDK through prepared HTTP and Kubernetes connections
     deps: [":js:build", ":py:sync"]
     cmds:
-      - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwner(HTTP|Kubernetes|SDKSelectionBudget|SDKProcessContext|SDKNativeWorkloadAcquisition)$' -count=1 -timeout=6m -args -tnl-test-tier=integration
+      - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwner(HTTP|Kubernetes|SDKSelectionBudget|SDKProcessContext|SDKNativeWorkloadAcquisition|SDKPythonLifecycle)$' -count=1 -timeout=6m -args -tnl-test-tier=integration
+      - task: :go:test:integration:sdk-python-prepare-timeout
+
+  sdk-python-lifecycle:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check Python close and retained failures through the production native registry
+    deps: [":py:sync"]
+    cmds:
+      - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwnerSDKPythonLifecycle$' -count=1 -timeout=1m -args -tnl-test-tier=integration
+
+  sdk-python-prepare-timeout:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check lost Python preparation replies before and after native readiness without stopping peers
+    deps: [":py:sync"]
+    cmds:
+      - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwnerSDKPythonPrepareTimeout$' -count=1 -timeout=1m -args -tnl-test-tier=integration
 
   kubernetes:
     desc: Run kubectl against a digest-pinned disposable kind cluster (Docker, kubectl, kind v0.30.0)

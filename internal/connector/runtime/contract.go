@@ -67,6 +67,7 @@ type Request struct {
 	Workload          string              `json:"workload,omitempty"`
 	Manifest          string              `json:"manifest,omitempty"`
 	RequestedAt       string              `json:"requested_at,omitempty"`
+	SDKRequestHandle  string              `json:"sdk_request_handle,omitempty"`
 	SDKWorkload       *SDKWorkloadRequest `json:"sdk_workload,omitempty"`
 	SDKWorkloadPolicy string              `json:"sdk_workload_policy,omitempty"`
 	SDKEnvironment    *SDKEnvironment     `json:"sdk_environment,omitempty"`

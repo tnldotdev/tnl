@@ -96,6 +96,11 @@ func newSDKFixture(t *testing.T, workload bool) *sdkFixture {
 			if err != nil {
 				return err
 			}
+			if options.beforeStart != nil {
+				if err := options.beforeStart(dir); err != nil {
+					return err
+				}
+			}
 			lock, err := filelock.Acquire(filepath.Join(dir, "owner.lock"), filelock.Nonblocking, os.Getuid())
 			if err != nil {
 				return err
@@ -523,17 +528,17 @@ func TestConnectionSDKClosingFailureLeavesPeerAndReplacementUntouched(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := CloseSDKFailure(t.Context(), f.options.Registry, f.options.ParentPID+1, old); !errors.Is(err, connectorruntime.ErrUnauthorized) {
+	if err := CloseSDK(t.Context(), SDKCloseOptions{Registry: f.options.Registry, ParentPID: f.options.ParentPID + 1, FailureHandle: old}); !errors.Is(err, connectorruntime.ErrUnauthorized) {
 		t.Fatal("another parent cleared failure", err)
 	}
-	if err := CloseSDKFailure(t.Context(), f.options.Registry, f.options.ParentPID, old); err != nil {
+	if err := CloseSDK(t.Context(), SDKCloseOptions{Registry: f.options.Registry, ParentPID: f.options.ParentPID, FailureHandle: old}); err != nil {
 		t.Fatal(err)
 	}
 	current, err := f.prepare(t.Context(), "first", "db")
 	if err != nil || f.started != 3 {
 		t.Fatal("closing failed identity did not permit retry", err, f.started)
 	}
-	if err := CloseSDKFailure(t.Context(), f.options.Registry, f.options.ParentPID, old); err != nil {
+	if err := CloseSDK(t.Context(), SDKCloseOptions{Registry: f.options.Registry, ParentPID: f.options.ParentPID, FailureHandle: old}); err != nil {
 		t.Fatal(err)
 	}
 	warm, err := f.prepare(t.Context(), "first", "db")
@@ -553,7 +558,7 @@ func TestConnectionSDKClosingFailureLeavesPeerAndReplacementUntouched(t *testing
 	if !errors.As(err, &failed) || failed.SDKFailureHandle() == old {
 		t.Fatal("new startup reused failure reference", err)
 	}
-	if err := CloseSDKFailure(t.Context(), f.options.Registry, f.options.ParentPID, old); err != nil {
+	if err := CloseSDK(t.Context(), SDKCloseOptions{Registry: f.options.Registry, ParentPID: f.options.ParentPID, FailureHandle: old}); err != nil {
 		t.Fatal(err)
 	}
 	f.denyStart = false

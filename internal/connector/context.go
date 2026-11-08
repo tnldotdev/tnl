@@ -36,6 +36,8 @@ type OwnerStartOptions struct {
 	RunnerTemp                                         string
 	ParentPID                                          int
 	SDKRegistry                                        string
+	RequestHandle                                      string
+	beforeStart                                        func(string) error
 	KubeTokenFile, KubeUserConfig, KubeUser, Namespace string
 }
 
