@@ -125,10 +125,21 @@ if (op === "oidc") {
   const request = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
     assertion: string;
     context: { audience: string };
+    github_actions_refresh?: {
+      audience: string;
+      request_url: string;
+      request_token: string;
+    };
   };
   await trace({
     proofOnStdin: request.assertion === "fixture-jwt-never-log",
     audience: request.context.audience,
+    actionRefreshOnStdin:
+      request.github_actions_refresh?.audience === request.context.audience &&
+      request.github_actions_refresh.request_url ===
+        "https://runtime.example.test/token?keep=yes&audience=wrong" &&
+      request.github_actions_refresh.request_token === "fixture-bearer",
+    argvHasRuntimeCredential: args.some((arg) => arg.includes("fixture-bearer")),
   });
   if (config.noisy) {
     process.stderr.write(request.assertion);

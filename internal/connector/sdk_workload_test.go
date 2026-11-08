@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -159,5 +160,60 @@ func TestConnectionSDKWorkloadEnvironmentOverride(t *testing.T) {
 	}
 	if strings.Contains(fmt.Sprintf("%v %#v", connectorruntime.SDKEnvironment{TokenEnv: "JOB_ID_TOKEN", TokenValue: "private-value"}, connectorruntime.SDKEnvironment{TokenValue: "private-value"}), "private-value") {
 		t.Fatal("environment input leaked")
+	}
+}
+
+func TestConnectionSDKRefreshKeepsSelectedSource(t *testing.T) {
+	directory := t.TempDir()
+	for _, test := range []struct {
+		name, source, assertion string
+		hints                   workloadmanifest.Acquisition
+		request                 connectorruntime.SDKWorkloadRequest
+		environment             connectorruntime.SDKEnvironment
+		want                    *workloadmanifest.Acquisition
+	}{
+		{name: "callback does not borrow a file", source: "callback", assertion: "private.jwt", hints: workloadmanifest.Acquisition{Method: "github-actions"}, environment: connectorruntime.SDKEnvironment{VercelTokenFile: "fallback.jwt"}},
+		{name: "Vercel request token does not borrow a file", source: "vercel", assertion: "private.jwt", hints: workloadmanifest.Acquisition{Method: "vercel-oidc"}, environment: connectorruntime.SDKEnvironment{VercelTokenFile: "fallback.jwt"}},
+		{name: "selected Vercel file", source: "vercel", hints: workloadmanifest.Acquisition{Method: "vercel-oidc"}, environment: connectorruntime.SDKEnvironment{VercelTokenFile: "current.jwt"}, want: &workloadmanifest.Acquisition{Method: "token-file", TokenFile: filepath.Join(directory, "current.jwt")}},
+		{name: "explicit runtime file", source: "native", hints: workloadmanifest.Acquisition{Method: "github-actions"}, request: connectorruntime.SDKWorkloadRequest{TokenFile: "current.jwt"}, want: &workloadmanifest.Acquisition{Method: "token-file", TokenFile: filepath.Join(directory, "current.jwt")}},
+		{name: "declared file", source: "native", hints: workloadmanifest.Acquisition{Method: "token-file", TokenFile: "current.jwt"}, want: &workloadmanifest.Acquisition{Method: "token-file", TokenFile: filepath.Join(directory, "current.jwt")}},
+		{name: "static selected environment", source: "native", hints: workloadmanifest.Acquisition{Method: "token-env", TokenEnv: "JWT"}, environment: connectorruntime.SDKEnvironment{TokenEnv: "JWT", TokenValue: "private.jwt"}},
+		{name: "SDK GitHub request bearer is not Action ownership", source: "native", hints: workloadmanifest.Acquisition{Method: "github-actions", Audience: "https://control.example"}, environment: connectorruntime.SDKEnvironment{GitHubActions: "true", GitHubRequestURL: "https://runtime.example/token", GitHubRequestToken: "private-request-bearer"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			selected := workloadmanifest.Selection{Directory: directory, Workload: workloadmanifest.Workload{Acquisition: test.hints}}
+			got := sdkWorkloadRefresh(selected, test.source, test.request, test.environment, test.assertion)
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatal("refresh changed the selected acquisition source")
+			}
+		})
+	}
+}
+
+func TestConnectionSDKStartupTransfersOnlyNativeRefreshHints(t *testing.T) {
+	f, _ := sdkWorkloadFixture(t, "github", workloadmanifest.Acquisition{Method: "github-actions", Audience: "https://control.example"})
+	file := filepath.Join(f.options.Directory, "current.jwt")
+	if err := os.WriteFile(file, []byte("private-startup-assertion"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	request := connectorruntime.SDKWorkloadRequest{Name: "job", TokenFile: "current.jwt"}
+	selected, _, err := selectSDKWorkload(f.options.Directory, "db", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := f.operations.start
+	f.operations.start = func(ctx context.Context, options OwnerStartOptions, request connectorruntime.StartRequest, accept func(connectorruntime.Status) error) error {
+		if request.Refresh == nil || request.Refresh.Method != "token-file" || request.Refresh.TokenFile != file || request.Refresh.TokenEnv != "" || request.Assertion != "private-startup-assertion" {
+			t.Fatal("startup lost the selected refresh source")
+		}
+		return start(ctx, options, request, accept)
+	}
+	input, _ := json.Marshal(map[string]any{"schema": 1, "sdk_workload": request, "sdk_workload_policy": selected.Policy})
+	if _, err := f.operations.prepareSDK(t.Context(), f.options, bytes.NewReader(input)); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(f.options.Registry, "registry.json"))
+	if err != nil || bytes.Contains(data, []byte(file)) || bytes.Contains(data, []byte("private-startup-assertion")) || bytes.Contains(data, []byte(`"refresh"`)) {
+		t.Fatal("registry persisted private startup or refresh acquisition state", err)
 	}
 }

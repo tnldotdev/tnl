@@ -35,6 +35,9 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 		if connectorruntime.ReadJSON(input, &request) != nil || request.Schema != 1 || !reflect.DeepEqual(request.Context, scope) {
 			return connectorruntime.ErrInvalid
 		}
+		if err := validateGitHubActionsRefresh(options, project, request); err != nil {
+			return err
+		}
 		if request.Assertion == "" {
 			var hints workloadmanifest.Acquisition
 			if options.Manifest != "" {
@@ -74,6 +77,7 @@ func StartOwner(ctx context.Context, options OwnerStartOptions, input io.Reader,
 			if err != nil {
 				return failure.Wrap("acquire workload assertion", failure.WorkloadAssertionUnavailable, err)
 			}
+			request.Refresh = workload.RefreshSource(scope.Directory, hints, os.Getenv)
 		}
 	}
 	return launchOwner(ctx, options, request, func(status connectorruntime.Status) error { return json.NewEncoder(output).Encode(status) })

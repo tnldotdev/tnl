@@ -262,3 +262,28 @@ func TestGitHubAssertionBodyProgressDoesNotExtendDeadline(t *testing.T) {
 		t.Fatal("request did not cancel its peer")
 	}
 }
+
+func TestGitHubActionRefreshSourceValidationDoesNotAcquire(t *testing.T) {
+	for _, test := range []struct {
+		name, endpoint, token string
+		valid                 bool
+	}{
+		{"private runtime", "https://runtime.example.test/token?keep=yes", "private-bearer", true},
+		{"HTTP", "http://runtime.example.test/token", "private-bearer", false},
+		{"userinfo", "https://user:secret@runtime.example.test/token", "private-bearer", false},
+		{"fragment", "https://runtime.example.test/token#private", "private-bearer", false},
+		{"missing host", "https:///token", "private-bearer", false},
+		{"oversized URL", "https://runtime.example.test/" + strings.Repeat("x", 4096), "private-bearer", false},
+		{"missing bearer", "https://runtime.example.test/token", "", false},
+		{"invalid bearer", "https://runtime.example.test/token", "private\r\nbearer", false},
+		{"oversized bearer", "https://runtime.example.test/token", strings.Repeat("x", (32<<10)+1), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			environment := map[string]string{"GITHUB_ACTIONS": "true", "ACTIONS_ID_TOKEN_REQUEST_URL": test.endpoint, "ACTIONS_ID_TOKEN_REQUEST_TOKEN": test.token}
+			err := ValidateGitHubActionsSource(func(name string) string { return environment[name] })
+			if (err == nil) != test.valid {
+				t.Fatal("private job runtime validation changed its source bounds", err)
+			}
+		})
+	}
+}

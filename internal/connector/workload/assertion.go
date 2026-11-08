@@ -130,16 +130,9 @@ func Acquire(ctx context.Context, hints workloadmanifest.Acquisition, callback f
 // the audience comes from the generated manifest; the runtime supplies only its
 // HTTPS token endpoint and bearer credential. redirects never carry that bearer.
 func githubAssertion(ctx context.Context, audience string, transport http.RoundTripper, getenv func(string) string) (string, error) {
-	if getenv("GITHUB_ACTIONS") != "true" {
-		return "", ErrAssertionUnavailable
-	}
-	endpoint, err := url.Parse(getenv("ACTIONS_ID_TOKEN_REQUEST_URL"))
-	if err != nil || endpoint.Scheme != "https" || endpoint.Hostname() == "" || endpoint.User != nil || endpoint.Fragment != "" {
-		return "", ErrAssertionUnavailable
-	}
-	bearer, err := boundedAssertion(getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN"))
+	endpoint, bearer, err := githubAssertionSource(getenv)
 	if err != nil {
-		return "", ErrAssertionUnavailable
+		return "", err
 	}
 	query := endpoint.Query()
 	query.Set("audience", audience)
@@ -175,6 +168,32 @@ func githubAssertion(ctx context.Context, audience string, transport http.RoundT
 		return "", ErrAssertionUnavailable
 	}
 	return boundedAssertion(value.Value)
+}
+
+// ValidateGitHubActionsSource checks a private job-runtime source without
+// acquiring a proof. ordinary SDK/request inputs do not gain a background owner.
+func ValidateGitHubActionsSource(getenv func(string) string) error {
+	_, _, err := githubAssertionSource(getenv)
+	return err
+}
+
+func githubAssertionSource(getenv func(string) string) (*url.URL, string, error) {
+	if getenv("GITHUB_ACTIONS") != "true" {
+		return nil, "", ErrAssertionUnavailable
+	}
+	raw := getenv("ACTIONS_ID_TOKEN_REQUEST_URL")
+	if len(raw) > 4096 {
+		return nil, "", ErrAssertionUnavailable
+	}
+	endpoint, err := url.Parse(raw)
+	if err != nil || endpoint.Scheme != "https" || endpoint.Hostname() == "" || endpoint.User != nil || endpoint.Fragment != "" {
+		return nil, "", ErrAssertionUnavailable
+	}
+	bearer, err := boundedAssertion(getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN"))
+	if err != nil {
+		return nil, "", ErrAssertionUnavailable
+	}
+	return endpoint, bearer, nil
 }
 
 // Fly's documented endpoint returns a text/plain signed JWT. the fixed local

@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rm,
   stat,
@@ -173,6 +174,36 @@ function entrypoint(env: NodeJS.ProcessEnv = {}, entry = "main") {
 }
 
 describe("native main and post", () => {
+  test("explicitly transfers job-owned GitHub refresh acquisition on private startup stdin only", async () => {
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv(
+      "ACTIONS_ID_TOKEN_REQUEST_URL",
+      "https://runtime.example.test/token?keep=yes&audience=wrong",
+    );
+    const getIDToken = vi.fn(oidc);
+    await main({ signal: new AbortController().signal, getIDToken });
+    expect(getIDToken).toHaveBeenCalledExactlyOnceWith("https://control.example");
+    const owned = await saved();
+    const traces = await readFile(path.join(project, "trace.ndjson"), "utf8");
+    expect(traces).not.toContain('"argvHasRuntimeCredential":true');
+    expect(traces).not.toContain('"oidcBearer":true');
+    expect(traces).toContain('"tracking":"runner-fixture-tracking"');
+    const files = await readdir(owned.session, { recursive: true });
+    const persisted = [await readFile(state, "utf8"), await readFile(envFile, "utf8")];
+    for (const file of files) {
+      const selected = path.join(owned.session, file);
+      // the synthetic executable contains its fixture constants, not a saved request.
+      if (selected === owned.binary) continue;
+      if ((await stat(selected)).isFile()) persisted.push(await readFile(selected, "utf8"));
+    }
+    for (const value of [...persisted, output.join(""), traces]) {
+      expect(value).not.toContain("fixture-bearer");
+      expect(value).not.toContain("fixture-jwt-never-log");
+      expect(value).not.toContain("runtime.example.test/token");
+    }
+    expect(traces).toContain('"actionRefreshOnStdin":true');
+  });
+
   test("OIDC acquisition has a deadline even when the provider never settles", async () => {
     vi.stubEnv("INPUT_TIMEOUT", "1");
     await actionFailure(

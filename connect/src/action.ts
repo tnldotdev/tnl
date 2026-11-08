@@ -231,12 +231,25 @@ async function setup(options: Parameters<typeof main>[0]): Promise<void> {
       throw new ActionError("TNL_ACTION_OIDC_FAILED", { cause });
     }
     checkCancelled(options.signal);
+    // the action transfers its job-owned runtime source explicitly. ordinary
+    // SDK request bearers are not background sources, and child env stays filtered.
+    const requestURL = process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
+    const requestToken = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+    const githubActionsRefresh =
+      requestURL && requestToken
+        ? { audience: context.audience, request_url: requestURL, request_token: requestToken }
+        : undefined;
     owned.start_attempted = true;
     await save();
     const started = await connectorJSON(binary, ["start", ...scopeArgs, "--runner-temp", session], {
       ...commandOptions,
       timeout: timeout * 1000,
-      input: JSON.stringify({ schema: 1, context, assertion }),
+      input: JSON.stringify({
+        schema: 1,
+        context,
+        assertion,
+        github_actions_refresh: githubActionsRefresh,
+      }),
       onResponse: async (value) => {
         // retain a usable cleanup capability before checking readiness, even
         // when the starter dies after delivering a complete response.
