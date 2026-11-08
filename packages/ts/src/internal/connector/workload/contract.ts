@@ -12,6 +12,7 @@ export interface WorkloadRequest {
     github_actions?: string;
     cloud_run_service?: string;
     kubernetes_service_host?: string;
+    gitlab_ci?: string;
   };
 }
 

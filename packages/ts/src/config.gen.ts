@@ -969,6 +969,7 @@ export interface TnlConfig {
           oidc?: never;
           google?: never;
           kubernetes?: never;
+          gitlab?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1108,6 +1109,7 @@ export interface TnlConfig {
           oidc?: never;
           google?: never;
           kubernetes?: never;
+          gitlab?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1146,6 +1148,7 @@ export interface TnlConfig {
           oidc?: never;
           google?: never;
           kubernetes?: never;
+          gitlab?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1184,6 +1187,7 @@ export interface TnlConfig {
           fly?: never;
           google?: never;
           kubernetes?: never;
+          gitlab?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1225,6 +1229,7 @@ export interface TnlConfig {
           fly?: never;
           oidc?: never;
           kubernetes?: never;
+          gitlab?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1262,6 +1267,7 @@ export interface TnlConfig {
           fly?: never;
           oidc?: never;
           google?: never;
+          gitlab?: never;
           /**
            * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
            *
@@ -1293,6 +1299,134 @@ export interface TnlConfig {
             audience?: string;
             serviceAccount: string;
           };
+          /**
+           * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
+           */
+          maxDuration?: TnlRatePeriod;
+        }
+      | {
+          github?: never;
+          vercel?: never;
+          fly?: never;
+          oidc?: never;
+          google?: never;
+          kubernetes?: never;
+          /**
+           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
+           *
+           * @minItems 1
+           * @maxItems 32
+           */
+          services: [string, ...string[]];
+          token?:
+            | {
+                file: string;
+                env?: never;
+              }
+            | {
+                file?: never;
+                env: string;
+              };
+          gitlab:
+            | {
+                /**
+                 * GitLab project path; defaults to the Git origin on the selected server.
+                 */
+                project?: string;
+                /**
+                 * GitLab HTTPS origin; defaults to https://gitlab.com.
+                 */
+                server?: string;
+                environment?: string;
+                /**
+                 * Intended token recipient; defaults to the control URL.
+                 */
+                audience?: string;
+                branch?: never;
+                tag?: never;
+                pipelineSource?:
+                  | "push"
+                  | "web"
+                  | "schedule"
+                  | "api"
+                  | "trigger"
+                  | "pipeline"
+                  | "parent_pipeline"
+                  | "merge_request_event"
+                  | "external"
+                  | "external_pull_request_event"
+                  | "chat"
+                  | "webide"
+                  | "ondemand_dast_scan"
+                  | "ondemand_dast_validation"
+                  | "security_orchestration_policy";
+              }
+            | {
+                /**
+                 * GitLab project path; defaults to the Git origin on the selected server.
+                 */
+                project?: string;
+                /**
+                 * GitLab HTTPS origin; defaults to https://gitlab.com.
+                 */
+                server?: string;
+                environment?: string;
+                /**
+                 * Intended token recipient; defaults to the control URL.
+                 */
+                audience?: string;
+                branch: string;
+                tag?: never;
+                pipelineSource?:
+                  | "push"
+                  | "web"
+                  | "schedule"
+                  | "api"
+                  | "trigger"
+                  | "pipeline"
+                  | "parent_pipeline"
+                  | "merge_request_event"
+                  | "external"
+                  | "external_pull_request_event"
+                  | "chat"
+                  | "webide"
+                  | "ondemand_dast_scan"
+                  | "ondemand_dast_validation"
+                  | "security_orchestration_policy";
+              }
+            | {
+                /**
+                 * GitLab project path; defaults to the Git origin on the selected server.
+                 */
+                project?: string;
+                /**
+                 * GitLab HTTPS origin; defaults to https://gitlab.com.
+                 */
+                server?: string;
+                environment?: string;
+                /**
+                 * Intended token recipient; defaults to the control URL.
+                 */
+                audience?: string;
+                branch?: never;
+                tag: string;
+                pipelineSource?:
+                  | "push"
+                  | "web"
+                  | "schedule"
+                  | "api"
+                  | "trigger"
+                  | "pipeline"
+                  | "parent_pipeline"
+                  | "merge_request_event"
+                  | "external"
+                  | "external_pull_request_event"
+                  | "chat"
+                  | "webide"
+                  | "ondemand_dast_scan"
+                  | "ondemand_dast_validation"
+                  | "security_orchestration_policy";
+              };
           /**
            * Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof.
            */

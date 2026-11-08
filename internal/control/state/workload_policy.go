@@ -31,11 +31,13 @@ type ProjectWorkload struct {
 	GitHub             *ProjectWorkloadGitHub     `json:"github,omitempty"`
 	Google             *ProjectWorkloadGoogle     `json:"google,omitempty"`
 	Kubernetes         *ProjectWorkloadKubernetes `json:"kubernetes,omitempty"`
+	GitLab             *ProjectWorkloadGitLab     `json:"gitlab,omitempty"`
 	Services           []string                   `json:"services"`
 	MaxDurationSeconds int                        `json:"max_duration_seconds"`
 }
 type ProjectWorkloadGoogle = controlv1.ProjectWorkloadGoogle
 type ProjectWorkloadKubernetes = controlv1.ProjectWorkloadKubernetes
+type ProjectWorkloadGitLab = controlv1.ProjectWorkloadGitLab
 type ProjectWorkloadGitHub struct {
 	Repository        string   `json:"repository"`
 	RepositoryID      string   `json:"repository_id"`
@@ -61,6 +63,9 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 			return ErrProjectConfigurationInvalid
 		}
 		if (p.Provider == "kubernetes") != (p.Kubernetes != nil) {
+			return ErrProjectConfigurationInvalid
+		}
+		if (p.Provider == "gitlab") != (p.GitLab != nil) {
 			return ErrProjectConfigurationInvalid
 		}
 		if p.Provider != "github" {
@@ -210,6 +215,16 @@ func (p ProjectWorkload) validateTrust() error {
 		return true
 	}
 	switch p.Provider {
+	case "gitlab":
+		g := p.GitLab
+		if g == nil || !config.ValidGitLabServer(g.Server) || !config.ValidGitLabProject(g.Project) || !config.ValidWorkloadNumericID(g.ProjectId) || !config.ValidWorkloadNumericID(g.NamespaceId) || t.Issuer != g.Server || t.JWKSURL != g.Server+"/oauth/discovery/keys" || t.Claims["job_project_id"] != g.ProjectId || t.Claims["job_namespace_id"] != g.NamespaceId || t.Claims["job_project_path"] != g.Project || t.Claims["job_namespace_path"] != g.Project[:strings.LastIndex(g.Project, "/")] || !config.ValidWorkloadRef(t.Claims["ref_path"]) || !config.ValidGitLabPipelineSource(t.Claims["pipeline_source"]) || g.DefaultBranch != nil && !config.ValidWorkloadRef("refs/heads/"+*g.DefaultBranch) {
+			return ErrProjectConfigurationInvalid
+		}
+		for key := range t.Claims {
+			if !slices.Contains([]string{"job_project_id", "job_namespace_id", "job_project_path", "job_namespace_path", "ref_path", "pipeline_source", "environment"}, key) {
+				return ErrProjectConfigurationInvalid
+			}
+		}
 	case "kubernetes":
 		k := p.Kubernetes
 		if k == nil || !config.ExactWorkloadValue(k.Context) || !config.WorkloadHTTPS(k.ClusterServer) || !naming.ValidAuthorityLabel(k.Namespace) || !config.ValidKubernetesName(k.ServiceAccount) || len(t.Claims) != 2 || t.Claims["sub"] != "system:serviceaccount:"+k.Namespace+":"+k.ServiceAccount || !config.ValidKubernetesUID(t.Claims["service_account_uid"]) {

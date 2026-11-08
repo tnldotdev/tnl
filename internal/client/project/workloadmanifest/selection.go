@@ -23,6 +23,7 @@ type Runtime struct {
 	GitHubActions         string  `json:"github_actions,omitempty"`
 	CloudRunService       string  `json:"cloud_run_service,omitempty"`
 	KubernetesServiceHost string  `json:"kubernetes_service_host,omitempty"`
+	GitLabCI              string  `json:"gitlab_ci,omitempty"`
 }
 
 type Selection struct {
@@ -80,6 +81,9 @@ func Select(directory, configured, service string, runtime Runtime) (Selection, 
 		}
 		if runtime.KubernetesServiceHost != "" {
 			providers = append(providers, "kubernetes")
+		}
+		if runtime.GitLabCI == "true" {
+			providers = append(providers, "gitlab")
 		}
 		if len(providers) != 1 {
 			return Selection{}, ErrRequired

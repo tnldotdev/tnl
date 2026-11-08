@@ -23,7 +23,7 @@ import (
 
 func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	for _, provider := range []string{"vercel", "fly", "oidc", "google", "kubernetes"} {
+	for _, provider := range []string{"vercel", "fly", "oidc", "google", "kubernetes", "gitlab"} {
 		t.Run(provider, func(t *testing.T) {
 			ctx := t.Context()
 			dbURL := testutil.NewDisposablePostgresDatabaseURL(t, "workload_"+provider)
@@ -66,6 +66,11 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				trust.Claims = map[string]string{"sub": "system:serviceaccount:production:orders", "service_account_uid": "11111111-1111-4111-8111-111111111111"}
 				claims = map[string]any{"iss": trust.Issuer, "aud": trust.Audience, "sub": trust.Claims["sub"], "kubernetes.io": map[string]any{"namespace": "production", "serviceaccount": map[string]any{"name": "orders", "uid": trust.Claims["service_account_uid"]}, "pod": map[string]any{"name": "orders-one", "uid": "22222222-2222-4222-8222-222222222222"}}}
 			}
+			if provider == "gitlab" {
+				trust.Issuer, trust.JWKSURL, trust.Audience = "https://gitlab.example", "https://gitlab.example/oauth/discovery/keys", "https://control.example"
+				trust.Claims = map[string]string{"job_project_id": "123", "job_namespace_id": "456", "job_project_path": "shop/storefront", "job_namespace_path": "shop", "ref_path": "refs/heads/trunk", "pipeline_source": "push"}
+				claims = map[string]any{"iss": trust.Issuer, "aud": trust.Audience, "sub": "project_path:shop/storefront:ref_type:branch:ref:trunk", "project_id": "123", "project_path": "shop/storefront", "namespace_id": "456", "namespace_path": "shop", "job_project_id": "123", "job_project_path": "shop/storefront", "job_namespace_id": "456", "job_namespace_path": "shop", "pipeline_id": "1001", "job_id": "2001", "pipeline_source": "push", "ref": "trunk", "ref_type": "branch", "ref_path": "refs/heads/trunk", "sha": strings.Repeat("a", 40)}
+			}
 			claims["iat"], claims["nbf"], claims["exp"] = now.Unix(), now.Unix(), now.Add(10*time.Minute).Unix()
 			issuer := githubtest.NewKeySet(t, trust.JWKSURL)
 			mux := http.NewServeMux()
@@ -92,6 +97,11 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if provider == "kubernetes" {
 				p := configuration.Workloads["storefront"]
 				p.Kubernetes = &controlstate.ProjectWorkloadKubernetes{Context: "eks-development", ClusterServer: "https://cluster.example.test", Namespace: "production", ServiceAccount: "orders"}
+				configuration.Workloads["storefront"] = p
+			}
+			if provider == "gitlab" {
+				p := configuration.Workloads["storefront"]
+				p.GitLab = &controlstate.ProjectWorkloadGitLab{Server: "https://gitlab.example", Project: "shop/storefront", ProjectId: "123", NamespaceId: "456", DefaultBranch: new("trunk")}
 				configuration.Workloads["storefront"] = p
 			}
 			data, _ := json.Marshal(configuration)
@@ -141,25 +151,28 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if attached, err := job.Attach(ctx, rotated); err != nil || attached.Id != session.Id || attached.Binding != binding || !attached.ExpiresAt.Equal(*session.ExpiresAt) || attached.AssertionExpiresAt == nil || attached.AssertionExpiresAt.Unix() != now.Add(11*time.Minute).Unix() {
 				t.Fatal("authenticated assertion attachment changed session", err)
 			}
-			if provider == "kubernetes" {
-				pod := claims["kubernetes.io"].(map[string]any)["pod"].(map[string]any)
-				original := pod["uid"]
-				pod["uid"] = "33333333-3333-4333-8333-333333333333"
+			if provider == "kubernetes" || provider == "gitlab" {
+				execution, key, next := claims, "job_id", "2002"
+				if provider == "kubernetes" {
+					execution, key, next = claims["kubernetes.io"].(map[string]any)["pod"].(map[string]any), "uid", "33333333-3333-4333-8333-333333333333"
+				}
+				original := execution[key]
+				execution[key] = next
 				replacementToken := issuer.Sign(t, claims)
 				replacementBinding, err := job.Identify(ctx, team, "store", body.SourceFingerprint, "storefront", replacementToken)
 				if err != nil || replacementBinding == binding {
-					t.Fatal("replacement Pod reused the old binding", err)
+					t.Fatal("replacement execution reused the old binding", err)
 				}
 				before, err := job.Session()
 				if err != nil {
 					t.Fatal(err)
 				}
 				if _, err := job.Attach(ctx, replacementToken); err == nil {
-					t.Fatal("replacement Pod attached proof to the old session")
+					t.Fatal("replacement execution attached proof to the old session")
 				}
 				after, err := job.Session()
 				if err != nil || after.Id != before.Id || after.Binding != before.Binding || !after.IdentityExpiresAt.Equal(before.IdentityExpiresAt) || !after.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
-					t.Fatal("rejected Pod attachment changed current authority", err)
+					t.Fatal("rejected attachment changed current authority", err)
 				}
 				replacement, err := workload.New(server.URL, server.Client())
 				if err != nil {
@@ -167,15 +180,15 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 				}
 				replaced, err := replacement.Exchange(ctx, team, "store", body.SourceFingerprint, "storefront", replacementToken, nil)
 				if err != nil || replaced.Id == session.Id || replaced.Binding != replacementBinding {
-					t.Fatal("replacement Pod did not receive separate authority", err)
+					t.Fatal("replacement execution did not receive separate authority", err)
 				}
 				if err := replacement.Revoke(ctx); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := job.ListServices(ctx); err != nil {
-					t.Fatal("replacement cleanup revoked the original Pod", err)
+					t.Fatal("replacement cleanup revoked the original execution", err)
 				}
-				pod["uid"] = original
+				execution[key] = original
 			}
 			encoded, err := json.Marshal(session)
 			if err != nil {
