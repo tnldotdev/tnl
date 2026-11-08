@@ -255,6 +255,11 @@ func requestWithToken[T any](ctx context.Context, client *Client, token string, 
 	if err != nil {
 		return zero, failure.Wrap("decode authority response", failure.ServerResponseInvalid, err)
 	}
+	if session, ok := any(result).(authorityv1.WorkloadSession); ok {
+		if err := validateWorkloadSessionWire(payload, session); err != nil {
+			return zero, failure.Wrap("decode workload session", failure.ServerResponseInvalid, err)
+		}
+	}
 	return result, nil
 }
 

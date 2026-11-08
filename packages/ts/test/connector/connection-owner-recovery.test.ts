@@ -87,7 +87,7 @@ async function assertPortFree(port: number): Promise<void> {
 
 beforeEach(async () => {
   vi.resetModules();
-  vi.stubGlobal("__tnlConnectorContextV1", undefined);
+  vi.stubGlobal("__tnlConnectorContextV2", undefined);
   vi.stubEnv("TNL_CONNECTION_HANDLE", undefined);
   for (const name of ["TNL_WORKLOAD", "GITHUB_ACTIONS", "VERCEL", "FLY_APP_NAME"])
     vi.stubEnv(name, undefined);

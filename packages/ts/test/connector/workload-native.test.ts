@@ -73,12 +73,10 @@ vi.mock("../../src/internal/connector/connection_ipc.js", async () => {
 });
 vi.mock("../../src/internal/connector/workload/provider.js", () => ({
   usesWorkload: () => true,
-  acquireAssertion: async () => fixture.assertion,
   selectWorkload: async () => ({
-    name: "job",
-    directory: process.cwd(),
-    selected: { services: ["api", "db", "mysql", "raw", "cluster"] },
-    manifest: { schema: 1 },
+    sdk_workload: { name: "job", callback: true, runtime: {} },
+    sdk_workload_policy: "a".repeat(64),
+    assertion: fixture.assertion,
   }),
 }));
 vi.mock("node:child_process", () => ({
@@ -264,7 +262,7 @@ function project() {
 let originalListeners = new Set(process.listeners("beforeExit"));
 beforeEach(() => {
   vi.resetModules();
-  vi.stubGlobal("__tnlConnectorContextV1", undefined);
+  vi.stubGlobal("__tnlConnectorContextV2", undefined);
   fixture.assertion = "first";
   fixture.owners.clear();
   fixture.calls.length = 0;

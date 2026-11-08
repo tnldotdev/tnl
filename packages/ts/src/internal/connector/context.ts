@@ -3,8 +3,10 @@ import type { TnlFetch } from "../../project.js";
 import type { WorkloadConfiguration } from "./workload/provider.js";
 import { TnlError } from "../../errors.js";
 import type { OwnerIPC } from "./connection_ipc.js";
+import type { SelectionOptions, WorkloadRequest } from "./workload/contract.js";
 
 export interface NativeScope {
+  readonly directory: string;
   readonly registry: string;
   readonly binary: string;
   readonly environment: Pick<
@@ -18,8 +20,9 @@ export interface NativeScope {
     input: unknown,
     name: string,
     assertion: string | undefined,
-    options: { workload?: string; manifest?: string; requested_at: string },
+    options: SelectionOptions,
   ): Promise<unknown>;
+  workload(name: string, request: WorkloadRequest): Promise<unknown>;
   entry?: { readonly file: string; readonly ipc: Promise<OwnerIPC> };
   selected?: { readonly file: string; readonly expiresAt: number };
 }
@@ -41,12 +44,13 @@ interface ConnectorContext {
 }
 
 declare global {
-  var __tnlConnectorContextV1: ConnectorContext | undefined;
+  var __tnlConnectorContextV2: ConnectorContext | undefined;
 }
 
 // this version describes the shared in-memory shape, not the native wire schema.
 // independently loaded compatible SDK copies share waits, IPC, and cleanup.
-export const context: ConnectorContext = (globalThis.__tnlConnectorContextV1 ??= {
+// v2 scopes add directory and workload; do not reuse older copies' v1 scopes.
+export const context: ConnectorContext = (globalThis.__tnlConnectorContextV2 ??= {
   scopes: new Map(),
   selectedScopes: new Map(),
   fetches: new Map(),

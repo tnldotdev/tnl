@@ -99,12 +99,18 @@ class NativeFixture:
                 assertion: str | None = None,
                 *,
                 sdk: bool = False,
-                workload: str | None = None,
-                manifest: str | None = None,
                 requested_at: str | None = None,
+                selection: dict[str, object] | None = None,
+                preview: bool = False,
             ) -> object:
+                if preview:
+                    return fixture.preview(name, selection)
                 if sdk and not fixture.human:
-                    assert workload == "job" and manifest is not None and requested_at is not None
+                    assert (
+                        selection is not None
+                        and "sdk_workload" in selection
+                        and requested_at is not None
+                    )
                 return fixture.select(name, assertion) if sdk else prepared(name, fixture.deadline)
 
             def close(self) -> None:
@@ -115,6 +121,8 @@ class NativeFixture:
     def command(self, binary: Path, *args: str, input_value: object = None) -> object:
         self.calls.append(args[0])
         assert not any(token in args for token in ("first", "rotated", "forged", "other"))
+        if args[0] == "sdk-workload":
+            return self.preview(args[args.index("--service") + 1], input_value)
         if args[0] == "sdk-prepare":
             assert "--retain-start-failure" in args
             assertion = input_value.get("assertion") if isinstance(input_value, dict) else None
@@ -137,6 +145,16 @@ class NativeFixture:
             return {"schema": 1, "state": "stopped"}
         assert args[0] == "read"
         return prepared(args[-1], self.deadline)
+
+    def preview(self, service: str, request: object) -> object:
+        return {
+            "schema": 1,
+            "name": "job",
+            "source": "callback",
+            "policy": "a" * 64,
+            "directory": str(self.directory),
+            "manifest": str(self.directory / ".tnl/generated/workloads.json"),
+        }
 
     def select(self, name: str, assertion: str | None) -> object:
         if self.human and assertion is None:
@@ -438,10 +456,10 @@ def test_rotating_assertions_and_services_share_only_control_verified_owners(
         with pytest.raises(tnl.TnlError):
             first.snapshot()
         await first
-        assert native.calls == ["sdk-prepare"]
+        assert native.calls == ["sdk-workload", "sdk-prepare"]
         for _ in range(10):
             await first
-        assert native.calls == ["sdk-prepare"] and callbacks == 11
+        assert native.calls == ["sdk-workload", "sdk-prepare"] and callbacks == 11
         await tnl.connect("mysql", directory=tmp_path)
         current = "rotated"
         rotated = tnl.connect("db", directory=tmp_path)
@@ -916,13 +934,13 @@ def test_recovery_failure_without_cleanup_reference_preserves_original_error(
 def test_callback_failures_do_not_expose_private_cause(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    NativeFixture(tmp_path, monkeypatch)
+    native = NativeFixture(tmp_path, monkeypatch)
 
     def token() -> str:
         raise RuntimeError("private-assertion")
 
     tnl.configure_workload("job", token=token)
     with pytest.raises(tnl.TnlError) as caught:
-        asyncio.run(_workload.select_workload(str(tmp_path), "db"))
+        asyncio.run(_workload.select_workload("db", native.preview))
     assert "private-assertion" not in str(caught.value)
     assert caught.value.__cause__ is None and caught.value.__context__ is None
