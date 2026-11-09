@@ -1,4 +1,10 @@
-import { createTnl, type TnlApplicationCredential, type TnlHTTPConnection } from "@tnldotdev/tnl";
+import {
+  createTnl,
+  type TnlApplicationCredential,
+  type TnlHTTPConnection,
+  type PreparedPublication,
+  type PreparedService,
+} from "@tnldotdev/tnl";
 import { expectTypeOf, test } from "vitest";
 
 test("native instances select explicit HTTP resources with the same helper types", async () => {
@@ -31,6 +37,14 @@ test("native application documents select the same exact async HTTP boundary", a
   app.connect("database");
   // @ts-expect-error application grants cannot select origins without a resource ID.
   app.connect("https://app.example");
+  expectTypeOf(app.prepare({ resource: "url_selected" })).toEqualTypeOf<
+    Promise<PreparedPublication>
+  >();
+  // @ts-expect-error application preparation cannot select project service names.
+  app.prepare({ service: "web" });
+  // @ts-expect-error saved HTTP publication preparation cannot select a service grant.
+  app.prepare({ resource: "svc_selected" });
+  expectTypeOf(createTnl().prepare({ service: "web" })).toEqualTypeOf<Promise<PreparedService>>();
   expectTypeOf(app.publish(() => new Response("app"), { resource: "url_selected" })).toEqualTypeOf<
     Promise<import("@tnldotdev/tnl").Publication>
   >();

@@ -11,7 +11,12 @@ import { TnlError } from "./errors.js";
 import { httpResources } from "./internal/connector/http_resource.js";
 import type { TnlHTTPConnection, TnlHTTPInstance } from "./client.js";
 import type { TnlApplicationCredential, TnlApplicationResource } from "./credential.js";
-import type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
+import type {
+  PrepareOptions,
+  PreparedService,
+  PreparedPublication,
+} from "./internal/publisher/app.js";
+import type { ApplicationPrepareOptions } from "./internal/publisher/app_credential.js";
 import type { PublishOptions } from "./internal/publisher/publish.js";
 import type { ApplicationPublication } from "./internal/publisher/publish.js";
 import { parseApplicationCredential } from "./internal/credential.js";
@@ -37,7 +42,12 @@ import type {
   TnlOptions,
 } from "./project.js";
 export type * from "./project.js";
-export type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
+export type {
+  PrepareOptions,
+  PreparedService,
+  PreparedPublication,
+} from "./internal/publisher/app.js";
+export type { ApplicationPrepareOptions } from "./internal/publisher/app_credential.js";
 export type {
   PublishOptions,
   PublisherCredentialFile,
@@ -97,8 +107,10 @@ export type TnlInstance = Omit<
   [Symbol.asyncDispose](): Promise<void>;
 };
 
-export type TnlApplicationInstance = Omit<TnlInstance, "connect" | "client"> &
-  TnlHTTPInstance<TnlApplicationResource>;
+export type TnlApplicationInstance = Omit<TnlInstance, "connect" | "client" | "prepare"> &
+  TnlHTTPInstance<TnlApplicationResource> & {
+    prepare(options?: ApplicationPrepareOptions): Promise<PreparedPublication>;
+  };
 
 /** construct an isolated native connection scope without starting native work. */
 export function createTnl(
@@ -108,7 +120,12 @@ export function createTnl(
   options: TnlOptions & { credential: string },
 ): Omit<TnlInstance, "connect" | "client"> & TnlHTTPInstance<`https://${string}`>;
 export function createTnl(options?: TnlOptions): TnlInstance;
-export function createTnl(options: TnlOptions = {}): TnlInstance {
+export function createTnl(
+  options: TnlOptions = {},
+):
+  | TnlInstance
+  | TnlApplicationInstance
+  | (Omit<TnlInstance, "connect" | "client"> & TnlHTTPInstance<`https://${string}`>) {
   const {
     createConnectionScope,
     closeConnectionScope,
@@ -245,8 +262,20 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
       if (name.startsWith("https://")) throw new TnlError("sdk.authentication_required");
       return connectionClient(name, settings, update, scope);
     },
-    prepare: (settings: PrepareOptions = {}) =>
+    prepare: (settings: PrepareOptions & ApplicationPrepareOptions = {}) =>
       own(async () => {
+        if (application !== undefined) {
+          const source = checkPublisher(settings);
+          if (source === undefined) throw new TnlError("sdk.credential_denied");
+          const { prepareApplicationPublication } =
+            await import("./internal/publisher/app_credential.js");
+          return prepareApplicationPublication(
+            source,
+            scope.directory,
+            scope.environment.TNL_STATE_DIR,
+            settings,
+          );
+        }
         checkPublisher();
         if (explicitServer !== undefined) throw new TnlError("sdk.configuration_invalid");
         const { prepareService } = await import("./internal/publisher/app.js");

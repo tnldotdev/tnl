@@ -46,6 +46,22 @@ vi.mock("../../src/internal/publisher/publish.js", () => ({
     };
   },
 }));
+vi.mock("../../src/internal/publisher/app_credential.js", () => ({
+  prepareApplicationPublication: async (source: {
+    document: string;
+    resource: string;
+    server: string;
+  }) => {
+    fixture.source = source;
+    await fixture.gate;
+    return {
+      async close() {
+        fixture.order.push("preparation");
+        if (fixture.fail) throw new Error("drain failed");
+      },
+    };
+  },
+}));
 
 beforeEach(() => {
   fixture.order.length = 0;
@@ -159,6 +175,28 @@ test("application publication refuses ambiguous grants and explicit source chang
     await visit.close();
   }
   expect(fixture.source).toBeUndefined();
+});
+
+test("application preparation selects the same pinned exact publish grant and retains failed drain for retry", async () => {
+  const { createTnl } = await import("../../src/index.js");
+  const credential = applicationCredential();
+  const app = createTnl({ credential });
+  try {
+    await expect(app.prepare()).rejects.toHaveProperty("code", "sdk.credential_denied");
+    expect(fixture.source).toBeUndefined();
+    const resource = `url_${"B".repeat(22)}` as const;
+    await app.prepare({ resource });
+    expect(fixture.source).toMatchObject({ resource, server: credential.control_url });
+    fixture.fail = true;
+    await expect(app.close()).rejects.toBeInstanceOf(AggregateError);
+    expect(fixture.order).toEqual(["preparation"]);
+    fixture.fail = false;
+    await app.close();
+    expect(fixture.order).toEqual(["preparation", "preparation", "connector"]);
+  } finally {
+    fixture.fail = false;
+    await app.close();
+  }
 });
 
 test("a selected workload cannot fall back to a human publisher", async () => {

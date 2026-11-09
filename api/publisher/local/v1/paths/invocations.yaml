@@ -1,4 +1,29 @@
 paths:
+  /v1/publications/prepare:
+    post:
+      operationId: preparePublication
+      description: Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/PreparePublication" }
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "200":
+          description: prepared publication
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublicationAssignment" }
+  /v1/publications/register:
+    post:
+      operationId: registerPublication
+      description: Invocation capability only. Bind the current owner's prepared publication to its actual listener. Registration acknowledges the listener before asynchronous public readiness.
+      requestBody:
+        $ref: "../openapi.yaml#/components/requestBodies/Registration"
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "204": { description: listener registered }
   /v1/leases:
     post:
       operationId: acquireLease
@@ -18,7 +43,7 @@ paths:
   /v1/ad-hoc/register:
     post:
       operationId: registerInvocation
-      description: Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+      description: Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
       requestBody:
         required: true
         content:

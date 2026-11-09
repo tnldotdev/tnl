@@ -28,6 +28,10 @@ paths:
     $ref: "./paths/invocations.yaml#/paths/~1v1~1leases"
   /v1/ad-hoc/register:
     $ref: "./paths/invocations.yaml#/paths/~1v1~1ad-hoc~1register"
+  /v1/publications/prepare:
+    $ref: "./paths/invocations.yaml#/paths/~1v1~1publications~1prepare"
+  /v1/publications/register:
+    $ref: "./paths/invocations.yaml#/paths/~1v1~1publications~1register"
 components:
   responses:
     Problem:
@@ -67,5 +71,9 @@ components:
       $ref: "./schemas/invocations.yaml#/schemas/Lease"
     Invocation:
       $ref: "./schemas/invocations.yaml#/schemas/Invocation"
+    PreparePublication:
+      $ref: "./schemas/invocations.yaml#/schemas/PreparePublication"
+    PublicationAssignment:
+      $ref: "./schemas/invocations.yaml#/schemas/PublicationAssignment"
     Check:
       $ref: "./schemas/observations.yaml#/schemas/Check"

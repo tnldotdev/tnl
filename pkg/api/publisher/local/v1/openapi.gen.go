@@ -165,6 +165,21 @@ func (e PrepareVersion) Valid() bool {
 	}
 }
 
+// Defines values for PreparePublicationVersion.
+const (
+	PreparePublicationVersionN1 PreparePublicationVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the PreparePublicationVersion enum.
+func (e PreparePublicationVersion) Valid() bool {
+	switch e {
+	case PreparePublicationVersionN1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PublicationCommand.
 const (
 	Dev     PublicationCommand = "dev"
@@ -210,6 +225,21 @@ func (e PublicationState) Valid() bool {
 	case Starting:
 		return true
 	case Stopped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublicationAssignmentVersion.
+const (
+	PublicationAssignmentVersionN1 PublicationAssignmentVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the PublicationAssignmentVersion enum.
+func (e PublicationAssignmentVersion) Valid() bool {
+	switch e {
+	case PublicationAssignmentVersionN1:
 		return true
 	default:
 		return false
@@ -365,6 +395,20 @@ type PrepareFramework string
 // PrepareVersion defines model for Prepare.Version.
 type PrepareVersion int
 
+// PreparePublication defines model for PreparePublication.
+type PreparePublication struct {
+	ApplicationCredential string                    `json:"application_credential"`
+	InvocationId          string                    `json:"invocation_id"`
+	Owner                 string                    `json:"owner"`
+	Pid                   int                       `json:"pid"`
+	ResourceId            string                    `json:"resource_id"`
+	ServerUrl             *string                   `json:"server_url,omitempty"`
+	Version               PreparePublicationVersion `json:"version"`
+}
+
+// PreparePublicationVersion defines model for PreparePublication.Version.
+type PreparePublicationVersion int
+
 // Problem defines model for Problem.
 type Problem struct {
 	Code    string `json:"code"`
@@ -399,6 +443,18 @@ type PublicationCommand string
 
 // PublicationState defines model for Publication.State.
 type PublicationState string
+
+// PublicationAssignment defines model for PublicationAssignment.
+type PublicationAssignment struct {
+	Hostname       string                       `json:"hostname"`
+	PublicUrl      string                       `json:"public_url"`
+	RegistrationID string                       `json:"registration_id"`
+	ResourceId     string                       `json:"resource_id"`
+	Version        PublicationAssignmentVersion `json:"version"`
+}
+
+// PublicationAssignmentVersion defines model for PublicationAssignment.Version.
+type PublicationAssignmentVersion int
 
 // Readiness defines model for Readiness.
 type Readiness struct {
@@ -475,6 +531,12 @@ type AcquireLeaseJSONRequestBody = Lease
 
 // PrepareJSONRequestBody defines body for Prepare for application/json ContentType.
 type PrepareJSONRequestBody = Prepare
+
+// PreparePublicationJSONRequestBody defines body for PreparePublication for application/json ContentType.
+type PreparePublicationJSONRequestBody = PreparePublication
+
+// RegisterPublicationJSONRequestBody defines body for RegisterPublication for application/json ContentType.
+type RegisterPublicationJSONRequestBody = Registration
 
 // RegisterJSONRequestBody defines body for Register for application/json ContentType.
 type RegisterJSONRequestBody = Registration
@@ -562,13 +624,13 @@ type ClientInterface interface {
 	// RegisterInvocationWithBody performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+	// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
 	RegisterInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegisterInvocation performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+	// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
 	RegisterInvocation(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IssueCapabilityWithBody performs a POST /v1/capabilities (the `IssueCapability` operationId) request,
@@ -627,6 +689,30 @@ type ClientInterface interface {
 	// App capability only; service must equal the capability service. Idempotent for the live owner and PID.
 	Prepare(ctx context.Context, body PrepareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// PreparePublicationWithBody performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+	PreparePublicationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PreparePublication performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+	PreparePublication(ctx context.Context, body PreparePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterPublicationWithBody performs a POST /v1/publications/register (the `RegisterPublication` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Invocation capability only. Bind the current owner's prepared publication to its actual listener. Registration acknowledges the listener before asynchronous public readiness.
+	RegisterPublicationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterPublication performs a POST /v1/publications/register (the `RegisterPublication` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Invocation capability only. Bind the current owner's prepared publication to its actual listener. Registration acknowledges the listener before asynchronous public readiness.
+	RegisterPublication(ctx context.Context, body RegisterPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RegisterWithBody performs a POST /v1/register (the `Register` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -672,7 +758,7 @@ type ClientInterface interface {
 // RegisterInvocationWithBody performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 // with any type of body and a specified content type.
 //
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
 func (c *Client) RegisterInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegisterInvocationRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -688,7 +774,7 @@ func (c *Client) RegisterInvocationWithBody(ctx context.Context, contentType str
 // RegisterInvocation performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
 func (c *Client) RegisterInvocation(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegisterInvocationRequest(c.Server, body)
 	if err != nil {
@@ -847,6 +933,70 @@ func (c *Client) PrepareWithBody(ctx context.Context, contentType string, body i
 // App capability only; service must equal the capability service. Idempotent for the live owner and PID.
 func (c *Client) Prepare(ctx context.Context, body PrepareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPrepareRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PreparePublicationWithBody performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request,
+// with any type of body and a specified content type.
+//
+// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+func (c *Client) PreparePublicationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreparePublicationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PreparePublication performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+func (c *Client) PreparePublication(ctx context.Context, body PreparePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreparePublicationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterPublicationWithBody performs a POST /v1/publications/register (the `RegisterPublication` operationId) request,
+// with any type of body and a specified content type.
+//
+// Invocation capability only. Bind the current owner's prepared publication to its actual listener. Registration acknowledges the listener before asynchronous public readiness.
+func (c *Client) RegisterPublicationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterPublicationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterPublication performs a POST /v1/publications/register (the `RegisterPublication` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Invocation capability only. Bind the current owner's prepared publication to its actual listener. Registration acknowledges the listener before asynchronous public readiness.
+func (c *Client) RegisterPublication(ctx context.Context, body RegisterPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterPublicationRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1272,6 +1422,86 @@ func NewPrepareRequestWithBody(server string, contentType string, body io.Reader
 	return req, nil
 }
 
+// NewPreparePublicationRequest calls the generic PreparePublication builder with application/json body
+func NewPreparePublicationRequest(server string, body PreparePublicationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPreparePublicationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPreparePublicationRequestWithBody constructs an http.Request for the PreparePublication method, with any body, and a specified content type
+func NewPreparePublicationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publications/prepare")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRegisterPublicationRequest calls the generic RegisterPublication builder with application/json body
+func NewRegisterPublicationRequest(server string, body RegisterPublicationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterPublicationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRegisterPublicationRequestWithBody constructs an http.Request for the RegisterPublication method, with any body, and a specified content type
+func NewRegisterPublicationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publications/register")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewRegisterRequest calls the generic Register builder with application/json body
 func NewRegisterRequest(server string, body RegisterJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -1466,7 +1696,7 @@ type ClientWithResponsesInterface interface {
 	// RegisterInvocationWithBodyWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+	// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RegisterInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error)
@@ -1474,7 +1704,7 @@ type ClientWithResponsesInterface interface {
 	// RegisterInvocationWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+	// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
 	RegisterInvocationWithResponse(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error)
 
 	// IssueCapabilityWithBodyWithResponse performs a POST /v1/capabilities (the `IssueCapability` operationId) request,
@@ -1544,6 +1774,34 @@ type ClientWithResponsesInterface interface {
 	//
 	// App capability only; service must equal the capability service. Idempotent for the live owner and PID.
 	PrepareWithResponse(ctx context.Context, body PrepareJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareResponse, error)
+
+	// PreparePublicationWithBodyWithResponse performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	PreparePublicationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreparePublicationResponse, error)
+
+	// PreparePublicationWithResponse performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+	PreparePublicationWithResponse(ctx context.Context, body PreparePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*PreparePublicationResponse, error)
+
+	// RegisterPublicationWithBodyWithResponse performs a POST /v1/publications/register (the `RegisterPublication` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Invocation capability only. Bind the current owner's prepared publication to its actual listener. Registration acknowledges the listener before asynchronous public readiness.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RegisterPublicationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterPublicationResponse, error)
+
+	// RegisterPublicationWithResponse performs a POST /v1/publications/register (the `RegisterPublication` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Invocation capability only. Bind the current owner's prepared publication to its actual listener. Registration acknowledges the listener before asynchronous public readiness.
+	RegisterPublicationWithResponse(ctx context.Context, body RegisterPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterPublicationResponse, error)
 
 	// RegisterWithBodyWithResponse performs a POST /v1/register (the `Register` operationId) request,
 	// with any type of body and a specified content type.
@@ -1924,6 +2182,95 @@ func (r PrepareResponse) ContentType() string {
 	return ""
 }
 
+type PreparePublicationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublicationAssignment
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PreparePublicationResponse) GetJSON200() *PublicationAssignment {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r PreparePublicationResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PreparePublicationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PreparePublicationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PreparePublicationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PreparePublicationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RegisterPublicationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r RegisterPublicationResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterPublicationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterPublicationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterPublicationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterPublicationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type RegisterResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2098,7 +2445,7 @@ func (r UnregisterResponse) ContentType() string {
 // RegisterInvocationWithBodyWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 // with any type of body and a specified content type.
 //
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) RegisterInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error) {
@@ -2112,7 +2459,7 @@ func (c *ClientWithResponses) RegisterInvocationWithBodyWithResponse(ctx context
 // RegisterInvocationWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Invocation capability only. A locally stored publisher identity with a namespace grant allocates a temporary HTTP URL. Registration acknowledges its bound target before asynchronous provisioning. Optional application limits apply to allocation and the publisher. An explicit server may override saved or hosted defaults but must match explicit project configuration or TNL_SERVER. No bearer publication credentials are accepted.
+// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
 func (c *ClientWithResponses) RegisterInvocationWithResponse(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error) {
 	rsp, err := c.RegisterInvocation(ctx, body, reqEditors...)
 	if err != nil {
@@ -2247,6 +2594,58 @@ func (c *ClientWithResponses) PrepareWithResponse(ctx context.Context, body Prep
 		return nil, err
 	}
 	return ParsePrepareResponse(rsp)
+}
+
+// PreparePublicationWithBodyWithResponse performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request,
+// with any type of body and a specified content type.
+//
+// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) PreparePublicationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreparePublicationResponse, error) {
+	rsp, err := c.PreparePublicationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePreparePublicationResponse(rsp)
+}
+
+// PreparePublicationWithResponse performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+func (c *ClientWithResponses) PreparePublicationWithResponse(ctx context.Context, body PreparePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*PreparePublicationResponse, error) {
+	rsp, err := c.PreparePublication(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePreparePublicationResponse(rsp)
+}
+
+// RegisterPublicationWithBodyWithResponse performs a POST /v1/publications/register (the `RegisterPublication` operationId) request,
+// with any type of body and a specified content type.
+//
+// Invocation capability only. Bind the current owner's prepared publication to its actual listener. Registration acknowledges the listener before asynchronous public readiness.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RegisterPublicationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterPublicationResponse, error) {
+	rsp, err := c.RegisterPublicationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterPublicationResponse(rsp)
+}
+
+// RegisterPublicationWithResponse performs a POST /v1/publications/register (the `RegisterPublication` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Invocation capability only. Bind the current owner's prepared publication to its actual listener. Registration acknowledges the listener before asynchronous public readiness.
+func (c *ClientWithResponses) RegisterPublicationWithResponse(ctx context.Context, body RegisterPublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterPublicationResponse, error) {
+	rsp, err := c.RegisterPublication(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterPublicationResponse(rsp)
 }
 
 // RegisterWithBodyWithResponse performs a POST /v1/register (the `Register` operationId) request,
@@ -2567,6 +2966,68 @@ func ParsePrepareResponse(rsp *http.Response) (*PrepareResponse, error) {
 	return response, nil
 }
 
+// ParsePreparePublicationResponse parses an HTTP response from a PreparePublicationWithResponse call
+func ParsePreparePublicationResponse(rsp *http.Response) (*PreparePublicationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PreparePublicationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublicationAssignment
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRegisterPublicationResponse parses an HTTP response from a RegisterPublicationWithResponse call
+func ParseRegisterPublicationResponse(rsp *http.Response) (*RegisterPublicationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterPublicationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRegisterResponse parses an HTTP response from a RegisterWithResponse call
 func ParseRegisterResponse(rsp *http.Response) (*RegisterResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2710,6 +3171,12 @@ type ServerInterface interface {
 
 	// (POST /v1/prepare)
 	Prepare(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/publications/prepare)
+	PreparePublication(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/publications/register)
+	RegisterPublication(w http.ResponseWriter, r *http.Request)
 
 	// (POST /v1/register)
 	Register(w http.ResponseWriter, r *http.Request)
@@ -2860,6 +3327,34 @@ func (siw *ServerInterfaceWrapper) Prepare(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.Prepare(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PreparePublication operation middleware
+func (siw *ServerInterfaceWrapper) PreparePublication(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PreparePublication(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RegisterPublication operation middleware
+func (siw *ServerInterfaceWrapper) RegisterPublication(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegisterPublication(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3056,6 +3551,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/check", wrapper.Check)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/leases", wrapper.AcquireLease)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/ad-hoc/register", wrapper.RegisterInvocation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publications/prepare", wrapper.PreparePublication)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publications/register", wrapper.RegisterPublication)
 
 	return m
 }

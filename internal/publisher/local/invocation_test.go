@@ -365,13 +365,40 @@ func TestApplicationInvocationRealPublisherKeepsSavedURLAfterDrain(t *testing.T)
 	if !testutil.IsolatedPublishingTest(t) {
 		return
 	}
+	applicationRealPublisher(t, false)
+}
+
+func TestApplicationPublicationPreparedRealPublisherKeepsSavedURLAfterDrain(t *testing.T) {
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	applicationRealPublisher(t, true)
+}
+
+func applicationRealPublisher(t *testing.T, prepared bool) {
+	t.Helper()
 	a, endpoint, body, fixture, _, url := applicationInvocation(t)
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("application bytes")) }))
 	defer target.Close()
 	body["target"] = target.URL
 	var registration publisherprotocol.Registration
-	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &registration); err != nil {
-		t.Fatal(err)
+	if prepared {
+		delete(body, "target")
+		var assignment publisherprotocol.PublicationAssignment
+		if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/prepare", body, &assignment); err != nil {
+			t.Fatal(err)
+		}
+		if fixture.Runs.Load() != 0 {
+			t.Fatal("preparation started a publish run before listener registration")
+		}
+		registration = publisherprotocol.Registration{Version: 1, RegistrationID: assignment.RegistrationID, Owner: body["owner"].(string), Target: target.URL}
+		if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", registration, nil); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &registration); err != nil {
+			t.Fatal(err)
+		}
 	}
 	waitInvocation(t, a, func(snapshot publisherapp.Snapshot) bool {
 		for _, service := range snapshot.Services {
@@ -393,6 +420,174 @@ func TestApplicationInvocationRealPublisherKeepsSavedURLAfterDrain(t *testing.T)
 	}
 	if fixture.Runs.Load() != 1 || fixture.Allocations.Load() != 0 || fixture.Deletions.Load() != 0 {
 		t.Fatal("application publication drain changed the saved URL lifecycle")
+	}
+}
+
+func TestApplicationPublicationPreparationRegistersBeforeReadinessAndJoinsReplacement(t *testing.T) {
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	a, endpoint, body, fixture, _, url := applicationInvocation(t)
+	delete(body, "target")
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
+	defer first.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
+	defer second.Close()
+	started := make(chan string, 2)
+	draining := make(chan struct{})
+	releaseDrain := sync.OnceFunc(func() { close(draining) })
+	defer releaseDrain()
+	joined := make(chan struct{})
+	var attached atomic.Int32
+	a.AttachPublication = func(_ context.Context, service publisherapp.Service, cfg *publisher.Config) error {
+		if service.Target == "" || cfg.Target != service.Target {
+			t.Fatal("prepared publication attached before its target was bound")
+		}
+		attached.Add(1)
+		return nil
+	}
+	a.workers.RunPublisher = func(ctx context.Context, cfg publisher.Config) error {
+		started <- cfg.Target
+		<-ctx.Done()
+		if cfg.Target == first.URL {
+			<-draining
+			close(joined)
+		}
+		return ctx.Err()
+	}
+	var assignment publisherprotocol.PublicationAssignment
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/prepare", body, &assignment); err != nil {
+		t.Fatal(err)
+	}
+	if assignment.ResourceId != url.Id || assignment.PublicUrl != "https://"+url.CanonicalHostname || assignment.Hostname != url.CanonicalHostname || attached.Load() != 0 {
+		t.Fatal("preparation bound a target or changed its saved resource")
+	}
+	select {
+	case <-started:
+		t.Fatal("preparation started a publisher before registration")
+	default:
+	}
+	registration := publisherprotocol.Registration{Version: 1, RegistrationID: assignment.RegistrationID, Owner: body["owner"].(string), Target: first.URL}
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", registration, nil); err != nil {
+		t.Fatal("registration waited for unreported public readiness", err)
+	}
+	select {
+	case target := <-started:
+		if target != first.URL {
+			t.Fatal("prepared worker used another target")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("registration did not start its worker")
+	}
+	service, found := a.manager.ServiceForRegistration(assignment.RegistrationID)
+	if !found || !service.Registered || service.Routable {
+		t.Fatal("registration acknowledgment claimed public readiness")
+	}
+	replacement := registration
+	replacement.Target = second.URL
+	replaced := make(chan error, 1)
+	go func() {
+		replaced <- publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/register", replacement, nil)
+	}()
+	select {
+	case err := <-replaced:
+		t.Fatal("replacement did not join the previous target", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	releaseDrain()
+	if err := <-replaced; err != nil {
+		t.Fatal(err)
+	}
+	<-joined
+	select {
+	case target := <-started:
+		if target != second.URL {
+			t.Fatal("replacement did not bind its own target")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("replacement did not start")
+	}
+	var again publisherprotocol.PublicationAssignment
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/prepare", body, &again); err != nil || again != assignment {
+		t.Fatal("preparation retry replaced the current owner's registration", err)
+	}
+	var stale *publisherprotocol.ResponseError
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", registration, nil); !errors.As(err, &stale) || stale.Code != "runtime.registration_stale" {
+		t.Fatal("old target cleanup stopped its replacement", err)
+	}
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", replacement, nil); err != nil {
+		t.Fatal(err)
+	}
+	if attached.Load() != 2 || fixture.Allocations.Load() != 0 || fixture.Deletions.Load() != 0 {
+		t.Fatal("prepared publication changed saved URL lifecycle or attachment ownership")
+	}
+}
+
+func TestApplicationPublicationPreparationCanCloseBeforeRegistering(t *testing.T) {
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	a, endpoint, body, fixture, _, _ := applicationInvocation(t)
+	delete(body, "target")
+	a.workers.RunPublisher = func(context.Context, publisher.Config) error {
+		t.Error("unbound publication started a worker")
+		return nil
+	}
+	var assignment publisherprotocol.PublicationAssignment
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/prepare", body, &assignment); err != nil {
+		t.Fatal(err)
+	}
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", publisherprotocol.Registration{Version: 1, RegistrationID: assignment.RegistrationID, Owner: body["owner"].(string)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.Runs.Load() != 0 || fixture.Allocations.Load() != 0 || fixture.Deletions.Load() != 0 {
+		t.Fatal("closing an unbound preparation changed server publication state")
+	}
+}
+
+func TestApplicationPublicationPreparationRejectsOtherCapabilitiesAndSiblingRegistration(t *testing.T) {
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	a, endpoint, body, fixture, _, _ := applicationInvocation(t)
+	delete(body, "target")
+	if err := publisherprotocol.Call(t.Context(), a.capabilities.Owner(), "POST", "/v1/publications/prepare", body, nil); !errors.Is(err, publisherprotocol.ErrForbidden) {
+		t.Fatal("owner capability used invocation-only preparation", err)
+	}
+	serviceName := "web"
+	app, err := a.capabilities.Issue(publisherprotocol.CapabilityRequest{Scope: "app", Service: &serviceName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publisherprotocol.Call(t.Context(), app, "POST", "/v1/publications/prepare", body, nil); !errors.Is(err, publisherprotocol.ErrForbidden) {
+		t.Fatal("app capability prepared another publication", err)
+	}
+	other, err := opaqueid.New(opaqueid.InvocationPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling, err := a.capabilities.Issue(publisherprotocol.CapabilityRequest{Scope: "invocation", InvocationId: &other})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publisherprotocol.Call(t.Context(), sibling, "POST", "/v1/publications/prepare", body, nil); !errors.Is(err, publisherprotocol.ErrForbidden) {
+		t.Fatal("sibling invocation prepared another owner's publication", err)
+	}
+	var assignment publisherprotocol.PublicationAssignment
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/publications/prepare", body, &assignment); err != nil {
+		t.Fatal(err)
+	}
+	registration := publisherprotocol.Registration{Version: 1, RegistrationID: assignment.RegistrationID, Owner: body["owner"].(string), Target: "http://127.0.0.1:3000"}
+	var stale *publisherprotocol.ResponseError
+	if err := publisherprotocol.Call(t.Context(), sibling, "POST", "/v1/publications/register", registration, nil); !errors.As(err, &stale) || stale.Code != "runtime.registration_stale" {
+		t.Fatal("sibling capability registered another owner's listener", err)
+	}
+	registration.Target = ""
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", registration, nil); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.Runs.Load() != 0 || fixture.Allocations.Load() != 0 || fixture.Deletions.Load() != 0 {
+		t.Fatal("capability rejection changed publication state")
 	}
 }
 

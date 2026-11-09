@@ -30,6 +30,8 @@ const (
 )
 
 type Prepare = api.Prepare
+type PreparePublication = api.PreparePublication
+type PublicationAssignment = api.PublicationAssignment
 
 type Assignment struct {
 	Version        int                 `json:"version"`

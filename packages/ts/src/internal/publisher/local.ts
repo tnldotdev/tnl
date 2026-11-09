@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomInt } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import * as http from "node:http";
@@ -49,6 +50,15 @@ export interface EndpointSelection {
   readonly service?: string | undefined;
   readonly invocationID?: string | undefined;
   readonly stateDir?: string;
+}
+
+export function newInvocationID() {
+  return invocationIDSchema.parse(
+    `ivk_${Array.from(
+      { length: 22 },
+      () => "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"[randomInt(62)],
+    ).join("")}`,
+  );
 }
 
 export function parseEndpoint(value: unknown, selection: EndpointSelection = {}): RuntimeEndpoint {
@@ -176,6 +186,8 @@ function runtimeRequestUntraced(
       "renew",
       "unregister",
       "ad-hoc/register",
+      "publications/prepare",
+      "publications/register",
     ].includes(operation)
   )
     throw new TnlError("sdk.configuration_invalid");
@@ -233,7 +245,14 @@ function runtimeRequestUntraced(
             if (response.statusCode === 204) {
               if (
                 length !== 0 ||
-                ["prepare", "status", "check", "events", "ad-hoc/register"].includes(operation)
+                [
+                  "prepare",
+                  "publications/prepare",
+                  "status",
+                  "check",
+                  "events",
+                  "ad-hoc/register",
+                ].includes(operation)
               )
                 throw new TnlError("sdk.response_invalid");
               resolve(undefined);
@@ -269,7 +288,16 @@ function runtimeRequestUntraced(
                                     : "sdk.request_rejected",
               );
             }
-            if (!["prepare", "status", "check", "events", "ad-hoc/register"].includes(operation))
+            if (
+              ![
+                "prepare",
+                "publications/prepare",
+                "status",
+                "check",
+                "events",
+                "ad-hoc/register",
+              ].includes(operation)
+            )
               throw new TnlError("sdk.response_invalid");
             resolve(value);
           } catch (cause) {

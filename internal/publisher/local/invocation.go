@@ -30,6 +30,39 @@ import (
 )
 
 func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.Invocation) (_ publisherprotocol.Registration, result error) {
+	return a.prepareInvocation(ctx, request, true)
+}
+
+func (a *appRuntime) preparePublication(ctx context.Context, request publisherprotocol.PreparePublication) (publisherprotocol.PublicationAssignment, error) {
+	if request.Version != 1 || request.ApplicationCredential == "" {
+		return publisherprotocol.PublicationAssignment{}, credentialfile.ErrApplication
+	}
+	registration, err := a.prepareInvocation(ctx, publisherprotocol.Invocation{Version: 1, InvocationId: request.InvocationId, Owner: request.Owner, Pid: request.Pid, ServerUrl: request.ServerUrl, ApplicationCredential: &request.ApplicationCredential, ResourceId: &request.ResourceId}, false)
+	if err != nil {
+		return publisherprotocol.PublicationAssignment{}, err
+	}
+	service, found := a.manager.ServiceForRegistration(registration.RegistrationID)
+	if !found {
+		return publisherprotocol.PublicationAssignment{}, publisherapp.ErrRegistrationStale
+	}
+	return publisherprotocol.PublicationAssignment{Version: 1, RegistrationID: registration.RegistrationID, ResourceId: request.ResourceId, Hostname: strings.TrimPrefix(service.PublicURL, "https://"), PublicUrl: service.PublicURL}, nil
+}
+
+func (a *appRuntime) registerPublication(ctx context.Context, request publisherprotocol.Registration) error {
+	canonical, err := targetsyntax.NormalizeTarget(request.Target)
+	if err != nil || canonical != request.Target {
+		return publisherprotocol.ErrForbidden
+	}
+	a.mu.Lock()
+	preparation, found := a.prepared[request.RegistrationID]
+	a.mu.Unlock()
+	if !found || !preparation.preparedPublication || preparation.invocation == nil {
+		return publisherprotocol.ErrForbidden
+	}
+	return a.manager.RegisterContext(ctx, request.RegistrationID, request.Owner, request.Target, "")
+}
+
+func (a *appRuntime) prepareInvocation(ctx context.Context, request publisherprotocol.Invocation, bound bool) (_ publisherprotocol.Registration, result error) {
 	release, err := a.beginPreparation(ctx, request.InvocationId)
 	if err != nil {
 		return publisherprotocol.Registration{}, err
@@ -37,7 +70,12 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	defer release()
 	finish := a.manager.BeginPreparation()
 	defer finish()
-	canonical, err := targetsyntax.NormalizeTarget(request.Target)
+	canonical := request.Target
+	if bound {
+		canonical, err = targetsyntax.NormalizeTarget(request.Target)
+	} else if request.Target != "" || request.ApplicationCredential == nil {
+		return publisherprotocol.Registration{}, credentialfile.ErrApplication
+	}
 	if err != nil || canonical != request.Target || request.PublisherCredentialFile != "" && request.PublisherIdentityId != "" ||
 		request.AccessMode != nil && !request.AccessMode.Valid() || request.Ip != nil && len(*request.Ip) > 32 {
 		return publisherprotocol.Registration{}, errors.New("invalid invocation target or policy")
@@ -74,9 +112,16 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 			continue
 		}
 		a.mu.Lock()
-		previous := a.prepared[service.RegistrationID].invocation
+		preparation := a.prepared[service.RegistrationID]
+		previous := preparation.invocation
 		a.mu.Unlock()
-		first, _ := json.Marshal(previous)
+		comparison := previous
+		if previous != nil && (!bound || preparation.preparedPublication && service.Target == request.Target) {
+			copy := *previous
+			copy.Target = request.Target
+			comparison = &copy
+		}
+		first, _ := json.Marshal(comparison)
 		next, _ := json.Marshal(request)
 		if previous == nil || string(first) != string(next) {
 			return publisherprotocol.Registration{}, publisherapp.ErrOwnerConflict
@@ -216,19 +261,21 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	}
 	cfg.AccessMode = publicURL.AccessMode
 	configuration := publisherapp.Configuration{Publisher: cfg, Inspection: policy, Cleanup: cleanup}
-	if a.AttachPublication != nil {
+	if bound && a.AttachPublication != nil {
 		if err := a.AttachPublication(ctx, publisherapp.Service{Name: request.InvocationId, RegistrationID: id, Target: request.Target}, &configuration.Publisher); err != nil {
 			return publisherprotocol.Registration{}, err
 		}
 	}
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{configuration: configuration, invocation: &request}
+	a.prepared[id] = appPreparation{configuration: configuration, invocation: &request, preparedPublication: !bound}
 	a.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return publisherprotocol.Registration{}, err
 	}
-	if err := a.manager.RegisterContext(ctx, id, request.Owner, request.Target, ""); err != nil {
-		return publisherprotocol.Registration{}, err
+	if bound {
+		if err := a.manager.RegisterContext(ctx, id, request.Owner, request.Target, ""); err != nil {
+			return publisherprotocol.Registration{}, err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return publisherprotocol.Registration{}, err

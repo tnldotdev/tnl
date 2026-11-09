@@ -29,6 +29,8 @@ type Server struct {
 	Database            *clientstate.Database
 	Project             string
 	Prepare             func(context.Context, publisherprotocol.Prepare) (publisherprotocol.Assignment, error)
+	PreparePublication  func(context.Context, publisherprotocol.PreparePublication) (publisherprotocol.PublicationAssignment, error)
+	RegisterPublication func(context.Context, publisherprotocol.Registration) error
 	Register            func(publisherprotocol.Registration) error
 	RegisterContext     func(context.Context, publisherprotocol.Registration) error
 	Acquire             func(context.Context, publisherprotocol.Lease) (publisherprotocol.Registration, error)
@@ -123,6 +125,30 @@ func (s *Server) Handler() http.Handler {
 		}
 		publisherprotocol.Write(w, 200, registration)
 	})
+	mux.HandleFunc("POST /v1/publications/prepare", func(w http.ResponseWriter, r *http.Request) {
+		grant := publisherprotocol.Grant(r)
+		if grant.Scope != "invocation" || s.PreparePublication == nil {
+			Problem(w, publisherprotocol.ErrForbidden)
+			return
+		}
+		var request publisherprotocol.PreparePublication
+		if err := decodePublicationInput(w, r, &request); err != nil {
+			Problem(w, err)
+			return
+		}
+		if request.Version != 1 || request.InvocationId != *grant.InvocationId || !publisherprotocol.ValidOwner(request.Owner) || request.Pid <= 0 {
+			Problem(w, publisherprotocol.ErrForbidden)
+			return
+		}
+		assignment, err := s.PreparePublication(r.Context(), request)
+		if err != nil {
+			Problem(w, err)
+			return
+		}
+		if err := publisherprotocol.Write(w, 200, assignment); err != nil || r.Context().Err() != nil {
+			_ = s.Manager.Unregister(assignment.RegistrationID, request.Owner)
+		}
+	})
 	mux.HandleFunc("POST /v1/ad-hoc/register", func(w http.ResponseWriter, r *http.Request) {
 		grant := publisherprotocol.Grant(r)
 		if grant.Scope != "invocation" || s.Invocation == nil {
@@ -130,28 +156,7 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		var request publisherprotocol.Invocation
-		var raw jsonv1.RawMessage
-		if err := publisherprotocol.Decode(w, r, &raw); err != nil {
-			Problem(w, err)
-			return
-		}
-		var fields map[string]jsonv1.RawMessage
-		if err := json.Unmarshal(raw, &fields); err != nil {
-			Problem(w, err)
-			return
-		}
-		for _, name := range []string{"application_credential", "resource_id", "publisher_credential_file", "publisher_identity_id"} {
-			value, present := fields[name]
-			if present && (bytes.Equal(bytes.TrimSpace(value), []byte("null")) || bytes.Equal(bytes.TrimSpace(value), []byte(`""`))) {
-				if name == "application_credential" || name == "resource_id" {
-					Problem(w, credentialfile.ErrApplication)
-				} else {
-					Problem(w, credentialfile.ErrInvalid)
-				}
-				return
-			}
-		}
-		if err := json.Unmarshal(raw, &request, json.RejectUnknownMembers(true)); err != nil {
+		if err := decodePublicationInput(w, r, &request); err != nil {
 			Problem(w, err)
 			return
 		}
@@ -178,7 +183,7 @@ func (s *Server) Handler() http.Handler {
 			_ = s.Manager.UnregisterTarget(registration.RegistrationID, registration.Owner, registration.Target)
 		}
 	})
-	for _, operation := range []string{"register", "renew", "unregister"} {
+	for _, operation := range []string{"register", "publications/register", "renew", "unregister"} {
 		mux.HandleFunc("POST /v1/"+operation, func(w http.ResponseWriter, r *http.Request) {
 			var request publisherprotocol.Registration
 			if err := publisherprotocol.Decode(w, r, &request); err != nil {
@@ -197,6 +202,12 @@ func (s *Server) Handler() http.Handler {
 			}
 			var err error
 			switch operation {
+			case "publications/register":
+				if grant.Scope != "invocation" || s.RegisterPublication == nil {
+					Problem(w, publisherprotocol.ErrForbidden)
+					return
+				}
+				err = s.RegisterPublication(r.Context(), request)
 			case "register":
 				if grant.Scope != "app" {
 					Problem(w, publisherprotocol.ErrForbidden)
@@ -325,6 +336,29 @@ func scopedEvent(event publisherapp.Event, grant publisherprotocol.Endpoint, cur
 		result.Publication, result.Type = &publication, event.Type
 	}
 	return result
+}
+
+// preserve explicit selector presence before decoding a generated request. null
+// and empty credentials must never select an ambient publisher identity.
+func decodePublicationInput(w http.ResponseWriter, r *http.Request, request any) error {
+	var raw jsonv1.RawMessage
+	if err := publisherprotocol.Decode(w, r, &raw); err != nil {
+		return err
+	}
+	var fields map[string]jsonv1.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	for _, name := range []string{"application_credential", "resource_id", "publisher_credential_file", "publisher_identity_id"} {
+		value, present := fields[name]
+		if present && (bytes.Equal(bytes.TrimSpace(value), []byte("null")) || bytes.Equal(bytes.TrimSpace(value), []byte(`""`))) {
+			if name == "application_credential" || name == "resource_id" {
+				return credentialfile.ErrApplication
+			}
+			return credentialfile.ErrInvalid
+		}
+	}
+	return json.Unmarshal(raw, request, json.RejectUnknownMembers(true))
 }
 
 func Problem(w http.ResponseWriter, err error) {

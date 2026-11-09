@@ -200,11 +200,12 @@ func Endpoint(ctx context.Context, options Options, service, invocationID string
 }
 
 type appPreparation struct {
-	configuration publisherapp.Configuration
-	project       clientproject.Project
-	framework     publisherprotocol.Framework
-	assignment    publisherprotocol.Assignment
-	invocation    *publisherprotocol.Invocation
+	configuration       publisherapp.Configuration
+	project             clientproject.Project
+	framework           publisherprotocol.Framework
+	assignment          publisherprotocol.Assignment
+	invocation          *publisherprotocol.Invocation
+	preparedPublication bool
 }
 
 type appRuntime struct {
@@ -348,7 +349,7 @@ func Serve(ctx context.Context, options Options) (result error) {
 }
 
 func (a *appRuntime) handler() http.Handler {
-	return (&localapi.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, RegisterContext: a.register, Acquire: a.acquire, Invocation: a.invocation, Check: a.workers.Check, ConfigurationDigest: func() (string, error) {
+	return (&localapi.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, PreparePublication: a.preparePublication, RegisterPublication: a.registerPublication, RegisterContext: a.register, Acquire: a.acquire, Invocation: a.invocation, Check: a.workers.Check, ConfigurationDigest: func() (string, error) {
 		_, digest, err := a.project.Snapshot()
 		return digest, err
 	}, AppService: func(name string) bool {
@@ -457,7 +458,16 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service publishera
 		return a.operations(preparation.project).ServiceConfiguration(ctx, service)
 	}
 	if preparation.configuration.Publisher.Control != nil {
-		return preparation.configuration, nil
+		configuration := preparation.configuration
+		if preparation.preparedPublication {
+			configuration.Publisher.Target = service.Target
+			if a.AttachPublication != nil {
+				if err := a.AttachPublication(ctx, service, &configuration.Publisher); err != nil {
+					return publisherapp.Configuration{}, err
+				}
+			}
+		}
+		return configuration, nil
 	}
 	return a.operations(preparation.project).PublicConfiguration(ctx, service)
 }

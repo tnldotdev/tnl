@@ -1,4 +1,4 @@
-import { randomBytes, randomInt } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import * as path from "node:path";
 import { isIP } from "node:net";
 import type { FetchHandler } from "./fetch_types.js";
@@ -9,6 +9,7 @@ import {
   runtimeRequest,
   type RuntimeEndpoint,
   type EndpointSelection,
+  newInvocationID,
 } from "./local.js";
 import { closeServer, listeningTarget, isBunServer, type LocalHTTPServer } from "./register.js";
 import * as z from "zod";
@@ -104,10 +105,7 @@ async function publishServerUntraced(
   bound();
   const directory = path.resolve(options.directory ?? process.cwd());
   const owner = randomBytes(16).toString("hex");
-  const invocationID = `ivk_${Array.from(
-    { length: 22 },
-    () => "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"[randomInt(62)],
-  ).join("")}`;
+  const invocationID = newInvocationID();
   // the SDK process may receive this environment variable after the native
   // owner starts. pass the path, never the credential contents, to that owner.
   const publisherCredentialFile =

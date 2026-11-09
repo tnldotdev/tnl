@@ -32,14 +32,17 @@ const prepareOptionsSchema = z
   .readonly();
 export type PrepareOptions = z.output<typeof prepareOptionsSchema>;
 
-export interface PreparedService extends ProjectRuntime {
-  readonly service: string;
+export interface PreparedPublication {
   readonly hostname: string | undefined;
   readonly publicURL: `https://${string}` | undefined;
   /** acknowledges a bound listener; use tnl wait for public readiness. */
   register(server: LocalHTTPServer): Promise<Publication>;
   /** unregisters publication without stopping the application listener. */
   close(): Promise<void>;
+}
+
+export interface PreparedService extends ProjectRuntime, PreparedPublication {
+  readonly service: string;
 }
 
 const assignmentSchema = z
@@ -71,11 +74,21 @@ const assignmentSchema = z
   }))
   .readonly();
 type Assignment = z.output<typeof assignmentSchema>;
-type AppRegistration = { readonly endpoint: RuntimeEndpoint; readonly assignment: Assignment };
-type AppRegistrationState =
-  | { readonly phase: "prepared"; readonly registration: AppRegistration }
-  | { readonly phase: "released"; readonly registration: AppRegistration }
-  | { readonly phase: "closed"; readonly registration: AppRegistration };
+interface PreparedAssignment<Metadata extends object> {
+  readonly registrationID: string;
+  readonly service: string;
+  readonly hostname: string | undefined;
+  readonly publicURL: `https://${string}` | undefined;
+  readonly metadata: Metadata;
+}
+type AppRegistration<Metadata extends object> = {
+  readonly endpoint: RuntimeEndpoint;
+  readonly assignment: PreparedAssignment<Metadata>;
+};
+type AppRegistrationState<Metadata extends object> =
+  | { readonly phase: "prepared"; readonly registration: AppRegistration<Metadata> }
+  | { readonly phase: "released"; readonly registration: AppRegistration<Metadata> }
+  | { readonly phase: "closed"; readonly registration: AppRegistration<Metadata> };
 interface Dependencies {
   start(
     directory: string,
@@ -164,14 +177,53 @@ async function createPreparedServiceUntraced(
     owner,
     pid: process.pid,
   };
-  const endpoint = await dependencies.start(directory, undefined, selection);
-  const assignment = parseAssignment(
-    await dependencies.request(endpoint, "prepare", prepareRequest),
+  return createPreparedRegistration(
+    {
+      directory,
+      framework,
+      selection,
+      owner,
+      registerOperation: "register",
+      onClose,
+      bootstrap: async (endpoint) => {
+        const assignment = parseAssignment(
+          await dependencies.request(endpoint, "prepare", prepareRequest),
+        );
+        if (endpoint.scope !== "app" || assignment.service !== endpoint.service)
+          throw new TnlError("sdk.response_invalid");
+        return { ...assignment, metadata: { ...assignment.project, service: assignment.service } };
+      },
+      reportTarget: (handle, report) => {
+        registry.frameworkTargets.set(handle, report);
+      },
+    },
+    dependencies,
   );
-  if (endpoint.scope !== "app" || assignment.service !== endpoint.service)
-    throw new TnlError("sdk.response_invalid");
+}
+
+// one registration lifecycle serves project metadata and exact application grants.
+// callers provide only validated assignment facts and private setup operations.
+export async function createPreparedRegistration<Metadata extends object>(
+  options: {
+    readonly directory: string;
+    readonly framework: Framework;
+    readonly selection: EndpointSelection;
+    readonly owner: string;
+    readonly registerOperation: "register" | "publications/register";
+    readonly bootstrap: (endpoint: RuntimeEndpoint) => Promise<PreparedAssignment<Metadata>>;
+    readonly reportTarget?: (
+      handle: PreparedPublication & Metadata,
+      report: (target: `http://${string}`) => Promise<void>,
+    ) => void;
+    readonly onClose?: () => void;
+  },
+  dependencies: Dependencies,
+): Promise<PreparedPublication & Metadata> {
+  const { directory, framework, selection, owner } = options;
+  const endpoint = await dependencies.start(directory, undefined, selection);
+  const assignment = await options.bootstrap(endpoint);
   const initial = assignment;
-  let state: AppRegistrationState = {
+  let state: AppRegistrationState<Metadata> = {
     phase: "prepared",
     registration: { endpoint, assignment },
   };
@@ -201,7 +253,7 @@ async function createPreparedServiceUntraced(
     pending = result;
     return result;
   };
-  const registration = (current: AppRegistration = state.registration) => ({
+  const registration = (current: AppRegistration<Metadata> = state.registration) => ({
     version: 1,
     registration_id: current.assignment.registrationID,
     owner,
@@ -210,15 +262,8 @@ async function createPreparedServiceUntraced(
   const reconnect = () =>
     operation("sdk.app.recover", async () => {
       const replacementEndpoint = await dependencies.start(directory, undefined, selection);
-      const replacement = parseAssignment(
-        await dependencies.request(replacementEndpoint, "prepare", prepareRequest),
-      );
-      if (
-        replacement.publicURL !== initial.publicURL ||
-        replacement.service !== initial.service ||
-        replacementEndpoint.scope !== "app" ||
-        replacement.service !== replacementEndpoint.service
-      ) {
+      const replacement = await options.bootstrap(replacementEndpoint);
+      if (replacement.publicURL !== initial.publicURL || replacement.service !== initial.service) {
         await dependencies.request(replacementEndpoint, "unregister", {
           version: 1,
           registration_id: replacement.registrationID,
@@ -226,11 +271,12 @@ async function createPreparedServiceUntraced(
         });
         throw new TnlError("sdk.response_invalid");
       }
-      if (state.phase !== "closed")
-        state = {
-          phase: "prepared",
-          registration: { endpoint: replacementEndpoint, assignment: replacement },
-        };
+      // close fences registration immediately, but its queued release must own
+      // a replacement that finishes arriving during recovery.
+      state = {
+        phase: isClosed() ? "closed" : "prepared",
+        registration: { endpoint: replacementEndpoint, assignment: replacement },
+      };
     });
   const release = async () => {
     clearTimeout(timer);
@@ -238,7 +284,7 @@ async function createPreparedServiceUntraced(
     try {
       await dependencies.request(current.endpoint, "unregister", registration(current));
     } catch (error) {
-      if (!recoverable(error)) throw error;
+      if (!(error instanceof TnlError) || error.code !== "sdk.registration_stale") throw error;
     }
     if (state.phase !== "closed") state = { phase: "released", registration: current };
     finishPublication();
@@ -260,7 +306,11 @@ async function createPreparedServiceUntraced(
             try {
               await reconnect();
               if (state.phase === "prepared" && target !== undefined)
-                await dependencies.request(state.registration.endpoint, "register", registration());
+                await dependencies.request(
+                  state.registration.endpoint,
+                  options.registerOperation,
+                  registration(),
+                );
             } catch {
               /* the next renewal retries a restarting owner. */
             }
@@ -305,12 +355,20 @@ async function createPreparedServiceUntraced(
         });
     }
     try {
-      await dependencies.request(state.registration.endpoint, "register", registration());
+      await dependencies.request(
+        state.registration.endpoint,
+        options.registerOperation,
+        registration(),
+      );
     } catch (error) {
       if (!recoverable(error) || isClosed()) throw error;
       await reconnect();
       if (isClosed()) throw new TnlError("sdk.registration_stale");
-      await dependencies.request(state.registration.endpoint, "register", registration());
+      await dependencies.request(
+        state.registration.endpoint,
+        options.registerOperation,
+        registration(),
+      );
     }
     if (isClosed() || (listener !== undefined && !isBunServer(listener) && !listener.listening))
       throw new TnlError("sdk.listener_failed");
@@ -324,7 +382,7 @@ async function createPreparedServiceUntraced(
     active?.lifetime.abort(new TnlError("sdk.registration_stale"));
     clearTimeout(timer);
     process.off("beforeExit", beforeExit);
-    onClose();
+    options.onClose?.();
     closing = operation(
       framework === "next"
         ? "next.cleanup"
@@ -344,9 +402,8 @@ async function createPreparedServiceUntraced(
   };
   process.once("beforeExit", beforeExit);
   schedule();
-  const handle: PreparedService = Object.freeze({
-    ...assignment.project,
-    service: assignment.service,
+  const handle: PreparedPublication & Metadata = Object.freeze({
+    ...assignment.metadata,
     hostname: assignment.hostname,
     publicURL: assignment.publicURL,
     register: (listener: LocalHTTPServer) =>
@@ -392,7 +449,7 @@ async function createPreparedServiceUntraced(
       ),
     close,
   });
-  registry.frameworkTargets.set(handle, (bound) =>
+  options.reportTarget?.(handle, (bound) =>
     operation(
       framework === "next" && target !== undefined && target !== bound
         ? "next.restart"
