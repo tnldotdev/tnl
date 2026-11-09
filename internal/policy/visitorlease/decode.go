@@ -12,7 +12,7 @@ import (
 func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 	policy := body.Policy
 	scope := visitorscope.Scope{Kind: visitorscope.Kind(policy.Resource.Kind), ID: policy.Resource.Id}
-	if !scope.Valid() || policy.Port < 1 || policy.Port > 65535 || policy.MetadataRevision < 0 || len(policy.VerificationKeys) > 64 || len(policy.WorkloadLeases) > 4096 || len(body.Revisions) > 256 {
+	if !scope.Valid() || policy.Port < 1 || policy.Port > 65535 || policy.MetadataRevision < 0 || len(policy.VerificationKeys) > 64 || len(policy.WorkloadLeases) > 4096 || len(policy.ShareVerifiers) > 256 || len(body.Revisions) > 256 {
 		return Update{}, ErrUpdate
 	}
 	update := Update{View: visitortoken.View{Scope: scope, Issuer: policy.Issuer, Hostname: policy.Hostname, Port: uint16(policy.Port), VisitorPolicyRevision: policy.VisitorPolicyRevision,
@@ -42,6 +42,20 @@ func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 		workloads[parent.SessionId] = visitortoken.WorkloadLease{KeySHA256: parent.KeySha256, ExpiresAt: parent.ExpiresAt}
 	}
 	update.View = update.View.WithVerificationKeys(keys).WithWorkloadLeases(workloads)
+	shares := make(map[string]visitortoken.ShareVerifier, len(policy.ShareVerifiers))
+	for _, verifier := range policy.ShareVerifiers {
+		if len(verifier.SecretDigest) != 32 {
+			return Update{}, ErrUpdate
+		}
+		if _, found := shares[verifier.ShareId]; found {
+			return Update{}, ErrUpdate
+		}
+		shares[verifier.ShareId] = visitortoken.ShareVerifier{Digest: [32]byte(verifier.SecretDigest), ExpiresAt: verifier.ExpiresAt}
+	}
+	update.View = update.View.WithShareVerifiers(shares)
+	if !update.View.ValidShareVerifiers() {
+		return Update{}, ErrUpdate
+	}
 	if policy.Ip != nil {
 		if len(policy.Ip.Key) != 32 || len(policy.Ip.Prefixes) > 2048 {
 			return Update{}, ErrUpdate

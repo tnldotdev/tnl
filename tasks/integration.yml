@@ -9,7 +9,7 @@ tasks:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/control/api/public -run='{{.RUN}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   share-token:
-    desc: Check CLI share token preparation and exact signed permission output with disposable PostgreSQL
+    desc: Check directly usable CLI share tokens and advertised lifetimes with disposable PostgreSQL
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./cmd/tnl -run='^TestIntegrationShareTokenPreparesExactPermission$' -count=1 -timeout=3m -args -tnl-test-tier=integration
 

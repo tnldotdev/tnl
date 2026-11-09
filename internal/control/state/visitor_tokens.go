@@ -348,15 +348,11 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 			return result, ErrVisitorPermission
 		}
 		digest := sha256.Sum256(secret)
-		var stored []byte
-		var issuerID, guestID string
-		err = tx.QueryRow(ctx, `SELECT share.secret_digest,share.expires_at,share.created_by_identity_id,COALESCE(share.guest_id,'') FROM control.shares share
-		    JOIN control.share_public_urls included ON included.share_id=share.id AND included.public_url_id=$2
-		    WHERE share.id=$1 AND share.revoked_at IS NULL AND share.expires_at>$3
-		    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$3)) FOR SHARE OF share`, shareID, scope.ID, now).Scan(&stored, &until, &issuerID, &guestID)
+		authority, err := q.LockVisitorShareAuthority(ctx, controlstatedb.LockVisitorShareAuthorityParams{PublicURLID: scope.ID, ShareID: shareID, Now: timestamptz(now)})
 		if err != nil {
 			return result, publisherLookupError(err, ErrVisitorPermission)
 		}
+		until = authority.ExpiresAt.Time
 		if session {
 			var deadline time.Time
 			err := tx.QueryRow(ctx, `SELECT expires_at FROM control.share_cookies
@@ -365,33 +361,8 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 				return result, publisherLookupError(err, ErrVisitorPermission)
 			}
 			until = minTime(until, deadline)
-		} else if subtle.ConstantTimeCompare(stored, digest[:]) != 1 {
+		} else if subtle.ConstantTimeCompare(authority.SecretDigest, digest[:]) != 1 {
 			return result, ErrVisitorPermission
-		}
-		if guestID == "" {
-			// a share depends on the issuer retaining management authority, not
-			// merely holding an unrelated visitor grant on the same resource.
-			var authorized bool
-			err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.public_urls url
-			    JOIN control.teams team ON team.id=url.team_id AND team.deleted_at IS NULL
-			    JOIN control.identities person ON person.id=$2 AND person.disabled_at IS NULL
-			    JOIN control.team_memberships member ON member.team_id=url.team_id AND member.identity_id=person.id
-			    WHERE url.id=$1 AND control.active_membership(member.id,$3)
-			    AND control.active_team_subject(url.team_id,person.id,$3)
-			    AND ((url.public_url_scope='member' AND member.id=url.membership_id)
-			        OR (url.public_url_scope='shared' AND member.role IN ('owner','admin'))))`, scope.ID, issuerID, now).Scan(&authorized)
-			if err != nil {
-				return result, err
-			}
-			if !authorized {
-				return result, ErrVisitorPermission
-			}
-		} else {
-			var deadline time.Time
-			if err := tx.QueryRow(ctx, `SELECT expires_at FROM control.guest_trials WHERE id=$1`, guestID).Scan(&deadline); err != nil {
-				return result, err
-			}
-			until = minTime(until, deadline)
 		}
 		subject = visitortoken.Share{ShareID: shareID}
 	case GrantTokenSource:

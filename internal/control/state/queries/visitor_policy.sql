@@ -14,3 +14,14 @@ SELECT issuer FROM control.visitor_token_issuer WHERE id;
 
 -- name: ReadVisitorPolicyService :one
 SELECT * FROM control.services WHERE id=sqlc.arg(id);
+
+-- name: ReadVisitorShareVerifiers :many
+SELECT authority.share_id::text AS share_id,authority.secret_digest::bytea AS secret_digest,authority.expires_at::timestamptz AS expires_at
+FROM control.visitor_share_authority(sqlc.arg(public_url_id)::text,sqlc.arg(now)::timestamptz) authority
+ORDER BY share_id LIMIT 257;
+
+-- name: LockVisitorShareAuthority :one
+SELECT authority.secret_digest::bytea AS secret_digest,authority.expires_at::timestamptz AS expires_at
+FROM control.visitor_share_authority(sqlc.arg(public_url_id)::text,sqlc.arg(now)::timestamptz) authority
+JOIN control.shares share ON share.id=authority.share_id
+WHERE share.id=sqlc.arg(share_id) FOR SHARE OF share;

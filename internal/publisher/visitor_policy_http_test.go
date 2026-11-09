@@ -1,8 +1,11 @@
 package publisher
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -148,6 +151,11 @@ func TestPublisherVisitorPolicyHTTPMaximumPublicRunSourceKey(t *testing.T) {
 	body, _ := policyfixture.Maximum(t, time.Now().UTC())
 	body.Policy.Resource = controlv1.VisitorResourceScope{Kind: "public_url", Id: certificateTestPublicURLID}
 	body.Policy.Port = 443
+	secret := bytes.Repeat([]byte{7}, 32)
+	digest := sha256.Sum256(secret)
+	for i := range 256 {
+		body.Policy.ShareVerifiers = append(body.Policy.ShareVerifiers, controlv1.VisitorShareVerifier{ShareId: fmt.Sprintf("shr_%022d", i), SecretDigest: digest[:], ExpiresAt: time.Now().Add(7 * 24 * time.Hour)})
+	}
 	body.Policy.VisitorPolicyRevision = math.MaxInt64 - 256
 	body.VisitorSourceKey = testVisitorSourceKeyBytes()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,6 +196,15 @@ func TestPublisherVisitorPolicyHTTPMaximumPublicRunSourceKey(t *testing.T) {
 	view, enabled, _ := policy.lease.Current()
 	if !enabled || view.VisitorPolicyRevision != math.MaxInt64 || policy.sourceKey != testPublicVisitorSourceKey {
 		t.Fatal("public preparation omitted source authority or policy history")
+	}
+	for _, share := range body.Policy.ShareVerifiers {
+		token, err := visitortoken.ShareToken(share.ShareId, secret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := visitortoken.VerifyBearer(token, view, time.Now()); err != nil {
+			t.Fatal("maximum public policy lost current share authority", err)
+		}
 	}
 }
 

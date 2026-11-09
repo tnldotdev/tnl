@@ -48,6 +48,7 @@ schemas:
         anonymous,
         verification_keys,
         workload_leases,
+        share_verifiers,
       ]
     properties:
       resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
@@ -77,6 +78,11 @@ schemas:
         type: array
         maxItems: 4096
         items: { $ref: "../openapi.yaml#/components/schemas/VisitorWorkloadLease" }
+      share_verifiers:
+        type: array
+        maxItems: 256
+        description: Current resource-bound share verifiers for authenticated serving processes. Contains no share secrets; never expose policy snapshots to visitors.
+        items: { $ref: "../openapi.yaml#/components/schemas/VisitorShareVerifier" }
       ip: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicyIP" }
   VisitorVerificationKey:
     type: object
@@ -103,6 +109,14 @@ schemas:
         type: array
         maxItems: 2048
         items: { $ref: "../openapi.yaml#/components/schemas/HashedIPPrefix" }
+  VisitorShareVerifier:
+    type: object
+    additionalProperties: false
+    required: [share_id, secret_digest, expires_at]
+    properties:
+      share_id: { $ref: "../openapi.yaml#/components/schemas/ShareID" }
+      secret_digest: { type: string, format: byte, minLength: 44, maxLength: 44 }
+      expires_at: { type: string, format: date-time }
   HashedIPPrefix:
     type: object
     additionalProperties: false

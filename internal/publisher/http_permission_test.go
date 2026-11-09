@@ -1,8 +1,10 @@
 package publisher
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -232,100 +234,118 @@ func TestLocalHTTPPermissionPolicyExpiryStopsSignedAndAnonymousRequests(t *testi
 }
 
 func TestLocalHTTPPermissionRevocationKeepsUnrelatedHTTP2StreamAndConnection(t *testing.T) {
-	policy, update, token := httpPermissionFixture(t, true)
-	certificate := publicURLTestCertificate(t, update.View.Hostname)
-	release := make(chan struct{})
-	unblock := sync.OnceFunc(func() { close(release) })
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		permission, err := localHTTPPermission(r, policy, nil)
-		if err != nil {
-			http.Error(w, "visitor denied", http.StatusForbidden)
-			return
-		}
-		guard, bound, err := guardLocalHTTPRequest(w, r, policy, permission)
-		if err != nil {
-			http.Error(w, "visitor denied", http.StatusForbidden)
-			return
-		}
-		defer guard.finish()
-		if bound.Header.Get("Authorization") != "application-secret" {
-			t.Error("visitor checks changed application authentication")
-		}
-		if bound.Header.Get(visitorTokenHeader) != "" || bound.Header.Get("Cookie") != "app=unchanged" {
-			t.Error("visitor credential reached the application or changed its cookie")
-		}
-		_, _ = io.WriteString(guard, "prefix")
-		guard.Flush()
-		if r.URL.Path == "/signed" {
-			<-bound.Context().Done()
-			return
-		}
-		select {
-		case <-bound.Context().Done():
-			return
-		case <-release:
-			_, _ = io.WriteString(guard, "finished")
-		}
-	}))
-	server.EnableHTTP2 = true
-	server.TLS = &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13}
-	server.StartTLS()
-	defer func() { unblock(); server.Close() }()
-	var dials atomic.Int64
-	transport := &http.Transport{ForceAttemptHTTP2: true, TLSClientConfig: &tls.Config{RootCAs: rootsForCertificate(t, certificate)},
-		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			if dials.Add(1) != 1 {
-				return nil, errors.New("visitor tried to replace its HTTP/2 connection")
+	for _, credential := range []string{"signed", "opaque share"} {
+		t.Run(credential, func(t *testing.T) {
+			policy, update, token := httpPermissionFixture(t, true)
+			if credential == "opaque share" {
+				id := "shr_" + strings.Repeat("S", 22)
+				secret := bytes.Repeat([]byte{9}, 32)
+				var err error
+				token, err = visitortoken.ShareToken(id, secret)
+				if err != nil {
+					t.Fatal(err)
+				}
+				update.View = update.View.WithShareVerifiers(map[string]visitortoken.ShareVerifier{id: {Digest: sha256.Sum256(secret), ExpiresAt: time.Now().Add(7 * 24 * time.Hour)}})
+				if err := policy.Apply(policy.Begin(), update); err != nil {
+					t.Fatal(err)
+				}
 			}
-			return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
-		}}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
-	open := func(path string, signed bool) *http.Response {
-		t.Helper()
-		r, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://"+update.View.Hostname+path, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		r.Header.Set("Authorization", "application-secret")
-		r.Header.Set("Cookie", "app=unchanged")
-		if signed {
-			r.Header.Set(visitorTokenHeader, token.Reveal())
-		}
-		response, err := client.Do(r)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if response.StatusCode != http.StatusOK || response.ProtoMajor != 2 {
-			t.Fatalf("request was not admitted as HTTP/2: %d %s", response.StatusCode, response.Proto)
-		}
-		prefix := make([]byte, len("prefix"))
-		if _, err := io.ReadFull(response.Body, prefix); err != nil || string(prefix) != "prefix" {
-			t.Fatal("request did not begin streaming", err)
-		}
-		return response
-	}
-	first, sibling := open("/signed", true), open("/anonymous", false)
-	defer first.Body.Close()
-	defer sibling.Body.Close()
-	update.View.VisitorPolicyRevision++
-	now := time.Now()
-	update.View.ObservedAt, update.View.ValidUntil = now, now.Add(10*time.Second)
-	if err := policy.Apply(policy.Begin(), update); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := io.Copy(io.Discard, first.Body); err == nil {
-		t.Fatal("revoked signed request ended as a successful response")
-	}
-	// a later anonymous request shares the same still-live HTTP/2 connection.
-	third := open("/future", false)
-	_ = third.Body.Close()
-	if dials.Load() != 1 {
-		t.Fatal("revocation closed the shared visitor connection")
-	}
-	unblock()
-	body, err := io.ReadAll(sibling.Body)
-	if err != nil || string(body) != "finished" {
-		t.Fatal("revocation interrupted the unrelated HTTP/2 request", err)
+			certificate := publicURLTestCertificate(t, update.View.Hostname)
+			release := make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				permission, err := localHTTPPermission(r, policy, nil)
+				if err != nil {
+					http.Error(w, "visitor denied", http.StatusForbidden)
+					return
+				}
+				guard, bound, err := guardLocalHTTPRequest(w, r, policy, permission)
+				if err != nil {
+					http.Error(w, "visitor denied", http.StatusForbidden)
+					return
+				}
+				defer guard.finish()
+				if bound.Header.Get("Authorization") != "application-secret" {
+					t.Error("visitor checks changed application authentication")
+				}
+				if bound.Header.Get(visitorTokenHeader) != "" || bound.Header.Get("Cookie") != "app=unchanged" {
+					t.Error("visitor credential reached the application or changed its cookie")
+				}
+				_, _ = io.WriteString(guard, "prefix")
+				guard.Flush()
+				if r.URL.Path == "/signed" {
+					<-bound.Context().Done()
+					return
+				}
+				select {
+				case <-bound.Context().Done():
+					return
+				case <-release:
+					_, _ = io.WriteString(guard, "finished")
+				}
+			}))
+			server.EnableHTTP2 = true
+			server.TLS = &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13}
+			server.StartTLS()
+			defer func() { unblock(); server.Close() }()
+			var dials atomic.Int64
+			transport := &http.Transport{ForceAttemptHTTP2: true, TLSClientConfig: &tls.Config{RootCAs: rootsForCertificate(t, certificate)},
+				DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+					if dials.Add(1) != 1 {
+						return nil, errors.New("visitor tried to replace its HTTP/2 connection")
+					}
+					return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+				}}
+			defer transport.CloseIdleConnections()
+			client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+			open := func(path string, signed bool) *http.Response {
+				t.Helper()
+				r, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://"+update.View.Hostname+path, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				r.Header.Set("Authorization", "application-secret")
+				r.Header.Set("Cookie", "app=unchanged")
+				if signed {
+					r.Header.Set(visitorTokenHeader, token.Reveal())
+				}
+				response, err := client.Do(r)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if response.StatusCode != http.StatusOK || response.ProtoMajor != 2 {
+					t.Fatalf("request was not admitted as HTTP/2: %d %s", response.StatusCode, response.Proto)
+				}
+				prefix := make([]byte, len("prefix"))
+				if _, err := io.ReadFull(response.Body, prefix); err != nil || string(prefix) != "prefix" {
+					t.Fatal("request did not begin streaming", err)
+				}
+				return response
+			}
+			first, sibling := open("/signed", true), open("/anonymous", false)
+			defer first.Body.Close()
+			defer sibling.Body.Close()
+			update.View.VisitorPolicyRevision++
+			update.View = update.View.WithShareVerifiers(nil)
+			now := time.Now()
+			update.View.ObservedAt, update.View.ValidUntil = now, now.Add(10*time.Second)
+			if err := policy.Apply(policy.Begin(), update); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.Copy(io.Discard, first.Body); err == nil {
+				t.Fatal("revoked signed request ended as a successful response")
+			}
+			// a later anonymous request shares the same still-live HTTP/2 connection.
+			third := open("/future", false)
+			_ = third.Body.Close()
+			if dials.Load() != 1 {
+				t.Fatal("revocation closed the shared visitor connection")
+			}
+			unblock()
+			body, err := io.ReadAll(sibling.Body)
+			if err != nil || string(body) != "finished" {
+				t.Fatal("revocation interrupted the unrelated HTTP/2 request", err)
+			}
+		})
 	}
 }

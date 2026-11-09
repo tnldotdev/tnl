@@ -50,7 +50,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		return result, ErrVisitorPolicy
 	}
 	policy := controlv1.VisitorPolicySnapshot{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, Issuer: issuer,
-		VisitorPolicyRevision: revision, KeyRevision: keyRevision, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), VerificationKeys: []controlv1.VisitorVerificationKey{}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}}
+		VisitorPolicyRevision: revision, KeyRevision: keyRevision, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), VerificationKeys: []controlv1.VisitorVerificationKey{}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}, ShareVerifiers: []controlv1.VisitorShareVerifier{}}
 	for _, key := range keys {
 		policy.VerificationKeys = append(policy.VerificationKeys, controlv1.VisitorVerificationKey{Id: key.ID, PublicKey: key.PublicKey})
 	}
@@ -59,6 +59,16 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 	team := ""
 	switch scope.Kind {
 	case visitorscope.PublicURL:
+		shares, err := q.ReadVisitorShareVerifiers(ctx, controlstatedb.ReadVisitorShareVerifiersParams{PublicURLID: scope.ID, Now: timestamptz(now)})
+		if err != nil {
+			return result, err
+		}
+		if len(shares) > 256 {
+			return result, ErrVisitorPolicy
+		}
+		for _, share := range shares {
+			policy.ShareVerifiers = append(policy.ShareVerifiers, controlv1.VisitorShareVerifier{ShareId: share.ShareID, SecretDigest: share.SecretDigest, ExpiresAt: share.ExpiresAt.Time})
+		}
 		row, err := q.GetFeedbackPublicURL(ctx, scope.ID)
 		if err != nil {
 			return result, err

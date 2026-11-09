@@ -3961,7 +3961,10 @@ type VisitorPolicySnapshot struct {
 	Port             int       `json:"port"`
 
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
-	Resource              VisitorResourceScope     `json:"resource"`
+	Resource VisitorResourceScope `json:"resource"`
+
+	// ShareVerifiers Current resource-bound share verifiers for authenticated serving processes. Contains no share secrets; never expose policy snapshots to visitors.
+	ShareVerifiers        []VisitorShareVerifier   `json:"share_verifiers"`
 	ValidUntil            time.Time                `json:"valid_until"`
 	VerificationKeys      []VisitorVerificationKey `json:"verification_keys"`
 	VisitorPolicyRevision int64                    `json:"visitor_policy_revision"`
@@ -3990,6 +3993,13 @@ type VisitorResourceScope struct {
 
 // VisitorResourceScopeKind defines model for VisitorResourceScope.Kind.
 type VisitorResourceScopeKind string
+
+// VisitorShareVerifier defines model for VisitorShareVerifier.
+type VisitorShareVerifier struct {
+	ExpiresAt    time.Time `json:"expires_at"`
+	SecretDigest []byte    `json:"secret_digest"`
+	ShareId      ShareID   `json:"share_id"`
+}
 
 // VisitorSubject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
 type VisitorSubject struct {

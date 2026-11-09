@@ -109,7 +109,7 @@ func (l *Lease) applyLocked(request Request, update Update, now time.Time) error
 		(!request.Deadline.IsZero() && !now.Before(request.Deadline)) ||
 		(l.revision > 0 && view.ObservedAt.Before(l.update.View.ControlTime)) ||
 		view.Scope != l.scope || view.VisitorPolicyRevision < l.revision || update.KeyRevision < l.keyRevision || update.KeyRevision < 1 || view.VisitorPolicyRevision < 1 ||
-		duration <= 0 || duration > visitortoken.PolicyLifetime || !now.Before(request.StartedAt.Add(duration)) || !view.ValidVerificationKeys() {
+		duration <= 0 || duration > visitortoken.PolicyLifetime || !now.Before(request.StartedAt.Add(duration)) || !view.ValidVerificationKeys() || !view.ValidShareVerifiers() {
 		return ErrUpdate
 	}
 	if request.Snapshot && !update.Snapshot {
@@ -259,7 +259,7 @@ func (g *Guard) resetLocked() {
 	facts := g.permission.Facts()
 	until := view.ValidUntil
 	if !g.anonymous && !g.connection {
-		until = view.LocalDeadline(facts.ExpiresAt)
+		until = view.LocalDeadline(visitortoken.PermissionDeadline(g.permission, view))
 		if g.renewable && facts.VisitorPolicyRevision != view.VisitorPolicyRevision {
 			until = earlier(until, g.confirmedUntil)
 		}
