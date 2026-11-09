@@ -176,7 +176,7 @@ func (a localAuthorizer) Authorize(ctx context.Context, request authorization.Re
 			domain.Kind == controlstate.DomainKindCustom && request.PublicURLScope == authorization.PublicURLScopeShared, a.dnsAutomation)
 	}
 	if request.Operation == authorization.OperationCredentialCreate {
-		decision.CertificatePlan = authorization.PublicURLCertificatePlan("eph-aaaaaaaaaaaaaaaaaaaaaaaaaa."+namespace, namespace,
+		decision.CertificatePlan = authorization.PublicURLCertificatePlan("aaaaaaaaaaaaaaaaaaaaaaaaaa."+namespace, namespace,
 			domain.Kind == controlstate.DomainKindCustom && request.PublicURLScope == authorization.PublicURLScopeShared, a.dnsAutomation)
 	}
 	return decision, nil

@@ -18,7 +18,7 @@ from tnl._native import NativeRuntime
 from tnl._protocol import Endpoint, InvalidResponse, NativeUnavailable, parse_status
 
 _publisher = "pub_" + "A" * 22
-_public_url = "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.member.example.test"
+_public_url = "https://aaaaaaaaaaaaaaaaaaaaaaaaaa.member.example.test"
 
 
 class FakeNative(NativeRuntime):

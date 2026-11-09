@@ -215,7 +215,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: read idempotent public_url: %w", err)
 	}
 	if request.PublisherIdentityID != "" {
-		request.CanonicalHostname, err = newEphemeralHostname(request.PublisherNamespace)
+		request.CanonicalHostname, err = newRandomPublicURLHostname(request.PublisherNamespace)
 		if err != nil {
 			return PublicURL{}, err
 		}

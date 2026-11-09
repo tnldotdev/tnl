@@ -293,6 +293,10 @@ func TestIntegrationPublisherNamespaceMemberOwnershipAndRemoval(t *testing.T) {
 	if !strings.HasSuffix(u.CanonicalHostname, "."+p.Scope.Namespace) || !u.Ephemeral {
 		t.Fatal("allocation escaped its namespace")
 	}
+	label := strings.TrimSuffix(u.CanonicalHostname, "."+p.Scope.Namespace)
+	if len(label) != 26 || strings.ContainsAny(label, "-=") {
+		t.Fatalf("random allocation has a prefix or padding: %q", label)
+	}
 	e2 := publisherEnrollment(t, d, r, p.Scope, now)
 	otherPublic, _, _ := ed25519.GenerateKey(rand.Reader)
 	other, err := d.RedeemPublisherEnrollment(t.Context(), e2.Key, otherPublic, now)

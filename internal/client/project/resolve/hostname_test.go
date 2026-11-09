@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -32,8 +33,8 @@ func TestProjectPublishHostnameUsesNamespace(t *testing.T) {
 		t.Fatal(err)
 	}
 	label, found := strings.CutSuffix(generated, ".chase-abc.tnl.dev")
-	if !found || strings.Count(label, "-") != 1 || generatedScope != controlv1.Member {
-		t.Fatalf("generated route = %q, %q", generated, generatedScope)
+	if !found || !regexp.MustCompile(`^[a-z2-7]{26}$`).MatchString(label) || generatedScope != controlv1.Member {
+		t.Fatalf("random public URL = %q, %q", generated, generatedScope)
 	}
 }
 
