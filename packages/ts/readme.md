@@ -111,5 +111,34 @@ Connections run in Node or Bun. Deployed apps need this package as a runtime
 dependency, including its platform-specific native package. To use prepared
 connections in CI, see the [GitHub Action](https://github.com/tnldotdev/tnl/blob/main/connect/readme.md).
 
+Use `createTnl` for independently owned connection scopes. Each instance pins its
+project directory, server, and client state selection without changing process-wide
+configuration:
+
+```ts
+import { createTnl } from "@tnldotdev/tnl";
+import { Pool } from "pg";
+
+const app = createTnl({ directory: "/srv/checkout" });
+const getDb = app.client("database", {
+  create: (connection) => new Pool({ ...connection, user: "checkout" }),
+  close: (pool) => pool.end(),
+});
+
+try {
+  const db = await getDb();
+  await db.query("select 1");
+} finally {
+  await app.close();
+}
+```
+
+Each getter selects current access and reuses the client for that exact connection
+binding. Renewing expiration alone does not replace a pool. Instance cleanup closes
+its factories before stopping its native owners; other instances keep running.
+Supply `workload: { name, token }` or `workload: { name, tokenFile }` to isolate a
+workload source on the instance. Provider callbacks read the current request; they
+are not background refresh sources.
+
 The CLI enables pseudonymous telemetry by default. Set `TNL_NO_TELEMETRY=true`
 to disable it; see [telemetry](https://tnl.dev/docs/cli#telemetry).

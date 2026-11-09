@@ -88,7 +88,7 @@ beforeEach(() => {
       if (!exitListeners.has(listener)) process.removeListener("beforeExit", listener);
   });
   vi.resetModules();
-  vi.stubGlobal("__tnlConnectorContextV2", undefined);
+  vi.stubGlobal("__tnlConnectorContextV3", undefined);
   vi.stubEnv("TNL_CONNECTION_HANDLE", undefined);
   for (const name of ["TNL_WORKLOAD", "GITHUB_ACTIONS", "VERCEL", "FLY_APP_NAME"])
     vi.stubEnv(name, undefined);

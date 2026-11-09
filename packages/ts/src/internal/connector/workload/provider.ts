@@ -31,9 +31,13 @@ const workloadOptionsSchema = z
 
 export type WorkloadConfiguration = z.output<typeof workloadOptionsSchema>;
 
+export function parseWorkload(options: WorkloadOptions): WorkloadConfiguration {
+  return parseValue(workloadOptionsSchema, options, "sdk.workload_required");
+}
+
 /** register a fixed request-scoped source, never a mutable current token. */
 export function configureWorkload(options: WorkloadOptions): void {
-  const selected = parseValue(workloadOptionsSchema, options, "sdk.workload_required");
+  const selected = parseWorkload(options);
   const key = contextKey();
   const configuration = context.workloads.get(key);
   if (
@@ -48,17 +52,33 @@ export function configureWorkload(options: WorkloadOptions): void {
   context.workloads.set(key, selected);
 }
 
-export function usesWorkload(key = contextKey()): boolean {
+export function workloadRuntime(): WorkloadRequest["runtime"] {
+  return {
+    ...(process.env.TNL_WORKLOAD === undefined ? {} : { workload: process.env.TNL_WORKLOAD }),
+    vercel: process.env.VERCEL ?? "",
+    fly_app_name: process.env.FLY_APP_NAME ?? "",
+    github_actions: process.env.GITHUB_ACTIONS ?? "",
+    cloud_run_service: process.env.K_SERVICE ?? "",
+    kubernetes_service_host: process.env.KUBERNETES_SERVICE_HOST ?? "",
+    gitlab_ci: process.env.GITLAB_CI ?? "",
+  };
+}
+
+export function usesWorkload(
+  key = contextKey(),
+  runtime = workloadRuntime(),
+  inheritHandle = true,
+): boolean {
   return (
-    process.env.TNL_CONNECTION_HANDLE === undefined &&
-    (process.env.TNL_WORKLOAD !== undefined ||
+    (!inheritHandle || process.env.TNL_CONNECTION_HANDLE === undefined) &&
+    (runtime.workload !== undefined ||
       context.workloads.has(key) ||
-      process.env.VERCEL === "1" ||
-      Boolean(process.env.FLY_APP_NAME) ||
-      Boolean(process.env.K_SERVICE) ||
-      Boolean(process.env.KUBERNETES_SERVICE_HOST) ||
-      process.env.GITLAB_CI === "true" ||
-      process.env.GITHUB_ACTIONS === "true")
+      runtime.vercel === "1" ||
+      Boolean(runtime.fly_app_name) ||
+      Boolean(runtime.cloud_run_service) ||
+      Boolean(runtime.kubernetes_service_host) ||
+      runtime.gitlab_ci === "true" ||
+      runtime.github_actions === "true")
   );
 }
 
@@ -67,8 +87,9 @@ export function usesWorkload(key = contextKey()): boolean {
 export async function selectWorkload(
   select: (request: WorkloadRequest) => Promise<unknown>,
   key = contextKey(),
+  configuration = context.workloads.get(key),
+  runtime = workloadRuntime(),
 ): Promise<SelectionOptions> {
-  const configuration = context.workloads.get(key);
   const request: WorkloadRequest = {
     ...(configuration === undefined
       ? {}
@@ -77,22 +98,19 @@ export async function selectWorkload(
           callback: configuration.token !== undefined,
           ...(configuration.tokenFile === undefined ? {} : { token_file: configuration.tokenFile }),
         }),
-    runtime: {
-      ...(process.env.TNL_WORKLOAD === undefined ? {} : { workload: process.env.TNL_WORKLOAD }),
-      vercel: process.env.VERCEL ?? "",
-      fly_app_name: process.env.FLY_APP_NAME ?? "",
-      github_actions: process.env.GITHUB_ACTIONS ?? "",
-      cloud_run_service: process.env.K_SERVICE ?? "",
-      kubernetes_service_host: process.env.KUBERNETES_SERVICE_HOST ?? "",
-      gitlab_ci: process.env.GITLAB_CI ?? "",
-    },
+    runtime,
   };
   const selection = parseValue(
     workloadSelectionSchema,
     await select(request),
     "sdk.response_invalid",
   );
-  const assertion = await acquireAssertion(selection, AbortSignal.timeout(10_000), key);
+  const assertion = await acquireAssertion(
+    selection,
+    AbortSignal.timeout(10_000),
+    key,
+    configuration,
+  );
   return {
     sdk_workload: request,
     sdk_workload_policy: selection.policy,
@@ -122,8 +140,8 @@ export async function acquireAssertion(
   selection: Pick<WorkloadSelection, "name" | "source">,
   signal: AbortSignal,
   key = contextKey(),
+  configuration = context.workloads.get(key),
 ): Promise<string | undefined> {
-  const configuration = context.workloads.get(key);
   const lifetime = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
   try {
     return await cancellable(lifetime, async () => {

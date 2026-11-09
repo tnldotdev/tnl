@@ -12,6 +12,7 @@ import type {
   TnlConnectionHandle,
   TnlConnectionRegistry,
   TnlFetch,
+  TnlOptions,
 } from "../../project.js";
 import { clientFactory } from "./client_factory.js";
 import { awaitableConnection } from "./awaitable_connection.js";
@@ -22,19 +23,98 @@ import type { ConnectionSnapshot } from "./snapshot.js";
 import * as z from "zod";
 import { parseValue } from "../validation.js";
 import { sdkPreparationSchema, preparedConnectionSchema } from "./contract.js";
-import { usesWorkload, selectWorkload } from "./workload/provider.js";
+import {
+  usesWorkload,
+  selectWorkload,
+  parseWorkload,
+  workloadRuntime,
+  type WorkloadConfiguration,
+} from "./workload/provider.js";
 import type { SelectionOptions, WorkloadRequest } from "./workload/contract.js";
 export { configureWorkload } from "./workload/provider.js";
 import { resolveNativeBinary } from "../native/launcher.js";
 import { launchEnvironment, operation, operationSync, independent } from "../tracing.js";
 import type { ProjectRuntime } from "../project/runtime.js";
-import { isServiceName } from "../values.js";
+import { isServiceName, pathTextSchema, httpsOriginSchema } from "../values.js";
 
 type Settings = TnlConnectionRegistry[keyof TnlConnectionRegistry];
 type Prepared = ReturnType<typeof parsePrepared>;
 const maximumBytes = 128 * 1024;
 const { scopes, selectedScopes, fetches } = context;
 const command = ["--no-telemetry", "runtime", "connections"];
+
+// explicit instances have private native registries, not a mutable current identity.
+export interface ConnectionScope {
+  readonly key: string;
+  readonly directory: string;
+  readonly environment: NativeScope["environment"];
+  readonly workload?: WorkloadConfiguration;
+  readonly runtime: WorkloadRequest["runtime"];
+  readonly pending: Set<Promise<unknown>>;
+  readonly clients: Set<{ close(): Promise<void> }>;
+  readonly fetches: Map<string, ManagedFetch>;
+  native?: Promise<NativeScope>;
+  closed: boolean;
+  closing?: Promise<void>;
+}
+
+export function createConnectionScope(options: TnlOptions): ConnectionScope {
+  const selected = parseValue(
+    z.strictObject({
+      directory: pathTextSchema.optional(),
+      stateDir: pathTextSchema.optional(),
+      server: httpsOriginSchema.optional(),
+      workload: z.unknown().optional(),
+    }),
+    options,
+    "sdk.configuration_invalid",
+  );
+  const workload = options.workload === undefined ? undefined : parseWorkload(options.workload);
+  const runtime = workloadRuntime();
+  if (workload !== undefined) delete runtime.workload;
+  const stateDir = selected.stateDir ?? process.env.TNL_STATE_DIR;
+  return {
+    key: randomUUID(),
+    directory: path.resolve(selected.directory ?? process.cwd()),
+    environment: {
+      TNL_STATE_DIR: stateDir === undefined ? undefined : path.resolve(stateDir),
+      TNL_SERVER: selected.server ?? process.env.TNL_SERVER,
+      TNL_CONNECTION_HANDLE: undefined,
+      TNL_CONFIG: process.env.TNL_CONFIG,
+    },
+    ...(workload === undefined ? {} : { workload }),
+    runtime,
+    pending: new Set(),
+    clients: new Set(),
+    fetches: new Map(),
+    closed: false,
+  };
+}
+
+export function closeConnectionScope(scope: ConnectionScope): Promise<void> {
+  scope.closed = true;
+  if (scope.closing !== undefined) return scope.closing;
+  const closing = (async () => {
+    await Promise.allSettled(scope.pending);
+    const results = await Promise.allSettled([
+      ...[...scope.clients].map((client) => client.close()),
+      ...[...scope.fetches.values()].map((fetch) => fetch.close()),
+    ]);
+    const errors = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as unknown] : [],
+    );
+    // drivers may still own sockets after failed cleanup; retain their native owner.
+    if (errors.length > 0) throw new AggregateError(errors, "runtime cleanup failed");
+    if (scope.native !== undefined) await (await scope.native).stop();
+    scope.clients.clear();
+    scope.fetches.clear();
+  })();
+  scope.closing = closing;
+  void closing.catch(() => {
+    if (scope.closing === closing) delete scope.closing;
+  });
+  return closing;
+}
 
 function machineError(cause: unknown, operation?: string): TnlError {
   // native stderr and JSON parser errors can contain private input; retain only
@@ -148,18 +228,19 @@ function readArgs(file: string, name: string): string[] {
   return ["read", "--handle", file, "--service", name];
 }
 
-function nativeScope(key: string): Promise<NativeScope> {
+function nativeScope(key: string, selection?: ConnectionScope): Promise<NativeScope> {
   const binary = resolveNativeBinary();
-  const directory = process.cwd();
+  const directory = selection?.directory ?? process.cwd();
   const nativeKey = JSON.stringify([key, binary]);
   let loading = scopes.get(nativeKey);
   if (loading === undefined) {
     if (scopes.size >= 32) throw new TnlError("sdk.connection_unavailable");
     // pin the cache key's selection before yielding, not provider inputs or traces.
-    const environment = {
+    const environment = selection?.environment ?? {
       TNL_STATE_DIR: process.env.TNL_STATE_DIR,
       TNL_SERVER: process.env.TNL_SERVER,
       TNL_CONNECTION_HANDLE: process.env.TNL_CONNECTION_HANDLE,
+      TNL_CONFIG: process.env.TNL_CONFIG,
     };
     loading = (async () => {
       const scope: NativeScope = {
@@ -172,20 +253,33 @@ function nativeScope(key: string): Promise<NativeScope> {
         // keep native error classification with the copy that owns this IPC.
         select: (...args) => requestSelection(scope, ...args),
         workload: (name, request) => requestWorkload(scope, name, request),
+        stop: async () => {
+          await machine(scope, [
+            "sdk-stop",
+            "--registry",
+            scope.registry,
+            "--parent-pid",
+            String(process.pid),
+          ]);
+          if (scope.entry !== undefined)
+            await scope.entry.ipc.then(
+              (ipc) => ipc.close(),
+              () => {},
+            );
+          process.off("beforeExit", beforeExit);
+          scopes.delete(nativeKey);
+          selectedScopes.get(key)?.delete(binary);
+          if (selectedScopes.get(key)?.size === 0) selectedScopes.delete(key);
+        },
       };
       const cleanup = independent("sdk.app.cleanup", async () => {
-        await machine(scope, [
-          "sdk-stop",
-          "--registry",
-          scope.registry,
-          "--parent-pid",
-          String(process.pid),
-        ]);
-        if (scope.entry !== undefined) (await scope.entry.ipc).close();
+        if (selection === undefined) await scope.stop();
+        else await closeConnectionScope(selection);
       });
-      process.once("beforeExit", () => {
+      const beforeExit = () => {
         void cleanup().catch(() => {});
-      });
+      };
+      process.once("beforeExit", beforeExit);
       let selected = selectedScopes.get(key);
       if (selected === undefined) {
         selected = new Map();
@@ -196,24 +290,53 @@ function nativeScope(key: string): Promise<NativeScope> {
     })();
     scopes.set(nativeKey, loading);
   }
+  if (selection !== undefined) selection.native = loading;
   return loading;
 }
 
-function prepare(name: string, externalFile?: string): Promise<Prepared> {
-  return operation("sdk.connect", () => prepareUntraced(name, externalFile));
+function prepare(
+  name: string,
+  externalFile?: string,
+  selection?: ConnectionScope,
+): Promise<Prepared> {
+  if (selection?.closed) return Promise.reject(new TnlError("sdk.client_closed"));
+  const pending = operation("sdk.connect", async () => {
+    const prepared = await prepareUntraced(name, externalFile, selection);
+    if (selection?.closed) throw new TnlError("sdk.client_closed");
+    return prepared;
+  });
+  selection?.pending.add(pending);
+  void pending.then(
+    () => selection?.pending.delete(pending),
+    () => selection?.pending.delete(pending),
+  );
+  return pending;
 }
 
-async function prepareUntraced(name: string, externalFile: string | undefined): Promise<Prepared> {
+async function prepareUntraced(
+  name: string,
+  externalFile: string | undefined,
+  selection?: ConnectionScope,
+): Promise<Prepared> {
   const requestedAt = new Date().toISOString();
-  const base = contextKey();
+  const base = selection?.key ?? contextKey();
   if (externalFile !== undefined) {
     readArgs(externalFile, name);
     return parsePrepared(await prepareExternal(externalFile, name), name, externalFile);
   }
-  const workload = usesWorkload(base);
-  const scope = await nativeScope(base);
+  const workload =
+    selection?.workload !== undefined ||
+    usesWorkload(base, selection?.runtime, selection === undefined);
+  const scope = await nativeScope(base, selection);
   const selectionOptions: SelectionOptions = {
-    ...(workload ? await selectWorkload((request) => scope.workload(name, request), base) : {}),
+    ...(workload
+      ? await selectWorkload(
+          (request) => scope.workload(name, request),
+          base,
+          selection?.workload,
+          selection?.runtime,
+        )
+      : {}),
     requested_at: requestedAt,
   };
   const assertion = selectionOptions.assertion;
@@ -330,14 +453,15 @@ async function requestWorkload(
   return raw;
 }
 
-function readPrepared(name: string): Prepared {
+function readPrepared(name: string, selection?: ConnectionScope): Prepared {
   const owner =
-    process.env.TNL_CONNECTION_HANDLE === undefined
-      ? selectedScopes.get(contextKey())?.get(resolveNativeBinary())?.selected
+    selection !== undefined || process.env.TNL_CONNECTION_HANDLE === undefined
+      ? selectedScopes.get(selection?.key ?? contextKey())?.get(resolveNativeBinary())?.selected
       : undefined;
   if (owner?.expiresAt !== undefined && owner.expiresAt <= Date.now())
     throw new TnlError("sdk.connection_unprepared");
-  const file = process.env.TNL_CONNECTION_HANDLE ?? owner?.file;
+  const file =
+    (selection === undefined ? process.env.TNL_CONNECTION_HANDLE : undefined) ?? owner?.file;
   if (file === undefined) throw new TnlError("sdk.connection_unprepared");
   // a separate native process can use owner IPC while this event loop is blocked.
   // never execute an executable selected by descriptor contents or PATH.
@@ -366,16 +490,20 @@ function parsePrepared(value: unknown, name: string, file: string) {
   });
 }
 
+type ManagedFetch = TnlFetch & { close(): Promise<void> };
+
 export function managedFetch(
   url: `https://${string}`,
   current: (signal?: AbortSignal) => Promise<ConnectionSnapshot>,
-): TnlFetch {
+): ManagedFetch {
   let active = 0;
   let pool: Pool | undefined;
   let dispatcher: Dispatcher | undefined;
   let poolKey: string | undefined;
   const retired = new Set<Pool>();
-  return async (input, init) => {
+  let closed = false;
+  const fetch: TnlFetch = async (input, init) => {
+    if (closed) throw new TnlError("sdk.client_closed");
     const running = [...retired, ...(pool === undefined ? [] : [pool])].reduce(
       (sum, p) => sum + p.stats.running + p.stats.pending,
       0,
@@ -399,6 +527,7 @@ export function managedFetch(
       lifetime.throwIfAborted();
       const snapshot = await cancellable(lifetime, () => current(lifetime));
       lifetime.throwIfAborted();
+      if (closed) throw new TnlError("sdk.client_closed");
       if (
         (snapshot.protocol !== "http" && snapshot.protocol !== "kubernetes") ||
         snapshot.url !== url ||
@@ -522,6 +651,14 @@ export function managedFetch(
       active--;
     }
   };
+  return Object.assign(fetch, {
+    async close() {
+      closed = true;
+      await Promise.all(
+        [...retired, ...(pool === undefined ? [] : [pool])].map((entry) => entry.close()),
+      );
+    },
+  });
 }
 
 function responseIdentity(response: Response, url: string, type: string): Response {
@@ -534,28 +671,36 @@ function responseIdentity(response: Response, url: string, type: string): Respon
   return response;
 }
 
-function settings(name: string, snapshot: ConnectionSnapshot, externalFile?: string): Settings {
+function settings(
+  name: string,
+  snapshot: ConnectionSnapshot,
+  externalFile?: string,
+  selection?: ConnectionScope,
+): Settings {
   switch (snapshot.protocol) {
     case "tcp":
       return Object.freeze({ host: snapshot.host, port: snapshot.port });
     case "http": {
       const key = JSON.stringify([
-        contextKey(),
+        selection?.key ?? contextKey(),
         externalFile === undefined ? resolveNativeBinary() : undefined,
         name,
         snapshot.url,
         externalFile,
       ]);
-      let fetch = fetches.get(key);
+      const cache = selection?.fetches ?? fetches;
+      let fetch = cache.get(key);
       if (fetch === undefined) {
-        if (fetches.size >= 32) throw new TnlError("sdk.connection_unavailable");
-        fetch = managedFetch(snapshot.url, async (signal) => {
+        if (cache.size >= 32) throw new TnlError("sdk.connection_unavailable");
+        const managed = managedFetch(snapshot.url, async (signal) => {
           signal?.throwIfAborted();
-          const current = await waitForPreparation(prepare(name, externalFile), signal);
+          const current = await waitForPreparation(prepare(name, externalFile, selection), signal);
           signal?.throwIfAborted();
           return current.snapshot;
         });
-        fetches.set(key, fetch);
+        if (selection === undefined) fetches.set(key, managed);
+        else selection.fetches.set(key, managed);
+        fetch = managed;
       }
       return Object.freeze({
         url: snapshot.url,
@@ -603,15 +748,18 @@ async function waitForPreparation<T>(operation: Promise<T>, signal?: AbortSignal
 export function connectionHandle(
   name: string,
   updateProject: (project: ProjectRuntime) => void,
+  selection?: ConnectionScope,
 ): TnlConnectionHandle<Settings> {
+  if (selection?.closed) throw new TnlError("sdk.client_closed");
   if (!isServiceName(name)) throw new TnlError("sdk.configuration_invalid");
-  const externalFile = process.env.TNL_CONNECTION_HANDLE;
+  const externalFile = selection === undefined ? process.env.TNL_CONNECTION_HANDLE : undefined;
   const result = (prepared: Prepared) => {
     updateProject(prepared.project);
-    return settings(name, prepared.snapshot, externalFile);
+    return settings(name, prepared.snapshot, externalFile, selection);
   };
   return awaitableConnection(
     () => {
+      if (selection?.closed) throw new TnlError("sdk.client_closed");
       if (externalFile !== undefined) {
         return result(
           parsePrepared(
@@ -623,10 +771,14 @@ export function connectionHandle(
       }
       // a module-shared handle must not select the last request's identity.
       // await yields plain settings; sync workload settings need an explicit file.
-      if (usesWorkload()) throw new TnlError("sdk.connection_unprepared");
-      return result(readPrepared(name));
+      if (
+        selection?.workload !== undefined ||
+        usesWorkload(selection?.key, selection?.runtime, selection === undefined)
+      )
+        throw new TnlError("sdk.connection_unprepared");
+      return result(readPrepared(name, selection));
     },
-    async () => result(await prepare(name, externalFile)),
+    async () => result(await prepare(name, externalFile, selection)),
   );
 }
 
@@ -634,16 +786,20 @@ export function connectionClient<Client>(
   name: string,
   options: TnlClientOptions<Settings, Client>,
   updateProject: (project: ProjectRuntime) => void,
+  selection?: ConnectionScope,
 ): TnlClientFactory<Client> {
+  if (selection?.closed) throw new TnlError("sdk.client_closed");
   if (!isServiceName(name)) throw new TnlError("sdk.configuration_invalid");
-  const externalFile = process.env.TNL_CONNECTION_HANDLE;
-  return clientFactory(async () => {
-    const prepared = await prepare(name, externalFile);
+  const externalFile = selection === undefined ? process.env.TNL_CONNECTION_HANDLE : undefined;
+  const factory = clientFactory(async () => {
+    const prepared = await prepare(name, externalFile, selection);
     updateProject(prepared.project);
     const { expires: _expires, ...binding } = prepared.snapshot;
     return {
       key: JSON.stringify([prepared.file, binding]),
-      connection: settings(name, prepared.snapshot, externalFile),
+      connection: settings(name, prepared.snapshot, externalFile, selection),
     };
   }, options);
+  selection?.clients.add(factory);
+  return factory;
 }

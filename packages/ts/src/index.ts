@@ -5,6 +5,7 @@ import {
   parseRuntimePayload,
   parseProjectRuntime,
   type ProjectMetadata,
+  type ProjectRuntime,
 } from "./internal/project/runtime.js";
 import { TnlError } from "./errors.js";
 import type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
@@ -22,6 +23,7 @@ import type {
   TnlConnectionRegistry,
   TnlClientFactory,
   TnlClientOptions,
+  TnlOptions,
 } from "./project.js";
 export type * from "./project.js";
 export type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
@@ -65,6 +67,35 @@ export type TnlRuntime = Readonly<
       ): TnlClientFactory<Client>;
     }
 >;
+
+export type TnlInstance = Pick<TnlRuntime, "connect" | "client" | "services"> & {
+  close(): Promise<void>;
+  [Symbol.asyncDispose](): Promise<void>;
+};
+
+/** construct an isolated native connection scope without starting native work. */
+export function createTnl(options: TnlOptions = {}): TnlInstance {
+  const { createConnectionScope, closeConnectionScope, connectionHandle, connectionClient } =
+    loadConnection();
+  const scope = createConnectionScope(options);
+  let project: ProjectRuntime | undefined;
+  const update = (next: ProjectRuntime) => {
+    project = next;
+  };
+  const close = () => closeConnectionScope(scope);
+  return Object.freeze({
+    get services() {
+      return serviceMetadata(project);
+    },
+    connect: (name: string) => connectionHandle(name, update, scope),
+    client: <Client>(
+      name: string,
+      settings: TnlClientOptions<TnlConnectionRegistry[keyof TnlConnectionRegistry], Client>,
+    ) => connectionClient(name, settings, update, scope),
+    close,
+    [Symbol.asyncDispose]: close,
+  }) as TnlInstance;
+}
 
 declare const process:
   | {

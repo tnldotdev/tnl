@@ -4,8 +4,12 @@ import type { TnlRuntime } from "./index.js";
 import { TnlError } from "./errors.js";
 import { awaitableConnection } from "./internal/connector/awaitable_connection.js";
 export type * from "./project.js";
-export type { TnlRuntime, TnlProjectConfig } from "./index.js";
+export type { TnlRuntime, TnlProjectConfig, TnlInstance } from "./index.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
+
+export function createTnl(): never {
+  throw new TnlError("sdk.connection_server_only");
+}
 
 declare const process: { readonly env?: { readonly TNL_PROJECT_RUNTIME?: string } } | undefined;
 

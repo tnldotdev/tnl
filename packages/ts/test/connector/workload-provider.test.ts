@@ -16,7 +16,7 @@ beforeEach(async () => {
   vercel.header = undefined;
   vercel.token.mockReset();
   vi.resetModules();
-  vi.stubGlobal("__tnlConnectorContextV2", undefined);
+  vi.stubGlobal("__tnlConnectorContextV3", undefined);
   for (const name of [
     "TNL_CONNECTION_HANDLE",
     "TNL_WORKLOAD",

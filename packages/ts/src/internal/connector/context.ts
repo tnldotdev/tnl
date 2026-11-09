@@ -11,7 +11,7 @@ export interface NativeScope {
   readonly binary: string;
   readonly environment: Pick<
     NodeJS.ProcessEnv,
-    "TNL_STATE_DIR" | "TNL_SERVER" | "TNL_CONNECTION_HANDLE"
+    "TNL_STATE_DIR" | "TNL_SERVER" | "TNL_CONNECTION_HANDLE" | "TNL_CONFIG"
   >;
   readonly requests: Map<string, Promise<unknown>>;
   open(file: string): Promise<OwnerIPC>;
@@ -23,6 +23,7 @@ export interface NativeScope {
     options: SelectionOptions,
   ): Promise<unknown>;
   workload(name: string, request: WorkloadRequest): Promise<unknown>;
+  stop(): Promise<void>;
   entry?: { readonly file: string; readonly ipc: Promise<OwnerIPC> };
   selected?: { readonly file: string; readonly expiresAt: number };
 }
@@ -44,13 +45,13 @@ interface ConnectorContext {
 }
 
 declare global {
-  var __tnlConnectorContextV2: ConnectorContext | undefined;
+  var __tnlConnectorContextV3: ConnectorContext | undefined;
 }
 
 // this version describes the shared in-memory shape, not the native wire schema.
 // independently loaded compatible SDK copies share waits, IPC, and cleanup.
-// v2 scopes add directory and workload; do not reuse older copies' v1 scopes.
-export const context: ConnectorContext = (globalThis.__tnlConnectorContextV2 ??= {
+// v3 scopes expose joined cleanup; never adopt an older scope without its owner.
+export const context: ConnectorContext = (globalThis.__tnlConnectorContextV3 ??= {
   scopes: new Map(),
   selectedScopes: new Map(),
   fetches: new Map(),

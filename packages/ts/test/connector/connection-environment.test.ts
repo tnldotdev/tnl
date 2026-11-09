@@ -24,6 +24,7 @@ const fixture = vi.hoisted(() => ({
     | typeof import("../../src/internal/connector/workload/provider.js")
     | undefined,
   failIPC: false,
+  failStop: false,
 }));
 vi.mock("../../src/internal/native/launcher.js", () => ({
   resolveNativeBinary: () => "/fixture/tnl",
@@ -38,6 +39,9 @@ vi.mock("node:fs/promises", async (original) => ({
   mkdtemp: async (prefix: string) => `${prefix}fixture-${++fixture.scopes}`,
 }));
 vi.mock("../../src/internal/connector/workload/provider.js", () => ({
+  parseWorkload: (...args: Parameters<ReturnType<typeof actualProvider>["parseWorkload"]>) =>
+    actualProvider().parseWorkload(...args),
+  workloadRuntime: () => actualProvider().workloadRuntime(),
   configureWorkload: (
     ...args: Parameters<ReturnType<typeof actualProvider>["configureWorkload"]>
   ) => actualProvider().configureWorkload(...args),
@@ -111,6 +115,10 @@ vi.mock("node:child_process", () => ({
               return;
             }
             if (args[3] === "sdk-stop") {
+              if (fixture.failStop) {
+                callback(new Error("stop failed"), "");
+                return;
+              }
               callback(null, JSON.stringify({ schema: 1, state: "stopped" }));
               return;
             }
@@ -189,7 +197,7 @@ function prepared(owner: Owner) {
 let originalListeners = new Set(process.listeners("beforeExit"));
 beforeEach(async () => {
   vi.resetModules();
-  vi.stubGlobal("__tnlConnectorContextV2", undefined);
+  vi.stubGlobal("__tnlConnectorContextV3", undefined);
   fixture.provider = await vi.importActual("../../src/internal/connector/workload/provider.js");
   fixture.launches.length = 0;
   fixture.owners.clear();
@@ -198,12 +206,118 @@ beforeEach(async () => {
   fixture.workload = false;
   fixture.realWorkload = false;
   fixture.failIPC = false;
+  fixture.failStop = false;
   vi.stubEnv("TNL_SERVER", "https://a.example");
   vi.stubEnv("TNL_STATE_DIR", "/fixture/state-a");
   vi.stubEnv("TNL_CONNECTION_HANDLE", undefined);
   for (const name of ["TNL_WORKLOAD", "VERCEL", "FLY_APP_NAME", "GITHUB_ACTIONS"])
     vi.stubEnv(name, undefined);
   originalListeners = new Set(process.listeners("beforeExit"));
+});
+
+test("explicit instances pin selection and close only their own factories and owners", async () => {
+  const { createConnectionScope, connectionHandle, connectionClient, closeConnectionScope } =
+    await import("../../src/internal/connector/connection.js");
+  const a = createConnectionScope({ server: "https://a.example", directory: "/fixture/a" });
+  const b = createConnectionScope({ server: "https://b.example", directory: "/fixture/b" });
+  const updateA = vi.fn(),
+    updateB = vi.fn();
+  const createA = vi.fn((connection: unknown) => ({ connection }));
+  const closeA = vi.fn();
+  const getA = connectionClient("database", { create: createA, close: closeA }, updateA, a);
+  const getB = connectionClient(
+    "database",
+    { create: (connection) => ({ connection }), close: vi.fn() },
+    updateB,
+    b,
+  );
+  const [poolA, poolB] = await Promise.all([getA(), getB()]);
+  expect(poolA.connection).toMatchObject({ port: 20001 });
+  expect(poolB.connection).toMatchObject({ port: 20002 });
+  expect(createA).toHaveBeenCalledOnce();
+  vi.stubEnv("TNL_SERVER", "https://unrelated.example");
+  expect(await getA()).toBe(poolA);
+  await closeConnectionScope(a);
+  expect(closeA).toHaveBeenCalledExactlyOnceWith(poolA);
+  const stops = fixture.launches.filter((launch) => launch.args[3] === "sdk-stop");
+  expect(stops).toHaveLength(1);
+  expect(stops[0]?.environment.TNL_SERVER).toBe("https://a.example");
+  expect(await getB()).toBe(poolB);
+  expect(() => connectionHandle("database", updateA, a)).toThrow(
+    expect.objectContaining({ code: "sdk.client_closed" }),
+  );
+  await expect(getA()).rejects.toHaveProperty("code", "sdk.client_closed");
+  await closeConnectionScope(b);
+});
+
+test("scoped close fences and joins cold selection before stopping its registry", async () => {
+  const { createConnectionScope, connectionHandle, closeConnectionScope } =
+    await import("../../src/internal/connector/connection.js");
+  const scope = createConnectionScope({});
+  const gate = Promise.withResolvers<void>();
+  fixture.scopeGate = gate.promise;
+  const result = Promise.resolve(connectionHandle("database", vi.fn(), scope));
+  const rejected = expect(result).rejects.toHaveProperty("code", "sdk.client_closed");
+  await vi.waitFor(() => expect(fixture.scopeStarted).toHaveBeenCalledOnce());
+  let closed = false;
+  const closing = closeConnectionScope(scope).then(() => {
+    closed = true;
+  });
+  await Promise.resolve();
+  expect(closed).toBe(false);
+  gate.resolve();
+  await rejected;
+  await closing;
+  expect(fixture.launches.map((launch) => launch.args[3])).toEqual(["sdk-prepare", "sdk-stop"]);
+});
+
+test("scoped cleanup retries driver failure before releasing native authority", async () => {
+  const { createConnectionScope, connectionClient, closeConnectionScope } =
+    await import("../../src/internal/connector/connection.js");
+  const scope = createConnectionScope({});
+  const failure = new Error("driver close failed");
+  const close = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(undefined);
+  const get = connectionClient("database", { create: () => ({}), close }, vi.fn(), scope);
+  await get();
+  await expect(closeConnectionScope(scope)).rejects.toMatchObject({ errors: [failure] });
+  expect(fixture.launches.map((launch) => launch.args[3])).toEqual(["sdk-prepare"]);
+  fixture.failStop = true;
+  await expect(closeConnectionScope(scope)).rejects.toHaveProperty(
+    "code",
+    "sdk.connection_unavailable",
+  );
+  fixture.failStop = false;
+  await closeConnectionScope(scope);
+  expect(close).toHaveBeenCalledTimes(2);
+  expect(fixture.launches.map((launch) => launch.args[3])).toEqual([
+    "sdk-prepare",
+    "sdk-stop",
+    "sdk-stop",
+  ]);
+});
+
+test("explicit same-name workloads retain separate request callbacks", async () => {
+  fixture.realWorkload = true;
+  const { createConnectionScope, connectionHandle, closeConnectionScope } =
+    await import("../../src/internal/connector/connection.js");
+  const tokenA = vi.fn(async () => "assertion-a"),
+    tokenB = vi.fn(async () => "assertion-b");
+  const a = createConnectionScope({ workload: { name: "job", token: tokenA } });
+  const b = createConnectionScope({ workload: { name: "job", token: tokenB } });
+  vi.stubEnv("TNL_WORKLOAD", "unrelated");
+  vi.stubEnv("TNL_CONNECTION_HANDLE", "/fixture/unrelated/handle.json");
+  await Promise.all([
+    connectionHandle("database", vi.fn(), a),
+    connectionHandle("database", vi.fn(), b),
+  ]);
+  expect(tokenA).toHaveBeenCalledOnce();
+  expect(tokenB).toHaveBeenCalledOnce();
+  expect(
+    fixture.launches
+      .filter((launch) => launch.args[3] === "sdk-prepare")
+      .map((launch) => launch.input),
+  ).toMatchObject([{ assertion: "assertion-a" }, { assertion: "assertion-b" }]);
+  await Promise.all([closeConnectionScope(a), closeConnectionScope(b)]);
 });
 afterEach(() => {
   vi.unstubAllGlobals();

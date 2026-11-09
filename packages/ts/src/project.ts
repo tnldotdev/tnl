@@ -1,6 +1,15 @@
 import type { TnlProtocol } from "./config.js";
 import type { ProjectServiceMetadata, ServiceProtocol } from "./internal/project/runtime.js";
 import type { NativeTLSOptions } from "./internal/connector/snapshot.js";
+import type { WorkloadOptions } from "./workload.js";
+
+/** immutable selection for one independently owned runtime instance. */
+export type TnlOptions = Readonly<{
+  directory?: string;
+  stateDir?: string;
+  server?: string;
+  workload?: WorkloadOptions;
+}>;
 
 /** browser-safe addresses only; native credentials are returned by node methods. */
 export type TnlProtocolRegistry = {

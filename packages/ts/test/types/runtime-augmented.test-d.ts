@@ -1,4 +1,9 @@
-import { tnl, type TnlProjectFromConfig, type TnlConnectionRegistry } from "@tnldotdev/tnl";
+import {
+  tnl,
+  createTnl,
+  type TnlProjectFromConfig,
+  type TnlConnectionRegistry,
+} from "@tnldotdev/tnl";
 import { defineConfig } from "@tnldotdev/tnl/config";
 import { assert, assertType, expectTypeOf, test } from "vitest";
 import { Pool } from "pg";
@@ -143,6 +148,27 @@ test("client factories infer ordinary clients and exact protocol callback settin
 type Union = TnlProjectFromConfig<{
   services: { choice: { protocol: "postgres" } | { protocol: "mysql" } };
 }>;
+
+test("scoped instances preserve generated service and factory types", async () => {
+  const app = createTnl({
+    directory: "/app",
+    workload: { name: "job", token: async () => "proof" },
+  });
+  const get = app.client("db", {
+    create(connection) {
+      expectTypeOf(connection).toEqualTypeOf<TnlConnectionRegistry["postgres"]>();
+      return new Pool({ ...connection });
+    },
+    close(pool) {
+      return pool.end();
+    },
+  });
+  expectTypeOf(get()).toEqualTypeOf<Promise<Pool>>();
+  expectTypeOf(app.services.api.url).toEqualTypeOf<`https://${string}`>();
+  // @ts-expect-error scoped instances retain exact generated service names.
+  app.connect("missing");
+  await app.close();
+});
 declare const union: Union;
 test("a service protocol union remains a union", () => {
   expectTypeOf(union.services.choice.protocol).toEqualTypeOf<"postgres" | "mysql">();
