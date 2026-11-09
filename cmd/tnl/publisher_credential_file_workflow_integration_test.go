@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
@@ -92,7 +92,7 @@ func TestIntegrationCLINamedPublisherCredentialFileWithoutPersonSession(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertWorkflowPublisherRuntime(t, session.Authenticated().Control, team, identity.PublisherIdentityID, 0, false)
+	assertWorkflowPublisherRuntime(t, session.Authenticated().Control, team, identity.ClientID, 0, false)
 	publisherState := f.state(t, "file-only-publisher")
 	ctx, stop := context.WithCancel(t.Context())
 	ready, joined := f.command(t, ctx, stop, []string{"--config", configuration, "publish", "api", "--foreground", "--publisher-credential-file", credential, "--state-dir", publisherState})
@@ -101,7 +101,7 @@ func TestIntegrationCLINamedPublisherCredentialFileWithoutPersonSession(t *testi
 	case <-time.After(20 * time.Second):
 		t.Fatal("named scoped publisher did not become ready")
 	}
-	runtime := assertWorkflowPublisherRuntime(t, session.Authenticated().Control, team, identity.PublisherIdentityID, 1, true)
+	runtime := assertWorkflowPublisherRuntime(t, session.Authenticated().Control, team, identity.ClientID, 1, true)
 	listener := workflowListen(t)
 	address := listener.Addr().String()
 	_ = listener.Close()
@@ -144,7 +144,7 @@ func TestIntegrationCLINamedPublisherCredentialFileWithoutPersonSession(t *testi
 	case <-time.After(20 * time.Second):
 		t.Fatal("foreground publisher did not join")
 	}
-	stopped := assertWorkflowPublisherRuntime(t, session.Authenticated().Control, team, identity.PublisherIdentityID, 1, false)
+	stopped := assertWorkflowPublisherRuntime(t, session.Authenticated().Control, team, identity.ClientID, 1, false)
 	if stopped.ProcessRunId != runtime.ProcessRunId {
 		t.Fatal("foreground stop replaced runtime ownership")
 	}

@@ -13,11 +13,11 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 

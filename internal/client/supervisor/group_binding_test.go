@@ -17,7 +17,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
 )
 

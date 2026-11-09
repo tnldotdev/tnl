@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -21,7 +22,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
@@ -236,7 +236,7 @@ func InstallBackgroundJob(ctx context.Context, registry *supervisor.Registry, fl
 		if err != nil {
 			return err
 		}
-		identity, private, err = f.Validate()
+		identity, private, err = f.Publisher("")
 		if err != nil {
 			return err
 		}

@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 

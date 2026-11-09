@@ -17,9 +17,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )

@@ -19,9 +19,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go/logging"
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )

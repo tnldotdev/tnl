@@ -664,6 +664,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runTelemetryPreference(ctx, flags.Telemetry.Status, "status", stdout)
 	case "auth status":
 		return runAuthStatus(ctx, flags.Auth.Status, stdout, stderr)
+	case "auth register <name>":
+		return runAuthRegister(ctx, flags.Auth.Register, stdout, stderr)
 	case "auth login", "auth login run":
 		return runLogin(ctx, flags.Auth.Login.loginCommand, os.Stdin, stdout, stderr)
 	case "auth login start":

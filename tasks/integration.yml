@@ -4,7 +4,7 @@ tasks:
   application-registrations:
     desc: Check atomic application registrations, exact visitor grants, key rotation and bounded policy projection
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/control/api/public -run='^TestIntegration(Application|PublisherIdentit|PublisherNamespace)' -count=1 -timeout=5m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/control/api/public ./internal/client/identity -run='^TestIntegration(Application|PublisherIdentit|PublisherNamespace)' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   live-authorization:
     desc: Check browser and alias authorization in disposable PostgreSQL

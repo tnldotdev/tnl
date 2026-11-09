@@ -1,6 +1,12 @@
 version: "3"
 
 tasks:
+  test:application-credentials:
+    desc: Check shared multi-operation credentials, exact grant selection and resumable setup
+    cmds:
+      - go test -race ./internal/client/credentialfile ./internal/client/identity ./internal/client/state -run='Application|Portable|ServiceGrant|PublisherProvision' -count=1
+      - go test -race ./cmd/tnl -run='^Test(ApplicationRegistration|FinalPublisherVisitorAndRuntimeCommandArguments)' -count=1
+
   lint:
     cmds:
       - go vet ./...
@@ -213,19 +219,19 @@ tasks:
   test:publisher-identity:
     desc: Check owned native identities, enrollment retries and portable group credentials
     cmds:
-      - go test -race ./internal/publisher/identity ./internal/publisher/identity/credentialfile ./internal/security/publisherproof -count=1
+      - go test -race ./internal/publisher/identity ./internal/client/credentialfile ./internal/security/publisherproof -count=1
 
   test:publisher-groups:
     desc: Check scoped group dependencies, ownership, retries, and joined shutdown
     cmds:
-      - go test -race ./internal/client/supervisor ./internal/publisher/identity/credentialfile ./internal/publisher/group -count=1
+      - go test -race ./internal/client/supervisor ./internal/client/credentialfile ./internal/publisher/group -count=1
       - go test -race ./cmd/tnl -run='^Test(FixedGroups|PublisherGroupDiscovery|GroupIdentity)' -count=1
 
   test:publisher-state:
     desc: Verify durable filesystem identity, certificate lifecycle, and cross-runtime ownership
     cmds:
       - go test -race ./internal/client/state -run='^Test(Certificate|Publisher|PendingPublisher|InstallPublisher|PromotePublisher|DurablePublisher|PrivateDirectory)' -count=1
-      - go test -race ./internal/publisher/identity/credentialfile -count=1
+      - go test -race ./internal/client/credentialfile -count=1
       - go test -race ./internal/client/supervisor -run='^TestInstalledGroup' -count=1
 
   test:fuzz:

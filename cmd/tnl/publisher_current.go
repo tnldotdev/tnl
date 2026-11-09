@@ -9,11 +9,11 @@ import (
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
@@ -46,13 +46,17 @@ func runPublisherCurrent(ctx context.Context, flags publisherCurrentCommand, out
 		if flags.ServerURL != "" && flags.ServerURL != file.ControlURL {
 			return credentialfile.ErrInvalid
 		}
-		result = publisherCurrentResult{Source: "publisher file", ControlURL: file.ControlURL, PublisherIdentityID: file.PublisherIdentityID, GrantID: file.GrantID, Scope: file.Kind}
-		if file.Namespace != nil {
-			result.Scope = *file.Namespace
-		} else if file.PublicURLID != nil {
-			result.Scope = *file.PublicURLID
-		} else if file.ServiceID != nil {
-			result.Scope = *file.ServiceID
+		identity, _, err := file.Publisher("")
+		if err != nil {
+			return err
+		}
+		result = publisherCurrentResult{Source: "publisher file", ControlURL: file.ControlURL, PublisherIdentityID: identity.ClientId, GrantID: identity.GrantId, Scope: string(identity.Kind)}
+		if identity.Namespace != nil {
+			result.Scope = *identity.Namespace
+		} else if identity.PublicUrlId != nil {
+			result.Scope = *identity.PublicUrlId
+		} else if identity.ServiceId != nil {
+			result.Scope = *identity.ServiceId
 		}
 		if flags.Check {
 			control, err := clientcontrol.New(file.ControlURL, nil, "")

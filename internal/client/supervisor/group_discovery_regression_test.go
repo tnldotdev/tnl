@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )

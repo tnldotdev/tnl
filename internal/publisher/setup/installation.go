@@ -13,12 +13,12 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/publisher/target"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -81,9 +81,13 @@ func InstallPublication(ctx context.Context, selected Publication, presentation 
 	if err != nil {
 		return err
 	}
+	grant, err := credential.Select(controlv1.ApplicationPublish, publicURL.Id)
+	if err != nil {
+		return err
+	}
 	job := selected.Job
 	job.Kind, job.ID, job.Server, job.PublicURLID, job.Protocol = supervisor.KindPublicURL, supervisor.PublicURLJobKey(server, publicURL.Id), server, publicURL.Id, config.ProtocolHTTP
-	job.PublisherIdentityID, job.GrantID, job.VerifyReadiness = credential.PublisherIdentityID, credential.GrantID, true
+	job.PublisherIdentityID, job.GrantID, job.VerifyReadiness = credential.ClientID, grant.ID, true
 	caPath := selected.TargetCAFile
 	if caPath != "" && !filepath.IsAbs(caPath) {
 		caPath = filepath.Join(selected.ProjectRoot, caPath)
@@ -170,7 +174,7 @@ func RegisterInput(ctx context.Context, resolveOptions func() (supervisor.Servic
 }
 
 func Register(ctx context.Context, options supervisor.ServiceOptions, payload Installation, executor supervisor.Executor, render func([]supervisor.Job, string) error) error {
-	identity, private, err := payload.Credential.Validate()
+	identity, private, err := payload.Credential.Publisher("")
 	if err != nil {
 		return err
 	}

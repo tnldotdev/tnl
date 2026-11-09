@@ -3,9 +3,9 @@ package setup
 import (
 	"context"
 
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 

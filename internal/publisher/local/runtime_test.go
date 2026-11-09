@@ -80,8 +80,15 @@ func TestRuntimeStatusIsAuthenticatedScopedAndDoesNotProbe(t *testing.T) {
 	if len(snapshot.Services) != 1 || snapshot.Services[0].Name != "web" || snapshot.Services[0].Ready {
 		t.Fatalf("scoped status=%+v", snapshot.Services)
 	}
-	if err := publisherprotocol.Call(t.Context(), app, "POST", "/v1/check", publisherprotocol.Check{}, &snapshot); err != publisherprotocol.ErrForbidden {
-		t.Fatalf("app ran owner readiness: %v", err)
+	siblings := []string{"api"}
+	if err := publisherprotocol.Call(t.Context(), app, "POST", "/v1/check", publisherprotocol.Check{Services: &siblings}, &snapshot); err != publisherprotocol.ErrForbidden {
+		t.Fatalf("app ran sibling readiness: %v", err)
+	}
+	if err := publisherprotocol.Call(t.Context(), app, "POST", "/v1/check", publisherprotocol.Check{}, &snapshot); err != nil {
+		t.Fatal("app could not request its own readiness", err)
+	}
+	if len(snapshot.Services) != 1 || snapshot.Services[0].Name != "web" {
+		t.Fatal("app readiness returned sibling state")
 	}
 	if err := publisherprotocol.Call(t.Context(), owner, "GET", "/v1/status", nil, &snapshot); err != nil {
 		t.Fatal(err)

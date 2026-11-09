@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"

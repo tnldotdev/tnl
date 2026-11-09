@@ -9,8 +9,8 @@ import (
 	"errors"
 	"os"
 
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
@@ -118,7 +118,7 @@ func LoadFile(path, server string, control NativeControl, authority AssertionExc
 	if selected, ok := control.(interface{ ControlURL() string }); ok && selected.ControlURL() != f.ControlURL {
 		return nil, ErrScope
 	}
-	i, key, err := f.Validate()
+	i, key, err := f.Publisher("")
 	if err != nil {
 		return nil, err
 	}

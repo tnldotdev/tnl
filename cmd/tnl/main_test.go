@@ -260,6 +260,7 @@ func TestFinalPublisherVisitorAndRuntimeCommandArguments(t *testing.T) {
 		{[]string{"url", "access", "show", "orders.example"}, "url access show <url>"},
 		{[]string{"url", "access", "set", "orders.example", "restricted", "--ip", "192.0.2.1"}, "url access set <url> <mode>"},
 		{[]string{"auth", "browser", "app.example"}, "auth browser <url>"},
+		{[]string{"auth", "register", "worker", "--visit", "svc_0123456789abcdefghijkl", "--output-file", "credential.json"}, "auth register <name>"},
 		{[]string{"team", "feedback", "set", "signed_in"}, "team feedback set <authors>"},
 		{[]string{"share", "invite", "create", "app.example", "--email", "reviewer@example.com"}, "share invite create <url>"},
 		{[]string{"share", "invite", "accept", "secret"}, "share invite accept <secret>"},

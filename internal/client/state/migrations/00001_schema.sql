@@ -9,7 +9,7 @@ INSERT INTO baseline_identity (id, identity) VALUES (1, 'tnl-client-fresh-v1-ser
 -- key. no expiration may discard a key after a remote enrollment committed.
 CREATE TABLE publisher_provision_journal (
     server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
-    kind TEXT NOT NULL CHECK (kind IN ('group', 'aws')),
+    kind TEXT NOT NULL CHECK (kind IN ('group', 'aws', 'application')),
     binding_key TEXT NOT NULL CHECK (length(binding_key) BETWEEN 1 AND 1024),
     revision INTEGER NOT NULL CHECK (revision > 0),
     document_ciphertext BLOB NOT NULL,

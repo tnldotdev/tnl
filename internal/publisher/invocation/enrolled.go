@@ -10,6 +10,7 @@ import (
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -20,7 +21,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/app"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -112,7 +112,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 		if err != nil {
 			return err
 		}
-		identity, _, err = file.Validate()
+		identity, _, err = file.Publisher("")
 		if err != nil {
 			return err
 		}

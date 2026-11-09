@@ -8,11 +8,11 @@ import (
 	"os"
 	"slices"
 
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/naming"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )

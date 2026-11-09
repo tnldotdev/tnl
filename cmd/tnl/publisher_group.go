@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/buildinfo"
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	"github.com/tnldotdev/tnl/internal/client/detached"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
@@ -21,7 +22,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"

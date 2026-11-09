@@ -412,6 +412,8 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		apply(&flags.Alias.Release.remoteFlags, true)
 	case "auth status":
 		apply(&flags.Auth.Status.remoteFlags, false)
+	case "auth register <name>":
+		apply(&flags.Auth.Register.remoteFlags, true)
 	case "auth login", "auth login run", "auth login start":
 		flags.Auth.Login.ServerURL, _, contextErr = resolve.Server(flags.Auth.Login.ServerURL, project.Config.Server, "")
 		if flags.Auth.Login.Team == "" && project.Config.Team != nil {

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
 	clientteam "github.com/tnldotdev/tnl/internal/client/team"
@@ -16,7 +17,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/publisher/setup"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
@@ -273,7 +273,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		if err != nil {
 			return err
 		}
-		identity, signing, err = file.Validate()
+		identity, signing, err = file.Publisher("")
 		if err != nil {
 			return err
 		}

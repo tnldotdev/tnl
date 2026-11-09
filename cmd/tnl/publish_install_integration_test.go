@@ -289,7 +289,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, signing, err := credential.Validate()
+	identity, signing, err := credential.Publisher("")
 	if err != nil {
 		t.Fatal(err)
 	}

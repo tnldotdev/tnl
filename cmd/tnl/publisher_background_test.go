@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
@@ -24,7 +25,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/publisher/invocation"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -149,7 +149,7 @@ func TestAppWorkflowInstallLoadsExplicitPublisherFromClientState(t *testing.T) {
 		t.Fatalf("installed wrong identity: %+v %v", jobs, err)
 	}
 	credential, err := r.Credential(t.Context(), jobs[0])
-	if err != nil || credential.PublisherIdentityID != identity.ClientId {
+	if err != nil || credential.ClientID != identity.ClientId {
 		t.Fatal("exact credential was not imported", err)
 	}
 }

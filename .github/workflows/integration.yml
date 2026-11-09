@@ -25,6 +25,8 @@ jobs:
         include:
           - suite: api
             shard: 1/1
+          - suite: application-registrations
+            shard: 1/1
           - suite: runtime:leases
             shard: 1/1
           - suite: runtime:workload

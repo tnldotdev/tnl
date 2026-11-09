@@ -7,12 +7,12 @@ import (
 	"errors"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
-	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherdiscovery "github.com/tnldotdev/tnl/internal/publisher/target/discovery"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )

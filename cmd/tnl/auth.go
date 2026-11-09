@@ -16,10 +16,11 @@ import (
 )
 
 type authCommand struct {
-	Status  authStatusCommand  `cmd:"" help:"Show local credentials; --check silently validates with the server."`
-	Login   authLoginCommand   `cmd:"" help:"Log in explicitly, or manage a resumable login operation."`
-	Logout  logoutCommand      `cmd:"" help:"Cancel login operations and remove the saved control session."`
-	Browser authBrowserCommand `cmd:"" help:"Sign in to visit an HTTP public URL in a browser."`
+	Register authRegisterCommand `cmd:"" help:"Register one application signing key with explicit runtime grants and write its private credential document."`
+	Status   authStatusCommand   `cmd:"" help:"Show local credentials; --check silently validates with the server."`
+	Login    authLoginCommand    `cmd:"" help:"Log in explicitly, or manage a resumable login operation."`
+	Logout   logoutCommand       `cmd:"" help:"Cancel login operations and remove the saved control session."`
+	Browser  authBrowserCommand  `cmd:"" help:"Sign in to visit an HTTP public URL in a browser."`
 }
 
 type authStatusCommand struct {
