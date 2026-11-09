@@ -214,6 +214,9 @@ test("invalid credentials and resource paths fail without exposing private value
   expect(() => app.connect("https://app.example/path")).toThrow(
     expect.objectContaining({ code: "sdk.configuration_invalid" }),
   );
+  expect(() => app.connect("https://app.example:0")).toThrow(
+    expect.objectContaining({ code: "sdk.configuration_invalid" }),
+  );
   await app.close();
 });
 

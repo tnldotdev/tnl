@@ -35,9 +35,15 @@ type enrollment struct {
 	public ed25519.PublicKey
 }
 
+type ServiceAttempt struct {
+	ServiceID, PublisherIdentityID, IdempotencyKey string
+	Declaration                                    controlv1.ServiceRunDeclaration
+}
+
 type Fixture struct {
 	URL, Namespace, DomainID, OwnerToken      string
 	HTTP                                      *http.Client
+	ServiceAttempts                           chan ServiceAttempt
 	Enrollments, Allocations, Runs, Deletions atomic.Int32
 	VisitorDecisions                          atomic.Int32
 	sourceSequence                            atomic.Uint64
@@ -45,6 +51,7 @@ type Fixture struct {
 	backend                                   *testutil.PublishingFixture
 	seed                                      *clientcontrol.Client
 	routes                                    map[string]controlv1.PublicURL
+	services                                  map[string]controlv1.Service
 	enrollments                               map[string]*enrollment
 	grants                                    map[string]*enrollment
 	tokens                                    map[string]*enrollment
@@ -68,6 +75,7 @@ func New(t *testing.T, hooks testutil.PublishingHooks) *Fixture {
 		t.Fatal(err)
 	}
 	f := &Fixture{Namespace: backend.Namespace, DomainID: "dom_0000000000000000000001", OwnerToken: backend.AccessToken, backend: backend, seed: seed, routes: map[string]controlv1.PublicURL{}, enrollments: map[string]*enrollment{}, grants: map[string]*enrollment{}, tokens: map[string]*enrollment{}, replays: map[string]bool{}, runURLs: map[string]string{}, setups: map[string]controlv1.PublishRunSetup{}, hooks: hooks, t: t, sessions: map[string]relaySession{}}
+	f.services, f.ServiceAttempts = map[string]controlv1.Service{}, make(chan ServiceAttempt, 16)
 	server := httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	t.Cleanup(server.Close)
 	f.URL, f.HTTP = server.URL, server.Client()
@@ -90,6 +98,20 @@ func (f *Fixture) SavedPublicURL(ctx context.Context, purpose controlv1.PublicUR
 	f.routes[publicURL.Id] = publicURL
 	f.mu.Unlock()
 	return publicURL, nil
+}
+
+// this fixture qualifies signed exact-service selection and preparation. service
+// lifecycle and wire tests remain with the service publisher owner.
+func (f *Fixture) SavedService(protocol controlv1.ServiceProtocol, public bool) controlv1.Service {
+	id, err := opaqueid.New(opaqueid.ServicePrefix)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	service := controlv1.Service{Id: id, TeamId: "tm_0000000000000000000001", Name: "application", Enabled: true, Protocol: protocol, TrustRevision: 1, Endpoint: &controlv1.ServiceEndpoint{Hostname: "service." + f.Namespace, Port: 15443, Public: public}}
+	f.mu.Lock()
+	f.services[id] = service
+	f.mu.Unlock()
+	return service
 }
 
 func (f *Fixture) NamespaceEnrollment(ctx context.Context) (string, error) {
@@ -140,6 +162,8 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 		result := authorityv1.PublisherEnrollmentResult{ClientId: client, KeyId: key, GrantId: grant, TeamId: b.TeamId}
 		if b.PublicUrlId != nil {
 			result.Kind, result.PublicUrlId = "saved_public_url", b.PublicUrlId
+		} else if b.ServiceId != nil {
+			result.Kind, result.ServiceId = "service", b.ServiceId
 		} else if b.DomainId != nil {
 			namespace := f.Namespace
 			result.Kind, result.DomainId, result.Namespace = "namespace", b.DomainId, &namespace
@@ -152,7 +176,7 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 		f.enrollments[token], f.grants[grant] = e, e
 		f.mu.Unlock()
 		f.Enrollments.Add(1)
-		writeStatus(w, 201, controlv1.PublisherEnrollment{Id: id, EnrollmentKey: token, ExpiresAt: time.Now().Add(time.Minute), TeamId: b.TeamId, Kind: controlv1.PublisherEnrollmentKind(result.Kind), PublicUrlId: b.PublicUrlId, DomainId: result.DomainId, Namespace: result.Namespace})
+		writeStatus(w, 201, controlv1.PublisherEnrollment{Id: id, EnrollmentKey: token, ExpiresAt: time.Now().Add(time.Minute), TeamId: b.TeamId, Kind: controlv1.PublisherEnrollmentKind(result.Kind), PublicUrlId: b.PublicUrlId, ServiceId: result.ServiceId, DomainId: result.DomainId, Namespace: result.Namespace})
 		return
 	}
 	if r.Method == "POST" && r.URL.Path == "/v1/publisher-enrollments/redeem" {
@@ -275,6 +299,38 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Unlock()
 	if e == nil {
 		denied(w)
+		return
+	}
+	if r.Method == "GET" && r.URL.Path == "/v1/publisher/service" {
+		if e.result.Kind != "service" || e.result.ServiceId == nil {
+			denied(w)
+			return
+		}
+		f.mu.Lock()
+		service, found := f.services[*e.result.ServiceId]
+		f.mu.Unlock()
+		if !found {
+			denied(w)
+			return
+		}
+		write(w, service)
+		return
+	}
+	if r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/services/") && strings.HasSuffix(r.URL.Path, "/runs") {
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/services/"), "/runs")
+		var declared controlv1.ServiceRunDeclaration
+		key := r.Header.Get("Idempotency-Key")
+		if e.result.Kind != "service" || e.result.ServiceId == nil || *e.result.ServiceId != id || !opaqueid.Valid(key, opaqueid.IdempotencyPrefix) || json.NewDecoder(r.Body).Decode(&declared) != nil {
+			denied(w)
+			return
+		}
+		select {
+		case f.ServiceAttempts <- ServiceAttempt{ServiceID: id, PublisherIdentityID: e.result.ClientId, IdempotencyKey: key, Declaration: declared}:
+		default:
+		}
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(503)
+		_ = json.NewEncoder(w).Encode(controlv1.Problem{Type: "about:blank", Title: "service fixture holds preparation", Code: controlv1.Unavailable, Status: 503})
 		return
 	}
 	if r.Method == "GET" && r.URL.Path == "/v1/publisher/public-url" {

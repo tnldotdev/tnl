@@ -9,7 +9,7 @@ schemas:
       owner: { type: string, pattern: "^[a-f0-9]{32}$" }
       pid: { type: integer, minimum: 1 }
       application_credential: { type: string, minLength: 1, maxLength: 65536 }
-      resource_id: { type: string, pattern: "^url_[A-Za-z0-9]{22}$" }
+      resource_id: { type: string, pattern: "^(url|svc)_[A-Za-z0-9]{22}$" }
       server_url: { type: string, maxLength: 4096 }
   PublicationAssignment:
     type: object
@@ -18,9 +18,14 @@ schemas:
     properties:
       version: { type: integer, enum: [1] }
       registration_id: { type: string, maxLength: 128, x-go-name: RegistrationID }
-      resource_id: { type: string, pattern: "^url_[A-Za-z0-9]{22}$" }
+      resource_id: { type: string, pattern: "^(url|svc)_[A-Za-z0-9]{22}$" }
       hostname: { type: string, minLength: 1, maxLength: 253 }
-      public_url: { type: string, minLength: 1, maxLength: 4096 }
+      public_url:
+        {
+          type: string,
+          maxLength: 4096,
+          description: "HTTPS public endpoint, or empty for a connector-only HTTP service.",
+        }
   Registration:
     type: object
     additionalProperties: false

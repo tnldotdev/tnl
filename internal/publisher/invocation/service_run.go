@@ -10,6 +10,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/project/resolve"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
@@ -17,6 +18,7 @@ import (
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -93,6 +95,31 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 	if config.TargetType(definition) != "app" {
 		plan.Project, plan.ProjectService = &project.Project, service.Name
 	}
+	return ServicePublicationConfiguration(ServicePublicationOptions{Service: service, Manager: a.manager, State: profile, Native: native, Identity: identity, Saved: saved, Plan: plan, Binding: binding, Resolver: a.TargetResolver})
+}
+
+// service publication operations compose the same run, target and observation
+// owners for configured apps and exact application grants. selection and trust
+// capture stay with their caller; this operation never enrolls or realizes a service.
+type ServicePublicationOptions struct {
+	Service  publisherapp.Service
+	Manager  *publisherapp.Manager
+	State    *clientstate.Store
+	Native   *publisheridentity.Native
+	Identity authorityv1.PublisherEnrollmentResult
+	Saved    controlv1.Service
+	Plan     targetplan.TargetPlan
+	Binding  *targetplan.TargetBinding
+	Resolver targetplan.TargetResolver
+}
+
+func ServicePublicationConfiguration(options ServicePublicationOptions) (publisherapp.Configuration, error) {
+	service, manager, profile := options.Service, options.Manager, options.State
+	native, identity, saved := options.Native, options.Identity, options.Saved
+	plan, binding := options.Plan, options.Binding
+	if manager == nil || profile == nil || native == nil || binding == nil {
+		return publisherapp.Configuration{}, publisheridentity.ErrScope
+	}
 	transport, err := targetplan.PrivateTransport(plan)
 	if err != nil {
 		return publisherapp.Configuration{}, err
@@ -144,7 +171,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 					current := service
 					current.RunNumber = control.number.Load()
 					observation := check(probe, current)
-					a.manager.Observe(observation)
+					manager.Observe(observation)
 					return observation.Ready
 				}, Ready: func() error {
 					run := control.number.Load()
@@ -153,9 +180,9 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 					}
 					current := service
 					current.RunNumber = run
-					a.manager.Observe(check(ctx, current))
+					manager.Observe(check(ctx, current))
 					return nil
-				}}, targetplan.TargetHooks{Resolver: a.TargetResolver, Capture: capture})
+				}}, targetplan.TargetHooks{Resolver: options.Resolver, Capture: capture})
 		}
 		for attempt := 0; ctx.Err() == nil; attempt++ {
 			err := publish()
@@ -171,7 +198,7 @@ func (a *ProjectRuntime) ServiceConfiguration(ctx context.Context, service publi
 				}
 			}
 			if reason, _, ok := failure.Describe(err); ok {
-				a.manager.RecordWarning(service.Name, service.RegistrationID, string(reason))
+				manager.RecordWarning(service.Name, service.RegistrationID, string(reason))
 			}
 			timer := time.NewTimer(publisherapp.RetryDelay(attempt))
 			select {

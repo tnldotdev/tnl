@@ -66,6 +66,70 @@ test("inline Fetch handlers receive a public origin and can stream request and r
   }
 });
 
+test("inline HTTP service Fetch handlers preserve an allocated public endpoint port", async () => {
+  let origin = "";
+  const server = await createFetchServer((request) => {
+    origin = request.url;
+    return new Response("service");
+  });
+  try {
+    const response = await new Promise<string>((resolve, reject) => {
+      const request = httpRequest(
+        {
+          hostname: "127.0.0.1",
+          port: portOf(server),
+          path: "/read",
+          headers: { Host: "service.example:15443" },
+        },
+        (response) => {
+          let body = "";
+          response.on("data", (part: Buffer) => {
+            body += part.toString();
+          });
+          response.on("end", () => resolve(body));
+        },
+      );
+      request.on("error", reject);
+      request.end();
+    });
+    expect(response).toBe("service");
+    expect(origin).toBe("https://service.example:15443/read");
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test.each([
+  "service.example:15443/path",
+  "user@service.example:15443",
+  "service.example:0",
+  "service.example:65536",
+  "service_name.example:15443",
+])("inline service Fetch rejects an invalid endpoint authority %s", async (host) => {
+  let dispatched = false;
+  const server = await createFetchServer(() => {
+    dispatched = true;
+    return new Response("app");
+  });
+  try {
+    const status = await new Promise<number | undefined>((resolve, reject) => {
+      const request = httpRequest(
+        { hostname: "127.0.0.1", port: portOf(server), headers: { Host: host } },
+        (response) => {
+          response.resume();
+          response.on("end", () => resolve(response.statusCode));
+        },
+      );
+      request.on("error", reject);
+      request.end();
+    });
+    expect(status).toBe(400);
+    expect(dispatched).toBe(false);
+  } finally {
+    await closeServer(server);
+  }
+});
+
 test("inline Fetch explicitly rejects a WebSocket upgrade before calling the handler", async () => {
   let calls = 0;
   const server = await createFetchServer(() => {

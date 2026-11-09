@@ -18,6 +18,7 @@ import { httpsOriginSchema, pathTextSchema, registrationIDSchema } from "../valu
 import { parseStatus } from "./status.js";
 import { publicationHandle, type Publication } from "./publication.js";
 import type { TnlRatePeriod } from "../../config.gen.js";
+import type { TnlApplicationResource } from "../../credential.js";
 
 export type PublisherCredentialFile = {
   readonly publisherCredentialFile: string;
@@ -34,8 +35,8 @@ export type PublishOptions = PublishSettings &
     | { readonly publisherCredentialFile?: never; readonly publisherIdentityID?: never }
   );
 interface PublishSettings {
-  /** select an exact saved public URL from this instance's application credential. */
-  readonly resource?: `url_${string}`;
+  /** select an exact saved HTTP public URL or service from this instance's credential. */
+  readonly resource?: TnlApplicationResource;
   readonly server?: string;
   readonly directory?: string;
   readonly stateDir?: string;
@@ -58,7 +59,7 @@ interface PublishSettings {
 // this private source travels only over capability-authenticated local HTTP.
 export type ApplicationPublication = Readonly<{
   document: string;
-  resource: `url_${string}`;
+  resource: TnlApplicationResource;
   server: string;
 }>;
 
@@ -389,7 +390,10 @@ const accessModeSchema = z.enum(["restricted", "anonymous"]);
 const publishOptionsSchema = z
   .strictObject({
     publisherCredentialFile: credentialFileSchema.optional(),
-    resource: z.templateLiteral(["url_", z.string().regex(/^[A-Za-z0-9]{22}$/)]).optional(),
+    resource: z
+      .string()
+      .regex(/^(url|svc)_[A-Za-z0-9]{22}$/)
+      .optional(),
     publisherIdentityID: z
       .string()
       .regex(/^pub_[A-Za-z0-9]{22}$/)

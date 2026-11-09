@@ -446,7 +446,9 @@ type PublicationState string
 
 // PublicationAssignment defines model for PublicationAssignment.
 type PublicationAssignment struct {
-	Hostname       string                       `json:"hostname"`
+	Hostname string `json:"hostname"`
+
+	// PublicUrl HTTPS public endpoint, or empty for a connector-only HTTP service.
 	PublicUrl      string                       `json:"public_url"`
 	RegistrationID string                       `json:"registration_id"`
 	ResourceId     string                       `json:"resource_id"`
@@ -624,13 +626,13 @@ type ClientInterface interface {
 	// RegisterInvocationWithBody performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
+	// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL or HTTP service. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved resource. Service grants use service runs, not public URL publish runs. No bearer publication credentials are accepted.
 	RegisterInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegisterInvocation performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
+	// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL or HTTP service. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved resource. Service grants use service runs, not public URL publish runs. No bearer publication credentials are accepted.
 	RegisterInvocation(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IssueCapabilityWithBody performs a POST /v1/capabilities (the `IssueCapability` operationId) request,
@@ -692,13 +694,13 @@ type ClientInterface interface {
 	// PreparePublicationWithBody performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+	// Invocation capability only. Prepare one saved HTTP public URL or HTTP service from an exact application publish grant without binding or starting a listener. A connector-only service has no public URL.
 	PreparePublicationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PreparePublication performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+	// Invocation capability only. Prepare one saved HTTP public URL or HTTP service from an exact application publish grant without binding or starting a listener. A connector-only service has no public URL.
 	PreparePublication(ctx context.Context, body PreparePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegisterPublicationWithBody performs a POST /v1/publications/register (the `RegisterPublication` operationId) request,
@@ -758,7 +760,7 @@ type ClientInterface interface {
 // RegisterInvocationWithBody performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 // with any type of body and a specified content type.
 //
-// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
+// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL or HTTP service. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved resource. Service grants use service runs, not public URL publish runs. No bearer publication credentials are accepted.
 func (c *Client) RegisterInvocationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegisterInvocationRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -774,7 +776,7 @@ func (c *Client) RegisterInvocationWithBody(ctx context.Context, contentType str
 // RegisterInvocation performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
+// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL or HTTP service. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved resource. Service grants use service runs, not public URL publish runs. No bearer publication credentials are accepted.
 func (c *Client) RegisterInvocation(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegisterInvocationRequest(c.Server, body)
 	if err != nil {
@@ -946,7 +948,7 @@ func (c *Client) Prepare(ctx context.Context, body PrepareJSONRequestBody, reqEd
 // PreparePublicationWithBody performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request,
 // with any type of body and a specified content type.
 //
-// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+// Invocation capability only. Prepare one saved HTTP public URL or HTTP service from an exact application publish grant without binding or starting a listener. A connector-only service has no public URL.
 func (c *Client) PreparePublicationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPreparePublicationRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -962,7 +964,7 @@ func (c *Client) PreparePublicationWithBody(ctx context.Context, contentType str
 // PreparePublication performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+// Invocation capability only. Prepare one saved HTTP public URL or HTTP service from an exact application publish grant without binding or starting a listener. A connector-only service has no public URL.
 func (c *Client) PreparePublication(ctx context.Context, body PreparePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPreparePublicationRequest(c.Server, body)
 	if err != nil {
@@ -1696,7 +1698,7 @@ type ClientWithResponsesInterface interface {
 	// RegisterInvocationWithBodyWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
+	// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL or HTTP service. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved resource. Service grants use service runs, not public URL publish runs. No bearer publication credentials are accepted.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	RegisterInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error)
@@ -1704,7 +1706,7 @@ type ClientWithResponsesInterface interface {
 	// RegisterInvocationWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
+	// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL or HTTP service. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved resource. Service grants use service runs, not public URL publish runs. No bearer publication credentials are accepted.
 	RegisterInvocationWithResponse(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error)
 
 	// IssueCapabilityWithBodyWithResponse performs a POST /v1/capabilities (the `IssueCapability` operationId) request,
@@ -1778,7 +1780,7 @@ type ClientWithResponsesInterface interface {
 	// PreparePublicationWithBodyWithResponse performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+	// Invocation capability only. Prepare one saved HTTP public URL or HTTP service from an exact application publish grant without binding or starting a listener. A connector-only service has no public URL.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	PreparePublicationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreparePublicationResponse, error)
@@ -1786,7 +1788,7 @@ type ClientWithResponsesInterface interface {
 	// PreparePublicationWithResponse performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+	// Invocation capability only. Prepare one saved HTTP public URL or HTTP service from an exact application publish grant without binding or starting a listener. A connector-only service has no public URL.
 	PreparePublicationWithResponse(ctx context.Context, body PreparePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*PreparePublicationResponse, error)
 
 	// RegisterPublicationWithBodyWithResponse performs a POST /v1/publications/register (the `RegisterPublication` operationId) request,
@@ -2445,7 +2447,7 @@ func (r UnregisterResponse) ContentType() string {
 // RegisterInvocationWithBodyWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request,
 // with any type of body and a specified content type.
 //
-// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
+// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL or HTTP service. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved resource. Service grants use service runs, not public URL publish runs. No bearer publication credentials are accepted.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) RegisterInvocationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error) {
@@ -2459,7 +2461,7 @@ func (c *ClientWithResponses) RegisterInvocationWithBodyWithResponse(ctx context
 // RegisterInvocationWithResponse performs a POST /v1/ad-hoc/register (the `RegisterInvocation` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
+// Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL or HTTP service. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved resource. Service grants use service runs, not public URL publish runs. No bearer publication credentials are accepted.
 func (c *ClientWithResponses) RegisterInvocationWithResponse(ctx context.Context, body RegisterInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterInvocationResponse, error) {
 	rsp, err := c.RegisterInvocation(ctx, body, reqEditors...)
 	if err != nil {
@@ -2599,7 +2601,7 @@ func (c *ClientWithResponses) PrepareWithResponse(ctx context.Context, body Prep
 // PreparePublicationWithBodyWithResponse performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request,
 // with any type of body and a specified content type.
 //
-// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+// Invocation capability only. Prepare one saved HTTP public URL or HTTP service from an exact application publish grant without binding or starting a listener. A connector-only service has no public URL.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) PreparePublicationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreparePublicationResponse, error) {
@@ -2613,7 +2615,7 @@ func (c *ClientWithResponses) PreparePublicationWithBodyWithResponse(ctx context
 // PreparePublicationWithResponse performs a POST /v1/publications/prepare (the `PreparePublication` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+// Invocation capability only. Prepare one saved HTTP public URL or HTTP service from an exact application publish grant without binding or starting a listener. A connector-only service has no public URL.
 func (c *ClientWithResponses) PreparePublicationWithResponse(ctx context.Context, body PreparePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*PreparePublicationResponse, error) {
 	rsp, err := c.PreparePublication(ctx, body, reqEditors...)
 	if err != nil {

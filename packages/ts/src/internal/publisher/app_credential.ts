@@ -14,18 +14,27 @@ import {
 import type { ApplicationPublication } from "./publish.js";
 
 const optionsSchema = z.strictObject({
-  resource: z.templateLiteral(["url_", z.string().regex(/^[A-Za-z0-9]{22}$/)]).exactOptional(),
+  resource: z
+    .templateLiteral([z.enum(["url_", "svc_"]), z.string().regex(/^[A-Za-z0-9]{22}$/)])
+    .exactOptional(),
 });
 export type ApplicationPrepareOptions = z.output<typeof optionsSchema>;
 const assignmentSchema = z
   .strictObject({
     version: z.literal(1),
     registration_id: registrationIDSchema,
-    resource_id: z.templateLiteral(["url_", z.string().regex(/^[A-Za-z0-9]{22}$/)]),
+    resource_id: z.templateLiteral([
+      z.enum(["url_", "svc_"]),
+      z.string().regex(/^[A-Za-z0-9]{22}$/),
+    ]),
     hostname: hostnameSchema,
-    public_url: httpsOriginSchema,
+    public_url: z.union([httpsOriginSchema, z.literal("")]),
   })
-  .refine((value) => value.public_url === `https://${value.hostname}`);
+  .refine((value) =>
+    value.resource_id.startsWith("url_")
+      ? value.public_url === `https://${value.hostname}`
+      : value.public_url === "" || new URL(value.public_url).hostname === value.hostname,
+  );
 
 interface Dependencies {
   start(
@@ -75,7 +84,7 @@ export function prepareApplicationPublication(
           registrationID: assignment.registration_id,
           service: invocation,
           hostname: assignment.hostname,
-          publicURL: assignment.public_url,
+          publicURL: assignment.public_url === "" ? undefined : assignment.public_url,
           metadata: {},
         };
       },

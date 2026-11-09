@@ -199,6 +199,35 @@ test("application preparation selects the same pinned exact publish grant and re
   }
 });
 
+test("application HTTP service publication and preparation select an exact service grant, never a URL or visit grant", async () => {
+  const { createTnl } = await import("../../src/index.js");
+  const resource = `svc_${"S".repeat(22)}` as const;
+  const credential: TnlApplicationCredential = {
+    ...applicationCredential(),
+    grants: [
+      {
+        id: `pgrant_${"P".repeat(22)}`,
+        operation: "publish",
+        kind: "service",
+        service_id: resource,
+      },
+      { id: `pgrant_${"V".repeat(22)}`, operation: "visit", kind: "service", service_id: resource },
+    ],
+  };
+  const app = createTnl({ credential });
+  try {
+    await app.publish(() => new Response("app"));
+    expect(fixture.source?.resource).toBe(resource);
+    await app.prepare({ resource });
+    expect(fixture.source?.resource).toBe(resource);
+    await expect(
+      app.publish(() => new Response("app"), { resource: `url_${"S".repeat(22)}` }),
+    ).rejects.toHaveProperty("code", "sdk.credential_denied");
+  } finally {
+    await app.close();
+  }
+});
+
 test("a selected workload cannot fall back to a human publisher", async () => {
   const { createTnl } = await import("../../src/index.js");
   fixture.workload = true;

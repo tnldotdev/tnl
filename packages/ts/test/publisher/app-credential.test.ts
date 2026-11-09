@@ -5,6 +5,7 @@ import { TnlError } from "../../src/errors.js";
 import { prepareApplicationPublication } from "../../src/internal/publisher/app_credential.js";
 import type { RuntimeEndpoint } from "../../src/internal/publisher/local.js";
 import { invocationIDSchema } from "../../src/internal/values.js";
+import type { ApplicationPublication } from "../../src/internal/publisher/publish.js";
 
 const resource = `url_${"A".repeat(22)}` as const;
 const source = {
@@ -21,7 +22,7 @@ const registrationSchema = z.strictObject({
 });
 afterEach(() => vi.useRealTimers());
 
-function fixture() {
+function fixture(selected: ApplicationPublication = source) {
   const calls: { operation: string; body: unknown }[] = [];
   const state = {
     id: `reg_${"a".repeat(32)}`,
@@ -32,6 +33,8 @@ function fixture() {
     failCleanup: false,
     wrongResource: false,
     starts: 0,
+    hostname: "app.example",
+    publicURL: "https://app.example",
     preparation: undefined as Promise<void> | undefined,
   };
   const runtime = {
@@ -60,17 +63,17 @@ function fixture() {
           await state.preparation;
           state.owner = bodySchema.parse(body).owner;
           expect(body).toMatchObject({
-            application_credential: source.document,
-            resource_id: source.resource,
-            server_url: source.server,
+            application_credential: selected.document,
+            resource_id: selected.resource,
+            server_url: selected.server,
           });
           expect(z.record(z.string(), z.unknown()).parse(body).target).toBeUndefined();
           return {
             version: 1,
             registration_id: state.id,
-            resource_id: state.wrongResource ? `url_${"X".repeat(22)}` : resource,
-            hostname: "app.example",
-            public_url: "https://app.example",
+            resource_id: state.wrongResource ? `url_${"X".repeat(22)}` : selected.resource,
+            hostname: state.hostname,
+            public_url: state.publicURL,
           };
         }
         if (operation === "publications/register")
@@ -87,7 +90,7 @@ function fixture() {
                 directory: ".",
                 registration_id: state.id,
                 target: state.target,
-                public_url: "https://app.example",
+                ...(state.publicURL === "" ? {} : { public_url: state.publicURL }),
                 registered: true,
                 routable: false,
                 ready: false,
@@ -224,6 +227,47 @@ test("application preparation rejects another resource in the native reply", asy
     prepareApplicationPublication(source, "/project", undefined, {}, runtime),
   ).rejects.toHaveProperty("code", "sdk.response_invalid");
 });
+
+test.each(["", "https://app.example:15443"])(
+  "saved public URL preparation rejects a service-only endpoint form %s",
+  async (endpoint) => {
+    const { state, runtime } = fixture();
+    state.publicURL = endpoint;
+    await expect(
+      prepareApplicationPublication(source, "/project", undefined, {}, runtime),
+    ).rejects.toHaveProperty("code", "sdk.response_invalid");
+  },
+);
+
+test.each([false, true])(
+  "HTTP service preparation preserves public reachability %s without inventing a public URL",
+  async (publicEndpoint) => {
+    const selected: ApplicationPublication = { ...source, resource: `svc_${"S".repeat(22)}` };
+    const { state, runtime } = fixture(selected);
+    state.hostname = "service.example";
+    state.publicURL = publicEndpoint ? "https://service.example:15443" : "";
+    const prepared = await prepareApplicationPublication(
+      selected,
+      "/project",
+      undefined,
+      { resource: selected.resource },
+      runtime,
+    );
+    const server = await listener();
+    try {
+      expect(prepared.hostname).toBe(state.hostname);
+      expect(prepared.publicURL).toBe(publicEndpoint ? state.publicURL : undefined);
+      const publication = await prepared.register(server);
+      expect(publication.url).toBe(publicEndpoint ? state.publicURL : undefined);
+      expect((await publication.status()).publicURL).toBe(
+        publicEndpoint ? state.publicURL : undefined,
+      );
+    } finally {
+      await prepared.close();
+      await stop(server);
+    }
+  },
+);
 
 test("closing during owner recovery joins and releases the late replacement without registering it", async () => {
   vi.useFakeTimers();

@@ -45,7 +45,7 @@ const serviceStatusSchema = z.strictObject({
   public_url: httpsOriginSchema
     .refine((url) => {
       const hostname = URL.parse(url)?.hostname;
-      return hostnameSchema.safeParse(hostname).success && url === `https://${hostname}`;
+      return hostnameSchema.safeParse(hostname).success;
     })
     .optional(),
   registration_id: textSchema.optional(),

@@ -206,6 +206,7 @@ type appPreparation struct {
 	assignment          publisherprotocol.Assignment
 	invocation          *publisherprotocol.Invocation
 	preparedPublication bool
+	servicePublication  *invocation.ServicePublicationOptions
 }
 
 type appRuntime struct {
@@ -453,6 +454,17 @@ func (a *appRuntime) workerConfiguration(ctx context.Context, service publishera
 	a.mu.Unlock()
 	if !found {
 		return publisherapp.Configuration{}, publisherapp.ErrRegistrationStale
+	}
+	if preparation.servicePublication != nil {
+		options := *preparation.servicePublication
+		options.Service, options.Plan.Target = service, service.Target
+		options.Binding = &target.TargetBinding{Resolve: func(context.Context) (target.TargetSnapshot, error) {
+			return target.TargetSnapshot{Address: service.Target, Identity: service.Target}, nil
+		}}
+		if err := target.PreflightPrivate(ctx, options.Plan); err != nil {
+			return publisherapp.Configuration{}, err
+		}
+		return invocation.ServicePublicationConfiguration(options)
 	}
 	if definition, configured := preparation.project.Config.Services[service.Name]; configured && !config.IsPublicService(definition) {
 		return a.operations(preparation.project).ServiceConfiguration(ctx, service)

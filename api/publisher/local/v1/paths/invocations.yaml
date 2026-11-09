@@ -2,7 +2,7 @@ paths:
   /v1/publications/prepare:
     post:
       operationId: preparePublication
-      description: Invocation capability only. Prepare one saved HTTP public URL from an exact application publish grant without binding or starting a listener.
+      description: Invocation capability only. Prepare one saved HTTP public URL or HTTP service from an exact application publish grant without binding or starting a listener. A connector-only service has no public URL.
       requestBody:
         required: true
         content:
@@ -43,7 +43,7 @@ paths:
   /v1/ad-hoc/register:
     post:
       operationId: registerInvocation
-      description: Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved URL. No bearer publication credentials are accepted.
+      description: Invocation capability only. A namespace identity allocates a temporary HTTP URL; an explicit application credential selects an exact saved HTTP app public URL or HTTP service. Registration acknowledges its bound target before asynchronous provisioning. Explicit application authority never falls back to personal state, changes saved visitor policy, allocates, or deletes a saved resource. Service grants use service runs, not public URL publish runs. No bearer publication credentials are accepted.
       requestBody:
         required: true
         content:

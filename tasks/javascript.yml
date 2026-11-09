@@ -2,14 +2,14 @@ version: "3"
 
 tasks:
   test:application-publications:
-    desc: Check exact application publication selection, private local transport and saved URL lifetime
+    desc: Check exact HTTP application grants, private local transport and separate URL/service lifetimes
     deps: [":js:build"]
     cmds:
       - pnpm exec vitest run packages/ts/test/publisher/runtime-instance.test.ts packages/ts/test/publisher/adhoc-open.test.ts packages/ts/test/publisher/app-credential.test.ts
       - task: :go:test:focused
         vars:
           PACKAGES: ./internal/publisher/local ./internal/publisher/localapi
-          RUN: "TestApplication(Invocation|Publication)"
+          RUN: "TestApplication(Invocation|Publication|ServicePublication)"
           FLAGS: "-race"
 
   test:web:

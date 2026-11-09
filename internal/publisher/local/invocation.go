@@ -26,6 +26,7 @@ import (
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -45,7 +46,13 @@ func (a *appRuntime) preparePublication(ctx context.Context, request publisherpr
 	if !found {
 		return publisherprotocol.PublicationAssignment{}, publisherapp.ErrRegistrationStale
 	}
-	return publisherprotocol.PublicationAssignment{Version: 1, RegistrationID: registration.RegistrationID, ResourceId: request.ResourceId, Hostname: strings.TrimPrefix(service.PublicURL, "https://"), PublicUrl: service.PublicURL}, nil
+	hostname := strings.TrimPrefix(service.PublicURL, "https://")
+	a.mu.Lock()
+	if preparation := a.prepared[registration.RegistrationID]; preparation.servicePublication != nil {
+		hostname = preparation.servicePublication.Saved.Endpoint.Hostname
+	}
+	a.mu.Unlock()
+	return publisherprotocol.PublicationAssignment{Version: 1, RegistrationID: registration.RegistrationID, ResourceId: request.ResourceId, Hostname: hostname, PublicUrl: service.PublicURL}, nil
 }
 
 func (a *appRuntime) registerPublication(ctx context.Context, request publisherprotocol.Registration) error {
@@ -89,7 +96,7 @@ func (a *appRuntime) prepareInvocation(ctx context.Context, request publisherpro
 		if err != nil {
 			return publisherprotocol.Registration{}, errors.Join(credentialfile.ErrApplication, err)
 		}
-		if request.ResourceId == nil || !opaqueid.Valid(*request.ResourceId, opaqueid.PublicURLPrefix) {
+		if request.ResourceId == nil || !opaqueid.Valid(*request.ResourceId, opaqueid.PublicURLPrefix) && !opaqueid.Valid(*request.ResourceId, opaqueid.ServicePrefix) {
 			return publisherprotocol.Registration{}, credentialfile.ErrGrant
 		}
 		application = &parsed
@@ -165,9 +172,10 @@ func (a *appRuntime) prepareInvocation(ctx context.Context, request publisherpro
 		return publisherprotocol.Registration{}, err
 	}
 	var native *publisheridentity.Native
+	var selectedIdentity authorityv1.PublisherEnrollmentResult
 	if application != nil {
 		grant, err := application.Select(controlv1.ApplicationPublish, *request.ResourceId)
-		if err != nil || grant.Kind != "saved_public_url" || grant.ExpiresAt != nil && !grant.ExpiresAt.After(time.Now()) {
+		if err != nil || grant.Kind != "saved_public_url" && grant.Kind != "service" || grant.ExpiresAt != nil && !grant.ExpiresAt.After(time.Now()) {
 			return publisherprotocol.Registration{}, credentialfile.ErrGrant
 		}
 		selected := *application
@@ -176,6 +184,7 @@ func (a *appRuntime) prepareInvocation(ctx context.Context, request publisherpro
 		if err != nil {
 			return publisherprotocol.Registration{}, errors.Join(credentialfile.ErrApplication, err)
 		}
+		selectedIdentity = identity
 		native, err = publisheridentity.NewNative(control, authority, identity, key)
 		clear(key)
 		if err != nil {
@@ -190,6 +199,9 @@ func (a *appRuntime) prepareInvocation(ctx context.Context, request publisherpro
 		}
 		return publisherprotocol.Registration{}, err
 	}
+	if application != nil && selectedIdentity.Kind == authorityv1.Service {
+		return a.prepareApplicationService(ctx, request, bound, profile, native, selectedIdentity)
+	}
 	allocation := controlv1.AllocateEphemeralPublicURLRequest{InvocationId: request.InvocationId, Target: request.Target, Ip: request.Ip, Limits: request.Limits}
 	allocation.RequirePostQuantum = request.RequirePostQuantum
 	if request.AccessMode != nil {
@@ -200,14 +212,7 @@ func (a *appRuntime) prepareInvocation(ctx context.Context, request publisherpro
 	if application != nil {
 		publicURL, err = native.SavedPublicURL(ctx)
 		if err != nil {
-			reason, _ := failure.ReasonOf(err)
-			if errors.Is(err, clientcontrol.ErrUnauthenticated) || errors.Is(err, clientcontrol.ErrNotFound) || errors.Is(err, publisheridentity.ErrScope) || reason == failure.ServerDenied || reason == failure.Authentication {
-				return publisherprotocol.Registration{}, errors.Join(credentialfile.ErrGrant, err)
-			}
-			if reason == failure.ServerResponseInvalid {
-				return publisherprotocol.Registration{}, errors.Join(credentialfile.ErrApplication, err)
-			}
-			return publisherprotocol.Registration{}, errors.Join(credentialfile.ErrApplicationUnavailable, err)
+			return publisherprotocol.Registration{}, applicationAuthorityError(err)
 		}
 		if publicURL.Ephemeral || publicURL.ServiceProtocol != controlv1.Http || publicURL.Purpose != controlv1.App || request.AccessMode != nil || request.Ip != nil || request.RequirePostQuantum != nil && *request.RequirePostQuantum != publicURL.RequirePostQuantum {
 			return publisherprotocol.Registration{}, credentialfile.ErrGrant
@@ -282,6 +287,17 @@ func (a *appRuntime) prepareInvocation(ctx context.Context, request publisherpro
 	}
 	transferred = true
 	return publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: request.Target}, nil
+}
+
+func applicationAuthorityError(err error) error {
+	reason, _ := failure.ReasonOf(err)
+	if errors.Is(err, clientcontrol.ErrUnauthenticated) || errors.Is(err, clientcontrol.ErrNotFound) || errors.Is(err, publisheridentity.ErrScope) || reason == failure.ServerDenied || reason == failure.Authentication {
+		return errors.Join(credentialfile.ErrGrant, err)
+	}
+	if reason == failure.ServerResponseInvalid {
+		return errors.Join(credentialfile.ErrApplication, err)
+	}
+	return errors.Join(credentialfile.ErrApplicationUnavailable, err)
 }
 
 func invocationLimits(input *controlv1.PublisherApplicationLimits) (publisher.ApplicationLimits, error) {

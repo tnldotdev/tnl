@@ -162,18 +162,21 @@ export function createTnl(
         (grant) =>
           grant.operation === "publish" &&
           (settings.resource === undefined ||
-            (grant.kind === "saved_public_url" && grant.public_url_id === settings.resource)),
+            (grant.kind === "saved_public_url" && grant.public_url_id === settings.resource) ||
+            (grant.kind === "service" && grant.service_id === settings.resource)),
       );
       const grant = grants[0];
       if (
         grants.length !== 1 ||
-        grant?.kind !== "saved_public_url" ||
+        (grant?.kind !== "saved_public_url" && grant?.kind !== "service") ||
         (grant.expires_at !== undefined && Date.parse(grant.expires_at) <= Date.now())
       )
         throw new TnlError("sdk.credential_denied");
       return {
         document: JSON.stringify(application),
-        resource: grant.public_url_id as `url_${string}`,
+        resource: (grant.kind === "saved_public_url"
+          ? grant.public_url_id
+          : grant.service_id) as TnlApplicationResource,
         server: application.control_url,
       };
     }
