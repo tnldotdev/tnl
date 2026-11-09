@@ -193,7 +193,6 @@ async function publishServerUntraced(
         }
       },
       (cause: unknown) => {
-        closePromise = undefined;
         const stale = cause instanceof TnlError && cause.code === "sdk.registration_stale";
         if (!terminal) {
           terminal = true;
@@ -201,6 +200,7 @@ async function publishServerUntraced(
           else rejectDone(cause);
         }
         if (stale) return;
+        closePromise = undefined;
         throw cause;
       },
     );

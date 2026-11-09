@@ -105,7 +105,7 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
   "sdk.client_closed": {
     class: "invalid",
     retry: "after_change",
-    message: "the client factory is closed; create a new factory",
+    message: "the SDK instance or client factory is closed; create a new one",
   },
   "sdk.client_capacity": {
     class: "unavailable",

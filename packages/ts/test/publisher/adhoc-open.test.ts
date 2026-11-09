@@ -237,42 +237,52 @@ test("default invocation rediscovery retains automatic publisher selection after
   await handle.close();
 });
 
-test("close interrupts status polling and joins unregister without waiting for its next timer", async () => {
-  let service = "";
-  let target = "";
-  let unregistered = false;
-  const handle = await publishFetch(
-    () => new Response("app"),
-    { publisherIdentityID: `pub_${"A".repeat(22)}` },
-    {
-      start: async (_directory, _binary, selection): Promise<RuntimeEndpoint> => {
-        service = selection?.invocationID ?? "";
-        return {
-          version: 1,
-          url: "http://127.0.0.1:12345",
-          capability: "b".repeat(64),
-          owner_id: "a".repeat(32),
-          scope: "invocation",
-          invocation_id: invocationIDSchema.parse(service),
-        };
+test.each(["acknowledged", "stale"])(
+  "close interrupts polling and joins %s unregister idempotently",
+  async (result) => {
+    let service = "";
+    let target = "";
+    let unregistered = 0;
+    const app = createServer();
+    await new Promise<void>((resolve) => app.listen(0, "127.0.0.1", resolve));
+    onTestFinished(() => new Promise<void>((resolve) => app.close(() => resolve())));
+    const handle = await publishServer(
+      app,
+      { publisherIdentityID: `pub_${"A".repeat(22)}` },
+      {
+        start: async (_directory, _binary, selection): Promise<RuntimeEndpoint> => {
+          service = selection?.invocationID ?? "";
+          return {
+            version: 1,
+            url: "http://127.0.0.1:12345",
+            capability: "b".repeat(64),
+            owner_id: "a".repeat(32),
+            scope: "invocation",
+            invocation_id: invocationIDSchema.parse(service),
+          };
+        },
+        request: async (_endpoint, operation, body) => {
+          if (operation === "ad-hoc/register") {
+            const payload = invocationSchema.parse(body);
+            target = payload.target;
+            return { version: 1, registration_id: id, owner: payload.owner, target };
+          }
+          if (operation === "status") return snapshot(service, target);
+          if (operation === "unregister") {
+            unregistered++;
+            if (result === "stale") throw new TnlError("sdk.registration_stale");
+          }
+          return undefined;
+        },
+        pause: () => new Promise<void>(() => {}),
       },
-      request: async (_endpoint, operation, body) => {
-        if (operation === "ad-hoc/register") {
-          const payload = invocationSchema.parse(body);
-          target = payload.target;
-          return { version: 1, registration_id: id, owner: payload.owner, target };
-        }
-        if (operation === "status") return snapshot(service, target);
-        if (operation === "unregister") unregistered = true;
-        return undefined;
-      },
-      pause: () => new Promise<void>(() => {}),
-    },
-  );
-  await handle.close();
-  await handle.finished();
-  expect(unregistered).toBe(true);
-});
+    );
+    await handle.close();
+    await handle.close();
+    await handle.finished();
+    expect(unregistered).toBe(1);
+  },
+);
 
 test("explicit publisher file is passed only to native and never enters status", async () => {
   let service = "";
