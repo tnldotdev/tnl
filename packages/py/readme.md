@@ -24,9 +24,9 @@ from myapp import app
 
 
 async def main():
-    async with tnl.open(app) as tunnel:
+    async with tnl.publish(app) as tunnel:
         print(tunnel.url)
-        await tunnel.wait()
+        await tunnel.finished()
 
 
 asyncio.run(main())
@@ -36,8 +36,15 @@ Run `uv run python preview.py`. tnl starts the app and waits until its temporary
 public URL can receive visitors. Press Ctrl+C to remove the URL and stop the
 app. By default, visitors need a current sign-in, share link, or token.
 
+`status()` reads without probing. `wait()` requests fresh application readiness;
+`wait(until="routable")` checks only routing. `finished()` waits for termination.
+`watch(after=status.cursor)` resumes native events exclusively after that cursor;
+omit `after` to begin with a current snapshot. Cancelling an observation does not
+stop the publication. Close the publication, or leave its async context, to drain
+its native run before stopping the SDK-owned ASGI listener.
+
 To use a provisioned publisher credential instead of local setup, pass
-`publisher_credential_file="/absolute/private/publisher.json"` to `tnl.open`, or
+`publisher_credential_file="/absolute/private/publisher.json"` to `tnl.publish`, or
 set `TNL_PUBLISHER_CREDENTIAL_FILE`.
 
 ## use a configured app
@@ -67,6 +74,11 @@ Run from the project directory. `service="api"` selects the service above.
 `port=0` picks a free port, and
 `tnl wait` checks public readiness. Restart the project's apps together after
 changing configuration.
+
+For a listener you manage yourself, `await prepared.register(target)` returns the
+same `Publication` handle without waiting for public readiness. Replacing its
+listener supersedes the old handle; closing the old handle cannot stop the
+replacement. A failed drain remains retryable with `close()`.
 
 ## connect to a service
 

@@ -77,7 +77,7 @@ def test_initial_registration_reply_loss_reconciles_and_joins_before_asgi_shutdo
                     await send({"type": "http.response.body", "body": b"still serving"})
 
             async def publish() -> None:
-                async with tnl.open(app, directory=tmp_path):
+                async with tnl.publish(app, directory=tmp_path):
                     pytest.fail("lost initial reply was accepted")
 
             async def marker(name: str) -> None:

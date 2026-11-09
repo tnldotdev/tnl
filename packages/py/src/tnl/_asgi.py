@@ -22,41 +22,21 @@ from ._protocol import (
     Endpoint,
     InvalidResponse,
     NativeUnavailable,
+    PublicationStatus,
     RegistrationLost,
-    Status,
     TnlError,
     parse_registration,
     parse_status,
 )
+from ._publication import Publication, Selection, join_cleanup
 
 _native = NativeRuntime()
 _alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 _duration = re.compile(r"(?:(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:ns|us|µs|ms|s|m|h))+")
 
 
-async def _join_cleanup[T](task: asyncio.Task[T]) -> T:
-    """defer caller cancellation until the owned cleanup task has finished."""
-    canceled: asyncio.CancelledError | None = None
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError as cause:
-            canceled = cause
-        except BaseException:
-            break
-    try:
-        result = task.result()
-    except BaseException as cause:
-        if canceled is not None and not isinstance(cause, asyncio.CancelledError):
-            raise BaseExceptionGroup("cleanup and cancellation failed", [canceled, cause]) from None
-        raise
-    if canceled is not None:
-        raise canceled
-    return result
-
-
 class _OwnedServer(uvicorn.Server):
-    tunnel: Tunnel | None = None
+    tunnel: _ASGIPublication | None = None
 
     async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
         if self.tunnel is not None:
@@ -140,7 +120,7 @@ def _limit_payload(value: Limits | None) -> dict[str, object] | None:
     return result
 
 
-class Tunnel:
+class _ASGIPublication(Publication):
     """one temporary public URL and its owned ASGI listener."""
 
     def __init__(
@@ -210,6 +190,21 @@ class Tunnel:
                 lambda value: value.exception() if not value.cancelled() else None
             )
         server.tunnel = self
+        super().__init__(
+            native=native,
+            current=self._selection,
+            url=lambda: self._url,
+            stopped=self._closing_event,
+            close=self.close,
+            finished=self._wait_finished,
+        )
+
+    def _selection(self) -> Selection:
+        if self._endpoint is None or self._registration is None:
+            raise RegistrationLost()
+        return Selection(
+            self._endpoint, self._id, str(self._registration["registration_id"]), self._target
+        )
 
     @property
     def url(self) -> str:
@@ -251,7 +246,7 @@ class Tunnel:
         await self._ready
 
     async def unregister(self) -> None:
-        await _join_cleanup(asyncio.create_task(self._unregister()))
+        await join_cleanup(asyncio.create_task(self._unregister()))
 
     async def _unregister(self) -> None:
         if not self._closed:
@@ -284,7 +279,7 @@ class Tunnel:
                         await asyncio.sleep(0.1)
                 self._registration = None
 
-    def _observe(self, status: Status) -> None:
+    def _observe(self, status: PublicationStatus) -> None:
         if status.public_url is not None:
             if self._url is not None and status.public_url != self._url:
                 raise InvalidResponse()
@@ -348,13 +343,13 @@ class Tunnel:
         except TimeoutError:
             pass
 
-    async def wait(self) -> None:
+    async def _wait_finished(self) -> None:
         await asyncio.shield(self._finished)
 
     async def close(self) -> None:
         if self._cleanup_task is None or (self._cleanup_task.done() and not self._close_complete):
             self._cleanup_task = asyncio.create_task(self._close())
-        await _join_cleanup(self._cleanup_task)
+        await join_cleanup(self._cleanup_task)
 
     async def _close(self) -> None:
         async with self._close_lock:
@@ -432,7 +427,7 @@ async def _start_asgi(app: ASGIApp) -> tuple[_OwnedServer, asyncio.Task[None], s
 
 
 @asynccontextmanager
-async def open(
+async def publish(
     app: ASGIApp,
     *,
     publisher_credential_file: str | Path | None = None,
@@ -443,7 +438,7 @@ async def open(
     access: Literal["restricted", "anonymous"] | AccessPolicy | None = None,
     limits: Limits | None = None,
     require_post_quantum: bool = False,
-) -> AsyncIterator[Tunnel]:
+) -> AsyncIterator[_ASGIPublication]:
     """start ASGI, register its bound listener, and wait for native routability."""
     if not callable(app):
         raise TnlError("sdk.configuration_invalid", "pass an ASGI app")
@@ -486,7 +481,7 @@ async def open(
     _limit_payload(limits)
     root = str(Path(directory or os.getcwd()).resolve())
     asgi_server, task, listener = await _start_asgi(app)
-    tunnel = Tunnel(
+    tunnel = _ASGIPublication(
         _native,
         asgi_server,
         task,

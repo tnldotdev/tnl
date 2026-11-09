@@ -26,6 +26,7 @@ from ._protocol import (
     service_name,
     text,
 )
+from ._publication import Publication, Selection, join_cleanup
 
 
 def _service_metadata(name: str, value: object) -> dict[str, object]:
@@ -86,6 +87,12 @@ class _Closed:
 type _RegistrationPhase = _Preparing | _Prepared | _Closed
 
 
+@dataclass(slots=True)
+class _PublicationRun:
+    stopped: asyncio.Event
+    done: asyncio.Future[None]
+
+
 class PreparedService:
     def __init__(
         self, directory: str, service: str | None, state_dir: str | None, native: NativeRuntime
@@ -99,6 +106,11 @@ class PreparedService:
         self._target: str | None = None
         self._lock = asyncio.Lock()
         self._renewal: asyncio.Task[None] | None = None
+        self._active: _PublicationRun | None = None
+        self._released = False
+        self._cleanup: asyncio.Task[None] | None = None
+        self._close_complete = False
+        self._closing_requested = False
         self.service = ""
         self.hostname = ""
         self.public_url = ""
@@ -194,10 +206,13 @@ class PreparedService:
         await self._prepare()
         self._renewal = asyncio.create_task(self._renew())
 
-    async def register(self, target: str) -> None:
+    async def register(self, target: str) -> Publication:
         async with self._lock:
-            if isinstance(self._phase, _Closed):
+            if self._closing_requested or isinstance(self._phase, _Closed):
                 raise RegistrationLost()
+            if self._released:
+                await self._prepare()
+                self._released = False
             self._target = target
             prepared = self._phase
             assert isinstance(prepared, _Prepared)
@@ -213,6 +228,62 @@ class PreparedService:
                     prepared.endpoint, "register", self._registration(prepared)
                 )
 
+            self._finish_active()
+            if self._closing_requested:
+                raise RegistrationLost()
+            active = _PublicationRun(asyncio.Event(), asyncio.get_running_loop().create_future())
+            self._active = active
+
+            def current() -> Selection:
+                if (
+                    self._active is not active
+                    or not isinstance(self._phase, _Prepared)
+                    or self._target is None
+                ):
+                    raise RegistrationLost()
+                return Selection(
+                    self._phase.endpoint, self.service, self._phase.registration_id, self._target
+                )
+
+            async def close() -> None:
+                active.stopped.set()
+                await join_cleanup(asyncio.create_task(self._release(active)))
+
+            async def finished() -> None:
+                await asyncio.shield(active.done)
+
+            return Publication(
+                native=self._native,
+                current=current,
+                url=lambda: self.public_url or None,
+                stopped=active.stopped,
+                close=close,
+                finished=finished,
+            )
+
+    def _finish_active(self) -> None:
+        if self._active is not None:
+            self._active.stopped.set()
+            if not self._active.done.done():
+                self._active.done.set_result(None)
+            self._active = None
+
+    async def _release(self, active: _PublicationRun) -> None:
+        async with self._lock:
+            if self._active is not active:
+                return
+            prepared = self._phase.registration if isinstance(self._phase, _Closed) else self._phase
+            if isinstance(prepared, _Prepared):
+                try:
+                    await self._native.request(
+                        prepared.endpoint, "unregister", self._registration(prepared)
+                    )
+                except RegistrationLost:
+                    pass
+            self._released = True
+            self._target = None
+            self._finish_active()
+
     async def _renew(self) -> None:
         while not isinstance(self._phase, _Closed):
             await asyncio.sleep(5)
@@ -220,6 +291,8 @@ class PreparedService:
                 prepared = self._phase
                 if isinstance(prepared, _Closed):
                     return
+                if self._released:
+                    continue
                 assert isinstance(prepared, _Prepared)
                 try:
                     await self._native.request(
@@ -240,10 +313,24 @@ class PreparedService:
                     pass
 
     async def close(self) -> None:
+        self._closing_requested = True
+        if self._active is not None:
+            self._active.stopped.set()
+        if self._cleanup is None or self._cleanup.done() and not self._close_complete:
+            self._cleanup = asyncio.create_task(self._close())
+        await join_cleanup(self._cleanup)
+
+    async def _close(self) -> None:
         async with self._lock:
-            if isinstance(self._phase, _Closed):
+            if self._close_complete:
                 return
-            prepared = self._phase if isinstance(self._phase, _Prepared) else None
+            prepared = (
+                self._phase.registration
+                if isinstance(self._phase, _Closed)
+                else self._phase
+                if isinstance(self._phase, _Prepared) and not self._released
+                else None
+            )
             self._phase = _Closed(prepared)
             if self._renewal is not None:
                 self._renewal.cancel()
@@ -256,8 +343,10 @@ class PreparedService:
                     await self._native.request(
                         prepared.endpoint, "unregister", self._registration(prepared)
                     )
-                except (RegistrationLost, NativeUnavailable):
+                except RegistrationLost:
                     pass
+            self._finish_active()
+            self._close_complete = True
 
 
 async def prepare(

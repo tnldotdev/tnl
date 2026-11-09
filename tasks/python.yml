@@ -1,6 +1,13 @@
 version: "3"
 
 tasks:
+  test:publications:
+    desc: Check Python publication observations, ASGI ownership and native registration
+    cmds:
+      - task: :py:test
+        vars:
+          CLI_ARGS: "-k 'publication or asgi or status or worker_registers or native_assignment'"
+
   test:client-factories:
     dir: "{{.ROOT_DIR}}"
     desc: Check ordinary Python client caching, cancellation and joined cleanup

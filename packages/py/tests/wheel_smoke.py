@@ -73,7 +73,7 @@ class NativeStub(NativeRuntime):
                     "ready": False,
                     "readiness": {"path": "/"},
                     "public_url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test",
-                    "publish_run_number": 1,
+                    "run_number": 1,
                 }
             ],
         }
@@ -105,7 +105,7 @@ async def main() -> None:
             await send({"type": "websocket.send", "text": str(message["text"])})
             await send({"type": "websocket.close", "code": 1000})
 
-    async with tnl.open(app) as tunnel:
+    async with tnl.publish(app) as tunnel:
         assert tunnel.url == "https://aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test"
         async with httpx.AsyncClient() as client:
             response = await client.get(native.target + "/")
@@ -113,7 +113,7 @@ async def main() -> None:
         async with websockets.connect(native.target.replace("http://", "ws://") + "/") as ws:
             await ws.send("wheel websocket")
             assert await ws.recv() == "wheel websocket"
-    await tunnel.wait()
+    await tunnel.finished()
     assert native.events == ["startup", "register", "unregister", "shutdown"]
 
 

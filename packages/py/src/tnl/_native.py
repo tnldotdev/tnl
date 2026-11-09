@@ -7,6 +7,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from urllib.parse import urlencode
 
 import httpx
 
@@ -17,6 +18,7 @@ from ._protocol import (
     RegistrationLost,
     TnlError,
     parse_endpoint,
+    text,
 )
 
 _REQUEST_TIMEOUT = 30.0
@@ -139,11 +141,18 @@ class NativeRuntime:
             "renew",
             "unregister",
             "status",
+            "check",
+            "events",
             "ad-hoc/register",
         }:
             raise InvalidResponse()
-        data = None if payload is None else json.dumps(payload).encode()
-        get = operation in {"health", "status"}
+        address = endpoint.url + "/v1/" + operation
+        if operation == "events":
+            if payload is None or set(payload) != {"after"}:
+                raise InvalidResponse()
+            address += "?" + urlencode({"after": text(payload["after"], 128)})
+        data = None if payload is None or operation == "events" else json.dumps(payload).encode()
+        get = operation in {"health", "status", "events"}
         if get and data is not None or data is not None and len(data) > 64 << 10:
             raise InvalidResponse()
         headers = {
@@ -163,14 +172,14 @@ class NativeRuntime:
             ):
                 async with client.stream(
                     "GET" if get else "POST",
-                    endpoint.url + "/v1/" + operation,
+                    address,
                     headers=headers,
                     content=data,
                 ) as response:
                     body = bytearray()
                     async for chunk in response.aiter_raw():
                         body.extend(chunk)
-                        if len(body) > 64 << 10:
+                        if len(body) > (8 << 20 if operation == "events" else 64 << 10):
                             raise InvalidResponse()
                     if (
                         response.status_code == 401
@@ -179,7 +188,13 @@ class NativeRuntime:
                     ):
                         raise RegistrationLost()
                     if response.status_code == 204:
-                        if body or operation in {"prepare", "status", "ad-hoc/register"}:
+                        if body or operation in {
+                            "prepare",
+                            "status",
+                            "check",
+                            "events",
+                            "ad-hoc/register",
+                        }:
                             raise InvalidResponse()
                         return None
                     if (
@@ -189,7 +204,13 @@ class NativeRuntime:
                         raise InvalidResponse()
                     value: object = json.loads(body)
                     if response.status_code == 200:
-                        if operation not in {"prepare", "status", "ad-hoc/register"}:
+                        if operation not in {
+                            "prepare",
+                            "status",
+                            "check",
+                            "events",
+                            "ad-hoc/register",
+                        }:
                             raise InvalidResponse()
                         return value
                     if (
@@ -203,6 +224,7 @@ class NativeRuntime:
                         raise RegistrationLost()
                     code = {
                         "runtime.owner_conflict": "sdk.owner_conflict",
+                        "runtime.cursor_expired": "sdk.event_cursor_expired",
                         "runtime.authentication_required": "sdk.authentication_required",
                         "runtime.publisher_setup_required": "sdk.publisher_setup_required",
                         "runtime.publisher_credential_file_invalid": (
@@ -212,6 +234,10 @@ class NativeRuntime:
                     if response.status_code >= 500 and code == "sdk.request_rejected":
                         raise NativeUnavailable()
                     message = {
+                        "sdk.event_cursor_expired": (
+                            "the local event cursor expired; read publication status"
+                            " before resuming events"
+                        ),
                         "sdk.publisher_setup_required": (
                             "no namespace publisher is set up; run tnl publisher setup"
                             " --namespace, then try again"

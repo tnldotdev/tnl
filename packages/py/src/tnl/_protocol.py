@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import cast
@@ -137,27 +139,93 @@ def parse_registration(value: object, owner: str, target: str) -> dict[str, obje
 
 
 @dataclass(frozen=True, slots=True)
-class Status:
+class PublicationStatus:
     registered: bool
     routable: bool
     ready: bool
     public_url: str | None
     publish_run_number: int | None
     failure: str | None
+    cursor: str
+    tunnel_id: str | None
+    checked_at: datetime | None
 
 
-def parse_status(value: object, service: str, registration_id: str, target: str) -> Status | None:
+def timestamp(value: object) -> datetime:
+    try:
+        result = datetime.fromisoformat(text(value))
+    except ValueError:
+        raise InvalidResponse() from None
+    if result.utcoffset() is None:
+        raise InvalidResponse()
+    return result
+
+
+def _inventory(value: object, service: str, tunnel_ids: set[str]) -> dict[str, object]:
+    publication = object_value(
+        value,
+        {
+            "tunnel_id",
+            "command",
+            "state",
+            "process_id",
+            "server",
+            "project",
+            "service",
+            "service_protocol",
+            "public_url_id",
+            "publish_run_number",
+            "public_port",
+            "hostname",
+            "public_url",
+            "target",
+            "framework",
+            "started_at",
+            "updated_at",
+            "heartbeat_at",
+            "lease_expires_at",
+            "failure",
+        },
+    )
+    tunnel_id = text(publication.get("tunnel_id"))
+    if (
+        (publication.get("service") != service and tunnel_id not in tunnel_ids)
+        or type(publication.get("process_id")) is not int
+        or publication.get("command") not in ("publish", "dev")
+        or publication.get("state")
+        not in ("starting", "provisioning", "ready", "draining", "stopped", "failed", "stale")
+    ):
+        raise InvalidResponse()
+    for key in (
+        "tunnel_id",
+        "server",
+        "project",
+        "started_at",
+        "updated_at",
+        "heartbeat_at",
+        "lease_expires_at",
+    ):
+        text(publication.get(key))
+    for key, field_value in publication.items():
+        if key in {"process_id", "publish_run_number", "public_port"}:
+            if type(field_value) is not int or not 1 <= field_value <= 2**53 - 1:
+                raise InvalidResponse()
+        else:
+            text(field_value)
+    return publication
+
+
+def parse_status(
+    value: object, service: str, registration_id: str, target: str
+) -> PublicationStatus | None:
     obj = object_value(
         value, {"schema_version", "project", "cursor", "observed_at", "services", "publications"}
     )
     if type(obj.get("schema_version")) is not int or obj["schema_version"] != 1:
         raise InvalidResponse()
     text(obj.get("project"))
-    text(obj.get("cursor"), 128)
-    try:
-        datetime.fromisoformat(text(obj.get("observed_at")))
-    except ValueError:
-        raise InvalidResponse() from None
+    cursor = text(obj.get("cursor"), 128)
+    timestamp(obj.get("observed_at"))
     services = obj.get("services")
     publications = obj.get("publications", [])
     if (
@@ -167,56 +235,10 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
         or len(publications) > 64
     ):
         raise InvalidResponse()
+    own = services[0] if services and isinstance(services[0], dict) else {}
+    tunnel_id = own.get("tunnel_id")
     for raw in publications:
-        publication = object_value(
-            raw,
-            {
-                "tunnel_id",
-                "command",
-                "state",
-                "process_id",
-                "server",
-                "project",
-                "service",
-                "service_protocol",
-                "public_url_id",
-                "publish_run_number",
-                "public_port",
-                "hostname",
-                "public_url",
-                "target",
-                "framework",
-                "started_at",
-                "updated_at",
-                "heartbeat_at",
-                "lease_expires_at",
-                "failure",
-            },
-        )
-        if (
-            publication.get("service") != service
-            or type(publication.get("process_id")) is not int
-            or publication.get("command") not in ("publish", "dev")
-            or publication.get("state")
-            not in ("starting", "provisioning", "ready", "draining", "stopped", "failed", "stale")
-        ):
-            raise InvalidResponse()
-        for key in (
-            "tunnel_id",
-            "server",
-            "project",
-            "started_at",
-            "updated_at",
-            "heartbeat_at",
-            "lease_expires_at",
-        ):
-            text(publication.get(key))
-        for key, field_value in publication.items():
-            if key in {"process_id", "publish_run_number", "public_port"}:
-                if type(field_value) is not int or not 1 <= field_value <= 2**53 - 1:
-                    raise InvalidResponse()
-            else:
-                text(field_value)
+        _inventory(raw, service, {tunnel_id} if isinstance(tunnel_id, str) else set())
     if not services:
         return None
     item = object_value(
@@ -234,7 +256,7 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
             "registered",
             "routable",
             "ready",
-            "publish_run_number",
+            "run_number",
             "provisioning_stage",
             "readiness",
             "observation",
@@ -261,24 +283,30 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
     readiness = object_value(item.get("readiness"), {"path"})
     if not text(readiness.get("path")).startswith("/"):
         raise InvalidResponse()
-    number = item.get("publish_run_number")
+    number = item.get("run_number")
     if number is not None and (type(number) is not int or not 1 <= number <= 2**53 - 1):
         raise InvalidResponse()
     public_url = item.get("public_url")
     if public_url is not None:
         url = text(public_url)
         try:
-            expected = f"https://{hostname(urlsplit(url).hostname)}"
+            parts = urlsplit(url)
+            expected = f"https://{hostname(parts.hostname)}"
+            if parts.port is not None:
+                if not 1 <= parts.port <= 65535:
+                    raise InvalidResponse()
+                expected += f":{parts.port}"
         except ValueError:
             raise InvalidResponse() from None
         if url != expected:
             raise InvalidResponse()
+    checked_at = None
     if "observation" in item:
         observation = object_value(
             item["observation"],
             {
                 "registration_id",
-                "publish_run_number",
+                "run_number",
                 "checked_at",
                 "status",
                 "ready",
@@ -290,16 +318,13 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
         if not text(observed_path.get("path")).startswith("/"):
             raise InvalidResponse()
         text(observation.get("registration_id"), 128)
-        try:
-            datetime.fromisoformat(text(observation.get("checked_at")))
-        except ValueError:
-            raise InvalidResponse() from None
+        checked_at = timestamp(observation.get("checked_at"))
         if (
             type(observation.get("ready")) is not bool
-            or type(observation.get("publish_run_number")) is not int
+            or type(observation.get("run_number")) is not int
         ):
             raise InvalidResponse()
-        observed_run = observation["publish_run_number"]
+        observed_run = observation["run_number"]
         if not isinstance(observed_run, int) or not 1 <= observed_run <= 2**53 - 1:
             raise InvalidResponse()
         if "status" in observation:
@@ -310,7 +335,8 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
             text(observation["reason"])
         if item["ready"] and (
             observation["registration_id"] != registration_id
-            or observation["publish_run_number"] != number
+            or observation["run_number"] != number
+            or observed_path["path"] != readiness["path"]
             or not observation["ready"]
         ):
             raise InvalidResponse()
@@ -320,11 +346,80 @@ def parse_status(value: object, service: str, registration_id: str, target: str)
         return None
     if item["routable"] and (not item["registered"] or number is None):
         raise InvalidResponse()
-    return Status(
+    return PublicationStatus(
         cast(bool, item["registered"]),
         cast(bool, item["routable"]),
         cast(bool, item["ready"]),
         cast(str | None, public_url),
         cast(int | None, number),
         cast(str | None, item.get("failure")),
+        cursor,
+        cast(str | None, tunnel_id),
+        checked_at,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationEvent:
+    cursor: str
+    type: str
+    at: datetime
+    service: Mapping[str, object] | None = None
+    snapshot: Mapping[str, object] | None = None
+    publication: Mapping[str, object] | None = None
+
+
+def parse_events(
+    value: object, service: str, tunnel_id: str | None
+) -> tuple[PublicationEvent, ...]:
+    if not isinstance(value, list) or len(value) > 4096:
+        raise InvalidResponse()
+    events = []
+    for raw in value:
+        event = object_value(raw, {"cursor", "type", "at", "service", "snapshot", "publication"})
+        cursor, kind, at = (
+            text(event.get("cursor"), 128),
+            text(event.get("type"), 128),
+            timestamp(event.get("at")),
+        )
+        own_ids = {tunnel_id} if tunnel_id is not None else set()
+        snapshots: list[object] = []
+        if "snapshot" in event:
+            snapshots.append(event["snapshot"])
+        if "service" in event:
+            snapshots.append(
+                {
+                    "schema_version": 1,
+                    "project": ".",
+                    "cursor": cursor,
+                    "observed_at": event["at"],
+                    "services": [event["service"]],
+                }
+            )
+        for snapshot in snapshots:
+            obj = object_value(
+                snapshot,
+                {"schema_version", "project", "cursor", "observed_at", "services", "publications"},
+            )
+            services = obj.get("services")
+            if not isinstance(services, list) or len(services) > 1:
+                raise InvalidResponse()
+            item = services[0] if services and isinstance(services[0], dict) else {}
+            parse_status(
+                obj, service, str(item.get("registration_id", "")), str(item.get("target", ""))
+            )
+            if isinstance(item.get("tunnel_id"), str):
+                own_ids.add(item["tunnel_id"])
+        if "publication" in event:
+            _inventory(event["publication"], service, own_ids)
+        events.append(
+            PublicationEvent(
+                cursor,
+                kind,
+                at,
+                cast(Mapping[str, object] | None, deepcopy(event.get("service"))),
+                cast(Mapping[str, object] | None, deepcopy(event.get("snapshot"))),
+                cast(Mapping[str, object] | None, deepcopy(event.get("publication"))),
+            )
+        )
+    return tuple(events)
