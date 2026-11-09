@@ -194,30 +194,10 @@ func (s *Server) Handler() http.Handler {
 		})
 	}
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		snapshot := s.Manager.Snapshot()
-		grant := publisherprotocol.Grant(r)
-		if grant.Scope != "owner" {
-			name := ""
-			if grant.Service != nil {
-				name = *grant.Service
-			} else if grant.InvocationId != nil {
-				name = *grant.InvocationId
-			}
-			snapshot.Services = slices.DeleteFunc(snapshot.Services, func(service publisherapp.Service) bool { return service.Name != name })
-			snapshot.Publications = slices.DeleteFunc(slices.Clone(snapshot.Publications), func(publication clientstate.TunnelInfo) bool {
-				if grant.Scope == "invocation" {
-					return !slices.ContainsFunc(snapshot.Services, func(service publisherapp.Service) bool { return service.TunnelID == publication.ID })
-				}
-				return publication.Service != name
-			})
-		}
+		snapshot := scopedSnapshot(s.Manager.Snapshot(), publisherprotocol.Grant(r))
 		publisherprotocol.Write(w, 200, snapshot)
 	})
 	mux.HandleFunc("GET /v1/events", func(w http.ResponseWriter, r *http.Request) {
-		if publisherprotocol.Grant(r).Scope != "owner" {
-			Problem(w, publisherprotocol.ErrForbidden)
-			return
-		}
 		cursor := r.URL.Query().Get("after")
 		if cursor == "" || len(cursor) > 128 {
 			Problem(w, publisherapp.ErrCursorExpired)
@@ -228,10 +208,17 @@ func (s *Server) Handler() http.Handler {
 			Problem(w, err)
 			return
 		}
+		grant := publisherprotocol.Grant(r)
+		if grant.Scope != "owner" {
+			current := scopedSnapshot(s.Manager.Snapshot(), grant)
+			for i, event := range events {
+				events[i] = scopedEvent(event, grant, current)
+			}
+		}
 		publisherprotocol.Write(w, 200, events)
 	})
 	mux.HandleFunc("POST /v1/check", func(w http.ResponseWriter, r *http.Request) {
-		if publisherprotocol.Grant(r).Scope != "owner" || s.Check == nil {
+		if s.Check == nil {
 			Problem(w, publisherprotocol.ErrForbidden)
 			return
 		}
@@ -248,14 +235,68 @@ func (s *Server) Handler() http.Handler {
 			Problem(w, errors.New("too many services"))
 			return
 		}
+		grant := publisherprotocol.Grant(r)
+		if grant.Scope != "owner" {
+			name := scopeName(grant)
+			if len(names) != 0 && (len(names) != 1 || names[0] != name) {
+				Problem(w, publisherprotocol.ErrForbidden)
+				return
+			}
+			names = []string{name}
+		}
 		snapshot, err := s.Check(r.Context(), names)
 		if err != nil {
 			Problem(w, err)
 			return
 		}
-		publisherprotocol.Write(w, 200, snapshot)
+		publisherprotocol.Write(w, 200, scopedSnapshot(snapshot, grant))
 	})
 	return observability.LocalRequests(s.Capabilities.Handler(mux))
+}
+
+func scopeName(grant publisherprotocol.Endpoint) string {
+	if grant.Service != nil {
+		return *grant.Service
+	}
+	if grant.InvocationId != nil {
+		return *grant.InvocationId
+	}
+	return ""
+}
+
+// scope every observation path before serialization, without mutating owner views.
+func scopedSnapshot(snapshot publisherapp.Snapshot, grant publisherprotocol.Endpoint) publisherapp.Snapshot {
+	if grant.Scope == "owner" {
+		return snapshot
+	}
+	name := scopeName(grant)
+	snapshot.Services = slices.DeleteFunc(slices.Clone(snapshot.Services), func(service publisherapp.Service) bool { return service.Name != name })
+	snapshot.Publications = slices.DeleteFunc(slices.Clone(snapshot.Publications), func(publication clientstate.TunnelInfo) bool {
+		if grant.Scope == "invocation" {
+			return !slices.ContainsFunc(snapshot.Services, func(service publisherapp.Service) bool { return service.TunnelID == publication.ID })
+		}
+		return publication.Service != name
+	})
+	return snapshot
+}
+
+func scopedEvent(event publisherapp.Event, grant publisherprotocol.Endpoint, current publisherapp.Snapshot) publisherapp.Event {
+	name := scopeName(grant)
+	result := publisherapp.Event{Cursor: event.Cursor, Type: "cursor", At: event.At}
+	if event.Snapshot != nil {
+		snapshot := scopedSnapshot(*event.Snapshot, grant)
+		result.Snapshot = &snapshot
+		result.Type = "snapshot"
+	}
+	if event.Service != nil && event.Service.Name == name {
+		service := *event.Service
+		result.Service, result.Type = &service, event.Type
+	}
+	if event.Publication != nil && (grant.Scope == "app" && event.Publication.Service == name || grant.Scope == "invocation" && slices.ContainsFunc(current.Services, func(service publisherapp.Service) bool { return service.TunnelID == event.Publication.ID })) {
+		publication := *event.Publication
+		result.Publication, result.Type = &publication, event.Type
+	}
+	return result
 }
 
 func Problem(w http.ResponseWriter, err error) {

@@ -56,7 +56,7 @@ func TestAppCapabilityCannotReplaceAnotherServiceOrSubmitReadiness(t *testing.T)
 		t.Fatal("app capability replaced another service")
 	}
 	if err := publisherprotocol.Call(t.Context(), app, "POST", "/v1/check", publisherprotocol.Check{}, nil); !errors.Is(err, publisherprotocol.ErrForbidden) {
-		t.Fatalf("app checked readiness: %v", err)
+		t.Fatalf("missing check implementation accepted readiness: %v", err)
 	}
 	if err := publisherprotocol.Call(t.Context(), capabilities.Owner(), "POST", "/v1/observe", publisherapp.Observation{Ready: true}, nil); err == nil {
 		t.Fatal("client authored readiness was accepted")

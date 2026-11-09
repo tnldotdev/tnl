@@ -32,6 +32,19 @@ The process keeps one evaluated configuration. If reuse returns
 `TNL_CLIENT_APP_CONFIGURATION_CONFLICT`, stop and restart the project's apps and
 named local publishers so they all use the new configuration.
 
+## observing a publication
+
+App and invocation capabilities can read status, request fresh readiness checks,
+and resume events for their own publication. A check with no service selector
+selects that capability's publication, never the whole project. Selecting another
+service is forbidden. Only the native worker can submit readiness observations.
+
+Event cursors remain exclusive positions in the project journal. Unrelated
+updates become cursor-only events, without their event type or payload, so a
+scoped consumer can advance without seeing another service's state. Snapshot
+events use the same filtering as status and check responses. Expired cursors
+return `runtime.cursor_expired`; read status before resuming.
+
 ## where to change it
 
 - [server.go](server.go) handles HTTP requests and capability scopes.

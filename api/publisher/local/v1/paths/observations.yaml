@@ -13,7 +13,7 @@ paths:
   /v1/events:
     get:
       operationId: events
-      description: Owner only. Exclusively resume the native project journal, including direct and named publications. Expired cursors return 410.
+      description: Exclusively resume the native project journal. App and invocation capabilities see only their own observations; cursor-only events advance past unrelated work. Expired cursors return 410.
       parameters:
         - name: after
           in: query
@@ -29,7 +29,7 @@ paths:
   /v1/check:
     post:
       operationId: check
-      description: Owner only. Perform fresh public readiness checks, fenced by lease, target and exact publish run. Proofs stay in owner memory.
+      description: Perform fresh readiness checks, fenced by lease, target and exact run. App and invocation capabilities can check only their own publication and receive a scoped snapshot. Proofs stay in owner memory.
       requestBody:
         required: true
         content:

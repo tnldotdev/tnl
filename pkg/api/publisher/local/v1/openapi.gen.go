@@ -580,18 +580,18 @@ type ClientInterface interface {
 	// CheckWithBody performs a POST /v1/check (the `Check` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Owner only. Perform fresh public readiness checks, fenced by lease, target and exact publish run. Proofs stay in owner memory.
+	// Perform fresh readiness checks, fenced by lease, target and exact run. App and invocation capabilities can check only their own publication and receive a scoped snapshot. Proofs stay in owner memory.
 	CheckWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Check performs a POST /v1/check (the `Check` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Owner only. Perform fresh public readiness checks, fenced by lease, target and exact publish run. Proofs stay in owner memory.
+	// Perform fresh readiness checks, fenced by lease, target and exact run. App and invocation capabilities can check only their own publication and receive a scoped snapshot. Proofs stay in owner memory.
 	Check(ctx context.Context, body CheckJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Events performs a GET /v1/events (the `Events` operationId) request.
 	//
-	// Owner only. Exclusively resume the native project journal, including direct and named publications. Expired cursors return 410.
+	// Exclusively resume the native project journal. App and invocation capabilities see only their own observations; cursor-only events advance past unrelated work. Expired cursors return 410.
 	Events(ctx context.Context, params *EventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Health performs a GET /v1/health (the `Health` operationId) request.
@@ -730,7 +730,7 @@ func (c *Client) IssueCapability(ctx context.Context, body IssueCapabilityJSONRe
 // CheckWithBody performs a POST /v1/check (the `Check` operationId) request,
 // with any type of body and a specified content type.
 //
-// Owner only. Perform fresh public readiness checks, fenced by lease, target and exact publish run. Proofs stay in owner memory.
+// Perform fresh readiness checks, fenced by lease, target and exact run. App and invocation capabilities can check only their own publication and receive a scoped snapshot. Proofs stay in owner memory.
 func (c *Client) CheckWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCheckRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -746,7 +746,7 @@ func (c *Client) CheckWithBody(ctx context.Context, contentType string, body io.
 // Check performs a POST /v1/check (the `Check` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Owner only. Perform fresh public readiness checks, fenced by lease, target and exact publish run. Proofs stay in owner memory.
+// Perform fresh readiness checks, fenced by lease, target and exact run. App and invocation capabilities can check only their own publication and receive a scoped snapshot. Proofs stay in owner memory.
 func (c *Client) Check(ctx context.Context, body CheckJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCheckRequest(c.Server, body)
 	if err != nil {
@@ -761,7 +761,7 @@ func (c *Client) Check(ctx context.Context, body CheckJSONRequestBody, reqEditor
 
 // Events performs a GET /v1/events (the `Events` operationId) request.
 //
-// Owner only. Exclusively resume the native project journal, including direct and named publications. Expired cursors return 410.
+// Exclusively resume the native project journal. App and invocation capabilities see only their own observations; cursor-only events advance past unrelated work. Expired cursors return 410.
 func (c *Client) Events(ctx context.Context, params *EventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEventsRequest(c.Server, params)
 	if err != nil {
@@ -1488,7 +1488,7 @@ type ClientWithResponsesInterface interface {
 	// CheckWithBodyWithResponse performs a POST /v1/check (the `Check` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Owner only. Perform fresh public readiness checks, fenced by lease, target and exact publish run. Proofs stay in owner memory.
+	// Perform fresh readiness checks, fenced by lease, target and exact run. App and invocation capabilities can check only their own publication and receive a scoped snapshot. Proofs stay in owner memory.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	CheckWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckResponse, error)
@@ -1496,12 +1496,12 @@ type ClientWithResponsesInterface interface {
 	// CheckWithResponse performs a POST /v1/check (the `Check` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Owner only. Perform fresh public readiness checks, fenced by lease, target and exact publish run. Proofs stay in owner memory.
+	// Perform fresh readiness checks, fenced by lease, target and exact run. App and invocation capabilities can check only their own publication and receive a scoped snapshot. Proofs stay in owner memory.
 	CheckWithResponse(ctx context.Context, body CheckJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckResponse, error)
 
 	// EventsWithResponse performs a GET /v1/events (the `Events` operationId) request.
 	//
-	// Owner only. Exclusively resume the native project journal, including direct and named publications. Expired cursors return 410.
+	// Exclusively resume the native project journal. App and invocation capabilities see only their own observations; cursor-only events advance past unrelated work. Expired cursors return 410.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	EventsWithResponse(ctx context.Context, params *EventsParams, reqEditors ...RequestEditorFn) (*EventsResponse, error)
@@ -2144,7 +2144,7 @@ func (c *ClientWithResponses) IssueCapabilityWithResponse(ctx context.Context, b
 // CheckWithBodyWithResponse performs a POST /v1/check (the `Check` operationId) request,
 // with any type of body and a specified content type.
 //
-// Owner only. Perform fresh public readiness checks, fenced by lease, target and exact publish run. Proofs stay in owner memory.
+// Perform fresh readiness checks, fenced by lease, target and exact run. App and invocation capabilities can check only their own publication and receive a scoped snapshot. Proofs stay in owner memory.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) CheckWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CheckResponse, error) {
@@ -2158,7 +2158,7 @@ func (c *ClientWithResponses) CheckWithBodyWithResponse(ctx context.Context, con
 // CheckWithResponse performs a POST /v1/check (the `Check` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Owner only. Perform fresh public readiness checks, fenced by lease, target and exact publish run. Proofs stay in owner memory.
+// Perform fresh readiness checks, fenced by lease, target and exact run. App and invocation capabilities can check only their own publication and receive a scoped snapshot. Proofs stay in owner memory.
 func (c *ClientWithResponses) CheckWithResponse(ctx context.Context, body CheckJSONRequestBody, reqEditors ...RequestEditorFn) (*CheckResponse, error) {
 	rsp, err := c.Check(ctx, body, reqEditors...)
 	if err != nil {
@@ -2169,7 +2169,7 @@ func (c *ClientWithResponses) CheckWithResponse(ctx context.Context, body CheckJ
 
 // EventsWithResponse performs a GET /v1/events (the `Events` operationId) request.
 //
-// Owner only. Exclusively resume the native project journal, including direct and named publications. Expired cursors return 410.
+// Exclusively resume the native project journal. App and invocation capabilities see only their own observations; cursor-only events advance past unrelated work. Expired cursors return 410.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) EventsWithResponse(ctx context.Context, params *EventsParams, reqEditors ...RequestEditorFn) (*EventsResponse, error) {
