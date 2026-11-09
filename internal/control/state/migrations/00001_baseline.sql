@@ -2039,6 +2039,24 @@ CREATE TABLE control.service_http_grants (
     revoked_at timestamptz
 );
 
+-- current service grant authority is shared by local verifier projection and
+-- browser exchanges. ordinary grants outlive the creator's short access token;
+-- company-bound provenance retains its explicit current authentication checks.
+-- +goose StatementBegin
+CREATE FUNCTION control.visitor_service_grant_authority(service text, at_time timestamptz)
+RETURNS TABLE(grant_id text, kind text, secret_digest bytea, expires_at timestamptz) LANGUAGE sql STABLE AS $$
+    SELECT credential.id,credential.kind,credential.secret_digest,
+        LEAST(credential.expires_at,permission.expires_at,parent.access_expires_at,parent.refresh_expires_at)
+    FROM control.service_http_grants credential
+    CROSS JOIN LATERAL control.visitor_identity_permission('service',credential.service_id,credential.created_by_identity_id,
+        COALESCE(credential.control_session_id,''),'',at_time) permission
+    LEFT JOIN control.control_sessions parent ON parent.id=credential.control_session_id
+    WHERE credential.service_id=service AND credential.revoked_at IS NULL AND credential.expires_at>at_time
+        AND (credential.control_session_id IS NULL OR (parent.identity_id=credential.created_by_identity_id AND parent.revoked_at IS NULL
+            AND parent.access_expires_at>at_time AND parent.refresh_expires_at>at_time))
+$$;
+-- +goose StatementEnd
+
 -- direct runtime facts have no mirror or projection trigger. typed run facts
 -- retain their certificate/key-binding boundaries and one active identity index.
 CREATE VIEW control.publisher_service_runs AS

@@ -363,7 +363,7 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	}
 	currentPermission := func() controlv1.VisitorTokenResponse {
 		t.Helper()
-		source, err := json.Marshal(controlv1.VisitorTokenGrantSource{Kind: controlv1.VisitorTokenGrant, Credential: grant.RefreshCredential})
+		source, err := json.Marshal(controlv1.VisitorTokenGrantSource{Kind: controlv1.VisitorTokenGrant, Credential: grant.Permission.VisitorToken})
 		if err != nil {
 			t.Fatal(err)
 		}

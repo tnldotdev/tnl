@@ -32,6 +32,7 @@ func Maximum(t testing.TB, now time.Time) (controlv1.VisitorPolicyUpdate, ed2551
 		VerificationKeys: make([]controlv1.VisitorVerificationKey, 64),
 		WorkloadLeases:   make([]controlv1.VisitorWorkloadLease, 4096),
 		ShareVerifiers:   []controlv1.VisitorShareVerifier{},
+		GrantVerifiers:   []controlv1.VisitorGrantVerifier{},
 	}
 	for i := range policy.VerificationKeys {
 		policy.VerificationKeys[i] = controlv1.VisitorVerificationKey{Id: strings.Repeat("\x01", 126) + fmt.Sprintf("%02d", i), PublicKey: private.Public().(ed25519.PublicKey)}

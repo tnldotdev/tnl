@@ -249,11 +249,11 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	}
 	awaitServiceHTTPStatus(t, client, base, "Tnl-Visitor-Token", share.Permission.VisitorToken, 200)
 	closeResponse(request(client, "/", "Tnl-Visitor-Token", share.Permission.VisitorToken, 200))
-	closeResponse(request(client, "/", "Tnl-Visitor-Token", share.RefreshCredential, 403))
+	closeResponse(request(client, "/", "Tnl-Visitor-Token", share.Permission.VisitorToken, 200))
 	jar, _ := cookiejar.New(nil)
 	shareClient := *client
 	shareClient.Jar = jar
-	closeResponse(request(&shareClient, "/__tnl/share/"+share.RefreshCredential, "", "", 303))
+	closeResponse(request(&shareClient, "/__tnl/share/"+share.Permission.VisitorToken, "", "", 303))
 	closeResponse(request(&shareClient, "/", "", "", 200))
 	if err = f.identity.routes.RevokeServiceHTTPGrant(t.Context(), service.Id, share.GrantId); err != nil {
 		t.Fatal(err)
@@ -417,7 +417,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	mtls := &http.Client{Transport: newTransport(&material), Timeout: 10 * time.Second}
 	awaitServiceHTTPStatus(t, mtls, base, "", "", 200)
 	closeResponse(request(mtls, "/", "", "", 200))
-	source, err := json.Marshal(controlv1.VisitorTokenGrantSource{Kind: "grant", Credential: transition.RefreshCredential})
+	source, err := json.Marshal(controlv1.VisitorTokenGrantSource{Kind: "grant", Credential: transition.Permission.VisitorToken})
 	if err != nil {
 		t.Fatal(err)
 	}

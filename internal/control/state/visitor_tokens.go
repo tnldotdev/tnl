@@ -7,7 +7,6 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -369,34 +368,16 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		if scope.Kind != visitorscope.Service {
 			return result, ErrVisitorPermission
 		}
-		grantID, digest, err := visitorRefreshDigest(supplied.Credential)
+		grantID, digest, err := visitortoken.GrantTokenDigest(visitortoken.Token(supplied.Credential))
 		if err != nil {
-			return result, err
+			return result, ErrVisitorPermission
 		}
-		var creator, session, kind string
-		err = tx.QueryRow(ctx, `SELECT created_by_identity_id,COALESCE(control_session_id,''),expires_at,kind FROM control.service_http_grants
-		    WHERE id=$1 AND service_id=$2 AND secret_digest=$3 AND revoked_at IS NULL AND expires_at>$4 FOR SHARE`, grantID, scope.ID, digest[:], now).Scan(&creator, &session, &until, &kind)
+		authority, err := q.LockVisitorGrantAuthority(ctx, controlstatedb.LockVisitorGrantAuthorityParams{ServiceID: scope.ID, GrantID: grantID, SecretDigest: digest[:], Now: timestamptz(now)})
 		if err != nil {
 			return result, publisherLookupError(err, ErrVisitorPermission)
 		}
-		if session != "" {
-			parent, err := q.GetVisitorParentSession(ctx, session)
-			if err != nil {
-				return result, publisherLookupError(err, ErrVisitorPermission)
-			}
-			if parent.IdentityID != creator || parent.RevokedAt.Valid || !parent.AccessExpiresAt.Time.After(now) || !parent.RefreshExpiresAt.Time.After(now) {
-				return result, ErrVisitorPermission
-			}
-			until = minTime(until, minTime(parent.AccessExpiresAt.Time, parent.RefreshExpiresAt.Time))
-		}
-		decision, err := q.VisitorPermission(ctx, controlstatedb.VisitorPermissionParams{ResourceKind: "service", ResourceID: scope.ID, IdentityID: creator, ControlSessionID: session, Now: timestamptz(now)})
-		if err != nil {
-			return result, publisherLookupError(err, ErrVisitorPermission)
-		}
-		if decision.ExpiresAt.Valid && decision.ExpiresAt.InfinityModifier == 0 {
-			until = minTime(until, decision.ExpiresAt.Time)
-		}
-		subject = visitortoken.Grant{GrantID: grantID, Kind: kind}
+		until = authority.ExpiresAt.Time
+		subject = visitortoken.Grant{GrantID: grantID, Kind: authority.Kind}
 		explicitLifetime = true
 	default:
 		return result, ErrVisitorPermission
@@ -409,21 +390,6 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		result.Permission.ExpiresAt = until.Truncate(time.Second)
 	}
 	return result, nil
-}
-
-// a refresh credential is authority-facing only. it has a separate format and
-// digest purpose from every retired application-access credential.
-func visitorRefreshDigest(credential string) (string, [32]byte, error) {
-	var zero [32]byte
-	parts := strings.Split(credential, ".")
-	if len(parts) != 3 || parts[0] != "vrf1" || !opaqueid.Valid(parts[1], "shg_") || len(parts[2]) != 43 {
-		return "", zero, ErrVisitorPermission
-	}
-	raw, err := base64.RawURLEncoding.Strict().DecodeString(parts[2])
-	if err != nil || len(raw) != 32 || base64.RawURLEncoding.EncodeToString(raw) != parts[2] {
-		return "", zero, ErrVisitorPermission
-	}
-	return parts[1], sha256.Sum256([]byte("tnl visitor refresh v1\x00" + credential)), nil
 }
 
 type browserTokenFacts struct {

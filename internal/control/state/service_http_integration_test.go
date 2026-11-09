@@ -141,7 +141,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		}
 		guard.Close()
 	}
-	check(a, GrantTokenSource{Credential: grant.RefreshCredential}, true)
+	check(a, GrantTokenSource{Credential: grant.Permission.VisitorToken}, true)
 	status, err := d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
 	if err != nil || status.State != PublicServiceVisitorAuthenticated {
 		t.Fatal("transport bypassed promotion", status, err)
@@ -155,8 +155,8 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 	}
 	wrongAuth := a
 	wrongAuth.Subject.Kind = visitorscope.PublicURL
-	check(wrongAuth, GrantTokenSource{Credential: grant.RefreshCredential}, false)
-	check(b, GrantTokenSource{Credential: grant.RefreshCredential}, false)
+	check(wrongAuth, GrantTokenSource{Credential: grant.Permission.VisitorToken}, false)
+	check(b, GrantTokenSource{Credential: grant.Permission.VisitorToken}, false)
 	check(a, GrantTokenSource{Credential: "shr_0123456789abcdefghijkl." + strings.Repeat("A", 43)}, false)
 	if _, err := d.ReadPublisherVisitorPolicy(t.Context(), a.Subject, a.RunID, a.Number+1, a.Token.String(), 0, now); err == nil {
 		t.Fatal("wrong run number fetched policy")
@@ -276,7 +276,7 @@ func TestIntegrationServiceHTTPSubjectAndAdmissionScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(a, BrowserSessionTokenSource{Secret: redemption.CookieSecret}, false)
-	check(a, GrantTokenSource{Credential: grant.RefreshCredential}, false)
+	check(a, GrantTokenSource{Credential: grant.Permission.VisitorToken}, false)
 	status, err = d.PublicServiceVisitorStatus(t.Context(), lease.IngressLeaseIdentity, visitor, now)
 	if err != nil || status.State != PublicServiceVisitorAllowed {
 		t.Fatal("HTTP authority changed its independent transport lease", status, err)

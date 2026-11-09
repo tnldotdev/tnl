@@ -75,7 +75,7 @@ func TestServiceHTTPShareRedemptionKeepsRenewingBeyondFirstPermission(t *testing
 		}
 		defer policy.Close()
 		grantID := "shg_" + strings.Repeat("G", 22)
-		refresh := "vrf1." + grantID + "." + strings.Repeat("A", 43)
+		refresh := "vsg1." + grantID + "." + strings.Repeat("A", 43)
 		issuer := &browserTokenClientFixture{issue: func(_ context.Context, request controlv1.VisitorTokenRequest) (controlv1.VisitorTokenResponse, error) {
 			var source controlv1.VisitorTokenGrantSource
 			if request.Resource.Id != scope.ID || request.Resource.Kind != "service" || json.Unmarshal(request.Source, &source) != nil || source.Kind != "grant" || source.Credential != refresh {

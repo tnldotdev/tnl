@@ -50,7 +50,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		return result, ErrVisitorPolicy
 	}
 	policy := controlv1.VisitorPolicySnapshot{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, Issuer: issuer,
-		VisitorPolicyRevision: revision, KeyRevision: keyRevision, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), VerificationKeys: []controlv1.VisitorVerificationKey{}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}, ShareVerifiers: []controlv1.VisitorShareVerifier{}}
+		VisitorPolicyRevision: revision, KeyRevision: keyRevision, ObservedAt: now, ValidUntil: now.Add(visitortoken.PolicyLifetime), VerificationKeys: []controlv1.VisitorVerificationKey{}, WorkloadLeases: []controlv1.VisitorWorkloadLease{}, ShareVerifiers: []controlv1.VisitorShareVerifier{}, GrantVerifiers: []controlv1.VisitorGrantVerifier{}}
 	for _, key := range keys {
 		policy.VerificationKeys = append(policy.VerificationKeys, controlv1.VisitorVerificationKey{Id: key.ID, PublicKey: key.PublicKey})
 	}
@@ -122,6 +122,16 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 			}
 		}
 	case visitorscope.Service:
+		grants, err := q.ReadVisitorGrantVerifiers(ctx, controlstatedb.ReadVisitorGrantVerifiersParams{ServiceID: scope.ID, Now: timestamptz(now)})
+		if err != nil {
+			return result, err
+		}
+		if len(grants) > 256 {
+			return result, ErrVisitorPolicy
+		}
+		for _, grant := range grants {
+			policy.GrantVerifiers = append(policy.GrantVerifiers, controlv1.VisitorGrantVerifier{GrantId: grant.GrantID, Kind: controlv1.VisitorGrantVerifierKind(grant.Kind), SecretDigest: grant.SecretDigest, ExpiresAt: grant.ExpiresAt.Time})
+		}
 		row, err := q.ReadVisitorPolicyService(ctx, scope.ID)
 		if err != nil {
 			return result, err

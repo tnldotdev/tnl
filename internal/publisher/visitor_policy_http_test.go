@@ -24,9 +24,15 @@ import (
 )
 
 func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
-	for _, fault := range []string{"maximum", "keys", "workloads", "prefixes", "events", "nil key", "short key", "overlong key", "bytes"} {
+	for _, fault := range []string{"maximum", "keys", "workloads", "grants", "prefixes", "events", "nil key", "short key", "overlong key", "bytes"} {
 		t.Run(fault, func(t *testing.T) {
 			body, private := policyfixture.Maximum(t, time.Now().UTC())
+			secret := bytes.Repeat([]byte{8}, 32)
+			for i := range 256 {
+				token, _ := visitortoken.GrantToken(fmt.Sprintf("shg_%022d", i), secret)
+				id, digest, _ := visitortoken.GrantTokenDigest(token)
+				body.Policy.GrantVerifiers = append(body.Policy.GrantVerifiers, controlv1.VisitorGrantVerifier{GrantId: id, Kind: "token", SecretDigest: digest[:], ExpiresAt: time.Now().Add(7 * 24 * time.Hour)})
+			}
 			body.Policy.VisitorPolicyRevision = math.MaxInt64 - 256
 			if _, err := visitorlease.Decode(body); err != nil {
 				t.Fatal("maximum base is invalid before applying the boundary fault", err)
@@ -36,6 +42,8 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 				body.Policy.VerificationKeys = append(body.Policy.VerificationKeys, body.Policy.VerificationKeys[0])
 			case "workloads":
 				body.Policy.WorkloadLeases = append(body.Policy.WorkloadLeases, body.Policy.WorkloadLeases[0])
+			case "grants":
+				body.Policy.GrantVerifiers = append(body.Policy.GrantVerifiers, body.Policy.GrantVerifiers[0])
 			case "prefixes":
 				body.Policy.Ip.Prefixes = append(body.Policy.Ip.Prefixes, body.Policy.Ip.Prefixes[0])
 			case "events":
@@ -110,6 +118,12 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 			view, enabled, _ := policy.lease.Current()
 			if !enabled || view.VisitorPolicyRevision != math.MaxInt64 {
 				t.Fatal("publisher preparation did not install complete policy history")
+			}
+			for _, grant := range body.Policy.GrantVerifiers {
+				token, _ := visitortoken.GrantToken(grant.GrantId, secret)
+				if _, err := visitortoken.VerifyBearer(token, view, time.Now()); err != nil {
+					t.Fatal("maximum policy truncated a service grant verifier", err)
+				}
 			}
 			for _, key := range body.Policy.VerificationKeys {
 				if !view.HasSigningKey(key.Id) {

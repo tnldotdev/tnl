@@ -25,3 +25,14 @@ SELECT authority.secret_digest::bytea AS secret_digest,authority.expires_at::tim
 FROM control.visitor_share_authority(sqlc.arg(public_url_id)::text,sqlc.arg(now)::timestamptz) authority
 JOIN control.shares share ON share.id=authority.share_id
 WHERE share.id=sqlc.arg(share_id) FOR SHARE OF share;
+
+-- name: ReadVisitorGrantVerifiers :many
+SELECT authority.grant_id::text AS grant_id,authority.kind::text AS kind,authority.secret_digest::bytea AS secret_digest,authority.expires_at::timestamptz AS expires_at
+FROM control.visitor_service_grant_authority(sqlc.arg(service_id)::text,sqlc.arg(now)::timestamptz) authority
+ORDER BY grant_id LIMIT 257;
+
+-- name: LockVisitorGrantAuthority :one
+SELECT authority.kind::text AS kind,authority.expires_at::timestamptz AS expires_at
+FROM control.visitor_service_grant_authority(sqlc.arg(service_id)::text,sqlc.arg(now)::timestamptz) authority
+JOIN control.service_http_grants credential ON credential.id=authority.grant_id
+WHERE credential.id=sqlc.arg(grant_id) AND credential.secret_digest=sqlc.arg(secret_digest) FOR SHARE OF credential;

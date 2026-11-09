@@ -52,13 +52,13 @@ type Permission struct {
 // verification boundary constructs it; admission still checks current policy.
 // its zero value cannot be bound to a visitor lease.
 type VerifiedPermission struct {
-	facts       Permission
-	shareDigest [32]byte
+	facts        Permission
+	bearerDigest [32]byte
 }
 
 func (p VerifiedPermission) Facts() Permission { return p.facts }
 func (p VerifiedPermission) Valid() bool {
-	return p.facts.SigningKeyID != "" || p.shareDigest != ([32]byte{})
+	return p.facts.SigningKeyID != "" || p.bearerDigest != ([32]byte{})
 }
 
 func (p VerifiedPermission) SameSubject(other VerifiedPermission) bool {
@@ -148,6 +148,7 @@ type View struct {
 	ControlTime           time.Time
 	workloads             map[string]WorkloadLease
 	shares                map[string]ShareVerifier
+	grants                map[string]GrantVerifier
 }
 
 // WithVerificationKeys publishes independent key bytes. snapshots may share
@@ -273,8 +274,8 @@ func CheckCurrent(permission VerifiedPermission, view View, now time.Time) error
 	if !permission.Valid() {
 		return ErrToken
 	}
-	if permission.shareDigest != ([32]byte{}) {
-		return checkShareCurrent(permission, view, now)
+	if permission.bearerDigest != ([32]byte{}) {
+		return checkPossessionCurrent(permission, view, now)
 	}
 	return checkCurrent(permission.facts, view, now)
 }
@@ -305,6 +306,9 @@ func checkCurrent(permission Permission, view View, now time.Time) error {
 func VerifyBearer(token Token, view View, now time.Time) (VerifiedPermission, error) {
 	if strings.HasPrefix(token.Reveal(), "vsh1.") {
 		return verifyShareBearer(token, view, now)
+	}
+	if strings.HasPrefix(token.Reveal(), "vsg1.") {
+		return verifyGrantBearer(token, view, now)
 	}
 	permission, err := verify(token, view, now)
 	if err != nil {

@@ -2,7 +2,6 @@ package visitortoken
 
 import (
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"maps"
 	"strings"
@@ -69,42 +68,5 @@ func verifyShareBearer(token Token, view View, now time.Time) (VerifiedPermissio
 	if err != nil {
 		return VerifiedPermission{}, err
 	}
-	verifier, found := view.shares[id]
-	if !found || view.Scope.Kind != visitorscope.PublicURL || subtle.ConstantTimeCompare(digest[:], verifier.Digest[:]) != 1 || !verifier.ExpiresAt.After(view.AuthorityTime(now)) {
-		return VerifiedPermission{}, ErrToken
-	}
-	permission := VerifiedPermission{facts: Permission{Scope: view.Scope, Hostname: view.Hostname, Port: view.Port, VisitorPolicyRevision: view.VisitorPolicyRevision, Subject: Share{ShareID: id}, ExpiresAt: verifier.ExpiresAt}, shareDigest: digest}
-	if err := checkShareCurrent(permission, view, now); err != nil {
-		return VerifiedPermission{}, err
-	}
-	return permission, nil
-}
-
-func checkShareCurrent(permission VerifiedPermission, view View, now time.Time) error {
-	if !view.current(now) {
-		return ErrPolicy
-	}
-	facts := permission.facts
-	share, ok := facts.Subject.(Share)
-	verifier, found := view.shares[share.ShareID]
-	if !ok || !found || view.Scope.Kind != visitorscope.PublicURL || facts.Scope != view.Scope || facts.Hostname != view.Hostname || facts.Port != view.Port ||
-		permission.shareDigest == ([32]byte{}) || subtle.ConstantTimeCompare(permission.shareDigest[:], verifier.Digest[:]) != 1 ||
-		!facts.ExpiresAt.After(view.AuthorityTime(now)) || !verifier.ExpiresAt.After(view.AuthorityTime(now)) {
-		return ErrToken
-	}
-	return nil
-}
-
-// PermissionDeadline preserves the admitted credential's lifetime while applying
-// a shorter current parent deadline. policy renewal never widens an admission.
-func PermissionDeadline(permission VerifiedPermission, view View) time.Time {
-	until := permission.facts.ExpiresAt
-	if permission.shareDigest != ([32]byte{}) {
-		if share, ok := permission.facts.Subject.(Share); ok {
-			if parent, found := view.shares[share.ShareID]; found && parent.ExpiresAt.Before(until) {
-				until = parent.ExpiresAt
-			}
-		}
-	}
-	return until
+	return verifyPossession(Share{ShareID: id}, digest, view, now)
 }

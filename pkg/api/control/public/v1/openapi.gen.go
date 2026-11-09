@@ -1416,6 +1416,24 @@ func (e VisitorGrantKind) Valid() bool {
 	}
 }
 
+// Defines values for VisitorGrantVerifierKind.
+const (
+	VisitorGrantVerifierKindShare VisitorGrantVerifierKind = "share"
+	VisitorGrantVerifierKindToken VisitorGrantVerifierKind = "token"
+)
+
+// Valid indicates whether the value is a known member of the VisitorGrantVerifierKind enum.
+func (e VisitorGrantVerifierKind) Valid() bool {
+	switch e {
+	case VisitorGrantVerifierKindShare:
+		return true
+	case VisitorGrantVerifierKindToken:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for VisitorResourceScopeKind.
 const (
 	VisitorResourceScopeKindPublicUrl VisitorResourceScopeKind = "public_url"
@@ -3893,12 +3911,11 @@ type VisitorConnectionID = string
 
 // VisitorCredential defines model for VisitorCredential.
 type VisitorCredential struct {
-	ExpiresAt         time.Time             `json:"expires_at"`
-	GrantId           string                `json:"grant_id"`
-	Kind              VisitorCredentialKind `json:"kind"`
-	Permission        VisitorTokenResponse  `json:"permission"`
-	RefreshCredential string                `json:"refresh_credential"`
-	ShareUrl          *string               `json:"share_url,omitempty"`
+	ExpiresAt  time.Time             `json:"expires_at"`
+	GrantId    string                `json:"grant_id"`
+	Kind       VisitorCredentialKind `json:"kind"`
+	Permission VisitorTokenResponse  `json:"permission"`
+	ShareUrl   *string               `json:"share_url,omitempty"`
 }
 
 // VisitorCredentialKind defines model for VisitorCredential.Kind.
@@ -3927,6 +3944,17 @@ type VisitorGrant struct {
 // VisitorGrantKind defines model for VisitorGrant.Kind.
 type VisitorGrantKind string
 
+// VisitorGrantVerifier defines model for VisitorGrantVerifier.
+type VisitorGrantVerifier struct {
+	ExpiresAt    time.Time                `json:"expires_at"`
+	GrantId      string                   `json:"grant_id"`
+	Kind         VisitorGrantVerifierKind `json:"kind"`
+	SecretDigest []byte                   `json:"secret_digest"`
+}
+
+// VisitorGrantVerifierKind defines model for VisitorGrantVerifier.Kind.
+type VisitorGrantVerifierKind string
+
 // VisitorInvitation defines model for VisitorInvitation.
 type VisitorInvitation struct {
 	AcceptedIdentityId *string     `json:"accepted_identity_id,omitempty"`
@@ -3948,12 +3976,15 @@ type VisitorPolicySnapshot struct {
 	Anonymous bool `json:"anonymous"`
 
 	// ConnectionDeadline Guest observation bound, including idle connections after readiness. When present, ingress requires the run's ready routing projection before forwarding visitors, and ingress and publisher bind connections to this policy's locally confirmed lifetime. Enabled policy valid_until must not exceed this deadline. Preparation policy can be installed and acknowledged without granting visitor permission.
-	ConnectionDeadline *time.Time       `json:"connection_deadline,omitempty"`
-	Enabled            bool             `json:"enabled"`
-	Hostname           string           `json:"hostname"`
-	Ip                 *VisitorPolicyIP `json:"ip,omitempty"`
-	Issuer             string           `json:"issuer"`
-	KeyRevision        int64            `json:"key_revision"`
+	ConnectionDeadline *time.Time `json:"connection_deadline,omitempty"`
+	Enabled            bool       `json:"enabled"`
+
+	// GrantVerifiers Current service credential verifiers for authenticated serving processes. Contains no bearer secrets; never expose policy snapshots to visitors.
+	GrantVerifiers []VisitorGrantVerifier `json:"grant_verifiers"`
+	Hostname       string                 `json:"hostname"`
+	Ip             *VisitorPolicyIP       `json:"ip,omitempty"`
+	Issuer         string                 `json:"issuer"`
+	KeyRevision    int64                  `json:"key_revision"`
 
 	// MetadataRevision current service trust revision; zero for public URLs.
 	MetadataRevision int64     `json:"metadata_revision"`

@@ -49,6 +49,7 @@ schemas:
         verification_keys,
         workload_leases,
         share_verifiers,
+        grant_verifiers,
       ]
     properties:
       resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
@@ -83,6 +84,11 @@ schemas:
         maxItems: 256
         description: Current resource-bound share verifiers for authenticated serving processes. Contains no share secrets; never expose policy snapshots to visitors.
         items: { $ref: "../openapi.yaml#/components/schemas/VisitorShareVerifier" }
+      grant_verifiers:
+        type: array
+        maxItems: 256
+        description: Current service credential verifiers for authenticated serving processes. Contains no bearer secrets; never expose policy snapshots to visitors.
+        items: { $ref: "../openapi.yaml#/components/schemas/VisitorGrantVerifier" }
       ip: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicyIP" }
   VisitorVerificationKey:
     type: object
@@ -115,6 +121,15 @@ schemas:
     required: [share_id, secret_digest, expires_at]
     properties:
       share_id: { $ref: "../openapi.yaml#/components/schemas/ShareID" }
+      secret_digest: { type: string, format: byte, minLength: 44, maxLength: 44 }
+      expires_at: { type: string, format: date-time }
+  VisitorGrantVerifier:
+    type: object
+    additionalProperties: false
+    required: [grant_id, kind, secret_digest, expires_at]
+    properties:
+      grant_id: { type: string, pattern: "^shg_[A-Za-z0-9]{22}$" }
+      kind: { type: string, enum: [token, share] }
       secret_digest: { type: string, format: byte, minLength: 44, maxLength: 44 }
       expires_at: { type: string, format: date-time }
   HashedIPPrefix:

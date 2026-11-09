@@ -4,7 +4,7 @@ tasks:
   live-authorization:
     desc: Check browser and alias authorization in disposable PostgreSQL
     vars:
-      RUN: '{{default "^TestIntegration(Alias(OwnerBrowserHandoffs|BrowserHTTP)|Browser|FinalVisitor|ControlBrowser|Visitor(Token|Policy|Signing|Share)|ConcurrentVisitor|ServiceHTTPSubject|FeedbackCombined|ReplaceVisitorAccess|ExactURLShare)" .RUN}}'
+      RUN: '{{default "^TestIntegration(Alias(OwnerBrowserHandoffs|BrowserHTTP)|Browser|FinalVisitor|ControlBrowser|Visitor(Token|Policy|Signing|Share|ServiceGrant)|ConcurrentVisitor|ServiceHTTPSubject|FeedbackCombined|ReplaceVisitorAccess|ExactURLShare)" .RUN}}'
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/control/api/public -run='{{.RUN}}' -count=1 -timeout=5m -args -tnl-test-tier=integration
 

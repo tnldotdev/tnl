@@ -12,7 +12,7 @@ import (
 func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 	policy := body.Policy
 	scope := visitorscope.Scope{Kind: visitorscope.Kind(policy.Resource.Kind), ID: policy.Resource.Id}
-	if !scope.Valid() || policy.Port < 1 || policy.Port > 65535 || policy.MetadataRevision < 0 || len(policy.VerificationKeys) > 64 || len(policy.WorkloadLeases) > 4096 || len(policy.ShareVerifiers) > 256 || len(body.Revisions) > 256 {
+	if !scope.Valid() || policy.Port < 1 || policy.Port > 65535 || policy.MetadataRevision < 0 || len(policy.VerificationKeys) > 64 || len(policy.WorkloadLeases) > 4096 || len(policy.ShareVerifiers) > 256 || len(policy.GrantVerifiers) > 256 || len(body.Revisions) > 256 {
 		return Update{}, ErrUpdate
 	}
 	update := Update{View: visitortoken.View{Scope: scope, Issuer: policy.Issuer, Hostname: policy.Hostname, Port: uint16(policy.Port), VisitorPolicyRevision: policy.VisitorPolicyRevision,
@@ -54,6 +54,20 @@ func Decode(body controlv1.VisitorPolicyUpdate) (Update, error) {
 	}
 	update.View = update.View.WithShareVerifiers(shares)
 	if !update.View.ValidShareVerifiers() {
+		return Update{}, ErrUpdate
+	}
+	grants := make(map[string]visitortoken.GrantVerifier, len(policy.GrantVerifiers))
+	for _, verifier := range policy.GrantVerifiers {
+		if len(verifier.SecretDigest) != 32 {
+			return Update{}, ErrUpdate
+		}
+		if _, found := grants[verifier.GrantId]; found {
+			return Update{}, ErrUpdate
+		}
+		grants[verifier.GrantId] = visitortoken.GrantVerifier{Digest: [32]byte(verifier.SecretDigest), Kind: string(verifier.Kind), ExpiresAt: verifier.ExpiresAt}
+	}
+	update.View = update.View.WithGrantVerifiers(grants)
+	if !update.View.ValidGrantVerifiers() {
 		return Update{}, ErrUpdate
 	}
 	if policy.Ip != nil {

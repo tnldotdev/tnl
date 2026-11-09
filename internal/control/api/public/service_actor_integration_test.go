@@ -275,7 +275,7 @@ func TestIntegrationServiceActorInvitationAndServiceHTTPLifecycle(t *testing.T) 
 	var summaries []controlv1.ServiceHTTPGrantSummary
 	listed = f.serviceCall("GET", base+"/http-grants", serviceOwnerSub, nil, nil)
 	serviceResult(t, listed, 200, &summaries)
-	if len(summaries) != 1 || summaries[0].Id != httpGrant.GrantId || summaries[0].Subject.Kind != "service" || summaries[0].Subject.Id != service.ID || strings.Contains(listed.Body.String(), httpGrant.RefreshCredential) || strings.Contains(listed.Body.String(), httpGrant.Permission.VisitorToken) {
+	if len(summaries) != 1 || summaries[0].Id != httpGrant.GrantId || summaries[0].Subject.Kind != "service" || summaries[0].Subject.Id != service.ID || strings.Contains(listed.Body.String(), httpGrant.Permission.VisitorToken) {
 		t.Fatal("HTTP inventory lost exact owned ID or exposed secret")
 	}
 	native, err := NewHandler(Config{}, DatabaseStores(f.d), f.d, nil)
@@ -292,7 +292,7 @@ func TestIntegrationServiceActorInvitationAndServiceHTTPLifecycle(t *testing.T) 
 		t.Fatal(err)
 	}
 	nativeList, err := nativeClient.ListServiceHTTPGrantsWithResponse(t.Context(), service.ID)
-	if err != nil || nativeList.JSON200 == nil || len(*nativeList.JSON200) != 1 || (*nativeList.JSON200)[0].Id != httpGrant.GrantId || bytes.Contains(nativeList.Body, []byte(httpGrant.RefreshCredential)) || bytes.Contains(nativeList.Body, []byte(httpGrant.Permission.VisitorToken)) {
+	if err != nil || nativeList.JSON200 == nil || len(*nativeList.JSON200) != 1 || (*nativeList.JSON200)[0].Id != httpGrant.GrantId || bytes.Contains(nativeList.Body, []byte(httpGrant.Permission.VisitorToken)) {
 		t.Fatal("native HTTP grant inventory did not expose the owned secretless ID", err)
 	}
 	other, err := f.d.CreateServiceAt(t.Context(), team.ID, owner.Identity.Identity.Id, "other", "other", controlstate.ServicePlacement{}, f.now, controlstate.ServiceMetadata{Protocol: "tcp"})

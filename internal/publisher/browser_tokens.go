@@ -9,7 +9,6 @@ import (
 	"errors"
 	"net/http"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -467,8 +466,7 @@ func canonicalBrowserTokenSource(source json.RawMessage) (json.RawMessage, error
 		if decode(&value) != nil {
 			return nil, visitortoken.ErrToken
 		}
-		parts := strings.Split(value.Credential, ".")
-		if len(parts) != 3 || parts[0] != "vrf1" || !opaqueid.Valid(parts[1], "shg_") || !validSecret(parts[2]) {
+		if _, _, err := visitortoken.GrantTokenDigest(visitortoken.Token(value.Credential)); err != nil {
 			return nil, visitortoken.ErrToken
 		}
 		return json.Marshal(value)
