@@ -142,6 +142,12 @@ func parseVisitorTokenSource(raw json.RawMessage) (controlstate.VisitorTokenSour
 			return nil, false, invalid
 		}
 		return controlstate.WorkloadTokenSource{Credential: source.Credential}, false, nil
+	case "application":
+		var source controlv1.VisitorTokenApplicationSource
+		if decode(&source) != nil || !source.Kind.Valid() || len(source.Credential) != 47 {
+			return nil, false, controlstate.ErrVisitorPermission
+		}
+		return controlstate.ApplicationTokenSource{Credential: source.Credential}, false, nil
 	case "share":
 		var source controlv1.VisitorTokenShareSource
 		if decode(&source) != nil || !opaqueid.Valid(source.ShareId, opaqueid.SharePrefix) || len(source.Secret) != 43 {

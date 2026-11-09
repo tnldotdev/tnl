@@ -149,6 +149,7 @@ type View struct {
 	workloads             map[string]WorkloadLease
 	shares                map[string]ShareVerifier
 	grants                map[string]GrantVerifier
+	applications          map[string]ApplicationLease
 }
 
 // WithVerificationKeys publishes independent key bytes. snapshots may share
@@ -284,19 +285,26 @@ func checkCurrent(permission Permission, view View, now time.Time) error {
 	if !view.current(now) {
 		return ErrPolicy
 	}
-	if permission.Scope != view.Scope || permission.Hostname != view.Hostname || permission.Port != view.Port || permission.VisitorPolicyRevision != view.VisitorPolicyRevision || !permission.ExpiresAt.After(view.AuthorityTime(now)) {
+	subject := permission.Subject
+	if certificate, ok := subject.(Certificate); ok {
+		subject = certificate.Source
+	}
+	_, application := subject.(Application)
+	if permission.Scope != view.Scope || permission.Hostname != view.Hostname || permission.Port != view.Port || (!application && permission.VisitorPolicyRevision != view.VisitorPolicyRevision) || !permission.ExpiresAt.After(view.AuthorityTime(now)) {
 		return ErrToken
 	}
 	if !view.HasSigningKey(permission.SigningKeyID) {
 		return ErrKey
 	}
-	subject := permission.Subject
-	if certificate, ok := subject.(Certificate); ok {
-		subject = certificate.Source
-	}
 	if workload, ok := subject.(Workload); ok {
 		parent, found := view.Workload(workload.SessionID)
 		if !found || parent.KeySHA256 != workload.KeySHA256 || !parent.ExpiresAt.After(view.AuthorityTime(now)) {
+			return ErrBinding
+		}
+	}
+	if application, ok := subject.(Application); ok {
+		parent, found := view.applications[application.GrantID]
+		if !found || parent.Subject != application || !parent.ExpiresAt.After(view.AuthorityTime(now)) {
 			return ErrBinding
 		}
 	}
@@ -315,7 +323,7 @@ func VerifyBearer(token Token, view View, now time.Time) (VerifiedPermission, er
 		return VerifiedPermission{}, err
 	}
 	switch permission.Subject.(type) {
-	case Browser, Share, Grant:
+	case Browser, Share, Grant, Application:
 		return VerifiedPermission{facts: permission}, nil
 	default:
 		return VerifiedPermission{}, ErrBinding

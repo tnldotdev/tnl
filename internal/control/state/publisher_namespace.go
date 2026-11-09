@@ -32,7 +32,7 @@ func (d *Database) validatePublisherAllocation(ctx context.Context, q *controlst
 	if err != nil {
 		return p, controlstatedb.ControlDomain{}, err
 	}
-	if p.GuestID != "" || p.Scope.Kind != "namespace" || p.Scope.Namespace != r.PublisherNamespace || p.Scope.DomainID != r.DomainID || p.Scope.TeamID != r.TeamID || p.CreatorID != r.ActingIdentityID || r.ServiceProtocol != PublicURLServiceHTTP || r.Purpose != PublicURLPurposeApp || r.DNSState != PublicURLDNSPending {
+	if p.Operation != ApplicationAllocate || p.GuestID != "" || p.Scope.Kind != "namespace" || p.Scope.Namespace != r.PublisherNamespace || p.Scope.DomainID != r.DomainID || p.Scope.TeamID != r.TeamID || p.CreatorID != r.ActingIdentityID || r.ServiceProtocol != PublicURLServiceHTTP || r.Purpose != PublicURLPurposeApp || r.DNSState != PublicURLDNSPending {
 		return p, controlstatedb.ControlDomain{}, ErrPublisherIdentity
 	}
 	domain, err := q.GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: r.DomainID, TeamID: text(r.TeamID)})
@@ -45,7 +45,7 @@ type PublisherPublicURLOptions struct {
 }
 
 func (d *Database) AllocatePublisherPublicURL(ctx context.Context, p PublisherIdentity, invocation, target string, prefixes []string, binding []byte, now time.Time, options ...PublisherPublicURLOptions) (PublicURL, error) {
-	if p.Scope.Kind != "namespace" || p.GuestID != "" {
+	if p.Operation != ApplicationAllocate || p.Scope.Kind != "namespace" || p.GuestID != "" {
 		return PublicURL{}, ErrPublisherIdentity
 	}
 	mode := VisitorAccessRestricted
@@ -92,13 +92,16 @@ func (d *Database) validatePublisherDeletion(ctx context.Context, q *controlstat
 	if err != nil {
 		return err
 	}
-	if p.GuestID != "" || p.Scope.Kind != "namespace" || u.CreatedByIdentityID != p.CreatorID || r.ActingIdentityID != p.CreatorID {
+	if p.Operation != ApplicationAllocate || p.GuestID != "" || p.Scope.Kind != "namespace" || u.CreatedByIdentityID != p.CreatorID || r.ActingIdentityID != p.CreatorID {
 		return ErrPublisherIdentity
 	}
 	return publisherOwnsRun(ctx, q, p, u)
 }
 
 func (d *Database) PublisherMayStartRun(ctx context.Context, p PublisherIdentity, id string) (bool, error) {
+	if p.Operation != ApplicationPublish && p.Operation != ApplicationAllocate {
+		return false, ErrPublisherIdentity
+	}
 	if p.Scope.Kind == "saved_public_url" {
 		return p.Scope.PublicURLID == id, nil
 	}

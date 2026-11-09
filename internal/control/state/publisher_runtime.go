@@ -126,8 +126,12 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 		if r.Deployment != nil {
 			return result, ErrPublisherIdentity
 		}
-		if _, _, err = d.livePublisher(ctx, q, i.ID, r.ScopeID, "", r.Now); err != nil {
+		identity, _, err := d.livePublisher(ctx, q, i.ID, r.ScopeID, "", r.Now)
+		if err != nil {
 			return result, err
+		}
+		if identity.Operation != ApplicationPublish && identity.Operation != ApplicationAllocate {
+			return result, ErrPublisherIdentity
 		}
 	}
 	kid, err := publisherproof.KeyID(r.Assertion)

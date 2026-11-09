@@ -6,9 +6,17 @@ schemas:
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenBrowserSessionSource" }
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenDeviceSource" }
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenWorkloadSource" }
+      - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenApplicationSource" }
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenShareSource" }
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenShareSessionSource" }
       - { $ref: "../openapi.yaml#/components/schemas/VisitorTokenGrantSource" }
+  VisitorTokenApplicationSource:
+    type: object
+    additionalProperties: false
+    required: [kind, credential]
+    properties:
+      kind: { type: string, enum: [application], x-enum-varnames: [VisitorTokenApplication] }
+      credential: { type: string, minLength: 47, maxLength: 47, pattern: "^pta_[A-Za-z0-9_-]{43}$" }
   VisitorTokenControlSessionSource:
     type: object
     additionalProperties: false

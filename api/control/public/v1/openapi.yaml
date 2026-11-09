@@ -9,6 +9,8 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/applications:
+    $ref: "./paths/applications.yaml#/paths/~1v1~1applications"
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1connector-peer-pairs"
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery:
@@ -326,6 +328,8 @@ components:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenDeviceSource"
     VisitorTokenWorkloadSource:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenWorkloadSource"
+    VisitorTokenApplicationSource:
+      $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenApplicationSource"
     VisitorTokenShareSource:
       $ref: "./schemas/visitor-tokens.yaml#/schemas/VisitorTokenShareSource"
     VisitorTokenShareSessionSource:
@@ -348,6 +352,8 @@ components:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorVerificationKey"
     VisitorWorkloadLease:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorWorkloadLease"
+    VisitorApplicationLease:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorApplicationLease"
     VisitorShareVerifier:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorShareVerifier"
     VisitorGrantVerifier:
@@ -648,6 +654,14 @@ components:
       $ref: "./schemas/public-urls.yaml#/schemas/PublicURL"
     PublisherGrant:
       $ref: "./schemas/publishers.yaml#/schemas/PublisherGrant"
+    ApplicationOperation:
+      $ref: "./schemas/applications.yaml#/schemas/ApplicationOperation"
+    ApplicationGrantInput:
+      $ref: "./schemas/applications.yaml#/schemas/ApplicationGrantInput"
+    RegisterApplicationRequest:
+      $ref: "./schemas/applications.yaml#/schemas/RegisterApplicationRequest"
+    RegisteredApplication:
+      $ref: "./schemas/applications.yaml#/schemas/RegisteredApplication"
     PublisherIdentityPage:
       $ref: "./schemas/publishers.yaml#/schemas/PublisherIdentityPage"
     PublisherIdentity:

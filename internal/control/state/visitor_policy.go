@@ -54,6 +54,25 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 	for _, key := range keys {
 		policy.VerificationKeys = append(policy.VerificationKeys, controlv1.VisitorVerificationKey{Id: key.ID, PublicKey: key.PublicKey})
 	}
+	applications, err := q.ReadApplicationVisitAuthority(ctx, controlstatedb.ReadApplicationVisitAuthorityParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID, Now: timestamptz(now)})
+	if err != nil {
+		return result, err
+	}
+	if len(applications) > 256 {
+		return result, ErrVisitorPolicy
+	}
+	policy.ApplicationLeases = make([]controlv1.VisitorApplicationLease, 0, len(applications))
+	for _, parent := range applications {
+		digest, err := visitortoken.KeyDigest(ed25519.PublicKey(parent.PublicKey))
+		if err != nil {
+			return result, err
+		}
+		until := policy.ValidUntil
+		if parent.ExpiresAt.Valid && parent.ExpiresAt.InfinityModifier == 0 {
+			until = minTime(until, parent.ExpiresAt.Time)
+		}
+		policy.ApplicationLeases = append(policy.ApplicationLeases, controlv1.VisitorApplicationLease{ClientId: parent.ClientID, GrantId: parent.GrantID, KeyId: parent.KeyID, KeySha256: digest, ExpiresAt: until})
+	}
 	var prefixes []netip.Prefix
 	ipRestricted := false
 	team := ""

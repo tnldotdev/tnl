@@ -43,6 +43,12 @@ func (WorkloadTokenSource) visitorTokenSource() {}
 func (WorkloadTokenSource) String() string      { return "workload visitor token source" }
 func (WorkloadTokenSource) GoString() string    { return "workload visitor token source" }
 
+type ApplicationTokenSource struct{ Credential string }
+
+func (ApplicationTokenSource) visitorTokenSource() {}
+func (ApplicationTokenSource) String() string      { return "application visitor token source" }
+func (ApplicationTokenSource) GoString() string    { return "application visitor token source" }
+
 type ShareTokenSource struct{ ShareID, Secret string }
 
 func (ShareTokenSource) visitorTokenSource() {}
@@ -330,6 +336,57 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		subject = visitortoken.Workload{SessionID: workloadSource.ID, KeySHA256: digest}
 		result.PublicKey = ed25519.PublicKey(workloadSource.PublicKey)
 		result.ConnectorUntil = minTime(until, now.Add(WorkloadLease))
+	case ApplicationTokenSource:
+		// the explicit access credential is checked in this issuance transaction,
+		// not through publisher authentication or an ambient control principal.
+		access, err := publisherAccessCredential(ctx, q, supplied.Credential, now)
+		if err != nil {
+			if errors.Is(err, ErrPublisherIdentity) {
+				return result, ErrVisitorPermission
+			}
+			return result, publisherLookupError(err, ErrVisitorPermission)
+		}
+		if _, err := q.LockPublisherIdentity(ctx, access.PublisherIdentityID); err != nil {
+			return result, publisherLookupError(err, ErrVisitorPermission)
+		}
+		// key rotation does not take a resource guard. lock its row so a
+		// repeatable-read snapshot retries rather than issuing from a retired key.
+		key, err := q.GetPublisherKey(ctx, controlstatedb.GetPublisherKeyParams{ID: access.KeyID, PublisherIdentityID: access.PublisherIdentityID})
+		if err != nil {
+			return result, publisherLookupError(err, ErrVisitorPermission)
+		}
+		if key.RetiredAt.Valid {
+			return result, ErrVisitorPermission
+		}
+		parents, err := q.ReadApplicationVisitAuthority(ctx, controlstatedb.ReadApplicationVisitAuthorityParams{ResourceKind: string(scope.Kind), ResourceID: scope.ID, Now: timestamptz(now)})
+		if err != nil {
+			return result, err
+		}
+		if len(parents) > 256 {
+			return result, ErrVisitorPolicy
+		}
+		var found bool
+		for _, parent := range parents {
+			if parent.ClientID != access.PublisherIdentityID || parent.GrantID != access.GrantID || parent.KeyID != access.KeyID {
+				continue
+			}
+			digest, err := visitortoken.KeyDigest(ed25519.PublicKey(parent.PublicKey))
+			if err != nil {
+				return result, err
+			}
+			subject = visitortoken.Application{ClientID: parent.ClientID, GrantID: parent.GrantID, KeyID: parent.KeyID, KeySHA256: digest}
+			until = access.ExpiresAt.Time
+			if parent.ExpiresAt.Valid && parent.ExpiresAt.InfinityModifier == 0 {
+				until = minTime(until, parent.ExpiresAt.Time)
+			}
+			result.PublicKey = ed25519.PublicKey(parent.PublicKey)
+			result.ConnectorUntil = minTime(until, now.Add(2*time.Minute))
+			found = true
+			break
+		}
+		if !found {
+			return result, ErrVisitorPermission
+		}
 	case ShareTokenSource, ShareSessionTokenSource:
 		var shareID, sourceSecret string
 		var session bool

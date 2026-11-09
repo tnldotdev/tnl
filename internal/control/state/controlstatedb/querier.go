@@ -98,6 +98,8 @@ type Querier interface {
 	CopyCompanySessionContexts(ctx context.Context, arg CopyCompanySessionContextsParams) error
 	CountActiveShareCookiesForPublicURL(ctx context.Context, arg CountActiveShareCookiesForPublicURLParams) (int64, error)
 	CountActiveSharesForPublicURL(ctx context.Context, arg CountActiveSharesForPublicURLParams) (int64, error)
+	// count dormant member grants too: restoring membership must not overflow policy.
+	CountApplicationVisitGrants(ctx context.Context, arg CountApplicationVisitGrantsParams) (int64, error)
 	CountConnectorPeerPairOwners(ctx context.Context, arg CountConnectorPeerPairOwnersParams) (int64, error)
 	CountGuestCurrentPublicURLs(ctx context.Context, guestID string) (int64, error)
 	// diagnostic/test oracle only; placement reads trigger-maintained totals.
@@ -499,6 +501,8 @@ type Querier interface {
 	PublisherScopeAvailable(ctx context.Context, arg PublisherScopeAvailableParams) (bool, error)
 	PutCompanyEligibility(ctx context.Context, arg PutCompanyEligibilityParams) error
 	QuarantineMemberSlug(ctx context.Context, arg QuarantineMemberSlugParams) (int64, error)
+	ReadApplicationRegistrationRequest(ctx context.Context, arg ReadApplicationRegistrationRequestParams) (ControlApplicationRegistrationRequest, error)
+	ReadApplicationVisitAuthority(ctx context.Context, arg ReadApplicationVisitAuthorityParams) ([]ReadApplicationVisitAuthorityRow, error)
 	ReadConnectorPeerBindingClaims(ctx context.Context, arg ReadConnectorPeerBindingClaimsParams) ([]ControlConnectorPeerPairLegClaim, error)
 	ReadConnectorPeerClaimBounds(ctx context.Context, pairID string) ([]ReadConnectorPeerClaimBoundsRow, error)
 	// relay leases are current-state recheck deadlines, not pair renewals.
@@ -516,6 +520,7 @@ type Querier interface {
 	ReadyServiceConnectionSlot(ctx context.Context, arg ReadyServiceConnectionSlotParams) (ControlServiceConnectionSlot, error)
 	ReadyServiceRun(ctx context.Context, arg ReadyServiceRunParams) (ControlServiceRun, error)
 	RecentGuestTrialStats(ctx context.Context, since pgtype.Timestamptz) (RecentGuestTrialStatsRow, error)
+	RecordApplicationRegistrationRequest(ctx context.Context, arg RecordApplicationRegistrationRequestParams) error
 	RecordFeedbackActivity(ctx context.Context, arg RecordFeedbackActivityParams) error
 	RedeemPublisherEnrollment(ctx context.Context, arg RedeemPublisherEnrollmentParams) error
 	RedeemServiceHTTPBrowserSession(ctx context.Context, arg RedeemServiceHTTPBrowserSessionParams) (RedeemServiceHTTPBrowserSessionRow, error)

@@ -1584,7 +1584,7 @@ CREATE INDEX team_invitation_email_deliveries_pending ON control.team_invitation
 -- instead belong to one trial and may only use its assigned demo URL.
 CREATE TABLE control.publisher_identities (
     id text PRIMARY KEY CHECK (id <> ''), team_id text NOT NULL CHECK (team_id <> ''), name text NOT NULL CHECK (name <> ''),
-    kind text NOT NULL CHECK (kind IN ('installed', 'automation', 'run', 'guest')),
+    kind text NOT NULL CHECK (kind IN ('installed', 'automation', 'run', 'guest', 'application')),
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     ownership text NOT NULL CHECK (ownership IN ('team', 'member', 'guest')),
     owner_membership_id text,
@@ -1613,6 +1613,7 @@ CREATE TABLE control.publisher_grants (
     id text PRIMARY KEY CHECK (id <> ''), publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     kind text NOT NULL CHECK (kind IN ('saved_public_url', 'namespace', 'service')),
+    operation text NOT NULL CHECK (operation IN ('visit','publish','allocate')),
     public_url_id text REFERENCES control.public_urls(id) ON DELETE CASCADE,
     service_id text,
     domain_id text REFERENCES control.domains(id) ON DELETE RESTRICT, namespace text,
@@ -1620,12 +1621,24 @@ CREATE TABLE control.publisher_grants (
     created_at timestamptz NOT NULL, expires_at timestamptz, revoked_at timestamptz,
     UNIQUE (id, publisher_identity_id),
     CHECK (expires_at IS NULL OR expires_at > created_at),
+    CHECK ((operation='allocate') = (kind='namespace')),
     CHECK ((kind = 'saved_public_url' AND public_url_id IS NOT NULL AND service_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL)
         OR (kind = 'namespace' AND public_url_id IS NULL AND service_id IS NULL AND domain_id IS NOT NULL AND namespace IS NOT NULL AND namespace <> '' AND public_url_scope IS NOT NULL AND (public_url_scope = 'member') = (membership_id IS NOT NULL))
         OR (kind = 'service' AND service_id IS NOT NULL AND public_url_id IS NULL AND domain_id IS NULL AND namespace IS NULL AND public_url_scope IS NULL AND membership_id IS NULL))
 );
-CREATE UNIQUE INDEX publisher_grants_active_url ON control.publisher_grants(publisher_identity_id, public_url_id) WHERE revoked_at IS NULL AND kind = 'saved_public_url';
-CREATE UNIQUE INDEX publisher_grants_active_namespace ON control.publisher_grants(publisher_identity_id, domain_id, namespace) WHERE revoked_at IS NULL AND kind = 'namespace';
+CREATE UNIQUE INDEX publisher_grants_active_url ON control.publisher_grants(publisher_identity_id, operation, public_url_id) WHERE revoked_at IS NULL AND kind = 'saved_public_url';
+CREATE UNIQUE INDEX publisher_grants_active_namespace ON control.publisher_grants(publisher_identity_id, operation, domain_id, namespace) WHERE revoked_at IS NULL AND kind = 'namespace';
+CREATE TABLE control.application_registration_requests (
+    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    idempotency_key text NOT NULL CHECK (idempotency_key<>''),
+    request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
+    publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE RESTRICT,
+    key_id text NOT NULL,
+    grant_ids text[] NOT NULL CHECK (cardinality(grant_ids) BETWEEN 1 AND 64),
+    created_at timestamptz NOT NULL,
+    PRIMARY KEY (created_by_identity_id,idempotency_key),
+    FOREIGN KEY (key_id,publisher_identity_id) REFERENCES control.publisher_identity_keys(id,publisher_identity_id)
+);
 CREATE TABLE control.publisher_enrollments (
     id text PRIMARY KEY CHECK (id <> ''), enrollment_key_digest bytea NOT NULL CHECK (octet_length(enrollment_key_digest) = 32),
     team_id text NOT NULL, name text NOT NULL, identity_kind text NOT NULL CHECK (identity_kind IN ('installed', 'automation', 'run')),
@@ -1732,7 +1745,7 @@ ALTER TABLE control.publisher_grants ADD CONSTRAINT publisher_grants_service_fke
     FOREIGN KEY (service_id) REFERENCES control.services(id) ON DELETE RESTRICT;
 ALTER TABLE control.publisher_enrollments ADD CONSTRAINT publisher_enrollments_service_fkey
     FOREIGN KEY (service_id) REFERENCES control.services(id) ON DELETE RESTRICT;
-CREATE UNIQUE INDEX publisher_grants_active_service ON control.publisher_grants(publisher_identity_id, service_id)
+CREATE UNIQUE INDEX publisher_grants_active_service ON control.publisher_grants(publisher_identity_id, operation, service_id)
     WHERE revoked_at IS NULL AND kind = 'service';
 
 ALTER TABLE control.visitor_grants ADD CONSTRAINT visitor_grants_service_fkey
@@ -1778,6 +1791,41 @@ RETURNS TABLE(reason text, expires_at timestamptz) LANGUAGE sql STABLE AS $$
     ORDER BY permission.priority,permission.expires_at DESC NULLS FIRST LIMIT 1;
 $$;
 -- +goose StatementEnd
+-- application visit grants are durable machine authority, not control sessions.
+-- member-owned applications retain current membership and company eligibility;
+-- team-owned applications retain the team's explicit delegation after setup.
+-- one rule supplies issuance and authenticated policy projection.
+-- +goose StatementBegin
+CREATE FUNCTION control.application_visit_authority(scope_kind text, scope_id text, at_time timestamptz)
+RETURNS TABLE(client_id text, grant_id text, key_id text, public_key bytea, expires_at timestamptz) LANGUAGE sql STABLE AS $$
+    SELECT p.id,g.id,k.id,k.public_key,LEAST(g.expires_at,
+        CASE WHEN p.ownership='member' AND NOT m.personal_account_exception
+            AND (t.company_sign_in_required OR m.identity_connection_id IS NOT NULL)
+        THEN (SELECT max(e.valid_until) FROM control.identity_connections c
+            JOIN control.company_eligibility e ON e.identity_connection_id=c.id AND e.team_id=c.team_id
+            WHERE c.team_id=p.team_id AND c.state='active' AND e.identity_id=m.identity_id
+                AND (m.identity_connection_id IS NULL OR m.identity_connection_id=c.id)
+                AND e.connection_revision=c.revision AND e.eligible AND e.valid_until>at_time)
+        ELSE 'infinity'::timestamptz END)
+    FROM control.publisher_grants g
+    JOIN control.publisher_identities p ON p.id=g.publisher_identity_id
+    JOIN control.teams t ON t.id=p.team_id AND t.deleted_at IS NULL
+    JOIN control.publisher_identity_keys k ON k.publisher_identity_id=p.id AND k.retired_at IS NULL
+    LEFT JOIN control.team_memberships m ON m.id=p.owner_membership_id
+    LEFT JOIN control.public_urls u ON u.id=g.public_url_id
+    LEFT JOIN control.services s ON s.id=g.service_id
+    LEFT JOIN control.domains d ON d.id=COALESCE(u.domain_id,s.domain_id)
+    WHERE p.kind='application' AND control.active_publisher(p.id,at_time)
+        AND g.operation='visit' AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>at_time)
+        AND ((scope_kind='public_url' AND u.id=scope_id AND u.team_id=p.team_id
+            AND u.lifecycle_state='enabled' AND u.purpose IN ('app','alias','demo')
+            AND (u.expires_at IS NULL OR u.expires_at>at_time)) OR
+            (scope_kind='service' AND s.id=scope_id AND s.team_id=p.team_id AND s.enabled AND s.deleted_at IS NULL))
+        AND (COALESCE(u.domain_id,s.domain_id) IS NULL OR
+            d.state='ready' AND d.released_at IS NULL AND (d.kind='managed' OR d.team_id=p.team_id))
+$$;
+-- +goose StatementEnd
+
 CREATE TABLE control.service_client_certificate_issuer (
     id boolean PRIMARY KEY DEFAULT true CHECK (id),
     seed_ciphertext bytea NOT NULL CHECK (octet_length(seed_ciphertext)>29),

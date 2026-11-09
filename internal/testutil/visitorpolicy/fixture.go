@@ -29,10 +29,11 @@ func Maximum(t testing.TB, now time.Time) (controlv1.VisitorPolicyUpdate, ed2551
 		Issuer: "https://" + strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 56),
 		Port:   65535, VisitorPolicyRevision: 1, KeyRevision: math.MaxInt64,
 		ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true,
-		VerificationKeys: make([]controlv1.VisitorVerificationKey, 64),
-		WorkloadLeases:   make([]controlv1.VisitorWorkloadLease, 4096),
-		ShareVerifiers:   []controlv1.VisitorShareVerifier{},
-		GrantVerifiers:   []controlv1.VisitorGrantVerifier{},
+		VerificationKeys:  make([]controlv1.VisitorVerificationKey, 64),
+		WorkloadLeases:    make([]controlv1.VisitorWorkloadLease, 4096),
+		ShareVerifiers:    []controlv1.VisitorShareVerifier{},
+		GrantVerifiers:    []controlv1.VisitorGrantVerifier{},
+		ApplicationLeases: make([]controlv1.VisitorApplicationLease, 256),
 	}
 	for i := range policy.VerificationKeys {
 		policy.VerificationKeys[i] = controlv1.VisitorVerificationKey{Id: strings.Repeat("\x01", 126) + fmt.Sprintf("%02d", i), PublicKey: private.Public().(ed25519.PublicKey)}
@@ -42,6 +43,9 @@ func Maximum(t testing.TB, now time.Time) (controlv1.VisitorPolicyUpdate, ed2551
 	policy.VerificationKeys[0].Id = strings.Repeat("k", 128)
 	for i := range policy.WorkloadLeases {
 		policy.WorkloadLeases[i] = controlv1.VisitorWorkloadLease{SessionId: fmt.Sprintf("wls_%022d", i), KeySha256: digest, ExpiresAt: now.Add(time.Minute)}
+	}
+	for i := range policy.ApplicationLeases {
+		policy.ApplicationLeases[i] = controlv1.VisitorApplicationLease{ClientId: fmt.Sprintf("pub_%022d", i), GrantId: fmt.Sprintf("pgrant_%022d", i), KeyId: fmt.Sprintf("pkey_%022d", i), KeySha256: digest, ExpiresAt: now.Add(time.Minute)}
 	}
 	var hashKey [32]byte
 	hashKey[0] = 1

@@ -11,7 +11,7 @@ import (
 type visitorSourceAuthenticationKey struct{}
 
 // VisitorSourceAuthenticates reports that this exact request carries its own
-// browser, share, grant, or workload source instead of a management session.
+// browser, share, grant, workload, or application source instead of a management session.
 func VisitorSourceAuthenticates(ctx context.Context) bool {
 	value, _ := ctx.Value(visitorSourceAuthenticationKey{}).(bool)
 	return value

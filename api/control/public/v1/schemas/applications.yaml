@@ -1,0 +1,54 @@
+schemas:
+  ApplicationOperation:
+    type: string
+    enum: [visit, publish, allocate]
+    x-enum-varnames: [ApplicationVisit, ApplicationPublish, ApplicationAllocate]
+  ApplicationGrantInput:
+    type: object
+    additionalProperties: false
+    required: [operation]
+    description: Select exactly one resource. Visit and publish grants select a public URL or service ID; allocation grants select an automated domain namespace.
+    properties:
+      operation: { $ref: "../openapi.yaml#/components/schemas/ApplicationOperation" }
+      public_url_id: { $ref: "../openapi.yaml#/components/schemas/PublicURLID" }
+      service_id: { $ref: "../openapi.yaml#/components/schemas/ServiceID" }
+      domain_id: { $ref: "../openapi.yaml#/components/schemas/DomainID" }
+      expires_at: { type: string, format: date-time }
+  RegisterApplicationRequest:
+    type: object
+    additionalProperties: false
+    required: [team_id, name, ownership, public_key, grants]
+    properties:
+      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      name: { type: string, minLength: 1, maxLength: 32 }
+      ownership:
+        type: string
+        enum: [member, team]
+        x-enum-varnames: [RegisterApplicationMember, RegisterApplicationTeam]
+      public_key:
+        type: string
+        minLength: 43
+        maxLength: 43
+        description: Unpadded base64url Ed25519 public key. The application retains the private key.
+      grants:
+        type: array
+        minItems: 1
+        maxItems: 64
+        items: { $ref: "../openapi.yaml#/components/schemas/ApplicationGrantInput" }
+  RegisteredApplication:
+    type: object
+    additionalProperties: false
+    required: [client_id, key_id, team_id, name, ownership, grants]
+    properties:
+      client_id: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
+      key_id: { type: string }
+      team_id: { $ref: "../openapi.yaml#/components/schemas/TeamID" }
+      name: { type: string }
+      ownership:
+        type: string
+        enum: [member, team]
+        x-enum-varnames: [RegisteredApplicationMember, RegisteredApplicationTeam]
+      grants:
+        type: array
+        maxItems: 64
+        items: { $ref: "../openapi.yaml#/components/schemas/PublisherGrant" }

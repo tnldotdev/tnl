@@ -14,7 +14,7 @@ import (
 )
 
 func publisherOwnsRun(ctx context.Context, q *controlstatedb.Queries, p PublisherIdentity, u controlstatedb.ControlPublicUrl) error {
-	if p.Scope.TeamID != u.TeamID || u.LifecycleState != "enabled" {
+	if p.Operation != ApplicationPublish && p.Operation != ApplicationAllocate || p.Scope.TeamID != u.TeamID || u.LifecycleState != "enabled" {
 		return ErrPublisherIdentity
 	}
 	if p.Scope.Kind == "saved_public_url" {
@@ -97,6 +97,9 @@ func (d *Database) publisherRunLive(ctx context.Context, q *controlstatedb.Queri
 }
 
 func (d *Database) PublisherRunPlan(ctx context.Context, p PublisherIdentity, u PublicURL, _ bool) (authorization.CertificatePlan, error) {
+	if p.Operation != ApplicationPublish && p.Operation != ApplicationAllocate {
+		return authorization.CertificatePlan{}, ErrPublisherIdentity
+	}
 	if p.Scope.Kind != "saved_public_url" && p.Scope.Kind != "namespace" || u.TeamID != p.Scope.TeamID || u.LifecycleState != PublicURLLifecycleEnabled || p.Scope.Kind == "saved_public_url" && u.ID != p.Scope.PublicURLID || p.Scope.Kind == "namespace" && (!u.Ephemeral || u.ServiceProtocol != PublicURLServiceHTTP) {
 		return authorization.CertificatePlan{}, ErrPublisherIdentity
 	}

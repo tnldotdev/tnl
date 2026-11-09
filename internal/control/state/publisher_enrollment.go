@@ -82,11 +82,31 @@ func insertPublisherGrant(ctx context.Context, q *controlstatedb.Queries, publis
 		return controlstatedb.ControlPublisherGrant{}, ErrPublisherIdentity
 	}
 	s := resolved.publisherScope()
+	operation := ApplicationPublish
+	if s.Kind == "namespace" {
+		operation = ApplicationAllocate
+	}
+	if application, ok := resolved.(applicationGrantScope); ok {
+		operation = application.operation
+	}
+	if operation == ApplicationVisit {
+		resource := s.PublicURLID
+		if s.Kind == "service" {
+			resource = s.ServiceID
+		}
+		count, err := q.CountApplicationVisitGrants(ctx, controlstatedb.CountApplicationVisitGrantsParams{Kind: s.Kind, ResourceID: resource, Now: timestamptz(now)})
+		if err != nil {
+			return controlstatedb.ControlPublisherGrant{}, err
+		}
+		if count >= 256 {
+			return controlstatedb.ControlPublisherGrant{}, ErrApplicationRegistration
+		}
+	}
 	id, err := opaqueid.New(opaqueid.PublisherGrantPrefix)
 	if err != nil {
 		return controlstatedb.ControlPublisherGrant{}, err
 	}
-	grant, err := q.InsertPublisherGrant(ctx, controlstatedb.InsertPublisherGrantParams{ID: id, PublisherIdentityID: publisher, CreatedByIdentityID: issuer, Kind: s.Kind, PublicURLID: nullableText(s.PublicURLID), ServiceID: nullableText(s.ServiceID), DomainID: nullableText(s.DomainID), Namespace: nullableText(s.Namespace), MembershipID: nullableText(s.MembershipID), PublicURLScope: nullableText(string(s.PublicURLScope)), CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
+	grant, err := q.InsertPublisherGrant(ctx, controlstatedb.InsertPublisherGrantParams{ID: id, PublisherIdentityID: publisher, CreatedByIdentityID: issuer, Kind: s.Kind, Operation: string(operation), PublicURLID: nullableText(s.PublicURLID), ServiceID: nullableText(s.ServiceID), DomainID: nullableText(s.DomainID), Namespace: nullableText(s.Namespace), MembershipID: nullableText(s.MembershipID), PublicURLScope: nullableText(string(s.PublicURLScope)), CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
 	var constraint *pgconn.PgError
 	if errors.As(err, &constraint) && constraint.Code == "23505" && (constraint.ConstraintName == "publisher_grants_active_url" || constraint.ConstraintName == "publisher_grants_active_namespace" || constraint.ConstraintName == "publisher_grants_active_service") {
 		return grant, ErrAuthorityConflict
@@ -117,7 +137,7 @@ func insertPublisher(ctx context.Context, q *controlstatedb.Queries, resolved re
 	if err != nil {
 		return PublisherIdentity{}, err
 	}
-	return PublisherIdentity{ID: id, KeyID: kid, GrantID: g.ID, CreatorID: creator, Kind: kind, GuestID: guest, Scope: s, Ownership: ownership, OwnerMembershipID: owner}, nil
+	return PublisherIdentity{ID: id, KeyID: kid, GrantID: g.ID, CreatorID: creator, Kind: kind, GuestID: guest, Scope: s, Operation: ApplicationOperation(g.Operation), Ownership: ownership, OwnerMembershipID: owner}, nil
 }
 
 func (d *Database) RedeemPublisherEnrollment(ctx context.Context, secret string, public ed25519.PublicKey, now time.Time) (result PublisherIdentity, retErr error) {
@@ -221,7 +241,7 @@ func (d *Database) EnrollGuestPublisher(ctx context.Context, guestID, urlID, sou
 		if revoked || subtle.ConstantTimeCompare(existingPublic, public) != 1 {
 			return result, ErrPublisherIdentity
 		}
-		return PublisherIdentity{ID: existing, KeyID: existingKey, GrantID: existingGrant, CreatorID: u.CreatedByIdentityID, Kind: "guest", GuestID: guestID, Scope: s}, nil
+		return PublisherIdentity{ID: existing, KeyID: existingKey, GrantID: existingGrant, CreatorID: u.CreatedByIdentityID, Kind: "guest", GuestID: guestID, Scope: s, Operation: ApplicationPublish}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err

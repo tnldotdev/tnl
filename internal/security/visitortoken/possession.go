@@ -46,6 +46,11 @@ func checkPossessionCurrent(permission VerifiedPermission, view View, now time.T
 // a shorter current parent deadline. policy renewal never widens an admission.
 func PermissionDeadline(permission VerifiedPermission, view View) time.Time {
 	until := permission.facts.ExpiresAt
+	if application, ok := permission.facts.Subject.(Application); ok {
+		if parent, found := view.applications[application.GrantID]; found && parent.ExpiresAt.Before(until) {
+			until = parent.ExpiresAt
+		}
+	}
 	if permission.bearerDigest != ([32]byte{}) {
 		if _, parent, found := view.possession(permission.facts.Subject); found && parent.Before(until) {
 			until = parent

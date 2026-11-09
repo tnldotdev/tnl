@@ -1,0 +1,22 @@
+paths:
+  /v1/applications:
+    post:
+      operationId: registerApplication
+      summary: Register one signing identity with explicit application grants
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "../openapi.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/RegisterApplicationRequest" }
+      responses:
+        "201":
+          description: One registered key and its captured grants; identical retries return the same registration.
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/RegisteredApplication" }
+        default:
+          $ref: "../openapi.yaml#/components/responses/Problem"

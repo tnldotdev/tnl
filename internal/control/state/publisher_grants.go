@@ -29,19 +29,8 @@ func (d *Database) CreatePublisherGrant(ctx context.Context, r CreatePublisherGr
 	if i.TeamID != s.TeamID || i.RevokedAt.Valid || i.Kind == "guest" {
 		return "", ErrPublisherIdentity
 	}
-	if i.Ownership == "team" {
-		if s.Kind == "namespace" && s.PublicURLScope != PublicURLScopeShared {
-			return "", ErrPublisherIdentity
-		}
-		if s.Kind == "saved_public_url" {
-			u, err := q.LockPublicURLForRun(ctx, s.PublicURLID)
-			if err != nil {
-				return "", err
-			}
-			if u.PublicURLScope != "shared" {
-				return "", ErrPublisherIdentity
-			}
-		}
+	if err := publisherGrantMatchesOwnership(ctx, q, i.Ownership, s); err != nil {
+		return "", err
 	}
 	if i.Ownership != "member" || i.OwnerMembershipID.String != r.EditorMembershipID {
 		m, err := q.GetActivePublishRunMembership(ctx, controlstatedb.GetActivePublishRunMembershipParams{TeamID: s.TeamID, IdentityID: r.EditorID})
@@ -60,6 +49,25 @@ func (d *Database) CreatePublisherGrant(ctx context.Context, r CreatePublisherGr
 		return "", err
 	}
 	return g.ID, tx.Commit(ctx)
+}
+
+func publisherGrantMatchesOwnership(ctx context.Context, q *controlstatedb.Queries, ownership string, s PublisherScope) error {
+	if ownership != "team" {
+		return nil
+	}
+	if s.Kind == "namespace" && s.PublicURLScope != PublicURLScopeShared {
+		return ErrPublisherIdentity
+	}
+	if s.Kind == "saved_public_url" {
+		url, err := q.LockPublicURLForRun(ctx, s.PublicURLID)
+		if err != nil {
+			return err
+		}
+		if url.PublicURLScope != "shared" {
+			return ErrPublisherIdentity
+		}
+	}
+	return nil
 }
 
 func (d *Database) RevokePublisherIdentity(ctx context.Context, team, id, editor string, now time.Time) (retErr error) {

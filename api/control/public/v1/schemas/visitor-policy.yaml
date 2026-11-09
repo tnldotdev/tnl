@@ -50,6 +50,7 @@ schemas:
         workload_leases,
         share_verifiers,
         grant_verifiers,
+        application_leases,
       ]
     properties:
       resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
@@ -90,6 +91,21 @@ schemas:
         description: Current service credential verifiers for authenticated serving processes. Contains no bearer secrets; never expose policy snapshots to visitors.
         items: { $ref: "../openapi.yaml#/components/schemas/VisitorGrantVerifier" }
       ip: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicyIP" }
+      application_leases:
+        type: array
+        maxItems: 256
+        description: Current visit grants and keys for this exact resource. Contains no access tokens or private keys.
+        items: { $ref: "../openapi.yaml#/components/schemas/VisitorApplicationLease" }
+  VisitorApplicationLease:
+    type: object
+    additionalProperties: false
+    required: [client_id, grant_id, key_id, key_sha256, expires_at]
+    properties:
+      client_id: { type: string, pattern: "^pub_[A-Za-z0-9]{22}$" }
+      grant_id: { type: string, pattern: "^pgrant_[A-Za-z0-9]{22}$" }
+      key_id: { type: string, pattern: "^pkey_[A-Za-z0-9]{22}$" }
+      key_sha256: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+      expires_at: { type: string, format: date-time }
   VisitorVerificationKey:
     type: object
     additionalProperties: false

@@ -24,7 +24,7 @@ import (
 )
 
 func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
-	for _, fault := range []string{"maximum", "keys", "workloads", "grants", "prefixes", "events", "nil key", "short key", "overlong key", "bytes"} {
+	for _, fault := range []string{"maximum", "keys", "workloads", "grants", "applications", "prefixes", "events", "nil key", "short key", "overlong key", "bytes"} {
 		t.Run(fault, func(t *testing.T) {
 			body, private := policyfixture.Maximum(t, time.Now().UTC())
 			secret := bytes.Repeat([]byte{8}, 32)
@@ -44,6 +44,8 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 				body.Policy.WorkloadLeases = append(body.Policy.WorkloadLeases, body.Policy.WorkloadLeases[0])
 			case "grants":
 				body.Policy.GrantVerifiers = append(body.Policy.GrantVerifiers, body.Policy.GrantVerifiers[0])
+			case "applications":
+				body.Policy.ApplicationLeases = append(body.Policy.ApplicationLeases, body.Policy.ApplicationLeases[0])
 			case "prefixes":
 				body.Policy.Ip.Prefixes = append(body.Policy.Ip.Prefixes, body.Policy.Ip.Prefixes[0])
 			case "events":

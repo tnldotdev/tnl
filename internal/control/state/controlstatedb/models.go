@@ -105,6 +105,16 @@ type ControlAdminAuditEvent struct {
 	OccurredAt      pgtype.Timestamptz
 }
 
+type ControlApplicationRegistrationRequest struct {
+	CreatedByIdentityID string
+	IdempotencyKey      string
+	RequestDigest       []byte
+	PublisherIdentityID string
+	KeyID               string
+	GrantIds            []string
+	CreatedAt           pgtype.Timestamptz
+}
+
 type ControlAppliedProject struct {
 	TeamID                  string
 	ProjectKey              string
@@ -911,6 +921,7 @@ type ControlPublisherGrant struct {
 	PublisherIdentityID string
 	CreatedByIdentityID string
 	Kind                string
+	Operation           string
 	PublicURLID         pgtype.Text
 	ServiceID           pgtype.Text
 	DomainID            pgtype.Text

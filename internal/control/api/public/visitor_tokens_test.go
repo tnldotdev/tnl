@@ -23,6 +23,9 @@ func TestVisitorTokenSourceRejectsMixedUnknownAndIncompleteVariants(t *testing.T
 		`{"kind":"device"}`,
 		`{"kind":"device","device_id":"vdev_` + strings.Repeat("A", 22) + `","credential":"ignored"}`,
 		`{"kind":"workload"}`,
+		`{"kind":"application"}`,
+		`{"kind":"application","credential":"short"}`,
+		`{"kind":"application","credential":"pta_` + strings.Repeat("A", 43) + `","identity_id":"ignored"}`,
 		`{"kind":"share","share_id":"shr_` + strings.Repeat("A", 22) + `"}`,
 		`{"kind":"browser_session","secret":"` + strings.Repeat("A", 43) + `","identity_id":"ignored"}`,
 		`{"kind":"grant","credential":"` + strings.Repeat("A", 129) + `"}`,
@@ -36,6 +39,7 @@ func TestVisitorTokenSourceRejectsMixedUnknownAndIncompleteVariants(t *testing.T
 		`{"kind":"device","device_id":"vdev_` + strings.Repeat("A", 22) + `"}`:                                         true,
 		`{"kind":"browser_session","secret":"` + strings.Repeat("A", 43) + `"}`:                                        false,
 		`{"kind":"workload","credential":"wlc_` + strings.Repeat("A", 43) + `"}`:                                       false,
+		`{"kind":"application","credential":"pta_` + strings.Repeat("A", 43) + `"}`:                                    false,
 		`{"kind":"share","share_id":"shr_` + strings.Repeat("A", 22) + `","secret":"` + strings.Repeat("B", 43) + `"}`: false,
 	} {
 		parsed, needsHuman, err := parseVisitorTokenSource(json.RawMessage(source))

@@ -133,7 +133,7 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 }
 
 func publisherGrantResponse(g controlstatedb.ControlPublisherGrant) controlv1.PublisherGrant {
-	r := controlv1.PublisherGrant{Id: g.ID, Kind: controlv1.PublisherGrantKind(g.Kind), CreatedAt: g.CreatedAt.Time}
+	r := controlv1.PublisherGrant{Id: g.ID, Kind: controlv1.PublisherGrantKind(g.Kind), Operation: controlv1.ApplicationOperation(g.Operation), CreatedAt: g.CreatedAt.Time}
 	if g.PublicURLID.Valid {
 		r.PublicUrlId = &g.PublicURLID.String
 	}

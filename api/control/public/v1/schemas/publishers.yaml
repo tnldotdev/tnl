@@ -135,13 +135,14 @@ schemas:
   PublisherGrant:
     type: object
     additionalProperties: false
-    required: [id, kind, created_at]
+    required: [id, kind, operation, created_at]
     properties:
       id:
         $ref: "../openapi.yaml#/components/schemas/ResourceID"
       kind:
         type: string
         enum: [saved_public_url, namespace, service]
+      operation: { $ref: "../openapi.yaml#/components/schemas/ApplicationOperation" }
       public_url_id:
         $ref: "../openapi.yaml#/components/schemas/PublicURLID"
       service_id:
@@ -180,7 +181,7 @@ schemas:
       runtime: { $ref: "../openapi.yaml#/components/schemas/PublisherRuntimeStatus" }
       id: { $ref: "../openapi.yaml#/components/schemas/ResourceID" }
       name: { type: string }
-      kind: { type: string, enum: [installed, automation, run, guest] }
+      kind: { type: string, enum: [installed, automation, run, guest, application] }
       ownership:
         {
           type: string,

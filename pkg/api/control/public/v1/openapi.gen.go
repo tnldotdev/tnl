@@ -39,6 +39,27 @@ func (e AdminServerStatusRole) Valid() bool {
 	}
 }
 
+// Defines values for ApplicationOperation.
+const (
+	ApplicationAllocate ApplicationOperation = "allocate"
+	ApplicationPublish  ApplicationOperation = "publish"
+	ApplicationVisit    ApplicationOperation = "visit"
+)
+
+// Valid indicates whether the value is a known member of the ApplicationOperation enum.
+func (e ApplicationOperation) Valid() bool {
+	switch e {
+	case ApplicationAllocate:
+		return true
+	case ApplicationPublish:
+		return true
+	case ApplicationVisit:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AppliedProjectServiceServiceKind.
 const (
 	AppliedProjectServiceServiceKindLocal     AppliedProjectServiceServiceKind = "local"
@@ -896,15 +917,18 @@ func (e PublisherGroupServiceAssignmentServiceKind) Valid() bool {
 
 // Defines values for PublisherIdentityKind.
 const (
-	PublisherIdentityKindAutomation PublisherIdentityKind = "automation"
-	PublisherIdentityKindGuest      PublisherIdentityKind = "guest"
-	PublisherIdentityKindInstalled  PublisherIdentityKind = "installed"
-	PublisherIdentityKindRun        PublisherIdentityKind = "run"
+	PublisherIdentityKindApplication PublisherIdentityKind = "application"
+	PublisherIdentityKindAutomation  PublisherIdentityKind = "automation"
+	PublisherIdentityKindGuest       PublisherIdentityKind = "guest"
+	PublisherIdentityKindInstalled   PublisherIdentityKind = "installed"
+	PublisherIdentityKindRun         PublisherIdentityKind = "run"
 )
 
 // Valid indicates whether the value is a known member of the PublisherIdentityKind enum.
 func (e PublisherIdentityKind) Valid() bool {
 	switch e {
+	case PublisherIdentityKindApplication:
+		return true
 	case PublisherIdentityKindAutomation:
 		return true
 	case PublisherIdentityKindGuest:
@@ -1101,6 +1125,42 @@ func (e ReadinessResponseStatus) Valid() bool {
 	case ReadinessResponseStatusNotReady:
 		return true
 	case ReadinessResponseStatusReady:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RegisterApplicationRequestOwnership.
+const (
+	RegisterApplicationMember RegisterApplicationRequestOwnership = "member"
+	RegisterApplicationTeam   RegisterApplicationRequestOwnership = "team"
+)
+
+// Valid indicates whether the value is a known member of the RegisterApplicationRequestOwnership enum.
+func (e RegisterApplicationRequestOwnership) Valid() bool {
+	switch e {
+	case RegisterApplicationMember:
+		return true
+	case RegisterApplicationTeam:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RegisteredApplicationOwnership.
+const (
+	RegisteredApplicationMember RegisteredApplicationOwnership = "member"
+	RegisteredApplicationTeam   RegisteredApplicationOwnership = "team"
+)
+
+// Valid indicates whether the value is a known member of the RegisteredApplicationOwnership enum.
+func (e RegisteredApplicationOwnership) Valid() bool {
+	switch e {
+	case RegisteredApplicationMember:
+		return true
+	case RegisteredApplicationTeam:
 		return true
 	default:
 		return false
@@ -1470,6 +1530,21 @@ func (e VisitorSubjectKind) Valid() bool {
 	}
 }
 
+// Defines values for VisitorTokenApplicationSourceKind.
+const (
+	VisitorTokenApplication VisitorTokenApplicationSourceKind = "application"
+)
+
+// Valid indicates whether the value is a known member of the VisitorTokenApplicationSourceKind enum.
+func (e VisitorTokenApplicationSourceKind) Valid() bool {
+	switch e {
+	case VisitorTokenApplication:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for VisitorTokenBrowserSessionSourceKind.
 const (
 	VisitorTokenBrowserSession VisitorTokenBrowserSessionSourceKind = "browser_session"
@@ -1806,6 +1881,18 @@ type AppendReviewerFeedbackEventRequest struct {
 	Text        *string           `json:"text,omitempty"`
 	Type        FeedbackEventType `json:"type"`
 }
+
+// ApplicationGrantInput Select exactly one resource. Visit and publish grants select a public URL or service ID; allocation grants select an automated domain namespace.
+type ApplicationGrantInput struct {
+	DomainId    *DomainID            `json:"domain_id,omitempty"`
+	ExpiresAt   *time.Time           `json:"expires_at,omitempty"`
+	Operation   ApplicationOperation `json:"operation"`
+	PublicUrlId *PublicURLID         `json:"public_url_id,omitempty"`
+	ServiceId   *ServiceID           `json:"service_id,omitempty"`
+}
+
+// ApplicationOperation defines model for ApplicationOperation.
+type ApplicationOperation string
 
 // AppliedProjectConfiguration defines model for AppliedProjectConfiguration.
 type AppliedProjectConfiguration struct {
@@ -3127,16 +3214,17 @@ type PublisherEnrollmentKind string
 
 // PublisherGrant defines model for PublisherGrant.
 type PublisherGrant struct {
-	CreatedAt   time.Time          `json:"created_at"`
-	DomainId    *DomainID          `json:"domain_id,omitempty"`
-	ExpiresAt   *time.Time         `json:"expires_at,omitempty"`
-	Id          ResourceID         `json:"id"`
-	Kind        PublisherGrantKind `json:"kind"`
-	Namespace   *string            `json:"namespace,omitempty"`
-	PublicUrlId *PublicURLID       `json:"public_url_id,omitempty"`
-	RevokedAt   *time.Time         `json:"revoked_at,omitempty"`
-	ServiceId   *ServiceID         `json:"service_id,omitempty"`
-	TeamId      *TeamID            `json:"team_id,omitempty"`
+	CreatedAt   time.Time            `json:"created_at"`
+	DomainId    *DomainID            `json:"domain_id,omitempty"`
+	ExpiresAt   *time.Time           `json:"expires_at,omitempty"`
+	Id          ResourceID           `json:"id"`
+	Kind        PublisherGrantKind   `json:"kind"`
+	Namespace   *string              `json:"namespace,omitempty"`
+	Operation   ApplicationOperation `json:"operation"`
+	PublicUrlId *PublicURLID         `json:"public_url_id,omitempty"`
+	RevokedAt   *time.Time           `json:"revoked_at,omitempty"`
+	ServiceId   *ServiceID           `json:"service_id,omitempty"`
+	TeamId      *TeamID              `json:"team_id,omitempty"`
 }
 
 // PublisherGrantKind defines model for PublisherGrant.Kind.
@@ -3380,6 +3468,33 @@ type RedeemShareRequest struct {
 	Secret           *string  `json:"secret,omitempty"`
 	ShareId          *ShareID `json:"share_id,omitempty"`
 }
+
+// RegisterApplicationRequest defines model for RegisterApplicationRequest.
+type RegisterApplicationRequest struct {
+	Grants    []ApplicationGrantInput             `json:"grants"`
+	Name      string                              `json:"name"`
+	Ownership RegisterApplicationRequestOwnership `json:"ownership"`
+
+	// PublicKey Unpadded base64url Ed25519 public key. The application retains the private key.
+	PublicKey string `json:"public_key"`
+	TeamId    TeamID `json:"team_id"`
+}
+
+// RegisterApplicationRequestOwnership defines model for RegisterApplicationRequest.Ownership.
+type RegisterApplicationRequestOwnership string
+
+// RegisteredApplication defines model for RegisteredApplication.
+type RegisteredApplication struct {
+	ClientId  ResourceID                     `json:"client_id"`
+	Grants    []PublisherGrant               `json:"grants"`
+	KeyId     string                         `json:"key_id"`
+	Name      string                         `json:"name"`
+	Ownership RegisteredApplicationOwnership `json:"ownership"`
+	TeamId    TeamID                         `json:"team_id"`
+}
+
+// RegisteredApplicationOwnership defines model for RegisteredApplication.Ownership.
+type RegisteredApplicationOwnership string
 
 // RelayID defines model for RelayID.
 type RelayID = ResourceID
@@ -3906,6 +4021,15 @@ type UpdatePublicURLRequest struct {
 // VisitorAccessMode defines model for VisitorAccessMode.
 type VisitorAccessMode string
 
+// VisitorApplicationLease defines model for VisitorApplicationLease.
+type VisitorApplicationLease struct {
+	ClientId  string    `json:"client_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	GrantId   string    `json:"grant_id"`
+	KeyId     string    `json:"key_id"`
+	KeySha256 string    `json:"key_sha256"`
+}
+
 // VisitorConnectionID defines model for VisitorConnectionID.
 type VisitorConnectionID = string
 
@@ -3975,6 +4099,9 @@ type VisitorPolicyIP struct {
 type VisitorPolicySnapshot struct {
 	Anonymous bool `json:"anonymous"`
 
+	// ApplicationLeases Current visit grants and keys for this exact resource. Contains no access tokens or private keys.
+	ApplicationLeases []VisitorApplicationLease `json:"application_leases"`
+
 	// ConnectionDeadline Guest observation bound, including idle connections after readiness. When present, ingress requires the run's ready routing projection before forwarding visitors, and ingress and publisher bind connections to this policy's locally confirmed lifetime. Enabled policy valid_until must not exceed this deadline. Preparation policy can be installed and acknowledged without granting visitor permission.
 	ConnectionDeadline *time.Time `json:"connection_deadline,omitempty"`
 	Enabled            bool       `json:"enabled"`
@@ -4042,6 +4169,15 @@ type VisitorSubject struct {
 
 // VisitorSubjectKind defines model for VisitorSubject.Kind.
 type VisitorSubjectKind string
+
+// VisitorTokenApplicationSource defines model for VisitorTokenApplicationSource.
+type VisitorTokenApplicationSource struct {
+	Credential string                            `json:"credential"`
+	Kind       VisitorTokenApplicationSourceKind `json:"kind"`
+}
+
+// VisitorTokenApplicationSourceKind defines model for VisitorTokenApplicationSource.Kind.
+type VisitorTokenApplicationSourceKind string
 
 // VisitorTokenBrowserSessionSource defines model for VisitorTokenBrowserSessionSource.
 type VisitorTokenBrowserSessionSource struct {
@@ -4233,6 +4369,11 @@ type TeamIDQuery = TeamID
 // ListAdminRelaysParams defines parameters for ListAdminRelays.
 type ListAdminRelaysParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// RegisterApplicationParams defines parameters for RegisterApplication.
+type RegisterApplicationParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
 }
 
 // CompletePreviewBrowserLoginParams defines parameters for CompletePreviewBrowserLogin.
@@ -4499,6 +4640,9 @@ type SetMaintenanceControlJSONRequestBody = SetMaintenanceControlRequest
 
 // DrainAdminRelayJSONRequestBody defines body for DrainAdminRelay for application/json ContentType.
 type DrainAdminRelayJSONRequestBody = AdminDrainRelayRequest
+
+// RegisterApplicationJSONRequestBody defines body for RegisterApplication for application/json ContentType.
+type RegisterApplicationJSONRequestBody = RegisterApplicationRequest
 
 // AppendFeedbackEventJSONRequestBody defines body for AppendFeedbackEvent for application/json ContentType.
 type AppendFeedbackEventJSONRequestBody = AppendFeedbackEventRequest
@@ -4891,6 +5035,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 	GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterApplicationWithBody Register one signing identity with explicit application grants
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/applications (the `RegisterApplication` operationId).
+	RegisterApplicationWithBody(ctx context.Context, params *RegisterApplicationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterApplication Register one signing identity with explicit application grants
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/applications (the `RegisterApplication` operationId).
+	RegisterApplication(ctx context.Context, params *RegisterApplicationParams, body RegisterApplicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CompletePreviewBrowserLogin Return a signed-in visitor to the preview
 	//
@@ -6093,6 +6251,40 @@ func (c *Client) DrainAdminRelay(ctx context.Context, relayId RelayID, body Drai
 // Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 func (c *Client) GetAdminServerStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAdminServerStatusRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterApplicationWithBody Register one signing identity with explicit application grants
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/applications (the `RegisterApplication` operationId).
+func (c *Client) RegisterApplicationWithBody(ctx context.Context, params *RegisterApplicationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterApplicationRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterApplication Register one signing identity with explicit application grants
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/applications (the `RegisterApplication` operationId).
+func (c *Client) RegisterApplication(ctx context.Context, params *RegisterApplicationParams, body RegisterApplicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterApplicationRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -9407,6 +9599,59 @@ func NewGetAdminServerStatusRequest(server string) (*http.Request, error) {
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRegisterApplicationRequest calls the generic RegisterApplication builder with application/json body
+func NewRegisterApplicationRequest(server string, params *RegisterApplicationParams, body RegisterApplicationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterApplicationRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewRegisterApplicationRequestWithBody constructs an http.Request for the RegisterApplication method, with any body, and a specified content type
+func NewRegisterApplicationRequestWithBody(server string, params *RegisterApplicationParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/applications")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
 	}
 
 	return req, nil
@@ -15876,6 +16121,20 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/admin/status (the `GetAdminServerStatus` operationId).
 	GetAdminServerStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminServerStatusResponse, error)
 
+	// RegisterApplicationWithBodyWithResponse Register one signing identity with explicit application grants
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/applications (the `RegisterApplication` operationId).
+	RegisterApplicationWithBodyWithResponse(ctx context.Context, params *RegisterApplicationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterApplicationResponse, error)
+
+	// RegisterApplicationWithResponse Register one signing identity with explicit application grants
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/applications (the `RegisterApplication` operationId).
+	RegisterApplicationWithResponse(ctx context.Context, params *RegisterApplicationParams, body RegisterApplicationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterApplicationResponse, error)
+
 	// CompletePreviewBrowserLoginWithResponse Return a signed-in visitor to the preview
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -17412,6 +17671,54 @@ func (r GetAdminServerStatusResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAdminServerStatusResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RegisterApplicationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *RegisteredApplication
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r RegisterApplicationResponse) GetJSON201() *RegisteredApplication {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegisterApplicationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterApplicationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterApplicationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterApplicationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterApplicationResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -23610,6 +23917,32 @@ func (c *ClientWithResponses) GetAdminServerStatusWithResponse(ctx context.Conte
 	return ParseGetAdminServerStatusResponse(rsp)
 }
 
+// RegisterApplicationWithBodyWithResponse Register one signing identity with explicit application grants
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/applications (the `RegisterApplication` operationId).
+func (c *ClientWithResponses) RegisterApplicationWithBodyWithResponse(ctx context.Context, params *RegisterApplicationParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterApplicationResponse, error) {
+	rsp, err := c.RegisterApplicationWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterApplicationResponse(rsp)
+}
+
+// RegisterApplicationWithResponse Register one signing identity with explicit application grants
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/applications (the `RegisterApplication` operationId).
+func (c *ClientWithResponses) RegisterApplicationWithResponse(ctx context.Context, params *RegisterApplicationParams, body RegisterApplicationJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterApplicationResponse, error) {
+	rsp, err := c.RegisterApplication(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterApplicationResponse(rsp)
+}
+
 // CompletePreviewBrowserLoginWithResponse Return a signed-in visitor to the preview
 //
 // Returns a wrapper object for the known response body format(s).
@@ -26269,6 +26602,39 @@ func ParseGetAdminServerStatusResponse(rsp *http.Response) (*GetAdminServerStatu
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRegisterApplicationResponse parses an HTTP response from a RegisterApplicationWithResponse call
+func ParseRegisterApplicationResponse(rsp *http.Response) (*RegisterApplicationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterApplicationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest RegisteredApplication
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -30534,6 +30900,9 @@ type ServerInterface interface {
 	// GetAdminServerStatus Read control, ingress, and relay status
 	// (GET /v1/admin/status)
 	GetAdminServerStatus(w http.ResponseWriter, r *http.Request)
+	// RegisterApplication Register one signing identity with explicit application grants
+	// (POST /v1/applications)
+	RegisterApplication(w http.ResponseWriter, r *http.Request, params RegisterApplicationParams)
 	// CompletePreviewBrowserLogin Return a signed-in visitor to the preview
 	// (GET /v1/browser/callback)
 	CompletePreviewBrowserLogin(w http.ResponseWriter, r *http.Request, params CompletePreviewBrowserLoginParams)
@@ -31039,6 +31408,51 @@ func (siw *ServerInterfaceWrapper) GetAdminServerStatus(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAdminServerStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RegisterApplication operation middleware
+func (siw *ServerInterfaceWrapper) RegisterApplication(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RegisterApplicationParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegisterApplication(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -35617,6 +36031,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/applications", wrapper.RegisterApplication)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs", wrapper.ListConnectorPeerPairs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery", wrapper.DeliverConnectorPeerPair)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared", wrapper.ConfirmConnectorPeerPairPrepared)

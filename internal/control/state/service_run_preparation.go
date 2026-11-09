@@ -59,7 +59,7 @@ func serviceRunPreparation(r controlstatedb.ControlServiceRun) ServiceRunPrepara
 }
 
 func servicePublisherMatches(p PublisherIdentity, serviceID string) bool {
-	return opaqueid.Valid(serviceID, opaqueid.ServicePrefix) && p.Kind != "guest" &&
+	return opaqueid.Valid(serviceID, opaqueid.ServicePrefix) && p.Operation == ApplicationPublish && p.Kind != "guest" &&
 		p.Scope.Kind == "service" && p.Scope.ServiceID == serviceID &&
 		opaqueid.Valid(p.ID, opaqueid.PublisherIdentityPrefix) &&
 		opaqueid.Valid(p.KeyID, opaqueid.PublisherIdentityKeyPrefix) &&

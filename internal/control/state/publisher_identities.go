@@ -62,6 +62,7 @@ type PublisherIdentity struct {
 	ID, KeyID, GrantID, CreatorID, Kind, GuestID string
 	Ownership, OwnerMembershipID                 string
 	Scope                                        PublisherScope
+	Operation                                    ApplicationOperation
 }
 type PublisherEnrollment struct {
 	ID, Key string

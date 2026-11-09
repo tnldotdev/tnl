@@ -37,8 +37,8 @@ func (d *Database) livePublisher(ctx context.Context, q *controlstatedb.Queries,
 			return PublisherIdentity{}, g, ErrPublisherIdentity
 		}
 	}
-	result := PublisherIdentity{ID: id, GrantID: grant, CreatorID: i.CreatedByIdentityID, Kind: i.Kind, GuestID: i.GuestID.String, Scope: scopeFromGrant(i.TeamID, g), Ownership: i.Ownership, OwnerMembershipID: i.OwnerMembershipID.String}
-	available, err := q.PublisherScopeAvailable(ctx, controlstatedb.PublisherScopeAvailableParams{PublisherIdentityID: id, GrantID: grant})
+	result := PublisherIdentity{ID: id, GrantID: grant, CreatorID: i.CreatedByIdentityID, Kind: i.Kind, GuestID: i.GuestID.String, Scope: scopeFromGrant(i.TeamID, g), Operation: ApplicationOperation(g.Operation), Ownership: i.Ownership, OwnerMembershipID: i.OwnerMembershipID.String}
+	available, err := q.PublisherScopeAvailable(ctx, controlstatedb.PublisherScopeAvailableParams{PublisherIdentityID: id, GrantID: grant, Now: timestamptz(now)})
 	if err != nil {
 		return PublisherIdentity{}, g, err
 	}
@@ -134,22 +134,15 @@ func (d *Database) ExchangePublisherAssertion(ctx context.Context, id, grant, au
 }
 
 func (d *Database) AuthenticatePublisherAccess(ctx context.Context, token, sourceIP string, now time.Time) (result PublisherIdentity, retErr error) {
-	if len(token) != 47 || !strings.HasPrefix(token, "pta_") {
-		return result, ErrPublisherIdentity
-	}
-	digest := sha256.Sum256([]byte(token))
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
 		return result, err
 	}
 	defer rollback(ctx, tx, "authenticate publisher access", &retErr)()
 	q := controlstatedb.New(tx)
-	a, err := q.GetPublisherAccess(ctx, digest[:])
+	a, err := publisherAccessCredential(ctx, q, token, now)
 	if err != nil {
 		return result, publisherLookupError(err, ErrPublisherIdentity)
-	}
-	if !a.ExpiresAt.Time.After(now) {
-		return result, ErrPublisherIdentity
 	}
 	result, _, err = d.livePublisher(ctx, q, a.PublisherIdentityID, a.GrantID, sourceIP, now)
 	if err != nil {
@@ -158,8 +151,28 @@ func (d *Database) AuthenticatePublisherAccess(ctx context.Context, token, sourc
 	if result.GuestID != "" && sourceIP == "" {
 		return PublisherIdentity{}, ErrPublisherIdentity
 	}
+	if result.Operation != ApplicationPublish && result.Operation != ApplicationAllocate {
+		return PublisherIdentity{}, ErrPublisherIdentity
+	}
 	result.KeyID = a.KeyID
 	return result, nil
+}
+
+// shared credential parsing does not select a role or grant human authority.
+// callers check their operation and resource within the same transaction.
+func publisherAccessCredential(ctx context.Context, q *controlstatedb.Queries, token string, now time.Time) (controlstatedb.ControlPublisherAccessToken, error) {
+	if len(token) != 47 || !strings.HasPrefix(token, "pta_") {
+		return controlstatedb.ControlPublisherAccessToken{}, ErrPublisherIdentity
+	}
+	digest := sha256.Sum256([]byte(token))
+	access, err := q.GetPublisherAccess(ctx, digest[:])
+	if err != nil {
+		return access, publisherLookupError(err, ErrPublisherIdentity)
+	}
+	if !access.ExpiresAt.Time.After(now) {
+		return access, ErrPublisherIdentity
+	}
+	return access, nil
 }
 
 func (d *Database) RotatePublisherKey(ctx context.Context, token, sourceIP, replacementID, audience string, public ed25519.PublicKey, proof, currentProof string, now time.Time) (retErr error) {
