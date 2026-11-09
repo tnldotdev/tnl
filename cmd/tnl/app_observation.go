@@ -11,7 +11,6 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/clioutput"
-	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
@@ -21,7 +20,7 @@ import (
 
 type waitCommand struct {
 	StateDir string        `name:"state-dir" env:"TNL_STATE_DIR" type:"path"`
-	Service  []string      `name:"service" help:"Check this service; repeat to select several. Defaults to every configured service."`
+	Service  []string      `name:"service" help:"Check this local service or invocation ID; repeat to select several. Defaults to configured local services and current standalone publications."`
 	Timeout  time.Duration `name:"timeout" default:"2m" help:"Time to wait for fresh public readiness checks."`
 	Output   string        `name:"output" enum:"human,json" default:"human"`
 }
@@ -32,32 +31,10 @@ type watchCommand struct {
 }
 
 func readAppSnapshotFrom(ctx context.Context, project projectConfiguration, state *clientstate.Database) (publisherapp.Snapshot, error) {
-	snapshot, err := publisherapp.ReadSnapshotFrom(ctx, state, project.Root)
+	snapshot, err := publisherapp.ReadProjectSnapshotFrom(ctx, state, project.Project)
 	if err != nil {
 		return snapshot, err
 	}
-	configured := configuredRuntimeServices(project)
-	for index := range configured {
-		for _, saved := range snapshot.Services {
-			if saved.Name != configured[index].Name {
-				continue
-			}
-			definition := configured[index]
-			configured[index] = saved
-			configured[index].Directory, configured[index].Readiness, configured[index].ServiceProtocol = definition.Directory, definition.Readiness, definition.ServiceProtocol
-			if saved.Readiness != definition.Readiness {
-				configured[index].Ready, configured[index].Observation = false, nil
-			}
-			for _, publication := range snapshot.Publications {
-				if publication.Service == saved.Name && publication.Target == saved.Target && publication.State == clientstate.TunnelStateStale {
-					configured[index].Registered, configured[index].Routable, configured[index].Ready = false, false, false
-					configured[index].Observation, configured[index].Failure = nil, "runtime.manager_unavailable"
-				}
-			}
-			break
-		}
-	}
-	snapshot.Services = configured
 	checkAppSnapshotOwner(ctx, state, &snapshot)
 	return snapshot, nil
 }
@@ -134,9 +111,6 @@ func runAppObservation(ctx context.Context, flags cli, command string, output io
 	if err != nil {
 		return err
 	}
-	if !project.Found() || len(project.Config.Services) == 0 {
-		return failure.Wrap("observe services", failure.ProjectConfigMissing, errors.New("configured services are required"))
-	}
 	if command == "watch" {
 		return runAppWatch(ctx, project, root, flags.Watch, output)
 	}
@@ -147,25 +121,6 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 	if flags.Timeout <= 0 {
 		return failure.Wrap("wait for apps", failure.InvalidCommand, errors.New("timeout must be positive"))
 	}
-	for _, name := range flags.Service {
-		definition, found := project.Config.Services[name]
-		if !found {
-			return failure.Wrap("wait for service", failure.ServiceNotConfigured, errors.New("service is not configured"))
-		}
-		if config.PublisherGroupName(definition) != "local" {
-			return failure.Wrap("wait for local service", failure.AppRemoteService, errors.New("service belongs to a remote publisher"))
-		}
-	}
-	if len(flags.Service) == 0 {
-		for _, service := range configuredRuntimeServices(project) {
-			flags.Service = append(flags.Service, service.Name)
-		}
-	}
-	if len(flags.Service) == 0 {
-		return failure.Wrap("wait for local services", failure.AppRemoteService, errors.New("no local services are configured"))
-	}
-	slices.Sort(flags.Service)
-	flags.Service = slices.Compact(flags.Service)
 	state, err := clientstate.Open(ctx, root)
 	if err != nil {
 		return err
@@ -184,6 +139,11 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 		if err != nil {
 			return err
 		}
+		selected, err := publisherapp.LocalObservationServices(project.Project, snapshot, flags.Service)
+		if err != nil {
+			return err
+		}
+		flags.Service = selected
 		checked := false
 		if endpoint, err := publisherprotocol.ReadEndpoint(path); err == nil {
 			request := publisherprotocol.Check{}
@@ -198,15 +158,17 @@ func runAppWait(ctx context.Context, project projectConfiguration, root string, 
 				checkSource = "selected local publisher process unavailable"
 			}
 		}
-		snapshot.Services = slices.DeleteFunc(snapshot.Services, func(s publisherapp.Service) bool {
-			if len(flags.Service) != 0 {
-				return !slices.Contains(flags.Service, s.Name)
+		// a live owner may expose its first standalone registration after the
+		// durable snapshot was read. capture that selection before counting ready.
+		if len(flags.Service) == 0 {
+			flags.Service, err = publisherapp.LocalObservationServices(project.Project, snapshot, nil)
+			if err != nil {
+				return err
 			}
-			_, configured := project.Config.Services[s.Name]
-			return !configured
-		})
+		}
+		snapshot.Services = slices.DeleteFunc(snapshot.Services, func(s publisherapp.Service) bool { return !slices.Contains(flags.Service, s.Name) })
 		want := len(flags.Service)
-		ready := checked && len(snapshot.Services) == want
+		ready := checked && want > 0 && len(snapshot.Services) == want
 		for index := range snapshot.Services {
 			if !checked {
 				snapshot.Services[index].Ready = false

@@ -68,3 +68,22 @@ func waitObservationFixture(t *testing.T, manager *publisherapp.Manager, predica
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func installObservationChecks(t *testing.T, project projectConfiguration, state *clientstate.Database, manager *publisherapp.Manager, check func(context.Context, []string) (publisherapp.Snapshot, error)) {
+	t.Helper()
+	server := httptest.NewUnstartedServer(nil)
+	capabilities, err := publisherprotocol.NewCapabilities("http://" + server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Config.Handler = (&localapi.Server{Manager: manager, Database: state, Project: project.Root, Capabilities: capabilities, Check: check}).Handler()
+	server.Start()
+	t.Cleanup(server.Close)
+	path, err := publisherprotocol.DescriptorPath(state.Root(), project.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publisherprotocol.WriteEndpoint(path, capabilities.Owner()); err != nil {
+		t.Fatal(err)
+	}
+}
