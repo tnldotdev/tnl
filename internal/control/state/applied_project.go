@@ -119,13 +119,14 @@ type AppliedProjectService struct {
 	Public          bool   `json:"public,omitempty"`
 }
 type AppliedPublisherGroup struct {
-	Template   string   `json:"template,omitempty"`
-	GroupNames []string `json:"group_names"`
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Namespace  string   `json:"namespace"`
-	DomainID   string   `json:"domain_id"`
-	Public     bool     `json:"public"`
+	IngressPoolID string   `json:"ingress_pool_id"`
+	Template      string   `json:"template,omitempty"`
+	GroupNames    []string `json:"group_names"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Namespace     string   `json:"namespace"`
+	DomainID      string   `json:"domain_id"`
+	Public        bool     `json:"public"`
 }
 type AppliedProjectConfiguration struct {
 	ProjectLabel      string                       `json:"-"`
@@ -418,8 +419,31 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			}
 		}
 	}
-	for _, key := range sortedProjectKeys(c.Services) {
+	var poolIDs []string
+	if len(c.PublisherGroups) != 0 {
+		poolIDs, err = lockServicePortInventories(ctx, tx, nil)
+		if err != nil {
+			return result, err
+		}
+	}
+	groupServiceCounts := map[string]int{}
+	retainedServices := map[string][]string{}
+	for key, s := range c.Services {
+		if entry, ok := saved[key]; ok && entry.ServiceID.Valid {
+			retainedServices[s.PublisherGroup] = append(retainedServices[s.PublisherGroup], entry.ServiceID.String)
+		} else {
+			groupServiceCounts[s.PublisherGroup]++
+		}
+	}
+	placed := map[string]bool{}
+	for _, key := range placementOrderedServices(c) {
 		s := c.Services[key]
+		if s.PublisherGroup != "local" && !placed[s.PublisherGroup] {
+			if err := ensurePublisherGroupIngressPool(ctx, tx, groupIDs[s.PublisherGroup], groupServiceCounts[s.PublisherGroup], retainedServices[s.PublisherGroup], poolIDs); err != nil {
+				return result, err
+			}
+			placed[s.PublisherGroup] = true
+		}
 		entry, found := saved[key]
 		changed := !found || !reflect.DeepEqual(old.Services[key], s)
 		if !found {
@@ -475,6 +499,13 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 				id, kind = entry.ServiceID.String, "service"
 			}
 			if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: r.TeamID, ServiceID: id, ServiceKind: kind, EventType: "apply", OccurredAt: r.Now, ActorIdentityID: r.ActorID, ConfigurationRevision: next}, fmt.Sprintf("%s/%d", r.ProjectKey, next)); err != nil {
+				return result, err
+			}
+		}
+	}
+	for _, name := range sortedProjectKeys(c.PublisherGroups) {
+		if !placed[name] {
+			if err := ensurePublisherGroupIngressPool(ctx, tx, groupIDs[name], 0, nil, poolIDs); err != nil {
 				return result, err
 			}
 		}
@@ -608,7 +639,7 @@ func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row cont
 		if err := tx.QueryRow(ctx, `SELECT array_agg(name ORDER BY name) FROM control.publisher_group_names WHERE group_id=$1`, group.ID).Scan(&names); err != nil {
 			return result, err
 		}
-		result.Groups = append(result.Groups, AppliedPublisherGroup{Template: group.TemplateName, ID: group.ID, Name: group.Name, GroupNames: names, Namespace: group.Namespace, DomainID: group.DomainID.String, Public: group.Public})
+		result.Groups = append(result.Groups, AppliedPublisherGroup{IngressPoolID: group.IngressPoolID.String, Template: group.TemplateName, ID: group.ID, Name: group.Name, GroupNames: names, Namespace: group.Namespace, DomainID: group.DomainID.String, Public: group.Public})
 	}
 	return result, err
 }

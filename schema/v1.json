@@ -3458,6 +3458,10 @@
           "type": "array",
           "description": "Stable ingress IPv6 address published in owned public URL records; repeat for each address."
         },
+        "ingress_pools_file": {
+          "type": "string",
+          "description": "Control-only JSON file declaring ingress pool IDs, stable addresses, and service port ranges."
+        },
         "cluster_secret": {
           "type": "string",
           "description": "Current shared secret for private communication among control, ingress, and relays."

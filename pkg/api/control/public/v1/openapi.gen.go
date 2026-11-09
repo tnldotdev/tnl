@@ -1841,9 +1841,12 @@ type AppliedPublisherGroup struct {
 	// GroupNames Authoritative current and historical selectors permanently bound to this group ID.
 	GroupNames []string `json:"group_names"`
 	Id         string   `json:"id"`
-	Name       string   `json:"name"`
-	Namespace  string   `json:"namespace"`
-	Public     bool     `json:"public"`
+
+	// IngressPoolId Ingress pool permanently assigned to this group.
+	IngressPoolId string `json:"ingress_pool_id"`
+	Name          string `json:"name"`
+	Namespace     string `json:"namespace"`
+	Public        bool   `json:"public"`
 
 	// Template Source template followed by this concrete group.
 	Template *string `json:"template,omitempty"`

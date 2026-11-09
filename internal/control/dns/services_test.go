@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
+	"net/netip"
 	"reflect"
 	"strings"
 	"testing"
@@ -132,5 +133,33 @@ func TestWorkerClaimsServiceEndpointWhenOtherQueuesAreEmpty(t *testing.T) {
 	worker := testDNSWorker(t, store, provider, &verifierStub{}, now)
 	if found, err := worker.processOne(t.Context()); found || err != nil || store.serviceEndpointClaims != 1 || provider.publishCalls != 0 {
 		t.Fatalf("empty service queue = %t, %v; claims = %d, publishes = %d", found, err, store.serviceEndpointClaims, provider.publishCalls)
+	}
+}
+
+func TestServiceEndpointDNSUsesSavedSecondaryPoolAcrossReachabilityChanges(t *testing.T) {
+	now := time.Now().UTC()
+	store := &managedDNSStoreStub{work: controlstate.ServiceEndpointDNSWork{
+		Hostname: "api.tractor-042.tractors.tunnels.example.test", ServiceID: "svc_0123456789ABCDEFGHIJKL",
+		OwnerID: "pgrp_0123456789ABCDEFGHIJKL", DomainID: "domain", PoolID: "ingress-b", State: controlstate.PublicURLDNSPending,
+	}}
+	store.pool = controlstate.IngressPool{ID: "ingress-b", State: controlstate.IngressPoolDraining, IPv4Address: netip.MustParseAddr("192.0.2.20")}
+	provider := &providerStub{}
+	worker, err := New(store, provider, &verifierStub{publicURLVerified: true}, Config{WorkerID: "dns-worker", ManagedDomain: "tunnels.example.test", ManagedZoneID: "Z123", IngressIPv4Addresses: []string{"192.0.2.10"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker.now = func() time.Time { return now }
+	for _, public := range []bool{false, true, false} {
+		store.work.Public = public
+		if found, err := worker.processServiceEndpoint(t.Context(), now); !found || err != nil {
+			t.Fatal(found, err)
+		}
+		want := "127.0.0.1"
+		if public {
+			want = "192.0.2.20"
+		}
+		if !reflect.DeepEqual(provider.record.IngressIPv4Addresses, []string{want}) || provider.record.CanonicalHostname != store.work.Hostname || store.saved.PoolID != "ingress-b" {
+			t.Fatal("reachability selected another pool or endpoint", provider.record, store.saved)
+		}
 	}
 }

@@ -685,17 +685,18 @@ type ControlPreviewPublicUrl struct {
 }
 
 type ControlProjectPublisherGroup struct {
-	TemplateName string
-	Ownership    string
-	ID           string
-	TeamID       string
-	ProjectKey   string
-	Name         string
-	Description  string
-	DomainID     pgtype.Text
-	Namespace    string
-	Public       bool
-	DeletedAt    pgtype.Timestamptz
+	IngressPoolID pgtype.Text
+	TemplateName  string
+	Ownership     string
+	ID            string
+	TeamID        string
+	ProjectKey    string
+	Name          string
+	Description   string
+	DomainID      pgtype.Text
+	Namespace     string
+	Public        bool
+	DeletedAt     pgtype.Timestamptz
 }
 
 type ControlPublicServiceVisitor struct {

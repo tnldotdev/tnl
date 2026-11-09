@@ -143,7 +143,7 @@ func (q *Queries) ListAppliedProjectServices(ctx context.Context, arg ListApplie
 }
 
 const listProjectPublisherGroups = `-- name: ListProjectPublisherGroups :many
-SELECT template_name, ownership, id, team_id, project_key, name, description, domain_id, namespace, public, deleted_at FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL ORDER BY name
+SELECT ingress_pool_id, template_name, ownership, id, team_id, project_key, name, description, domain_id, namespace, public, deleted_at FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND deleted_at IS NULL ORDER BY name
 `
 
 type ListProjectPublisherGroupsParams struct {
@@ -161,6 +161,7 @@ func (q *Queries) ListProjectPublisherGroups(ctx context.Context, arg ListProjec
 	for rows.Next() {
 		var i ControlProjectPublisherGroup
 		if err := rows.Scan(
+			&i.IngressPoolID,
 			&i.TemplateName,
 			&i.Ownership,
 			&i.ID,

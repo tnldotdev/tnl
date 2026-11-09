@@ -1,6 +1,13 @@
 version: "3"
 
 tasks:
+  publisher-pools:
+    desc: Check publisher group placement and retained endpoints with disposable PostgreSQL
+    cmds:
+      - task: state:shard
+        vars:
+          RUN: ^TestIntegration(PublisherGroup|ServicePortInventory|IngressPool|PublicURLPinsTeamIngressPool|MigrationRejectsSiblingWorkloadBaselines)
+
   default:
     desc: Run PostgreSQL-backed integration boundaries
     cmds:

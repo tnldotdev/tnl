@@ -33,6 +33,8 @@ func projectConfigurationProblem(ctx context.Context, w http.ResponseWriter, ope
 		writeProblem(w, 409, controlv1.Conflict, "this resource is managed by project configuration; change its declaration and apply again")
 	case errors.Is(err, controlstate.ErrServicePortsExhausted):
 		writeProblem(w, 503, controlv1.PlacementUnavailable, "ingress pool has no available service port; ask the operator to extend its service port inventory")
+	case errors.Is(err, controlstate.ErrServicePoolPinned):
+		writeProblem(w, 409, controlv1.Conflict, "service port reservation belongs to another ingress pool; keep the service in a group on its saved pool or create a separate service")
 	case errors.Is(err, controlstate.ErrServiceConflict), errors.Is(err, controlstate.ErrPublicURLConflict):
 		writeProblem(w, 409, controlv1.Conflict, "a declared service name or public hostname is already in use")
 	case errors.Is(err, controlstate.ErrServiceAccess), errors.Is(err, controlstate.ErrPublicURLAccess):

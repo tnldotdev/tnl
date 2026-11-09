@@ -93,6 +93,7 @@ type Config struct {
 	Route53ServerZoneID  string   `name:"route53-server-zone-id" env:"TNLD_ROUTE53_SERVER_ZONE_ID" help:"Existing Route 53 hosted zone ID for the server domain; enables relay certificate DNS-01."`
 	IngressIPv4Addresses []string `name:"ingress-ipv4-address" env:"TNLD_INGRESS_IPV4_ADDRESSES" help:"Stable ingress IPv4 address published in owned public URL records; repeat for each address."`
 	IngressIPv6Addresses []string `name:"ingress-ipv6-address" env:"TNLD_INGRESS_IPV6_ADDRESSES" help:"Stable ingress IPv6 address published in owned public URL records; repeat for each address."`
+	IngressPoolsFile     string   `name:"ingress-pools-file" env:"TNLD_INGRESS_POOLS_FILE" type:"path" help:"Control-only JSON file declaring ingress pool IDs, stable addresses, and service port ranges."`
 
 	ClusterSecret         string `name:"cluster-secret" env:"TNLD_CLUSTER_SECRET" help:"Current shared secret for private communication among control, ingress, and relays."`
 	ClusterSecretPrevious string `name:"cluster-secret-previous" env:"TNLD_CLUSTER_SECRET_PREVIOUS" help:"Previous cluster secret accepted only during rotation."`
@@ -177,6 +178,9 @@ func (c Config) Validate() (retErr error) {
 			failure.SettingRelayQUICProfile, errors.New("relay QUIC profile must be standard or fly"))
 	}
 	if _, err := c.ServicePortInventory(); err != nil {
+		return err
+	}
+	if _, err := c.IngressPools(); err != nil {
 		return err
 	}
 	if c.RequireProxyHeader {

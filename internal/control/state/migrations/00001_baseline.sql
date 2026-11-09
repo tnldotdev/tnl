@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-publisher-templates')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-publisher-pools')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-publisher-templates');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-publisher-pools');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -45,6 +45,8 @@ CREATE TABLE control.ingress_pools (
     CHECK (state = 'disabled' OR ipv4_address IS NOT NULL OR ipv6_address IS NOT NULL)
 );
 INSERT INTO control.ingress_pools (id, state, created_at, updated_at) VALUES ('ingress-a', 'disabled', now(), now());
+CREATE UNIQUE INDEX ingress_pools_ipv4 ON control.ingress_pools(ipv4_address) WHERE ipv4_address IS NOT NULL;
+CREATE UNIQUE INDEX ingress_pools_ipv6 ON control.ingress_pools(ipv6_address) WHERE ipv6_address IS NOT NULL;
 
 CREATE TABLE control.ingress_service_port_ranges (
     ingress_pool_id text NOT NULL REFERENCES control.ingress_pools(id) ON DELETE RESTRICT,
@@ -2035,6 +2037,7 @@ CREATE TABLE control.applied_projects (
 );
 ALTER TABLE control.workload_sessions ADD FOREIGN KEY(team_id,project_key) REFERENCES control.applied_projects(team_id,project_key);
 CREATE TABLE control.project_publisher_groups (
+	 ingress_pool_id text REFERENCES control.ingress_pools(id) ON DELETE RESTRICT,
 	 template_name text NOT NULL DEFAULT '' CHECK (template_name = '' OR template_name ~ '^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$'),
     ownership text NOT NULL DEFAULT 'team' CHECK (ownership='team'),
     id text PRIMARY KEY,
@@ -2051,6 +2054,17 @@ CREATE TABLE control.project_publisher_groups (
 );
 CREATE UNIQUE INDEX project_publisher_groups_active ON control.project_publisher_groups(team_id, project_key, name) WHERE deleted_at IS NULL;
 CREATE UNIQUE INDEX project_publisher_groups_namespace ON control.project_publisher_groups(namespace) WHERE deleted_at IS NULL AND namespace <> '';
+-- +goose StatementBegin
+CREATE FUNCTION control.reject_publisher_group_ingress_pool_move() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.ingress_pool_id IS NOT NULL AND NEW.ingress_pool_id IS DISTINCT FROM OLD.ingress_pool_id THEN
+        RAISE EXCEPTION 'publisher group ingress pool is pinned' USING ERRCODE='23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER publisher_group_ingress_pool_pinned BEFORE UPDATE OF ingress_pool_id ON control.project_publisher_groups FOR EACH ROW EXECUTE FUNCTION control.reject_publisher_group_ingress_pool_move();
 -- namespace claims outlive group names and runs. reuse waits for certificate,
 -- DNS and forwarding retirement; a config rename never changes this owner.
 CREATE TABLE control.service_namespace_claims (

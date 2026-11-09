@@ -331,8 +331,10 @@ schemas:
         }
   AppliedPublisherGroup:
     type: object
-    required: [id, name, group_names, namespace, domain_id, public]
+    required: [id, name, group_names, namespace, domain_id, public, ingress_pool_id]
     properties:
+      ingress_pool_id:
+        { type: string, description: Ingress pool permanently assigned to this group. }
       template: { type: string, description: Source template followed by this concrete group. }
       id: { type: string }
       name: { type: string }

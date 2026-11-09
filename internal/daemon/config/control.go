@@ -159,7 +159,7 @@ func (c Config) validateDNSAutomation() (retErr error) {
 		}
 	}()
 	configured := c.Route53ManagedZoneID != "" || c.Route53ServerZoneID != "" ||
-		len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0
+		len(c.IngressIPv4Addresses) != 0 || len(c.IngressIPv6Addresses) != 0 || c.IngressPoolsFile != ""
 	if !configured {
 		return nil
 	}
@@ -177,6 +177,9 @@ func (c Config) validateDNSAutomation() (retErr error) {
 		return errors.New("ingress IP addresses require a Route 53 managed zone ID")
 	}
 	if c.Route53ManagedZoneID == "" {
+		return nil
+	}
+	if c.IngressPoolsFile != "" {
 		return nil
 	}
 	if len(c.IngressIPv4Addresses) == 0 && len(c.IngressIPv6Addresses) == 0 {

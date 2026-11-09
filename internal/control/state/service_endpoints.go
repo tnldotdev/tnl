@@ -9,12 +9,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
+var ErrServicePoolPinned = errors.New("service port reservation belongs to another ingress pool")
+
 // endpoint identity is durable across runs, publisher replicas and group-key
 // renames. group moves never silently broaden certificate authority.
 func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service, group string, automation bool, now time.Time) error {
 	var namespace, domain, pool, name, hostname string
 	var public bool
-	err := tx.QueryRow(ctx, `SELECT g.namespace,g.domain_id,t.ingress_pool_id,s.name,s.certificate_hostname,g.public FROM control.project_publisher_groups g JOIN control.teams t ON t.id=g.team_id JOIN control.services s ON s.id=$1 AND s.team_id=g.team_id WHERE g.id=$2 AND g.deleted_at IS NULL FOR UPDATE OF s`, service, group).Scan(&namespace, &domain, &pool, &name, &hostname, &public)
+	err := tx.QueryRow(ctx, `SELECT g.namespace,g.domain_id,g.ingress_pool_id,s.name,s.certificate_hostname,g.public FROM control.project_publisher_groups g JOIN control.services s ON s.id=$1 AND s.team_id=g.team_id WHERE g.id=$2 AND g.deleted_at IS NULL FOR UPDATE OF s`, service, group).Scan(&namespace, &domain, &pool, &name, &hostname, &public)
 	if err != nil {
 		return err
 	}
@@ -38,7 +40,11 @@ func (d *Database) ensureServiceEndpoint(ctx context.Context, tx pgx.Tx, service
 
 func allocateServicePort(ctx context.Context, tx pgx.Tx, service, pool string, now time.Time) (int, error) {
 	var port int
-	err := tx.QueryRow(ctx, `SELECT port FROM control.service_port_claims WHERE service_id=$1 AND state='held'`, service).Scan(&port)
+	var heldPool string
+	err := tx.QueryRow(ctx, `SELECT port,ingress_pool_id FROM control.service_port_claims WHERE service_id=$1 AND state='held'`, service).Scan(&port, &heldPool)
+	if err == nil && heldPool != pool {
+		return 0, ErrServicePoolPinned
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		// serialize allocation within one public address pool, then reserve under
 		// a unique constraint. local connectors use exactly this port by default.
