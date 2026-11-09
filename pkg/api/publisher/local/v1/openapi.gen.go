@@ -303,7 +303,10 @@ type Event struct {
 
 // Invocation defines model for Invocation.
 type Invocation struct {
-	AccessMode              *InvocationAccessMode                    `json:"access_mode,omitempty"`
+	AccessMode *InvocationAccessMode `json:"access_mode,omitempty"`
+
+	// ApplicationCredential Private JSON credential document. Selects only an exact publication grant; never persisted in observations or supplied with another identity source.
+	ApplicationCredential   *string                                  `json:"application_credential,omitempty"`
 	InvocationId            string                                   `json:"invocation_id"`
 	Ip                      *[]string                                `json:"ip,omitempty"`
 	Limits                  *externalRef0.PublisherApplicationLimits `json:"limits,omitempty"`
@@ -312,9 +315,12 @@ type Invocation struct {
 	PublisherCredentialFile string                                   `json:"publisher_credential_file,omitempty"`
 	PublisherIdentityId     string                                   `json:"publisher_identity_id,omitempty"`
 	RequirePostQuantum      *bool                                    `json:"require_post_quantum,omitempty"`
-	ServerUrl               *string                                  `json:"server_url,omitempty"`
-	Target                  string                                   `json:"target"`
-	Version                 InvocationVersion                        `json:"version"`
+
+	// ResourceId Exact publication resource in the application credential document. This field cannot select ambient personal authority.
+	ResourceId *string           `json:"resource_id,omitempty"`
+	ServerUrl  *string           `json:"server_url,omitempty"`
+	Target     string            `json:"target"`
+	Version    InvocationVersion `json:"version"`
 }
 
 // InvocationAccessMode defines model for Invocation.AccessMode.

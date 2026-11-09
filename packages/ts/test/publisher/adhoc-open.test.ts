@@ -1,5 +1,6 @@
 import { createServer, get } from "node:http";
-import { assert, expect, test, onTestFinished } from "vitest";
+import { inspect } from "node:util";
+import { assert, expect, test, onTestFinished, vi } from "vitest";
 import * as z from "zod";
 import { TnlError } from "../../src/errors.js";
 import { publishServer, publishFetch } from "../../src/internal/publisher/publish.js";
@@ -69,6 +70,98 @@ test("failed native drain retains an SDK-owned listener until cleanup retry succ
   await handle.close();
   await expect(fetch(target)).rejects.toThrow();
 });
+
+test("application publication sends its private source only in the local registration body", async () => {
+  const resource = `url_${"A".repeat(22)}` as const;
+  const source = {
+    resource,
+    server: "https://control.example",
+    document: "private application document",
+  };
+  vi.stubEnv("TNL_PUBLISHER_CREDENTIAL_FILE", "/private/must-not-read.json");
+  onTestFinished(() => {
+    vi.unstubAllEnvs();
+  });
+  let invocation = "",
+    target = "";
+  const requests: { operation: string; body: unknown }[] = [];
+  const handle = await publishFetch(
+    () => new Response("app"),
+    { resource, server: source.server },
+    {
+      start: async (_directory, _binary, selection) => {
+        invocation = selection?.invocationID ?? "";
+        return {
+          version: 1,
+          url: "http://127.0.0.1:12345",
+          capability: "b".repeat(64),
+          owner_id: "a".repeat(32),
+          scope: "invocation",
+          invocation_id: invocationIDSchema.parse(invocation),
+        };
+      },
+      request: async (_endpoint, operation, body) => {
+        requests.push({ operation, body });
+        if (operation === "ad-hoc/register") {
+          const payload = invocationSchema.parse(body);
+          expect(payload.application_credential).toBe(source.document);
+          expect(payload.resource_id).toBe(resource);
+          expect(payload.publisher_credential_file).toBeUndefined();
+          expect(payload.publisher_identity_id).toBeUndefined();
+          target = payload.target;
+          return { version: 1, registration_id: id, owner: payload.owner, target };
+        }
+        if (operation === "status") return snapshot(invocation, target);
+        return undefined;
+      },
+      pause: () => new Promise<void>(() => {}),
+    },
+    source,
+  );
+  await handle.close();
+  expect(
+    requests
+      .filter((request) => JSON.stringify(request.body)?.includes(source.document))
+      .map((request) => request.operation),
+  ).toEqual(["ad-hoc/register"]);
+});
+
+test.each([
+  [400, "runtime.credential_invalid", "sdk.credential_invalid", "after_change"],
+  [403, "runtime.credential_denied", "sdk.credential_denied", "after_change"],
+  [503, "runtime.credential_unavailable", "sdk.credential_unavailable", "later"],
+] as const)(
+  "application authority HTTP %s retains its owned classification without private native output",
+  async (status, code, expected, retry) => {
+    const secret = "private application signing document";
+    const api = createServer((_request, response) => {
+      response
+        .writeHead(status, { "Content-Type": "application/json" })
+        .end(JSON.stringify({ code, message: secret }));
+    });
+    await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
+    const address = api.address();
+    if (address === null || typeof address === "string") throw new Error("missing listener");
+    try {
+      const error: unknown = await runtimeRequest(
+        {
+          version: 1,
+          url: `http://127.0.0.1:${address.port}`,
+          capability: "b".repeat(64),
+          owner_id: "a".repeat(32),
+          scope: "invocation",
+          invocation_id: invocationIDSchema.parse(`ivk_${"A".repeat(22)}`),
+        },
+        "ad-hoc/register",
+        {},
+      ).catch((cause: unknown) => cause);
+      expect(error).toMatchObject({ code: expected, retry });
+      expect(inspect(error, { showHidden: true, depth: 8 })).not.toContain(secret);
+    } finally {
+      await new Promise<void>((resolve) => api.close(() => resolve()));
+    }
+  },
+);
 function snapshot(service: string, target: string, registration = id, routable = true, run = 2) {
   return {
     schema_version: 1,

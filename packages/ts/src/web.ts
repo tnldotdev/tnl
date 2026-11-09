@@ -3,7 +3,7 @@ import type { TnlHTTPInstance } from "./client.js";
 import type { TnlApplicationCredential, TnlApplicationResource } from "./credential.js";
 import { httpResources } from "./internal/connector/http_resource.js";
 import { credentialSchema } from "./internal/connector/http_credential.js";
-import { applicationCredentialSchema } from "./internal/connector/application_http.js";
+import { applicationCredentialSchema } from "./internal/credential.js";
 import { parseValue } from "./internal/validation.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
 export type { TnlClientFactory, TnlClientOptions, TnlFetch, TnlHTTPConnection } from "./client.js";

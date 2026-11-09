@@ -3,7 +3,10 @@
 package localapi
 
 import (
+	"bytes"
 	"context"
+	jsonv1 "encoding/json"
+	json "encoding/json/v2"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -127,12 +130,37 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		var request publisherprotocol.Invocation
-		if err := publisherprotocol.Decode(w, r, &request); err != nil {
+		var raw jsonv1.RawMessage
+		if err := publisherprotocol.Decode(w, r, &raw); err != nil {
+			Problem(w, err)
+			return
+		}
+		var fields map[string]jsonv1.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			Problem(w, err)
+			return
+		}
+		for _, name := range []string{"application_credential", "resource_id", "publisher_credential_file", "publisher_identity_id"} {
+			value, present := fields[name]
+			if present && (bytes.Equal(bytes.TrimSpace(value), []byte("null")) || bytes.Equal(bytes.TrimSpace(value), []byte(`""`))) {
+				if name == "application_credential" || name == "resource_id" {
+					Problem(w, credentialfile.ErrApplication)
+				} else {
+					Problem(w, credentialfile.ErrInvalid)
+				}
+				return
+			}
+		}
+		if err := json.Unmarshal(raw, &request, json.RejectUnknownMembers(true)); err != nil {
 			Problem(w, err)
 			return
 		}
 		if request.Version != 1 || request.InvocationId != *grant.InvocationId || !publisherprotocol.ValidOwner(request.Owner) || request.Pid <= 0 || request.PublisherCredentialFile != "" && request.PublisherIdentityId != "" {
 			Problem(w, publisherprotocol.ErrForbidden)
+			return
+		}
+		if request.ApplicationCredential != nil && (request.PublisherCredentialFile != "" || request.PublisherIdentityId != "") || request.ResourceId != nil && request.ApplicationCredential == nil {
+			Problem(w, credentialfile.ErrApplication)
 			return
 		}
 		if request.PublisherCredentialFile != "" && (!filepath.IsAbs(request.PublisherCredentialFile) || len(request.PublisherCredentialFile) > 4096 || strings.ContainsRune(request.PublisherCredentialFile, 0)) {
@@ -303,6 +331,12 @@ func Problem(w http.ResponseWriter, err error) {
 	status, code, message := 400, "runtime.request_invalid", "local publisher request is invalid"
 	reason, _ := failure.ReasonOf(err)
 	switch {
+	case errors.Is(err, credentialfile.ErrApplication):
+		status, code, message = 400, "runtime.credential_invalid", "check the application signing credential document"
+	case errors.Is(err, credentialfile.ErrGrant):
+		status, code, message = 403, "runtime.credential_denied", "select a current publication grant for this exact resource"
+	case errors.Is(err, credentialfile.ErrApplicationUnavailable):
+		status, code, message = 503, "runtime.credential_unavailable", "application publication authority is temporarily unavailable"
 	case reason == failure.AppConfigurationConflict:
 		definition, _ := failure.DefinitionFor(failure.AppConfigurationConflict)
 		status, code, message = 409, string(failure.AppConfigurationConflict), definition.Message

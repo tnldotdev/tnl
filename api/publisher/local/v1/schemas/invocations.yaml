@@ -34,6 +34,14 @@ schemas:
       publisher_identity_id: { type: string, maxLength: 128, x-go-type-skip-optional-pointer: true }
       publisher_credential_file:
         { type: string, maxLength: 4096, x-go-type-skip-optional-pointer: true }
+      application_credential:
+        type: string
+        maxLength: 65536
+        description: Private JSON credential document. Selects only an exact publication grant; never persisted in observations or supplied with another identity source.
+      resource_id:
+        type: string
+        maxLength: 64
+        description: Exact publication resource in the application credential document. This field cannot select ambient personal authority.
       access_mode: { type: string, enum: [restricted, anonymous] }
       require_post_quantum: { type: boolean }
       ip: { type: array, maxItems: 32, items: { type: string, maxLength: 64 } }

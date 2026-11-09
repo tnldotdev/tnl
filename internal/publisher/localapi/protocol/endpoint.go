@@ -335,6 +335,10 @@ func callEndpoint(ctx context.Context, e Endpoint, method, path string, input, o
 		return ErrUnauthorized
 	}
 	if response.StatusCode == 403 {
+		var problem Problem
+		if json.NewDecoder(io.LimitReader(response.Body, MaxBytes)).Decode(&problem) == nil && problem.Code == "runtime.credential_denied" {
+			return &ResponseError{Status: response.StatusCode, Code: problem.Code}
+		}
 		return ErrForbidden
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {

@@ -3,6 +3,9 @@ package local
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,12 +13,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -206,6 +211,188 @@ func TestInvocationWorkerPublicationAndLimits(t *testing.T) {
 	}
 	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &repeated); err != nil || repeated != registration || f.Allocations.Load() != 2 {
 		t.Fatalf("limited repeat allocated again: registration=%+v allocations=%d err=%v", repeated, f.Allocations.Load(), err)
+	}
+}
+
+func applicationInvocation(t *testing.T) (*appRuntime, publisherprotocol.Endpoint, map[string]any, *publishingtest.Fixture, credentialfile.File, controlv1.PublicURL) {
+	t.Helper()
+	a, endpoint, body, fixture := invocationRuntime(t)
+	url, err := fixture.SavedPublicURL(t.Context(), controlv1.App, "http://127.0.0.1:3000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := fixture.Owner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrollment, err := owner.CreatePublisherEnrollment(t.Context(), controlv1.CreatePublisherEnrollmentRequest{TeamId: url.TeamId, PublicUrlId: &url.Id, Name: "application", Kind: "installed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := clientauthority.New(fixture.URL, fixture.HTTP, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := authority.RedeemPublisherEnrollment(t.Context(), enrollment.EnrollmentKey, public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := credentialfile.New(fixture.URL, identity, private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file.Grants = append(file.Grants, credentialfile.Grant{ID: "pgrant_" + strings.Repeat("V", 22), Operation: controlv1.ApplicationVisit, Kind: "saved_public_url", PublicURLID: &url.Id})
+	document, err := json.Marshal(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(body, "publisher_identity_id")
+	body["application_credential"], body["resource_id"] = string(document), url.Id
+	return a, endpoint, body, fixture, file, url
+}
+
+func TestApplicationInvocationUsesExactPublishGrantWithoutAllocatingOrDeletingSavedURL(t *testing.T) {
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	a, endpoint, body, fixture, file, url := applicationInvocation(t)
+	t.Setenv("TNL_PUBLISHER_CREDENTIAL_FILE", "/private/must-not-read.json")
+	personal := "https://personal.example"
+	a.project.Config.Server = &personal
+	captured := make(chan publisher.Config, 1)
+	a.workers.RunPublisher = func(ctx context.Context, cfg publisher.Config) error {
+		captured <- cfg
+		return readyInvocation(ctx, cfg)
+	}
+	var registration publisherprotocol.Registration
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &registration); err != nil {
+		t.Fatal(err)
+	}
+	waitInvocation(t, a, func(snapshot publisherapp.Snapshot) bool {
+		for _, service := range snapshot.Services {
+			if service.RegistrationID == registration.RegistrationID {
+				return service.Routable
+			}
+		}
+		return false
+	})
+	cfg := <-captured
+	if cfg.ControlURL != file.ControlURL || cfg.PublisherIdentityID != file.ClientID || cfg.Ephemeral || cfg.AssignedPublicURL == nil || cfg.AssignedPublicURL.Id != url.Id || fixture.Allocations.Load() != 0 {
+		t.Fatal("application publication changed its exact URL or borrowed namespace allocation")
+	}
+	snapshot, err := json.Marshal(a.manager.Snapshot())
+	if err != nil || strings.Contains(string(snapshot), file.PrivateKey) || strings.Contains(string(snapshot), "application_credential") {
+		t.Fatal("application credential entered public observations", err)
+	}
+	var again publisherprotocol.Registration
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &again); err != nil || again != registration {
+		t.Fatal("exact invocation retry changed publication ownership", err)
+	}
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", registration, nil); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.Allocations.Load() != 0 || fixture.Deletions.Load() != 0 {
+		t.Fatal("saved publication cleanup deleted a URL or allocated a replacement")
+	}
+}
+
+func TestApplicationInvocationRejectsWrongOperationSourceAndResourceWithoutFallback(t *testing.T) {
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	_, endpoint, body, fixture, original, _ := applicationInvocation(t)
+	for _, fault := range []string{"visit", "resource", "key", "server", "mixed", "policy", "empty", "null", "missing resource", "outage"} {
+		file := original
+		file.Grants = append([]credentialfile.Grant(nil), original.Grants...)
+		request := make(map[string]any, len(body))
+		for key, value := range body {
+			request[key] = value
+		}
+		want := "runtime.credential_denied"
+		switch fault {
+		case "visit":
+			file.Grants = file.Grants[1:]
+		case "resource":
+			request["resource_id"] = "url_" + strings.Repeat("X", 22)
+		case "key":
+			raw, _ := base64.RawURLEncoding.DecodeString(file.PrivateKey)
+			raw[63] ^= 1
+			file.PrivateKey = base64.RawURLEncoding.EncodeToString(raw)
+			want = "runtime.credential_invalid"
+		case "server":
+			request["server_url"] = "https://another.example"
+		case "mixed":
+			request["publisher_credential_file"] = "/private/must-not-read.json"
+			want = "runtime.credential_invalid"
+		case "policy":
+			request["access_mode"] = "anonymous"
+		case "empty", "null":
+			want = "runtime.credential_invalid"
+		case "missing resource":
+			delete(request, "resource_id")
+		case "outage":
+			fixture.HTTP.Transport = invocationTransport(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 503, Header: http.Header{"Content-Type": []string{"application/problem+json"}}, Body: io.NopCloser(strings.NewReader(`{"type":"about:blank","title":"unavailable","status":503,"code":"unavailable"}`)), Request: r}, nil
+			})
+			want = "runtime.credential_unavailable"
+		}
+		document, err := json.Marshal(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request["application_credential"] = string(document)
+		if fault == "empty" {
+			request["application_credential"] = ""
+		}
+		if fault == "null" {
+			request["application_credential"] = nil
+		}
+		var problem *publisherprotocol.ResponseError
+		if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", request, nil); !errors.As(err, &problem) || problem.Code != want || strings.Contains(err.Error(), file.PrivateKey) {
+			t.Fatal("application invocation changed authority or exposed its credential", fault, err)
+		}
+		if fixture.Allocations.Load() != 0 || fixture.Runs.Load() != 0 || fixture.Deletions.Load() != 0 {
+			t.Fatal("rejected application authority created publication side effects")
+		}
+	}
+}
+
+func TestApplicationInvocationRealPublisherKeepsSavedURLAfterDrain(t *testing.T) {
+	if !testutil.IsolatedPublishingTest(t) {
+		return
+	}
+	a, endpoint, body, fixture, _, url := applicationInvocation(t)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("application bytes")) }))
+	defer target.Close()
+	body["target"] = target.URL
+	var registration publisherprotocol.Registration
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/ad-hoc/register", body, &registration); err != nil {
+		t.Fatal(err)
+	}
+	waitInvocation(t, a, func(snapshot publisherapp.Snapshot) bool {
+		for _, service := range snapshot.Services {
+			if service.RegistrationID == registration.RegistrationID {
+				if service.Failure != "" {
+					t.Fatalf("application publisher failed: %s", service.Failure)
+				}
+				return service.Routable
+			}
+		}
+		return false
+	})
+	status, payload, err := fixture.Visit(t.Context(), "https://"+url.CanonicalHostname)
+	if err != nil || status != http.StatusOK || string(payload) != "application bytes" {
+		t.Fatal("saved application publication did not carry real visitor TLS bytes", status, err)
+	}
+	if err := publisherprotocol.Call(t.Context(), endpoint, "POST", "/v1/unregister", registration, nil); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.Runs.Load() != 1 || fixture.Allocations.Load() != 0 || fixture.Deletions.Load() != 0 {
+		t.Fatal("application publication drain changed the saved URL lifecycle")
 	}
 }
 

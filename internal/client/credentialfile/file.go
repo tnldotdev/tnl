@@ -24,6 +24,8 @@ import (
 var ErrInvalid = errors.New("credential file is missing, unsafe, or invalid; check its owner, permissions, and control URL")
 var ErrExists = errors.New("credential file already exists; choose a new --output-file path")
 var ErrGrant = failure.Wrap("select application grant", failure.PublisherGrantMismatch, errors.New("select one exact credential grant for this operation and resource"))
+var ErrApplication = failure.Wrap("read application credential", failure.PublisherSelectionInvalid, errors.New("the application signing credential document is invalid"))
+var ErrApplicationUnavailable = failure.Wrap("authorize application publication", failure.ServerUnavailable, errors.New("application publication authority is temporarily unavailable"))
 
 const MaxBytes = 65536
 

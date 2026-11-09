@@ -31,5 +31,10 @@ test("native application documents select the same exact async HTTP boundary", a
   app.connect("database");
   // @ts-expect-error application grants cannot select origins without a resource ID.
   app.connect("https://app.example");
+  expectTypeOf(app.publish(() => new Response("app"), { resource: "url_selected" })).toEqualTypeOf<
+    Promise<import("@tnldotdev/tnl").Publication>
+  >();
+  // @ts-expect-error this publication path selects saved HTTP public URLs, not services.
+  app.publish(() => new Response("app"), { resource: "svc_selected" });
   await app.close();
 });

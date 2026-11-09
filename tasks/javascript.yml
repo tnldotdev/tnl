@@ -1,6 +1,17 @@
 version: "3"
 
 tasks:
+  test:application-publications:
+    desc: Check exact application publication selection, private local transport and saved URL lifetime
+    deps: [":js:build"]
+    cmds:
+      - pnpm exec vitest run packages/ts/test/publisher/runtime-instance.test.ts packages/ts/test/publisher/adhoc-open.test.ts
+      - task: :go:test:focused
+        vars:
+          PACKAGES: ./internal/publisher/local ./internal/publisher/localapi
+          RUN: "TestApplicationInvocation"
+          FLAGS: "-race"
+
   test:web:
     desc: Check Fetch-only HTTP scopes, credential isolation and Node-free runtime dependencies
     deps: [":js:build"]

@@ -13,6 +13,8 @@ import type { TnlHTTPConnection, TnlHTTPInstance } from "./client.js";
 import type { TnlApplicationCredential, TnlApplicationResource } from "./credential.js";
 import type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
 import type { PublishOptions } from "./internal/publisher/publish.js";
+import type { ApplicationPublication } from "./internal/publisher/publish.js";
+import { parseApplicationCredential } from "./internal/credential.js";
 import type { Publication } from "./internal/publisher/publication.js";
 export type {
   Publication,
@@ -118,6 +120,10 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
   if (options.credential !== undefined && options.workload !== undefined)
     throw new TnlError("sdk.configuration_invalid");
   const http = options.credential === undefined ? undefined : httpResources(options.credential);
+  const application =
+    options.credential !== undefined && typeof options.credential !== "string"
+      ? parseApplicationCredential(options.credential)
+      : undefined;
   if (
     http?.controlURL !== undefined &&
     options.server !== undefined &&
@@ -127,10 +133,37 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
   const explicitServer = options.server;
   const workloadSelected =
     scope.workload !== undefined || usesWorkload(scope.key, scope.runtime, false);
-  const checkPublisher = () => {
+  const checkPublisher = (settings?: PublishOptions): ApplicationPublication | undefined => {
+    if (application !== undefined && settings !== undefined) {
+      if (
+        settings.publisherCredentialFile !== undefined ||
+        settings.publisherIdentityID !== undefined ||
+        (settings.server !== undefined && settings.server !== application.control_url)
+      )
+        throw new TnlError("sdk.credential_denied");
+      const grants = application.grants.filter(
+        (grant) =>
+          grant.operation === "publish" &&
+          (settings.resource === undefined ||
+            (grant.kind === "saved_public_url" && grant.public_url_id === settings.resource)),
+      );
+      const grant = grants[0];
+      if (
+        grants.length !== 1 ||
+        grant?.kind !== "saved_public_url" ||
+        (grant.expires_at !== undefined && Date.parse(grant.expires_at) <= Date.now())
+      )
+        throw new TnlError("sdk.credential_denied");
+      return {
+        document: JSON.stringify(application),
+        resource: grant.public_url_id as `url_${string}`,
+        server: application.control_url,
+      };
+    }
     // current workload grants authorize visiting only; never use a human publisher.
     if (http !== undefined) throw new TnlError("sdk.credential_denied");
     if (workloadSelected) throw new TnlError("sdk.workload_denied");
+    return undefined;
   };
   let project: ProjectRuntime | undefined;
   const update = (next: ProjectRuntime) => {
@@ -233,7 +266,7 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
       }),
     publish: (server: LocalHTTPServer | FetchHandler, settings: PublishOptions = {}) =>
       own(async () => {
-        checkPublisher();
+        const source = checkPublisher(settings);
         const { publishServer, publishFetch } = await import("./internal/publisher/publish.js");
         const startup = new AbortController();
         const abortStartup = () => startup.abort(lifetime.signal.reason);
@@ -252,11 +285,12 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
             settings.signal === undefined
               ? startup.signal
               : AbortSignal.any([settings.signal, startup.signal]),
+          ...(source === undefined ? {} : { server: source.server }),
         };
         try {
           return await (typeof server === "function"
-            ? publishFetch(server, selected)
-            : publishServer(server, selected));
+            ? publishFetch(server, selected, undefined, source)
+            : publishServer(server, selected, undefined, source));
         } finally {
           lifetime.signal.removeEventListener("abort", abortStartup);
         }

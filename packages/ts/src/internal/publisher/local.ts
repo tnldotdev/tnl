@@ -245,22 +245,28 @@ function runtimeRequestUntraced(
             if (response.statusCode !== 200) {
               const problem = parseValue(problemSchema, value, "sdk.response_invalid");
               throw new TnlError(
-                problem.code === "runtime.cursor_expired"
-                  ? "sdk.event_cursor_expired"
-                  : problem.code === "runtime.owner_conflict"
-                    ? "sdk.owner_conflict"
-                    : problem.code === "runtime.registration_stale" ||
-                        problem.code === "runtime.unauthorized"
-                      ? "sdk.registration_stale"
-                      : problem.code === "runtime.authentication_required"
-                        ? "sdk.authentication_required"
-                        : problem.code === "runtime.publisher_setup_required"
-                          ? "sdk.publisher_setup_required"
-                          : problem.code === "runtime.publisher_credential_file_invalid"
-                            ? "sdk.publisher_credential_file_invalid"
-                            : response.statusCode !== undefined && response.statusCode >= 500
-                              ? "sdk.dev_unavailable"
-                              : "sdk.request_rejected",
+                problem.code === "runtime.credential_invalid"
+                  ? "sdk.credential_invalid"
+                  : problem.code === "runtime.credential_denied"
+                    ? "sdk.credential_denied"
+                    : problem.code === "runtime.credential_unavailable"
+                      ? "sdk.credential_unavailable"
+                      : problem.code === "runtime.cursor_expired"
+                        ? "sdk.event_cursor_expired"
+                        : problem.code === "runtime.owner_conflict"
+                          ? "sdk.owner_conflict"
+                          : problem.code === "runtime.registration_stale" ||
+                              problem.code === "runtime.unauthorized"
+                            ? "sdk.registration_stale"
+                            : problem.code === "runtime.authentication_required"
+                              ? "sdk.authentication_required"
+                              : problem.code === "runtime.publisher_setup_required"
+                                ? "sdk.publisher_setup_required"
+                                : problem.code === "runtime.publisher_credential_file_invalid"
+                                  ? "sdk.publisher_credential_file_invalid"
+                                  : response.statusCode !== undefined && response.statusCode >= 500
+                                    ? "sdk.dev_unavailable"
+                                    : "sdk.request_rejected",
               );
             }
             if (!["prepare", "status", "check", "events", "ad-hoc/register"].includes(operation))

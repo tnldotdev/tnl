@@ -33,6 +33,8 @@ export type PublishOptions = PublishSettings &
     | { readonly publisherCredentialFile?: never; readonly publisherIdentityID?: never }
   );
 interface PublishSettings {
+  /** select an exact saved public URL from this instance's application credential. */
+  readonly resource?: `url_${string}`;
   readonly server?: string;
   readonly directory?: string;
   readonly stateDir?: string;
@@ -51,6 +53,13 @@ interface PublishSettings {
   };
   readonly signal?: AbortSignal;
 }
+
+// this private source travels only over capability-authenticated local HTTP.
+export type ApplicationPublication = Readonly<{
+  document: string;
+  resource: `url_${string}`;
+  server: string;
+}>;
 
 interface Dependencies {
   start(
@@ -77,16 +86,20 @@ export function publishServer(
   server: LocalHTTPServer,
   options: PublishOptions = {},
   runtime: Dependencies = dependencies,
+  application?: ApplicationPublication,
 ): Promise<Publication> {
-  return operation("sdk.publish", () => publishServerUntraced(server, options, runtime));
+  return operation("sdk.publish", () =>
+    publishServerUntraced(server, options, runtime, application),
+  );
 }
 
 async function publishServerUntraced(
   server: LocalHTTPServer,
   options: PublishOptions,
   runtime: Dependencies,
+  application?: ApplicationPublication,
 ): Promise<Publication> {
-  validateOptions(options);
+  validateOptions(options, application);
   const target = await listeningTarget(server, options);
   bound();
   const directory = path.resolve(options.directory ?? process.cwd());
@@ -98,7 +111,7 @@ async function publishServerUntraced(
   // the SDK process may receive this environment variable after the native
   // owner starts. pass the path, never the credential contents, to that owner.
   const publisherCredentialFile =
-    options.publisherIdentityID === undefined
+    application === undefined && options.publisherIdentityID === undefined
       ? (options.publisherCredentialFile ?? process.env.TNL_PUBLISHER_CREDENTIAL_FILE)
       : undefined;
   if (
@@ -112,6 +125,9 @@ async function publishServerUntraced(
     owner,
     pid: process.pid,
     target,
+    ...(application === undefined
+      ? {}
+      : { application_credential: application.document, resource_id: application.resource }),
     ...(options.server === undefined ? {} : { server_url: options.server }),
     ...(options.publisherIdentityID === undefined
       ? {}
@@ -372,9 +388,10 @@ const networkSchema = z
     );
   });
 const accessModeSchema = z.enum(["restricted", "anonymous"]);
-const openOptionsSchema = z
+const publishOptionsSchema = z
   .strictObject({
     publisherCredentialFile: credentialFileSchema.optional(),
+    resource: z.templateLiteral(["url_", z.string().regex(/^[A-Za-z0-9]{22}$/)]).optional(),
     publisherIdentityID: z
       .string()
       .regex(/^pub_[A-Za-z0-9]{22}$/)
@@ -402,8 +419,17 @@ const openOptionsSchema = z
       options.publisherCredentialFile === undefined || options.publisherIdentityID === undefined,
   );
 
-function validateOptions(options: PublishOptions): void {
-  parseValue(openOptionsSchema, options, "sdk.configuration_invalid");
+function validateOptions(options: PublishOptions, application?: ApplicationPublication): void {
+  parseValue(publishOptionsSchema, options, "sdk.configuration_invalid");
+  if (
+    (application === undefined && options.resource !== undefined) ||
+    (application !== undefined &&
+      (options.publisherCredentialFile !== undefined ||
+        options.publisherIdentityID !== undefined ||
+        options.server !== application.server ||
+        (options.resource !== undefined && options.resource !== application.resource)))
+  )
+    throw new TnlError("sdk.credential_denied");
 }
 function validPublisherCredentialFile(value: unknown): value is string {
   return credentialFileSchema.safeParse(value).success;
@@ -418,13 +444,14 @@ export async function publishFetch(
   handler: FetchHandler,
   options: PublishOptions = {},
   runtime: Dependencies = dependencies,
+  application?: ApplicationPublication,
 ): Promise<Publication> {
-  validateOptions(options);
+  validateOptions(options, application);
   const { createFetchServer } = await import("./fetch.js");
   const server = await createFetchServer(handler);
   let base: Publication;
   try {
-    base = await publishServer(server, options, runtime);
+    base = await publishServer(server, options, runtime, application);
   } catch (cause) {
     try {
       await closeServer(server);
