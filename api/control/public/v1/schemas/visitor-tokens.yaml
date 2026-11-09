@@ -92,4 +92,8 @@ schemas:
           minimum: 1,
           description: "Current service metadata revision, present only for service permissions.",
         }
+      service_protocol:
+        $ref: "../openapi.yaml#/components/schemas/ServiceProtocol"
+      service_endpoint:
+        $ref: "../openapi.yaml#/components/schemas/ServiceEndpoint"
       expires_at: { type: string, format: date-time }

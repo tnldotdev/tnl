@@ -50,12 +50,15 @@ func TestVisitorTokenSourceRejectsMixedUnknownAndIncompleteVariants(t *testing.T
 }
 
 func TestVisitorTokenResponseServiceTrustRevision(t *testing.T) {
-	issued := controlstate.IssuedVisitorToken{ServiceTrustRevision: 3, Permission: visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_test"}}}
+	issued := controlstate.IssuedVisitorToken{ServiceTrustRevision: 3, ServiceProtocol: "http", ServiceEndpoint: &controlstate.ServiceEndpoint{Hostname: "api.example.test", Port: 10443, Public: true}, Permission: visitortoken.Permission{Scope: visitorscope.Scope{Kind: visitorscope.Service, ID: "svc_test"}}}
 	if response := visitorTokenResponse(issued); response.ServiceTrustRevision == nil || *response.ServiceTrustRevision != 3 {
 		t.Fatal("service permission omitted its current metadata revision")
 	}
+	if response := visitorTokenResponse(issued); response.ServiceProtocol == nil || *response.ServiceProtocol != "http" || response.ServiceEndpoint == nil || !response.ServiceEndpoint.Public || response.ServiceEndpoint.Hostname != "api.example.test" {
+		t.Fatal("service permission omitted its safe protocol and public endpoint metadata")
+	}
 	issued.Permission.Scope.Kind = visitorscope.PublicURL
-	if response := visitorTokenResponse(issued); response.ServiceTrustRevision != nil {
+	if response := visitorTokenResponse(issued); response.ServiceTrustRevision != nil || response.ServiceProtocol != nil || response.ServiceEndpoint != nil {
 		t.Fatal("public URL permission included a service metadata revision")
 	}
 }

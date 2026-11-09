@@ -27,6 +27,8 @@ jobs:
             shard: 1/1
           - suite: application-registrations
             shard: 1/1
+          - suite: application-http
+            shard: 1/1
           - suite: runtime:leases
             shard: 1/1
           - suite: runtime:workload
@@ -44,6 +46,13 @@ jobs:
         with:
           tools: go task go:github.com/letsencrypt/pebble/v2/cmd/pebble
           go-cache: race
+
+      - name: Set up application HTTP SDK
+        if: matrix.suite == 'application-http'
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
+        with:
+          tools: node pnpm
+          pnpm: "true"
 
       - name: Check test harness and shard selection
         if: matrix.suite == 'api'

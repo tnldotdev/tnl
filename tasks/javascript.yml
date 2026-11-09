@@ -5,7 +5,7 @@ tasks:
     desc: Check Fetch-only HTTP scopes, credential isolation and Node-free runtime dependencies
     deps: [":js:build"]
     cmds:
-      - pnpm exec vitest run packages/ts/test/connector/web-http.test.ts packages/ts/test/connector/web-streams.test.ts packages/ts/test/connector/client-fence.test.ts packages/ts/test/publisher/runtime-instance.test.ts
+      - pnpm exec vitest run packages/ts/test/connector/web-http.test.ts packages/ts/test/connector/web-streams.test.ts packages/ts/test/connector/application-http.test.ts packages/ts/test/connector/client-fence.test.ts packages/ts/test/publisher/runtime-instance.test.ts
       - pnpm exec tsc --project packages/ts/test/fixtures/web-only/tsconfig.json
 
   test:publications:

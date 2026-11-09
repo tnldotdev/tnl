@@ -71,6 +71,8 @@ type IssuedVisitorToken struct {
 	Token                visitortoken.Token
 	Permission           visitortoken.Permission
 	ServiceTrustRevision int64
+	ServiceProtocol      string
+	ServiceEndpoint      *ServiceEndpoint
 }
 
 type visitorResource struct {
@@ -201,9 +203,12 @@ func (d *Database) issueVisitorToken(ctx context.Context, tx pgx.Tx, issuer stri
 	if scope.Kind == visitorscope.Service {
 		// service admission holds the same lock as metadata updates. read the
 		// current revision without selecting another publisher run.
-		if err := tx.QueryRow(ctx, `SELECT trust_revision FROM control.services WHERE id=$1`, scope.ID).Scan(&result.ServiceTrustRevision); err != nil {
+		service, err := controlstatedb.New(tx).GetService(ctx, scope.ID)
+		if err != nil {
 			return result, err
 		}
+		result.ServiceTrustRevision, result.ServiceProtocol = service.TrustRevision, service.Protocol
+		result.ServiceEndpoint = &ServiceEndpoint{Hostname: permission.Hostname, Port: int(permission.Port), Public: service.Public}
 	}
 	token, err := d.signVisitorPermission(ctx, tx, issuer, permission, clock.entered)
 	if err != nil {

@@ -39,6 +39,11 @@ func visitorTokenResponse(issued controlstate.IssuedVisitorToken) controlv1.Visi
 		Hostname: permission.Hostname, Port: int(permission.Port), VisitorPolicyRevision: permission.VisitorPolicyRevision, ExpiresAt: permission.ExpiresAt, VisitorToken: issued.Token.Reveal()}
 	if permission.Scope.Kind == visitorscope.Service {
 		response.ServiceTrustRevision = &issued.ServiceTrustRevision
+		if issued.ServiceProtocol != "" && issued.ServiceEndpoint != nil {
+			protocol := controlv1.ServiceProtocol(issued.ServiceProtocol)
+			response.ServiceProtocol = &protocol
+			response.ServiceEndpoint = &controlv1.ServiceEndpoint{Hostname: issued.ServiceEndpoint.Hostname, Port: issued.ServiceEndpoint.Port, Public: issued.ServiceEndpoint.Public}
+		}
 	}
 	return response
 }

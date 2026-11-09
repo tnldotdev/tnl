@@ -66,7 +66,7 @@ export function createConnectionScope(options: TnlOptions): ConnectionScope {
       stateDir: pathTextSchema.optional(),
       server: httpsOriginSchema.optional(),
       workload: z.unknown().optional(),
-      credential: z.string().optional(),
+      credential: z.unknown().optional(),
     }),
     options,
     "sdk.configuration_invalid",

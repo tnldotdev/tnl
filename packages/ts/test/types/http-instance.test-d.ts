@@ -1,4 +1,4 @@
-import { createTnl, type TnlHTTPConnection } from "@tnldotdev/tnl";
+import { createTnl, type TnlApplicationCredential, type TnlHTTPConnection } from "@tnldotdev/tnl";
 import { expectTypeOf, test } from "vitest";
 
 test("native instances select explicit HTTP resources with the same helper types", async () => {
@@ -12,5 +12,24 @@ test("native instances select explicit HTTP resources with the same helper types
     close: async () => {},
   });
   expectTypeOf(await get()).toEqualTypeOf<TnlHTTPConnection["fetch"]>();
+  await app.close();
+});
+
+declare const credential: TnlApplicationCredential;
+test("native application documents select the same exact async HTTP boundary", async () => {
+  const app = createTnl({ credential });
+  expectTypeOf(app.connect("url_selected")).toEqualTypeOf<Promise<TnlHTTPConnection>>();
+  const get = app.client("svc_selected", {
+    create: (settings) => {
+      expectTypeOf(settings).toEqualTypeOf<TnlHTTPConnection>();
+      return settings.fetch;
+    },
+    close: async () => {},
+  });
+  expectTypeOf(await get()).toEqualTypeOf<TnlHTTPConnection["fetch"]>();
+  // @ts-expect-error exact application grants cannot select personal project state.
+  app.connect("database");
+  // @ts-expect-error application grants cannot select origins without a resource ID.
+  app.connect("https://app.example");
   await app.close();
 });

@@ -1,4 +1,8 @@
-import { createTnl } from "@tnldotdev/tnl/web";
+import {
+  createTnl,
+  type TnlApplicationCredential,
+  type TnlApplicationResource,
+} from "@tnldotdev/tnl/web";
 
 export function application(env: { readonly TNL_CREDENTIAL: string }) {
   const app = createTnl({ credential: env.TNL_CREDENTIAL });
@@ -16,4 +20,17 @@ export function application(env: { readonly TNL_CREDENTIAL: string }) {
     },
     settings: api,
   };
+}
+
+export async function preparedApplication(
+  credential: TnlApplicationCredential,
+  resource: TnlApplicationResource,
+) {
+  const app = createTnl({ credential });
+  const api = await app.connect(resource);
+  const get = app.client(resource, {
+    create: (connection) => ({ fetch: connection.fetch }),
+    close: async () => {},
+  });
+  return { api, get, close: () => app.close() };
 }

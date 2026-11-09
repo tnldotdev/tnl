@@ -9,7 +9,8 @@ import {
 } from "./internal/project/runtime.js";
 import { TnlError } from "./errors.js";
 import { httpResources } from "./internal/connector/http_resource.js";
-import type { TnlHTTPConnection } from "./client.js";
+import type { TnlHTTPConnection, TnlHTTPInstance } from "./client.js";
+import type { TnlApplicationCredential, TnlApplicationResource } from "./credential.js";
 import type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
 import type { PublishOptions } from "./internal/publisher/publish.js";
 import type { Publication } from "./internal/publisher/publication.js";
@@ -82,9 +83,11 @@ export type TnlInstance = Omit<
   Pick<TnlRuntime, "connect" | "client" | "services" | "prepare" | "publish">,
   "connect" | "client"
 > & {
-  connect: ((resource: `https://${string}`) => TnlHTTPConnection) & TnlRuntime["connect"];
+  connect: ((resource: `https://${string}`) => TnlHTTPConnection) &
+    ((resource: TnlApplicationResource) => Promise<TnlHTTPConnection>) &
+    TnlRuntime["connect"];
   client: (<Client>(
-    resource: `https://${string}`,
+    resource: `https://${string}` | TnlApplicationResource,
     options: TnlClientOptions<TnlHTTPConnection, Client>,
   ) => TnlClientFactory<Client>) &
     TnlRuntime["client"];
@@ -92,7 +95,17 @@ export type TnlInstance = Omit<
   [Symbol.asyncDispose](): Promise<void>;
 };
 
+export type TnlApplicationInstance = Omit<TnlInstance, "connect" | "client"> &
+  TnlHTTPInstance<TnlApplicationResource>;
+
 /** construct an isolated native connection scope without starting native work. */
+export function createTnl(
+  options: TnlOptions & { credential: TnlApplicationCredential },
+): TnlApplicationInstance;
+export function createTnl(
+  options: TnlOptions & { credential: string },
+): Omit<TnlInstance, "connect" | "client"> & TnlHTTPInstance<`https://${string}`>;
+export function createTnl(options?: TnlOptions): TnlInstance;
 export function createTnl(options: TnlOptions = {}): TnlInstance {
   const {
     createConnectionScope,
@@ -105,6 +118,12 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
   if (options.credential !== undefined && options.workload !== undefined)
     throw new TnlError("sdk.configuration_invalid");
   const http = options.credential === undefined ? undefined : httpResources(options.credential);
+  if (
+    http?.controlURL !== undefined &&
+    options.server !== undefined &&
+    options.server !== http.controlURL
+  )
+    throw new TnlError("sdk.configuration_invalid");
   const explicitServer = options.server;
   const workloadSelected =
     scope.workload !== undefined || usesWorkload(scope.key, scope.runtime, false);
@@ -173,6 +192,7 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
     connect: (name: string) => {
       check();
       if (http !== undefined) {
+        if (http.controlURL !== undefined) return http.connect(name as TnlApplicationResource);
         if (!name.startsWith("https://")) throw new TnlError("sdk.credential_denied");
         return http.connect(name as `https://${string}`);
       }
@@ -185,8 +205,9 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
     ) => {
       check();
       if (http !== undefined) {
-        if (!name.startsWith("https://")) throw new TnlError("sdk.credential_denied");
-        return http.client(name as `https://${string}`, settings);
+        if (http.controlURL === undefined && !name.startsWith("https://"))
+          throw new TnlError("sdk.credential_denied");
+        return http.client(name as `https://${string}` | TnlApplicationResource, settings);
       }
       if (name.startsWith("https://")) throw new TnlError("sdk.authentication_required");
       return connectionClient(name, settings, update, scope);

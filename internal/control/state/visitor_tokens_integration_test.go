@@ -82,23 +82,30 @@ func TestIntegrationServicePermissionReportsCurrentTrustRevisionWithoutSelecting
 		t.Fatal(err)
 	}
 	scope := visitorscope.Scope{Kind: visitorscope.Service, ID: service.ID}
-	read := func(want int64) {
+	read := func(want int64, protocol string, public bool) {
 		t.Helper()
 		issued, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, DeviceTokenSource{DeviceID: device.ID}, now)
 		if err != nil || issued.ServiceTrustRevision != want {
 			t.Fatalf("service permission trust revision = %d, want %d: %v", issued.ServiceTrustRevision, want, err)
+		}
+		if issued.ServiceProtocol != protocol || issued.ServiceEndpoint == nil || issued.ServiceEndpoint.Hostname != issued.Permission.Hostname || issued.ServiceEndpoint.Port != int(issued.Permission.Port) || issued.ServiceEndpoint.Public != public {
+			t.Fatal("visitor preparation lost current safe protocol or endpoint metadata")
 		}
 		var runs int
 		if err := d.pool.QueryRow(ctx, `SELECT count(*) FROM control.service_runs WHERE service_id=$1`, service.ID).Scan(&runs); err != nil || runs != 0 {
 			t.Fatal("permission issuance selected a publisher run", err)
 		}
 	}
-	read(service.TrustRevision)
+	read(service.TrustRevision, "http", false)
 	updated, err := d.ConfigureService(ctx, service.ID, principal.IdentityID, ServiceMetadata{Protocol: "tcp", TrustRevision: service.TrustRevision}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	read(updated.TrustRevision)
+	read(updated.TrustRevision, "tcp", false)
+	if _, err := d.pool.Exec(ctx, `UPDATE control.services SET public=true WHERE id=$1`, service.ID); err != nil {
+		t.Fatal(err)
+	}
+	read(updated.TrustRevision, "tcp", true)
 }
 
 func TestIntegrationConcurrentVisitorTokenIssuanceRetriesSerialization(t *testing.T) {

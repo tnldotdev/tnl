@@ -245,6 +245,7 @@ test("native instances use the same explicit HTTP credential without personal pu
   vi.stubGlobal("fetch", dispatch);
   const app = createNativeTnl({ credential });
   expect(await (await app.connect("https://app.example").fetch("/")).text()).toBe("explicit");
+  // @ts-expect-error explicit tokens cannot select project resources.
   expect(() => app.connect("database")).toThrow(
     expect.objectContaining({ code: "sdk.credential_denied" }),
   );

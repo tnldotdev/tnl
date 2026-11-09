@@ -18,6 +18,9 @@ export type TnlErrorCode =
   | "sdk.workload_assertion_unavailable"
   | "sdk.workload_denied"
   | "sdk.credential_denied"
+  | "sdk.credential_invalid"
+  | "sdk.credential_unavailable"
+  | "sdk.credential_response_invalid"
   | "sdk.http_unavailable"
   | "sdk.workload_unavailable"
   | "sdk.workload_response_invalid"
@@ -141,6 +144,21 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     class: "conflict",
     retry: "after_change",
     message: "the selected credential does not authorize this operation",
+  },
+  "sdk.credential_invalid": {
+    class: "invalid",
+    retry: "after_change",
+    message: "the application credential is invalid; check its document and signing key",
+  },
+  "sdk.credential_unavailable": {
+    class: "unavailable",
+    retry: "later",
+    message: "application authorization could not reach control; check its control URL and network",
+  },
+  "sdk.credential_response_invalid": {
+    class: "internal",
+    retry: "after_change",
+    message: "control returned invalid application authority; check server and SDK compatibility",
   },
   "sdk.http_unavailable": {
     class: "unavailable",

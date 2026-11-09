@@ -1,4 +1,3 @@
-import * as z from "zod";
 import type {
   TnlClientFactory,
   TnlClientOptions,
@@ -9,31 +8,19 @@ import { TnlError, privateTnlError } from "../../errors.js";
 import { parseValue } from "../validation.js";
 import { httpsOriginSchema } from "../values.js";
 import { clientFactory } from "./client_factory.js";
+import { applicationHTTP } from "./application_http.js";
+import { credentialSchema } from "./http_credential.js";
+import { cancellable } from "./cancellation.js";
+import type { TnlApplicationCredential, TnlApplicationResource } from "../../credential.js";
 
-export const credentialSchema = z
-  .string()
-  .min(1)
-  .max(2048)
-  .refine((value) => {
-    const parts = value.split(".");
-    if (parts.length !== 3 || parts.some((part) => !/^[A-Za-z0-9_-]+$/.test(part))) return false;
-    if (parts[0] === "vsh1" || parts[0] === "vsg1") {
-      const prefix = parts[0] === "vsh1" ? "shr_" : "shg_";
-      if (!new RegExp(`^${prefix}[A-Za-z0-9]{22}$`).test(parts[1] ?? "") || parts[2]?.length !== 43)
-        return false;
-      try {
-        const secret = parts[2].replaceAll("-", "+").replaceAll("_", "/");
-        return atob(secret).length === 32 && btoa(atob(secret)).replaceAll("=", "") === secret;
-      } catch {
-        return false;
-      }
-    }
-    // signed visitor permissions are opaque here; only the publisher verifies them.
-    return parts[0]?.startsWith("ey") === true;
-  });
-
-export function httpResources(credential: string) {
-  const selected = parseValue(credentialSchema, credential, "sdk.configuration_invalid");
+export function httpResources(credential: string | TnlApplicationCredential) {
+  const selected =
+    typeof credential === "string"
+      ? parseValue(credentialSchema, credential, "sdk.configuration_invalid")
+      : undefined;
+  const setup = new AbortController();
+  const application =
+    typeof credential === "string" ? undefined : applicationHTTP(credential, setup.signal);
   const lifetime = new AbortController();
   const connections = new Map<string, TnlHTTPConnection>();
   const clients = new Set<{ close(): Promise<void> }>();
@@ -43,10 +30,13 @@ export function httpResources(credential: string) {
   const check = () => {
     if (closed) throw new TnlError("sdk.client_closed");
   };
-  const connect = (resource: `https://${string}`): TnlHTTPConnection => {
+  const connection = (
+    url: `https://${string}`,
+    key: string,
+    authorize: (signal: AbortSignal) => Promise<string>,
+  ): TnlHTTPConnection => {
     check();
-    const url = parseValue(httpsOriginSchema, resource, "sdk.configuration_invalid");
-    const existing = connections.get(url);
+    const existing = connections.get(key);
     if (existing !== undefined) return existing;
     if (connections.size >= 64) throw new TnlError("sdk.client_capacity");
     const fetch: TnlFetch = (input, init) => {
@@ -77,7 +67,11 @@ export function httpResources(credential: string) {
           )
             throw new TnlError("sdk.configuration_invalid");
           signal.throwIfAborted();
-          request.headers.set("Tnl-Visitor-Token", selected);
+          request.headers.set(
+            "Tnl-Visitor-Token",
+            await cancellable(signal, () => authorize(signal)),
+          );
+          signal.throwIfAborted();
           let response: Response;
           try {
             response = await globalThis.fetch(request, {
@@ -109,39 +103,75 @@ export function httpResources(credential: string) {
       return operation;
     };
     const connection = Object.freeze({ url, fetch });
-    connections.set(url, connection);
+    connections.set(key, connection);
     return connection;
   };
+  const acquire = async (
+    resource: string,
+  ): Promise<{ key: string; connection: TnlHTTPConnection }> => {
+    check();
+    if (application === undefined) {
+      const url = parseValue(httpsOriginSchema, resource, "sdk.configuration_invalid");
+      const token = selected;
+      if (token === undefined) throw new TnlError("sdk.credential_denied");
+      return { key: url, connection: connection(url, url, async () => token) };
+    }
+    const id = resource as TnlApplicationResource;
+    const prepared = await application.resolve(id);
+    check();
+    return {
+      key: prepared.key,
+      connection: connection(prepared.url, prepared.key, async (signal) => {
+        signal.throwIfAborted();
+        const current = await application.resolve(id);
+        signal.throwIfAborted();
+        if (current.key !== prepared.key) throw new TnlError("sdk.credential_denied");
+        return current.credential;
+      }),
+    };
+  };
+  function connect(resource: `https://${string}`): TnlHTTPConnection;
+  function connect(resource: TnlApplicationResource): Promise<TnlHTTPConnection>;
+  function connect(resource: string): TnlHTTPConnection | Promise<TnlHTTPConnection> {
+    check();
+    if (application !== undefined) return acquire(resource).then((selected) => selected.connection);
+    const url = parseValue(httpsOriginSchema, resource, "sdk.configuration_invalid");
+    const token = selected;
+    if (token === undefined) throw new TnlError("sdk.credential_denied");
+    return connection(url, url, async () => token);
+  }
+  const fence = () => {
+    closed = true;
+    setup.abort(new TnlError("sdk.client_closed"));
+  };
   return {
+    controlURL: application?.controlURL,
     connect,
     client<Client>(
-      resource: `https://${string}`,
+      resource: `https://${string}` | TnlApplicationResource,
       options: TnlClientOptions<TnlHTTPConnection, Client>,
     ): TnlClientFactory<Client> {
       check();
-      const connection = connect(resource);
+      // validate constant-token origins eagerly, retaining the synchronous form.
+      if (application === undefined) connect(resource as `https://${string}`);
       const factory = clientFactory(
-        async () => {
-          check();
-          return { key: connection.url, connection };
-        },
+        () => acquire(resource),
         options,
         () => !closed,
       );
       clients.add(factory);
       return factory;
     },
-    fence() {
-      closed = true;
-    },
+    fence,
     close(): Promise<void> {
-      closed = true;
+      fence();
       if (closing !== undefined) return closing;
       closing = (async () => {
         const results = await Promise.allSettled([...clients].map((client) => client.close()));
         const failures = results.flatMap((result) =>
           result.status === "rejected" ? [result.reason as unknown] : [],
         );
+        await application?.finished();
         if (failures.length > 0) throw new AggregateError(failures, "HTTP client cleanup failed");
         lifetime.abort(new TnlError("sdk.client_closed"));
         await Promise.allSettled(pending);

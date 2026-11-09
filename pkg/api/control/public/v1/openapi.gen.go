@@ -4231,6 +4231,10 @@ type VisitorTokenResponse struct {
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
 	Resource VisitorResourceScope `json:"resource"`
 
+	// ServiceEndpoint Control-owned service TLS identity. Native clients verify this name with system roots. Target trust is a separate publisher-side boundary.
+	ServiceEndpoint *ServiceEndpoint `json:"service_endpoint,omitempty"`
+	ServiceProtocol *ServiceProtocol `json:"service_protocol,omitempty"`
+
 	// ServiceTrustRevision Current service metadata revision, present only for service permissions.
 	ServiceTrustRevision  *int64 `json:"service_trust_revision,omitempty"`
 	VisitorPolicyRevision int64  `json:"visitor_policy_revision"`
