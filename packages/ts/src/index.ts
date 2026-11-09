@@ -86,10 +86,21 @@ export type TnlInstance = Pick<
 
 /** construct an isolated native connection scope without starting native work. */
 export function createTnl(options: TnlOptions = {}): TnlInstance {
-  const { createConnectionScope, closeConnectionScope, connectionHandle, connectionClient } =
-    loadConnection();
+  const {
+    createConnectionScope,
+    closeConnectionScope,
+    connectionHandle,
+    connectionClient,
+    usesWorkload,
+  } = loadConnection();
   const scope = createConnectionScope(options);
   const explicitServer = options.server;
+  const workloadSelected =
+    scope.workload !== undefined || usesWorkload(scope.key, scope.runtime, false);
+  const checkPublisher = () => {
+    // current workload grants authorize visiting only; never use a human publisher.
+    if (workloadSelected) throw new TnlError("sdk.workload_denied");
+  };
   let project: ProjectRuntime | undefined;
   const update = (next: ProjectRuntime) => {
     project = next;
@@ -157,6 +168,7 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
     },
     prepare: (settings: PrepareOptions = {}) =>
       own(async () => {
+        checkPublisher();
         if (explicitServer !== undefined) throw new TnlError("sdk.configuration_invalid");
         const { prepareService } = await import("./internal/publisher/app.js");
         const prepared = await prepareService(
@@ -175,6 +187,7 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
       }),
     publish: (server: LocalHTTPServer | FetchHandler, settings: PublishOptions = {}) =>
       own(async () => {
+        checkPublisher();
         const { publishServer, publishFetch } = await import("./internal/publisher/publish.js");
         const startup = new AbortController();
         const abortStartup = () => startup.abort(lifetime.signal.reason);

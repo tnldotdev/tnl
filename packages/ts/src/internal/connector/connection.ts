@@ -31,7 +31,7 @@ import {
   type WorkloadConfiguration,
 } from "./workload/provider.js";
 import type { SelectionOptions, WorkloadRequest } from "./workload/contract.js";
-export { configureWorkload } from "./workload/provider.js";
+export { configureWorkload, usesWorkload } from "./workload/provider.js";
 import { resolveNativeBinary } from "../native/launcher.js";
 import { launchEnvironment, operation, operationSync, independent } from "../tracing.js";
 import type { ProjectRuntime } from "../project/runtime.js";

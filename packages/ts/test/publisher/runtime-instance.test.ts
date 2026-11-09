@@ -5,6 +5,7 @@ const fixture = vi.hoisted(() => ({
   selected: undefined as AbortSignal | undefined,
   gate: undefined as Promise<void> | undefined,
   fail: false,
+  workload: false,
   scope: {
     key: "scope",
     directory: "/project",
@@ -20,6 +21,7 @@ vi.mock("../../src/internal/connector/connection_bridge.js", () => ({
     },
     connectionHandle: () => ({}),
     connectionClient: () => ({}),
+    usesWorkload: () => fixture.workload,
   }),
 }));
 vi.mock("../../src/internal/publisher/publish.js", () => ({
@@ -41,6 +43,21 @@ beforeEach(() => {
   fixture.selected = undefined;
   fixture.gate = undefined;
   fixture.fail = false;
+  fixture.workload = false;
+});
+
+test("a selected workload cannot fall back to a human publisher", async () => {
+  const { createTnl } = await import("../../src/index.js");
+  fixture.workload = true;
+  const app = createTnl();
+  await expect(app.publish(() => new Response("app"))).rejects.toHaveProperty(
+    "code",
+    "sdk.workload_denied",
+  );
+  await expect(app.prepare()).rejects.toHaveProperty("code", "sdk.workload_denied");
+  expect(fixture.selected).toBeUndefined();
+  expect(fixture.order).toEqual([]);
+  await app.close();
 });
 
 test("instance cleanup drains publications before releasing connector clients", async () => {
