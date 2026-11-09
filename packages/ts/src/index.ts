@@ -9,7 +9,13 @@ import {
 } from "./internal/project/runtime.js";
 import { TnlError } from "./errors.js";
 import type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
-import type { AdHocTunnel, OpenOptions } from "./internal/publisher/open.js";
+import type { PublishOptions } from "./internal/publisher/publish.js";
+import type { Publication } from "./internal/publisher/publication.js";
+export type {
+  Publication,
+  PublicationStatus,
+  PublicationEvent,
+} from "./internal/publisher/publication.js";
 import type { LocalHTTPServer } from "./internal/publisher/register.js";
 import type { FetchHandler } from "./internal/publisher/fetch_types.js";
 import type {
@@ -28,11 +34,10 @@ import type {
 export type * from "./project.js";
 export type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
 export type {
-  AdHocTunnel,
-  OpenOptions,
+  PublishOptions,
   PublisherCredentialFile,
   PublisherIdentityID,
-} from "./internal/publisher/open.js";
+} from "./internal/publisher/publish.js";
 export type { FetchHandler } from "./internal/publisher/fetch_types.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
 
@@ -57,7 +62,10 @@ export type TnlRuntime = Readonly<
       readonly port: number;
       readonly dev: boolean;
       prepare(options?: PrepareOptions): Promise<PreparedService>;
-      open(server: LocalHTTPServer | FetchHandler, options?: OpenOptions): Promise<AdHocTunnel>;
+      publish(
+        server: LocalHTTPServer | FetchHandler,
+        options?: PublishOptions,
+      ): Promise<Publication>;
       connect<Name extends TnlServiceNames<Config>>(
         name: Name,
       ): TnlConnectionHandle<TnlConnection<Config, Name>>;
@@ -68,7 +76,10 @@ export type TnlRuntime = Readonly<
     }
 >;
 
-export type TnlInstance = Pick<TnlRuntime, "connect" | "client" | "services"> & {
+export type TnlInstance = Pick<
+  TnlRuntime,
+  "connect" | "client" | "services" | "prepare" | "publish"
+> & {
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 };
@@ -78,20 +89,119 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
   const { createConnectionScope, closeConnectionScope, connectionHandle, connectionClient } =
     loadConnection();
   const scope = createConnectionScope(options);
+  const explicitServer = options.server;
   let project: ProjectRuntime | undefined;
   const update = (next: ProjectRuntime) => {
     project = next;
   };
-  const close = () => closeConnectionScope(scope);
+  const owned = new Set<{ close(): Promise<void> }>();
+  const pending = new Set<Promise<unknown>>();
+  const lifetime = new AbortController();
+  let closed = false;
+  let closing: Promise<void> | undefined;
+  const check = () => {
+    if (closed) throw new TnlError("sdk.client_closed");
+  };
+  const own = <Value extends { close(): Promise<void> }>(
+    start: () => Promise<Value>,
+  ): Promise<Value> => {
+    check();
+    const work = Promise.resolve().then(async () => {
+      check();
+      const value = await start();
+      owned.add(value);
+      check();
+      return value;
+    });
+    pending.add(work);
+    void work.then(
+      () => pending.delete(work),
+      () => pending.delete(work),
+    );
+    return work;
+  };
+  const close = (): Promise<void> => {
+    closed = true;
+    lifetime.abort(new TnlError("sdk.client_closed"));
+    if (closing !== undefined) return closing;
+    closing = (async () => {
+      await Promise.allSettled(pending);
+      const results = await Promise.allSettled([...owned].map((value) => value.close()));
+      const failures = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason as unknown] : [],
+      );
+      if (failures.length > 0) throw new AggregateError(failures, "publication cleanup failed");
+      await closeConnectionScope(scope);
+      owned.clear();
+    })().catch((error: unknown) => {
+      closing = undefined;
+      throw error;
+    });
+    return closing;
+  };
+  scope.cleanup = close;
   return Object.freeze({
     get services() {
       return serviceMetadata(project);
     },
-    connect: (name: string) => connectionHandle(name, update, scope),
+    connect: (name: string) => {
+      check();
+      return connectionHandle(name, update, scope);
+    },
     client: <Client>(
       name: string,
       settings: TnlClientOptions<TnlConnectionRegistry[keyof TnlConnectionRegistry], Client>,
-    ) => connectionClient(name, settings, update, scope),
+    ) => {
+      check();
+      return connectionClient(name, settings, update, scope);
+    },
+    prepare: (settings: PrepareOptions = {}) =>
+      own(async () => {
+        if (explicitServer !== undefined) throw new TnlError("sdk.configuration_invalid");
+        const { prepareService } = await import("./internal/publisher/app.js");
+        const prepared = await prepareService(
+          {
+            ...settings,
+            directory: settings.directory ?? scope.directory,
+            ...(settings.stateDir === undefined && scope.environment.TNL_STATE_DIR !== undefined
+              ? { stateDir: scope.environment.TNL_STATE_DIR }
+              : {}),
+          },
+          "Bun" in globalThis ? "bun" : "node",
+          scope.key,
+        );
+        update(prepared);
+        return prepared;
+      }),
+    publish: (server: LocalHTTPServer | FetchHandler, settings: PublishOptions = {}) =>
+      own(async () => {
+        const { publishServer, publishFetch } = await import("./internal/publisher/publish.js");
+        const startup = new AbortController();
+        const abortStartup = () => startup.abort(lifetime.signal.reason);
+        lifetime.signal.addEventListener("abort", abortStartup, { once: true });
+        if (lifetime.signal.aborted) abortStartup();
+        const selected: PublishOptions = {
+          ...settings,
+          directory: settings.directory ?? scope.directory,
+          ...(settings.stateDir === undefined && scope.environment.TNL_STATE_DIR !== undefined
+            ? { stateDir: scope.environment.TNL_STATE_DIR }
+            : {}),
+          ...(settings.server === undefined && scope.environment.TNL_SERVER !== undefined
+            ? { server: scope.environment.TNL_SERVER }
+            : {}),
+          signal:
+            settings.signal === undefined
+              ? startup.signal
+              : AbortSignal.any([settings.signal, startup.signal]),
+        };
+        try {
+          return await (typeof server === "function"
+            ? publishFetch(server, selected)
+            : publishServer(server, selected));
+        } finally {
+          lifetime.signal.removeEventListener("abort", abortStartup);
+        }
+      }),
     close,
     [Symbol.asyncDispose]: close,
   }) as TnlInstance;
@@ -129,15 +239,19 @@ export const tnl = Object.freeze({
   async prepare(options: PrepareOptions = {}): Promise<PreparedService> {
     if (typeof process === "undefined") throw new TnlError("sdk.configuration_invalid");
     const { prepareService } = await import("./internal/publisher/app.js");
-    return prepareService(options, "Bun" in globalThis ? "bun" : "node");
+    const prepared = await prepareService(options, "Bun" in globalThis ? "bun" : "node");
+    if (options.directory === undefined) runtime = prepared;
+    return prepared;
   },
-  async open(
+  async publish(
     server: LocalHTTPServer | FetchHandler,
-    options: OpenOptions = {},
-  ): Promise<AdHocTunnel> {
+    options: PublishOptions = {},
+  ): Promise<Publication> {
     if (typeof process === "undefined") throw new TnlError("sdk.configuration_invalid");
-    const { openServer, openFetch } = await import("./internal/publisher/open.js");
-    return typeof server === "function" ? openFetch(server, options) : openServer(server, options);
+    const { publishServer, publishFetch } = await import("./internal/publisher/publish.js");
+    return typeof server === "function"
+      ? publishFetch(server, options)
+      : publishServer(server, options);
   },
   connect(name: string) {
     if (typeof process === "undefined" || typeof process.versions?.node !== "string")

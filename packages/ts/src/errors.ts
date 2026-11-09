@@ -2,6 +2,7 @@ export type TnlErrorCode =
   | "sdk.publication_failed"
   | "sdk.owner_conflict"
   | "sdk.registration_stale"
+  | "sdk.event_cursor_expired"
   | "sdk.authentication_required"
   | "sdk.publisher_setup_required"
   | "sdk.publisher_credential_file_invalid"
@@ -51,6 +52,11 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     class: "conflict",
     retry: "later",
     message: "app registration expired; prepare and register its listener again",
+  },
+  "sdk.event_cursor_expired": {
+    class: "conflict",
+    retry: "after_change",
+    message: "the local event cursor expired; read publication status before resuming events",
   },
   "sdk.authentication_required": {
     class: "unavailable",

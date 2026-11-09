@@ -56,6 +56,7 @@ export interface ConnectionScope {
   native?: Promise<NativeScope>;
   closed: boolean;
   closing?: Promise<void>;
+  cleanup?: () => Promise<void>;
 }
 
 export function createConnectionScope(options: TnlOptions): ConnectionScope {
@@ -274,6 +275,7 @@ function nativeScope(key: string, selection?: ConnectionScope): Promise<NativeSc
       };
       const cleanup = independent("sdk.app.cleanup", async () => {
         if (selection === undefined) await scope.stop();
+        else if (selection.cleanup !== undefined) await selection.cleanup();
         else await closeConnectionScope(selection);
       });
       const beforeExit = () => {

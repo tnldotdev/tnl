@@ -146,9 +146,10 @@ export function runtimeRequest(
   endpoint: RuntimeEndpoint,
   operation: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   return traceOperation("sdk.native.request", () =>
-    runtimeRequestUntraced(endpoint, operation, body),
+    runtimeRequestUntraced(endpoint, operation, body, signal),
   );
 }
 
@@ -156,6 +157,7 @@ function runtimeRequestUntraced(
   endpoint: RuntimeEndpoint,
   operation: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   parseEndpoint(
     endpoint,
@@ -164,24 +166,43 @@ function runtimeRequestUntraced(
       : { invocationID: endpoint.invocation_id },
   );
   if (
-    !["health", "status", "prepare", "register", "renew", "unregister", "ad-hoc/register"].includes(
-      operation,
-    )
+    ![
+      "health",
+      "status",
+      "events",
+      "check",
+      "prepare",
+      "register",
+      "renew",
+      "unregister",
+      "ad-hoc/register",
+    ].includes(operation)
   )
     throw new TnlError("sdk.configuration_invalid");
-  const get = operation === "health" || operation === "status";
+  signal?.throwIfAborted();
+  const get = operation === "health" || operation === "status" || operation === "events";
+  const endpointURL = new URL(`/v1/${operation}`, endpoint.url);
+  if (operation === "events") {
+    const query = parseValue(
+      z.strictObject({ after: z.string().min(1).max(128) }),
+      body,
+      "sdk.configuration_invalid",
+    );
+    endpointURL.searchParams.set("after", query.after);
+  }
   const payload = get ? undefined : JSON.stringify(body);
   if (
-    (get && body !== undefined) ||
+    (get && operation !== "events" && body !== undefined) ||
     (payload !== undefined && Buffer.byteLength(payload) > 64 * 1024)
   )
     throw new TnlError("sdk.configuration_invalid");
   return new Promise((resolve, reject) => {
     const request = http.request(
-      endpoint.url + `/v1/${operation}`,
+      endpointURL,
       {
         method: get ? "GET" : "POST",
         agent: false,
+        ...(signal === undefined ? {} : { signal }),
         headers: {
           ...traceHeaders(),
           Host: endpoint.url.slice("http://".length),
@@ -210,7 +231,10 @@ function runtimeRequestUntraced(
             )
               throw new TnlError("sdk.registration_stale");
             if (response.statusCode === 204) {
-              if (length !== 0 || ["prepare", "status", "ad-hoc/register"].includes(operation))
+              if (
+                length !== 0 ||
+                ["prepare", "status", "check", "events", "ad-hoc/register"].includes(operation)
+              )
                 throw new TnlError("sdk.response_invalid");
               resolve(undefined);
               return;
@@ -221,23 +245,25 @@ function runtimeRequestUntraced(
             if (response.statusCode !== 200) {
               const problem = parseValue(problemSchema, value, "sdk.response_invalid");
               throw new TnlError(
-                problem.code === "runtime.owner_conflict"
-                  ? "sdk.owner_conflict"
-                  : problem.code === "runtime.registration_stale" ||
-                      problem.code === "runtime.unauthorized"
-                    ? "sdk.registration_stale"
-                    : problem.code === "runtime.authentication_required"
-                      ? "sdk.authentication_required"
-                      : problem.code === "runtime.publisher_setup_required"
-                        ? "sdk.publisher_setup_required"
-                        : problem.code === "runtime.publisher_credential_file_invalid"
-                          ? "sdk.publisher_credential_file_invalid"
-                          : response.statusCode !== undefined && response.statusCode >= 500
-                            ? "sdk.dev_unavailable"
-                            : "sdk.request_rejected",
+                problem.code === "runtime.cursor_expired"
+                  ? "sdk.event_cursor_expired"
+                  : problem.code === "runtime.owner_conflict"
+                    ? "sdk.owner_conflict"
+                    : problem.code === "runtime.registration_stale" ||
+                        problem.code === "runtime.unauthorized"
+                      ? "sdk.registration_stale"
+                      : problem.code === "runtime.authentication_required"
+                        ? "sdk.authentication_required"
+                        : problem.code === "runtime.publisher_setup_required"
+                          ? "sdk.publisher_setup_required"
+                          : problem.code === "runtime.publisher_credential_file_invalid"
+                            ? "sdk.publisher_credential_file_invalid"
+                            : response.statusCode !== undefined && response.statusCode >= 500
+                              ? "sdk.dev_unavailable"
+                              : "sdk.request_rejected",
               );
             }
-            if (!["prepare", "status", "ad-hoc/register"].includes(operation))
+            if (!["prepare", "status", "check", "events", "ad-hoc/register"].includes(operation))
               throw new TnlError("sdk.response_invalid");
             resolve(value);
           } catch (cause) {
@@ -255,7 +281,9 @@ function runtimeRequestUntraced(
     );
     deadline.unref();
     request.once("close", () => clearTimeout(deadline));
-    request.on("error", () => reject(new TnlError("sdk.dev_unavailable")));
+    request.on("error", () =>
+      reject(signal?.aborted ? signal.reason : new TnlError("sdk.dev_unavailable")),
+    );
     request.end(payload);
   });
 }

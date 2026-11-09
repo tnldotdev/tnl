@@ -38,7 +38,7 @@ type publisherCommand struct {
 }
 type publisherSetupCommand struct {
 	scopedTeamFlags `embed:""`
-	Namespace       bool   `help:"Set up this team's HTTP namespace for tnl.open."`
+	Namespace       bool   `help:"Set up this team's HTTP namespace for tnl.publish."`
 	URL             string `name:"url" help:"Set up one saved development public URL by ID."`
 	ServiceID       string `name:"service" help:"Set up one exact saved service publisher."`
 	Domain          string `help:"Ready team domain; defaults to the team's default domain."`
@@ -112,7 +112,7 @@ func runPublisherSetup(ctx context.Context, f publisherSetupCommand, output, dia
 	if err != nil {
 		return err
 	}
-	return writeHumanFrame(output, "tnl publisher setup", "ready", "tnl.open can now publish in this namespace", clioutput.Fields(
+	return writeHumanFrame(output, "tnl publisher setup", "ready", "tnl.publish can now publish in this namespace", clioutput.Fields(
 		clioutput.Field{Label: "namespace", Value: namespace}, clioutput.Field{Label: "publisher", Value: identity.ClientId}, clioutput.Field{Label: "grant", Value: identity.GrantId},
 	))
 }

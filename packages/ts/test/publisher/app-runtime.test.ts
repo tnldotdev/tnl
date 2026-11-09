@@ -20,6 +20,81 @@ import { withProcessEnvironment } from "../helpers/environment.js";
 
 afterEach(() => vi.useRealTimers());
 
+test("registration returns a publication handle and superseded handles cannot stop replacements", async () => {
+  let target = "";
+  const request = vi.fn<typeof runtimeRequest>(async (_endpoint, operation, body) => {
+    if (operation === "prepare") return assignment();
+    if (operation === "register") target = z.object({ target: z.string() }).parse(body).target;
+    if (operation === "status" || operation === "check")
+      return {
+        schema_version: 1,
+        project: "/project",
+        cursor: "current",
+        observed_at: new Date().toISOString(),
+        services: [
+          {
+            service: "api",
+            directory: ".",
+            registration_id: `reg_${"a".repeat(32)}`,
+            target,
+            registered: true,
+            routable: true,
+            ready: operation === "check",
+            run_number: 1,
+            readiness: { path: "/" },
+            ...(operation === "check"
+              ? {
+                  observation: {
+                    registration_id: `reg_${"a".repeat(32)}`,
+                    run_number: 1,
+                    checked_at: new Date().toISOString(),
+                    ready: true,
+                    readiness: { path: "/" },
+                  },
+                }
+              : {}),
+          },
+        ],
+      };
+    return undefined;
+  });
+  const prepared = await createPreparedService({}, "node", {
+    start: async () => testEndpoint,
+    request,
+  });
+  const first = createServer(),
+    second = createServer();
+  await Promise.all(
+    [first, second].map(
+      (server) => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
+    ),
+  );
+  onTestFinished(async () => {
+    await prepared.close();
+    await Promise.all(
+      [first, second].map(
+        (server) => new Promise<void>((resolve) => server.close(() => resolve())),
+      ),
+    );
+  });
+  const a = await prepared.register(first);
+  expect(request.mock.calls.map(([, operation]) => operation)).toEqual(["prepare", "register"]);
+  await a.wait();
+  const finished = a.finished();
+  const b = await prepared.register(second);
+  await finished;
+  await expect(a.status()).rejects.toHaveProperty("code", "sdk.registration_stale");
+  const unregistered = () =>
+    request.mock.calls.filter(([, operation]) => operation === "unregister").length;
+  await a.close();
+  expect(unregistered()).toBe(0);
+  expect(await b.status()).toMatchObject({ registered: true, routable: true });
+  await b.close();
+  await b.finished();
+  expect(unregistered()).toBe(1);
+  expect(second.listening).toBe(true);
+});
+
 test("independent SDK copies share preparation and framework callbacks through close and reprepare", async () => {
   const first = await import("../../dist/internal/publisher/app.js");
   vi.resetModules();

@@ -12,7 +12,7 @@ const publicationSchema = z.strictObject({
   process_id: runNumberSchema,
   server: textSchema,
   project: textSchema,
-  service: textSchema,
+  service: textSchema.optional(),
   service_protocol: textSchema.exactOptional(),
   public_url_id: textSchema.exactOptional(),
   publish_run_number: runNumberSchema.exactOptional(),
@@ -29,7 +29,7 @@ const publicationSchema = z.strictObject({
 });
 const observationSchema = z.strictObject({
   registration_id: z.string(),
-  publish_run_number: runNumberSchema,
+  run_number: runNumberSchema,
   checked_at: timestampSchema,
   status: z.int().min(100).max(599).optional(),
   ready: z.boolean(),
@@ -54,7 +54,7 @@ const serviceStatusSchema = z.strictObject({
   registered: z.boolean(),
   routable: z.boolean(),
   ready: z.boolean(),
-  publish_run_number: runNumberSchema.optional(),
+  run_number: runNumberSchema.optional(),
   provisioning_stage: textSchema.optional(),
   readiness: z.strictObject({ path: z.string().startsWith("/").max(4096) }),
   observation: observationSchema.optional(),
@@ -74,12 +74,14 @@ function publicationStatus(item: z.output<typeof serviceStatusSchema>) {
     registered: item.registered,
     routable: item.routable,
     ready: item.ready,
+    ...(item.tunnel_id === undefined ? {} : { tunnelID: item.tunnel_id }),
     ...(item.public_url === undefined ? {} : { publicURL: item.public_url }),
-    ...(item.publish_run_number === undefined ? {} : { publishRunNumber: item.publish_run_number }),
+    ...(item.run_number === undefined ? {} : { publishRunNumber: item.run_number }),
+    ...(item.observation === undefined ? {} : { checkedAt: item.observation.checked_at }),
     ...(item.failure === undefined ? {} : { failure: item.failure }),
   };
 }
-export type PublicationStatus = Readonly<ReturnType<typeof publicationStatus>>;
+export type PublicationStatus = Readonly<ReturnType<typeof publicationStatus> & { cursor: string }>;
 
 export function parseStatus(
   value: unknown,
@@ -88,21 +90,75 @@ export function parseStatus(
   target: string,
 ): PublicationStatus | undefined {
   const snapshot = parseValue(statusSchema, value, "sdk.response_invalid");
-  if (snapshot.publications?.some((publication) => publication.service !== service))
-    throw new TnlError("sdk.response_invalid");
   const item = snapshot.services[0];
   if (item === undefined) return undefined;
+  if (
+    snapshot.publications?.some(
+      (publication) =>
+        publication.service !== service &&
+        (item.tunnel_id === undefined || publication.tunnel_id !== item.tunnel_id),
+    )
+  )
+    throw new TnlError("sdk.response_invalid");
   if (
     item.service !== service ||
     (item.ready &&
       (item.observation === undefined ||
         item.observation.registration_id !== registrationID ||
-        item.observation.publish_run_number !== item.publish_run_number ||
+        item.observation.run_number !== item.run_number ||
+        item.observation.readiness.path !== item.readiness.path ||
         !item.observation.ready))
   )
     throw new TnlError("sdk.response_invalid");
   if (item.registration_id !== registrationID || item.target !== target) return undefined;
-  if (item.routable && (!item.registered || item.publish_run_number === undefined))
+  if (item.routable && (!item.registered || item.run_number === undefined))
     throw new TnlError("sdk.response_invalid");
-  return publicationStatus(item);
+  return { ...publicationStatus(item), cursor: snapshot.cursor };
+}
+
+export function statusCursor(value: unknown): { cursor: string; at: string } {
+  const snapshot = parseValue(statusSchema, value, "sdk.response_invalid");
+  return { cursor: snapshot.cursor, at: snapshot.observed_at };
+}
+
+const eventSchema = z.strictObject({
+  cursor: z.string().min(1).max(128),
+  type: z.string().min(1).max(128),
+  at: timestampSchema,
+  service: serviceStatusSchema.optional(),
+  snapshot: statusSchema.optional(),
+  publication: publicationSchema.optional(),
+});
+
+export type PublicationEvent = Readonly<z.output<typeof eventSchema>>;
+
+export function parseEvents(
+  value: unknown,
+  service: string,
+  tunnelID?: string,
+): readonly PublicationEvent[] {
+  const events = parseValue(z.array(eventSchema).max(4096), value, "sdk.response_invalid");
+  for (const event of events) {
+    if (
+      (event.service !== undefined && event.service.service !== service) ||
+      event.snapshot?.services.some((item) => item.service !== service)
+    )
+      throw new TnlError("sdk.response_invalid");
+    const ownIDs = [
+      tunnelID,
+      event.service?.tunnel_id,
+      ...(event.snapshot?.services.map((item) => item.tunnel_id) ?? []),
+    ].filter((id) => id !== undefined);
+    const publications = [
+      ...(event.snapshot?.publications ?? []),
+      ...(event.publication === undefined ? [] : [event.publication]),
+    ];
+    if (
+      publications.some(
+        (publication) => publication.service !== service && !ownIDs.includes(publication.tunnel_id),
+      )
+    )
+      throw new TnlError("sdk.response_invalid");
+  }
+  return events;
 }

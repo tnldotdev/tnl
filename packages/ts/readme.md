@@ -56,14 +56,20 @@ For a temporary URL without project configuration, first run
 ```ts
 import { tnl } from "@tnldotdev/tnl";
 
-const tunnel = await tnl.open(() => new Response("hello"));
+const tunnel = await tnl.publish(() => new Response("hello"));
 console.log(tunnel.url);
-await tunnel.wait();
+await tunnel.finished();
 ```
 
-`open` waits until the public URL can receive visitors. Keep the tunnel open
+`publish` waits until the public URL can receive visitors. Keep the tunnel open
 while using it; call `await tunnel.close()` during shutdown to remove the URL.
 By default, visitors need a current sign-in, share link, or token.
+
+`wait()` requests fresh application readiness; `wait({ until: "routable" })`
+waits only for traffic routing. `status()` reads without probing, and `watch()`
+resumes native events using exclusive cursors. `finished()` waits for termination.
+Cancelling a wait or watch does not stop the publication. `prepare().register()`
+returns the same publication handle without blocking listener startup on readiness.
 
 ## connect to a service
 

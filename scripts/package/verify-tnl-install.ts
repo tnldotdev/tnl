@@ -64,7 +64,7 @@ for (const manager of ["npm", "pnpm"]) {
       const cjs = createRequire(import.meta.url)('@tnldotdev/tnl');
       assert.equal(cjs.tnl, tnl);
       assert.equal(typeof TnlError, 'function');
-      for (const value of [tnl.prepare, tnl.open, tnl.connect, tnl.client, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
+      for (const value of [tnl.prepare, tnl.publish, tnl.connect, tnl.client, defineConfig, withTnl, vite, configureWorkload]) assert.equal(typeof value, 'function');
       for (const root of [{tnl, TnlError}, cjs]) {
         const getClient = root.tnl.client('database', {
           create() { throw new Error('factory creation must remain lazy'); },

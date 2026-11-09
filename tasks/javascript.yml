@@ -1,6 +1,12 @@
 version: "3"
 
 tasks:
+  test:publications:
+    desc: Check publication handles, fresh readiness, scoped journal observation and listener ownership
+    deps: [":js:build"]
+    cmds:
+      - pnpm exec vitest run packages/ts/test/publisher/publication.test.ts packages/ts/test/publisher/runtime-instance.test.ts packages/ts/test/publisher/observation-http.test.ts packages/ts/test/publisher/status.test.ts packages/ts/test/publisher/adhoc-open.test.ts packages/ts/test/publisher/adhoc-fetch.test.ts packages/ts/test/publisher/app-runtime.test.ts
+
   test:client-factories:
     dir: "{{.ROOT_DIR}}"
     desc: Check ordinary client caching, exact native bindings and joined driver cleanup

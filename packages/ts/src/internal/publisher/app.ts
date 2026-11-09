@@ -20,6 +20,7 @@ import {
 } from "./local.js";
 import { listeningTarget, isBunServer, type LocalHTTPServer } from "./register.js";
 import { projectRuntimeSchema, type ProjectRuntime } from "../project/runtime.js";
+import { publicationHandle, type Publication } from "./publication.js";
 export { startRuntime, runtimeRequest } from "./local.js";
 
 const prepareOptionsSchema = z
@@ -36,7 +37,7 @@ export interface PreparedService extends ProjectRuntime {
   readonly hostname: string | undefined;
   readonly publicURL: `https://${string}` | undefined;
   /** acknowledges a bound listener; use tnl wait for public readiness. */
-  register(server: LocalHTTPServer): Promise<void>;
+  register(server: LocalHTTPServer): Promise<Publication>;
   /** unregisters publication without stopping the application listener. */
   close(): Promise<void>;
 }
@@ -115,10 +116,11 @@ type Framework = "node" | "bun" | "vite" | "next";
 export function prepareService(
   options: PrepareOptions = {},
   framework: Framework = "node",
+  scope = "",
 ): Promise<PreparedService> {
   validateOptions(options);
   const directory = path.resolve(options.directory ?? process.cwd());
-  const key = `${directory}\0${options.service ?? ""}\0${options.stateDir ?? process.env.TNL_STATE_DIR ?? ""}\0${process.env.TNL_APP_ENDPOINT ?? ""}\0${framework}`;
+  const key = `${directory}\0${options.service ?? ""}\0${options.stateDir ?? process.env.TNL_STATE_DIR ?? ""}\0${process.env.TNL_APP_ENDPOINT ?? ""}\0${framework}\0${scope}`;
   const existing = registry.preparations.get(key);
   if (existing !== undefined) return existing;
   const evict = () => {
@@ -177,11 +179,24 @@ async function createPreparedServiceUntraced(
   let server: LocalHTTPServer | undefined;
   let revision = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let pending = Promise.resolve();
+  let pending: Promise<unknown> = Promise.resolve();
   let closing: Promise<void> | undefined;
   const lifetime = new AbortController();
+  let active:
+    | {
+        readonly revision: number;
+        readonly lifetime: AbortController;
+        readonly done: Promise<void>;
+        finish(): void;
+      }
+    | undefined;
+  const finishPublication = () => {
+    active?.lifetime.abort(new TnlError("sdk.registration_stale"));
+    active?.finish();
+    active = undefined;
+  };
   const isClosed = () => state.phase === "closed";
-  const enqueue = (operation: () => Promise<void>) => {
+  const enqueue = <Result>(operation: () => Promise<Result>): Promise<Result> => {
     const result = pending.catch(() => {}).then(operation);
     pending = result;
     return result;
@@ -226,6 +241,7 @@ async function createPreparedServiceUntraced(
       if (!recoverable(error)) throw error;
     }
     if (state.phase !== "closed") state = { phase: "released", registration: current };
+    finishPublication();
   };
   const schedule = () => {
     if (state.phase !== "prepared") return;
@@ -298,12 +314,14 @@ async function createPreparedServiceUntraced(
     }
     if (isClosed() || (listener !== undefined && !isBunServer(listener) && !listener.listening))
       throw new TnlError("sdk.listener_failed");
+    finishPublication();
     schedule();
   };
   const close = (): Promise<void> => {
     if (closing !== undefined) return closing;
     state = { phase: "closed", registration: state.registration };
     lifetime.abort(new TnlError("sdk.registration_stale"));
+    active?.lifetime.abort(new TnlError("sdk.registration_stale"));
     clearTimeout(timer);
     process.off("beforeExit", beforeExit);
     onClose();
@@ -314,7 +332,10 @@ async function createPreparedServiceUntraced(
           ? "vite.cleanup"
           : "sdk.app.cleanup",
       () => enqueue(release),
-    );
+    ).catch((cause: unknown) => {
+      closing = undefined;
+      throw cause;
+    });
     return closing;
   };
   const exitCleanup = scheduled(close);
@@ -332,6 +353,41 @@ async function createPreparedServiceUntraced(
       operation("sdk.app.register", () =>
         enqueue(async () => {
           await setTarget(await listeningTarget(listener, { signal: lifetime.signal }), listener);
+          const done = Promise.withResolvers<void>();
+          const selected = {
+            revision,
+            lifetime: new AbortController(),
+            done: done.promise,
+            finish: () => done.resolve(),
+          };
+          active = selected;
+          return publicationHandle({
+            current: () => {
+              if (
+                active !== selected ||
+                selected.revision !== revision ||
+                state.phase !== "prepared" ||
+                target === undefined
+              )
+                throw new TnlError("sdk.registration_stale");
+              return {
+                endpoint: state.registration.endpoint,
+                registrationID: state.registration.assignment.registrationID,
+                service: initial.service,
+                target,
+              };
+            },
+            url: () => initial.publicURL,
+            lifetime: selected.lifetime.signal,
+            close: () => {
+              selected.lifetime.abort(new TnlError("sdk.registration_stale"));
+              return enqueue(async () => {
+                if (active === selected) await release();
+              });
+            },
+            finished: () => selected.done,
+            request: dependencies.request,
+          });
         }),
       ),
     close,

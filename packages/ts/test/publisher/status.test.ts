@@ -13,11 +13,11 @@ const service = {
   routable: true,
   ready: true,
   public_url: "https://web.example",
-  publish_run_number: 2,
+  run_number: 2,
   readiness: { path: "/ready" },
   observation: {
     registration_id: registrationID,
-    publish_run_number: 2,
+    run_number: 2,
     checked_at: "2026-11-03T00:00:00Z",
     ready: true,
     status: 200,
@@ -40,6 +40,8 @@ describe("publisher status replies", () => {
       ready: true,
       publicURL: service.public_url,
       publishRunNumber: 2,
+      checkedAt: service.observation.checked_at,
+      cursor: "cursor",
     });
     expect(parseStatus(snapshot, "web", registrationID, "http://127.0.0.1:4000")).toBeUndefined();
     expect(
@@ -50,7 +52,7 @@ describe("publisher status replies", () => {
   test.each([
     { ...service, observation: undefined },
     { ...service, observation: { ...service.observation, ready: false } },
-    { ...service, observation: { ...service.observation, publish_run_number: 1 } },
+    { ...service, observation: { ...service.observation, run_number: 1 } },
     {
       ...service,
       observation: { ...service.observation, registration_id: `reg_${"b".repeat(32)}` },
