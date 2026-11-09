@@ -17,6 +17,8 @@ export type TnlErrorCode =
   | "sdk.workload_manifest_invalid"
   | "sdk.workload_assertion_unavailable"
   | "sdk.workload_denied"
+  | "sdk.credential_denied"
+  | "sdk.http_unavailable"
   | "sdk.workload_unavailable"
   | "sdk.workload_response_invalid"
   | "sdk.runtime_invalid"
@@ -134,6 +136,16 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     class: "conflict",
     retry: "after_change",
     message: "workload access was denied; check the saved workload policy and service access",
+  },
+  "sdk.credential_denied": {
+    class: "conflict",
+    retry: "after_change",
+    message: "the selected credential does not authorize this operation",
+  },
+  "sdk.http_unavailable": {
+    class: "unavailable",
+    retry: "later",
+    message: "the HTTP resource could not be reached; check its public URL and network",
   },
   "sdk.workload_unavailable": {
     class: "unavailable",

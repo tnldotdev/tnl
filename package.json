@@ -12,7 +12,7 @@
     "test:run": "vitest run",
     "test:coverage": "pnpm build && vitest run --coverage --mode coverage",
     "typecheck": "pnpm build && pnpm typecheck:run",
-    "typecheck:run": "vitest run --config vitest.types.config.ts && tsc --project internal/publisher/toolbar/tsconfig.json && tsc --project tsconfig.json"
+    "typecheck:run": "vitest run --config vitest.types.config.ts && tsc --project internal/publisher/toolbar/tsconfig.json && tsc --project tsconfig.json && tsc --project packages/ts/test/fixtures/web-only/tsconfig.json"
   },
   "devDependencies": {
     "@apidevtools/json-schema-ref-parser": "15.5.2",

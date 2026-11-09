@@ -8,6 +8,8 @@ import {
   type ProjectRuntime,
 } from "./internal/project/runtime.js";
 import { TnlError } from "./errors.js";
+import { httpResources } from "./internal/connector/http_resource.js";
+import type { TnlHTTPConnection } from "./client.js";
 import type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
 import type { PublishOptions } from "./internal/publisher/publish.js";
 import type { Publication } from "./internal/publisher/publication.js";
@@ -76,10 +78,16 @@ export type TnlRuntime = Readonly<
     }
 >;
 
-export type TnlInstance = Pick<
-  TnlRuntime,
-  "connect" | "client" | "services" | "prepare" | "publish"
+export type TnlInstance = Omit<
+  Pick<TnlRuntime, "connect" | "client" | "services" | "prepare" | "publish">,
+  "connect" | "client"
 > & {
+  connect: ((resource: `https://${string}`) => TnlHTTPConnection) & TnlRuntime["connect"];
+  client: (<Client>(
+    resource: `https://${string}`,
+    options: TnlClientOptions<TnlHTTPConnection, Client>,
+  ) => TnlClientFactory<Client>) &
+    TnlRuntime["client"];
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 };
@@ -94,11 +102,15 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
     usesWorkload,
   } = loadConnection();
   const scope = createConnectionScope(options);
+  if (options.credential !== undefined && options.workload !== undefined)
+    throw new TnlError("sdk.configuration_invalid");
+  const http = options.credential === undefined ? undefined : httpResources(options.credential);
   const explicitServer = options.server;
   const workloadSelected =
     scope.workload !== undefined || usesWorkload(scope.key, scope.runtime, false);
   const checkPublisher = () => {
     // current workload grants authorize visiting only; never use a human publisher.
+    if (http !== undefined) throw new TnlError("sdk.credential_denied");
     if (workloadSelected) throw new TnlError("sdk.workload_denied");
   };
   let project: ProjectRuntime | undefined;
@@ -133,6 +145,8 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
   };
   const close = (): Promise<void> => {
     closed = true;
+    scope.closed = true;
+    http?.fence();
     lifetime.abort(new TnlError("sdk.client_closed"));
     if (closing !== undefined) return closing;
     closing = (async () => {
@@ -142,6 +156,7 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
         result.status === "rejected" ? [result.reason as unknown] : [],
       );
       if (failures.length > 0) throw new AggregateError(failures, "publication cleanup failed");
+      await http?.close();
       await closeConnectionScope(scope);
       owned.clear();
     })().catch((error: unknown) => {
@@ -157,6 +172,11 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
     },
     connect: (name: string) => {
       check();
+      if (http !== undefined) {
+        if (!name.startsWith("https://")) throw new TnlError("sdk.credential_denied");
+        return http.connect(name as `https://${string}`);
+      }
+      if (name.startsWith("https://")) throw new TnlError("sdk.authentication_required");
       return connectionHandle(name, update, scope);
     },
     client: <Client>(
@@ -164,6 +184,11 @@ export function createTnl(options: TnlOptions = {}): TnlInstance {
       settings: TnlClientOptions<TnlConnectionRegistry[keyof TnlConnectionRegistry], Client>,
     ) => {
       check();
+      if (http !== undefined) {
+        if (!name.startsWith("https://")) throw new TnlError("sdk.credential_denied");
+        return http.client(name as `https://${string}`, settings);
+      }
+      if (name.startsWith("https://")) throw new TnlError("sdk.authentication_required");
       return connectionClient(name, settings, update, scope);
     },
     prepare: (settings: PrepareOptions = {}) =>

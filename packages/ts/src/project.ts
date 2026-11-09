@@ -2,6 +2,8 @@ import type { TnlProtocol } from "./config.js";
 import type { ProjectServiceMetadata, ServiceProtocol } from "./internal/project/runtime.js";
 import type { NativeTLSOptions } from "./internal/connector/snapshot.js";
 import type { WorkloadOptions } from "./workload.js";
+import type { TnlFetch } from "./client.js";
+export type { TnlFetch, TnlHTTPConnection, TnlClientFactory, TnlClientOptions } from "./client.js";
 
 /** immutable selection for one independently owned runtime instance. */
 export type TnlOptions = Readonly<{
@@ -9,6 +11,7 @@ export type TnlOptions = Readonly<{
   stateDir?: string;
   server?: string;
   workload?: WorkloadOptions;
+  credential?: string;
 }>;
 
 /** browser-safe addresses only; native credentials are returned by node methods. */
@@ -21,9 +24,6 @@ export type TnlProtocolRegistry = {
 
 /** native TLS options exist only in the result of a node connection method. */
 export type TnlNativeTLSOptions = NativeTLSOptions;
-
-/** standard fetch calls, independent of platform-specific static helpers. */
-export type TnlFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export interface TnlConnectionRegistry {
   postgres: {
@@ -59,19 +59,6 @@ declare abstract class ConnectionPreparation<Settings> implements PromiseLike<Se
 
 /** await to prepare; synchronous workload reads require an explicit prepared handle. */
 export type TnlConnectionHandle<Settings> = Settings & ConnectionPreparation<Settings>;
-
-/** callbacks adapt ordinary drivers without adding a driver-specific tnl wrapper. */
-export type TnlClientOptions<Connection, Client> = Readonly<{
-  create(connection: Connection): Client | PromiseLike<Client>;
-  close(client: Client): void | PromiseLike<void>;
-}>;
-
-/** each call selects current native authority before returning its cached client. */
-export type TnlClientFactory<Client> = {
-  (): Promise<Client>;
-  /** join pending creation and close only this factory's ordinary clients. */
-  close(): Promise<void>;
-};
 
 type DeepReadonly<Value> = Value extends object
   ? { readonly [Key in keyof Value]: DeepReadonly<Value[Key]> }

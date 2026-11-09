@@ -49,6 +49,11 @@
       "import": "./dist/config.js",
       "default": "./dist/config.js"
     },
+    "./web": {
+      "types": "./dist/web.d.ts",
+      "import": "./dist/web.js",
+      "default": "./dist/web.js"
+    },
     "./workload": {
       "types": "./dist/workload.d.ts",
       "node": {

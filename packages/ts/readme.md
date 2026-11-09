@@ -146,5 +146,38 @@ Supply `workload: { name, token }` or `workload: { name, tokenFile }` to isolate
 workload source on the instance. Provider callbacks read the current request; they
 are not background refresh sources.
 
+## fetch with an explicit visitor token
+
+Use the Fetch-only entry point in a server runtime without native processes:
+
+```ts
+import { createTnl } from "@tnldotdev/tnl/web";
+
+const app = createTnl({ credential: env.TNL_CREDENTIAL });
+const api = app.connect("https://preview.example.com");
+const response = await api.fetch("/stock", {
+  headers: { Authorization: `Bearer ${applicationToken}` },
+});
+
+// during application shutdown, after using the response body
+await app.close();
+```
+
+Store the token printed by `tnl share token create` or `tnl share service token
+create` in a server-side secret. Do not put it in browser code. The web entry
+requires an explicit HTTPS origin and a visitor token; it does not select named
+services, enroll an identity, publish, or connect to databases. The native
+`createTnl` accepts the same explicit-token HTTP form without falling back to a
+personal session.
+
+`fetch` returns the standard response, preserves application headers and bodies,
+and sends the tnl credential separately. It does not follow redirects, send
+ambient browser credentials, retry a request, or switch identities. `client(url,
+{ create, close })` reuses the same ordinary client factory as native connections.
+Close the instance when its work ends; cleanup cancels its remaining Fetch calls
+and response streams after closing its clients. Failed client cleanup remains
+retryable. See [HTTP runtimes](https://tnl.dev/docs/serverless-http) for the current
+boundaries and platform qualification requirements.
+
 The CLI enables pseudonymous telemetry by default. Set `TNL_NO_TELEMETRY=true`
 to disable it; see [telemetry](https://tnl.dev/docs/cli#telemetry).

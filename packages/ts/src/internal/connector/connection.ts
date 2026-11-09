@@ -66,6 +66,7 @@ export function createConnectionScope(options: TnlOptions): ConnectionScope {
       stateDir: pathTextSchema.optional(),
       server: httpsOriginSchema.optional(),
       workload: z.unknown().optional(),
+      credential: z.string().optional(),
     }),
     options,
     "sdk.configuration_invalid",
@@ -793,15 +794,19 @@ export function connectionClient<Client>(
   if (selection?.closed) throw new TnlError("sdk.client_closed");
   if (!isServiceName(name)) throw new TnlError("sdk.configuration_invalid");
   const externalFile = selection === undefined ? process.env.TNL_CONNECTION_HANDLE : undefined;
-  const factory = clientFactory(async () => {
-    const prepared = await prepare(name, externalFile, selection);
-    updateProject(prepared.project);
-    const { expires: _expires, ...binding } = prepared.snapshot;
-    return {
-      key: JSON.stringify([prepared.file, binding]),
-      connection: settings(name, prepared.snapshot, externalFile, selection),
-    };
-  }, options);
+  const factory = clientFactory(
+    async () => {
+      const prepared = await prepare(name, externalFile, selection);
+      updateProject(prepared.project);
+      const { expires: _expires, ...binding } = prepared.snapshot;
+      return {
+        key: JSON.stringify([prepared.file, binding]),
+        connection: settings(name, prepared.snapshot, externalFile, selection),
+      };
+    },
+    options,
+    () => selection?.closed !== true,
+  );
   selection?.clients.add(factory);
   return factory;
 }

@@ -1,16 +1,17 @@
 import { TnlError } from "../../errors.js";
-import type { TnlClientFactory, TnlClientOptions } from "../../project.js";
+import type { TnlClientFactory, TnlClientOptions } from "../../client.js";
 
 type Entry<Client> = {
   readonly created: Promise<Client>;
   closed: boolean;
 };
 
-// native selects the exact binding; this cache owns only ordinary driver values.
-// expiry is deliberately absent from its key: native owns renewable authority.
+// acquisition selects the exact binding; this cache owns ordinary client values.
+// expiry is absent from its key: the runtime owns renewable authority.
 export function clientFactory<Connection, Client>(
   acquire: () => Promise<{ readonly key: string; readonly connection: Connection }>,
   options: TnlClientOptions<Connection, Client>,
+  active: () => boolean = () => true,
 ): TnlClientFactory<Client> {
   if (typeof options?.create !== "function" || typeof options.close !== "function")
     throw new TnlError("sdk.configuration_invalid");
@@ -21,18 +22,18 @@ export function clientFactory<Connection, Client>(
   let closing: Promise<void> | undefined;
 
   const get = (): Promise<Client> => {
-    if (closed) return Promise.reject(closedError);
+    if (closed || !active()) return Promise.reject(closedError);
     // register before invoking acquisition or application callbacks. close joins
     // every admitted getter, including one still waiting for native selection.
     const operation = Promise.resolve().then(async () => {
-      if (closed) throw closedError;
+      if (closed || !active()) throw closedError;
       const binding = await acquire();
-      if (closed) throw closedError;
+      if (closed || !active()) throw closedError;
       let entry = entries.get(binding.key);
       if (entry === undefined) {
         if (entries.size >= 64) throw new TnlError("sdk.client_capacity");
         const created: Promise<Client> = Promise.resolve().then(async () => {
-          if (closed) throw closedError;
+          if (closed || !active()) throw closedError;
           return options.create(binding.connection);
         });
         entry = { created, closed: false };
@@ -43,7 +44,7 @@ export function clientFactory<Connection, Client>(
         });
       }
       const value = await entry.created;
-      if (closed) throw closedError;
+      if (closed || !active()) throw closedError;
       return value;
     });
     pending.add(operation);
