@@ -29,7 +29,8 @@ from ._protocol import (
     TnlError,
 )
 from ._publication import Publication
-from ._workload import configure_workload
+from ._runtime import TnlInstance, create_tnl
+from ._workload import Workload, configure_workload
 
 __all__ = [
     "AccessPolicy",
@@ -58,6 +59,9 @@ __all__ = [
     "PublicationEvent",
     "PublicationStatus",
     "Server",
+    "TnlInstance",
+    "Workload",
+    "create_tnl",
     "handler",
     "connect",
     "client",

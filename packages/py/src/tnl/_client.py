@@ -46,10 +46,12 @@ class _Factory[C, T]:
         create: Callable[[C], T | Awaitable[T]],
         close: Callable[[T], None | Awaitable[None]],
         finalize: Callable[[], Awaitable[list[BaseException]]] | None = None,
+        active: Callable[[], bool] = lambda: True,
     ) -> None:
         if not callable(create) or not callable(close):
             raise TnlError("sdk.configuration_invalid", "supply create and close client callbacks")
         self._acquire = acquire
+        self._active = active
         self._create = create
         self._close = close
         self._finalize = finalize
@@ -80,7 +82,7 @@ class _Factory[C, T]:
         return loop
 
     async def __call__(self) -> T:
-        if self._pid != os.getpid() or self._closed:
+        if self._pid != os.getpid() or self._closed or not self._active():
             raise self._closed_error
         loop = self._context()
         operation = loop.create_task(self._result())
@@ -104,10 +106,10 @@ class _Factory[C, T]:
             return _Outcome(error=error)
 
     async def _get(self) -> T:
-        if self._closed:
+        if self._closed or not self._active():
             raise self._closed_error
         key, connection = await self._acquire()
-        if self._closed:
+        if self._closed or not self._active():
             raise self._closed_error
         entry = self._entries.get(key)
         if entry is None:
@@ -128,13 +130,13 @@ class _Factory[C, T]:
 
             created.add_done_callback(failed)
         value = (await asyncio.shield(entry.created)).unwrap()
-        if self._closed:
+        if self._closed or not self._active():
             raise self._closed_error
         return value
 
     async def _make(self, connection: C) -> _Outcome[T]:
         try:
-            if self._closed:
+            if self._closed or not self._active():
                 raise self._closed_error
             value = self._create(connection)
             if inspect.isawaitable(value):
@@ -255,6 +257,7 @@ def connection_client[C: Connection, T](
     *,
     create: Callable[[C], T | Awaitable[T]],
     close: Callable[[T], None | Awaitable[None]],
+    active: Callable[[], bool] = lambda: True,
 ) -> ClientFactory[T]:
     failed = _FailedAcquisitions()
 
@@ -287,7 +290,7 @@ def connection_client[C: Connection, T](
             key += (connection.kubeconfig, connection.context)
         return key, connection
 
-    return _Factory(acquire, create=create, close=close, finalize=failed.close)
+    return _Factory(acquire, create=create, close=close, finalize=failed.close, active=active)
 
 
 def client[T](

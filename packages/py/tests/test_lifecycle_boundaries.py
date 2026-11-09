@@ -55,7 +55,17 @@ def test_slow_ipc_reply_has_one_deadline_and_joins_workers(
     probe(f"ipc-{owner}-{phase}", tmp_path)
 
 
-@pytest.mark.parametrize("mode", ["fork-unlocked", "fork-locked", "fork-busy"])
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "fork-unlocked",
+        "fork-locked",
+        "fork-busy",
+        "fork-instance-unlocked",
+        "fork-instance-locked",
+        "fork-instance-busy",
+    ],
+)
 def test_forked_exit_and_inherited_handles_cannot_stop_parent_owner(
     tmp_path: Path, native_connections: tuple[Path, Path], mode: str
 ) -> None:

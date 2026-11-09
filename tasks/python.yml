@@ -1,6 +1,13 @@
 version: "3"
 
 tasks:
+  test:runtime-instances:
+    desc: Check Python runtime selection, isolated workload callbacks and joined cleanup
+    cmds:
+      - task: :py:test
+        vars:
+          CLI_ARGS: "-k 'runtime or workload or client or publication or forked'"
+
   test:publications:
     desc: Check Python publication observations, ASGI ownership and native registration
     cmds:

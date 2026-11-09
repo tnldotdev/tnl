@@ -7,8 +7,8 @@ import os
 import re
 import secrets
 import socket
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -427,7 +427,8 @@ async def _start_asgi(app: ASGIApp) -> tuple[_OwnedServer, asyncio.Task[None], s
 
 
 @asynccontextmanager
-async def publish(
+async def publish_runtime(
+    native: NativeRuntime,
     app: ASGIApp,
     *,
     publisher_credential_file: str | Path | None = None,
@@ -438,6 +439,7 @@ async def publish(
     access: Literal["restricted", "anonymous"] | AccessPolicy | None = None,
     limits: Limits | None = None,
     require_post_quantum: bool = False,
+    own: Callable[[_ASGIPublication], None] | None = None,
 ) -> AsyncIterator[_ASGIPublication]:
     """start ASGI, register its bound listener, and wait for native routability."""
     if not callable(app):
@@ -449,7 +451,7 @@ async def publish(
     # a running connector owner does not inherit later changes to the app's env.
     # send the path, never the credential contents, with this invocation.
     if publisher_credential_file is None and publisher_identity_id is None:
-        publisher_credential_file = os.getenv("TNL_PUBLISHER_CREDENTIAL_FILE")
+        publisher_credential_file = native.environment().get("TNL_PUBLISHER_CREDENTIAL_FILE")
     if publisher_credential_file is not None and (
         not isinstance(publisher_credential_file, str | Path)
         or not Path(publisher_credential_file).is_absolute()
@@ -482,7 +484,7 @@ async def publish(
     root = str(Path(directory or os.getcwd()).resolve())
     asgi_server, task, listener = await _start_asgi(app)
     tunnel = _ASGIPublication(
-        _native,
+        native,
         asgi_server,
         task,
         listener,
@@ -496,6 +498,8 @@ async def publish(
         limits,
         require_post_quantum,
     )
+    if own is not None:
+        own(tunnel)
     try:
         await tunnel.start()
         yield tunnel
@@ -513,3 +517,30 @@ async def publish(
         raise
     else:
         await tunnel.close()
+
+
+def publish(
+    app: ASGIApp,
+    *,
+    publisher_credential_file: str | Path | None = None,
+    publisher_identity_id: str | None = None,
+    server: str | None = None,
+    directory: str | Path | None = None,
+    state_dir: str | Path | None = None,
+    access: Literal["restricted", "anonymous"] | AccessPolicy | None = None,
+    limits: Limits | None = None,
+    require_post_quantum: bool = False,
+) -> AbstractAsyncContextManager[_ASGIPublication]:
+    """start ASGI and retain its listener until native publication drains."""
+    return publish_runtime(
+        _native,
+        app,
+        publisher_credential_file=publisher_credential_file,
+        publisher_identity_id=publisher_identity_id,
+        server=server,
+        directory=directory,
+        state_dir=state_dir,
+        access=access,
+        limits=limits,
+        require_post_quantum=require_post_quantum,
+    )

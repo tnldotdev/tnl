@@ -178,8 +178,9 @@ def test_mounted_sync_reads_are_fresh_and_await_is_a_coherent_nonawaitable_snaps
     monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
     calls: list[tuple[str, ...]] = []
 
-    def command(binary: Path, *args: str) -> object:
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
         assert binary == Path(sys.executable).resolve()
+        assert input_value is None
         assert args[0] in {"read", "prepare"} and args[1:] == (
             "--handle",
             mounted,
@@ -568,7 +569,8 @@ def test_expired_external_snapshots_never_stop_or_replace_the_owner(
     monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
     calls: list[str] = []
 
-    def command(binary: Path, *args: str) -> object:
+    def command(binary: Path, *args: str, input_value: object = None) -> object:
+        assert input_value is None
         calls.append(args[0])
         return prepared(expires_at="2020-01-01T00:00:00Z")
 
@@ -725,7 +727,9 @@ def test_http_keeps_managed_origin_and_project_protocol_drift_is_rejected(
     monkeypatch.setenv("TNL_CONNECTION_HANDLE", str(tmp_path / "handle"))
     monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
     monkeypatch.setattr(
-        _connections, "_command", lambda *args: prepared(protocol="http", url=connection.url)
+        _connections,
+        "_command",
+        lambda *args, **kwargs: prepared(protocol="http", url=connection.url),
     )
     project = tnl.Project({"database": "postgres"})
     with pytest.raises(tnl.TnlError):

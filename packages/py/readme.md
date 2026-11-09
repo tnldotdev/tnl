@@ -80,6 +80,39 @@ same `Publication` handle without waiting for public readiness. Replacing its
 listener supersedes the old handle; closing the old handle cannot stop the
 replacement. A failed drain remains retryable with `close()`.
 
+## own a runtime instance
+
+Use `create_tnl` when your app needs its own directory, server, state selection,
+or workload callback. Construction does not start native work:
+
+```python
+import tnl
+
+async def main():
+    async with tnl.create_tnl(directory="/srv/checkout") as app:
+        connection = await app.connect("database")
+        # pass the connection settings to your ordinary database driver
+```
+
+The instance pins its selection without changing process-wide configuration or
+using an ambient `TNL_CONNECTION_HANDLE`. `app.client(service, create=...,
+close=...)` uses the existing ordinary client factory: every getter selects
+current access and reuses the exact binding, including A/B/A reuse. Expiration
+renewal alone does not replace a client.
+
+Pass `workload=tnl.Workload("job", token=acquire_current_assertion)` or an absolute
+`token_file` to select one source for that instance. Callbacks read the current
+request; they are not background refresh tasks. An instance-selected workload
+cannot borrow a personal session for publishing.
+
+`await app.prepare(service="api")` and `async with app.publish(asgi_app)` retain
+their publication ownership on the instance. At shutdown, `await app.aclose()`
+fences new work, joins pending setup, drains publications, closes ordinary clients,
+then joins its native owners. Failed cleanup remains retryable; another instance
+keeps running. Use one event loop per instance and do not reuse it after a fork.
+This layer does not add application credential documents or non-native database
+transport.
+
 ## connect to a service
 
 Use `await tnl.connect("database")` to get settings for a declared service.

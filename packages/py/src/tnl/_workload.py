@@ -6,13 +6,69 @@ import asyncio
 import inspect
 import os
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 from ._protocol import TnlError, service_name
 
 type TokenSource = Callable[[], str | Awaitable[str]]
+type Configuration = tuple[str, TokenSource | None, str | None]
 _configuration: tuple[str, TokenSource | None, str | None] | None = None
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class Workload:
+    name: str
+    token: TokenSource | None = None
+    token_file: str | None = None
+
+    def __post_init__(self) -> None:
+        service_name(self.name)
+        if (
+            (self.token is None) == (self.token_file is None)
+            or self.token is not None
+            and not callable(self.token)
+            or self.token_file is not None
+            and (
+                not isinstance(self.token_file, str)
+                or not os.path.isabs(self.token_file)
+                or len(self.token_file) > 4096
+                or "\0" in self.token_file
+            )
+        ):
+            raise TnlError(
+                "sdk.configuration_invalid", "select one workload callback or absolute token file"
+            )
+
+    def configuration(self) -> Configuration:
+        return self.name, self.token, self.token_file
+
+
+def runtime() -> dict[str, str]:
+    return {
+        **({"workload": os.environ["TNL_WORKLOAD"]} if "TNL_WORKLOAD" in os.environ else {}),
+        "vercel": os.environ.get("VERCEL", ""),
+        "fly_app_name": os.environ.get("FLY_APP_NAME", ""),
+        "github_actions": os.environ.get("GITHUB_ACTIONS", ""),
+        "cloud_run_service": os.environ.get("K_SERVICE", ""),
+        "kubernetes_service_host": os.environ.get("KUBERNETES_SERVICE_HOST", ""),
+        "gitlab_ci": os.environ.get("GITLAB_CI", ""),
+    }
+
+
+def selected_workload(context: Mapping[str, str], configuration: Configuration | None) -> bool:
+    return (
+        configuration is not None
+        or "workload" in context
+        or (
+            context.get("vercel") == "1"
+            or bool(context.get("fly_app_name"))
+            or bool(context.get("cloud_run_service"))
+            or bool(context.get("kubernetes_service_host"))
+            or context.get("gitlab_ci") == "true"
+            or context.get("github_actions") == "true"
+        )
+    )
 
 
 def configure_workload(
@@ -30,15 +86,8 @@ def configure_workload(
 
 
 def uses_workload() -> bool:
-    return os.environ.get("TNL_CONNECTION_HANDLE") is None and (
-        _configuration is not None
-        or "TNL_WORKLOAD" in os.environ
-        or os.environ.get("VERCEL") == "1"
-        or bool(os.environ.get("FLY_APP_NAME"))
-        or bool(os.environ.get("K_SERVICE"))
-        or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
-        or os.environ.get("GITLAB_CI") == "true"
-        or os.environ.get("GITHUB_ACTIONS") == "true"
+    return os.environ.get("TNL_CONNECTION_HANDLE") is None and selected_workload(
+        runtime(), _configuration
     )
 
 
@@ -62,18 +111,16 @@ class Selection:
 async def select_workload(
     service: str, preview: Callable[[str, dict[str, object]], object]
 ) -> Selection:
-    configuration = _configuration
-    request: dict[str, object] = {
-        "runtime": {
-            **({"workload": os.environ["TNL_WORKLOAD"]} if "TNL_WORKLOAD" in os.environ else {}),
-            "vercel": os.environ.get("VERCEL", ""),
-            "fly_app_name": os.environ.get("FLY_APP_NAME", ""),
-            "github_actions": os.environ.get("GITHUB_ACTIONS", ""),
-            "cloud_run_service": os.environ.get("K_SERVICE", ""),
-            "kubernetes_service_host": os.environ.get("KUBERNETES_SERVICE_HOST", ""),
-            "gitlab_ci": os.environ.get("GITLAB_CI", ""),
-        }
-    }
+    return await select_scoped_workload(service, preview, runtime(), _configuration)
+
+
+async def select_scoped_workload(
+    service: str,
+    preview: Callable[[str, dict[str, object]], object],
+    context: Mapping[str, str],
+    configuration: Configuration | None,
+) -> Selection:
+    request: dict[str, object] = {"runtime": dict(context)}
     if configuration is not None:
         name, callback, token_file = configuration
         request.update({"name": name, "callback": callback is not None})

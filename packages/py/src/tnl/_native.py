@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import stat
+from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -29,6 +30,16 @@ def native_binary() -> Path:
     if not binary.is_file():
         raise TnlError("sdk.native_missing", "install a platform wheel containing the tnl binary")
     return binary
+
+
+def launch_environment(overrides: Mapping[str, str | None]) -> dict[str, str]:
+    environment = dict(os.environ)
+    for key, value in overrides.items():
+        if value is None:
+            environment.pop(key, None)
+        else:
+            environment[key] = value
+    return environment
 
 
 def _read_endpoint(file: str, service: str | None, invocation_id: str | None) -> Endpoint:
@@ -58,6 +69,13 @@ def _read_endpoint(file: str, service: str | None, invocation_id: str | None) ->
 
 
 class NativeRuntime:
+    def __init__(self, environment: Mapping[str, str | None] | None = None) -> None:
+        self._environment = None if environment is None else dict(environment)
+
+    def environment(self) -> Mapping[str, str]:
+        overrides = getattr(self, "_environment", None)
+        return os.environ if overrides is None else launch_environment(overrides)
+
     async def start(
         self,
         directory: str,
@@ -67,7 +85,8 @@ class NativeRuntime:
         state_dir: str | None = None,
     ) -> Endpoint:
         try:
-            mounted = os.environ.get("TNL_APP_ENDPOINT")
+            environment = self.environment()
+            mounted = environment.get("TNL_APP_ENDPOINT")
             if mounted is not None:
                 # an app can start before its publisher writes the scoped
                 # descriptor. only absence is retried; an unsafe or
@@ -94,7 +113,7 @@ class NativeRuntime:
                     directory,
                 ]
                 selected_state = (
-                    state_dir if state_dir is not None else os.environ.get("TNL_STATE_DIR")
+                    state_dir if state_dir is not None else environment.get("TNL_STATE_DIR")
                 )
                 if selected_state is not None:
                     args.extend(["--state-dir", selected_state])
@@ -103,7 +122,10 @@ class NativeRuntime:
                 if invocation_id is not None:
                     args.extend(["--invocation-id", invocation_id])
                 child = await asyncio.create_subprocess_exec(
-                    *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+                    *args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    env=environment,
                 )
                 assert child.stdout is not None
                 try:

@@ -24,9 +24,17 @@ from typing import TYPE_CHECKING, ClassVar, Literal, cast
 from urllib.parse import urlsplit
 
 from ._connection_ipc import OwnerIPC, _InterruptedError
-from ._native import native_binary
+from ._native import launch_environment, native_binary
 from ._protocol import TnlError, hostname, service_name
-from ._workload import Selection, select_workload, uses_workload
+from ._workload import (
+    Selection,
+    Workload,
+    runtime,
+    select_scoped_workload,
+    select_workload,
+    selected_workload,
+    uses_workload,
+)
 
 if TYPE_CHECKING:
     from ._client import ClientFactory
@@ -292,7 +300,12 @@ def _prepared(value: object, service: str) -> Connection:
     return connection
 
 
-def _command(binary: Path, *arguments: str, input_value: object = None) -> object:
+def _command(
+    binary: Path,
+    *arguments: str,
+    input_value: object = None,
+    environment: Mapping[str, str | None] | None = None,
+) -> object:
     """bound both pipes and exit by one deadline; never expose native output."""
     acknowledged = False
     try:
@@ -306,6 +319,7 @@ def _command(binary: Path, *arguments: str, input_value: object = None) -> objec
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             bufsize=0,
+            env=None if environment is None else launch_environment(environment),
         ) as child:
             try:
                 assert child.stdout is not None
@@ -440,7 +454,7 @@ class _Session:
         # the SDK joins its worker threads; native still decides which capability
         # a request selects and whether that owner can be reused or replaced.
         with self.scope.lock, self.changed:
-            if self.closed:
+            if self.closed or self.scope.closed:
                 raise _error("closed")
             self.pending += 1
             self.scope.pending += 1
@@ -457,10 +471,10 @@ class _Session:
                 self.changed.notify_all()
 
     def read(self, *, service: str) -> Connection:
-        if self.creator_pid != os.getpid() or self.closed:
+        if self.creator_pid != os.getpid() or self.closed or self.scope.closed:
             raise _error("closed")
         selected = self
-        if not uses_workload():
+        if not self.scope.uses_workload():
             # human reads may use the latest already-prepared owner. cleanup
             # still holds this handle's exact observed owner, never that alias.
             with self.scope.lock:
@@ -475,9 +489,7 @@ class _Session:
         if selected.expires_at is not None and selected.expires_at <= datetime.now(UTC):
             raise _error("expired")
         return _prepared(
-            _command(
-                self.scope.binary(), "read", "--handle", selected.handle, "--service", service
-            ),
+            self.scope.command("read", "--handle", selected.handle, "--service", service),
             service,
         )
 
@@ -543,8 +555,7 @@ class _Session:
             if reference:
                 assert self.scope.registry is not None
                 self.scope.check_stopped(
-                    _command(
-                        self.scope.binary(),
+                    self.scope.command(
                         "sdk-close",
                         "--registry",
                         self.scope.registry,
@@ -579,8 +590,22 @@ class _FailureObservation:
 
 
 class _Scope:
-    def __init__(self, directory: str, mounted: str | None) -> None:
+    def __init__(
+        self,
+        directory: str,
+        mounted: str | None,
+        *,
+        environment: Mapping[str, str | None] | None = None,
+        workload: Workload | None = None,
+    ) -> None:
         self.directory, self.mounted = directory, mounted
+        self.environment = None if environment is None else dict(environment)
+        self.configuration = None if workload is None else workload.configuration()
+        self.runtime = runtime()
+        if workload is not None:
+            self.runtime.pop("workload", None)
+        self.closed = False
+        self.operations: set[asyncio.Task[Connection]] = set()
         self.creator_pid = os.getpid()
         self.registry: str | None = None
         self._binary: Path | None = None
@@ -596,12 +621,35 @@ class _Scope:
         self.selected = _Session(self, mounted)
         if mounted is not None:
             self.handles[mounted] = self.selected
+        if environment is not None:
+            _independent_scopes.add(self)
 
     def binary(self) -> Path:
         with self.lock:
             if self._binary is None:
                 self._binary = native_binary().resolve(strict=True)
             return self._binary
+
+    def command(self, *arguments: str, input_value: object = None) -> object:
+        if self.environment is None:
+            return _command(self.binary(), *arguments, input_value=input_value)
+        return _command(
+            self.binary(), *arguments, input_value=input_value, environment=self.environment
+        )
+
+    def uses_workload(self) -> bool:
+        if self.environment is None:
+            return uses_workload()
+        return selected_workload(self.runtime, self.configuration)
+
+    async def select(self, service: str) -> Selection | None:
+        if not self.uses_workload():
+            return None
+        if self.environment is None:
+            return await select_workload(service, self.workload)
+        return await select_scoped_workload(
+            service, self.workload, self.runtime, self.configuration
+        )
 
     def prepare(
         self, service: str, selection: Selection | None, requester: _Session | None = None
@@ -813,7 +861,7 @@ class _Scope:
         arguments = [*arguments, "--sdk-request-handle", request_handle]
         entry = self.entry
         if entry is None:
-            raw = _command(binary, *arguments, input_value=private_input)
+            raw = self.command(*arguments, input_value=private_input)
         else:
             try:
                 raw = entry[1].prepare(
@@ -826,8 +874,8 @@ class _Scope:
                 )
             except TnlError as original:
                 try:
-                    raw = _command(
-                        binary, *arguments, "--recover-handle", entry[0], input_value=private_input
+                    raw = self.command(
+                        *arguments, "--recover-handle", entry[0], input_value=private_input
                     )
                 except (_OwnerPreparationFailure, _RetainedStartFailure):
                     # the requester must retain the replacement's cleanup reference.
@@ -881,8 +929,7 @@ class _Scope:
                 service, sdk=True, preview=True, selection={"sdk_workload": request}
             )
         except TnlError:
-            raw = _command(
-                self.binary(),
+            raw = self.command(
                 "sdk-workload",
                 "--directory",
                 self.directory,
@@ -937,8 +984,7 @@ class _Scope:
     def stop(self) -> None:
         if self.registry is not None:
             stopped = _object(
-                _command(
-                    self.binary(),
+                self.command(
                     "sdk-stop",
                     "--registry",
                     self.registry,
@@ -958,6 +1004,17 @@ class _Scope:
                 self.entry = None
             with self.lock:
                 self.failure_handles.clear()
+            if self.environment is not None:
+                for session in tuple(self.request_handles.values()):
+                    session.resolve_request(None)
+                with self.lock:
+                    for session in self.handles.values():
+                        if session.ipc is not None:
+                            session.ipc.close()
+                        session.closed = session.joined = True
+                    self.handles.clear()
+                    self.registry = None
+                atexit.unregister(self._cleanup)
 
     def _cleanup(self) -> None:
         if self.creator_pid != os.getpid():
@@ -970,6 +1027,7 @@ class _Scope:
 
 
 _sessions: dict[tuple[str, str | None, str | None, str | None], _Scope] = {}
+_independent_scopes: weakref.WeakSet[_Scope] = weakref.WeakSet()
 _sessions_lock = threading.Lock()
 
 
@@ -977,13 +1035,14 @@ def _after_fork() -> None:
     global _sessions_lock
     # close only this process's duplicate socket descriptors, without IPC or any
     # inherited locks. existing handle/atexit references are fenced by creator PID.
-    for scope in _sessions.values():
+    for scope in [*_sessions.values(), *_independent_scopes]:
         if scope.entry is not None:
             scope.entry[1].discard_inherited()
         for session in scope.handles.values():
             if session.ipc is not None:
                 session.ipc.discard_inherited()
     _sessions.clear()
+    _independent_scopes.clear()
     _sessions_lock = threading.Lock()
 
 
@@ -1011,9 +1070,11 @@ class ConnectionHandle[C: Connection]:
 
     def snapshot(self) -> C:
         """read a prepared owner's current snapshot, without startup or sign-in."""
-        if self._lifetime.closed:
+        if self._lifetime.closed or self._session.scope.closed:
             raise _error("closed")
-        if uses_workload() and (not self._verified_workload or self._session.handle is None):
+        if self._session.scope.uses_workload() and (
+            not self._verified_workload or self._session.handle is None
+        ):
             raise _error("not_prepared")
         return self._check(self._session.read(service=self._service))
 
@@ -1027,14 +1088,13 @@ class ConnectionHandle[C: Connection]:
             self._session.creator_pid != os.getpid()
             or self._lifetime.closed
             or self._session.closed
+            or self._session.scope.closed
         ):
             raise _error("closed")
         unprepared = self._session if self._session.handle is None else None
-        selection = None
-        if uses_workload():
-            selection = await select_workload(self._service, self._session.scope.workload)
+        selection = await self._session.scope.select(self._service)
         with self._lifetime.changed:
-            if self._lifetime.closed:
+            if self._lifetime.closed or self._session.scope.closed:
                 raise _error("closed")
             preparation = _Session(self._session.scope)
             preparation.initial_session = unprepared
@@ -1057,8 +1117,10 @@ class ConnectionHandle[C: Connection]:
                     self._lifetime.preparations.discard(preparation)
             raise
         with self._lifetime.changed:
-            if self._lifetime.closed or (
-                preparation.initial_session is not None and preparation.initial_session.closed
+            if (
+                self._lifetime.closed
+                or self._session.scope.closed
+                or (preparation.initial_session is not None and preparation.initial_session.closed)
             ):
                 # retain this preparation's late owner for joined close. only
                 # the initial shared session fences an alias's pending selection.
@@ -1070,7 +1132,24 @@ class ConnectionHandle[C: Connection]:
         return self._check(connection)
 
     def __await__(self) -> Generator[object, None, C]:
+        if self._session.scope.environment is not None:
+            return self._owned_preparation().__await__()
         return self._prepare().__await__()
+
+    async def _owned_preparation(self) -> C:
+        scope = self._session.scope
+        if scope.closed or scope.creator_pid != os.getpid():
+            raise _error("closed")
+        task = asyncio.create_task(self._prepare())
+        scope.operations.add(task)
+
+        def finished(work: asyncio.Task[C]) -> None:
+            scope.operations.discard(work)
+            if not work.cancelled():
+                work.exception()
+
+        task.add_done_callback(finished)
+        return await asyncio.shield(task)
 
     def _failed_cleanup(self) -> set[_Session]:
         # only a failed preparation owns these references. the handle's initial

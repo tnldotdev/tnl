@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -182,7 +183,9 @@ def ipc_probe(root: Path, mode: str) -> None:
     assert not (set(threading.enumerate()) - before), "IPC left a deadline worker alive"
 
 
-def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: bool) -> None:
+def fork_probe(
+    root: Path, binary: Path, owner: Path, *, locked: bool, busy: bool, instance: bool = False
+) -> None:
     _connections.native_binary = lambda: binary
     process = subprocess.Popen(
         [str(owner), str(root), str(binary)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
@@ -191,7 +194,12 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
     status = cast(dict[str, object], json.loads(process.stdout.readline()))
     original_command = _connections._command
 
-    def command(binary: Path, *args: str, input_value: object = None) -> object:
+    def command(
+        binary: Path,
+        *args: str,
+        input_value: object = None,
+        environment: Mapping[str, str | None] | None = None,
+    ) -> object:
         if args[0] == "sdk-close":
             return original_command(binary, "stop", "--handle", args[-1])
         if args[0] == "sdk-prepare":
@@ -209,17 +217,22 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
                     "database",
                 ),
             }
-        return original_command(binary, *args, input_value=input_value)
+        return original_command(binary, *args, input_value=input_value, environment=environment)
 
     _connections._command = command
-    handle = tnl.connect("database", directory=root)
+    app = tnl.create_tnl(directory=root) if instance else None
+    handle = tnl.connect("database", directory=root) if app is None else app.connect("database")
 
     class Client:
         def __init__(self, connection: tnl.Connection) -> None:
             self.port = connection.port
 
     closed_clients: list[Client] = []
-    get_client = tnl.client("database", directory=root, create=Client, close=closed_clients.append)
+    get_client = (
+        tnl.client("database", directory=root, create=Client, close=closed_clients.append)
+        if app is None
+        else app.client("database", create=Client, close=closed_clients.append)
+    )
     client_runner = asyncio.Runner()
 
     async def prepare() -> tnl.Connection:
@@ -317,6 +330,14 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
             assert reading_response(), "native response did not reach the buffered-reader boundary"
         pid = os.fork()
         if pid == 0:
+            if app is not None:
+                try:
+                    app.connect("database")
+                except tnl.TnlError as error:
+                    assert error.code == "sdk.client_closed"
+                else:
+                    raise AssertionError("child reused its parent's runtime instance")
+                asyncio.run(app.aclose())
             try:
                 asyncio.run(get_client())
             except tnl.TnlError as error:
@@ -373,6 +394,8 @@ def fork_probe(root: Path, binary: Path, owner: Path, *, locked: bool, busy: boo
                 stream.sendall(b"ping")
                 assert stream.recv(4) == b"ping"
         handle.close()
+        if app is not None:
+            client_runner.run(app.aclose())
         process.wait(timeout=5)
     finally:
         client_runner.close()
@@ -391,8 +414,9 @@ if __name__ == "__main__":
         fork_probe(
             Path(directory),
             *(Path(arg) for arg in args),
-            locked=mode == "fork-locked",
-            busy=mode == "fork-busy",
+            locked=mode.endswith("-locked"),
+            busy=mode.endswith("-busy"),
+            instance=mode.startswith("fork-instance-"),
         )
     else:
         command_probe(Path(directory), mode)
