@@ -26,7 +26,7 @@ import (
 
 func TestIntegrationSDKApplicationPublicationTraffic(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	for _, mode := range []string{"prepare", "publish", "fetch", "python-prepare"} {
+	for _, mode := range []string{"prepare", "publish", "fetch", "python-prepare", "python-publish"} {
 		t.Run(mode, func(t *testing.T) {
 			if !testutil.IsolatedPublishingTest(t) {
 				return
@@ -102,8 +102,8 @@ func TestIntegrationSDKApplicationPublicationTraffic(t *testing.T) {
 				t.Fatal(err)
 			}
 			command := exec.CommandContext(t.Context(), "node", filepath.Join(repo, "packages/ts/test/fixtures/publication-runtime.ts"), credential, saved.Id, mode, binary)
-			if mode == "python-prepare" {
-				command = exec.CommandContext(t.Context(), filepath.Join(repo, "packages/py/.venv/bin/python"), filepath.Join(repo, "packages/py/tests/application_publication_native.py"), credential, saved.Id, binary)
+			if strings.HasPrefix(mode, "python-") {
+				command = exec.CommandContext(t.Context(), filepath.Join(repo, "packages/py/.venv/bin/python"), filepath.Join(repo, "packages/py/tests/application_publication_native.py"), credential, saved.Id, binary, mode)
 			}
 			command.Dir = root
 			for _, entry := range os.Environ() {

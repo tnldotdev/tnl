@@ -6,7 +6,7 @@ import asyncio
 import os
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from enum import Enum
 from pathlib import Path
 from typing import Literal, Protocol, Self, overload
@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from starlette.types import ASGIApp
 
 from ._app import PreparedPublication, PreparedService
-from ._asgi import AccessPolicy, Limits, publish_runtime
+from ._asgi import AccessPolicy, Limits, _ASGIPublication, publish_runtime
 from ._client import ClientFactory, _Factory, connection_client
 from ._connections import Connection, ConnectionHandle, _Scope, _Session
 from ._credential import ApplicationDocument, application_document
@@ -105,6 +105,23 @@ class _Lifetime:
 
     async def _release(self) -> None:
         raise NotImplementedError
+
+    @asynccontextmanager
+    async def _publication_context(
+        self,
+        context: AbstractAsyncContextManager[_ASGIPublication],
+    ) -> AsyncIterator[Publication]:
+        publication = await self._own(context.__aenter__)
+        try:
+            yield publication
+        except BaseException as primary:
+            if not await context.__aexit__(type(primary), primary, primary.__traceback__):
+                raise
+        else:
+            await context.__aexit__(None, None, None)
+        finally:
+            if publication._close_complete:
+                self._publications.discard(publication)
 
     async def _cleanup(self) -> None:
         for task in tuple(self._pending):
@@ -272,22 +289,13 @@ class TnlInstance(_Lifetime):
             require_post_quantum=require_post_quantum,
             own=self._publications.add,
         )
-        publication = await self._own(context.__aenter__)
-        try:
+        async with self._publication_context(context) as publication:
             yield publication
-        except BaseException as primary:
-            if not await context.__aexit__(type(primary), primary, primary.__traceback__):
-                raise
-        else:
-            await context.__aexit__(None, None, None)
-        finally:
-            if publication._close_complete:
-                self._publications.discard(publication)
 
     def _fence(self) -> None:
         self._scope.closed = True
         for publication in tuple(self._publications):
-            if isinstance(publication, PreparedService):
+            if isinstance(publication, PreparedService | _ASGIPublication):
                 publication.fence()
 
     async def _release(self) -> None:
@@ -394,13 +402,36 @@ class TnlHTTPInstance(_Lifetime):
 
         return await self._own(start)
 
+    @asynccontextmanager
+    async def publish(
+        self,
+        app: ASGIApp,
+        *,
+        resource: str | None = None,
+    ) -> AsyncIterator[Publication]:
+        self._check()
+        if self._document is None:
+            raise TnlError("sdk.credential_denied", "visitor tokens do not authorize publication")
+        self._document.publish(resource)
+        context = publish_runtime(
+            self._publication_native,
+            app,
+            directory=self._publication_directory,
+            state_dir=self._publication_state,
+            application=self._document,
+            resource=resource,
+            own=self._publications.add,
+        )
+        async with self._publication_context(context) as publication:
+            yield publication
+
     async def _release(self) -> None:
         await self._http.close()
 
     def _fence(self) -> None:
         self._http.fence()
         for publication in tuple(self._publications):
-            if isinstance(publication, PreparedPublication):
+            if isinstance(publication, PreparedPublication | _ASGIPublication):
                 publication.fence()
 
 

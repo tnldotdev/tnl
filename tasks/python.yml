@@ -2,11 +2,11 @@ version: "3"
 
 tasks:
   test:application-publications:
-    desc: Check exact Python application preparation, listener replacement and joined native cleanup
+    desc: Check exact Python application preparation, ASGI publication and joined native cleanup
     cmds:
       - task: :py:test
         vars:
-          CLI_ARGS: "-k 'application_preparation or native or publication or runtime'"
+          CLI_ARGS: "-k 'application_preparation or application_asgi or native or publication or runtime'"
 
   test:application-http:
     desc: Check Python application document proofs, exact visit grants and HTTP client bindings
@@ -27,7 +27,7 @@ tasks:
     cmds:
       - task: :py:test
         vars:
-          CLI_ARGS: "-k 'runtime or workload or client or publication or forked or token_http or application_http'"
+          CLI_ARGS: "-k 'runtime or workload or client or publication or forked or token_http or application_http or application_asgi'"
 
   test:publications:
     desc: Check Python publication observations, ASGI ownership and native registration

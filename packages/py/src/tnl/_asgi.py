@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 import uvicorn
 from starlette.types import ASGIApp
 
+from ._credential import ApplicationDocument
 from ._native import NativeRuntime
 from ._protocol import (
     Endpoint,
@@ -33,6 +34,8 @@ from ._publication import Publication, Selection, join_cleanup
 _native = NativeRuntime()
 _alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 _duration = re.compile(r"(?:(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:ns|us|µs|ms|s|m|h))+")
+_POLL_INTERVAL = 0.25
+_RENEW_INTERVAL = 5
 
 
 class _OwnedServer(uvicorn.Server):
@@ -121,7 +124,7 @@ def _limit_payload(value: Limits | None) -> dict[str, object] | None:
 
 
 class _ASGIPublication(Publication):
-    """one temporary public URL and its owned ASGI listener."""
+    """one native publication and its owned ASGI listener."""
 
     def __init__(
         self,
@@ -138,6 +141,8 @@ class _ASGIPublication(Publication):
         ip: list[str] | None,
         limits: Limits | None,
         require_post_quantum: bool = False,
+        application: ApplicationDocument | None = None,
+        publication_credential: tuple[str, str] | None = None,
     ) -> None:
         self._native = native
         self._server = server
@@ -149,6 +154,8 @@ class _ASGIPublication(Publication):
         self._id = "ivk_" + "".join(secrets.choice(_alphabet) for _ in range(22))
         self._owner = secrets.token_hex(16)
         self._target = f"http://127.0.0.1:{listener.getsockname()[1]}"
+        self._application = application
+        self._resource = None if publication_credential is None else publication_credential[0]
         self._payload: dict[str, object] = {
             "version": 1,
             "invocation_id": self._id,
@@ -162,6 +169,11 @@ class _ASGIPublication(Publication):
             self._payload["publisher_identity_id"] = publisher_identity_id
         if server_url is not None:
             self._payload["server_url"] = server_url
+        if application is not None and publication_credential is not None:
+            _, document = publication_credential
+            self._payload["application_credential"] = document
+            self._payload["resource_id"] = self._resource
+            self._payload["server_url"] = application.control_url
         self._registration: dict[str, object] | None = None
         self._registration_uncertain = False
         self._initial_registration: asyncio.Task[None] | None = None
@@ -181,6 +193,7 @@ class _ASGIPublication(Publication):
         self._registration_lock = asyncio.Lock()
         self._monitor: asyncio.Task[None] | None = None
         self._url: str | None = None
+        self._endpoint_observed = False
         self._run = 0
         loop = asyncio.get_running_loop()
         self._ready: asyncio.Future[None] = loop.create_future()
@@ -200,6 +213,7 @@ class _ASGIPublication(Publication):
         )
 
     def _selection(self) -> Selection:
+        self._authorize()
         if self._endpoint is None or self._registration is None:
             raise RegistrationLost()
         return Selection(
@@ -207,15 +221,20 @@ class _ASGIPublication(Publication):
         )
 
     @property
-    def url(self) -> str:
-        if self._url is None or not self._ready.done() or self._ready.exception() is not None:
+    def url(self) -> str | None:
+        if not self._ready.done() or self._ready.exception() is not None:
             raise InvalidResponse()
         return self._url
+
+    def _authorize(self) -> None:
+        if self._application is not None:
+            self._application.publish(self._resource)
 
     async def _register(self) -> None:
         async with self._registration_lock:
             if self._closed:
                 return
+            self._authorize()
             self._endpoint = await self._native.start(
                 self._directory, invocation_id=self._id, state_dir=self._state_dir
             )
@@ -280,6 +299,19 @@ class _ASGIPublication(Publication):
                 self._registration = None
 
     def _observe(self, status: PublicationStatus) -> None:
+        if status.routable:
+            if (
+                self._endpoint_observed
+                and status.public_url != self._url
+                or status.public_url is None
+                and (
+                    self._application is None
+                    or self._resource is not None
+                    and self._resource.startswith("url_")
+                )
+            ):
+                raise InvalidResponse()
+            self._endpoint_observed = True
         if status.public_url is not None:
             if self._url is not None and status.public_url != self._url:
                 raise InvalidResponse()
@@ -297,6 +329,7 @@ class _ASGIPublication(Publication):
         last_renew = asyncio.get_running_loop().time()
         while not self._closed and not self._finished.done():
             try:
+                self._authorize()
                 if self._serve_task.done():
                     self._fail(
                         TnlError("sdk.listener_failed", "ASGI listener stopped during publication")
@@ -311,10 +344,11 @@ class _ASGIPublication(Publication):
                 )
                 if status is not None:
                     self._observe(status)
-                await self._pause(0.25)
+                await self._pause(_POLL_INTERVAL)
                 if self._closed or self._finished.done():
                     return
-                if asyncio.get_running_loop().time() - last_renew >= 5:
+                if asyncio.get_running_loop().time() - last_renew >= _RENEW_INTERVAL:
+                    self._authorize()
                     await self._native.request(self._endpoint, "renew", self._registration)
                     last_renew = asyncio.get_running_loop().time()
             except asyncio.CancelledError:
@@ -347,16 +381,19 @@ class _ASGIPublication(Publication):
         await asyncio.shield(self._finished)
 
     async def close(self) -> None:
+        self.fence()
         if self._cleanup_task is None or (self._cleanup_task.done() and not self._close_complete):
             self._cleanup_task = asyncio.create_task(self._close())
         await join_cleanup(self._cleanup_task)
+
+    def fence(self) -> None:
+        self._closed = True
+        self._closing_event.set()
 
     async def _close(self) -> None:
         async with self._close_lock:
             if self._close_complete:
                 return
-            self._closed = True
-            self._closing_event.set()
             if self._monitor is not None:
                 await self._monitor
             # an error retains the listener and registration for a later close
@@ -440,17 +477,32 @@ async def publish_runtime(
     limits: Limits | None = None,
     require_post_quantum: bool = False,
     own: Callable[[_ASGIPublication], None] | None = None,
+    application: ApplicationDocument | None = None,
+    resource: str | None = None,
 ) -> AsyncIterator[_ASGIPublication]:
     """start ASGI, register its bound listener, and wait for native routability."""
     if not callable(app):
         raise TnlError("sdk.configuration_invalid", "pass an ASGI app")
     if not isinstance(require_post_quantum, bool):
         raise TnlError("sdk.configuration_invalid", "require_post_quantum must be a boolean")
+    publication_credential = None
+    if application is not None:
+        publication_credential = application.publication(resource)
+        if (
+            publisher_credential_file is not None
+            or publisher_identity_id is not None
+            or access is not None
+            or limits is not None
+            or require_post_quantum
+            or server is not None
+            and server != application.control_url
+        ):
+            raise TnlError("sdk.credential_denied", "the application grant selects saved policy")
     if publisher_credential_file is not None and publisher_identity_id is not None:
         raise TnlError("sdk.configuration_invalid", "select a publisher file or publisher ID")
     # a running connector owner does not inherit later changes to the app's env.
     # send the path, never the credential contents, with this invocation.
-    if publisher_credential_file is None and publisher_identity_id is None:
+    if application is None and publisher_credential_file is None and publisher_identity_id is None:
         publisher_credential_file = native.environment().get("TNL_PUBLISHER_CREDENTIAL_FILE")
     if publisher_credential_file is not None and (
         not isinstance(publisher_credential_file, str | Path)
@@ -497,6 +549,8 @@ async def publish_runtime(
         ip,
         limits,
         require_post_quantum,
+        application,
+        publication_credential,
     )
     if own is not None:
         own(tunnel)
