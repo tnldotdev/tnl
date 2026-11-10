@@ -122,8 +122,8 @@ func TestConnectionSDKWorkloadSourcesAndTokenFileRotation(t *testing.T) {
 		t.Fatal("explicit GitHub callback rejected", err)
 	}
 	request.Callback = false
-	if _, _, err := selectSDKWorkload(f.options.Directory, "db", request); !errors.Is(err, workloadmanifest.ErrRequired) {
-		t.Fatal("missing explicit source accepted", err)
+	if _, source, err := selectSDKWorkload(f.options.Directory, "db", request); err != nil || source != "native" {
+		t.Fatal("named GitHub workload did not select built-in acquisition", err)
 	}
 }
 
@@ -160,6 +160,30 @@ func TestConnectionSDKWorkloadEnvironmentOverride(t *testing.T) {
 	}
 	if strings.Contains(fmt.Sprintf("%v %#v", connectorruntime.SDKEnvironment{TokenEnv: "JOB_ID_TOKEN", TokenValue: "private-value"}, connectorruntime.SDKEnvironment{TokenValue: "private-value"}), "private-value") {
 		t.Fatal("environment input leaked")
+	}
+}
+
+func TestConnectionSDKNamedWorkloadKeepsDeclaredAcquisition(t *testing.T) {
+	for _, test := range []struct {
+		provider, source string
+		acquisition      workloadmanifest.Acquisition
+	}{
+		{"github", "native", workloadmanifest.Acquisition{Method: "github-actions", Audience: "https://control.example"}},
+		{"vercel", "vercel", workloadmanifest.Acquisition{Method: "vercel-oidc"}},
+		{"oidc", "native", workloadmanifest.Acquisition{Method: "token-env", Audience: "https://control.example", TokenEnv: "JOB_ID_TOKEN"}},
+	} {
+		t.Run(test.provider, func(t *testing.T) {
+			f, _ := sdkWorkloadFixture(t, test.provider, test.acquisition)
+			request := connectorruntime.SDKWorkloadRequest{Name: "job"}
+			selected, source, err := selectSDKWorkload(f.options.Directory, "db", request)
+			if err != nil || source != test.source || selected.Name != "job" || f.identified != 0 || f.started != 0 {
+				t.Fatal("named selection changed acquisition or started authentication", source, err)
+			}
+			request.Runtime.Workload = new("unrelated")
+			if _, _, err := selectSDKWorkload(f.options.Directory, "db", request); !errors.Is(err, workloadmanifest.ErrRequired) {
+				t.Fatal("conflicting native selectors were accepted", err)
+			}
+		})
 	}
 }
 

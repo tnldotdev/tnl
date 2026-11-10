@@ -302,8 +302,8 @@ test("explicit same-name workloads retain separate request callbacks", async () 
     await import("../../src/internal/connector/connection.js");
   const tokenA = vi.fn(async () => "assertion-a"),
     tokenB = vi.fn(async () => "assertion-b");
-  const a = createConnectionScope({ workload: { name: "job", token: tokenA } });
-  const b = createConnectionScope({ workload: { name: "job", token: tokenB } });
+  const a = createConnectionScope({ credential: { workload: "job", token: tokenA } });
+  const b = createConnectionScope({ credential: { workload: "job", token: tokenB } });
   vi.stubEnv("TNL_WORKLOAD", "unrelated");
   vi.stubEnv("TNL_CONNECTION_HANDLE", "/fixture/unrelated/handle.json");
   await Promise.all([
@@ -318,6 +318,20 @@ test("explicit same-name workloads retain separate request callbacks", async () 
       .map((launch) => launch.input),
   ).toMatchObject([{ assertion: "assertion-a" }, { assertion: "assertion-b" }]);
   await Promise.all([closeConnectionScope(a), closeConnectionScope(b)]);
+});
+
+test("a named workload credential selects built-in acquisition without ambient workload selection", async () => {
+  const { createConnectionScope, closeConnectionScope } =
+    await import("../../src/internal/connector/connection.js");
+  vi.stubEnv("TNL_WORKLOAD", "unrelated");
+  const scope = createConnectionScope({ credential: { workload: "job" } });
+  expect(scope.workload).toEqual({ name: "job" });
+  expect(scope.runtime.workload).toBeUndefined();
+  expect(fixture.launches).toEqual([]);
+  await closeConnectionScope(scope);
+  expect(() =>
+    Reflect.apply(createConnectionScope, undefined, [{ workload: { name: "job" } }]),
+  ).toThrowError(expect.objectContaining({ code: "sdk.configuration_invalid" }));
 });
 afterEach(() => {
   vi.unstubAllGlobals();

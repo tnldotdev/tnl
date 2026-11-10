@@ -210,6 +210,22 @@ test.each([createTnl, createNativeTnl])(
   },
 );
 
+test("workload selectors are native runtime input, not Fetch-only credentials", () => {
+  expect(() =>
+    Reflect.apply(createTnl, undefined, [{ credential: { workload: "deploy" } }]),
+  ).toThrowError(expect.objectContaining({ code: "sdk.configuration_invalid" }));
+  for (const credential of [
+    { workload: "" },
+    { workload: "deploy", token: "static.private.jwt" },
+    { workload: "deploy", token: async () => "proof", tokenFile: "token" },
+    { workload: "deploy", private_key: "private" },
+  ]) {
+    expect(() => Reflect.apply(createNativeTnl, undefined, [{ credential }])).toThrowError(
+      expect.objectContaining({ code: "sdk.configuration_invalid" }),
+    );
+  }
+});
+
 test("application acquisition preserves expiration-independent A/B/A ordinary client reuse", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   const { credential, state } = fixture();

@@ -32,11 +32,11 @@ func selectSDKWorkload(directory, service string, request connectorruntime.SDKWo
 	if err != nil {
 		return selected, "", err
 	}
-	if request.Name == "" && (request.Callback || request.TokenFile != "") || request.Name != "" && request.Callback == (request.TokenFile != "") {
+	if request.Name == "" && (request.Callback || request.TokenFile != "") || request.Callback && request.TokenFile != "" {
 		return selected, "", workloadmanifest.ErrRequired
 	}
 	method := selected.Workload.Acquisition.Method
-	if request.Name != "" {
+	if request.Callback || request.TokenFile != "" {
 		if method != "callback" && method != "github-actions" {
 			return selected, "", workload.ErrAssertionSource
 		}

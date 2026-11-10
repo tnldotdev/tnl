@@ -152,7 +152,7 @@ type Union = TnlProjectFromConfig<{
 test("scoped instances preserve generated service and factory types", async () => {
   const app = createTnl({
     directory: "/app",
-    workload: { name: "job", token: async () => "proof" },
+    credential: { workload: "job", token: async () => "proof" },
   });
   const get = app.client("db", {
     create(connection) {

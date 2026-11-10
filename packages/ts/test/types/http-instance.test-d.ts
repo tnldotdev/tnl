@@ -26,6 +26,15 @@ test("native instances select explicit HTTP resources with the same helper types
 });
 
 declare const credential: TnlApplicationCredential;
+test("workload credentials select one acquisition source", () => {
+  createTnl({ credential: { workload: "deploy" } });
+  createTnl({ credential: { workload: "deploy", token: async () => "proof" } });
+  createTnl({ credential: { workload: "deploy", tokenFile: "/run/identity/token" } });
+  // @ts-expect-error an explicit workload has only one proof source.
+  createTnl({ credential: { workload: "deploy", token: async () => "proof", tokenFile: "token" } });
+  // @ts-expect-error workload selection belongs in the credential parameter.
+  createTnl({ workload: { name: "deploy", token: async () => "proof" } });
+});
 test("native application documents select the same exact async HTTP boundary", async () => {
   const app = createTnl({ credential });
   expectTypeOf(app.connect("url_selected")).toEqualTypeOf<Promise<TnlHTTPConnection>>();

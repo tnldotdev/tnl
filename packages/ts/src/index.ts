@@ -10,7 +10,11 @@ import {
 import { TnlError } from "./errors.js";
 import { httpResources } from "./internal/connector/http_resource.js";
 import type { TnlHTTPConnection, TnlHTTPInstance } from "./client.js";
-import type { TnlApplicationCredential, TnlApplicationResource } from "./credential.js";
+import type {
+  TnlApplicationCredential,
+  TnlApplicationResource,
+  TnlWorkloadCredential,
+} from "./credential.js";
 import type {
   PrepareOptions,
   PreparedService,
@@ -119,6 +123,7 @@ export type TnlCredentialInstance = Omit<TnlApplicationInstance, "connect" | "cl
 export function createTnl(
   options: TnlOptions & { credential: TnlApplicationCredential },
 ): TnlApplicationInstance;
+export function createTnl(options: TnlOptions & { credential: TnlWorkloadCredential }): TnlInstance;
 export function createTnl(options: TnlOptions & { credential: string }): TnlCredentialInstance;
 export function createTnl(options?: TnlOptions): TnlInstance;
 export function createTnl(
@@ -135,10 +140,9 @@ export function createTnl(
     ? parseCredentialInput(options.credential)
     : undefined;
   const scope = createConnectionScope(options);
-  if (credential !== undefined && options.workload !== undefined)
-    throw new TnlError("sdk.configuration_invalid");
-  const http = credential === undefined ? undefined : httpResources(credential);
-  const application = typeof credential === "object" ? credential : undefined;
+  const workload = typeof credential === "object" && "workload" in credential;
+  const http = credential === undefined || workload ? undefined : httpResources(credential);
+  const application = typeof credential === "object" && !workload ? credential : undefined;
   if (
     http?.controlURL !== undefined &&
     options.server !== undefined &&
@@ -147,7 +151,7 @@ export function createTnl(
     throw new TnlError("sdk.configuration_invalid");
   const explicitServer = options.server;
   const workloadSelected =
-    scope.workload !== undefined || usesWorkload(scope.key, scope.runtime, false);
+    workload || scope.workload !== undefined || usesWorkload(scope.key, scope.runtime, false);
   const checkPublisher = (settings?: PublishOptions): ApplicationPublication | undefined => {
     if (application !== undefined && settings !== undefined) {
       if (

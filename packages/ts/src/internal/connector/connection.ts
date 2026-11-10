@@ -36,6 +36,7 @@ import { resolveNativeBinary } from "../native/launcher.js";
 import { launchEnvironment, operation, operationSync, independent } from "../tracing.js";
 import type { ProjectRuntime } from "../project/runtime.js";
 import { isServiceName, pathTextSchema, httpsOriginSchema } from "../values.js";
+import { parseCredentialInput } from "../credential_input.js";
 
 type Settings = TnlConnectionRegistry[keyof TnlConnectionRegistry];
 type Prepared = ReturnType<typeof parsePrepared>;
@@ -65,13 +66,22 @@ export function createConnectionScope(options: TnlOptions): ConnectionScope {
       directory: pathTextSchema.optional(),
       stateDir: pathTextSchema.optional(),
       server: httpsOriginSchema.optional(),
-      workload: z.unknown().optional(),
       credential: z.unknown().optional(),
     }),
     options,
     "sdk.configuration_invalid",
   );
-  const workload = options.workload === undefined ? undefined : parseWorkload(options.workload);
+  const credential = Object.hasOwn(options, "credential")
+    ? parseCredentialInput(options.credential)
+    : undefined;
+  const workload =
+    typeof credential === "object" && "workload" in credential
+      ? parseWorkload({
+          name: credential.workload,
+          ...(credential.token === undefined ? {} : { token: credential.token }),
+          ...(credential.tokenFile === undefined ? {} : { tokenFile: credential.tokenFile }),
+        })
+      : undefined;
   const runtime = workloadRuntime();
   if (workload !== undefined) delete runtime.workload;
   const stateDir = selected.stateDir ?? process.env.TNL_STATE_DIR;

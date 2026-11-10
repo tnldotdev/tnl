@@ -248,6 +248,21 @@ test("a selected workload cannot fall back to a human publisher", async () => {
   await app.close();
 });
 
+test("an explicit workload credential never becomes a personal publication", async () => {
+  const { createTnl } = await import("../../src/index.js");
+  const app = createTnl({ credential: { workload: "deploy" } });
+  try {
+    await expect(app.publish(() => new Response("app"))).rejects.toHaveProperty(
+      "code",
+      "sdk.workload_denied",
+    );
+    await expect(app.prepare()).rejects.toHaveProperty("code", "sdk.workload_denied");
+    expect(fixture.selected).toBeUndefined();
+  } finally {
+    await app.close();
+  }
+});
+
 test("instance cleanup drains publications before releasing connector clients", async () => {
   const { createTnl } = await import("../../src/index.js");
   const app = createTnl();

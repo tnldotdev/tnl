@@ -4,6 +4,7 @@ import type { TnlApplicationCredential, TnlApplicationResource } from "./credent
 import { httpResources } from "./internal/connector/http_resource.js";
 import { parseCredentialInput } from "./internal/credential_input.js";
 import { parseValue } from "./internal/validation.js";
+import { TnlError } from "./errors.js";
 export { TnlError, type TnlErrorCode } from "./errors.js";
 export type { TnlClientFactory, TnlClientOptions, TnlFetch, TnlHTTPConnection } from "./client.js";
 export type {
@@ -30,7 +31,10 @@ export function createTnl<Credential extends TnlOptions["credential"]>(
     options,
     "sdk.configuration_invalid",
   );
-  const resources = httpResources(parseCredentialInput(selected.credential));
+  const credential = parseCredentialInput(selected.credential);
+  if (typeof credential === "object" && "workload" in credential)
+    throw new TnlError("sdk.configuration_invalid");
+  const resources = httpResources(credential);
   return Object.freeze({
     connect: resources.connect,
     client: resources.client,

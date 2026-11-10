@@ -1,8 +1,18 @@
 import * as z from "zod";
-import type { TnlApplicationCredential } from "../credential.js";
+import type { TnlApplicationCredential, TnlWorkloadCredential } from "../credential.js";
 import { TnlError } from "../errors.js";
 import { parseApplicationCredential } from "./credential.js";
 import { parseValue } from "./validation.js";
+import { pathTextSchema, serviceNameSchema } from "./values.js";
+
+const workloadCredentialSchema = z.union([
+  z.strictObject({ workload: serviceNameSchema }),
+  z.strictObject({
+    workload: serviceNameSchema,
+    token: z.custom<() => Promise<string>>((value) => typeof value === "function"),
+  }),
+  z.strictObject({ workload: serviceNameSchema, tokenFile: pathTextSchema }),
+]);
 
 export const credentialSchema = z
   .string()
@@ -28,7 +38,11 @@ export const credentialSchema = z
 
 // a string carries either an opaque visitor token or the complete application
 // document. invalid explicit input never selects ambient authentication.
-export function parseCredentialInput(value: unknown): string | TnlApplicationCredential {
+export function parseCredentialInput(
+  value: unknown,
+): string | TnlApplicationCredential | TnlWorkloadCredential {
+  if (value !== null && typeof value === "object" && Object.hasOwn(value, "workload"))
+    return parseValue(workloadCredentialSchema, value, "sdk.configuration_invalid");
   if (typeof value !== "string") return parseApplicationCredential(value);
   if (value.trimStart().startsWith("{")) {
     if (value.length > 128 * 1024) throw new TnlError("sdk.credential_invalid");

@@ -1,13 +1,13 @@
 import type { TnlProtocol } from "./config.js";
 import type { ProjectServiceMetadata, ServiceProtocol } from "./internal/project/runtime.js";
 import type { NativeTLSOptions } from "./internal/connector/snapshot.js";
-import type { WorkloadOptions } from "./workload.js";
 import type { TnlFetch } from "./client.js";
-import type { TnlApplicationCredential } from "./credential.js";
+import type { TnlApplicationCredential, TnlWorkloadCredential } from "./credential.js";
 export type {
   TnlApplicationCredential,
   TnlApplicationGrant,
   TnlApplicationResource,
+  TnlWorkloadCredential,
 } from "./credential.js";
 export type { TnlFetch, TnlHTTPConnection, TnlClientFactory, TnlClientOptions } from "./client.js";
 
@@ -16,8 +16,7 @@ export type TnlOptions = Readonly<{
   directory?: string;
   stateDir?: string;
   server?: string;
-  workload?: WorkloadOptions;
-  credential?: string | TnlApplicationCredential;
+  credential?: string | TnlApplicationCredential | TnlWorkloadCredential;
 }>;
 
 /** browser-safe addresses only; native credentials are returned by node methods. */

@@ -18,3 +18,12 @@ export type TnlApplicationGrant = Readonly<
 >;
 
 export type TnlApplicationResource = `url_${string}` | `svc_${string}`;
+
+/** one approved workload; provider acquisition stays inside runtime startup. */
+export type TnlWorkloadCredential = Readonly<
+  { workload: string } & (
+    | { token?: never; tokenFile?: never }
+    | { token: () => Promise<string>; tokenFile?: never }
+    | { tokenFile: string; token?: never }
+  )
+>;

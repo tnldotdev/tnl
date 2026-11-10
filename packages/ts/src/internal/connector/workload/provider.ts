@@ -26,12 +26,17 @@ const workloadOptionsSchema = z
       tokenFile: pathTextSchema,
       token: z.undefined().optional(),
     }),
+    z.strictObject({
+      name: serviceNameSchema,
+      token: z.undefined().optional(),
+      tokenFile: z.undefined().optional(),
+    }),
   ])
   .readonly();
 
 export type WorkloadConfiguration = z.output<typeof workloadOptionsSchema>;
 
-export function parseWorkload(options: WorkloadOptions): WorkloadConfiguration {
+export function parseWorkload(options: WorkloadOptions | { name: string }): WorkloadConfiguration {
   return parseValue(workloadOptionsSchema, options, "sdk.workload_required");
 }
 
