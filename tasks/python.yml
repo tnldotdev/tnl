@@ -6,7 +6,7 @@ tasks:
     cmds:
       - task: :py:test
         vars:
-          CLI_ARGS: "-k 'application_preparation or application_asgi or native or publication or runtime'"
+          CLI_ARGS: "-k 'application_preparation or application_asgi or workload_application or native or publication or runtime'"
 
   test:application-http:
     desc: Check Python application document proofs, exact visit grants and HTTP client bindings
@@ -34,7 +34,7 @@ tasks:
     cmds:
       - task: :py:test
         vars:
-          CLI_ARGS: "-k 'publication or asgi or status or worker_registers or native_assignment or application_preparation'"
+          CLI_ARGS: "-k 'publication or asgi or status or worker_registers or native_assignment or application_preparation or workload_application'"
 
   test:client-factories:
     dir: "{{.ROOT_DIR}}"

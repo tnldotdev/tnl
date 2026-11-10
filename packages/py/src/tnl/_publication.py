@@ -96,6 +96,8 @@ class Publication:
             await asyncio.gather(work, stopped, return_exceptions=True)
 
     async def _read(self, operation: str) -> tuple[PublicationStatus, object]:
+        if self._stopped.is_set():
+            raise RegistrationLost()
         current = self._current_selection()
         raw, selection = await self._request(
             operation, {"services": [current.service]} if operation == "check" else None

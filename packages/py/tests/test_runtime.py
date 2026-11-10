@@ -361,6 +361,21 @@ def test_platform_selected_instance_cannot_publish_via_a_personal_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    native = ScopedNative(tmp_path, monkeypatch)
+    command = native.command
+
+    def deny_application(
+        binary: Path,
+        *args: str,
+        input_value: object = None,
+        environment: Mapping[str, str | None] | None = None,
+    ) -> object:
+        if args[0] == "sdk-application":
+            native.calls.append((args, environment))
+            return {"schema": 1, "reason": "TNL_CLIENT_WORKLOAD_SERVICE_DENIED"}
+        return command(binary, *args, input_value=input_value, environment=environment)
+
+    monkeypatch.setattr(_connections, "_command", deny_application)
     app = tnl.create_tnl(directory=tmp_path)
     monkeypatch.delenv("GITHUB_ACTIONS")
 
@@ -376,6 +391,7 @@ def test_platform_selected_instance_cannot_publish_via_a_personal_session(
                 pass
         assert caught.value.code == "sdk.workload_denied"
         await app.aclose()
+        assert not native.owners and not any(args[0] == "sdk-prepare" for args, _ in native.calls)
 
     asyncio.run(scenario())
 

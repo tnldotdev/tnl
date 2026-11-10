@@ -161,6 +161,7 @@ class OwnerIPC:
         request_handle: str | None = None,
         selection: dict[str, object] | None = None,
         preview: bool = False,
+        application: bool = False,
     ) -> object:
         if self.creator_pid != os.getpid():
             self.discard_inherited()
@@ -214,6 +215,10 @@ class OwnerIPC:
                 "POST",
                 "/v1/connections/sdk-workload"
                 if preview
+                else "/v1/connections/sdk-application"
+                if application and sdk
+                else "/v1/connections/application"
+                if application
                 else "/v1/connections/sdk-prepare"
                 if sdk
                 else "/v1/connections/prepare",

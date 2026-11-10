@@ -7,7 +7,7 @@ import os
 import re
 import secrets
 import socket
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -143,6 +143,8 @@ class _ASGIPublication(Publication):
         require_post_quantum: bool = False,
         application: ApplicationDocument | None = None,
         publication_credential: tuple[str, str] | None = None,
+        authorize: Callable[[str], Awaitable[None]] | None = None,
+        check: Callable[[str], None] | None = None,
     ) -> None:
         self._native = native
         self._server = server
@@ -155,6 +157,7 @@ class _ASGIPublication(Publication):
         self._owner = secrets.token_hex(16)
         self._target = f"http://127.0.0.1:{listener.getsockname()[1]}"
         self._application = application
+        self._authorize_source, self._check_source = authorize, check
         self._resource = None if publication_credential is None else publication_credential[0]
         self._payload: dict[str, object] = {
             "version": 1,
@@ -229,12 +232,19 @@ class _ASGIPublication(Publication):
     def _authorize(self) -> None:
         if self._application is not None:
             self._application.publish(self._resource)
+        if self._check_source is not None and self._resource is not None:
+            self._check_source(self._resource)
+
+    async def _refresh_authorization(self) -> None:
+        self._authorize()
+        if self._authorize_source is not None and self._resource is not None:
+            await self._authorize_source(self._resource)
 
     async def _register(self) -> None:
         async with self._registration_lock:
             if self._closed:
                 return
-            self._authorize()
+            await self._refresh_authorization()
             self._endpoint = await self._native.start(
                 self._directory, invocation_id=self._id, state_dir=self._state_dir
             )
@@ -348,21 +358,25 @@ class _ASGIPublication(Publication):
                 if self._closed or self._finished.done():
                     return
                 if asyncio.get_running_loop().time() - last_renew >= _RENEW_INTERVAL:
-                    self._authorize()
+                    await self._refresh_authorization()
                     await self._native.request(self._endpoint, "renew", self._registration)
                     last_renew = asyncio.get_running_loop().time()
             except asyncio.CancelledError:
                 return
             except (NativeUnavailable, RegistrationLost):
+                if self._closed:
+                    return
                 try:
                     await self._register()
                 except (NativeUnavailable, RegistrationLost):
                     await self._pause(1)
                 except TnlError as cause:
-                    self._fail(cause)
+                    if not self._closed:
+                        self._fail(cause)
                     return
             except TnlError as cause:
-                self._fail(cause)
+                if not self._closed:
+                    self._fail(cause)
                 return
 
     def _fail(self, error: TnlError) -> None:
@@ -370,6 +384,12 @@ class _ASGIPublication(Publication):
             self._ready.set_exception(error)
         if not self._finished.done():
             self._finished.set_exception(error)
+        self.fence()
+        if self._cleanup_task is None:
+            self._cleanup_task = asyncio.create_task(self._close())
+            self._cleanup_task.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
 
     async def _pause(self, seconds: float) -> None:
         try:
@@ -479,6 +499,8 @@ async def publish_runtime(
     own: Callable[[_ASGIPublication], None] | None = None,
     application: ApplicationDocument | None = None,
     resource: str | None = None,
+    authorize: Callable[[str], Awaitable[None]] | None = None,
+    check: Callable[[str], None] | None = None,
 ) -> AsyncIterator[_ASGIPublication]:
     """start ASGI, register its bound listener, and wait for native routability."""
     if not callable(app):
@@ -488,6 +510,8 @@ async def publish_runtime(
     publication_credential = None
     if application is not None:
         publication_credential = application.publication(resource)
+        if check is not None:
+            check(publication_credential[0])
         if (
             publisher_credential_file is not None
             or publisher_identity_id is not None
@@ -551,6 +575,8 @@ async def publish_runtime(
         require_post_quantum,
         application,
         publication_credential,
+        authorize,
+        check,
     )
     if own is not None:
         own(tunnel)

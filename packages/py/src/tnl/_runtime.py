@@ -24,6 +24,7 @@ from ._native import NativeRuntime
 from ._protocol import TnlError, service_name
 from ._publication import Publication, join_cleanup
 from ._workload import Workload
+from ._workload_application import WorkloadApplication
 
 
 class _Owned(Protocol):
@@ -211,13 +212,14 @@ class TnlInstance(_Lifetime):
         self._server = selected_server
         super().__init__()
         self._handles: weakref.WeakSet[ConnectionHandle[Connection]] = weakref.WeakSet()
+        self._sources: set[WorkloadApplication] = set()
 
-    def _publisher(self) -> None:
+    async def _application(self) -> WorkloadApplication:
         self._check()
-        if self._scope.uses_workload():
-            raise TnlError(
-                "sdk.workload_denied", "the selected workload does not authorize publishing"
-            )
+        source = WorkloadApplication(self._scope)
+        self._sources.add(source)
+        await source.start()
+        return source
 
     def connect(self, service: str) -> ConnectionHandle[Connection]:
         self._check()
@@ -251,18 +253,76 @@ class TnlInstance(_Lifetime):
         self._clients.add(factory)
         return factory
 
-    async def prepare(self, *, service: str | None = None) -> PreparedService:
-        self._publisher()
+    async def prepare(
+        self,
+        *,
+        service: str | None = None,
+        resource: str | None = None,
+    ) -> PreparedService:
+        self._check()
         if service is not None:
             service_name(service)
 
         async def start() -> PreparedService:
-            result = PreparedService(self._scope.directory, service, self._state_dir, self._native)
+            result: PreparedService
+            if self._scope.uses_workload():
+                if service is not None:
+                    raise TnlError("sdk.credential_denied", "select an exact application resource")
+                source = await self._application()
+                result = PreparedPublication(
+                    self._scope.directory,
+                    self._state_dir,
+                    self._native,
+                    source.document,
+                    resource,
+                    authorize=source.authorize,
+                    check=source.check,
+                )
+            else:
+                if resource is not None:
+                    raise TnlError(
+                        "sdk.credential_denied", "select an explicit application credential"
+                    )
+                result = PreparedService(
+                    self._scope.directory, service, self._state_dir, self._native
+                )
             self._publications.add(result)
             await result.start()
             return result
 
         return await self._own(start)
+
+    @asynccontextmanager
+    async def _workload_publication(
+        self,
+        app: ASGIApp,
+        resource: str | None,
+    ) -> AsyncIterator[_ASGIPublication]:
+        source = await self._application()
+        owned: _ASGIPublication | None = None
+
+        def own(publication: _ASGIPublication) -> None:
+            nonlocal owned
+            owned = publication
+            self._publications.add(publication)
+
+        try:
+            async with publish_runtime(
+                self._native,
+                app,
+                directory=self._scope.directory,
+                state_dir=self._state_dir,
+                application=source.document,
+                resource=resource,
+                own=own,
+                authorize=source.authorize,
+                check=source.check,
+            ) as publication:
+                yield publication
+        finally:
+            if owned is None or owned._close_complete:
+                await source.close()
+                self._sources.discard(source)
 
     @asynccontextmanager
     async def publish(
@@ -274,21 +334,37 @@ class TnlInstance(_Lifetime):
         access: Literal["restricted", "anonymous"] | AccessPolicy | None = None,
         limits: Limits | None = None,
         require_post_quantum: bool = False,
+        resource: str | None = None,
     ) -> AsyncIterator[Publication]:
-        self._publisher()
-        context = publish_runtime(
-            self._native,
-            app,
-            publisher_credential_file=publisher_credential_file,
-            publisher_identity_id=publisher_identity_id,
-            directory=self._scope.directory,
-            state_dir=self._state_dir,
-            server=self._server,
-            access=access,
-            limits=limits,
-            require_post_quantum=require_post_quantum,
-            own=self._publications.add,
-        )
+        self._check()
+        if self._scope.uses_workload():
+            if (
+                publisher_credential_file is not None
+                or publisher_identity_id is not None
+                or access is not None
+                or limits is not None
+                or require_post_quantum
+            ):
+                raise TnlError(
+                    "sdk.credential_denied", "the application grant selects saved policy"
+                )
+            context = self._workload_publication(app, resource)
+        else:
+            if resource is not None:
+                raise TnlError("sdk.credential_denied", "select an explicit application credential")
+            context = publish_runtime(
+                self._native,
+                app,
+                publisher_credential_file=publisher_credential_file,
+                publisher_identity_id=publisher_identity_id,
+                directory=self._scope.directory,
+                state_dir=self._state_dir,
+                server=self._server,
+                access=access,
+                limits=limits,
+                require_post_quantum=require_post_quantum,
+                own=self._publications.add,
+            )
         async with self._publication_context(context) as publication:
             yield publication
 
@@ -300,6 +376,8 @@ class TnlInstance(_Lifetime):
 
     async def _release(self) -> None:
         await asyncio.gather(*tuple(self._scope.operations), return_exceptions=True)
+        await self._close_all(tuple(self._sources), lambda item: item.close())
+        self._sources.clear()
         await self._close_all(tuple(self._handles), lambda item: item.aclose())
         self._handles.clear()
         await asyncio.to_thread(self._scope.stop)

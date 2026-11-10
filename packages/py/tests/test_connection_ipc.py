@@ -17,7 +17,11 @@ from tnl import _connection_ipc
 from tnl._connection_ipc import OwnerIPC
 
 
-def test_private_ipc_reuses_socket_and_service_denial_does_not_poison_owner(tmp_path: Path) -> None:
+@pytest.mark.parametrize("operation", ["prepare", "application", "sdk-application"])
+def test_private_ipc_reuses_socket_and_service_denial_does_not_poison_owner(
+    tmp_path: Path,
+    operation: str,
+) -> None:
     key = "a" * 64
     requests: list[str] = []
 
@@ -30,7 +34,7 @@ def test_private_ipc_reuses_socket_and_service_denial_does_not_poison_owner(tmp_
             pass
 
         def do_POST(self) -> None:
-            assert self.path == "/v1/connections/prepare"
+            assert self.path == "/v1/connections/" + operation
             assert self.headers["Authorization"] == "Bearer " + key
             raw: object = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             assert isinstance(raw, dict)
@@ -69,12 +73,25 @@ def test_private_ipc_reuses_socket_and_service_denial_does_not_poison_owner(tmp_
     client: OwnerIPC | None = None
     try:
         client = OwnerIPC(str(file))
+
+        def prepare(service: str) -> object:
+            assert client is not None
+            return client.prepare(
+                service,
+                "private-assertion",
+                sdk=operation.startswith("sdk-"),
+                application="application" in operation,
+            )
+
         for _ in range(10):
-            assert client.prepare("db", "private-assertion") == {"schema": 1, "state": "prepared"}
+            assert prepare("db") == {"schema": 1, "state": "prepared"}
         assert len(requests) == 10 and len(connections) == 1
-        with pytest.raises(tnl.TnlError):
-            client.prepare("denied", "private-assertion")
-        assert client.prepare("db", "private-assertion") == {"schema": 1, "state": "prepared"}
+        if operation.startswith("sdk-"):
+            assert prepare("denied") == {"schema": 1, "state": "prepared"}
+        else:
+            with pytest.raises(tnl.TnlError):
+                prepare("denied")
+        assert prepare("db") == {"schema": 1, "state": "prepared"}
         assert requests == ["db"] * 10 + ["denied", "db"]
         file.chmod(0o644)
         with pytest.raises(tnl.TnlError):

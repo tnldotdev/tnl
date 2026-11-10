@@ -394,7 +394,7 @@ def _command(
         )
         if (
             arguments
-            and arguments[0] == "sdk-prepare"
+            and arguments[0] in {"sdk-prepare", "sdk-application"}
             and (
                 not acknowledged
                 or error.code == "sdk.connection_invalid"
@@ -449,6 +449,19 @@ class _Session:
             self.scope.request_handles.pop(reference, None)
 
     def prepare(self, service: str, selection: Selection | None) -> tuple[Connection, _Session]:
+        raw, session = self._prepare(service, selection)
+        return _prepared(raw, service), session
+
+    def application(self, selection: Selection) -> tuple[object, _Session]:
+        return self._prepare("", selection, application=True)
+
+    def _prepare(
+        self,
+        service: str,
+        selection: Selection | None,
+        *,
+        application: bool = False,
+    ) -> tuple[object, _Session]:
         # the SDK joins its worker threads; native still decides which capability
         # a request selects and whether that owner can be reused or replaced.
         with self.scope.lock, self.changed:
@@ -457,7 +470,7 @@ class _Session:
             self.pending += 1
             self.scope.pending += 1
         try:
-            result = self.scope.prepare(service, selection, self)
+            result = self.scope._select(service, selection, self, application=application)
             with self.changed:
                 if self.handle is None:
                     self.attached = result[1]
@@ -610,7 +623,7 @@ class _Scope:
         self.entry: tuple[str, OwnerIPC] | None = None
         self.pending = 0
         self.requests: dict[
-            tuple[str, str], tuple[Future[tuple[Connection, _Session]], _Session]
+            tuple[str, str, bool], tuple[Future[tuple[object, _Session]], _Session]
         ] = {}
         self.request_handles: dict[str, _Session] = {}
         self.failure_handles: dict[str, _FailureObservation] = {}
@@ -653,16 +666,29 @@ class _Scope:
     def prepare(
         self, service: str, selection: Selection | None, requester: _Session | None = None
     ) -> tuple[Connection, _Session]:
+        raw, session = self._select(service, selection, requester)
+        return _prepared(raw, service), session
+
+    def _select(
+        self,
+        service: str,
+        selection: Selection | None,
+        requester: _Session | None = None,
+        *,
+        application: bool = False,
+    ) -> tuple[object, _Session]:
         requested_at = datetime.now(UTC).isoformat()
         binary = self.binary()
         if self.mounted is not None:
+            if application:
+                raise _error("invalid")
             assert self.selected is not None
             with self.selected.lock:
                 if self.selected.closed:
                     raise _error("closed")
                 if self.selected.ipc is None:
                     self.selected.ipc = OwnerIPC(self.mounted)
-            return _prepared(self.selected.ipc.prepare(service), service), self.selected
+            return self.selected.ipc.prepare(service), self.selected
         with self.lock:
             if self.registry is None:
                 self.registry = str(Path(tempfile.mkdtemp(prefix="tnl-sdk-")).resolve())
@@ -671,18 +697,17 @@ class _Scope:
         if requester is not None and requester.closed:
             raise _error("closed")
         arguments = [
-            "sdk-prepare",
+            "sdk-application" if application else "sdk-prepare",
             "--directory",
             self.directory,
             "--registry",
             registry,
             "--parent-pid",
             str(os.getpid()),
-            "--selected-service",
-            service,
+            *([] if application else ["--selected-service", service]),
             "--requested-at",
             requested_at,
-            "--retain-start-failure",
+            *([] if application else ["--retain-start-failure"]),
         ]
         private_input = {
             "schema": 1,
@@ -695,12 +720,12 @@ class _Scope:
                 json.dumps([selection.name, selection.policy, selection.assertion]).encode()
             ).hexdigest()
         )
-        key = (selector, service)
+        key = (selector, service, application)
         if selection is not None and selection.assertion is None:
             # native must acquire this request's current token before coalescing
             # owner startup by verified identity. no SDK assertion cache applies.
             selector = uuid.uuid4().hex
-            key = (selector, service)
+            key = (selector, service, application)
         with self.lock:
             entry = self.requests.get(key)
             leading = entry is None
@@ -743,7 +768,7 @@ class _Scope:
                     request,
                 )
                 received = True
-                result = self._selected(raw, binary, service, selection, request)
+                result = self._selected(raw, binary, selection, request, application=application)
             except BaseException as error:
                 with self.lock:
                     target = None
@@ -800,11 +825,13 @@ class _Scope:
         self,
         raw: object,
         binary: Path,
-        service: str,
         selection: Selection | None,
         request: _Session,
-    ) -> tuple[Connection, _Session]:
-        value = _object(raw, {"schema", "owner", "prepared"})
+        *,
+        application: bool = False,
+    ) -> tuple[object, _Session]:
+        field = "application" if application else "prepared"
+        value = _object(raw, {"schema", "owner", field})
         owner = _object(
             value.get("owner"),
             {
@@ -842,8 +869,7 @@ class _Scope:
                 self.entry = (file, OwnerIPC(file))
         if session.closed:
             raise _error("closed")
-        connection = _prepared(value.get("prepared"), service)
-        return connection, session
+        return value.get(field), session
 
     def _request(
         self,
@@ -870,6 +896,7 @@ class _Scope:
                     selection=selection.private_input() if selection else None,
                     requested_at=requested_at,
                     request_handle=request_handle,
+                    **({"application": True} if arguments[0] == "sdk-application" else {}),
                 )
             except TnlError as original:
                 try:
@@ -932,8 +959,7 @@ class _Scope:
                 "sdk-workload",
                 "--directory",
                 self.directory,
-                "--service",
-                service,
+                *(["--service", service] if service else []),
                 input_value={"schema": 1, "sdk_workload": request},
             )
         if isinstance(raw, dict) and "reason" in raw:

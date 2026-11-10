@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import socket
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -198,11 +199,14 @@ class PreparedService:
         if self._failure is not None:
             raise self._failure
 
+    async def _refresh_authorization(self) -> None:
+        self._authorize()
+
     async def _reconcile_initial(self) -> None:
         pass
 
     async def _prepare(self) -> None:
-        self._authorize()
+        await self._refresh_authorization()
         assignment = await self._assignment()
         endpoint, ident, name = assignment.endpoint, assignment.registration_id, assignment.name
         host, url = assignment.hostname, assignment.public_url
@@ -257,7 +261,7 @@ class PreparedService:
         async with self._lock:
             if self._closing_requested or isinstance(self._phase, _Closed):
                 raise RegistrationLost()
-            self._authorize()
+            await self._refresh_authorization()
             if self._released:
                 await self._prepare()
                 self._released = False
@@ -337,8 +341,10 @@ class PreparedService:
             self._finish_active()
 
     async def _renew(self) -> None:
-        while not isinstance(self._phase, _Closed):
+        while not self._closing_requested and not isinstance(self._phase, _Closed):
             await asyncio.sleep(_RENEW_INTERVAL)
+            if self._closing_requested:
+                return
             async with self._lock:
                 prepared = self._phase
                 if isinstance(prepared, _Closed):
@@ -347,7 +353,7 @@ class PreparedService:
                     continue
                 assert isinstance(prepared, _Prepared)
                 try:
-                    self._authorize()
+                    await self._refresh_authorization()
                     await self._native.request(
                         prepared.endpoint, "renew", self._registration(prepared)
                     )
@@ -363,11 +369,15 @@ class PreparedService:
                                 self._registration(prepared),
                             )
                     except TnlError as error:
-                        if error.code == "sdk.credential_denied":
+                        if self._closing_requested:
+                            return
+                        if error.code in {"sdk.credential_denied", "sdk.workload_denied"}:
                             self._terminal(error)
                             return
                 except TnlError as error:
-                    if error.code == "sdk.credential_denied":
+                    if self._closing_requested:
+                        return
+                    if error.code in {"sdk.credential_denied", "sdk.workload_denied"}:
                         self._terminal(error)
                         return
 
@@ -377,6 +387,12 @@ class PreparedService:
             self._active.stopped.set()
             if not self._active.done.done():
                 self._active.done.set_exception(error)
+        self.fence()
+        if self._cleanup is None:
+            self._cleanup = asyncio.create_task(self._close())
+            self._cleanup.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
 
     def fence(self) -> None:
         self._closing_requested = True
@@ -436,10 +452,14 @@ class PreparedPublication(PreparedService):
         native: NativeRuntime,
         document: ApplicationDocument,
         resource: str | None,
+        *,
+        authorize: Callable[[str], Awaitable[None]] | None = None,
+        check: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(directory, None, state_dir, native)
         self._document = document
         self._resource, self._credential = document.publication(resource)
+        self._authorize_source, self._check_source = authorize, check
         self._invocation = "ivk_" + "".join(
             secrets.choice("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
             for _ in range(22)
@@ -453,6 +473,13 @@ class PreparedPublication(PreparedService):
     def _authorize(self) -> None:
         super()._authorize()
         self._document.publish(self._resource)
+        if self._check_source is not None:
+            self._check_source(self._resource)
+
+    async def _refresh_authorization(self) -> None:
+        self._authorize()
+        if self._authorize_source is not None:
+            await self._authorize_source(self._resource)
 
     async def _assignment(self) -> _Assignment:
         endpoint = await self._native.start(
