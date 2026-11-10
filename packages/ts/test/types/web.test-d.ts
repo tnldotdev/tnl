@@ -38,7 +38,9 @@ test("application documents select async exact-resource HTTP settings", async ()
   app.connect("https://app.example");
   // @ts-expect-error resource names do not select application grants.
   app.connect("database");
-  // @ts-expect-error token instances require explicit origins, not resource IDs.
-  createTnl({ credential: "visitor-token" }).connect("url_selected");
+  // strings may carry either a token or a complete JSON document.
+  expectTypeOf(createTnl({ credential: "from environment" }).connect("url_selected")).toEqualTypeOf<
+    Promise<TnlHTTPConnection>
+  >();
   await app.close();
 });

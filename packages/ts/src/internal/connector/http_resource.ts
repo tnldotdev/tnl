@@ -9,7 +9,7 @@ import { parseValue } from "../validation.js";
 import { httpsOriginSchema } from "../values.js";
 import { clientFactory } from "./client_factory.js";
 import { applicationHTTP } from "./application_http.js";
-import { credentialSchema } from "./http_credential.js";
+import { credentialSchema } from "../credential_input.js";
 import { cancellable } from "./cancellation.js";
 import type { TnlApplicationCredential, TnlApplicationResource } from "../../credential.js";
 

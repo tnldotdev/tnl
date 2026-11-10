@@ -102,27 +102,33 @@ function applicationCredential(): TnlApplicationCredential {
   };
 }
 
-test("application publication pins the prepared document and exact resource before native work", async () => {
-  const { createTnl } = await import("../../src/index.js");
-  const credential = applicationCredential();
-  const app = createTnl({ credential });
-  const resource = `url_${"B".repeat(22)}` as const;
-  Reflect.set(credential, "control_url", "https://another.example");
-  try {
-    await app.publish(() => new Response("app"), { resource });
-    expect(fixture.source).toMatchObject({ server: "https://control.example", resource });
-    expect(JSON.parse(fixture.source?.document ?? "")).toMatchObject({
-      client_id: credential.client_id,
-      key_id: credential.key_id,
-      control_url: "https://control.example",
-      grants: credential.grants,
-    });
-    expect(fixture.selected).toBeDefined();
-  } finally {
-    await app.close();
-  }
-  expect(fixture.order).toEqual(["publication", "connector"]);
-});
+test.each(["object", "json"])(
+  "application publication pins the %s document and exact resource before native work",
+  async (encoding) => {
+    const { createTnl } = await import("../../src/index.js");
+    const credential = applicationCredential();
+    const app =
+      encoding === "json"
+        ? createTnl({ credential: JSON.stringify(credential) })
+        : createTnl({ credential });
+    const resource = `url_${"B".repeat(22)}` as const;
+    Reflect.set(credential, "control_url", "https://another.example");
+    try {
+      await app.publish(() => new Response("app"), { resource });
+      expect(fixture.source).toMatchObject({ server: "https://control.example", resource });
+      expect(JSON.parse(fixture.source?.document ?? "")).toMatchObject({
+        client_id: credential.client_id,
+        key_id: credential.key_id,
+        control_url: "https://control.example",
+        grants: credential.grants,
+      });
+      expect(fixture.selected).toBeDefined();
+    } finally {
+      await app.close();
+    }
+    expect(fixture.order).toEqual(["publication", "connector"]);
+  },
+);
 
 test("application publication refuses ambiguous grants and explicit source changes without fallback", async () => {
   const { createTnl } = await import("../../src/index.js");

@@ -3,7 +3,7 @@ import type { TnlApplicationCredential, TnlApplicationResource } from "../../cre
 import { TnlError, privateTnlError } from "../../errors.js";
 import { parseValue } from "../validation.js";
 import { hostnameSchema, httpsOriginSchema } from "../values.js";
-import { credentialSchema } from "./http_credential.js";
+import { credentialSchema } from "../credential_input.js";
 import { cancellable } from "./cancellation.js";
 import { decodeBase64, encodeBase64, parseApplicationCredential } from "../credential.js";
 

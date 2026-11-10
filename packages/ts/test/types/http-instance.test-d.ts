@@ -10,6 +10,10 @@ import { expectTypeOf, test } from "vitest";
 test("native instances select explicit HTTP resources with the same helper types", async () => {
   const app = createTnl({ credential: "supplied by the environment" });
   expectTypeOf(app.connect("https://app.example")).toEqualTypeOf<TnlHTTPConnection>();
+  expectTypeOf(app.connect("svc_selected")).toEqualTypeOf<Promise<TnlHTTPConnection>>();
+  expectTypeOf(app.prepare({ resource: "url_selected" })).toEqualTypeOf<
+    Promise<PreparedPublication>
+  >();
   const get = app.client("https://app.example", {
     create(connection) {
       expectTypeOf(connection).toEqualTypeOf<TnlHTTPConnection>();

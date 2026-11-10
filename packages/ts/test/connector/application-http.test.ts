@@ -154,6 +154,62 @@ test("application HTTP selects exact resource grants with Web Crypto and no nati
   }
 });
 
+test.each([
+  ["web", (credential: string) => createTnl({ credential })],
+  ["native", (credential: string) => createNativeTnl({ credential })],
+] as const)(
+  "%s accepts an environment JSON credential without changing its grants",
+  async (_name, create) => {
+    const { credential, state, dispatch } = fixture();
+    const app = create(`\n${JSON.stringify(credential)}\n`);
+    expect(dispatch).not.toHaveBeenCalled();
+    try {
+      const api = await app.connect(serviceID);
+      expect(api.url).toBe("https://api.example:10443");
+      expect(await (await api.fetch("/stock")).text()).toBe("application data");
+      await expect(app.connect(`svc_${"X".repeat(22)}`)).rejects.toHaveProperty(
+        "code",
+        "sdk.credential_denied",
+      );
+      await expect(app.connect("https://personal.example")).rejects.toHaveProperty(
+        "code",
+        "sdk.credential_denied",
+      );
+      expect(state.control).toBe(2);
+    } finally {
+      await app.close();
+    }
+  },
+);
+
+test.each([createTnl, createNativeTnl])(
+  "explicit invalid credential input cannot become personal authentication",
+  (create) => {
+    const { credential, dispatch } = fixture();
+    for (const value of [
+      undefined,
+      null,
+      "",
+      [],
+      {},
+      `{"private_key":"${credential.private_key}"`,
+      JSON.stringify({ ...credential, version: 2 }),
+      JSON.stringify({ ...credential, workload: "deploy" }),
+      `{${" ".repeat(128 * 1024)}}`,
+    ]) {
+      let error: unknown;
+      try {
+        Reflect.apply(create, undefined, [{ credential: value }]);
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).toHaveProperty("code");
+      expect(inspect(error)).not.toContain(credential.private_key);
+    }
+    expect(dispatch).not.toHaveBeenCalled();
+  },
+);
+
 test("application acquisition preserves expiration-independent A/B/A ordinary client reuse", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   const { credential, state } = fixture();

@@ -19,7 +19,7 @@ import type {
 import type { ApplicationPrepareOptions } from "./internal/publisher/app_credential.js";
 import type { PublishOptions } from "./internal/publisher/publish.js";
 import type { ApplicationPublication } from "./internal/publisher/publish.js";
-import { parseApplicationCredential } from "./internal/credential.js";
+import { parseCredentialInput } from "./internal/credential_input.js";
 import type { Publication } from "./internal/publisher/publication.js";
 export type {
   Publication,
@@ -112,20 +112,18 @@ export type TnlApplicationInstance = Omit<TnlInstance, "connect" | "client" | "p
     prepare(options?: ApplicationPrepareOptions): Promise<PreparedPublication>;
   };
 
+export type TnlCredentialInstance = Omit<TnlApplicationInstance, "connect" | "client"> &
+  TnlHTTPInstance<`https://${string}` | TnlApplicationResource>;
+
 /** construct an isolated native connection scope without starting native work. */
 export function createTnl(
   options: TnlOptions & { credential: TnlApplicationCredential },
 ): TnlApplicationInstance;
-export function createTnl(
-  options: TnlOptions & { credential: string },
-): Omit<TnlInstance, "connect" | "client"> & TnlHTTPInstance<`https://${string}`>;
+export function createTnl(options: TnlOptions & { credential: string }): TnlCredentialInstance;
 export function createTnl(options?: TnlOptions): TnlInstance;
 export function createTnl(
   options: TnlOptions = {},
-):
-  | TnlInstance
-  | TnlApplicationInstance
-  | (Omit<TnlInstance, "connect" | "client"> & TnlHTTPInstance<`https://${string}`>) {
+): TnlInstance | TnlApplicationInstance | TnlCredentialInstance {
   const {
     createConnectionScope,
     closeConnectionScope,
@@ -133,14 +131,14 @@ export function createTnl(
     connectionClient,
     usesWorkload,
   } = loadConnection();
+  const credential = Object.hasOwn(options, "credential")
+    ? parseCredentialInput(options.credential)
+    : undefined;
   const scope = createConnectionScope(options);
-  if (options.credential !== undefined && options.workload !== undefined)
+  if (credential !== undefined && options.workload !== undefined)
     throw new TnlError("sdk.configuration_invalid");
-  const http = options.credential === undefined ? undefined : httpResources(options.credential);
-  const application =
-    options.credential !== undefined && typeof options.credential !== "string"
-      ? parseApplicationCredential(options.credential)
-      : undefined;
+  const http = credential === undefined ? undefined : httpResources(credential);
+  const application = typeof credential === "object" ? credential : undefined;
   if (
     http?.controlURL !== undefined &&
     options.server !== undefined &&
