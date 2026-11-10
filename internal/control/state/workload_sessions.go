@@ -166,6 +166,9 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 				return result, ErrWorkloadDenied
 			}
 		}
+		if err = captureWorkloadApplication(ctx, tx, id, r.TeamID, r.ProjectKey, r.Workload, r.PublicKey, now); err != nil {
+			return result, err
+		}
 		if err = workloadAudit(ctx, tx, id, "start", "", now); err != nil {
 			return result, err
 		}

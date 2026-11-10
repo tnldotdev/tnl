@@ -39,6 +39,7 @@ type Querier interface {
 	// run only after RegisterRelay succeeds, inside the same transaction. on a
 	// mismatched historical key the caller rolls back the lease replacement too.
 	BindRelayRunSigningKey(ctx context.Context, arg BindRelayRunSigningKeyParams) (int64, error)
+	BoundPublishRunApplicationAuthority(ctx context.Context, arg BoundPublishRunApplicationAuthorityParams) (ControlPublishRun, error)
 	BrowserSessionCurrentHost(ctx context.Context, arg BrowserSessionCurrentHostParams) (string, error)
 	BrowserSessionPublicURLIncluded(ctx context.Context, arg BrowserSessionPublicURLIncludedParams) (string, error)
 	CancelOpenPublicURLRecoveryEpisode(ctx context.Context, arg CancelOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
@@ -472,6 +473,8 @@ type Querier interface {
 	// old run clears its supersession only after it has passed lease and key checks.
 	MarkSupersededRelayRunSigningKeys(ctx context.Context, arg MarkSupersededRelayRunSigningKeysParams) error
 	MarkVisitorIPSet(ctx context.Context, publicUrlID string) error
+	// the caller holds the identity lock; session and persistent keys share the counter.
+	NextPublisherKeyRevision(ctx context.Context, publisherIdentityID string) (int64, error)
 	// renewal holds only its ingress row. do not acquire a URL/run lock here:
 	// ready holds URL/run -> pool and reads this committed observation.
 	// the lease fences process identity, not concurrent request arrival order.
@@ -501,6 +504,7 @@ type Querier interface {
 	PublisherScopeAvailable(ctx context.Context, arg PublisherScopeAvailableParams) (bool, error)
 	PutCompanyEligibility(ctx context.Context, arg PutCompanyEligibilityParams) error
 	QuarantineMemberSlug(ctx context.Context, arg QuarantineMemberSlugParams) (int64, error)
+	ReadApplicationKeyAuthority(ctx context.Context, arg ReadApplicationKeyAuthorityParams) (pgtype.Timestamptz, error)
 	ReadApplicationRegistrationRequest(ctx context.Context, arg ReadApplicationRegistrationRequestParams) (ControlApplicationRegistrationRequest, error)
 	ReadApplicationVisitAuthority(ctx context.Context, arg ReadApplicationVisitAuthorityParams) ([]ReadApplicationVisitAuthorityRow, error)
 	ReadConnectorPeerBindingClaims(ctx context.Context, arg ReadConnectorPeerBindingClaimsParams) ([]ControlConnectorPeerPairLegClaim, error)

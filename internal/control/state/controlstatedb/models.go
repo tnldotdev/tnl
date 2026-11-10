@@ -811,6 +811,7 @@ type ControlPublishRun struct {
 	ActingIdentityID           string
 	PublisherIdentityID        pgtype.Text
 	PublisherGrantID           pgtype.Text
+	PublisherKeyID             pgtype.Text
 	PublishRunNumber           int64
 	IdempotencyKey             string
 	RequestDigestCiphertext    []byte
@@ -997,6 +998,8 @@ type ControlPublisherIdentityKey struct {
 	Revision            int64
 	CreatedAt           pgtype.Timestamptz
 	RetiredAt           pgtype.Timestamptz
+	WorkloadSessionID   pgtype.Text
+	WorkloadBindingID   pgtype.Text
 }
 
 type ControlPublisherNamespaceAllocation struct {
@@ -1609,6 +1612,16 @@ type ControlVisitorVerificationKeyRevision struct {
 	Revision int64
 }
 
+type ControlWorkloadApplication struct {
+	ID                  string
+	TeamID              string
+	ProjectKey          string
+	WorkloadName        string
+	PublisherIdentityID string
+	CreatedAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+}
+
 type ControlWorkloadAssertion struct {
 	JtiDigest         []byte
 	AssertionDigest   []byte
@@ -1657,6 +1670,13 @@ type ControlWorkloadSession struct {
 	RevokedAt            pgtype.Timestamptz
 	RenewalSequence      int64
 	IdentityExpiresAt    pgtype.Timestamptz
+}
+
+type ControlWorkloadSessionApplicationGrant struct {
+	WorkloadSessionID   string
+	PublisherIdentityID string
+	GrantID             string
+	ExpiresAt           pgtype.Timestamptz
 }
 
 type ControlWorkloadSessionService struct {

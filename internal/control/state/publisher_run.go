@@ -51,6 +51,9 @@ func (d *Database) authorizePublisherRun(ctx context.Context, q *controlstatedb.
 	if err != nil {
 		return [32]byte{}, publisherLookupError(err, ErrPublisherIdentity)
 	}
+	if _, err := applicationKeyDeadline(ctx, q, p.ID, r.PublisherKeyID, p.GrantID, now); err != nil {
+		return [32]byte{}, err
+	}
 	secret, err := publisherproof.VerifyRun(k.PublicKey, r.PublisherRunProof, u.ID, r.IdempotencyKey)
 	if err != nil {
 		return [32]byte{}, ErrPublisherIdentity
@@ -63,7 +66,7 @@ func (d *Database) authorizePublisherRun(ctx context.Context, q *controlstatedb.
 		if err != nil {
 			return [32]byte{}, publisherLookupError(err, ErrPublisherIdentity)
 		}
-		if run.PublisherIdentityID.String != p.ID || run.PublisherGrantID.String != p.GrantID {
+		if run.PublisherIdentityID.String != p.ID || run.PublisherGrantID.String != p.GrantID || run.PublisherKeyID.String != r.PublisherKeyID {
 			return [32]byte{}, ErrPublisherIdentity
 		}
 	}
@@ -87,6 +90,12 @@ func (d *Database) publisherRunLive(ctx context.Context, q *controlstatedb.Queri
 		return false, nil
 	}
 	if err != nil {
+		return false, err
+	}
+	if _, err := applicationKeyDeadline(ctx, q, p.ID, run.PublisherKeyID.String, p.GrantID, now); err != nil {
+		if errors.Is(err, ErrPublisherIdentity) {
+			return false, nil
+		}
 		return false, err
 	}
 	err = publisherOwnsRun(ctx, q, p, u)

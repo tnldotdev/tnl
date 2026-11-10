@@ -91,6 +91,10 @@ func (d *Database) ExchangePublisherAssertion(ctx context.Context, id, grant, au
 	if k.RetiredAt.Valid {
 		return result, ErrPublisherIdentity
 	}
+	deadline, err := applicationKeyDeadline(ctx, q, id, kid, grant, now)
+	if err != nil {
+		return result, err
+	}
 	a, err := publisherproof.Verify(assertion, id, kid, grant, audience, k.PublicKey, now)
 	if err != nil {
 		return result, ErrPublisherIdentity
@@ -123,6 +127,9 @@ func (d *Database) ExchangePublisherAssertion(ctx context.Context, id, grant, au
 	token := "pta_" + base64.RawURLEncoding.EncodeToString(secret[:])
 	digest := sha256.Sum256([]byte(token))
 	until := now.Add(PublisherAccessLifetime)
+	if deadline != nil {
+		until = minTime(until, *deadline)
+	}
 	if g.ExpiresAt.Valid && g.ExpiresAt.Time.Before(until) {
 		until = g.ExpiresAt.Time
 	}
@@ -155,6 +162,9 @@ func (d *Database) AuthenticatePublisherAccess(ctx context.Context, token, sourc
 		return PublisherIdentity{}, ErrPublisherIdentity
 	}
 	result.KeyID = a.KeyID
+	if _, err := applicationKeyDeadline(ctx, q, result.ID, result.KeyID, result.GrantID, now); err != nil {
+		return PublisherIdentity{}, err
+	}
 	return result, nil
 }
 
@@ -200,7 +210,7 @@ func (d *Database) RotatePublisherKey(ctx context.Context, token, sourceIP, repl
 	if err != nil {
 		return publisherLookupError(err, ErrPublisherIdentity)
 	}
-	if k.RetiredAt.Valid {
+	if k.RetiredAt.Valid || k.WorkloadSessionID.Valid {
 		return ErrPublisherIdentity
 	}
 	current, err := publisherproof.Verify(currentProof, identity.ID, identity.KeyID, identity.GrantID, publisherproof.RotationAudience(audience, replacementID, public), k.PublicKey, now)
@@ -227,7 +237,11 @@ func (d *Database) RotatePublisherKey(ctx context.Context, token, sourceIP, repl
 	if _, err := q.RetirePublisherKey(ctx, controlstatedb.RetirePublisherKeyParams{ID: k.ID, Now: timestamptz(now)}); err != nil {
 		return err
 	}
-	if err := q.InsertPublisherKey(ctx, controlstatedb.InsertPublisherKeyParams{ID: replacementID, PublisherIdentityID: identity.ID, PublicKey: public, Revision: k.Revision + 1, CreatedAt: timestamptz(now)}); err != nil {
+	revision, err := q.NextPublisherKeyRevision(ctx, identity.ID)
+	if err != nil {
+		return err
+	}
+	if err := q.InsertPublisherKey(ctx, controlstatedb.InsertPublisherKeyParams{ID: replacementID, PublisherIdentityID: identity.ID, PublicKey: public, Revision: revision, CreatedAt: timestamptz(now)}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

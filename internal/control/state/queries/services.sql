@@ -169,6 +169,7 @@ WHERE run.id = sqlc.arg(id) AND run.run_number = sqlc.arg(run_number)
     AND run.publisher_identity_id = sqlc.arg(publisher_identity_id)
     AND run.publisher_grant_id = sqlc.arg(publisher_grant_id)
     AND run.publisher_key_id = sqlc.arg(publisher_key_id)
+    AND EXISTS(SELECT 1 FROM control.application_key_authority(run.publisher_identity_id,run.publisher_key_id,run.publisher_grant_id,sqlc.arg(now)))
     AND run.closed_at IS NULL;
 
 -- name: AdvanceServiceRunNumber :one

@@ -22,3 +22,11 @@ WHERE g.operation='visit' AND g.kind=sqlc.arg(kind)
     AND COALESCE(g.public_url_id,g.service_id)=sqlc.arg(resource_id)::text
     AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>sqlc.arg(now))
     AND p.revoked_at IS NULL;
+
+-- name: ReadApplicationKeyAuthority :one
+SELECT expires_at::timestamptz AS expires_at
+FROM control.application_key_authority(sqlc.arg(publisher_identity_id)::text,sqlc.arg(key_id)::text,sqlc.arg(grant_id)::text,sqlc.arg(now)::timestamptz);
+
+-- name: BoundPublishRunApplicationAuthority :one
+UPDATE control.publish_runs SET publisher_expires_at=LEAST(publisher_expires_at,sqlc.arg(expires_at)::timestamptz)
+WHERE id=sqlc.arg(id) AND closed_at IS NULL RETURNING *;

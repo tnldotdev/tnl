@@ -226,7 +226,7 @@ func (d *Database) createPublishRun(
 		PublicURLID: request.PublicURLID, IdempotencyKey: request.IdempotencyKey,
 	})
 	if err == nil {
-		if existing.PublisherIdentityID.String != request.PublisherIdentityID || existing.PublisherGrantID.String != request.PublisherGrantID {
+		if existing.PublisherIdentityID.String != request.PublisherIdentityID || existing.PublisherGrantID.String != request.PublisherGrantID || existing.PublisherKeyID.String != request.PublisherKeyID {
 			return PublishRunSetup{}, ErrPublishRunIdempotency
 		}
 		storedDigest, _, digestErr := d.openSecret(existing.RequestDigestStorageKeyID.String,
@@ -316,6 +316,7 @@ func (d *Database) createPublishRun(
 		ID: publishRunID, PublicURLID: request.PublicURLID, TeamID: request.TeamID, MembershipID: membershipID,
 		ActingIdentityID: request.ActingIdentityID, ExpectedMutationRevision: positive(request.ExpectedMutationRevision),
 		PublisherIdentityID: nullableText(request.PublisherIdentityID), PublisherGrantID: nullableText(request.PublisherGrantID),
+		PublisherKeyID:          nullableText(request.PublisherKeyID),
 		IdempotencyKey:          request.IdempotencyKey,
 		RequestDigestCiphertext: digestCiphertext, RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
 		PublishRunTokenID: publishRunTokenID.String(), PublishRunTokenDigest: publishRunTokenHash[:],
@@ -355,6 +356,10 @@ func (d *Database) createPublishRun(
 		return PublishRunSetup{}, err
 	}
 	session, err = boundGuestServingAuthority(ctx, queries, session, now)
+	if err != nil {
+		return PublishRunSetup{}, err
+	}
+	session, err = boundApplicationServingAuthority(ctx, queries, session, now)
 	if err != nil {
 		return PublishRunSetup{}, err
 	}

@@ -86,6 +86,7 @@ type CreatePublicURLRequest struct {
 	Ephemeral             bool
 	PublisherIdentityID   string
 	PublisherGrantID      string
+	PublisherKeyID        string
 	PublisherInvocationID string
 	PublisherNamespace    string
 }
@@ -110,6 +111,7 @@ type AuthorizedPublicURLDeleteRequest struct {
 	ExpectedMutationRevision uint64
 	PublisherIdentityID      string
 	PublisherGrantID         string
+	PublisherKeyID           string
 }
 
 type PublicURLPage struct {

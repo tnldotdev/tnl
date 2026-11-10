@@ -135,7 +135,7 @@ func (q *Queries) GetPublisherGrant(ctx context.Context, arg GetPublisherGrantPa
 }
 
 const getPublisherKey = `-- name: GetPublisherKey :one
-SELECT id, publisher_identity_id, public_key, revision, created_at, retired_at FROM control.publisher_identity_keys WHERE id = $1 AND publisher_identity_id = $2 FOR SHARE
+SELECT id, publisher_identity_id, public_key, revision, created_at, retired_at, workload_session_id, workload_binding_id FROM control.publisher_identity_keys WHERE id = $1 AND publisher_identity_id = $2 FOR SHARE
 `
 
 type GetPublisherKeyParams struct {
@@ -153,6 +153,8 @@ func (q *Queries) GetPublisherKey(ctx context.Context, arg GetPublisherKeyParams
 		&i.Revision,
 		&i.CreatedAt,
 		&i.RetiredAt,
+		&i.WorkloadSessionID,
+		&i.WorkloadBindingID,
 	)
 	return i, err
 }
@@ -381,8 +383,8 @@ func (q *Queries) InsertPublisherIdentity(ctx context.Context, arg InsertPublish
 }
 
 const insertPublisherKey = `-- name: InsertPublisherKey :exec
-INSERT INTO control.publisher_identity_keys(id, publisher_identity_id, public_key, revision, created_at)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO control.publisher_identity_keys(id, publisher_identity_id, public_key, revision, created_at, workload_session_id, workload_binding_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 type InsertPublisherKeyParams struct {
@@ -391,6 +393,8 @@ type InsertPublisherKeyParams struct {
 	PublicKey           []byte
 	Revision            int64
 	CreatedAt           pgtype.Timestamptz
+	WorkloadSessionID   pgtype.Text
+	WorkloadBindingID   pgtype.Text
 }
 
 func (q *Queries) InsertPublisherKey(ctx context.Context, arg InsertPublisherKeyParams) error {
@@ -400,6 +404,8 @@ func (q *Queries) InsertPublisherKey(ctx context.Context, arg InsertPublisherKey
 		arg.PublicKey,
 		arg.Revision,
 		arg.CreatedAt,
+		arg.WorkloadSessionID,
+		arg.WorkloadBindingID,
 	)
 	return err
 }
@@ -537,6 +543,18 @@ func (q *Queries) LockPublisherIdentity(ctx context.Context, id string) (Control
 		&i.RevokedAt,
 	)
 	return i, err
+}
+
+const nextPublisherKeyRevision = `-- name: NextPublisherKeyRevision :one
+SELECT (COALESCE(max(revision),0)+1)::bigint AS revision FROM control.publisher_identity_keys WHERE publisher_identity_id=$1
+`
+
+// the caller holds the identity lock; session and persistent keys share the counter.
+func (q *Queries) NextPublisherKeyRevision(ctx context.Context, publisherIdentityID string) (int64, error) {
+	row := q.db.QueryRow(ctx, nextPublisherKeyRevision, publisherIdentityID)
+	var revision int64
+	err := row.Scan(&revision)
+	return revision, err
 }
 
 const prunePublisherAccess = `-- name: PrunePublisherAccess :exec

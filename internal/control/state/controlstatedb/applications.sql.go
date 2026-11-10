@@ -11,6 +11,56 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const boundPublishRunApplicationAuthority = `-- name: BoundPublishRunApplicationAuthority :one
+UPDATE control.publish_runs SET publisher_expires_at=LEAST(publisher_expires_at,$1::timestamptz)
+WHERE id=$2 AND closed_at IS NULL RETURNING id, public_url_id, team_id, membership_id, acting_identity_id, publisher_identity_id, publisher_grant_id, publisher_key_id, publish_run_number, idempotency_key, request_digest_ciphertext, request_digest_storage_key_id, share_capable, publish_run_token_id, publish_run_token_digest, policy_revision, certificate_cache_key, certificate_scope, certificate_identifiers, certificate_challenge_method, traffic_limits, state, created_at, last_heartbeat_at, publisher_expires_at, certificate_installed_at, certificate_issuance_id, certificate_not_after, ready_at, closed_at, close_reason, assignments_open
+`
+
+type BoundPublishRunApplicationAuthorityParams struct {
+	ExpiresAt pgtype.Timestamptz
+	ID        string
+}
+
+func (q *Queries) BoundPublishRunApplicationAuthority(ctx context.Context, arg BoundPublishRunApplicationAuthorityParams) (ControlPublishRun, error) {
+	row := q.db.QueryRow(ctx, boundPublishRunApplicationAuthority, arg.ExpiresAt, arg.ID)
+	var i ControlPublishRun
+	err := row.Scan(
+		&i.ID,
+		&i.PublicURLID,
+		&i.TeamID,
+		&i.MembershipID,
+		&i.ActingIdentityID,
+		&i.PublisherIdentityID,
+		&i.PublisherGrantID,
+		&i.PublisherKeyID,
+		&i.PublishRunNumber,
+		&i.IdempotencyKey,
+		&i.RequestDigestCiphertext,
+		&i.RequestDigestStorageKeyID,
+		&i.ShareCapable,
+		&i.PublishRunTokenID,
+		&i.PublishRunTokenDigest,
+		&i.PolicyRevision,
+		&i.CertificateCacheKey,
+		&i.CertificateScope,
+		&i.CertificateIdentifiers,
+		&i.CertificateChallengeMethod,
+		&i.TrafficLimits,
+		&i.State,
+		&i.CreatedAt,
+		&i.LastHeartbeatAt,
+		&i.PublisherExpiresAt,
+		&i.CertificateInstalledAt,
+		&i.CertificateIssuanceID,
+		&i.CertificateNotAfter,
+		&i.ReadyAt,
+		&i.ClosedAt,
+		&i.CloseReason,
+		&i.AssignmentsOpen,
+	)
+	return i, err
+}
+
 const countApplicationVisitGrants = `-- name: CountApplicationVisitGrants :one
 SELECT count(*) FROM control.publisher_grants g
 JOIN control.publisher_identities p ON p.id=g.publisher_identity_id
@@ -32,6 +82,30 @@ func (q *Queries) CountApplicationVisitGrants(ctx context.Context, arg CountAppl
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const readApplicationKeyAuthority = `-- name: ReadApplicationKeyAuthority :one
+SELECT expires_at::timestamptz AS expires_at
+FROM control.application_key_authority($1::text,$2::text,$3::text,$4::timestamptz)
+`
+
+type ReadApplicationKeyAuthorityParams struct {
+	PublisherIdentityID string
+	KeyID               string
+	GrantID             string
+	Now                 pgtype.Timestamptz
+}
+
+func (q *Queries) ReadApplicationKeyAuthority(ctx context.Context, arg ReadApplicationKeyAuthorityParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, readApplicationKeyAuthority,
+		arg.PublisherIdentityID,
+		arg.KeyID,
+		arg.GrantID,
+		arg.Now,
+	)
+	var expires_at pgtype.Timestamptz
+	err := row.Scan(&expires_at)
+	return expires_at, err
 }
 
 const readApplicationRegistrationRequest = `-- name: ReadApplicationRegistrationRequest :one

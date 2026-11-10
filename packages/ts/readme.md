@@ -142,9 +142,11 @@ try {
 Each getter selects current access and reuses the client for that exact connection
 binding. Renewing expiration alone does not replace a pool. Instance cleanup closes
 its factories before stopping its native owners; other instances keep running.
-Supply `workload: { name, token }` or `workload: { name, tokenFile }` to isolate a
-workload source on the instance. Provider callbacks read the current request; they
-are not background refresh sources.
+Supply `credential: { workload: "deploy" }` to select a named workload's built-in
+provider acquisition. An explicit `token` callback or `tokenFile` belongs inside
+that same credential object. Provider callbacks read the current request; they
+are not background refresh sources. The former top-level `workload` constructor
+option is rejected.
 
 ## fetch with an explicit visitor token
 

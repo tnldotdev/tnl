@@ -47,6 +47,10 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 	if _, err = q.GetServiceRunPublisherIdentity(ctx, controlstatedb.GetServiceRunPublisherIdentityParams{ID: id, ServiceID: service, RunNumber: number, PublisherIdentityID: publisher.ID, PublisherGrantID: publisher.GrantID, PublisherKeyID: publisher.KeyID, Now: timestamptz(now)}); err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
+	leaseUntil, err := applicationPublisherLease(ctx, q, publisher.ID, publisher.KeyID, publisher.GrantID, now.Add(45*time.Second), now)
+	if err != nil {
+		return result, errors.Join(ErrServiceAccess, err)
+	}
 	seed, err := d.serviceAssignmentSeed(run)
 	if err != nil {
 		return result, err
@@ -67,21 +71,21 @@ func (d *Database) StartServiceRun(ctx context.Context, service, id string, numb
 		if err = insertServiceRunSlots(ctx, q, seed, run, placements, now); err != nil {
 			return result, err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET state='starting',started_at=$2,run_token_digest=$3,publisher_expires_at=$4 WHERE id=$1`, id, now, digest[:], now.Add(45*time.Second)); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET state='starting',started_at=$2,run_token_digest=$3,publisher_expires_at=$4 WHERE id=$1`, id, now, digest[:], leaseUntil); err != nil {
 			return result, err
 		}
 		run.State = string(serviceRunStarting)
 	} else if !serviceRunLifecycleState(run.State).active() {
 		return result, ErrServiceAccess
 	}
-	if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET run_token_digest=$2,publisher_expires_at=$3 WHERE id=$1`, id, digest[:], now.Add(45*time.Second)); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE control.service_runs SET run_token_digest=$2,publisher_expires_at=$3 WHERE id=$1`, id, digest[:], leaseUntil); err != nil {
 		return result, err
 	}
 	connections, err := privateAssignments(ctx, q, seed, run)
 	if err != nil {
 		return result, err
 	}
-	result = ServiceRunState{ServiceID: service, RunID: id, RunNumber: number, Token: token.String(), State: run.State, ExpiresAt: now.Add(45 * time.Second), Connections: connections}
+	result = ServiceRunState{ServiceID: service, RunID: id, RunNumber: number, Token: token.String(), State: run.State, ExpiresAt: leaseUntil, Connections: connections}
 	return result, tx.Commit(ctx)
 }
 

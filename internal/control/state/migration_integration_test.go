@@ -162,6 +162,7 @@ func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, previous := range []string{
+		"tnl-control-fresh-v1-workload-gitlab",
 		"tnl-control-fresh-v1-workload-kubernetes",
 		"tnl-control-fresh-v1-workload-google",
 		"tnl-control-fresh-v1-workload-optional-duration",

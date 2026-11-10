@@ -306,11 +306,11 @@ func TestIntegrationPublisherNamespaceMemberOwnershipAndRemoval(t *testing.T) {
 	if owns, err := d.PublisherMayStartRun(t.Context(), other, u.ID); err != nil || owns {
 		t.Fatalf("foreign allocation ownership = %t, %v", owns, err)
 	}
-	wrong := AuthorizedPublicURLDeleteRequest{PublicURLID: u.ID, TeamID: u.TeamID, ActingIdentityID: p.CreatorID, PublisherIdentityID: other.ID, PublisherGrantID: other.GrantID}
+	wrong := AuthorizedPublicURLDeleteRequest{PublicURLID: u.ID, TeamID: u.TeamID, ActingIdentityID: p.CreatorID, PublisherIdentityID: other.ID, PublisherGrantID: other.GrantID, PublisherKeyID: other.KeyID}
 	if err := d.DeleteAuthorizedPublicURL(t.Context(), wrong, now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("foreign allocation cleanup = %v", err)
 	}
-	wrong.PublisherIdentityID, wrong.PublisherGrantID = p.ID, p.GrantID
+	wrong.PublisherIdentityID, wrong.PublisherGrantID, wrong.PublisherKeyID = p.ID, p.GrantID, p.KeyID
 	if err := d.DeleteAuthorizedPublicURL(t.Context(), wrong, now); err != nil {
 		t.Fatalf("exact allocation cleanup = %v", err)
 	}

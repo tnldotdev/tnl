@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-workload-gitlab')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-application-sessions')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-workload-gitlab');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-application-sessions');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -590,6 +590,7 @@ CREATE TABLE control.publish_runs (
     acting_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
     publisher_identity_id text,
     publisher_grant_id text,
+    publisher_key_id text,
     publish_run_number bigint NOT NULL CHECK (publish_run_number >= 1),
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
     request_digest_ciphertext bytea,
@@ -621,6 +622,7 @@ CREATE TABLE control.publish_runs (
     FOREIGN KEY (public_url_id, team_id) REFERENCES control.public_urls(id, team_id) ON DELETE RESTRICT,
     CONSTRAINT publish_runs_private_digest_check CHECK ((request_digest_ciphertext IS NULL) = (request_digest_storage_key_id IS NULL) AND (closed_at IS NOT NULL OR request_digest_ciphertext IS NOT NULL)),
     CHECK ((publisher_identity_id IS NULL) = (publisher_grant_id IS NULL)),
+    CHECK ((publisher_identity_id IS NULL) = (publisher_key_id IS NULL)),
     CHECK ((certificate_cache_key IS NULL AND certificate_scope IS NULL AND certificate_identifiers IS NULL
             AND certificate_challenge_method IS NULL AND certificate_installed_at IS NULL
             AND certificate_issuance_id IS NULL AND certificate_not_after IS NULL)
@@ -1599,6 +1601,9 @@ CREATE TABLE control.publisher_identity_keys (
     id text PRIMARY KEY CHECK (id <> ''), publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
     public_key bytea NOT NULL CHECK (octet_length(public_key) = 32), revision bigint NOT NULL CHECK (revision > 0),
     created_at timestamptz NOT NULL, retired_at timestamptz,
+    workload_session_id text CHECK (workload_session_id ~ '^wls_[A-Za-z0-9]{22}$'),
+    workload_binding_id text,
+    CHECK ((workload_session_id IS NULL) = (workload_binding_id IS NULL)),
     UNIQUE (publisher_identity_id, revision), UNIQUE (id, publisher_identity_id)
 );
 -- +goose StatementBegin
@@ -1608,7 +1613,8 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
         AND p.revoked_at IS NULL AND (p.ownership<>'member' OR control.active_membership(p.owner_membership_id,at_time)))
 $$;
 -- +goose StatementEnd
-CREATE UNIQUE INDEX publisher_identity_keys_current ON control.publisher_identity_keys(publisher_identity_id) WHERE retired_at IS NULL;
+CREATE UNIQUE INDEX publisher_identity_keys_current ON control.publisher_identity_keys(publisher_identity_id) WHERE retired_at IS NULL AND workload_session_id IS NULL;
+CREATE UNIQUE INDEX publisher_identity_keys_workload ON control.publisher_identity_keys(publisher_identity_id,workload_session_id) WHERE workload_session_id IS NOT NULL;
 CREATE TABLE control.publisher_grants (
     id text PRIMARY KEY CHECK (id <> ''), publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
     created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
@@ -1680,6 +1686,8 @@ CREATE TABLE control.publisher_namespace_allocations (
 );
 ALTER TABLE control.publish_runs ADD CONSTRAINT publish_runs_publisher_grant
     FOREIGN KEY(publisher_grant_id,publisher_identity_id) REFERENCES control.publisher_grants(id,publisher_identity_id) ON DELETE RESTRICT;
+ALTER TABLE control.publish_runs ADD CONSTRAINT publish_runs_publisher_key
+    FOREIGN KEY(publisher_key_id,publisher_identity_id) REFERENCES control.publisher_identity_keys(id,publisher_identity_id) ON DELETE RESTRICT;
 CREATE VIEW control.publish_run_publisher_grants AS
 SELECT id AS publish_run_id,COALESCE(publisher_identity_id,'')::text AS publisher_identity_id,
     COALESCE(publisher_grant_id,'')::text AS publisher_grant_id FROM control.publish_runs WHERE publisher_identity_id IS NOT NULL;
@@ -1810,7 +1818,7 @@ RETURNS TABLE(client_id text, grant_id text, key_id text, public_key bytea, expi
     FROM control.publisher_grants g
     JOIN control.publisher_identities p ON p.id=g.publisher_identity_id
     JOIN control.teams t ON t.id=p.team_id AND t.deleted_at IS NULL
-    JOIN control.publisher_identity_keys k ON k.publisher_identity_id=p.id AND k.retired_at IS NULL
+    JOIN control.publisher_identity_keys k ON k.publisher_identity_id=p.id AND k.retired_at IS NULL AND k.workload_session_id IS NULL
     LEFT JOIN control.team_memberships m ON m.id=p.owner_membership_id
     LEFT JOIN control.public_urls u ON u.id=g.public_url_id
     LEFT JOIN control.services s ON s.id=g.service_id
@@ -1952,6 +1960,58 @@ CREATE TABLE control.workload_sessions (
     CONSTRAINT workload_identity_expiry CHECK (identity_expires_at>created_at AND lease_expires_at<=identity_expires_at)
 );
 CREATE INDEX workload_sessions_retention ON control.workload_sessions(COALESCE(expires_at,identity_expires_at),id);
+-- federation bindings identify an application; session delegations reference its
+-- existing grants rather than introducing a second durable permission list.
+CREATE TABLE control.workload_applications (
+    id text PRIMARY KEY CHECK (id<>''),
+    team_id text NOT NULL, project_key text NOT NULL, workload_name text NOT NULL,
+    publisher_identity_id text NOT NULL,
+    created_at timestamptz NOT NULL, revoked_at timestamptz,
+    FOREIGN KEY(publisher_identity_id,team_id) REFERENCES control.publisher_identities(id,team_id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX workload_applications_current ON control.workload_applications(team_id,project_key,workload_name) WHERE revoked_at IS NULL;
+ALTER TABLE control.publisher_identity_keys ADD CONSTRAINT publisher_identity_keys_workload_binding
+    FOREIGN KEY(workload_binding_id) REFERENCES control.workload_applications(id) ON DELETE RESTRICT;
+-- retain the session ID on historical signing keys after session retention.
+-- a missing source denies use; clearing it would turn a session key into a
+-- persistent signing credential.
+CREATE TABLE control.workload_session_application_grants (
+    workload_session_id text NOT NULL REFERENCES control.workload_sessions(id) ON DELETE CASCADE,
+    publisher_identity_id text NOT NULL, grant_id text NOT NULL,
+    expires_at timestamptz,
+    PRIMARY KEY(workload_session_id,grant_id),
+    FOREIGN KEY(grant_id,publisher_identity_id) REFERENCES control.publisher_grants(id,publisher_identity_id) ON DELETE CASCADE
+);
+-- persistent access tokens retain their issued lifetime across key rotation.
+-- session keys additionally require their original, still-current delegation.
+-- +goose StatementBegin
+CREATE FUNCTION control.application_key_authority(application_id text, signing_key_id text, selected_grant_id text, at_time timestamptz)
+RETURNS TABLE(expires_at timestamptz) LANGUAGE sql STABLE AS $$
+    SELECT 'infinity'::timestamptz FROM control.publisher_identity_keys key
+    WHERE key.id=signing_key_id AND key.publisher_identity_id=application_id AND key.workload_session_id IS NULL
+    UNION ALL
+    SELECT LEAST(session.lease_expires_at,session.identity_expires_at,session.expires_at,selected.expires_at,grant_record.expires_at)
+    FROM control.publisher_identity_keys key
+    JOIN control.publisher_identities app ON app.id=key.publisher_identity_id
+        AND app.kind='application' AND control.active_publisher(app.id,at_time)
+    JOIN control.workload_sessions session ON session.id=key.workload_session_id
+    JOIN control.workload_applications binding ON binding.id=key.workload_binding_id
+        AND binding.publisher_identity_id=key.publisher_identity_id AND binding.team_id=session.team_id
+        AND binding.project_key=session.project_key AND binding.workload_name=session.workload_name
+        AND binding.revoked_at IS NULL AND binding.created_at<=session.created_at
+    JOIN control.workload_session_application_grants selected ON selected.workload_session_id=session.id
+        AND selected.publisher_identity_id=key.publisher_identity_id AND selected.grant_id=selected_grant_id
+        AND (selected.expires_at IS NULL OR selected.expires_at>at_time)
+    JOIN control.publisher_grants grant_record ON grant_record.id=selected.grant_id
+        AND grant_record.publisher_identity_id=key.publisher_identity_id AND grant_record.revoked_at IS NULL
+        AND (grant_record.expires_at IS NULL OR grant_record.expires_at>at_time)
+    WHERE key.id=signing_key_id AND key.publisher_identity_id=application_id
+        AND key.public_key=session.public_key AND key.retired_at IS NULL
+        AND session.revoked_at IS NULL AND session.created_at<=at_time AND session.renewed_at<=at_time
+        AND session.lease_expires_at>at_time AND session.identity_expires_at>at_time
+        AND (session.expires_at IS NULL OR session.expires_at>at_time)
+$$;
+-- +goose StatementEnd
 CREATE TABLE control.workload_session_services (
     workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
     service_id text NOT NULL REFERENCES control.services(id),

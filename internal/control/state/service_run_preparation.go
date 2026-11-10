@@ -105,6 +105,10 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	if keyRecord.RetiredAt.Valid || len(keyRecord.PublicKey) != ed25519.PublicKeySize {
 		return result, ErrServiceAccess
 	}
+	preparationUntil, err := applicationPublisherLease(ctx, q, p.ID, p.KeyID, p.GrantID, now.Add(2*time.Minute), now)
+	if err != nil {
+		return result, errors.Join(ErrServiceAccess, err)
+	}
 	digest := sha256.Sum256([]byte(serviceID + "\x00" + p.ID + "\x00" + p.GrantID + "\x00" + p.KeyID))
 	var existingID string
 	err = tx.QueryRow(ctx, `SELECT id FROM control.service_runs WHERE service_id=$1 AND idempotency_key=$2 AND publisher_identity_id=$3`, serviceID, key, p.ID).Scan(&existingID)
@@ -174,10 +178,10 @@ func (d *Database) PrepareServiceRun(ctx context.Context, serviceID string, p Pu
 	run, err := q.PrepareServiceRun(ctx, controlstatedb.PrepareServiceRunParams{
 		ID: id, ServiceID: serviceID, TeamID: service.TeamID, RunNumber: int64(number),
 		PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, PublisherKeyID: p.KeyID, IdempotencyKey: key,
-		RequestDigest: digest[:], PreparationExpiresAt: timestamptz(now.Add(2 * time.Minute)),
+		RequestDigest: digest[:], PreparationExpiresAt: timestamptz(preparationUntil),
 		AssignmentSeedCiphertext: ciphertext, AssignmentSeedStorageKeyID: d.storageKey.CurrentID(),
 		CertificateCacheKey: plan.CacheKey, CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers, CertificateDomainID: service.DomainID, CertificateHostname: service.CertificateHostname, ServicePort: service.ServicePort,
-		Now: timestamptz(now), PublisherExpiresAt: timestamptz(now.Add(2 * time.Minute)),
+		Now: timestamptz(now), PublisherExpiresAt: timestamptz(preparationUntil),
 	})
 	if err != nil {
 		return result, err
@@ -265,6 +269,9 @@ func serviceRunAuthorization(ctx context.Context, tx pgx.Tx, q *controlstatedb.Q
 	}
 	if !current {
 		return run, ErrServiceAccess
+	}
+	if _, err := applicationKeyDeadline(ctx, q, run.PublisherIdentityID, run.PublisherKeyID, run.PublisherGrantID, now); err != nil {
+		return run, errors.Join(ErrServiceAccess, err)
 	}
 	observability.AuthenticatedServerScope(ctx, observability.Identity{TeamID: run.TeamID, PublisherIdentityID: run.PublisherIdentityID, ServiceID: run.ServiceID}, observability.Fields{Component: "control"})
 	return run, nil
@@ -440,9 +447,13 @@ func (d *Database) HeartbeatServiceRun(ctx context.Context, serviceID, runID, to
 		return result, err
 	}
 	run.Healthy, run.StreamCapacity, run.ReportedStreams = report.Healthy, report.StreamCapacity, report.ActiveStreams
+	leaseUntil, err := applicationPublisherLease(ctx, q, run.PublisherIdentityID, run.PublisherKeyID, run.PublisherGrantID, now.Add(45*time.Second), now)
+	if err != nil {
+		return result, errors.Join(ErrServiceAccess, err)
+	}
 	run, err = q.RenewServiceRun(ctx, controlstatedb.RenewServiceRunParams{
 		ID: runID, ServiceID: serviceID, RunNumber: run.RunNumber,
-		RunTokenDigest: run.RunTokenDigest, PublisherExpiresAt: timestamptz(now.Add(45 * time.Second)), Now: timestamptz(now),
+		RunTokenDigest: run.RunTokenDigest, PublisherExpiresAt: timestamptz(leaseUntil), Now: timestamptz(now),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrServiceAccess

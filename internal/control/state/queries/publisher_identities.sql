@@ -6,8 +6,12 @@ INSERT INTO control.publisher_identities(id, team_id, name, kind, created_by_ide
 VALUES (sqlc.arg(id), sqlc.arg(team_id), sqlc.arg(name), sqlc.arg(kind), sqlc.arg(created_by_identity_id), sqlc.narg(guest_id), sqlc.arg(created_at), sqlc.arg(ownership), sqlc.narg(owner_membership_id)) RETURNING *;
 
 -- name: InsertPublisherKey :exec
-INSERT INTO control.publisher_identity_keys(id, publisher_identity_id, public_key, revision, created_at)
-VALUES (sqlc.arg(id), sqlc.arg(publisher_identity_id), sqlc.arg(public_key), sqlc.arg(revision), sqlc.arg(created_at));
+INSERT INTO control.publisher_identity_keys(id, publisher_identity_id, public_key, revision, created_at, workload_session_id, workload_binding_id)
+VALUES (sqlc.arg(id), sqlc.arg(publisher_identity_id), sqlc.arg(public_key), sqlc.arg(revision), sqlc.arg(created_at), sqlc.narg(workload_session_id), sqlc.narg(workload_binding_id));
+
+-- name: NextPublisherKeyRevision :one
+-- the caller holds the identity lock; session and persistent keys share the counter.
+SELECT (COALESCE(max(revision),0)+1)::bigint AS revision FROM control.publisher_identity_keys WHERE publisher_identity_id=sqlc.arg(publisher_identity_id);
 
 -- name: GetPublisherKey :one
 SELECT * FROM control.publisher_identity_keys WHERE id = sqlc.arg(id) AND publisher_identity_id = sqlc.arg(publisher_identity_id) FOR SHARE;

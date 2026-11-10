@@ -145,6 +145,13 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 	if k.RetiredAt.Valid || group != "" && groupKey != kid {
 		return result, ErrPublisherIdentity
 	}
+	var sourceDeadline *time.Time
+	if group == "" {
+		sourceDeadline, err = applicationKeyDeadline(ctx, q, i.ID, kid, r.ScopeID, r.Now)
+		if err != nil {
+			return result, err
+		}
+	}
 	a, err := publisherproof.Verify(r.Assertion, i.ID, kid, publisherproof.RuntimeScope(r.ScopeID, r.Action, r.ProcessRunID, r.ExpectedEpoch, publisherprovenance.Digest(r.Deployment)), r.Audience, k.PublicKey, r.Now)
 	if err != nil {
 		return result, ErrPublisherIdentity
@@ -202,6 +209,9 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 	}
 	address, family := publicPublisherAddress(r.SourceIP)
 	until := r.Now.Add(PublisherGroupLeaseLifetime)
+	if sourceDeadline != nil {
+		until = minTime(until, *sourceDeadline)
+	}
 	if r.Action == "start" {
 		if current.ProcessRunID == r.ProcessRunID && current.Epoch == r.ExpectedEpoch+1 && current.ScopeID == r.ScopeID && current.KeyID == kid && !current.StoppedAt.Valid {
 			// a fresh one-use proof may recover a lost start reply. it must not

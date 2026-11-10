@@ -432,6 +432,7 @@ WHERE run.id = $2 AND run.run_number = $3
     AND run.publisher_identity_id = $5
     AND run.publisher_grant_id = $6
     AND run.publisher_key_id = $7
+    AND EXISTS(SELECT 1 FROM control.application_key_authority(run.publisher_identity_id,run.publisher_key_id,run.publisher_grant_id,$1))
     AND run.closed_at IS NULL
 `
 
