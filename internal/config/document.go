@@ -43,7 +43,7 @@ type TNL struct {
 	Services        Services                  `json:"services,omitempty" yaml:"services,omitempty" jsonschema_description:"Named application services. A local public_url block enables a public URL; named-group reachability belongs to its publisher group."`
 	Webhooks        map[string]Webhook        `json:"webhooks,omitempty" yaml:"webhooks,omitempty" jsonschema_description:"Stable project webhook endpoints, delivered to running worktrees."`
 	Aliases         map[string]Alias          `json:"aliases,omitempty" yaml:"aliases,omitempty" jsonschema_description:"Saved project public URLs assigned to the primary checkout by default, or explicitly to another worktree."`
-	Workloads       map[string]Workload       `json:"workloads,omitempty" yaml:"workloads,omitempty" jsonschema_description:"Named provider identities granting access to exact configured services."`
+	Workloads       map[string]Workload       `json:"workloads,omitempty" yaml:"workloads,omitempty" jsonschema_description:"Named provider identities with explicit application visit, publish and namespace-allocation grants."`
 }
 
 type Services map[string]Service

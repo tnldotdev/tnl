@@ -37,6 +37,7 @@ type Selection struct {
 
 // Select reads only the generated artifact in the canonical project directory.
 // it never evaluates project configuration, Git, provider metadata, or login state.
+// an empty service selects only the workload identity, never visit authority.
 func Select(directory, configured, service string, runtime Runtime) (Selection, error) {
 	directory, err := filepath.Abs(directory)
 	if err != nil {
@@ -102,7 +103,7 @@ func Select(directory, configured, service string, runtime Runtime) (Selection, 
 	if !ok || !naming.ValidServiceName(name) {
 		return Selection{}, ErrRequired
 	}
-	if !naming.ValidServiceName(service) || !slices.Contains(selected.Services, service) {
+	if service != "" && (!naming.ValidServiceName(service) || !slices.Contains(selected.VisitServices(), service)) {
 		return Selection{}, ErrDenied
 	}
 	data, _ := json.Marshal(manifest)

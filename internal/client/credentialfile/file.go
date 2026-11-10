@@ -71,39 +71,74 @@ func New(server string, identity authorityv1.PublisherEnrollmentResult, private 
 }
 
 func NewApplication(server string, application controlv1.RegisteredApplication, private ed25519.PrivateKey) (File, error) {
-	f := File{Version: 1, ControlURL: server, ClientID: application.ClientId, KeyID: application.KeyId, TeamID: application.TeamId, PrivateKey: base64.RawURLEncoding.EncodeToString(private), Grants: make([]Grant, 0, len(application.Grants))}
-	for _, grant := range application.Grants {
-		if grant.RevokedAt != nil || grant.TeamId != nil && *grant.TeamId != application.TeamId {
-			return File{}, ErrInvalid
-		}
-		f.Grants = append(f.Grants, Grant{ID: grant.Id, Operation: grant.Operation, Kind: string(grant.Kind), PublicURLID: grant.PublicUrlId, ServiceID: grant.ServiceId, DomainID: grant.DomainId, Namespace: grant.Namespace, ExpiresAt: grant.ExpiresAt})
+	grants, err := ApplicationGrants(application)
+	if err != nil {
+		return File{}, err
 	}
+	f := File{Version: 1, ControlURL: server, ClientID: application.ClientId, KeyID: application.KeyId, TeamID: application.TeamId, PrivateKey: base64.RawURLEncoding.EncodeToString(private), Grants: grants}
 	if _, err := f.Validate(); err != nil {
 		return File{}, err
 	}
 	return f, nil
 }
 
+// application responses may be empty after narrowing. only a nonempty grant set
+// can become a prepared credential; both paths use the same resource validator.
+func ApplicationGrants(application controlv1.RegisteredApplication) ([]Grant, error) {
+	if !validSigningIdentity(application.ClientId, application.KeyId, application.TeamId) {
+		return nil, ErrInvalid
+	}
+	grants := make([]Grant, 0, len(application.Grants))
+	for _, grant := range application.Grants {
+		if grant.RevokedAt != nil || grant.TeamId != nil && *grant.TeamId != application.TeamId {
+			return nil, ErrInvalid
+		}
+		grants = append(grants, Grant{ID: grant.Id, Operation: grant.Operation, Kind: string(grant.Kind), PublicURLID: cloneOptional(grant.PublicUrlId), ServiceID: cloneOptional(grant.ServiceId), DomainID: cloneOptional(grant.DomainId), Namespace: cloneOptional(grant.Namespace), ExpiresAt: cloneOptional(grant.ExpiresAt)})
+	}
+	return grants, validateGrantSet(grants)
+}
+
+func cloneOptional[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	return new(*value)
+}
+
+func validSigningIdentity(client, key, team string) bool {
+	return opaqueid.Valid(client, opaqueid.PublisherIdentityPrefix) && opaqueid.Valid(key, opaqueid.PublisherIdentityKeyPrefix) && team != "" && len(team) <= 256
+}
+
 // Validate checks the whole document without selecting a default capability.
 func (f File) Validate() (ed25519.PrivateKey, error) {
 	server, err := naming.CanonicalControlURL(f.ControlURL)
 	if err != nil || server != f.ControlURL || f.Version != 1 || len(f.Grants) < 1 || len(f.Grants) > 64 ||
-		!opaqueid.Valid(f.ClientID, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(f.KeyID, opaqueid.PublisherIdentityKeyPrefix) || f.TeamID == "" || len(f.TeamID) > 256 {
+		!validSigningIdentity(f.ClientID, f.KeyID, f.TeamID) {
 		return nil, ErrInvalid
 	}
 	private, err := base64.RawURLEncoding.DecodeString(f.PrivateKey)
 	if err != nil || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private[:ed25519.SeedSize]), private) || base64.RawURLEncoding.EncodeToString(private) != f.PrivateKey {
 		return nil, ErrInvalid
 	}
+	if err := validateGrantSet(f.Grants); err != nil {
+		return nil, err
+	}
+	return ed25519.PrivateKey(private), nil
+}
+
+func validateGrantSet(grants []Grant) error {
+	if len(grants) > 64 {
+		return ErrInvalid
+	}
 	ids, bindings := map[string]bool{}, map[string]bool{}
-	for _, grant := range f.Grants {
+	for _, grant := range grants {
 		resource, err := grant.resource()
 		if err != nil || ids[grant.ID] || bindings[string(grant.Operation)+":"+resource] {
-			return nil, ErrInvalid
+			return ErrInvalid
 		}
 		ids[grant.ID], bindings[string(grant.Operation)+":"+resource] = true, true
 	}
-	return ed25519.PrivateKey(private), nil
+	return nil
 }
 
 func (g Grant) resource() (string, error) {

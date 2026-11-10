@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
+	"github.com/tnldotdev/tnl/internal/testutil/workloadfixture"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -30,6 +31,7 @@ func TestConnectionPreparedOnlyAndVerifiedWarmWorkBudget(t *testing.T) {
 	names := []string{"db", "sibling", "invalid", "mismatch"}
 	session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: ids, ExpiresAt: new(now.Add(time.Hour)), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second)}
 	session.IdentityExpiresAt = now.Add(2 * time.Hour)
+	session.Application = workloadfixture.Application(session.Workload, session.TeamId, session.ServiceIds)
 	var mu sync.Mutex
 	calls := map[string]int{}
 	var public []byte

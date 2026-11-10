@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	clientworkload "github.com/tnldotdev/tnl/internal/connector/workload"
+	clientworkload "github.com/tnldotdev/tnl/internal/client/identity/workload"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"

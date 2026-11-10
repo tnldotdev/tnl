@@ -959,7 +959,7 @@ export interface TnlConfig {
       | undefined;
   };
   /**
-   * Named provider identities granting access to exact configured services.
+   * Named provider identities with explicit application visit, publish and namespace-allocation grants.
    */
   workloads?: {
     [k: string]:

@@ -3850,7 +3850,7 @@
             ]
           },
           "type": "object",
-          "description": "Named provider identities granting access to exact configured services."
+          "description": "Named provider identities with explicit application visit, publish and namespace-allocation grants."
         }
       },
       "additionalProperties": false,

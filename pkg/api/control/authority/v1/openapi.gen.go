@@ -1072,6 +1072,9 @@ type WorkloadSession = WorkloadSessionFields
 
 // WorkloadSessionFields defines model for WorkloadSessionFields.
 type WorkloadSessionFields struct {
+	// Application The exact registered application and captured live grants for this session signing key. Contains no private key and cannot be widened by renewal or assertion attachment.
+	Application externalRef0.RegisteredApplication `json:"application"`
+
 	// AssertionExpiresAt Verified expiry of the supplied assertion on exchange or attachment. Omitted on renewal; never extends the session window.
 	AssertionExpiresAt *time.Time `json:"assertion_expires_at,omitempty"`
 	Binding            string     `json:"binding"`

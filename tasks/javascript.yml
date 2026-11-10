@@ -71,7 +71,7 @@ tasks:
       - pnpm exec vitest run packages/ts/test/connector/connection.test.ts packages/ts/test/connector/connection-environment.test.ts packages/ts/test/connector/awaitable-connection.test.ts packages/ts/test/connector/connection-fetch.test.ts packages/ts/test/connector/connection-ipc.test.ts packages/ts/test/connector/connection-installed.test.ts packages/ts/test/connector/connection-owner-recovery.test.ts packages/ts/test/connector/workload-native.test.ts packages/ts/test/connector/workload-provider.test.ts packages/ts/test/project/service-metadata.test.ts
       - task: :go:test:focused
         vars:
-          PACKAGES: ./internal/connector/workload ./internal/client/project/workloadmanifest ./internal/connector
+          PACKAGES: ./internal/client/identity/workload ./internal/client/project/workloadmanifest ./internal/connector
           RUN: "Test(AssertionSource|FlyMachineToken|GitHubAssertion|Session.*(Validation|Decoder)|Selection|Manifest|ConnectionSDK.*Workload)"
 
   test:frameworks:

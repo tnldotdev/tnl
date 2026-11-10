@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/tnldotdev/tnl/internal/connector/workload"
+	"github.com/tnldotdev/tnl/internal/client/identity/workload"
 )
 
 func (b *connectorConnectionBackend) Close(ctx context.Context) error {

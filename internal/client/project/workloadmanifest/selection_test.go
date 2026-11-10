@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
+
 	"golang.org/x/sys/unix"
 )
 
@@ -22,7 +24,7 @@ func selectionFixture(t *testing.T) (string, Manifest, func(Manifest)) {
 	if err := os.MkdirAll(generated, 0700); err != nil {
 		t.Fatal(err)
 	}
-	manifest := Manifest{Schema: 1, Server: "https://control.example.test", Team: "team", ProjectKey: "project", SourceFingerprint: strings.Repeat("a", 64), ProjectLabel: "app", Services: map[string]string{"api": "http"}, Workloads: map[string]Workload{"job": {Provider: "github", Services: []string{"api"}, MaxDurationSeconds: 3600, Acquisition: Acquisition{Method: "github-actions", Audience: "https://control.example.test"}}}}
+	manifest := Manifest{Schema: 1, Server: "https://control.example.test", Team: "team", ProjectKey: "project", SourceFingerprint: strings.Repeat("a", 64), ProjectLabel: "app", Services: map[string]string{"api": "http"}, Workloads: map[string]Workload{"job": {Provider: "github", Grants: config.ServiceVisitGrants("api"), MaxDurationSeconds: 3600, Acquisition: Acquisition{Method: "github-actions", Audience: "https://control.example.test"}}}}
 	write := func(m Manifest) {
 		t.Helper()
 		data, err := json.Marshal(m)
@@ -133,7 +135,7 @@ func TestManifestRejectsSDKInvalidShapes(t *testing.T) {
 		"invalid service name":     func(m *Manifest) { m.Services["../extra"] = "http" },
 		"duplicate service": func(m *Manifest) {
 			w := m.Workloads["job"]
-			w.Services = []string{"api", "api"}
+			w.Grants = config.ServiceVisitGrants("api", "api")
 			m.Workloads["job"] = w
 		},
 		"missing service": func(m *Manifest) { delete(m.Services, "api") },

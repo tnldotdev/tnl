@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/filelock"
+	"github.com/tnldotdev/tnl/internal/client/identity/workload"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"golang.org/x/sys/unix"

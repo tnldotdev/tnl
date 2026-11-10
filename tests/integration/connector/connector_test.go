@@ -32,16 +32,17 @@ import (
 	"testing"
 	"time"
 
+	connectorworkload "github.com/tnldotdev/tnl/internal/client/identity/workload"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	connectorworkload "github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/connectorfixture"
 	"github.com/tnldotdev/tnl/internal/testutil/githubtest"
+	"github.com/tnldotdev/tnl/internal/testutil/workloadfixture"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -561,7 +562,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 				if g := claims.GitHub; g != nil {
 					github = &authorityv1.WorkloadGitHubExecution{RepositoryId: g.RepositoryID, RepositoryOwnerId: g.RepositoryOwnerID, RunId: g.RunID, RunAttempt: g.RunAttempt, CheckRunId: g.CheckRunID}
 				}
-				current = &workloadSession{public: ed25519.PublicKey(public), WorkloadSession: authorityv1.WorkloadSession{Id: id, TeamId: team, ProjectKey: exchange.ProjectKey, Workload: exchange.Workload, Provider: controlv1.WorkloadGitHub, Github: github, Credential: "wlc_" + base64.RawURLEncoding.EncodeToString(credential), ExpiresAt: new(time.Now().Add(time.Hour)), IdentityExpiresAt: time.Unix(claims.ExpiresAt, 0), LeaseExpiresAt: time.Now().Add(90 * time.Second), RenewAfter: time.Now().Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, Binding: bindingFor(exchange.Assertion)}}
+				current = &workloadSession{public: ed25519.PublicKey(public), WorkloadSession: authorityv1.WorkloadSession{Id: id, TeamId: team, ProjectKey: exchange.ProjectKey, Workload: exchange.Workload, Provider: controlv1.WorkloadGitHub, Github: github, Credential: "wlc_" + base64.RawURLEncoding.EncodeToString(credential), ExpiresAt: new(time.Now().Add(time.Hour)), IdentityExpiresAt: time.Unix(claims.ExpiresAt, 0), LeaseExpiresAt: time.Now().Add(90 * time.Second), RenewAfter: time.Now().Add(30 * time.Second), ServiceIds: []string{service}, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, Binding: bindingFor(exchange.Assertion), Application: workloadfixture.Application(exchange.Workload, team, []string{service})}}
 				if googleConfig {
 					current.Provider, current.Github = controlv1.WorkloadGoogle, nil
 				}
@@ -715,7 +716,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	}
 	configuration := map[string]any{"version": 1, "tnl": map[string]any{"server": server, "team": team, "publisher_groups": map[string]any{"remote": map[string]any{"public": public}}, "services": map[string]any{serviceName: map[string]any{"publisher_group": "remote", "protocol": protocol, "target": targetDefinition}}, "workloads": map[string]any{"test": workloadPolicy}}}
 	if startup == "action-wrong-provider" {
-		configuration["tnl"].(map[string]any)["workloads"] = map[string]any{"test": map[string]any{"fly": map[string]any{"app": "fixture", "org": "example"}, "services": []string{serviceName}}}
+		configuration["tnl"].(map[string]any)["workloads"] = map[string]any{"test": map[string]any{"fly": map[string]any{"app": "fixture", "org": "example"}, "grants": config.ServiceVisitGrants(serviceName)}}
 	}
 	data, _ := json.Marshal(configuration)
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), data, 0o600); err != nil {
@@ -867,7 +868,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	}
 	if strings.HasPrefix(startup, "javascript") || strings.HasPrefix(startup, "python") {
 		manifest := workloadmanifest.Manifest{Schema: 1, Server: scope.Server, Team: scope.TeamID, ProjectKey: scope.ProjectKey, SourceFingerprint: scope.SourceID, ProjectLabel: scope.ProjectLabel,
-			Workloads: map[string]workloadmanifest.Workload{"test": {Provider: "github", Services: []string{serviceName}, MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "github-actions", Audience: scope.Server}}}, Services: map[string]string{serviceName: protocol}}
+			Workloads: map[string]workloadmanifest.Workload{"test": {Provider: "github", Grants: config.ServiceVisitGrants(serviceName), MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "github-actions", Audience: scope.Server}}}, Services: map[string]string{serviceName: protocol}}
 		if strings.HasSuffix(startup, "-refresh") {
 			policy := manifest.Workloads["test"]
 			policy.MaxDurationSeconds = 0

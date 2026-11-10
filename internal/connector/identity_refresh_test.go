@@ -18,11 +18,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/identity/workload"
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
+	"github.com/tnldotdev/tnl/internal/testutil/workloadfixture"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -40,6 +41,7 @@ func newIdentityRefreshFixture(t *testing.T) *identityRefreshFixture {
 	now := time.Now()
 	id := "wls_" + strings.Repeat("s", 22)
 	current := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: "tm_" + strings.Repeat("t", 22), ProjectKey: "project", Workload: "job", Provider: controlv1.WorkloadOIDC, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: []string{}, ExpiresAt: new(now.Add(time.Minute)), IdentityExpiresAt: now.Add(2 * time.Second), LeaseExpiresAt: now.Add(2 * time.Second), RenewAfter: now.Add(30 * time.Second)}
+	current.Application = workloadfixture.Application(current.Workload, current.TeamId, current.ServiceIds)
 	var mu sync.Mutex
 	var public ed25519.PublicKey
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -26,22 +27,23 @@ const WorkloadLease = 90 * time.Second
 const WorkloadRenewAfter = 30 * time.Second
 
 type WorkloadSession struct {
-	RenewalSequence    int64                    `json:"renewal_sequence"`
-	ID                 string                   `json:"id"`
-	Credential         string                   `json:"credential"`
-	TeamID             string                   `json:"team_id"`
-	ProjectKey         string                   `json:"project_key"`
-	Workload           string                   `json:"workload"`
-	Provider           string                   `json:"provider"`
-	Subject            VisitorSubject           `json:"subject"`
-	LeaseExpiresAt     time.Time                `json:"lease_expires_at"`
-	IdentityExpiresAt  time.Time                `json:"identity_expires_at"`
-	ExpiresAt          *time.Time               `json:"expires_at,omitempty"`
-	RenewAfter         time.Time                `json:"renew_after"`
-	ServiceIDs         []string                 `json:"service_ids"`
-	Binding            string                   `json:"binding"`
-	AssertionExpiresAt *time.Time               `json:"assertion_expires_at,omitempty"`
-	GitHub             *WorkloadGitHubExecution `json:"github,omitempty"`
+	RenewalSequence    int64                           `json:"renewal_sequence"`
+	ID                 string                          `json:"id"`
+	Credential         string                          `json:"credential"`
+	TeamID             string                          `json:"team_id"`
+	ProjectKey         string                          `json:"project_key"`
+	Workload           string                          `json:"workload"`
+	Provider           string                          `json:"provider"`
+	Subject            VisitorSubject                  `json:"subject"`
+	LeaseExpiresAt     time.Time                       `json:"lease_expires_at"`
+	IdentityExpiresAt  time.Time                       `json:"identity_expires_at"`
+	ExpiresAt          *time.Time                      `json:"expires_at,omitempty"`
+	RenewAfter         time.Time                       `json:"renew_after"`
+	ServiceIDs         []string                        `json:"service_ids"`
+	Binding            string                          `json:"binding"`
+	AssertionExpiresAt *time.Time                      `json:"assertion_expires_at,omitempty"`
+	GitHub             *WorkloadGitHubExecution        `json:"github,omitempty"`
+	Application        controlv1.RegisteredApplication `json:"application"`
 }
 
 type WorkloadGitHubExecution struct {
@@ -238,6 +240,10 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 		r.ServiceIDs = append(r.ServiceIDs, service.ServiceID)
 	}
 	slices.Sort(r.ServiceIDs)
+	r.Application, err = readWorkloadApplication(ctx, q, id, now)
+	if err != nil {
+		return WorkloadSession{}, err
+	}
 	return r, nil
 }
 

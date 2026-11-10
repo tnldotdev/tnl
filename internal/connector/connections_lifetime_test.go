@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/identity/workload"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	"github.com/tnldotdev/tnl/internal/connector/workload"
 )
 
 func TestConnectionProcessLifetimeDoesNotResurrectWorkloadSessions(t *testing.T) {

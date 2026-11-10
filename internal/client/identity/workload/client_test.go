@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
+	"github.com/tnldotdev/tnl/internal/testutil/workloadfixture"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -299,6 +300,7 @@ func sessionFixture(provider controlv1.WorkloadProvider) authorityv1.WorkloadSes
 	s := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: "tm_" + strings.Repeat("t", 22), ProjectKey: "store", Workload: "storefront", Provider: provider, Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, LeaseExpiresAt: now.Add(90 * time.Second), ExpiresAt: new(now.Add(time.Hour)), RenewAfter: now.Add(30 * time.Second), ServiceIds: []string{"svc_" + strings.Repeat("p", 22)}}
 	s.Binding = strings.Repeat("b", 64)
 	s.IdentityExpiresAt = now.Add(5 * time.Minute)
+	s.Application = workloadfixture.Application(s.Workload, s.TeamId, s.ServiceIds)
 	if provider == controlv1.WorkloadGitHub {
 		s.Github = &authorityv1.WorkloadGitHubExecution{RepositoryId: "12345", RepositoryOwnerId: "6789", RunId: "111", RunAttempt: "1", CheckRunId: "222"}
 	}

@@ -32,6 +32,7 @@ import (
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/connectorfixture"
+	"github.com/tnldotdev/tnl/internal/testutil/workloadfixture"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -147,6 +148,7 @@ func TestIntegrationConnectionSharedOwnerStalledSibling(t *testing.T) {
 	trustRevision := int64(1)
 	session := authorityv1.WorkloadSession{Id: id, Credential: "wlc_" + strings.Repeat("x", 43), TeamId: team, ProjectKey: "project", Workload: "worker", Provider: controlv1.WorkloadVercel, Binding: strings.Repeat("a", 64), Subject: controlv1.VisitorSubject{Kind: "workload_session", WorkloadSessionId: &id}, ServiceIds: ids, ExpiresAt: new(now.Add(time.Hour)), LeaseExpiresAt: now.Add(90 * time.Second), RenewAfter: now.Add(30 * time.Second)}
 	session.IdentityExpiresAt = now.Add(2 * time.Hour)
+	session.Application = workloadfixture.Application(session.Workload, session.TeamId, session.ServiceIds)
 	natives := map[string]*connectorfixture.Connector{}
 	const serviceRun = "srun_rrrrrrrrrrrrrrrrrrrrrr"
 	for i, target := range []string{application.Listener.Addr().String(), dbListener.Addr().String()} {

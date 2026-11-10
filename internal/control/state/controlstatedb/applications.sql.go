@@ -84,6 +84,75 @@ func (q *Queries) CountApplicationVisitGrants(ctx context.Context, arg CountAppl
 	return count, err
 }
 
+const listCapturedApplicationGrants = `-- name: ListCapturedApplicationGrants :many
+SELECT grant_record.id, grant_record.publisher_identity_id, grant_record.created_by_identity_id, grant_record.kind, grant_record.operation, grant_record.public_url_id, grant_record.service_id, grant_record.domain_id, grant_record.namespace, grant_record.membership_id, grant_record.public_url_scope, grant_record.created_at, grant_record.expires_at, grant_record.revoked_at,LEAST(grant_record.expires_at,selected.expires_at)::timestamptz AS captured_expires_at
+FROM control.workload_session_application_grants selected
+JOIN control.publisher_grants grant_record ON grant_record.id=selected.grant_id AND grant_record.publisher_identity_id=selected.publisher_identity_id
+JOIN control.publisher_identity_keys key ON key.publisher_identity_id=selected.publisher_identity_id AND key.workload_session_id=selected.workload_session_id
+WHERE selected.workload_session_id=$1
+    AND EXISTS(SELECT 1 FROM control.application_key_authority(key.publisher_identity_id,key.id,grant_record.id,$2::timestamptz))
+ORDER BY grant_record.id LIMIT 65
+`
+
+type ListCapturedApplicationGrantsParams struct {
+	SessionID string
+	Now       pgtype.Timestamptz
+}
+
+type ListCapturedApplicationGrantsRow struct {
+	ID                  string
+	PublisherIdentityID string
+	CreatedByIdentityID string
+	Kind                string
+	Operation           string
+	PublicURLID         pgtype.Text
+	ServiceID           pgtype.Text
+	DomainID            pgtype.Text
+	Namespace           pgtype.Text
+	MembershipID        pgtype.Text
+	PublicURLScope      pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+	CapturedExpiresAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ListCapturedApplicationGrants(ctx context.Context, arg ListCapturedApplicationGrantsParams) ([]ListCapturedApplicationGrantsRow, error) {
+	rows, err := q.db.Query(ctx, listCapturedApplicationGrants, arg.SessionID, arg.Now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCapturedApplicationGrantsRow
+	for rows.Next() {
+		var i ListCapturedApplicationGrantsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PublisherIdentityID,
+			&i.CreatedByIdentityID,
+			&i.Kind,
+			&i.Operation,
+			&i.PublicURLID,
+			&i.ServiceID,
+			&i.DomainID,
+			&i.Namespace,
+			&i.MembershipID,
+			&i.PublicURLScope,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.RevokedAt,
+			&i.CapturedExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readApplicationKeyAuthority = `-- name: ReadApplicationKeyAuthority :one
 SELECT expires_at::timestamptz AS expires_at
 FROM control.application_key_authority($1::text,$2::text,$3::text,$4::timestamptz)
@@ -178,6 +247,40 @@ func (q *Queries) ReadApplicationVisitAuthority(ctx context.Context, arg ReadApp
 		return nil, err
 	}
 	return items, nil
+}
+
+const readWorkloadApplicationIdentity = `-- name: ReadWorkloadApplicationIdentity :one
+SELECT app.id,app.team_id,app.name,app.ownership,key.id::text AS key_id
+FROM control.publisher_identity_keys key
+JOIN control.publisher_identities app ON app.id=key.publisher_identity_id AND app.kind='application'
+JOIN control.workload_applications binding ON binding.id=key.workload_binding_id AND binding.publisher_identity_id=app.id AND binding.revoked_at IS NULL
+WHERE key.workload_session_id=$1 AND key.retired_at IS NULL AND control.active_publisher(app.id,$2)
+`
+
+type ReadWorkloadApplicationIdentityParams struct {
+	SessionID pgtype.Text
+	Now       pgtype.Timestamptz
+}
+
+type ReadWorkloadApplicationIdentityRow struct {
+	ID        string
+	TeamID    string
+	Name      string
+	Ownership string
+	KeyID     string
+}
+
+func (q *Queries) ReadWorkloadApplicationIdentity(ctx context.Context, arg ReadWorkloadApplicationIdentityParams) (ReadWorkloadApplicationIdentityRow, error) {
+	row := q.db.QueryRow(ctx, readWorkloadApplicationIdentity, arg.SessionID, arg.Now)
+	var i ReadWorkloadApplicationIdentityRow
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.Name,
+		&i.Ownership,
+		&i.KeyID,
+	)
+	return i, err
 }
 
 const recordApplicationRegistrationRequest = `-- name: RecordApplicationRegistrationRequest :exec

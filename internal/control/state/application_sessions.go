@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 // capture runs only while creating a new workload session under the team guard.
@@ -86,6 +87,33 @@ func applicationPublisherLease(ctx context.Context, q *controlstatedb.Queries, a
 		until = minTime(until, *deadline)
 	}
 	return until, err
+}
+
+// return only the original captured grants that remain authorized now. the
+// application never receives grants added after this session began.
+func readWorkloadApplication(ctx context.Context, q *controlstatedb.Queries, session string, now time.Time) (controlv1.RegisteredApplication, error) {
+	identity, err := q.ReadWorkloadApplicationIdentity(ctx, controlstatedb.ReadWorkloadApplicationIdentityParams{SessionID: text(session), Now: timestamptz(now)})
+	if err != nil {
+		return controlv1.RegisteredApplication{}, publisherLookupError(err, ErrWorkloadDenied)
+	}
+	grants, err := q.ListCapturedApplicationGrants(ctx, controlstatedb.ListCapturedApplicationGrantsParams{SessionID: session, Now: timestamptz(now)})
+	if err != nil {
+		return controlv1.RegisteredApplication{}, err
+	}
+	if len(grants) > 64 {
+		return controlv1.RegisteredApplication{}, ErrWorkloadDenied
+	}
+	result := controlv1.RegisteredApplication{ClientId: identity.ID, KeyId: identity.KeyID, TeamId: identity.TeamID, Name: identity.Name, Ownership: controlv1.RegisteredApplicationOwnership(identity.Ownership), Grants: []controlv1.PublisherGrant{}}
+	selectedText := func(value pgtype.Text) *string {
+		if value.Valid {
+			return new(value.String)
+		}
+		return nil
+	}
+	for _, grant := range grants {
+		result.Grants = append(result.Grants, controlv1.PublisherGrant{Id: grant.ID, Kind: controlv1.PublisherGrantKind(grant.Kind), Operation: controlv1.ApplicationOperation(grant.Operation), PublicUrlId: selectedText(grant.PublicURLID), ServiceId: selectedText(grant.ServiceID), DomainId: selectedText(grant.DomainID), Namespace: selectedText(grant.Namespace), CreatedAt: grant.CreatedAt.Time, ExpiresAt: optionalTime(grant.CapturedExpiresAt)})
+	}
+	return result, nil
 }
 
 func boundApplicationServingAuthority(ctx context.Context, q *controlstatedb.Queries, run controlstatedb.ControlPublishRun, now time.Time) (controlstatedb.ControlPublishRun, error) {

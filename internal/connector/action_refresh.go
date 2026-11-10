@@ -5,9 +5,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 
+	"github.com/tnldotdev/tnl/internal/client/identity/workload"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	"github.com/tnldotdev/tnl/internal/connector/workload"
 )
 
 // validateGitHubActionsRefresh binds an explicit action-owned runtime source to

@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/client/identity/workload"
 	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
-	"github.com/tnldotdev/tnl/internal/connector/workload"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/ingress"

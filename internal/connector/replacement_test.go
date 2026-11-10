@@ -12,10 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/identity/workload"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	"github.com/tnldotdev/tnl/internal/connector/workload"
+	"github.com/tnldotdev/tnl/internal/testutil/workloadfixture"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -159,6 +160,7 @@ func TestConnectionReplacementRequiresNonGitHubConfirmedExpiry(t *testing.T) {
 				session.Github = &authorityv1.WorkloadGitHubExecution{RepositoryId: "1", RepositoryOwnerId: "2", RunId: "3", RunAttempt: "4", CheckRunId: "5"}
 			}
 			session.IdentityExpiresAt = time.Now().Add(5 * time.Minute)
+			session.Application = workloadfixture.Application(session.Workload, session.TeamId, session.ServiceIds)
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {

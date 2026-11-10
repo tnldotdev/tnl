@@ -14,13 +14,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/identity/workload"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	clientserver "github.com/tnldotdev/tnl/internal/client/server"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
@@ -186,17 +186,17 @@ func connectionManifest(options ContextOptions) (projectConfiguration, connector
 	}
 	services := slices.Clone(options.Service)
 	if len(services) == 0 {
-		services = slices.Clone(w.Services)
+		services = w.VisitServices()
 	}
 	slices.Sort(services)
 	for _, s := range services {
-		if !slices.Contains(w.Services, s) {
+		if !slices.Contains(w.VisitServices(), s) {
 			return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrInvalid
 		}
 	}
 	b, _ := json.Marshal(m)
 	digest := sha256.Sum256(b)
-	configuration := config.TNL{Server: &m.Server, Team: &m.Team, Services: config.Services{}, Workloads: map[string]config.Workload{options.Workload: {Grants: config.ServiceVisitGrants(w.Services...), MaxDuration: new(config.Duration(time.Duration(w.MaxDurationSeconds) * time.Second))}}}
+	configuration := config.TNL{Server: &m.Server, Team: &m.Team, Services: config.Services{}, Workloads: map[string]config.Workload{options.Workload: {Grants: w.Grants, MaxDuration: new(config.Duration(time.Duration(w.MaxDurationSeconds) * time.Second))}}}
 	if w.MaxDurationSeconds == 0 {
 		policy := configuration.Workloads[options.Workload]
 		policy.MaxDuration = nil

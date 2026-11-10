@@ -35,11 +35,16 @@ type Acquisition struct {
 	TokenEnv  string `json:"token_env,omitempty"`
 }
 type Workload struct {
-	Provider           string      `json:"provider"`
-	Services           []string    `json:"services"`
-	MaxDurationSeconds int         `json:"max_duration_seconds"`
-	Acquisition        Acquisition `json:"acquisition"`
+	Provider           string                `json:"provider"`
+	Grants             config.WorkloadGrants `json:"grants"`
+	MaxDurationSeconds int                   `json:"max_duration_seconds"`
+	Acquisition        Acquisition           `json:"acquisition"`
 }
+
+func (w Workload) VisitServices() []string {
+	return (config.Workload{Grants: w.Grants}).VisitServices()
+}
+
 type Manifest struct {
 	Schema            int                 `json:"schema"`
 	Server            string              `json:"server"`
@@ -69,10 +74,8 @@ func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error)
 		if err != nil {
 			return nil, err
 		}
-		services := p.VisitServices()
-		slices.Sort(services)
-		m.Workloads[name] = Workload{Provider: p.Provider(), Services: services, MaxDurationSeconds: int(p.DurationLimit().Seconds()), Acquisition: a}
-		for _, key := range services {
+		m.Workloads[name] = Workload{Provider: p.Provider(), Grants: p.Grants, MaxDurationSeconds: int(p.DurationLimit().Seconds()), Acquisition: a}
+		for _, key := range p.ReferencedServices() {
 			m.Services[key] = config.Protocol(c.Services[key])
 		}
 	}
@@ -93,16 +96,16 @@ func (m Manifest) Validate() error {
 			return ErrInvalid
 		}
 	}
+	services := config.Services{}
+	for name := range m.Services {
+		services[name] = config.Service{PublisherGroup: new("manifest")}
+	}
 	for name, w := range m.Workloads {
-		if !naming.ValidServiceName(name) || w.MaxDurationSeconds < 0 || int64(w.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds || len(w.Services) == 0 || len(w.Services) > 32 {
+		if !naming.ValidServiceName(name) || w.MaxDurationSeconds < 0 || int64(w.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds {
 			return ErrInvalid
 		}
-		seen := map[string]bool{}
-		for _, s := range w.Services {
-			if !naming.ValidServiceName(s) || seen[s] || !slices.Contains([]string{"http", "tcp", "mysql", "postgres", "kubernetes"}, m.Services[s]) {
-				return ErrInvalid
-			}
-			seen[s] = true
+		if config.ValidateWorkloadGrants(services, w.Grants) != nil {
+			return ErrInvalid
 		}
 		if !slices.Contains([]string{"github", "vercel", "fly", "oidc", "google", "kubernetes", "gitlab"}, w.Provider) {
 			return ErrInvalid

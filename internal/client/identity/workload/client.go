@@ -1,5 +1,6 @@
-// package workloadclient is the connector visitor authentication adapter for a
-// provider workload. the caller owns its in-memory lifetime and renewal loop.
+// package workload owns platform proof acquisition and one ephemeral application
+// session. publisher and connector owners consume it without depending on each
+// other's process lifetime; callers own renewal, cancellation and joins.
 package workload
 
 import (
@@ -24,6 +25,7 @@ import (
 
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -46,10 +48,11 @@ type Client struct {
 	control    *clientcontrol.Client
 	session    authorityv1.WorkloadSession
 	nonce      string
+	server     string
 }
 
-func (*Client) String() string   { return "workload visitor client" }
-func (*Client) GoString() string { return "workload visitor client" }
+func (*Client) String() string   { return "workload application client" }
+func (*Client) GoString() string { return "workload application client" }
 
 // New creates one ephemeral execution key. retain this adapter across exchange
 // retries: a replacement key cannot take over an already-started execution.
@@ -62,7 +65,8 @@ func New(server string, httpClient *http.Client) (*Client, error) {
 }
 
 // NewWithKey lets a connector owner retain its own ephemeral key for
-// protected SDK snapshots. the client copies the key and never exports it.
+// protected SDK snapshots. the client copies the key; only private application
+// preparation packages it for another native operation owner.
 func NewWithKey(server string, httpClient *http.Client, key ed25519.PrivateKey) (*Client, error) {
 	if len(key) != ed25519.PrivateKeySize || !ed25519.NewKeyFromSeed(key.Seed()).Equal(key) {
 		return nil, invalidSession()
@@ -79,7 +83,11 @@ func NewWithKey(server string, httpClient *http.Client, key ed25519.PrivateKey) 
 	if _, err = rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	return &Client{key: slices.Clone(key), authority: authority, control: control, nonce: base64.RawURLEncoding.EncodeToString(nonce)}, nil
+	server, err = naming.CanonicalControlURL(server)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{key: slices.Clone(key), authority: authority, control: control, nonce: base64.RawURLEncoding.EncodeToString(nonce), server: server}, nil
 }
 
 func (c *Client) Exchange(ctx context.Context, team, project, source, workload, assertion string, services []string) (authorityv1.WorkloadSession, error) {
@@ -110,6 +118,8 @@ func (c *Client) Exchange(ctx context.Context, team, project, source, workload, 
 			return authorityv1.WorkloadSession{}, err
 		}
 	}
+	// retain a committed exchange even if cancellation raced its response. the
+	// operation owner must join and revoke it rather than lose its cleanup handle.
 	c.mu.Lock()
 	c.session = cloneSession(r)
 	c.mu.Unlock()
@@ -148,7 +158,7 @@ func validateSession(r authorityv1.WorkloadSession) error {
 		return invalidSession()
 	}
 	subject := tunnelv1.VisitorSubject{Kind: string(r.Subject.Kind), WorkloadSessionID: r.Id}
-	if subject.Validate() != nil || r.Subject.WorkloadSessionId == nil || *r.Subject.WorkloadSessionId != r.Id || string(r.Subject.Kind) != tunnelv1.VisitorWorkloadSession || r.Subject.IdentityId != nil || r.Subject.DeviceId != nil || len(r.Credential) != 47 || r.Credential[:4] != "wlc_" || !r.LeaseExpiresAt.After(time.Now()) || len(r.ServiceIds) > 32 {
+	if subject.Validate() != nil || r.Subject.WorkloadSessionId == nil || *r.Subject.WorkloadSessionId != r.Id || string(r.Subject.Kind) != tunnelv1.VisitorWorkloadSession || r.Subject.IdentityId != nil || r.Subject.DeviceId != nil || len(r.Credential) != 47 || r.Credential[:4] != "wlc_" || !r.LeaseExpiresAt.After(time.Now()) || len(r.ServiceIds) > 64 {
 		return invalidSession()
 	}
 	seen := map[string]bool{}
@@ -157,6 +167,21 @@ func validateSession(r authorityv1.WorkloadSession) error {
 			return invalidSession()
 		}
 		seen[id] = true
+	}
+	if _, err := credentialfile.ApplicationGrants(r.Application); err != nil || r.Application.TeamId != r.TeamId || r.Application.Name != r.Workload || !r.Application.Ownership.Valid() {
+		return invalidSession()
+	}
+	for _, grant := range r.Application.Grants {
+		if grant.CreatedAt.IsZero() || grant.CreatedAt.After(time.Now()) || grant.ExpiresAt != nil && !grant.ExpiresAt.After(time.Now()) {
+			return invalidSession()
+		}
+	}
+	for _, id := range r.ServiceIds {
+		if !slices.ContainsFunc(r.Application.Grants, func(grant controlv1.PublisherGrant) bool {
+			return grant.Operation == controlv1.ApplicationVisit && grant.ServiceId != nil && *grant.ServiceId == id
+		}) {
+			return invalidSession()
+		}
 	}
 	return nil
 }
@@ -219,7 +244,7 @@ func (c *Client) IdentifyPolicy(ctx context.Context, team, project, source, work
 	if err != nil {
 		return r, err
 	}
-	if !bindingID.MatchString(r.Binding) || len(r.Services) == 0 || len(r.Services) > 32 || !r.AssertionExpiresAt.After(time.Now()) || r.AssertionExpiresAt.After(time.Now().Add(12*time.Hour+time.Minute)) {
+	if !bindingID.MatchString(r.Binding) || len(r.Services) > 64 || !r.AssertionExpiresAt.After(time.Now()) || r.AssertionExpiresAt.After(time.Now().Add(12*time.Hour+time.Minute)) {
 		return authorityv1.WorkloadIdentity{}, invalidSession()
 	}
 	seen := map[string]bool{}
@@ -284,7 +309,44 @@ func validateSessionUpdate(current, next authorityv1.WorkloadSession) error {
 			return invalidSession()
 		}
 	}
+	if err := validateApplicationUpdate(current.Application, next.Application); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateApplicationUpdate(current, next controlv1.RegisteredApplication) error {
+	if current.ClientId != next.ClientId || current.KeyId != next.KeyId || current.TeamId != next.TeamId || current.Name != next.Name || current.Ownership != next.Ownership {
+		return invalidSession()
+	}
+	for _, grant := range next.Grants {
+		index := slices.IndexFunc(current.Grants, func(saved controlv1.PublisherGrant) bool { return saved.Id == grant.Id })
+		if index < 0 {
+			return invalidSession()
+		}
+		saved := current.Grants[index]
+		if saved.ExpiresAt != nil && (grant.ExpiresAt == nil || grant.ExpiresAt.After(*saved.ExpiresAt)) {
+			return invalidSession()
+		}
+		saved.ExpiresAt, grant.ExpiresAt = nil, nil
+		if !reflect.DeepEqual(saved, grant) {
+			return invalidSession()
+		}
+	}
+	return nil
+}
+
+// prepare a private in-memory credential from the accepted session key. callers
+// retain their own lifetime; no control client, key accessor, file or login is exposed.
+func (c *Client) PrepareApplication() (credentialfile.File, error) {
+	r, err := c.Session()
+	if err != nil {
+		return credentialfile.File{}, err
+	}
+	if !r.LeaseExpiresAt.After(time.Now()) || !SessionDeadline(r).After(time.Now()) {
+		return credentialfile.File{}, ErrSessionExpired
+	}
+	return credentialfile.NewApplication(c.server, r.Application, c.key)
 }
 
 func (c *Client) Revoke(ctx context.Context) error {
@@ -390,6 +452,31 @@ func cloneSession(r authorityv1.WorkloadSession) authorityv1.WorkloadSession {
 		r.Github = new(*r.Github)
 	}
 	r.ServiceIds = slices.Clone(r.ServiceIds)
+	r.Application.Grants = slices.Clone(r.Application.Grants)
+	for index, grant := range r.Application.Grants {
+		if grant.PublicUrlId != nil {
+			grant.PublicUrlId = new(*grant.PublicUrlId)
+		}
+		if grant.ServiceId != nil {
+			grant.ServiceId = new(*grant.ServiceId)
+		}
+		if grant.DomainId != nil {
+			grant.DomainId = new(*grant.DomainId)
+		}
+		if grant.Namespace != nil {
+			grant.Namespace = new(*grant.Namespace)
+		}
+		if grant.TeamId != nil {
+			grant.TeamId = new(*grant.TeamId)
+		}
+		if grant.ExpiresAt != nil {
+			grant.ExpiresAt = new(*grant.ExpiresAt)
+		}
+		if grant.RevokedAt != nil {
+			grant.RevokedAt = new(*grant.RevokedAt)
+		}
+		r.Application.Grants[index] = grant
+	}
 	if r.Subject.WorkloadSessionId != nil {
 		r.Subject.WorkloadSessionId = new(*r.Subject.WorkloadSessionId)
 	}

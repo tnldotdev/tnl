@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
+	connectorworkload "github.com/tnldotdev/tnl/internal/client/identity/workload"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	connectorworkload "github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"

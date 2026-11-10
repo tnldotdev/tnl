@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
+	"github.com/tnldotdev/tnl/internal/client/identity/workload"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
-	"github.com/tnldotdev/tnl/internal/connector/workload"
 	"github.com/tnldotdev/tnl/internal/failure"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )

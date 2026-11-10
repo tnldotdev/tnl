@@ -326,6 +326,7 @@ type Querier interface {
 	// that, one surviving slot keeps a ready run available during replacement.
 	// do not include target addresses or credentials.
 	ListAvailableServices(ctx context.Context, arg ListAvailableServicesParams) ([]ListAvailableServicesRow, error)
+	ListCapturedApplicationGrants(ctx context.Context, arg ListCapturedApplicationGrantsParams) ([]ListCapturedApplicationGrantsRow, error)
 	// candidates convey no delivery authority. the publisher checks each delivery
 	// separately after the exact relay claims have been accepted.
 	ListConnectorPeerPairCandidates(ctx context.Context, arg ListConnectorPeerPairCandidatesParams) ([]ListConnectorPeerPairCandidatesRow, error)
@@ -520,6 +521,7 @@ type Querier interface {
 	ReadVisitorShareVerifiers(ctx context.Context, arg ReadVisitorShareVerifiersParams) ([]ReadVisitorShareVerifiersRow, error)
 	ReadVisitorTokenIssuer(ctx context.Context) (string, error)
 	ReadVisitorVerificationKeyRevision(ctx context.Context) (int64, error)
+	ReadWorkloadApplicationIdentity(ctx context.Context, arg ReadWorkloadApplicationIdentityParams) (ReadWorkloadApplicationIdentityRow, error)
 	ReadyBrowserHosts(ctx context.Context, arg ReadyBrowserHostsParams) ([]ReadyBrowserHostsRow, error)
 	ReadyServiceConnectionSlot(ctx context.Context, arg ReadyServiceConnectionSlotParams) (ControlServiceConnectionSlot, error)
 	ReadyServiceRun(ctx context.Context, arg ReadyServiceRunParams) (ControlServiceRun, error)

@@ -30,3 +30,19 @@ FROM control.application_key_authority(sqlc.arg(publisher_identity_id)::text,sql
 -- name: BoundPublishRunApplicationAuthority :one
 UPDATE control.publish_runs SET publisher_expires_at=LEAST(publisher_expires_at,sqlc.arg(expires_at)::timestamptz)
 WHERE id=sqlc.arg(id) AND closed_at IS NULL RETURNING *;
+
+-- name: ReadWorkloadApplicationIdentity :one
+SELECT app.id,app.team_id,app.name,app.ownership,key.id::text AS key_id
+FROM control.publisher_identity_keys key
+JOIN control.publisher_identities app ON app.id=key.publisher_identity_id AND app.kind='application'
+JOIN control.workload_applications binding ON binding.id=key.workload_binding_id AND binding.publisher_identity_id=app.id AND binding.revoked_at IS NULL
+WHERE key.workload_session_id=sqlc.arg(session_id) AND key.retired_at IS NULL AND control.active_publisher(app.id,sqlc.arg(now));
+
+-- name: ListCapturedApplicationGrants :many
+SELECT grant_record.*,LEAST(grant_record.expires_at,selected.expires_at)::timestamptz AS captured_expires_at
+FROM control.workload_session_application_grants selected
+JOIN control.publisher_grants grant_record ON grant_record.id=selected.grant_id AND grant_record.publisher_identity_id=selected.publisher_identity_id
+JOIN control.publisher_identity_keys key ON key.publisher_identity_id=selected.publisher_identity_id AND key.workload_session_id=selected.workload_session_id
+WHERE selected.workload_session_id=sqlc.arg(session_id)
+    AND EXISTS(SELECT 1 FROM control.application_key_authority(key.publisher_identity_id,key.id,grant_record.id,sqlc.arg(now)::timestamptz))
+ORDER BY grant_record.id LIMIT 65;
