@@ -384,6 +384,10 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/ProjectPublisherGroup"
     ProjectWorkload:
       $ref: "./schemas/projects.yaml#/schemas/ProjectWorkload"
+    ProjectWorkloadGrants:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectWorkloadGrants"
+    ProjectWorkloadResource:
+      $ref: "./schemas/projects.yaml#/schemas/ProjectWorkloadResource"
     WorkloadProvider:
       $ref: "./schemas/workloads.yaml#/schemas/WorkloadProvider"
     WorkloadTrust:

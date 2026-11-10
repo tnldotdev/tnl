@@ -5,9 +5,9 @@ package workloadsetup
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
-	"slices"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/client/project/githubmetadata"
@@ -55,7 +55,7 @@ func (r resolver) resolve(ctx context.Context, o Options) (map[string]controlv1.
 	}
 	services := config.Services{}
 	for _, workload := range o.Workloads {
-		for _, name := range workload.Services {
+		for _, name := range workload.ReferencedServices() {
 			services[name] = config.Service{PublisherGroup: new("workload")}
 		}
 	}
@@ -71,8 +71,19 @@ func (r resolver) resolve(ctx context.Context, o Options) (map[string]controlv1.
 	}
 	for name, p := range o.Workloads {
 		previous := o.Previous[name]
-		bound := controlv1.ProjectWorkload{Provider: controlv1.WorkloadProvider(p.Provider()), Services: slices.Clone(p.Services), MaxDurationSeconds: int(p.DurationLimit() / time.Second)}
-		var err error
+		encoded, err := json.Marshal(p.Grants)
+		if err != nil {
+			return nil, err
+		}
+		var grants controlv1.ProjectWorkloadGrants
+		if err := json.Unmarshal(encoded, &grants); err != nil {
+			return nil, err
+		}
+		bound := controlv1.ProjectWorkload{Provider: controlv1.WorkloadProvider(p.Provider()), Grants: grants, MaxDurationSeconds: int(p.DurationLimit() / time.Second)}
+		if p.Ownership != "" {
+			ownership := controlv1.ProjectWorkloadOwnership(p.Ownership)
+			bound.Ownership = &ownership
+		}
 		if p.GitHub != nil && p.Provider() == "github" {
 			bound.Github, err = r.bindGitHub(ctx, o, p.GitHub, previous, repositories)
 		} else if p.Google != nil && p.Provider() == "google" {

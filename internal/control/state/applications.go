@@ -113,30 +113,11 @@ func (d *Database) RegisterApplication(ctx context.Context, r RegisterApplicatio
 		if request.Scope.TeamID != r.TeamID || request.ExpiresAt != nil && !request.ExpiresAt.After(now) {
 			return result, ErrApplicationRegistration
 		}
-		var scope resolvedPublisherScope
-		switch request.Operation {
-		case ApplicationVisit:
-			scope, err = d.authorizeApplicationVisit(ctx, q, request.Scope, r.ActingIdentityID, now)
-		case ApplicationPublish:
-			if request.Scope.Kind != "saved_public_url" && request.Scope.Kind != "service" {
-				return result, ErrApplicationRegistration
-			}
-			scope, err = d.authorizePublisherScope(ctx, q, request.Scope, r.ActingIdentityID, member.ID, uint64(member.PolicyRevision))
-		case ApplicationAllocate:
-			if request.Scope.Kind != "namespace" {
-				return result, ErrApplicationRegistration
-			}
-			scope, err = d.authorizePublisherScope(ctx, q, request.Scope, r.ActingIdentityID, member.ID, uint64(member.PolicyRevision))
-		default:
-			return result, ErrApplicationRegistration
-		}
+		scope, err := d.authorizeApplicationGrant(ctx, q, request, r.ActingIdentityID, member, r.Ownership, now)
 		if err != nil {
 			return result, err
 		}
-		if err := publisherGrantMatchesOwnership(ctx, q, r.Ownership, scope.publisherScope()); err != nil {
-			return result, err
-		}
-		resolved = append(resolved, applicationGrantScope{scope, request.Operation})
+		resolved = append(resolved, scope)
 	}
 	owner := ""
 	if r.Ownership == "member" {
@@ -162,6 +143,34 @@ func (d *Database) RegisterApplication(ctx context.Context, r RegisterApplicatio
 		return result, err
 	}
 	return result, tx.Commit(ctx)
+}
+
+func (d *Database) authorizeApplicationGrant(ctx context.Context, q *controlstatedb.Queries, request ApplicationGrantRequest, actor string, member controlstatedb.GetActivePublishRunMembershipRow, ownership string, now time.Time) (applicationGrantScope, error) {
+	var scope resolvedPublisherScope
+	var err error
+	switch request.Operation {
+	case ApplicationVisit:
+		scope, err = d.authorizeApplicationVisit(ctx, q, request.Scope, actor, now)
+	case ApplicationPublish:
+		if request.Scope.Kind != "saved_public_url" && request.Scope.Kind != "service" {
+			return applicationGrantScope{}, ErrApplicationRegistration
+		}
+		scope, err = d.authorizePublisherScope(ctx, q, request.Scope, actor, member.ID, uint64(member.PolicyRevision))
+	case ApplicationAllocate:
+		if request.Scope.Kind != "namespace" {
+			return applicationGrantScope{}, ErrApplicationRegistration
+		}
+		scope, err = d.authorizePublisherScope(ctx, q, request.Scope, actor, member.ID, uint64(member.PolicyRevision))
+	default:
+		return applicationGrantScope{}, ErrApplicationRegistration
+	}
+	if err != nil {
+		return applicationGrantScope{}, err
+	}
+	if err := publisherGrantMatchesOwnership(ctx, q, ownership, scope.publisherScope()); err != nil {
+		return applicationGrantScope{}, err
+	}
+	return applicationGrantScope{scope, request.Operation}, nil
 }
 
 func (d *Database) authorizeApplicationVisit(ctx context.Context, q *controlstatedb.Queries, s PublisherScope, actor string, now time.Time) (resolvedPublisherScope, error) {

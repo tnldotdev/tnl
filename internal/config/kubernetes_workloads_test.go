@@ -49,7 +49,7 @@ func TestValidKubernetesName(t *testing.T) {
 }
 
 func TestKubernetesWorkloadBlockAndNames(t *testing.T) {
-	c := TNL{Services: Services{"db": {PublisherGroup: new("production")}}, Workloads: map[string]Workload{"app": {Kubernetes: &WorkloadKubernetes{ServiceAccount: "orders.worker"}, Services: []string{"db"}}}}
+	c := TNL{Services: Services{"db": {PublisherGroup: new("production")}}, Workloads: map[string]Workload{"app": {Kubernetes: &WorkloadKubernetes{ServiceAccount: "orders.worker"}, Grants: ServiceVisitGrants("db")}}}
 	for _, name := range []string{"orders.worker", strings.Repeat("a", 64), strings.Repeat("a", 253)} {
 		c.Workloads["app"].Kubernetes.ServiceAccount = name
 		if err := ValidateWorkloads(c); err != nil {

@@ -626,7 +626,7 @@ test("configuration enforces service ownership and references for literals and f
           branch: "main",
           events: ["push"],
         },
-        services: ["cluster", "db"],
+        grants: { visit: [{ service: "cluster" }, { service: "db" }] },
         maxDuration: "1h",
       },
     },
@@ -641,7 +641,7 @@ test("configuration enforces service ownership and references for literals and f
           events: ["push"],
         },
         // @ts-expect-error workload policies select existing service keys.
-        services: ["missing"],
+        grants: { visit: [{ service: "missing" }] },
       },
     },
   });
@@ -658,28 +658,28 @@ test("configuration enforces service ownership and references for literals and f
     workloads: {
       storefront: {
         vercel: { team: "acme", project: "store", environment: "production" },
-        services: ["inventory", "models"],
+        grants: { visit: [{ service: "inventory" }, { service: "models" }] },
       },
       machine: {
         fly: { app: "store" },
-        services: ["inventory"],
+        grants: { visit: [{ service: "inventory" }] },
       },
       worker: {
         oidc: { issuer: "https://issuer.example", claims: { sub: "service:store" } },
         token: { file: "/run/provider/token" },
-        services: ["models"],
+        grants: { visit: [{ service: "models" }] },
       },
       cloud: {
         google: { serviceAccount: "orders@project.iam.gserviceaccount.com" },
-        services: ["models"],
+        grants: { visit: [{ service: "models" }] },
       },
       pod: {
         kubernetes: { serviceAccount: "orders", namespace: "production" },
-        services: ["models"],
+        grants: { visit: [{ service: "models" }] },
       },
       gitlab: {
         gitlab: { project: "shop/storefront", pipelineSource: "push" },
-        services: ["models"],
+        grants: { visit: [{ service: "models" }] },
       },
     },
   });
@@ -737,7 +737,7 @@ test("configuration enforces service ownership and references for literals and f
     workloads: {
       ci: {
         fly: { app: "web" },
-        services: ["web", "explicit"],
+        grants: { visit: [{ service: "web" }, { service: "explicit" }] },
       },
     },
   } as const;
@@ -748,21 +748,69 @@ test("configuration enforces service ownership and references for literals and f
   // @ts-expect-error asynchronous factories reject local workload references.
   defineConfig(async () => localWorkload);
 
+  defineConfig({
+    publisherGroups: { production: {} },
+    services: {
+      orders: {
+        publisherGroup: "production",
+        protocol: "postgres",
+        target: { type: "address", address: 5432 },
+      },
+    },
+    workloads: {
+      deploy: {
+        github: { workflow: ".github/workflows/deploy.yml", branch: "main", events: ["push"] },
+        grants: {
+          visit: [{ service: "orders" }],
+          publish: [{ publicURL: "preview.acme.dev" }, { service: "orders" }],
+          allocate: [{ domain: "previews.acme.dev" }],
+        },
+      },
+      allocateOnly: {
+        github: { workflow: ".github/workflows/deploy.yml" },
+        grants: { allocate: [{ domain: "previews.acme.dev" }] },
+      },
+    },
+  });
+  ({
+    workloads: {
+      old: {
+        github: { workflow: ".github/workflows/deploy.yml" },
+        // @ts-expect-error workload services has no compatibility alias.
+        services: ["orders"],
+        grants: { visit: [{ service: "orders" }] },
+      },
+    },
+  }) satisfies TnlConfig;
+  ({
+    workloads: {
+      mixedResource: {
+        github: { workflow: ".github/workflows/deploy.yml" },
+        grants: {
+          publish: [
+            // @ts-expect-error a grant selects one exact resource kind.
+            { service: "orders", publicURL: "preview.acme.dev" },
+          ],
+        },
+      },
+    },
+  }) satisfies TnlConfig;
+
   ({
     workloads: {
       mixed: {
         github: { workflow: ".github/workflows/test.yml" },
         // @ts-expect-error each workload selects exactly one provider block.
         fly: { app: "worker" },
-        services: ["db"],
+        grants: { visit: [{ service: "db" }] },
       },
       // @ts-expect-error a provider block is required.
-      missing: { services: ["db"] },
+      missing: { grants: { visit: [{ service: "db" }] } },
       old: {
         // @ts-expect-error the provider block replaces the discriminator.
         provider: "fly",
         fly: { app: "worker" },
-        services: ["db"],
+        grants: { visit: [{ service: "db" }] },
       },
       refs: {
         github: {
@@ -771,7 +819,7 @@ test("configuration enforces service ownership and references for literals and f
           // @ts-expect-error branch and tag are mutually exclusive.
           tag: "v1",
         },
-        services: ["db"],
+        grants: { visit: [{ service: "db" }] },
       },
       gitlabRefs: {
         gitlab: {
@@ -779,16 +827,16 @@ test("configuration enforces service ownership and references for literals and f
           // @ts-expect-error GitLab branch and tag are mutually exclusive.
           tag: "v1",
         },
-        services: ["db"],
+        grants: { visit: [{ service: "db" }] },
       },
       gitlabSource: {
         gitlab: {
           // @ts-expect-error GitLab pipeline sources are exact known values.
           pipelineSource: "*",
         },
-        services: ["db"],
+        grants: { visit: [{ service: "db" }] },
       },
-      gitlabDefaults: { gitlab: {}, services: ["db"] },
+      gitlabDefaults: { gitlab: {}, grants: { visit: [{ service: "db" }] } },
       sources: {
         fly: { app: "worker" },
         token: {
@@ -796,12 +844,12 @@ test("configuration enforces service ownership and references for literals and f
           // @ts-expect-error token file and environment variable are mutually exclusive.
           env: "TOKEN",
         },
-        services: ["db"],
+        grants: { visit: [{ service: "db" }] },
       },
       defaults: {
         github: { workflow: ".github/workflows/test.yml" },
         token: { env: "TOKEN" },
-        services: ["db"],
+        grants: { visit: [{ service: "db" }] },
       },
     },
   }) satisfies TnlConfig;

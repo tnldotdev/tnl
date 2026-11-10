@@ -48,16 +48,25 @@ func (q *Queries) GetWorkloadSession(ctx context.Context, id string) (ControlWor
 }
 
 const listWorkloadSessionServices = `-- name: ListWorkloadSessionServices :many
-SELECT service_id,service FROM control.workload_session_services WHERE workload_session_id=$1 ORDER BY service
+SELECT applied.service_id::text AS service_id,applied.service
+FROM control.workload_sessions session
+JOIN control.applied_project_services applied ON applied.team_id=session.team_id AND applied.project_key=session.project_key
+WHERE session.id=$1 AND EXISTS(SELECT 1 FROM control.workload_visit_authority($2::timestamptz)
+    WHERE session_id=session.id AND resource_kind='service' AND resource_id=applied.service_id) ORDER BY applied.service
 `
+
+type ListWorkloadSessionServicesParams struct {
+	SessionID string
+	Now       pgtype.Timestamptz
+}
 
 type ListWorkloadSessionServicesRow struct {
 	ServiceID string
 	Service   string
 }
 
-func (q *Queries) ListWorkloadSessionServices(ctx context.Context, workloadSessionID string) ([]ListWorkloadSessionServicesRow, error) {
-	rows, err := q.db.Query(ctx, listWorkloadSessionServices, workloadSessionID)
+func (q *Queries) ListWorkloadSessionServices(ctx context.Context, arg ListWorkloadSessionServicesParams) ([]ListWorkloadSessionServicesRow, error) {
+	rows, err := q.db.Query(ctx, listWorkloadSessionServices, arg.SessionID, arg.Now)
 	if err != nil {
 		return nil, err
 	}

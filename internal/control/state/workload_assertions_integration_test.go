@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 )
 
@@ -82,7 +83,7 @@ func TestIntegrationWorkloadAssertionAttachment(t *testing.T) {
 	// additions cannot expand this session's issued snapshot.
 	r.ExpectedRevision = applied.Revision
 	p := r.Configuration.Workloads["test"]
-	p.Services, p.MaxDurationSeconds = []string{"db"}, 120
+	p.Grants, p.MaxDurationSeconds = config.ServiceVisitGrants("db"), 120
 	r.Configuration.Workloads["test"] = p
 	applied, err = d.ApplyProjectConfiguration(t.Context(), r)
 	if err != nil {
@@ -96,7 +97,7 @@ func TestIntegrationWorkloadAssertionAttachment(t *testing.T) {
 		t.Fatal("unaffected service lost authorization", err)
 	}
 	r.ExpectedRevision = applied.Revision
-	p.Services = []string{"api", "db"}
+	p.Grants = config.ServiceVisitGrants("api", "db")
 	r.Configuration.Workloads["test"] = p
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)

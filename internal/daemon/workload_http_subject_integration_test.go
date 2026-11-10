@@ -43,7 +43,7 @@ func TestIntegrationWorkloadHTTPReplacementKeepsSubjectsSeparate(t *testing.T) {
 	}))
 	t.Cleanup(target.Close)
 	group, protocol := "public", controlv1.ServiceProtocolHTTP
-	policy := controlv1.ProjectWorkload{Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api"}, MaxDurationSeconds: 120}
+	policy := controlv1.ProjectWorkload{Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Grants: workloadVisitGrants(t, "api"), MaxDurationSeconds: 120}
 	short := policy
 	short.MaxDurationSeconds = 8
 	policies := map[string]controlv1.ProjectWorkload{"old": short, "new": policy}

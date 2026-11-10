@@ -11,7 +11,7 @@ func TestCloudSelectorsAndWorkloadReferences(t *testing.T) {
 	configuration := TNL{PublisherGroups: map[string]PublisherGroup{"production": {}}, Services: Services{
 		"cluster": {PublisherGroup: text("production"), Protocol: text("kubernetes"), Target: &ServiceTarget{Type: "eks", Cluster: text("development"), Region: text("us-east-1")}},
 		"db":      {PublisherGroup: text("production"), Protocol: text("postgres"), Target: &ServiceTarget{Type: "rds", Cluster: text("orders"), Region: text("eu-west-1"), Endpoint: text("reader")}},
-	}, Workloads: map[string]Workload{"deploy": {GitHub: &WorkloadGitHub{Workflow: ".github/workflows/deploy.yml", Branch: new("main"), Events: []string{"push"}}, Services: []string{"cluster", "db"}}}}
+	}, Workloads: map[string]Workload{"deploy": {GitHub: &WorkloadGitHub{Workflow: ".github/workflows/deploy.yml", Branch: new("main"), Events: []string{"push"}}, Grants: ServiceVisitGrants("cluster", "db")}}}
 	if err := ValidateTNL(configuration); err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,11 @@ func TestCloudSelectorsAndWorkloadReferences(t *testing.T) {
 		{"rds xor", func(c *TNL) { c.Services["db"].Target.Instance = text("other") }},
 		{"instance reader", func(c *TNL) { c.Services["db"].Target.Instance, c.Services["db"].Target.Cluster = text("orders"), nil }},
 		{"wildcard resource", func(c *TNL) { c.Services["db"].Target.Cluster = text("orders*") }},
-		{"unknown service", func(c *TNL) { p := c.Workloads["deploy"]; p.Services = []string{"missing"}; c.Workloads["deploy"] = p }},
+		{"unknown service", func(c *TNL) {
+			p := c.Workloads["deploy"]
+			p.Grants = ServiceVisitGrants("missing")
+			c.Workloads["deploy"] = p
+		}},
 		{"workflow wildcard", func(c *TNL) {
 			p := c.Workloads["deploy"]
 			p.GitHub.Workflow = ".github/workflows/*.yml"

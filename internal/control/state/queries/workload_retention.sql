@@ -33,10 +33,10 @@ DELETE FROM control.workload_audit WHERE ctid IN (
     FOR UPDATE SKIP LOCKED
 );
 
--- name: CleanupWorkloadServiceRights :execrows
--- keep the exact service snapshot until all other session references are gone.
-DELETE FROM control.workload_session_services WHERE (workload_session_id, service_id) IN (
-    SELECT rights.workload_session_id, rights.service_id FROM control.workload_session_services rights
+-- name: CleanupWorkloadApplicationGrants :execrows
+-- keep captured grants until all other session references are gone.
+DELETE FROM control.workload_session_application_grants WHERE (workload_session_id, grant_id) IN (
+    SELECT rights.workload_session_id, rights.grant_id FROM control.workload_session_application_grants rights
     JOIN control.workload_sessions session ON session.id = rights.workload_session_id
     WHERE COALESCE(session.expires_at,session.identity_expires_at) < sqlc.arg(before_time) AND session.lease_expires_at < sqlc.arg(before_time)
       AND (session.revoked_at IS NULL OR session.revoked_at < sqlc.arg(before_time))
@@ -45,7 +45,7 @@ DELETE FROM control.workload_session_services WHERE (workload_session_id, servic
       AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.public_service_visitors child WHERE child.workload_session_id = session.id)
-    ORDER BY COALESCE(session.expires_at,session.identity_expires_at), rights.workload_session_id, rights.service_id LIMIT sqlc.arg(batch_size)
+    ORDER BY COALESCE(session.expires_at,session.identity_expires_at), rights.workload_session_id, rights.grant_id LIMIT sqlc.arg(batch_size)
     FOR UPDATE OF rights SKIP LOCKED
 );
 
@@ -55,7 +55,7 @@ DELETE FROM control.workload_sessions WHERE id IN (
     WHERE COALESCE(session.expires_at,session.identity_expires_at) < sqlc.arg(before_time) AND session.lease_expires_at < sqlc.arg(before_time)
       AND (session.revoked_at IS NULL OR session.revoked_at < sqlc.arg(before_time))
       AND to_timestamp((session.claims->>'exp')::double precision) < sqlc.arg(before_time)
-      AND NOT EXISTS (SELECT 1 FROM control.workload_session_services child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.workload_session_application_grants child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_assertions child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)

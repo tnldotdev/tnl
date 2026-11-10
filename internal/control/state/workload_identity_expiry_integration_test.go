@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 )
 
@@ -65,7 +66,7 @@ func TestIntegrationWorkloadIdentityExpiryAndRefresh(t *testing.T) {
 	}
 	r.ExpectedRevision = applied.Revision
 	policy := r.Configuration.Workloads["test"]
-	policy.Services = []string{"api"}
+	policy.Grants = config.ServiceVisitGrants("api")
 	r.Configuration.Workloads["test"] = policy
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)

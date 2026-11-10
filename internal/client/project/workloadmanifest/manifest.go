@@ -69,7 +69,7 @@ func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error)
 		if err != nil {
 			return nil, err
 		}
-		services := slices.Clone(p.Services)
+		services := p.VisitServices()
 		slices.Sort(services)
 		m.Workloads[name] = Workload{Provider: p.Provider(), Services: services, MaxDurationSeconds: int(p.DurationLimit().Seconds()), Acquisition: a}
 		for _, key := range services {

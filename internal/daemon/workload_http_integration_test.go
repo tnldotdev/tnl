@@ -81,7 +81,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 	t.Cleanup(target.Close)
 	targetTrust := serviceHTTPTestTargetTrust(targetHostname, string(targetCA.certificatePEM))
 	group, private, protocol := "public", "private", controlv1.ServiceProtocolHTTP
-	policy := controlv1.ProjectWorkload{Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api", "other", "private"}, MaxDurationSeconds: 120}
+	policy := controlv1.ProjectWorkload{Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Grants: workloadVisitGrants(t, "api", "other", "private"), MaxDurationSeconds: 120}
 	policies := map[string]controlv1.ProjectWorkload{"test": policy, "provider": policy, "narrow": policy, "short": policy}
 	short := policy
 	short.MaxDurationSeconds = 8
@@ -257,7 +257,7 @@ func TestIntegrationWorkloadHTTPPublicTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	narrow := policy
-	narrow.Services = []string{"other"}
+	narrow.Grants = workloadVisitGrants(t, "other")
 	policies["narrow"] = narrow
 	changed := policy
 	changed.Github = new(*policy.Github)

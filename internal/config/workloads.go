@@ -12,7 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-// workload declares provider identity constraints and exact service rights.
+// workload declares provider identity constraints and application grants.
 type Workload struct {
 	GitHub      *WorkloadGitHub     `json:"github,omitempty" yaml:"github,omitempty"`
 	GitLab      *WorkloadGitLab     `json:"gitlab,omitempty" yaml:"gitlab,omitempty"`
@@ -22,8 +22,52 @@ type Workload struct {
 	Kubernetes  *WorkloadKubernetes `json:"kubernetes,omitempty" yaml:"kubernetes,omitempty"`
 	OIDC        *WorkloadOIDC       `json:"oidc,omitempty" yaml:"oidc,omitempty"`
 	Token       *WorkloadToken      `json:"token,omitempty" yaml:"token,omitempty"`
-	Services    []string            `json:"services" yaml:"services" jsonschema:"required,minItems=1,maxItems=32,uniqueItems=true" jsonschema_description:"exact configured service keys assigned to named publisher groups; local services cannot be workload targets."`
+	Grants      WorkloadGrants      `json:"grants" yaml:"grants" jsonschema:"required"`
+	Ownership   string              `json:"ownership,omitempty" yaml:"ownership,omitempty" jsonschema:"enum=member,enum=team"`
 	MaxDuration *Duration           `json:"max_duration,omitempty" yaml:"max_duration,omitempty" jsonschema_description:"Optional absolute session limit, in positive whole seconds. Omit to allow continued renewal with current platform proof."`
+}
+
+type WorkloadResource struct {
+	Service   *string `json:"service,omitempty" yaml:"service,omitempty"`
+	PublicURL *string `json:"public_url,omitempty" yaml:"public_url,omitempty"`
+}
+
+type WorkloadAllocation struct {
+	Domain string `json:"domain" yaml:"domain" jsonschema:"required,minLength=1,maxLength=256"`
+}
+
+type WorkloadGrants struct {
+	Visit    []WorkloadResource   `json:"visit,omitempty" yaml:"visit,omitempty" jsonschema:"minItems=1,maxItems=64,uniqueItems=true"`
+	Publish  []WorkloadResource   `json:"publish,omitempty" yaml:"publish,omitempty" jsonschema:"minItems=1,maxItems=64,uniqueItems=true"`
+	Allocate []WorkloadAllocation `json:"allocate,omitempty" yaml:"allocate,omitempty" jsonschema:"minItems=1,maxItems=64,uniqueItems=true"`
+}
+
+// service visit declarations also reconstruct the nonsecret native manifest's
+// selected service inventory without granting publication or allocation.
+func ServiceVisitGrants(services ...string) WorkloadGrants {
+	grants := WorkloadGrants{}
+	for _, service := range services {
+		grants.Visit = append(grants.Visit, WorkloadResource{Service: new(service)})
+	}
+	return grants
+}
+
+func (p Workload) VisitServices() []string {
+	return workloadServiceReferences(p.Grants.Visit)
+}
+
+func (p Workload) ReferencedServices() []string {
+	return append(workloadServiceReferences(p.Grants.Visit), workloadServiceReferences(p.Grants.Publish)...)
+}
+
+func workloadServiceReferences(resources []WorkloadResource) []string {
+	services := []string{}
+	for _, resource := range resources {
+		if resource.Service != nil {
+			services = append(services, *resource.Service)
+		}
+	}
+	return services
 }
 
 type WorkloadGitHub struct {
@@ -282,23 +326,65 @@ func ValidateWorkloads(c TNL) error {
 				return bad()
 			}
 		}
-		if len(p.Services) == 0 || len(p.Services) > 32 {
-			return bad()
+		if err := ValidateWorkloadGrants(c.Services, p.Grants); err != nil {
+			return fmt.Errorf("workloads.%s: %w", name, err)
 		}
-		seen := map[string]bool{}
-		for _, s := range p.Services {
-			service, ok := c.Services[s]
-			if !ok || seen[s] {
-				return bad()
-			}
-			if PublisherGroupName(service) == "local" {
-				return fmt.Errorf("workloads.%s: service %q must use a named publisher group", name, s)
-			}
-			seen[s] = true
+		if p.Ownership != "" && p.Ownership != "member" && p.Ownership != "team" {
+			return bad()
 		}
 		if d := p.DurationLimit(); p.MaxDuration != nil && (d < time.Second || d > MaxWorkloadMaxDuration || d%time.Second != 0) {
 			return bad()
 		}
+	}
+	return nil
+}
+
+func ValidateWorkloadGrants(services Services, grants WorkloadGrants) error {
+	count := len(grants.Visit) + len(grants.Publish) + len(grants.Allocate)
+	if count < 1 || count > 64 {
+		return errors.New("declare between 1 and 64 explicit visit, publish or allocation grants")
+	}
+	seen := map[string]bool{}
+	for _, selection := range []struct {
+		operation string
+		resources []WorkloadResource
+	}{{"visit", grants.Visit}, {"publish", grants.Publish}} {
+		for _, resource := range selection.resources {
+			if (resource.Service == nil) == (resource.PublicURL == nil) {
+				return errors.New("a visit or publish grant selects exactly one service or public URL")
+			}
+			var key string
+			if resource.Service != nil {
+				name := *resource.Service
+				service, ok := services[name]
+				if !ok || PublisherGroupName(service) == "local" {
+					return errors.New("a workload service grant must select a declared service in a named publisher group")
+				}
+				key = selection.operation + ":service:" + name
+			} else {
+				value := *resource.PublicURL
+				hostname, err := naming.CanonicalizeHostname(value)
+				if err != nil || hostname != value {
+					return errors.New("a workload public URL grant must select an exact canonical hostname")
+				}
+				key = selection.operation + ":public_url:" + hostname
+			}
+			if seen[key] {
+				return errors.New("workload grants must not repeat an operation and resource")
+			}
+			seen[key] = true
+		}
+	}
+	for _, allocation := range grants.Allocate {
+		domain, err := naming.CanonicalizeHostname(allocation.Domain)
+		if err != nil || domain != allocation.Domain {
+			return errors.New("a workload allocation grant must select an exact canonical domain")
+		}
+		key := "allocate:domain:" + domain
+		if seen[key] {
+			return errors.New("workload grants must not repeat an operation and resource")
+		}
+		seen[key] = true
 	}
 	return nil
 }

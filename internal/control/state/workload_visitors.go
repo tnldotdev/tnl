@@ -39,7 +39,7 @@ func (d *Database) ListWorkloadServices(ctx context.Context, credential string, 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.Query(ctx, `SELECT s.id,r.service,s.protocol,s.certificate_hostname,s.service_port,s.public FROM control.workload_session_services r JOIN control.services s ON s.id=r.service_id AND s.enabled AND s.deleted_at IS NULL WHERE r.workload_session_id=$1 ORDER BY r.service`, source.ID)
+	rows, err := tx.Query(ctx, `SELECT s.id,applied.service,s.protocol,s.certificate_hostname,s.service_port,s.public FROM control.workload_visit_authority($2) rights JOIN control.workload_sessions session ON session.id=rights.session_id JOIN control.applied_project_services applied ON applied.team_id=session.team_id AND applied.project_key=session.project_key AND applied.service_id=rights.resource_id JOIN control.services s ON s.id=rights.resource_id AND s.enabled AND s.deleted_at IS NULL WHERE rights.session_id=$1 AND rights.resource_kind='service' ORDER BY applied.service`, source.ID, source.CheckedAt)
 	if err != nil {
 		return nil, err
 	}

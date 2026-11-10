@@ -11,7 +11,7 @@ import (
 )
 
 func TestGitLabManifestDefaultsAndSelection(t *testing.T) {
-	c := config.TNL{Server: new("https://control.example.test"), Team: new("team"), Services: config.Services{"api": {}}, Workloads: map[string]config.Workload{"deploy": {GitLab: &config.WorkloadGitLab{Project: "shop/storefront"}, Services: []string{"api"}}}}
+	c := config.TNL{Server: new("https://control.example.test"), Team: new("team"), Services: config.Services{"api": {}}, Workloads: map[string]config.Workload{"deploy": {GitLab: &config.WorkloadGitLab{Project: "shop/storefront"}, Grants: config.ServiceVisitGrants("api")}}}
 	data, err := Generate(c, clientproject.SourceIdentity{Key: "project", Fingerprint: strings.Repeat("a", 64), Label: "app"})
 	if err != nil {
 		t.Fatal(err)

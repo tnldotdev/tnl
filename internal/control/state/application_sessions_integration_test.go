@@ -23,8 +23,8 @@ type applicationSessionFixture struct {
 	exchangeRequest ExchangeWorkloadRequest
 }
 
-// setup seeds the approved application binding directly. this suite qualifies
-// source authority, not the unfinished declarative apply or SDK acquisition path.
+// this source-authority fixture replaces apply's binding with an independently
+// registered multi-operation application to exercise persistent and session keys.
 func newApplicationSessionFixture(t *testing.T, lifetime ...time.Duration) applicationSessionFixture {
 	t.Helper()
 	d, now, _, _ := newPublishRunPrerequisites(t)
@@ -42,7 +42,7 @@ func newApplicationSessionFixture(t *testing.T, lifetime ...time.Duration) appli
 	if _, err := d.ApplyProjectConfiguration(t.Context(), project); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.pool.Exec(t.Context(), `INSERT INTO control.workload_applications(id,team_id,project_key,workload_name,publisher_identity_id,created_at) VALUES('binding',$1,$2,'test',$3,$4)`, r.TeamID, project.ProjectKey, application.ID, now); err != nil {
+	if _, err := d.pool.Exec(t.Context(), `UPDATE control.workload_applications SET id='binding',publisher_identity_id=$3 WHERE team_id=$1 AND project_key=$2 AND workload_name='test'`, r.TeamID, project.ProjectKey, application.ID); err != nil {
 		t.Fatal(err)
 	}
 	exchange, sessionKey := workloadExchange(t, project, now)

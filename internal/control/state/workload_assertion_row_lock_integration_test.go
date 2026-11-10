@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 )
@@ -18,7 +19,7 @@ func TestIntegrationWorkloadAssertionExpiryDuringSessionRowLock(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
 	trust := oidc.WorkloadTrust{Provider: "vercel", Issuer: "https://oidc.vercel.com/acme", JWKSURL: "https://oidc.vercel.com/acme/.well-known/jwks", Audience: "https://vercel.com/acme", Claims: map[string]string{"owner": "acme", "owner_id": "team_one", "project_id": "prj_store", "environment": "production"}}
-	r.Configuration.Workloads = map[string]ProjectWorkload{"test": {Provider: "vercel", Trust: trust, Services: []string{"api"}, MaxDurationSeconds: 3600}}
+	r.Configuration.Workloads = map[string]ProjectWorkload{"test": {Provider: "vercel", Trust: trust, Grants: config.ServiceVisitGrants("api"), MaxDurationSeconds: 3600}}
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}

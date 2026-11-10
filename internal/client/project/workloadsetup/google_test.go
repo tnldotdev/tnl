@@ -19,7 +19,7 @@ func TestGoogleTrustedBindingDefaultsReuseAndRebinding(t *testing.T) {
 		}
 		return []byte(`{"uniqueId":"112010400000000710080","email":"orders@project.iam.gserviceaccount.com"}`), nil
 	}
-	o := Options{Directory: "/project", Server: "https://control.example", Workloads: map[string]config.Workload{"app": {Google: &config.WorkloadGoogle{ServiceAccount: "orders@project.iam.gserviceaccount.com"}, Services: []string{"db"}}}}
+	o := Options{Directory: "/project", Server: "https://control.example", Workloads: map[string]config.Workload{"app": {Google: &config.WorkloadGoogle{ServiceAccount: "orders@project.iam.gserviceaccount.com"}, Grants: config.ServiceVisitGrants("db")}}}
 	first, err := r.resolve(t.Context(), o)
 	if err != nil || calls != 1 {
 		t.Fatal("initial name binding failed", err)
@@ -51,7 +51,7 @@ func TestGoogleTrustedBindingDefaultsReuseAndRebinding(t *testing.T) {
 
 func TestGoogleBindingRejectsInvalidMetadataAndPreservesAuthenticationCause(t *testing.T) {
 	r := newResolver()
-	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"app": {Google: &config.WorkloadGoogle{ServiceAccount: "orders@project.iam.gserviceaccount.com"}, Services: []string{"db"}}}}
+	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"app": {Google: &config.WorkloadGoogle{ServiceAccount: "orders@project.iam.gserviceaccount.com"}, Grants: config.ServiceVisitGrants("db")}}}
 	for _, output := range []string{
 		`not-json`,
 		`{"uniqueId":"112010400000000710080","email":"other@project.iam.gserviceaccount.com"}`,

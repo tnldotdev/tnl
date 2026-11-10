@@ -55,7 +55,7 @@ func TestVercelLinkedSelectionRejectsChangedIdentity(t *testing.T) {
 				}
 				return `{"id":"` + owner + `","slug":"acme"}`
 			})
-			policy := config.Workload{Vercel: &config.WorkloadVercel{Environment: "production"}, Services: []string{"db"}}
+			policy := config.Workload{Vercel: &config.WorkloadVercel{Environment: "production"}, Grants: config.ServiceVisitGrants("db")}
 			o := Options{Directory: directory, Server: "https://control.example", Workloads: map[string]config.Workload{"web": policy}}
 			first, err := r.resolve(t.Context(), o)
 			if err != nil {
@@ -69,7 +69,7 @@ func TestVercelLinkedSelectionRejectsChangedIdentity(t *testing.T) {
 
 			project, owner = test.project, test.owner
 			writeLink()
-			policy.Services = []string{"db", "cache"}
+			policy.Grants = config.ServiceVisitGrants("db", "cache")
 			o.Workloads["web"] = policy
 			r.getenv = func(string) string {
 				t.Fatal("changed linked Vercel identity required provider authentication")
@@ -79,7 +79,12 @@ func TestVercelLinkedSelectionRejectsChangedIdentity(t *testing.T) {
 			if !errors.Is(err, ErrRebinding) {
 				t.Fatalf("changed linked %s must require a new workload name; got error %v and binding %+v", test.name, err, rebound["web"])
 			}
-			if rebound != nil || calls != 2 || !reflect.DeepEqual(first["web"].Services, []string{"db"}) {
+			encoded, marshalErr := json.Marshal(first["web"].Grants)
+			var original config.WorkloadGrants
+			if marshalErr != nil || json.Unmarshal(encoded, &original) != nil {
+				t.Fatal("invalid saved grant", marshalErr)
+			}
+			if rebound != nil || calls != 2 || !reflect.DeepEqual(original, config.ServiceVisitGrants("db")) {
 				t.Fatal("changed linked identity expanded the saved service grant", rebound, first)
 			}
 		})
@@ -115,7 +120,7 @@ func TestVercelProjectNameAllowsUnderscore(t *testing.T) {
 				}
 				return `{"id":"team_one","slug":"acme"}`
 			})
-			o := Options{Directory: directory, Server: "https://control.example", Workloads: map[string]config.Workload{"web": {Vercel: v, Services: []string{"db"}}}}
+			o := Options{Directory: directory, Server: "https://control.example", Workloads: map[string]config.Workload{"web": {Vercel: v, Grants: config.ServiceVisitGrants("db")}}}
 			bound, err := r.resolve(t.Context(), o)
 			if err != nil {
 				t.Fatal("valid Vercel project name store_front rejected", err)
@@ -153,7 +158,7 @@ func TestFlyPersonalOrganizationUsesRawSlug(t *testing.T) {
 				query = body.Query
 				return `{"data":{"app":{"name":"worker","internalNumericId":456,"organization":{"slug":"personal","rawSlug":"alice","internalNumericId":123}}}}`
 			})
-			o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: &config.WorkloadFly{App: "worker", Org: org}, Services: []string{"db"}}}}
+			o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: &config.WorkloadFly{App: "worker", Org: org}, Grants: config.ServiceVisitGrants("db")}}}
 			bound, err := r.resolve(t.Context(), o)
 			if !strings.Contains(query, "rawSlug") {
 				t.Error("Fly metadata query did not request organization.rawSlug")
@@ -194,7 +199,7 @@ func TestFlyLocalSelectionReusesSavedBindingWithoutAuthentication(t *testing.T) 
 				return `{"data":{"app":{"name":"worker","internalNumericId":456,"organization":{"slug":"acme","rawSlug":"acme","internalNumericId":123}}}}`
 			})
 			f := &config.WorkloadFly{App: "worker"}
-			o := Options{Directory: directory, Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: f, Services: []string{"db"}}}}
+			o := Options{Directory: directory, Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: f, Grants: config.ServiceVisitGrants("db")}}}
 			first, err := r.resolve(t.Context(), o)
 			if err != nil {
 				t.Fatal("initial Fly binding failed", err)
@@ -238,7 +243,7 @@ func TestVercelProjectNameWithIDPrefixStillUsesName(t *testing.T) {
 			return ""
 		}
 	})
-	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"web": {Vercel: &config.WorkloadVercel{Project: "prj_store", Team: "acme", Environment: "production"}, Services: []string{"db"}}}}
+	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"web": {Vercel: &config.WorkloadVercel{Project: "prj_store", Team: "acme", Environment: "production"}, Grants: config.ServiceVisitGrants("db")}}}
 	bound, err := r.resolve(t.Context(), o)
 	if err != nil || bound["web"].Trust.Claims["project"] != "prj_store" || bound["web"].Trust.Claims["project_id"] != "prj_identity" {
 		t.Fatal("explicit Vercel project name was treated as an immutable ID", err, bound)
@@ -276,7 +281,7 @@ func TestFlyLocalSelectionRequiresBoundedRegularFile(t *testing.T) {
 				t.Fatal("invalid local Fly selection required provider authentication")
 				return ""
 			}
-			o := Options{Directory: directory, Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: &config.WorkloadFly{}, Services: []string{"db"}}}}
+			o := Options{Directory: directory, Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: &config.WorkloadFly{}, Grants: config.ServiceVisitGrants("db")}}}
 			if bound, err := r.resolve(t.Context(), o); !errors.Is(err, ErrBinding) || bound != nil {
 				t.Fatal("invalid local Fly selection accepted", err, bound)
 			}
@@ -294,7 +299,7 @@ func TestFlyLocalSelectionAcceptsFileAtSizeLimit(t *testing.T) {
 	r := fixtureResolver(t, func(*http.Request) string {
 		return `{"data":{"app":{"name":"worker","internalNumericId":456,"organization":{"rawSlug":"acme","internalNumericId":123}}}}`
 	})
-	o := Options{Directory: directory, Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: &config.WorkloadFly{}, Services: []string{"db"}}}}
+	o := Options{Directory: directory, Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: &config.WorkloadFly{}, Grants: config.ServiceVisitGrants("db")}}}
 	if bound, err := r.resolve(t.Context(), o); err != nil || bound["job"].Trust.Claims["app_name"] != "worker" {
 		t.Fatal("local Fly file at the size limit rejected", err, bound)
 	}

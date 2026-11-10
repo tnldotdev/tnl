@@ -108,10 +108,10 @@ func connectionProject(ctx context.Context, options ContextOptions) (projectConf
 			return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrInvalid
 		}
 		if len(services) == 0 {
-			services = slices.Clone(policy.Services)
+			services = policy.VisitServices()
 		}
 		for _, name := range services {
-			if !slices.Contains(policy.Services, name) {
+			if !slices.Contains(policy.VisitServices(), name) {
 				return projectConfiguration{}, connectorruntime.Context{}, connectorruntime.ErrInvalid
 			}
 		}
@@ -196,7 +196,7 @@ func connectionManifest(options ContextOptions) (projectConfiguration, connector
 	}
 	b, _ := json.Marshal(m)
 	digest := sha256.Sum256(b)
-	configuration := config.TNL{Server: &m.Server, Team: &m.Team, Services: config.Services{}, Workloads: map[string]config.Workload{options.Workload: {Services: w.Services, MaxDuration: new(config.Duration(time.Duration(w.MaxDurationSeconds) * time.Second))}}}
+	configuration := config.TNL{Server: &m.Server, Team: &m.Team, Services: config.Services{}, Workloads: map[string]config.Workload{options.Workload: {Grants: config.ServiceVisitGrants(w.Services...), MaxDuration: new(config.Duration(time.Duration(w.MaxDurationSeconds) * time.Second))}}}
 	if w.MaxDurationSeconds == 0 {
 		policy := configuration.Workloads[options.Workload]
 		policy.MaxDuration = nil

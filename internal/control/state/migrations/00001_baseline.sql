@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-application-sessions')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-workload-applications')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-application-sessions');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-workload-applications');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2004,6 +2004,7 @@ RETURNS TABLE(expires_at timestamptz) LANGUAGE sql STABLE AS $$
         AND (selected.expires_at IS NULL OR selected.expires_at>at_time)
     JOIN control.publisher_grants grant_record ON grant_record.id=selected.grant_id
         AND grant_record.publisher_identity_id=key.publisher_identity_id AND grant_record.revoked_at IS NULL
+        AND grant_record.created_at<=session.created_at
         AND (grant_record.expires_at IS NULL OR grant_record.expires_at>at_time)
     WHERE key.id=signing_key_id AND key.publisher_identity_id=application_id
         AND key.public_key=session.public_key AND key.retired_at IS NULL
@@ -2012,12 +2013,23 @@ RETURNS TABLE(expires_at timestamptz) LANGUAGE sql STABLE AS $$
         AND (session.expires_at IS NULL OR session.expires_at>at_time)
 $$;
 -- +goose StatementEnd
-CREATE TABLE control.workload_session_services (
-    workload_session_id text NOT NULL REFERENCES control.workload_sessions(id),
-    service_id text NOT NULL REFERENCES control.services(id),
-    service text NOT NULL,
-    PRIMARY KEY(workload_session_id,service_id)
-);
+-- workload visitor inventories and policy are projections of captured ordinary
+-- application grants, not a separate list of service permissions.
+-- a policy observation may overlap a committed renewal; its deadline remains
+-- bounded by the observation's lease budget, never the newer clock.
+-- +goose StatementBegin
+CREATE FUNCTION control.workload_visit_authority(at_time timestamptz)
+RETURNS TABLE(session_id text,resource_kind text,resource_id text,expires_at timestamptz) LANGUAGE sql STABLE AS $$
+    SELECT session.id,CASE grant_record.kind WHEN 'service' THEN 'service' ELSE 'public_url' END,
+        COALESCE(grant_record.service_id,grant_record.public_url_id),LEAST(authority.expires_at,at_time+interval '90 seconds')
+    FROM control.workload_sessions session
+    JOIN control.publisher_identity_keys key ON key.workload_session_id=session.id
+    JOIN control.workload_session_application_grants selected ON selected.workload_session_id=session.id AND selected.publisher_identity_id=key.publisher_identity_id
+    JOIN control.publisher_grants grant_record ON grant_record.id=selected.grant_id AND grant_record.operation='visit'
+    CROSS JOIN LATERAL control.application_key_authority(key.publisher_identity_id,key.id,grant_record.id,GREATEST(at_time,session.renewed_at)) authority
+    WHERE session.created_at<=at_time AND authority.expires_at>at_time
+$$;
+-- +goose StatementEnd
 CREATE TABLE control.workload_assertions (
     jti_digest bytea PRIMARY KEY CHECK (octet_length(jti_digest)=32),
     assertion_digest bytea NOT NULL CHECK (octet_length(assertion_digest)=32),
@@ -2710,9 +2722,25 @@ BEGIN
                 PERFORM control.touch_visitor_policy('public_url',resource.id);
             END LOOP;
         WHEN 'workload' THEN
-            FOR resource IN SELECT service_id AS id FROM control.workload_session_services WHERE workload_session_id=facts->>'id' ORDER BY service_id LOOP
-                PERFORM control.touch_visitor_policy('service',resource.id);
+            FOR resource IN SELECT CASE g.kind WHEN 'service' THEN 'service' ELSE 'public_url' END AS kind,COALESCE(g.service_id,g.public_url_id) AS id
+                FROM control.workload_session_application_grants selected JOIN control.publisher_grants g ON g.id=selected.grant_id
+                WHERE selected.workload_session_id=facts->>'id' AND g.operation='visit' ORDER BY 1,2 LOOP
+                PERFORM control.touch_visitor_policy(resource.kind,resource.id);
             END LOOP;
+        WHEN 'application_grant' THEN
+            FOR resource IN SELECT CASE g.kind WHEN 'service' THEN 'service' ELSE 'public_url' END AS kind,COALESCE(g.service_id,g.public_url_id) AS id
+                FROM control.publisher_grants g WHERE g.id=facts->>'grant_id' AND g.operation='visit' ORDER BY 1,2 LOOP
+                PERFORM control.touch_visitor_policy(resource.kind,resource.id);
+            END LOOP;
+        WHEN 'application' THEN
+            FOR resource IN SELECT CASE g.kind WHEN 'service' THEN 'service' ELSE 'public_url' END AS kind,COALESCE(g.service_id,g.public_url_id) AS id
+                FROM control.publisher_grants g WHERE g.publisher_identity_id=facts->>'publisher_identity_id' AND g.operation='visit' ORDER BY 1,2 LOOP
+                PERFORM control.touch_visitor_policy(resource.kind,resource.id);
+            END LOOP;
+        WHEN 'publisher_grant' THEN
+            IF facts->>'operation'='visit' THEN
+                PERFORM control.touch_visitor_policy(CASE facts->>'kind' WHEN 'service' THEN 'service' ELSE 'public_url' END,COALESCE(facts->>'service_id',facts->>'public_url_id'));
+            END IF;
         WHEN 'browser' THEN
             FOR resource IN SELECT DISTINCT public_url_id AS id FROM control.browser_session_run_bindings WHERE session_digest=(facts->>'token_digest')::bytea ORDER BY public_url_id LOOP
                 PERFORM control.touch_visitor_policy('public_url',resource.id);
@@ -2782,8 +2810,16 @@ CREATE TRIGGER visitor_policy_workload AFTER UPDATE ON control.workload_sessions
     EXECUTE FUNCTION control.visitor_policy_fact_changed('workload');
 -- a new workload adds its own key-bound lease; existing subjects keep their
 -- permission revision. removals and replacements invalidate prior authority.
-CREATE TRIGGER visitor_policy_workload_scope AFTER UPDATE OR DELETE ON control.workload_session_services
-    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('service');
+CREATE TRIGGER visitor_policy_workload_scope AFTER UPDATE OR DELETE ON control.workload_session_application_grants
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('application_grant');
+CREATE TRIGGER visitor_policy_workload_binding AFTER UPDATE OR DELETE ON control.workload_applications
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('team');
+CREATE TRIGGER visitor_policy_application_grant AFTER UPDATE OR DELETE ON control.publisher_grants
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('publisher_grant');
+CREATE TRIGGER visitor_policy_application_identity AFTER UPDATE OR DELETE ON control.publisher_identities
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('team');
+CREATE TRIGGER visitor_policy_application_key AFTER UPDATE OR DELETE ON control.publisher_identity_keys
+    FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('application');
 CREATE TRIGGER visitor_policy_company_connection AFTER UPDATE OR DELETE ON control.identity_connections
     FOR EACH ROW EXECUTE FUNCTION control.visitor_policy_fact_changed('team');
 CREATE TRIGGER visitor_policy_company_eligibility AFTER INSERT OR UPDATE OR DELETE ON control.company_eligibility

@@ -66,7 +66,11 @@ type PublicLocalHTTPServiceNames<Config> = Config extends { readonly services: i
 type TargetReferences<Config> = {
   [Field in keyof Config as Field extends "workloads" ? Field : never]: {
     [Name in keyof Config[Field]]: {
-      services: readonly NamedPublisherServiceNames<Config>[];
+      grants: {
+        readonly visit?: readonly WorkloadResourceForNames<NamedPublisherServiceNames<Config>>[];
+        readonly publish?: readonly WorkloadResourceForNames<NamedPublisherServiceNames<Config>>[];
+        readonly allocate?: readonly { readonly domain: string }[];
+      };
     };
   };
 } & {
@@ -119,8 +123,16 @@ export type TnlServiceTarget = NonNullable<Service["target"]>;
 export type TnlProtocol = NonNullable<Service["protocol"]>;
 type Alias = NonNullable<NonNullable<TnlConfig["aliases"]>[string]>;
 type Webhook = NonNullable<NonNullable<TnlConfig["webhooks"]>[string]>;
-type WorkloadForNames<Policy, Names extends string> = Policy extends unknown
-  ? Omit<Policy, "services"> & { services: NoInfer<Names>[] }
+type WorkloadResourceForNames<Names extends string> =
+  | { readonly service: NoInfer<Names>; readonly publicURL?: never }
+  | { readonly publicURL: string; readonly service?: never };
+type WorkloadForNames<Policy, Names extends string> = Policy extends { grants: infer Grants }
+  ? Omit<Policy, "grants"> & {
+      grants: Omit<Grants, "visit" | "publish"> & {
+        visit?: WorkloadResourceForNames<Names>[];
+        publish?: WorkloadResourceForNames<Names>[];
+      };
+    }
   : never;
 type MemberHTTP<Member> = Member extends { http?: infer HTTP } ? NonNullable<HTTP> : never;
 type MemberPaths<Member, Names extends string, Name extends Names> =

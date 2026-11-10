@@ -55,7 +55,31 @@ func Declarations(configuration config.TNL, configPath, outputDir string) ([]byt
 		shape["publisherGroups"] = publishers
 		policies := map[string]any{}
 		for name, policy := range configuration.Workloads {
-			value := map[string]any{"services": policy.Services}
+			grants := map[string]any{}
+			resources := func(selected []config.WorkloadResource) []map[string]string {
+				result := make([]map[string]string, 0, len(selected))
+				for _, resource := range selected {
+					if resource.Service != nil {
+						result = append(result, map[string]string{"service": *resource.Service})
+					} else if resource.PublicURL != nil {
+						result = append(result, map[string]string{"publicURL": *resource.PublicURL})
+					}
+				}
+				return result
+			}
+			if len(policy.Grants.Visit) != 0 {
+				grants["visit"] = resources(policy.Grants.Visit)
+			}
+			if len(policy.Grants.Publish) != 0 {
+				grants["publish"] = resources(policy.Grants.Publish)
+			}
+			if len(policy.Grants.Allocate) != 0 {
+				grants["allocate"] = policy.Grants.Allocate
+			}
+			value := map[string]any{"grants": grants}
+			if policy.Ownership != "" {
+				value["ownership"] = policy.Ownership
+			}
 			if g := policy.GitLab; g != nil {
 				block := map[string]any{}
 				if g.Project != "" {

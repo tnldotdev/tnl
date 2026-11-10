@@ -302,13 +302,13 @@ export default defineConfig({
   // ...existing config
   workloads: {
     migrate: {
-      provider: "github",
-      services: ["orders"],
+      grants: { visit: [{ service: "orders" }] },
       github: {
         // your GitHub repo details
         repository: "shop/storefront",
         workflow: ".github/workflows/deploy.yml",
-        ref: "refs/heads/main",
+        branch: "main",
+        events: ["push"],
       },
     },
   },

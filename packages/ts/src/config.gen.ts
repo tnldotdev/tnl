@@ -970,13 +970,73 @@ export interface TnlConfig {
           google?: never;
           kubernetes?: never;
           gitlab?: never;
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
+          grants: {
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            visit?: [
+              (
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              ),
+              ...(
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              )[],
+            ];
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            publish?: [
+              (
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              ),
+              ...(
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              )[],
+            ];
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            allocate?: [
+              {
+                domain: string;
+              },
+              ...{
+                domain: string;
+              }[],
+            ];
+          };
+          ownership?: "member" | "team";
           token?:
             | {
                 file: string;
@@ -1110,13 +1170,73 @@ export interface TnlConfig {
           google?: never;
           kubernetes?: never;
           gitlab?: never;
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
+          grants: {
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            visit?: [
+              (
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              ),
+              ...(
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              )[],
+            ];
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            publish?: [
+              (
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              ),
+              ...(
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              )[],
+            ];
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            allocate?: [
+              {
+                domain: string;
+              },
+              ...{
+                domain: string;
+              }[],
+            ];
+          };
+          ownership?: "member" | "team";
           token?:
             | {
                 file: string;
@@ -1149,13 +1269,73 @@ export interface TnlConfig {
           google?: never;
           kubernetes?: never;
           gitlab?: never;
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
+          grants: {
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            visit?: [
+              (
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              ),
+              ...(
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              )[],
+            ];
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            publish?: [
+              (
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              ),
+              ...(
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              )[],
+            ];
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            allocate?: [
+              {
+                domain: string;
+              },
+              ...{
+                domain: string;
+              }[],
+            ];
+          };
+          ownership?: "member" | "team";
           token?:
             | {
                 file: string;
@@ -1188,13 +1368,73 @@ export interface TnlConfig {
           google?: never;
           kubernetes?: never;
           gitlab?: never;
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
+          grants: {
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            visit?: [
+              (
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              ),
+              ...(
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              )[],
+            ];
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            publish?: [
+              (
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              ),
+              ...(
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              )[],
+            ];
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            allocate?: [
+              {
+                domain: string;
+              },
+              ...{
+                domain: string;
+              }[],
+            ];
+          };
+          ownership?: "member" | "team";
           token?:
             | {
                 file: string;
@@ -1230,13 +1470,73 @@ export interface TnlConfig {
           oidc?: never;
           kubernetes?: never;
           gitlab?: never;
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
+          grants: {
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            visit?: [
+              (
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              ),
+              ...(
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              )[],
+            ];
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            publish?: [
+              (
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              ),
+              ...(
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              )[],
+            ];
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            allocate?: [
+              {
+                domain: string;
+              },
+              ...{
+                domain: string;
+              }[],
+            ];
+          };
+          ownership?: "member" | "team";
           token?:
             | {
                 file: string;
@@ -1268,13 +1568,73 @@ export interface TnlConfig {
           oidc?: never;
           google?: never;
           gitlab?: never;
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
+          grants: {
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            visit?: [
+              (
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              ),
+              ...(
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              )[],
+            ];
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            publish?: [
+              (
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              ),
+              ...(
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              )[],
+            ];
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            allocate?: [
+              {
+                domain: string;
+              },
+              ...{
+                domain: string;
+              }[],
+            ];
+          };
+          ownership?: "member" | "team";
           token?:
             | {
                 file: string;
@@ -1311,13 +1671,73 @@ export interface TnlConfig {
           oidc?: never;
           google?: never;
           kubernetes?: never;
-          /**
-           * exact configured service keys assigned to named publisher groups; local services cannot be workload targets.
-           *
-           * @minItems 1
-           * @maxItems 32
-           */
-          services: [string, ...string[]];
+          grants: {
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            visit?: [
+              (
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              ),
+              ...(
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              )[],
+            ];
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            publish?: [
+              (
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              ),
+              ...(
+                | {
+                    service: string;
+                    publicURL?: never;
+                  }
+                | {
+                    service?: never;
+                    publicURL: string;
+                  }
+              )[],
+            ];
+            /**
+             * @minItems 1
+             * @maxItems 64
+             */
+            allocate?: [
+              {
+                domain: string;
+              },
+              ...{
+                domain: string;
+              }[],
+            ];
+          };
+          ownership?: "member" | "team";
           token?:
             | {
                 file: string;

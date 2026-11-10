@@ -459,6 +459,9 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err = recordAppliedGroupConfiguration(ctx, tx, existing, newServices, changedGroups, r.ActorID, next, r.Now); err != nil {
 		return result, err
 	}
+	if err = d.reconcileWorkloadApplications(ctx, tx, r, c); err != nil {
+		return result, err
+	}
 	if err = reconcileWorkloadPolicies(ctx, tx, r, c); err != nil {
 		return result, err
 	}

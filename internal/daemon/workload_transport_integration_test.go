@@ -86,7 +86,7 @@ func TestIntegrationWorkloadTransportLifecycle(t *testing.T) {
 				"db":           {PublisherGroup: &private, Protocol: &pgProtocol, Target: net.JoinHostPort(pg.Host, strconv.Itoa(int(pg.Port)))},
 			}
 			keys := []string{"private-tcp", "public-tcp", "private-http", "public-http", "db"}
-			policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: keys, MaxDurationSeconds: 205}}
+			policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Grants: workloadVisitGrants(t, keys...), MaxDurationSeconds: 205}}
 			continuousPolicy := policies["test"]
 			continuousPolicy.MaxDurationSeconds = 0
 			policies["continuous"] = continuousPolicy
@@ -305,7 +305,7 @@ func TestIntegrationWorkloadTransportHTTPNoFallback(t *testing.T) {
 	}))
 	t.Cleanup(target.Close)
 	group, protocol := "public", controlv1.ServiceProtocolHTTP
-	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api"}, MaxDurationSeconds: 60}}
+	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Grants: workloadVisitGrants(t, "api"), MaxDurationSeconds: 60}}
 	_, err := f.identity.routes.ApplyProjectConfiguration(t.Context(), "workload", controlv1.ApplyProjectConfigurationRequest{TeamId: f.identity.teamID, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {Public: new(true)}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Protocol: &protocol, Target: strings.TrimPrefix(target.URL, "http://")}}, Webhooks: map[string]controlv1.ProjectWebhook{}}})
 	if err != nil {
 		t.Fatal(err)

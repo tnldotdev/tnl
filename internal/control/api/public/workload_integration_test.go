@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
@@ -67,7 +69,7 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 		t.Fatal(err)
 	}
 	group, protocol := "production", controlv1.Kubernetes
-	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}, Environment: new("ci"), JobWorkflowRef: new("example/shared/.github/workflows/reuse.yml@refs/tags/v1")}, Services: []string{"cluster"}, MaxDurationSeconds: 3600}}
+	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}, Environment: new("ci"), JobWorkflowRef: new("example/shared/.github/workflows/reuse.yml@refs/tags/v1")}, Grants: workloadVisitGrants(t, "cluster"), MaxDurationSeconds: 3600}}
 	continuous := policies["test"]
 	continuous.MaxDurationSeconds = 0
 	policies["continuous"] = continuous
@@ -294,6 +296,18 @@ func TestIntegrationWorkloadHTTPAndNativeAdapter(t *testing.T) {
 			if bytes.Contains(data, []byte(credential)) {
 				t.Fatal("deletion response exposed a bearer credential")
 			}
+		}
+		// historical jobs also need an approval that existed at their start.
+		connection, err := pgx.Connect(ctx, databaseURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer connection.Close(ctx)
+		if _, err := connection.Exec(ctx, `UPDATE control.workload_applications SET created_at=$2 WHERE team_id=$1`, team, now.Add(-60*24*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := connection.Exec(ctx, `UPDATE control.publisher_grants SET created_at=$2 WHERE publisher_identity_id IN (SELECT publisher_identity_id FROM control.workload_applications WHERE team_id=$1)`, team, now.Add(-60*24*time.Hour)); err != nil {
+			t.Fatal(err)
 		}
 		for i, name := range []string{"lease-expired", "old-expired", "old-revoked"} {
 			at := now.Add(-40 * 24 * time.Hour)

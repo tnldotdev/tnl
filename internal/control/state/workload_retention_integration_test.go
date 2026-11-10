@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
@@ -64,7 +65,7 @@ func drainWorkloadHistory(t *testing.T, d *Database, now time.Time, limit int) i
 func workloadHistoryCounts(t *testing.T, d *Database) map[string]int64 {
 	t.Helper()
 	counts := map[string]int64{}
-	for _, table := range []string{"workload_sessions", "workload_session_services", "workload_assertions", "workload_client_certificates", "workload_audit", "public_service_visitors"} {
+	for _, table := range []string{"workload_sessions", "workload_session_application_grants", "workload_assertions", "workload_client_certificates", "workload_audit", "public_service_visitors"} {
 		var count int64
 		if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.`+table).Scan(&count); err != nil {
 			t.Fatal(err)
@@ -86,6 +87,7 @@ func TestIntegrationWorkloadRetentionReplayAndStop(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "workload_retention_replay")
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r.Now = now.Add(-60 * 24 * time.Hour)
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +169,7 @@ func TestIntegrationWorkloadRetentionAssertionBoundary(t *testing.T) {
 	p.MaxDurationSeconds = 10
 	r.Configuration.Workloads["test"] = p
 	trust := oidc.WorkloadTrust{Provider: "oidc", Issuer: "https://issuer.example/workloads", JWKSURL: "https://issuer.example/keys", Audience: "test", Claims: map[string]string{"sub": "worker"}}
-	r.Configuration.Workloads["long-assertion"] = ProjectWorkload{Provider: "oidc", Trust: trust, Services: []string{"api"}, MaxDurationSeconds: 10}
+	r.Configuration.Workloads["long-assertion"] = ProjectWorkload{Provider: "oidc", Trust: trust, Grants: config.ServiceVisitGrants("api"), MaxDurationSeconds: 10}
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
@@ -211,6 +213,7 @@ func TestIntegrationWorkloadRetentionReferencesAndBatches(t *testing.T) {
 	ctx := t.Context()
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
+	r.Now = now.Add(-60 * 24 * time.Hour)
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)
 	}

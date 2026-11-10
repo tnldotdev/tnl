@@ -70,14 +70,14 @@ type Querier interface {
 	CleanupVisitorHandoffs(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupVisitorLogins(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupVisitorSessions(ctx context.Context, now pgtype.Timestamptz) error
+	// keep captured grants until all other session references are gone.
+	CleanupWorkloadApplicationGrants(ctx context.Context, arg CleanupWorkloadApplicationGrantsParams) (int64, error)
 	CleanupWorkloadAssertions(ctx context.Context, arg CleanupWorkloadAssertionsParams) (int64, error)
 	CleanupWorkloadAudit(ctx context.Context, arg CleanupWorkloadAuditParams) (int64, error)
 	CleanupWorkloadCertificates(ctx context.Context, arg CleanupWorkloadCertificatesParams) (int64, error)
 	// each phase has its own budget so a busy leaf cannot starve its parents.
 	// select only unreferenced candidates before LIMIT; never cascade subject state.
 	CleanupWorkloadPublicServiceVisitors(ctx context.Context, arg CleanupWorkloadPublicServiceVisitorsParams) (int64, error)
-	// keep the exact service snapshot until all other session references are gone.
-	CleanupWorkloadServiceRights(ctx context.Context, arg CleanupWorkloadServiceRightsParams) (int64, error)
 	CleanupWorkloadSessions(ctx context.Context, arg CleanupWorkloadSessionsParams) (int64, error)
 	ClosePublishRun(ctx context.Context, arg ClosePublishRunParams) (ControlPublishRun, error)
 	ClosePublishRunConnections(ctx context.Context, arg ClosePublishRunConnectionsParams) error
@@ -375,7 +375,7 @@ type Querier interface {
 	ListVisitorIPGrants(ctx context.Context, publicUrlID string) ([]ControlVisitorIpGrant, error)
 	ListVisitorInventory(ctx context.Context, arg ListVisitorInventoryParams) ([]ListVisitorInventoryRow, error)
 	ListVisitorInvitations(ctx context.Context, publicUrlID string) ([]ControlVisitorInvitation, error)
-	ListWorkloadSessionServices(ctx context.Context, workloadSessionID string) ([]ListWorkloadSessionServicesRow, error)
+	ListWorkloadSessionServices(ctx context.Context, arg ListWorkloadSessionServicesParams) ([]ListWorkloadSessionServicesRow, error)
 	LockACMEOrder(ctx context.Context, issuanceID string) (ControlAcmeOrder, error)
 	LockACMEOrderForInstall(ctx context.Context, arg LockACMEOrderForInstallParams) (ControlAcmeOrder, error)
 	LockAppliedProject(ctx context.Context, arg LockAppliedProjectParams) (ControlAppliedProject, error)

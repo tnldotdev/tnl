@@ -72,10 +72,10 @@ func TestIntegrationWorkloadExchangeFreshAssertionRetry(t *testing.T) {
 			// policy additions cannot restore a right removed from this session,
 			// including when the client never received its original snapshot.
 			p := (*f.body.Configuration.Workloads)["test"]
-			p.Services = []string{"api"}
+			p.Grants = workloadVisitGrants(t, "api")
 			(*f.body.Configuration.Workloads)["test"] = p
 			f.apply(t)
-			p.Services = []string{"api", "db"}
+			p.Grants = workloadVisitGrants(t, "api", "db")
 			(*f.body.Configuration.Workloads)["test"] = p
 			f.apply(t)
 			before := f.saved(t, committed.Id)
@@ -288,7 +288,7 @@ func newWorkloadExchangeRetryFixture(t *testing.T) *workloadExchangeRetryFixture
 	}
 	team := human.Identity.Memberships[0].TeamID
 	group := "production"
-	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api", "db"}, MaxDurationSeconds: 3600}}
+	policies := map[string]controlv1.ProjectWorkload{"test": {Provider: controlv1.WorkloadGitHub, Github: &controlv1.ProjectWorkloadGitHub{Repository: "example/repository", RepositoryId: "12345", RepositoryOwnerId: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Grants: workloadVisitGrants(t, "api", "db"), MaxDurationSeconds: 3600}}
 	f := &workloadExchangeRetryFixture{server: server, issuer: issuer, inspect: inspect, owner: owner, team: team, body: controlv1.ApplyProjectConfigurationRequest{TeamId: team, SourceFingerprint: strings.Repeat("a", 64), Configuration: controlv1.ProjectConfiguration{Workloads: &policies, PublisherGroups: map[string]controlv1.ProjectPublisherGroup{group: {}}, Services: map[string]controlv1.ProjectServiceConfiguration{"api": {PublisherGroup: &group, Target: "api.internal:3000"}, "db": {PublisherGroup: &group, Target: "db.internal:5432"}}, Webhooks: map[string]controlv1.ProjectWebhook{}}}}
 	f.apply(t)
 	return f

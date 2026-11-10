@@ -1678,9 +1678,3 @@ type ControlWorkloadSessionApplicationGrant struct {
 	GrantID             string
 	ExpiresAt           pgtype.Timestamptz
 }
-
-type ControlWorkloadSessionService struct {
-	WorkloadSessionID string
-	ServiceID         string
-	Service           string
-}

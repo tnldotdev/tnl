@@ -97,14 +97,32 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 					props.Set(other, jsonschema.FalseSchema)
 				}
 			}
-			for _, key := range []string{"services", "max_duration", "token", provider} {
+			for _, key := range []string{"grants", "ownership", "max_duration", "token", provider} {
 				if property, ok := base.Properties.Get(key); ok {
 					props.Set(key, property)
 				}
 			}
-			result.OneOf = append(result.OneOf, &jsonschema.Schema{Type: "object", Properties: props, Required: []string{provider, "services"}, AdditionalProperties: jsonschema.FalseSchema})
+			result.OneOf = append(result.OneOf, &jsonschema.Schema{Type: "object", Properties: props, Required: []string{provider, "grants"}, AdditionalProperties: jsonschema.FalseSchema})
 		}
 		return result
+	case reflect.TypeOf(config.WorkloadResource{}):
+		result := &jsonschema.Schema{}
+		for _, field := range []string{"service", "public_url"} {
+			props := jsonschema.NewProperties()
+			props.Set(field, &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(256)})
+			other := "service"
+			if field == "service" {
+				other = "public_url"
+			}
+			props.Set(other, jsonschema.FalseSchema)
+			result.OneOf = append(result.OneOf, &jsonschema.Schema{Type: "object", Properties: props, Required: []string{field}, AdditionalProperties: jsonschema.FalseSchema})
+		}
+		return result
+	case reflect.TypeOf(config.WorkloadGrants{}):
+		type declaration config.WorkloadGrants
+		base := (&jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, DoNotReference: true, RequiredFromJSONSchemaTags: true, Mapper: schemaForType}).Reflect(declaration{})
+		base.MinProperties = integerPointer(1)
+		return base
 	case reflect.TypeOf(config.WorkloadGitLab{}):
 		type declaration config.WorkloadGitLab
 		base := (&jsonschema.Reflector{Anonymous: true, ExpandedStruct: true, DoNotReference: true, RequiredFromJSONSchemaTags: true, Mapper: schemaForType}).Reflect(declaration{})

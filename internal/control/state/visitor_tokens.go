@@ -318,23 +318,23 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		}
 		// selected-service membership is an authority-confirmed workload fact,
 		// independent of human grants and of which publisher run is ready.
-		var selected bool
-		err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.workload_sessions w
-		    JOIN control.workload_session_services selected ON selected.workload_session_id=w.id AND selected.service_id=$2
+		var selectedUntil time.Time
+		err := tx.QueryRow(ctx, `SELECT selected.expires_at FROM control.workload_sessions w
+		    JOIN control.workload_visit_authority($4) selected ON selected.session_id=w.id AND selected.resource_kind='service' AND selected.resource_id=$2
 		    JOIN control.teams team ON team.id=w.team_id AND team.deleted_at IS NULL
 		    JOIN control.applied_projects project ON project.team_id=w.team_id AND project.project_key=w.project_key
-		    WHERE w.id=$1 AND w.team_id=$3)`, workloadSource.ID, scope.ID, resource.TeamID).Scan(&selected)
+		    WHERE w.id=$1 AND w.team_id=$3`, workloadSource.ID, scope.ID, resource.TeamID, now).Scan(&selectedUntil)
 		if err != nil {
 			return result, publisherLookupError(err, ErrVisitorPermission)
 		}
-		if !selected || len(workloadSource.PublicKey) != ed25519.PublicKeySize {
+		if len(workloadSource.PublicKey) != ed25519.PublicKeySize {
 			return result, ErrVisitorPermission
 		}
 		digest, err := visitortoken.KeyDigest(ed25519.PublicKey(workloadSource.PublicKey))
 		if err != nil {
 			return result, err
 		}
-		until = minTime(workloadSource.LeaseExpiresAt, workloadSource.IdentityExpiresAt)
+		until = minTime(selectedUntil, minTime(workloadSource.LeaseExpiresAt, workloadSource.IdentityExpiresAt))
 		if workloadSource.ExpiresAt != nil {
 			until = minTime(until, *workloadSource.ExpiresAt)
 		}

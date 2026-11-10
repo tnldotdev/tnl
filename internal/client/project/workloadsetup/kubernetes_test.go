@@ -32,7 +32,7 @@ func TestKubernetesTrustedBindingDefaultsReuseAndRebinding(t *testing.T) {
 			return nil, ErrBinding
 		}
 	}
-	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"app": {Kubernetes: &config.WorkloadKubernetes{ServiceAccount: "orders"}, Services: []string{"db"}}}}
+	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"app": {Kubernetes: &config.WorkloadKubernetes{ServiceAccount: "orders"}, Grants: config.ServiceVisitGrants("db")}}}
 	first, err := r.resolve(t.Context(), o)
 	if err != nil || calls != 3 {
 		t.Fatal("initial Kubernetes binding failed", err, calls)
@@ -88,7 +88,7 @@ func TestKubernetesTrustedBindingDefaultsReuseAndRebinding(t *testing.T) {
 
 func TestKubernetesBindingRejectsInsecureContextAndKeepsAuthenticationCause(t *testing.T) {
 	r := newResolver()
-	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"app": {Kubernetes: &config.WorkloadKubernetes{ServiceAccount: "orders"}, Services: []string{"db"}}}}
+	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"app": {Kubernetes: &config.WorkloadKubernetes{ServiceAccount: "orders"}, Grants: config.ServiceVisitGrants("db")}}}
 	r.run = func(context.Context, string, string, ...string) ([]byte, error) {
 		return []byte(strings.Replace(kubeContextJSON, `"server":`, `"insecure-skip-tls-verify":true,"server":`, 1)), nil
 	}
@@ -126,7 +126,7 @@ func TestKubernetesSetupNamespaceDefaultsAndAudience(t *testing.T) {
 					return nil, ErrBinding
 				}
 			}
-			o := Options{Directory: "/project", Server: "https://control.example", Workloads: map[string]config.Workload{"app": {Kubernetes: &config.WorkloadKubernetes{Context: "eks-development", Namespace: test.explicitNamespace, ServiceAccount: "orders", Audience: "tnl-orders"}, Services: []string{"db"}}}}
+			o := Options{Directory: "/project", Server: "https://control.example", Workloads: map[string]config.Workload{"app": {Kubernetes: &config.WorkloadKubernetes{Context: "eks-development", Namespace: test.explicitNamespace, ServiceAccount: "orders", Audience: "tnl-orders"}, Grants: config.ServiceVisitGrants("db")}}}
 			bound, err := r.resolve(t.Context(), o)
 			if err != nil || bound["app"].Kubernetes.Namespace != test.wantNamespace || bound["app"].Trust.Audience != "tnl-orders" {
 				t.Fatal("setup defaults or explicit audience changed", err)
@@ -164,7 +164,7 @@ func TestKubernetesSetupRejectsMalformedMetadata(t *testing.T) {
 					return []byte(test.discovery), nil
 				}
 			}
-			o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"app": {Kubernetes: &config.WorkloadKubernetes{ServiceAccount: "orders"}, Services: []string{"db"}}}}
+			o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"app": {Kubernetes: &config.WorkloadKubernetes{ServiceAccount: "orders"}, Grants: config.ServiceVisitGrants("db")}}}
 			if _, err := r.resolve(t.Context(), o); !errors.Is(err, ErrBinding) {
 				t.Fatal("invalid cluster metadata established authority", err)
 			}

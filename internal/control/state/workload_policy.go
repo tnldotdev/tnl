@@ -32,9 +32,15 @@ type ProjectWorkload struct {
 	Google             *ProjectWorkloadGoogle     `json:"google,omitempty"`
 	Kubernetes         *ProjectWorkloadKubernetes `json:"kubernetes,omitempty"`
 	GitLab             *ProjectWorkloadGitLab     `json:"gitlab,omitempty"`
-	Services           []string                   `json:"services"`
+	Grants             config.WorkloadGrants      `json:"grants"`
+	Ownership          string                     `json:"ownership,omitempty"`
 	MaxDurationSeconds int                        `json:"max_duration_seconds"`
 }
+
+func (p ProjectWorkload) VisitServices() []string {
+	return (config.Workload{Grants: p.Grants}).VisitServices()
+}
+
 type ProjectWorkloadGoogle = controlv1.ProjectWorkloadGoogle
 type ProjectWorkloadKubernetes = controlv1.ProjectWorkloadKubernetes
 type ProjectWorkloadGitLab = controlv1.ProjectWorkloadGitLab
@@ -59,6 +65,28 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 		return ErrProjectConfigurationInvalid
 	}
 	for name, p := range c.Workloads {
+		services := config.Services{}
+		for key, service := range c.Services {
+			services[key] = config.Service{PublisherGroup: new(service.PublisherGroup)}
+		}
+		if err := config.ValidateWorkloadGrants(services, p.Grants); err != nil {
+			return errors.Join(ErrProjectConfigurationInvalid, err)
+		}
+		if p.Ownership != "" && p.Ownership != "member" && p.Ownership != "team" {
+			return ErrProjectConfigurationInvalid
+		}
+		if p.Ownership == "" {
+			p.Ownership = "member"
+		}
+		resourceKey := func(resource config.WorkloadResource) string {
+			if resource.Service != nil {
+				return "service:" + *resource.Service
+			}
+			return "public_url:" + *resource.PublicURL
+		}
+		slices.SortFunc(p.Grants.Visit, func(a, b config.WorkloadResource) int { return strings.Compare(resourceKey(a), resourceKey(b)) })
+		slices.SortFunc(p.Grants.Publish, func(a, b config.WorkloadResource) int { return strings.Compare(resourceKey(a), resourceKey(b)) })
+		slices.SortFunc(p.Grants.Allocate, func(a, b config.WorkloadAllocation) int { return strings.Compare(a.Domain, b.Domain) })
 		if (p.Provider == "google") != (p.Google != nil) {
 			return ErrProjectConfigurationInvalid
 		}
@@ -75,18 +103,9 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 			if err := p.validateTrust(); err != nil {
 				return err
 			}
-			if !serviceName.MatchString(name) || p.MaxDurationSeconds < 0 || int64(p.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds || len(p.Services) == 0 || len(p.Services) > 32 {
+			if !serviceName.MatchString(name) || p.MaxDurationSeconds < 0 || int64(p.MaxDurationSeconds) > config.MaxWorkloadMaxDurationSeconds {
 				return ErrProjectConfigurationInvalid
 			}
-			seen := map[string]bool{}
-			for _, key := range p.Services {
-				s, ok := c.Services[key]
-				if !ok || s.PublisherGroup == "local" || seen[key] {
-					return ErrProjectConfigurationInvalid
-				}
-				seen[key] = true
-			}
-			slices.Sort(p.Services)
 			c.Workloads[name] = p
 			continue
 		}
@@ -99,13 +118,7 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 		if !strings.HasPrefix(g.WorkflowRef, prefix) || !ok || suffix != g.Ref || !appliedNumericID.MatchString(g.RepositoryID) || !appliedNumericID.MatchString(g.RepositoryOwnerID) {
 			return ErrWorkloadBinding
 		}
-		services := map[string]config.Service{}
-		for key, s := range c.Services {
-			if s.PublisherGroup != "local" {
-				services[key] = config.Service{PublisherGroup: new(s.PublisherGroup)}
-			}
-		}
-		policy := config.Workload{GitHub: &config.WorkloadGitHub{Repository: &g.Repository, Workflow: workflow, Events: g.Events}, Services: p.Services}
+		policy := config.Workload{GitHub: &config.WorkloadGitHub{Repository: &g.Repository, Workflow: workflow, Events: g.Events}, Grants: p.Grants, Ownership: p.Ownership}
 		if !config.ValidWorkloadRef(g.Ref) {
 			return ErrProjectConfigurationInvalid
 		}
@@ -129,7 +142,6 @@ func normalizeProjectWorkloads(c *ProjectConfiguration) error {
 		if err := config.ValidateWorkloads(config.TNL{Services: services, Workloads: map[string]config.Workload{name: policy}}); err != nil {
 			return errors.Join(ErrProjectConfigurationInvalid, err)
 		}
-		slices.Sort(p.Services)
 		slices.Sort(p.GitHub.Events)
 		p.Trust = oidc.WorkloadTrust{Provider: "github", Issuer: oidc.GitHubIssuer, JWKSURL: oidc.GitHubIssuer + "/.well-known/jwks", Claims: map[string]string{}}
 		c.Workloads[name] = p
@@ -173,9 +185,6 @@ func reconcileWorkloadPolicies(ctx context.Context, tx pgx.Tx, r ApplyProjectCon
 				return err
 			}
 			continue
-		}
-		if _, err = tx.Exec(ctx, `DELETE FROM control.workload_session_services right_ WHERE right_.workload_session_id=$1 AND NOT EXISTS(SELECT 1 FROM control.applied_project_services applied WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=ANY($4::text[]) AND applied.service_id=right_.service_id)`, s.id, r.TeamID, r.ProjectKey, p.Services); err != nil {
-			return err
 		}
 		if p.MaxDurationSeconds > 0 {
 			if _, err = tx.Exec(ctx, `UPDATE control.workload_sessions SET expires_at=LEAST(expires_at,created_at+($2::bigint*interval '1 second')),lease_expires_at=LEAST(lease_expires_at,created_at+($2::bigint*interval '1 second')) WHERE id=$1`, s.id, p.MaxDurationSeconds); err != nil {

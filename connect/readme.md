@@ -11,7 +11,7 @@ GitHub workload named `deploy`. Before running it:
 
 - Declare `services.database` in this project's configuration, assign it to a
   named publisher group, and have a publisher in that group serving it.
-- Declare `workloads.deploy` with `provider: github`, `services: [database]`, and
+- Declare `workloads.deploy` with `github: { workflow: ".github/workflows/deploy.yml" }`, `grants: { visit: [{ service: "database" }] }`, and
   GitHub rules matching `.github/workflows/deploy.yml`, `refs/heads/main`, and the
   `push` event. Save that policy with `pnpm exec tnl apply` from your signed-in
   checkout. For a private repository, the first apply also needs `gh` authenticated
@@ -88,7 +88,7 @@ Keep your existing migration directory and schema settings in the Drizzle config
 
 | Input               | Purpose                                                                                         |
 | ------------------- | ----------------------------------------------------------------------------------------------- |
-| `workload`          | Required key under `workloads`, with `provider: github`                                         |
+| `workload`          | Required key under `workloads`, with a `github` provider block                                  |
 | `working-directory` | Project directory relative to the workspace; default `.`                                        |
 | `services`          | Optional newline-separated service keys; narrows the workload's service list                    |
 | `timeout`           | Seconds allowed for each of OIDC acquisition and native startup; default `90`, range `1`-`300`  |

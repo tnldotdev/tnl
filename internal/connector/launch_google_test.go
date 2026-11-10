@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	connectorruntime "github.com/tnldotdev/tnl/internal/connector/runtime"
 	"github.com/tnldotdev/tnl/internal/connector/workload"
 )
@@ -42,7 +43,7 @@ func TestConnectionStartOwnerGoogleMetadataFromConfig(t *testing.T) {
 				"server": "https://control.example", "team": "acme",
 				"publisher_groups": map[string]any{"remote": map[string]any{}},
 				"services":         map[string]any{"api": map[string]any{"publisher_group": "remote", "target": map[string]any{"type": "address", "address": "http://unused.invalid:3000"}}},
-				"workloads":        map[string]any{"job": map[string]any{"google": map[string]any{"service_account": "112010400000000710080", "audience": audience}, "services": []string{"api"}}},
+				"workloads":        map[string]any{"job": map[string]any{"google": map[string]any{"service_account": "112010400000000710080", "audience": audience}, "grants": config.ServiceVisitGrants("api")}},
 			}}
 			data, err := json.Marshal(configuration)
 			if err != nil {

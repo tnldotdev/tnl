@@ -11,6 +11,36 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cleanupWorkloadApplicationGrants = `-- name: CleanupWorkloadApplicationGrants :execrows
+DELETE FROM control.workload_session_application_grants WHERE (workload_session_id, grant_id) IN (
+    SELECT rights.workload_session_id, rights.grant_id FROM control.workload_session_application_grants rights
+    JOIN control.workload_sessions session ON session.id = rights.workload_session_id
+    WHERE COALESCE(session.expires_at,session.identity_expires_at) < $1 AND session.lease_expires_at < $1
+      AND (session.revoked_at IS NULL OR session.revoked_at < $1)
+      AND to_timestamp((session.claims->>'exp')::double precision) < $1
+      AND NOT EXISTS (SELECT 1 FROM control.workload_assertions child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.public_service_visitors child WHERE child.workload_session_id = session.id)
+    ORDER BY COALESCE(session.expires_at,session.identity_expires_at), rights.workload_session_id, rights.grant_id LIMIT $2
+    FOR UPDATE OF rights SKIP LOCKED
+)
+`
+
+type CleanupWorkloadApplicationGrantsParams struct {
+	BeforeTime pgtype.Timestamptz
+	BatchSize  int32
+}
+
+// keep captured grants until all other session references are gone.
+func (q *Queries) CleanupWorkloadApplicationGrants(ctx context.Context, arg CleanupWorkloadApplicationGrantsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, cleanupWorkloadApplicationGrants, arg.BeforeTime, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const cleanupWorkloadAssertions = `-- name: CleanupWorkloadAssertions :execrows
 DELETE FROM control.workload_assertions WHERE jti_digest IN (
     SELECT assertion.jti_digest FROM control.workload_assertions assertion WHERE assertion.expires_at < $1
@@ -102,43 +132,13 @@ func (q *Queries) CleanupWorkloadPublicServiceVisitors(ctx context.Context, arg 
 	return result.RowsAffected(), nil
 }
 
-const cleanupWorkloadServiceRights = `-- name: CleanupWorkloadServiceRights :execrows
-DELETE FROM control.workload_session_services WHERE (workload_session_id, service_id) IN (
-    SELECT rights.workload_session_id, rights.service_id FROM control.workload_session_services rights
-    JOIN control.workload_sessions session ON session.id = rights.workload_session_id
-    WHERE COALESCE(session.expires_at,session.identity_expires_at) < $1 AND session.lease_expires_at < $1
-      AND (session.revoked_at IS NULL OR session.revoked_at < $1)
-      AND to_timestamp((session.claims->>'exp')::double precision) < $1
-      AND NOT EXISTS (SELECT 1 FROM control.workload_assertions child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)
-      AND NOT EXISTS (SELECT 1 FROM control.public_service_visitors child WHERE child.workload_session_id = session.id)
-    ORDER BY COALESCE(session.expires_at,session.identity_expires_at), rights.workload_session_id, rights.service_id LIMIT $2
-    FOR UPDATE OF rights SKIP LOCKED
-)
-`
-
-type CleanupWorkloadServiceRightsParams struct {
-	BeforeTime pgtype.Timestamptz
-	BatchSize  int32
-}
-
-// keep the exact service snapshot until all other session references are gone.
-func (q *Queries) CleanupWorkloadServiceRights(ctx context.Context, arg CleanupWorkloadServiceRightsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, cleanupWorkloadServiceRights, arg.BeforeTime, arg.BatchSize)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const cleanupWorkloadSessions = `-- name: CleanupWorkloadSessions :execrows
 DELETE FROM control.workload_sessions WHERE id IN (
     SELECT session.id FROM control.workload_sessions session
     WHERE COALESCE(session.expires_at,session.identity_expires_at) < $1 AND session.lease_expires_at < $1
       AND (session.revoked_at IS NULL OR session.revoked_at < $1)
       AND to_timestamp((session.claims->>'exp')::double precision) < $1
-      AND NOT EXISTS (SELECT 1 FROM control.workload_session_services child WHERE child.workload_session_id = session.id)
+      AND NOT EXISTS (SELECT 1 FROM control.workload_session_application_grants child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_assertions child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_audit child WHERE child.workload_session_id = session.id)
       AND NOT EXISTS (SELECT 1 FROM control.workload_client_certificates child WHERE child.workload_session_id = session.id)

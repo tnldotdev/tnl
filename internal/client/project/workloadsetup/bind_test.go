@@ -27,7 +27,7 @@ func TestGitHubBindingDefaultsReuseAndErrors(t *testing.T) {
 		}
 		return githubmetadata.Repository{Repository: repository, RepositoryID: "12345", OwnerID: "6789", DefaultBranch: "trunk"}, nil
 	}
-	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"test": {GitHub: &config.WorkloadGitHub{Workflow: ".github/workflows/test.yml"}, Services: []string{"cluster"}}}, Repository: func(context.Context) (string, error) { return "example/repository", nil }}
+	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"test": {GitHub: &config.WorkloadGitHub{Workflow: ".github/workflows/test.yml"}, Grants: config.ServiceVisitGrants("cluster")}}, Repository: func(context.Context) (string, error) { return "example/repository", nil }}
 	first, err := r.resolve(t.Context(), o)
 	if err != nil {
 		t.Fatal(err)
@@ -82,8 +82,8 @@ func TestGitHubBindingDefaultBranchNonFinalDots(t *testing.T) {
 				return githubmetadata.Repository{Repository: repository, RepositoryID: "12345", OwnerID: "6789", DefaultBranch: branch}, nil
 			}
 			o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"test": {
-				GitHub:   &config.WorkloadGitHub{Repository: new("example/repository"), Workflow: ".github/workflows/test.yml"},
-				Services: []string{"cluster"},
+				GitHub: &config.WorkloadGitHub{Repository: new("example/repository"), Workflow: ".github/workflows/test.yml"},
+				Grants: config.ServiceVisitGrants("cluster"),
 			}}}
 			first, err := r.resolve(t.Context(), o)
 			if err != nil {
@@ -142,7 +142,7 @@ func TestVercelNameBindingAndReuse(t *testing.T) {
 		}
 		return `{"id":"team_one","slug":"acme"}`
 	})
-	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"web": {Vercel: &config.WorkloadVercel{Team: "acme", Project: "store", Environment: "production"}, Services: []string{"db"}}}}
+	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"web": {Vercel: &config.WorkloadVercel{Team: "acme", Project: "store", Environment: "production"}, Grants: config.ServiceVisitGrants("db")}}}
 	first, err := r.resolve(t.Context(), o)
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +174,7 @@ func TestFlyNumericBindingAndReuse(t *testing.T) {
 		}
 		return `{"data":{"app":{"name":"worker","internalNumericId":456,"organization":{"slug":"acme","rawSlug":"acme","internalNumericId":"123"}}}}`
 	})
-	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: &config.WorkloadFly{App: "worker"}, Services: []string{"db"}}}}
+	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: &config.WorkloadFly{App: "worker"}, Grants: config.ServiceVisitGrants("db")}}}
 	first, err := r.resolve(t.Context(), o)
 	if err != nil {
 		t.Fatal(err)
@@ -202,7 +202,7 @@ func TestOIDCDiscoveryAndSavedKeys(t *testing.T) {
 		}
 		return `{"issuer":"https://issuer.example","jwks_uri":"https://issuer.example/keys"}`
 	})
-	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"job": {OIDC: &config.WorkloadOIDC{Issuer: "https://issuer.example", Claims: map[string]string{"sub": "worker"}}, Services: []string{"db"}}}}
+	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"job": {OIDC: &config.WorkloadOIDC{Issuer: "https://issuer.example", Claims: map[string]string{"sub": "worker"}}, Grants: config.ServiceVisitGrants("db")}}}
 	first, err := r.resolve(t.Context(), o)
 	if err != nil || first["job"].Trust.Audience != o.Server || first["job"].Trust.JwksUrl != "https://issuer.example/keys" {
 		t.Fatal("OIDC discovery failed", err)
@@ -246,7 +246,7 @@ func TestLinkedVercelProjectIsOnlyASelectionHint(t *testing.T) {
 			}
 			return `{"id":"team_linked","slug":"acme"}`
 		})
-		o := Options{Directory: directory, Server: "https://control.example", Workloads: map[string]config.Workload{"web": {Vercel: &config.WorkloadVercel{Environment: "preview"}, Services: []string{"db"}}}}
+		o := Options{Directory: directory, Server: "https://control.example", Workloads: map[string]config.Workload{"web": {Vercel: &config.WorkloadVercel{Environment: "preview"}, Grants: config.ServiceVisitGrants("db")}}}
 		bound, err := r.resolve(t.Context(), o)
 		if projectID == "prj_linked" {
 			if err != nil || calls != 2 || bound["web"].Trust.Issuer != "https://oidc.vercel.com" {
@@ -268,7 +268,7 @@ func TestFlyLocalSelectionAndNumericIDs(t *testing.T) {
 		calls++
 		return `{"data":{"app":{"name":"worker","internalNumericId":456,"organization":{"slug":"acme","rawSlug":"acme","internalNumericId":123}}}}`
 	})
-	o := Options{Directory: directory, Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: &config.WorkloadFly{}, Services: []string{"db"}}}}
+	o := Options{Directory: directory, Server: "https://control.example", Workloads: map[string]config.Workload{"job": {Fly: &config.WorkloadFly{}, Grants: config.ServiceVisitGrants("db")}}}
 	bound, err := r.resolve(t.Context(), o)
 	if err != nil || calls != 1 || bound["job"].Trust.Claims["app_id"] != "456" {
 		t.Fatal("local Fly defaults failed", err)
@@ -283,7 +283,7 @@ func TestDiscoveryRejectsRedirectsAndBounds(t *testing.T) {
 			calls++
 			return &http.Response{StatusCode: status, Header: http.Header{"Location": {"https://elsewhere.example/private"}}, Body: io.NopCloser(strings.NewReader(strings.Repeat("x", (2<<20)+1))), Request: request}, nil
 		})
-		o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"job": {OIDC: &config.WorkloadOIDC{Issuer: "https://issuer.example", Claims: map[string]string{"sub": "worker"}}, Services: []string{"db"}}}}
+		o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"job": {OIDC: &config.WorkloadOIDC{Issuer: "https://issuer.example", Claims: map[string]string{"sub": "worker"}}, Grants: config.ServiceVisitGrants("db")}}}
 		if _, err := r.resolve(t.Context(), o); err == nil || calls != 1 {
 			t.Fatal("redirect, denied response or oversized metadata accepted", status, err)
 		}

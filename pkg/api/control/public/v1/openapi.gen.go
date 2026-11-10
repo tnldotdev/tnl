@@ -693,6 +693,24 @@ func (e ProjectTargetDiscoveryType) Valid() bool {
 	}
 }
 
+// Defines values for ProjectWorkloadOwnership.
+const (
+	ProjectWorkloadMember ProjectWorkloadOwnership = "member"
+	ProjectWorkloadTeam   ProjectWorkloadOwnership = "team"
+)
+
+// Valid indicates whether the value is a known member of the ProjectWorkloadOwnership enum.
+func (e ProjectWorkloadOwnership) Valid() bool {
+	switch e {
+	case ProjectWorkloadMember:
+		return true
+	case ProjectWorkloadTeam:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PublicURLLifecycleState.
 const (
 	Enabled   PublicURLLifecycleState = "enabled"
@@ -3001,15 +3019,21 @@ type ProjectWorkload struct {
 	// Google Service account selector retained by trusted apply. The verified numeric identity is the trust sub claim; this selector is setup metadata, not an assertion claim.
 	Google *ProjectWorkloadGoogle `json:"google,omitempty"`
 
+	// Grants Up to 64 explicit application grants across all operations. Service selectors name declared services in named publisher groups; public URL and domain selectors are exact canonical DNS names resolved during trusted apply.
+	Grants ProjectWorkloadGrants `json:"grants"`
+
 	// Kubernetes Trusted setup selectors retained for unchanged applies. The trust sub and service_account_uid claims define the approved service account identity; runtime never reads these setup selectors as credentials.
 	Kubernetes *ProjectWorkloadKubernetes `json:"kubernetes,omitempty"`
 
 	// MaxDurationSeconds Optional absolute session limit in seconds. Zero means no hard limit; permission leases and verified platform-proof expiry still apply.
-	MaxDurationSeconds int              `json:"max_duration_seconds"`
-	Provider           WorkloadProvider `json:"provider"`
-	Services           []string         `json:"services"`
-	Trust              WorkloadTrust    `json:"trust"`
+	MaxDurationSeconds int                       `json:"max_duration_seconds"`
+	Ownership          *ProjectWorkloadOwnership `json:"ownership,omitempty"`
+	Provider           WorkloadProvider          `json:"provider"`
+	Trust              WorkloadTrust             `json:"trust"`
 }
+
+// ProjectWorkloadOwnership defines model for ProjectWorkload.Ownership.
+type ProjectWorkloadOwnership string
 
 // ProjectWorkloadGitHub Immutable repository metadata verified during trusted manager apply; job assertions never establish this binding. Unchanged applies reuse the saved binding.
 type ProjectWorkloadGitHub struct {
@@ -3039,12 +3063,36 @@ type ProjectWorkloadGoogle struct {
 	ServiceAccount string `json:"service_account"`
 }
 
+// ProjectWorkloadGrants Up to 64 explicit application grants across all operations. Service selectors name declared services in named publisher groups; public URL and domain selectors are exact canonical DNS names resolved during trusted apply.
+type ProjectWorkloadGrants struct {
+	Allocate *[]struct {
+		Domain string `json:"domain"`
+	} `json:"allocate,omitempty"`
+	Publish *[]ProjectWorkloadResource `json:"publish,omitempty"`
+	Visit   *[]ProjectWorkloadResource `json:"visit,omitempty"`
+}
+
 // ProjectWorkloadKubernetes Trusted setup selectors retained for unchanged applies. The trust sub and service_account_uid claims define the approved service account identity; runtime never reads these setup selectors as credentials.
 type ProjectWorkloadKubernetes struct {
 	ClusterServer  string `json:"cluster_server"`
 	Context        string `json:"context"`
 	Namespace      string `json:"namespace"`
 	ServiceAccount string `json:"service_account"`
+}
+
+// ProjectWorkloadResource defines model for ProjectWorkloadResource.
+type ProjectWorkloadResource struct {
+	union json.RawMessage
+}
+
+// ProjectWorkloadResource0 defines model for ProjectWorkloadResource.0.
+type ProjectWorkloadResource0 struct {
+	Service string `json:"service"`
+}
+
+// ProjectWorkloadResource1 defines model for ProjectWorkloadResource.1.
+type ProjectWorkloadResource1 struct {
+	PublicUrl string `json:"public_url"`
 }
 
 // PublicURL defines model for PublicURL.
@@ -4860,6 +4908,68 @@ type IssueVisitorTokenJSONRequestBody = VisitorTokenRequest
 
 // IssueWorkloadServiceClientCertificateJSONRequestBody defines body for IssueWorkloadServiceClientCertificate for application/json ContentType.
 type IssueWorkloadServiceClientCertificateJSONRequestBody IssueWorkloadServiceClientCertificateJSONBody
+
+// AsProjectWorkloadResource0 returns the union data inside the ProjectWorkloadResource as a ProjectWorkloadResource0
+func (t ProjectWorkloadResource) AsProjectWorkloadResource0() (ProjectWorkloadResource0, error) {
+	var body ProjectWorkloadResource0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectWorkloadResource0 overwrites any union data inside the ProjectWorkloadResource as the provided ProjectWorkloadResource0
+func (t *ProjectWorkloadResource) FromProjectWorkloadResource0(v ProjectWorkloadResource0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectWorkloadResource0 performs a merge with any union data inside the ProjectWorkloadResource, using the provided ProjectWorkloadResource0
+func (t *ProjectWorkloadResource) MergeProjectWorkloadResource0(v ProjectWorkloadResource0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectWorkloadResource1 returns the union data inside the ProjectWorkloadResource as a ProjectWorkloadResource1
+func (t ProjectWorkloadResource) AsProjectWorkloadResource1() (ProjectWorkloadResource1, error) {
+	var body ProjectWorkloadResource1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectWorkloadResource1 overwrites any union data inside the ProjectWorkloadResource as the provided ProjectWorkloadResource1
+func (t *ProjectWorkloadResource) FromProjectWorkloadResource1(v ProjectWorkloadResource1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectWorkloadResource1 performs a merge with any union data inside the ProjectWorkloadResource, using the provided ProjectWorkloadResource1
+func (t *ProjectWorkloadResource) MergeProjectWorkloadResource1(v ProjectWorkloadResource1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ProjectWorkloadResource) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ProjectWorkloadResource) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
 
 // AsWebhookProviderSourceResponseSource0 returns the union data inside the WebhookProviderSourceResponse_Source as a WebhookProviderSourceResponseSource0
 func (t WebhookProviderSourceResponse_Source) AsWebhookProviderSourceResponseSource0() (WebhookProviderSourceResponseSource0, error) {

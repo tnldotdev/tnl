@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -22,7 +23,7 @@ import (
 )
 
 func workloadConfiguration() ProjectConfiguration {
-	return ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "production", Target: "api.internal:3000"}, "db": {PublisherGroup: "production", Protocol: "postgres", Target: "db.internal:5432"}}, Workloads: map[string]ProjectWorkload{"test": {Provider: "github", GitHub: &ProjectWorkloadGitHub{Repository: "example/repository", RepositoryID: "12345", RepositoryOwnerID: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Services: []string{"api", "db"}, MaxDurationSeconds: 3600}}}
+	return ProjectConfiguration{PublisherGroups: map[string]ProjectPublisherGroup{"production": {}}, Services: map[string]ProjectServiceConfiguration{"api": {PublisherGroup: "production", Target: "api.internal:3000"}, "db": {PublisherGroup: "production", Protocol: "postgres", Target: "db.internal:5432"}}, Workloads: map[string]ProjectWorkload{"test": {Provider: "github", GitHub: &ProjectWorkloadGitHub{Repository: "example/repository", RepositoryID: "12345", RepositoryOwnerID: "6789", WorkflowRef: "example/repository/.github/workflows/test.yml@refs/heads/main", Ref: "refs/heads/main", Events: []string{"push"}}, Grants: config.ServiceVisitGrants("api", "db"), MaxDurationSeconds: 3600}}}
 }
 
 func workloadExchange(t *testing.T, r ApplyProjectConfigurationRequest, now time.Time) (ExchangeWorkloadRequest, ed25519.PrivateKey) {
@@ -52,7 +53,7 @@ func TestIntegrationWorkloadReusableProviderFixedWindow(t *testing.T) {
 	r := appliedProjectRequest(t, d, now)
 	r.Configuration = workloadConfiguration()
 	trust := oidc.WorkloadTrust{Provider: "vercel", Issuer: "https://oidc.vercel.com/acme", JWKSURL: "https://oidc.vercel.com/acme/.well-known/jwks", Audience: "https://vercel.com/acme", Claims: map[string]string{"owner": "acme", "owner_id": "team_one", "project_id": "prj_store", "environment": "production"}}
-	r.Configuration.Workloads = map[string]ProjectWorkload{"storefront": {Provider: "vercel", Trust: trust, Services: []string{"api"}, MaxDurationSeconds: 3600}}
+	r.Configuration.Workloads = map[string]ProjectWorkload{"storefront": {Provider: "vercel", Trust: trust, Grants: config.ServiceVisitGrants("api"), MaxDurationSeconds: 3600}}
 	if _, err := d.ApplyProjectConfiguration(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +239,7 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 		}
 	}
 	p := r.Configuration.Workloads["test"]
-	p.Services = []string{"api"}
+	p.Grants = config.ServiceVisitGrants("api")
 	r.Configuration.Workloads["test"] = p
 	applied, err = d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
@@ -249,7 +250,7 @@ func TestIntegrationWorkloadReplayNarrowingAndFixedWindow(t *testing.T) {
 	if err != nil || len(services) != 1 || services[0].Service != "api" {
 		t.Fatal("narrowing failed", services, err)
 	}
-	p.Services = []string{"api", "db"}
+	p.Grants = config.ServiceVisitGrants("api", "db")
 	r.Configuration.Workloads["test"] = p
 	applied, err = d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {

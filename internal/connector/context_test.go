@@ -26,7 +26,7 @@ func TestConnectionContextAppliedTeamNameWithoutHumanState(t *testing.T) {
 			t.Fatalf("fixture git: %v %s", err, output)
 		}
 	}
-	configuration := `{"version":1,"tnl":{"server":"https://control.example","team":"acme","publisher_groups":{"production":{}},"services":{"database":{"protocol":"postgres","publisher_group":"production","target":{"type":"address","address":"unused.invalid:5432"}},"unrequested":{"protocol":"mysql","publisher_group":"production","target":{"type":"address","address":"unused.invalid:3306"}},"web":{"public_url":{},"target":{"type":"address","address":"http://unused.invalid:3000"}},"managed":{"publisher_group":"production","target":{"type":"address","address":"http://unused.invalid:3001"},"http":{}}},"workloads":{"migrate":{"github":{"workflow":".github/workflows/migrate.yml","branch":"main","events":["push"]},"services":["database"]}}}}`
+	configuration := `{"version":1,"tnl":{"server":"https://control.example","team":"acme","publisher_groups":{"production":{}},"services":{"database":{"protocol":"postgres","publisher_group":"production","target":{"type":"address","address":"unused.invalid:5432"}},"unrequested":{"protocol":"mysql","publisher_group":"production","target":{"type":"address","address":"unused.invalid:3306"}},"web":{"public_url":{},"target":{"type":"address","address":"http://unused.invalid:3000"}},"managed":{"publisher_group":"production","target":{"type":"address","address":"http://unused.invalid:3001"},"http":{}}},"workloads":{"migrate":{"github":{"workflow":".github/workflows/migrate.yml","branch":"main","events":["push"]},"grants":{"visit":[{"service":"database"}]}}}}}`
 	if err := os.WriteFile(filepath.Join(root, "tnl.json"), []byte(configuration), 0o600); err != nil {
 		t.Fatal(err)
 	}

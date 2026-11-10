@@ -13,14 +13,14 @@ import (
 
 // capture runs only while creating a new workload session under the team guard.
 // retries and renewals never add newly approved application grants to a session.
-func captureWorkloadApplication(ctx context.Context, tx pgx.Tx, session, team, project, name string, public []byte, now time.Time) error {
+func captureWorkloadApplication(ctx context.Context, tx pgx.Tx, session, team, project, name string, public []byte, services []string, now time.Time) error {
 	var binding, application string
 	err := tx.QueryRow(ctx, `SELECT binding.id,binding.publisher_identity_id
 	    FROM control.workload_applications binding
 	    WHERE binding.team_id=$1 AND binding.project_key=$2 AND binding.workload_name=$3 AND binding.revoked_at IS NULL
 	    AND binding.created_at<=$4`, team, project, name, now).Scan(&binding, &application)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		return ErrWorkloadDenied
 	}
 	if err != nil {
 		return err
@@ -51,7 +51,10 @@ func captureWorkloadApplication(ctx context.Context, tx pgx.Tx, session, team, p
 	}
 	captured, err := tx.Exec(ctx, `INSERT INTO control.workload_session_application_grants(workload_session_id,publisher_identity_id,grant_id,expires_at)
 	    SELECT $1,app.id,grant_record.id,grant_record.expires_at FROM control.publisher_identities app JOIN control.publisher_grants grant_record ON grant_record.publisher_identity_id=app.id
-	    WHERE app.id=$2 AND grant_record.revoked_at IS NULL AND (grant_record.expires_at IS NULL OR grant_record.expires_at>$3)`, session, application, now)
+	    WHERE app.id=$2 AND grant_record.revoked_at IS NULL AND (grant_record.expires_at IS NULL OR grant_record.expires_at>$3)
+	    AND ($6::text[] IS NULL OR grant_record.operation<>'visit' OR grant_record.kind<>'service' OR EXISTS(
+	        SELECT 1 FROM control.applied_project_services selected WHERE selected.team_id=$4 AND selected.project_key=$5
+	        AND selected.service_id=grant_record.service_id AND selected.service=ANY($6::text[])))`, session, application, now, team, project, services)
 	if err != nil {
 		return err
 	}

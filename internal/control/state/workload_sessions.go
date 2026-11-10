@@ -101,14 +101,14 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 	}
 	services := slices.Clone(r.Services)
 	if services == nil {
-		services = slices.Clone(p.Services)
+		services = p.VisitServices()
 	}
-	if len(services) == 0 || len(services) > 32 {
+	if len(services) > 64 {
 		return result, ErrWorkloadDenied
 	}
 	slices.Sort(services)
 	for i, s := range services {
-		if !slices.Contains(p.Services, s) || i > 0 && services[i-1] == s {
+		if !slices.Contains(p.VisitServices(), s) || i > 0 && services[i-1] == s {
 			return result, ErrWorkloadDenied
 		}
 	}
@@ -157,16 +157,7 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 		if err != nil {
 			return result, err
 		}
-		for _, s := range services {
-			tag, err := tx.Exec(ctx, `INSERT INTO control.workload_session_services(workload_session_id,service_id,service) SELECT $1,applied.service_id,applied.service FROM control.applied_project_services applied JOIN control.services service ON service.id=applied.service_id WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=$4 AND service.enabled AND service.deleted_at IS NULL`, id, r.TeamID, r.ProjectKey, s)
-			if err != nil {
-				return result, err
-			}
-			if tag.RowsAffected() != 1 {
-				return result, ErrWorkloadDenied
-			}
-		}
-		if err = captureWorkloadApplication(ctx, tx, id, r.TeamID, r.ProjectKey, r.Workload, r.PublicKey, now); err != nil {
+		if err = captureWorkloadApplication(ctx, tx, id, r.TeamID, r.ProjectKey, r.Workload, r.PublicKey, r.Services, now); err != nil {
 			return result, err
 		}
 		if err = workloadAudit(ctx, tx, id, "start", "", now); err != nil {
@@ -239,7 +230,7 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 	r.Subject = workloadSubject(id)
 	observability.WorkloadExecution(ctx, id, row.RunID.String, row.RunAttempt.String, row.CheckRunID.String)
 	r.ServiceIDs = []string{}
-	services, err := q.ListWorkloadSessionServices(ctx, id)
+	services, err := q.ListWorkloadSessionServices(ctx, controlstatedb.ListWorkloadSessionServicesParams{SessionID: id, Now: timestamptz(now)})
 	if err != nil {
 		return r, err
 	}
@@ -358,7 +349,7 @@ func VisitorSubjectAccess(ctx context.Context, tx pgx.Tx, service string, subjec
 	var until time.Time
 	var revision int64
 	var run, attempt, check string
-	err := tx.QueryRow(ctx, `SELECT LEAST(w.lease_expires_at,w.expires_at,w.identity_expires_at,$3::timestamptz+interval '90 seconds'),p.revision,COALESCE(w.run_id,''),COALESCE(w.run_attempt,''),COALESCE(w.check_run_id,'') FROM control.workload_sessions w JOIN control.workload_session_services rights ON rights.workload_session_id=w.id AND rights.service_id=$2 JOIN control.services s ON s.id=rights.service_id AND s.team_id=w.team_id AND s.enabled AND s.deleted_at IS NULL JOIN control.teams t ON t.id=w.team_id AND t.deleted_at IS NULL JOIN control.applied_projects p ON p.team_id=w.team_id AND p.project_key=w.project_key WHERE w.id=$1 AND w.revoked_at IS NULL AND w.lease_expires_at>$3 AND w.identity_expires_at>$3 AND (w.expires_at IS NULL OR w.expires_at>$3)`, subject.WorkloadSessionID, service, now).Scan(&until, &revision, &run, &attempt, &check)
+	err := tx.QueryRow(ctx, `SELECT rights.expires_at,p.revision,COALESCE(w.run_id,''),COALESCE(w.run_attempt,''),COALESCE(w.check_run_id,'') FROM control.workload_sessions w JOIN control.workload_visit_authority($3) rights ON rights.session_id=w.id AND rights.resource_kind='service' AND rights.resource_id=$2 JOIN control.services s ON s.id=rights.resource_id AND s.team_id=w.team_id AND s.enabled AND s.deleted_at IS NULL JOIN control.teams t ON t.id=w.team_id AND t.deleted_at IS NULL JOIN control.applied_projects p ON p.team_id=w.team_id AND p.project_key=w.project_key WHERE w.id=$1`, subject.WorkloadSessionID, service, now).Scan(&until, &revision, &run, &attempt, &check)
 	if err == nil {
 		observability.WorkloadExecution(ctx, subject.WorkloadSessionID, run, attempt, check)
 	}

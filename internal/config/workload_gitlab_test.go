@@ -23,7 +23,7 @@ func TestGitLabWorkloadDefaultsAndConstraints(t *testing.T) {
 			t.Fatal("invalid GitLab configuration accepted")
 		}
 	}
-	c := TNL{Services: Services{"db": {PublisherGroup: new("production")}}, Workloads: map[string]Workload{"deploy": {GitLab: &g, Services: []string{"db"}}}}
+	c := TNL{Services: Services{"db": {PublisherGroup: new("production")}}, Workloads: map[string]Workload{"deploy": {GitLab: &g, Grants: ServiceVisitGrants("db")}}}
 	if err := ValidateWorkloads(c); err != nil {
 		t.Fatal(err)
 	}

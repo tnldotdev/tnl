@@ -28,7 +28,7 @@ func TestGitLabTrustedSetupDefaultsReuseAndRebinding(t *testing.T) {
 		}
 		return []byte(gitLabProjectJSON), nil
 	}
-	o := Options{Directory: "/project", Server: "https://control.example", Workloads: map[string]config.Workload{"deploy": {GitLab: &config.WorkloadGitLab{}, Services: []string{"db"}}}}
+	o := Options{Directory: "/project", Server: "https://control.example", Workloads: map[string]config.Workload{"deploy": {GitLab: &config.WorkloadGitLab{}, Grants: config.ServiceVisitGrants("db")}}}
 	first, err := r.resolve(t.Context(), o)
 	if err != nil || calls != 2 {
 		t.Fatal("initial GitLab binding failed", err, calls)
@@ -80,7 +80,7 @@ func TestGitLabTrustedSetupDefaultsReuseAndRebinding(t *testing.T) {
 
 func TestGitLabSetupRejectsWrongMetadataAndKeepsAuthenticationCause(t *testing.T) {
 	r := newResolver()
-	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"deploy": {GitLab: &config.WorkloadGitLab{Project: "shop/storefront"}, Services: []string{"db"}}}}
+	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"deploy": {GitLab: &config.WorkloadGitLab{Project: "shop/storefront"}, Grants: config.ServiceVisitGrants("db")}}}
 	for _, metadata := range []string{`not-json`, strings.Replace(gitLabProjectJSON, "storefront", "another", 1), strings.Replace(gitLabProjectJSON, `"id":123`, `"id":0`, 1), strings.Replace(gitLabProjectJSON, `"full_path":"shop"`, `"full_path":"another"`, 1), strings.Replace(gitLabProjectJSON, `"id":123`, `"archived":true,"id":123`, 1)} {
 		r.run = func(context.Context, string, string, ...string) ([]byte, error) { return []byte(metadata), nil }
 		if _, err := r.resolve(t.Context(), o); !errors.Is(err, ErrBinding) {
@@ -115,7 +115,7 @@ func TestGitLabSelfManagedSetupAndExplicitBranchWithoutDefault(t *testing.T) {
 		}
 		return []byte(strings.Replace(gitLabProjectJSON, `"default_branch":"trunk"`, `"default_branch":null`, 1)), nil
 	}
-	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"deploy": {GitLab: &config.WorkloadGitLab{Server: "https://gitlab.example", Project: "shop/storefront", Branch: new("release")}, Services: []string{"db"}}}}
+	o := Options{Server: "https://control.example", Workloads: map[string]config.Workload{"deploy": {GitLab: &config.WorkloadGitLab{Server: "https://gitlab.example", Project: "shop/storefront", Branch: new("release")}, Grants: config.ServiceVisitGrants("db")}}}
 	bound, err := r.resolve(t.Context(), o)
 	if err != nil || bound["deploy"].Trust.Issuer != "https://gitlab.example" || bound["deploy"].Trust.JwksUrl != "https://gitlab.example/oauth/discovery/keys" || bound["deploy"].Trust.Claims["ref_path"] != "refs/heads/release" {
 		t.Fatal("self-managed explicit branch binding failed", err)

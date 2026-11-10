@@ -19,6 +19,10 @@ type ProjectConfigurationStore interface {
 
 func projectConfigurationProblem(w http.ResponseWriter, operation string, err error) {
 	switch {
+	case errors.Is(err, controlstate.ErrApplicationRegistration):
+		writeProblem(w, 400, controlv1.InvalidRequest, "workload application grant is unavailable; check the exact saved resource, domain, and ownership before applying again")
+	case errors.Is(err, controlstate.ErrPublisherIdentity), errors.Is(err, controlstate.ErrAuthorityAccess):
+		writeProblem(w, 403, controlv1.Forbidden, "workload grants require current authority for each selected resource and ownership")
 	case errors.Is(err, controlstate.ErrWorkloadBinding):
 		writeProblem(w, 400, controlv1.InvalidRequest, "GitHub workload policy requires verified repository and owner IDs; apply from a trusted operator with repository metadata access")
 	case errors.Is(err, controlstate.ErrProjectConfigurationInvalid):

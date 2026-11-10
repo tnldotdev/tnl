@@ -3,7 +3,7 @@ package config
 import "testing"
 
 func TestGoogleWorkloadBlock(t *testing.T) {
-	c := TNL{Services: Services{"db": {PublisherGroup: new("production")}}, Workloads: map[string]Workload{"app": {Google: &WorkloadGoogle{ServiceAccount: "orders@project.iam.gserviceaccount.com"}, Services: []string{"db"}}}}
+	c := TNL{Services: Services{"db": {PublisherGroup: new("production")}}, Workloads: map[string]Workload{"app": {Google: &WorkloadGoogle{ServiceAccount: "orders@project.iam.gserviceaccount.com"}, Grants: ServiceVisitGrants("db")}}}
 	if err := ValidateWorkloads(c); err != nil {
 		t.Fatal(err)
 	}

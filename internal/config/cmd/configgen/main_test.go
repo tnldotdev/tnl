@@ -11,6 +11,31 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 )
 
+func TestWorkloadGrantSchemaReplacesServicePermissions(t *testing.T) {
+	workload := schemaForType(reflect.TypeOf(config.Workload{}))
+	for _, variant := range workload.OneOf {
+		if !slices.Contains(variant.Required, "grants") {
+			t.Fatal("workload grants are optional")
+		}
+		if _, exists := variant.Properties.Get("services"); exists {
+			t.Fatal("removed workload services key remains in the schema")
+		}
+	}
+	grants := schemaForType(reflect.TypeOf(config.WorkloadGrants{}))
+	if grants.MinProperties == nil || *grants.MinProperties != 1 {
+		t.Fatal("empty grant object permitted")
+	}
+	resource := schemaForType(reflect.TypeOf(config.WorkloadResource{}))
+	if len(resource.OneOf) != 2 {
+		t.Fatal("resource selectors are not disjoint")
+	}
+	for _, variant := range resource.OneOf {
+		if len(variant.Required) != 1 || variant.Properties.Len() != 2 || variant.AdditionalProperties != jsonschema.FalseSchema {
+			t.Fatal("mixed resource selector permitted")
+		}
+	}
+}
+
 func TestSchemaInventoryAndCloudSelectorBounds(t *testing.T) {
 	ports, ok := tnldSchema().Properties.Get("service_port_ranges")
 	if !ok || ports.MinItems == nil || *ports.MinItems != 1 || ports.MaxItems == nil || *ports.MaxItems != tcpport.MaxInventoryDeclarations || !reflect.DeepEqual(ports.Default, []string{"20000-20015"}) {

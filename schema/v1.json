@@ -2409,15 +2409,107 @@
                   "google": false,
                   "kubernetes": false,
                   "gitlab": false,
-                  "services": {
-                    "items": {
-                      "type": "string"
+                  "grants": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "properties": {
+                      "visit": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "public_url": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            },
+                            {
+                              "properties": {
+                                "public_url": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "service": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["public_url"]
+                            }
+                          ]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "publish": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "public_url": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            },
+                            {
+                              "properties": {
+                                "public_url": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "service": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["public_url"]
+                            }
+                          ]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "allocate": {
+                        "items": {
+                          "properties": {
+                            "domain": {
+                              "type": "string",
+                              "maxLength": 256,
+                              "minLength": 1
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["domain"]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      }
                     },
-                    "type": "array",
-                    "maxItems": 32,
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                    "additionalProperties": false,
+                    "type": "object",
+                    "minProperties": 1
+                  },
+                  "ownership": {
+                    "type": "string",
+                    "enum": ["member", "team"]
                   },
                   "max_duration": {
                     "type": "string",
@@ -2606,7 +2698,7 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["github", "services"]
+                "required": ["github", "grants"]
               },
               {
                 "properties": {
@@ -2616,15 +2708,107 @@
                   "google": false,
                   "kubernetes": false,
                   "gitlab": false,
-                  "services": {
-                    "items": {
-                      "type": "string"
+                  "grants": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "properties": {
+                      "visit": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "public_url": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            },
+                            {
+                              "properties": {
+                                "public_url": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "service": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["public_url"]
+                            }
+                          ]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "publish": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "public_url": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            },
+                            {
+                              "properties": {
+                                "public_url": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "service": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["public_url"]
+                            }
+                          ]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "allocate": {
+                        "items": {
+                          "properties": {
+                            "domain": {
+                              "type": "string",
+                              "maxLength": 256,
+                              "minLength": 1
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["domain"]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      }
                     },
-                    "type": "array",
-                    "maxItems": 32,
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                    "additionalProperties": false,
+                    "type": "object",
+                    "minProperties": 1
+                  },
+                  "ownership": {
+                    "type": "string",
+                    "enum": ["member", "team"]
                   },
                   "max_duration": {
                     "type": "string",
@@ -2684,7 +2868,7 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["vercel", "services"]
+                "required": ["vercel", "grants"]
               },
               {
                 "properties": {
@@ -2694,15 +2878,107 @@
                   "google": false,
                   "kubernetes": false,
                   "gitlab": false,
-                  "services": {
-                    "items": {
-                      "type": "string"
+                  "grants": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "properties": {
+                      "visit": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "public_url": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            },
+                            {
+                              "properties": {
+                                "public_url": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "service": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["public_url"]
+                            }
+                          ]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "publish": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "public_url": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            },
+                            {
+                              "properties": {
+                                "public_url": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "service": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["public_url"]
+                            }
+                          ]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "allocate": {
+                        "items": {
+                          "properties": {
+                            "domain": {
+                              "type": "string",
+                              "maxLength": 256,
+                              "minLength": 1
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["domain"]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      }
                     },
-                    "type": "array",
-                    "maxItems": 32,
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                    "additionalProperties": false,
+                    "type": "object",
+                    "minProperties": 1
+                  },
+                  "ownership": {
+                    "type": "string",
+                    "enum": ["member", "team"]
                   },
                   "max_duration": {
                     "type": "string",
@@ -2760,7 +3036,7 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["fly", "services"]
+                "required": ["fly", "grants"]
               },
               {
                 "properties": {
@@ -2770,15 +3046,107 @@
                   "google": false,
                   "kubernetes": false,
                   "gitlab": false,
-                  "services": {
-                    "items": {
-                      "type": "string"
+                  "grants": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "properties": {
+                      "visit": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "public_url": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            },
+                            {
+                              "properties": {
+                                "public_url": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "service": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["public_url"]
+                            }
+                          ]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "publish": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "public_url": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            },
+                            {
+                              "properties": {
+                                "public_url": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "service": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["public_url"]
+                            }
+                          ]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "allocate": {
+                        "items": {
+                          "properties": {
+                            "domain": {
+                              "type": "string",
+                              "maxLength": 256,
+                              "minLength": 1
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["domain"]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      }
                     },
-                    "type": "array",
-                    "maxItems": 32,
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                    "additionalProperties": false,
+                    "type": "object",
+                    "minProperties": 1
+                  },
+                  "ownership": {
+                    "type": "string",
+                    "enum": ["member", "team"]
                   },
                   "max_duration": {
                     "type": "string",
@@ -2843,7 +3211,7 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["oidc", "services"]
+                "required": ["oidc", "grants"]
               },
               {
                 "properties": {
@@ -2853,15 +3221,107 @@
                   "oidc": false,
                   "kubernetes": false,
                   "gitlab": false,
-                  "services": {
-                    "items": {
-                      "type": "string"
+                  "grants": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "properties": {
+                      "visit": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "public_url": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            },
+                            {
+                              "properties": {
+                                "public_url": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "service": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["public_url"]
+                            }
+                          ]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "publish": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "public_url": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            },
+                            {
+                              "properties": {
+                                "public_url": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "service": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["public_url"]
+                            }
+                          ]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "allocate": {
+                        "items": {
+                          "properties": {
+                            "domain": {
+                              "type": "string",
+                              "maxLength": 256,
+                              "minLength": 1
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["domain"]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      }
                     },
-                    "type": "array",
-                    "maxItems": 32,
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                    "additionalProperties": false,
+                    "type": "object",
+                    "minProperties": 1
+                  },
+                  "ownership": {
+                    "type": "string",
+                    "enum": ["member", "team"]
                   },
                   "max_duration": {
                     "type": "string",
@@ -2917,7 +3377,7 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["google", "services"]
+                "required": ["google", "grants"]
               },
               {
                 "properties": {
@@ -2927,15 +3387,107 @@
                   "oidc": false,
                   "google": false,
                   "gitlab": false,
-                  "services": {
-                    "items": {
-                      "type": "string"
+                  "grants": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "properties": {
+                      "visit": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "public_url": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            },
+                            {
+                              "properties": {
+                                "public_url": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "service": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["public_url"]
+                            }
+                          ]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "publish": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "public_url": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            },
+                            {
+                              "properties": {
+                                "public_url": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "service": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["public_url"]
+                            }
+                          ]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "allocate": {
+                        "items": {
+                          "properties": {
+                            "domain": {
+                              "type": "string",
+                              "maxLength": 256,
+                              "minLength": 1
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["domain"]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      }
                     },
-                    "type": "array",
-                    "maxItems": 32,
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                    "additionalProperties": false,
+                    "type": "object",
+                    "minProperties": 1
+                  },
+                  "ownership": {
+                    "type": "string",
+                    "enum": ["member", "team"]
                   },
                   "max_duration": {
                     "type": "string",
@@ -2998,7 +3550,7 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["kubernetes", "services"]
+                "required": ["kubernetes", "grants"]
               },
               {
                 "properties": {
@@ -3008,15 +3560,107 @@
                   "oidc": false,
                   "google": false,
                   "kubernetes": false,
-                  "services": {
-                    "items": {
-                      "type": "string"
+                  "grants": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "properties": {
+                      "visit": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "public_url": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            },
+                            {
+                              "properties": {
+                                "public_url": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "service": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["public_url"]
+                            }
+                          ]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "publish": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "service": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "public_url": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["service"]
+                            },
+                            {
+                              "properties": {
+                                "public_url": {
+                                  "type": "string",
+                                  "maxLength": 256,
+                                  "minLength": 1
+                                },
+                                "service": false
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": ["public_url"]
+                            }
+                          ]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      },
+                      "allocate": {
+                        "items": {
+                          "properties": {
+                            "domain": {
+                              "type": "string",
+                              "maxLength": 256,
+                              "minLength": 1
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": ["domain"]
+                        },
+                        "type": "array",
+                        "maxItems": 64,
+                        "minItems": 1,
+                        "uniqueItems": true
+                      }
                     },
-                    "type": "array",
-                    "maxItems": 32,
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "description": "exact configured service keys assigned to named publisher groups; local services cannot be workload targets."
+                    "additionalProperties": false,
+                    "type": "object",
+                    "minProperties": 1
+                  },
+                  "ownership": {
+                    "type": "string",
+                    "enum": ["member", "team"]
                   },
                   "max_duration": {
                     "type": "string",
@@ -3201,7 +3845,7 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": ["gitlab", "services"]
+                "required": ["gitlab", "grants"]
               }
             ]
           },

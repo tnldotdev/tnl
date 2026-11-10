@@ -88,7 +88,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			configuration := controlstate.ProjectConfiguration{PublisherGroups: map[string]controlstate.ProjectPublisherGroup{"production": {}}, Services: map[string]controlstate.ProjectServiceConfiguration{"inventory": {PublisherGroup: "production", Target: "inventory.internal:3000"}, "models": {PublisherGroup: "production", Protocol: "postgres", Target: "models.internal:5432"}}, Workloads: map[string]controlstate.ProjectWorkload{"storefront": {Provider: provider, Trust: trust, Services: []string{"inventory", "models"}, MaxDurationSeconds: 3600}}}
+			configuration := controlstate.ProjectConfiguration{PublisherGroups: map[string]controlstate.ProjectPublisherGroup{"production": {}}, Services: map[string]controlstate.ProjectServiceConfiguration{"inventory": {PublisherGroup: "production", Target: "inventory.internal:3000"}, "models": {PublisherGroup: "production", Protocol: "postgres", Target: "models.internal:5432"}}, Workloads: map[string]controlstate.ProjectWorkload{"storefront": {Provider: provider, Trust: trust, Grants: config.ServiceVisitGrants("inventory", "models"), MaxDurationSeconds: 3600}}}
 			if provider == "google" {
 				p := configuration.Workloads["storefront"]
 				p.Google = &controlstate.ProjectWorkloadGoogle{ServiceAccount: "orders@project.iam.gserviceaccount.com"}
@@ -241,7 +241,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			}
 			// narrowing deletes issued rights; additions cannot expand the old snapshot.
 			p := (*body.Configuration.Workloads)["storefront"]
-			p.Services = []string{"inventory"}
+			p.Grants = workloadVisitGrants(t, "inventory")
 			(*body.Configuration.Workloads)["storefront"] = p
 			body.ExpectedRevision = applied.Revision
 			applied, err = owner.ApplyProjectConfiguration(ctx, "store", body)
@@ -252,7 +252,7 @@ func TestIntegrationWorkloadProviderSessions(t *testing.T) {
 			if err != nil || len(inventory.Services) != 1 || inventory.Services[0].Service != "inventory" {
 				t.Fatal("issued service snapshot did not narrow", err)
 			}
-			p.Services = []string{"inventory", "models"}
+			p.Grants = workloadVisitGrants(t, "inventory", "models")
 			(*body.Configuration.Workloads)["storefront"] = p
 			body.ExpectedRevision = applied.Revision
 			applied, err = owner.ApplyProjectConfiguration(ctx, "store", body)

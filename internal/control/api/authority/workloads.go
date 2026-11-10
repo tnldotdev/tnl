@@ -51,7 +51,7 @@ func (h *handler) IdentifyWorkload(w http.ResponseWriter, r *http.Request) {
 		workloadProblem(w, err)
 		return
 	}
-	writeJSON(w, 200, authorityv1.WorkloadIdentity{Binding: binding, Services: p.Services, AssertionExpiresAt: time.Unix(c.ExpiresAt, 0)})
+	writeJSON(w, 200, authorityv1.WorkloadIdentity{Binding: binding, Services: p.VisitServices(), AssertionExpiresAt: time.Unix(c.ExpiresAt, 0)})
 }
 
 func (h *handler) AttachWorkloadAssertion(w http.ResponseWriter, r *http.Request, id string) {

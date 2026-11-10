@@ -45,8 +45,8 @@ func (d *Database) CleanupWorkloads(ctx context.Context, now time.Time, limit in
 		{"audit", func() (int64, error) {
 			return q.CleanupWorkloadAudit(ctx, controlstatedb.CleanupWorkloadAuditParams{BeforeTime: before, BatchSize: batch})
 		}},
-		{"service rights", func() (int64, error) {
-			return q.CleanupWorkloadServiceRights(ctx, controlstatedb.CleanupWorkloadServiceRightsParams{BeforeTime: before, BatchSize: batch})
+		{"application grants", func() (int64, error) {
+			return q.CleanupWorkloadApplicationGrants(ctx, controlstatedb.CleanupWorkloadApplicationGrantsParams{BeforeTime: before, BatchSize: batch})
 		}},
 		{"sessions", func() (int64, error) {
 			return q.CleanupWorkloadSessions(ctx, controlstatedb.CleanupWorkloadSessionsParams{BeforeTime: before, BatchSize: batch})

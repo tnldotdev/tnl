@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/security/workloadproof"
 )
 
@@ -70,7 +71,7 @@ func TestIntegrationWorkloadOptionalHardDuration(t *testing.T) {
 	}
 	r.ExpectedRevision, r.Now = applied.Revision, at
 	policy.MaxDurationSeconds = int((6*time.Hour + 2*time.Minute) / time.Second)
-	policy.Services = []string{"api"}
+	policy.Grants = config.ServiceVisitGrants("api")
 	r.Configuration.Workloads["test"] = policy
 	applied, err = d.ApplyProjectConfiguration(ctx, r)
 	if err != nil {
@@ -82,7 +83,7 @@ func TestIntegrationWorkloadOptionalHardDuration(t *testing.T) {
 		t.Fatal("apply did not anchor a new hard limit to original session creation", err)
 	}
 	r.ExpectedRevision, r.Now = applied.Revision, at.Add(2*time.Second)
-	policy.MaxDurationSeconds, policy.Services = 0, []string{"api", "db"}
+	policy.MaxDurationSeconds, policy.Grants = 0, config.ServiceVisitGrants("api", "db")
 	r.Configuration.Workloads["test"] = policy
 	if _, err := d.ApplyProjectConfiguration(ctx, r); err != nil {
 		t.Fatal(err)

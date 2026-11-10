@@ -11,7 +11,7 @@ import (
 )
 
 func TestManifestOptionalHardDuration(t *testing.T) {
-	c := config.TNL{Server: new("https://control.example"), Team: new("team"), Services: config.Services{"api": {}}, Workloads: map[string]config.Workload{"app": {GitHub: &config.WorkloadGitHub{Workflow: ".github/workflows/test.yml"}, Services: []string{"api"}}}}
+	c := config.TNL{Server: new("https://control.example"), Team: new("team"), Services: config.Services{"api": {}}, Workloads: map[string]config.Workload{"app": {GitHub: &config.WorkloadGitHub{Workflow: ".github/workflows/test.yml"}, Grants: config.ServiceVisitGrants("api")}}}
 	source := clientproject.SourceIdentity{Key: "project", Fingerprint: strings.Repeat("a", 64), Label: "app"}
 	for _, duration := range []*config.Duration{nil, new(config.Duration(24 * time.Hour))} {
 		policy := c.Workloads["app"]
