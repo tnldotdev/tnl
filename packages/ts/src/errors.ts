@@ -121,7 +121,7 @@ const definitions: Record<TnlErrorCode, { class: FailureClass; retry: Retry; mes
     class: "invalid",
     retry: "after_change",
     message:
-      "select one saved workload with TNL_WORKLOAD or configureWorkload before calling tnl.connect",
+      "select one saved workload with createTnl({ credential: { workload } }) or TNL_WORKLOAD",
   },
   "sdk.workload_manifest_invalid": {
     class: "invalid",

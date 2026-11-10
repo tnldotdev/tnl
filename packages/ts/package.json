@@ -54,13 +54,6 @@
       "import": "./dist/web.js",
       "default": "./dist/web.js"
     },
-    "./workload": {
-      "types": "./dist/workload.d.ts",
-      "node": {
-        "import": "./dist/workload.js",
-        "require": "./dist/workload.js"
-      }
-    },
     "./next": {
       "types": "./dist/next.d.ts",
       "import": "./dist/next.js",

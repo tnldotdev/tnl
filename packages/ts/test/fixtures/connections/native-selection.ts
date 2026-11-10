@@ -6,27 +6,33 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as z from "zod";
 import { createInterface } from "node:readline";
-import { tnl } from "@tnldotdev/tnl";
-import { configureWorkload } from "@tnldotdev/tnl/workload";
+import { tnl, createTnl } from "@tnldotdev/tnl";
 
 const lines = createInterface({ input: process.stdin })[Symbol.asyncIterator]();
 const token = (await readFile("assertion", "utf8")).trim();
 let acquisitions = 0;
 const nativeProvider = process.argv.includes("provider");
 const rotatingFile = process.argv.includes("refresh");
-if (rotatingFile) configureWorkload({ name: "test", tokenFile: "assertion" });
-else if (!nativeProvider)
-  configureWorkload({
-    name: "test",
-    token: async () => {
-      acquisitions++;
-      return token;
-    },
-  });
-const handle = tnl.connect("api");
-const handles = nativeProvider ? Array.from({ length: 4 }, () => tnl.connect("api")) : [handle];
+const copies = process.argv.includes("copies");
+if (copies) process.env.TNL_WORKLOAD = "test";
+const app = createTnl({
+  credential: rotatingFile
+    ? { workload: "test", tokenFile: path.resolve("assertion") }
+    : nativeProvider
+      ? { workload: "test" }
+      : {
+          workload: "test",
+          token: async () => {
+            acquisitions++;
+            return token;
+          },
+        },
+});
+const owned: { close(): Promise<void> }[] = [app];
+const handle = copies ? tnl.connect("api") : app.connect("api");
+const handles = nativeProvider ? Array.from({ length: 4 }, () => app.connect("api")) : [handle];
 let copy: string | undefined;
-let copiedWorkload: typeof import("@tnldotdev/tnl/workload") | undefined;
+let second: typeof import("@tnldotdev/tnl") | undefined;
 const listeners = process.listenerCount("beforeExit");
 if (process.argv.includes("copies")) {
   const root = path.resolve(import.meta.dirname, "../../..");
@@ -36,21 +42,16 @@ if (process.argv.includes("copies")) {
   });
   await cp(path.join(root, "dist"), path.join(copy, "dist"), { recursive: true });
   await cp(path.join(root, "package.json"), path.join(copy, "package.json"));
-  const second: typeof import("@tnldotdev/tnl") = await import(
-    pathToFileURL(path.join(copy, "dist/index.js")).href
-  );
+  second = await import(pathToFileURL(path.join(copy, "dist/index.js")).href);
   const common: typeof import("@tnldotdev/tnl") = createRequire(path.join(copy, "package.json"))(
     "@tnldotdev/tnl",
   );
   const unbundled: typeof import("../../../src/internal/connector/connection.js") = await import(
     pathToFileURL(path.join(copy, "dist/internal/connector/connection.js")).href
   );
-  copiedWorkload = await import(pathToFileURL(path.join(copy, "dist/workload.js")).href);
-  assert.ok(copiedWorkload);
-  assert.throws(
-    () => copiedWorkload?.configureWorkload({ name: "test", token: async () => "different" }),
-    { code: "sdk.workload_required" },
-  );
+  assert.ok(second);
+  assert.equal("configureWorkload" in second, false);
+  assert.equal("configureWorkload" in common, false);
   handles.push(
     second.tnl.connect("api"),
     common.tnl.connect("api"),
@@ -60,7 +61,7 @@ if (process.argv.includes("copies")) {
 const [first] = await Promise.all(handles);
 assert.ok(first);
 assert.ok("fetch" in first);
-assert.equal(acquisitions, nativeProvider || rotatingFile ? 0 : handles.length);
+assert.equal(acquisitions, nativeProvider || rotatingFile || copies ? 0 : handles.length);
 assert.equal(process.listenerCount("beforeExit"), listeners + 1);
 console.log("cold");
 assert.equal((await lines.next()).value, "warm");
@@ -69,7 +70,7 @@ for (let i = 0; i < 10; i++) {
   for (const handle of nativeProvider ? handles.slice(0, 1) : handles)
     assert.deepEqual(await handle, first);
 }
-assert.equal(acquisitions, nativeProvider || rotatingFile ? 0 : handles.length * 11);
+assert.equal(acquisitions, nativeProvider || rotatingFile || copies ? 0 : handles.length * 11);
 if (nativeProvider) {
   delete process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
   await assert.rejects(Promise.resolve(handle), { code: "sdk.workload_assertion_unavailable" });
@@ -80,7 +81,7 @@ console.log("warm");
 if (rotatingFile) {
   let created = 0;
   let closed = 0;
-  const getClient = tnl.client("api", {
+  const getClient = app.client("api", {
     create(connection) {
       assert.ok("fetch" in connection);
       created++;
@@ -116,7 +117,7 @@ if (rotatingFile) {
   assert.equal(closed, 1);
   console.log("retained");
 }
-if (copiedWorkload !== undefined) {
+if (second !== undefined) {
   assert.equal((await lines.next()).value, "isolate");
   const directory = process.cwd();
   const isolated = path.join(directory, "other-project");
@@ -133,14 +134,17 @@ if (copiedWorkload !== undefined) {
       process.env[boundary] =
         boundary === "TNL_SERVER" ? manifest.server : path.join(directory, "other-state");
     try {
-      copiedWorkload.configureWorkload({
-        name: "test",
-        token: async () => {
-          isolatedAcquisitions++;
-          return token;
+      const isolatedApp = second.createTnl({
+        credential: {
+          workload: "scoped",
+          token: async () => {
+            isolatedAcquisitions++;
+            return token;
+          },
         },
       });
-      const current = await tnl.connect("api");
+      owned.push(isolatedApp);
+      const current = await isolatedApp.connect("api");
       assert.ok("fetch" in current);
       assert.equal(
         settings.some((value) => value.fetch === current.fetch),
@@ -155,10 +159,11 @@ if (copiedWorkload !== undefined) {
     for (const handle of handles) assert.deepEqual(await handle, first);
   }
   assert.equal(isolatedAcquisitions, 3);
-  assert.equal(acquisitions, handles.length * 14);
+  assert.equal(acquisitions, 0);
   assert.equal(process.listenerCount("beforeExit"), listeners + 4);
   console.log("isolated");
 }
 assert.equal((await lines.next()).value, "stop");
+await Promise.all(owned.map((app) => app.close()));
 await lines.return?.();
 if (copy !== undefined) await rm(copy, { recursive: true, force: true });

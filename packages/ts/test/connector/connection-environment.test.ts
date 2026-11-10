@@ -42,9 +42,6 @@ vi.mock("../../src/internal/connector/workload/provider.js", () => ({
   parseWorkload: (...args: Parameters<ReturnType<typeof actualProvider>["parseWorkload"]>) =>
     actualProvider().parseWorkload(...args),
   workloadRuntime: () => actualProvider().workloadRuntime(),
-  configureWorkload: (
-    ...args: Parameters<ReturnType<typeof actualProvider>["configureWorkload"]>
-  ) => actualProvider().configureWorkload(...args),
   usesWorkload: (...args: Parameters<ReturnType<typeof actualProvider>["usesWorkload"]>) =>
     fixture.realWorkload ? actualProvider().usesWorkload(...args) : fixture.workload,
   async selectWorkload(
@@ -385,19 +382,21 @@ test.each([
   "pending preparations keep same-name callbacks in their captured $name context",
   async ({ name, changed }) => {
     fixture.realWorkload = true;
-    const { connectionHandle, configureWorkload } =
+    const { connectionHandle, createConnectionScope } =
       await import("../../src/internal/connector/connection.js");
     const callbackA = vi.fn(async () => "assertion-a");
     const callbackB = vi.fn(async () => "assertion-b");
     const initial = process.env[name];
     const gate = Promise.withResolvers<void>();
     fixture.scopeGate = gate.promise;
-    configureWorkload({ name: "job", token: callbackA });
-    const first = connectionHandle("database", vi.fn()).then((value) => value);
+    const firstScope = createConnectionScope({ credential: { workload: "job", token: callbackA } });
+    const first = connectionHandle("database", vi.fn(), firstScope).then((value) => value);
     expect(fixture.scopeStarted).toHaveBeenCalledOnce();
     vi.stubEnv(name, changed);
-    configureWorkload({ name: "job", token: callbackB });
-    const second = connectionHandle("database", vi.fn()).then((value) => value);
+    const secondScope = createConnectionScope({
+      credential: { workload: "job", token: callbackB },
+    });
+    const second = connectionHandle("database", vi.fn(), secondScope).then((value) => value);
     expect(fixture.scopeStarted).toHaveBeenCalledTimes(2);
     expect(callbackA).not.toHaveBeenCalled();
     expect(callbackB).not.toHaveBeenCalled();
@@ -417,13 +416,13 @@ test.each([
 
 test("pending workload detection does not switch to an unconfigured context", async () => {
   fixture.realWorkload = true;
-  const { connectionHandle, configureWorkload } =
+  const { connectionHandle, createConnectionScope } =
     await import("../../src/internal/connector/connection.js");
   const callback = vi.fn(async () => "assertion-a");
-  configureWorkload({ name: "job", token: callback });
+  const scope = createConnectionScope({ credential: { workload: "job", token: callback } });
   const gate = Promise.withResolvers<void>();
   fixture.scopeGate = gate.promise;
-  const pending = connectionHandle("database", vi.fn()).then((value) => value);
+  const pending = connectionHandle("database", vi.fn(), scope).then((value) => value);
   expect(fixture.scopeStarted).toHaveBeenCalledOnce();
   vi.stubEnv("TNL_SERVER", "https://b.example");
   gate.resolve();

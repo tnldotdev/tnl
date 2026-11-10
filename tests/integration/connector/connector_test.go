@@ -874,6 +874,12 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 			policy.MaxDurationSeconds = 0
 			manifest.Workloads["test"] = policy
 		}
+		if startup == "javascript-copies" {
+			manifest.Workloads["scoped"] = manifest.Workloads["test"]
+			workload := manifest.Workloads["test"]
+			workload.Acquisition = workloadmanifest.Acquisition{Method: "token-file", Audience: scope.Server, TokenFile: "assertion"}
+			manifest.Workloads["test"] = workload
+		}
 		if err := manifest.Validate(); err != nil {
 			t.Fatal(err)
 		}

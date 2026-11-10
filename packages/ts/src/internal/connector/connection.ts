@@ -36,7 +36,7 @@ import {
   type WorkloadConfiguration,
 } from "./workload/provider.js";
 import type { SelectionOptions, WorkloadRequest } from "./workload/contract.js";
-export { configureWorkload, usesWorkload } from "./workload/provider.js";
+export { usesWorkload } from "./workload/provider.js";
 import { resolveNativeBinary } from "../native/launcher.js";
 import { launchEnvironment, operation, operationSync, independent } from "../tracing.js";
 import type { ProjectRuntime } from "../project/runtime.js";
@@ -359,14 +359,12 @@ async function selectNative(
   const requestedAt = new Date().toISOString();
   const base = selection?.key ?? contextKey();
   const workload =
-    selection?.workload !== undefined ||
-    usesWorkload(base, selection?.runtime, selection === undefined);
+    selection?.workload !== undefined || usesWorkload(selection?.runtime, selection === undefined);
   const scope = await nativeScope(base, selection);
   const selectionOptions: SelectionOptions = {
     ...(workload
       ? await selectWorkload(
           (request) => scope.workload(name, request),
-          base,
           selection?.workload,
           selection?.runtime,
         )
@@ -454,7 +452,6 @@ export async function workloadApplication(selection: ConnectionScope) {
     try {
       const refresh = await selectWorkload(
         (request) => scope.workload("", request),
-        selection.key,
         selection.workload,
         selection.runtime,
       );
@@ -873,7 +870,7 @@ export function connectionHandle(
       // await yields plain settings; sync workload settings need an explicit file.
       if (
         selection?.workload !== undefined ||
-        usesWorkload(selection?.key, selection?.runtime, selection === undefined)
+        usesWorkload(selection?.runtime, selection === undefined)
       )
         throw new TnlError("sdk.connection_unprepared");
       return result(readPrepared(name, selection));

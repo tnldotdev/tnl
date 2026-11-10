@@ -159,7 +159,7 @@ export function createTnl(
   const workloadSelected =
     workload ||
     (credential === undefined &&
-      (scope.workload !== undefined || usesWorkload(scope.key, scope.runtime, false)));
+      (scope.workload !== undefined || usesWorkload(scope.runtime, false)));
   const checkPublisher = async (
     settings: PublishOptions = {},
   ): Promise<ApplicationPublication | undefined> => {

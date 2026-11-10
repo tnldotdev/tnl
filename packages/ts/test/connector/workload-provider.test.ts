@@ -59,9 +59,9 @@ test.each([
 );
 
 test("native selection receives hints and current private provider inputs without SDK acquisition", async () => {
-  const { selectWorkload, configureWorkload } =
+  const { selectWorkload, parseWorkload } =
     await import("../../src/internal/connector/workload/provider.js");
-  configureWorkload({ name: "worker", tokenFile: "current.jwt" });
+  const configuration = parseWorkload({ name: "worker", tokenFile: "current.jwt" });
   vi.stubEnv("TNL_WORKLOAD", "");
   vi.stubEnv("GITHUB_ACTIONS", "true");
   const preview = vi.fn(async () => ({
@@ -74,7 +74,7 @@ test("native selection receives hints and current private provider inputs withou
   }));
   for (const token of ["first-private-bearer", "rotated-private-bearer"]) {
     vi.stubEnv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", token);
-    const selected = await selectWorkload(preview);
+    const selected = await selectWorkload(preview, configuration);
     expect(selected.assertion).toBeUndefined();
     expect(selected.sdk_environment?.github_request_token).toBe(token);
     expect(selected.sdk_workload).toMatchObject({
@@ -142,20 +142,20 @@ test.each([
 ])(
   "deferred assertion callbacks keep the acquisition's captured $name context",
   async ({ name, changed }) => {
-    const { configureWorkload, acquireAssertion } =
+    const { parseWorkload, acquireAssertion } =
       await import("../../src/internal/connector/workload/provider.js");
     const callbackA = vi.fn(async () => "assertion-a");
     const callbackB = vi.fn(async () => "assertion-b");
-    configureWorkload({ name: "worker", token: callbackA });
-    const pending = acquireAssertion(callbackSelection, AbortSignal.timeout(1000));
+    const first = parseWorkload({ name: "worker", token: callbackA });
+    const pending = acquireAssertion(callbackSelection, AbortSignal.timeout(1000), first);
     expect(callbackA).not.toHaveBeenCalled();
     vi.stubEnv(name, changed);
-    configureWorkload({ name: "worker", token: callbackB });
+    const second = parseWorkload({ name: "worker", token: callbackB });
 
     expect(await pending).toBe("assertion-a");
     expect(callbackA).toHaveBeenCalledOnce();
     expect(callbackB).not.toHaveBeenCalled();
-    expect(await acquireAssertion(callbackSelection, AbortSignal.timeout(1000))).toBe(
+    expect(await acquireAssertion(callbackSelection, AbortSignal.timeout(1000), second)).toBe(
       "assertion-b",
     );
     expect(callbackB).toHaveBeenCalledOnce();
@@ -165,14 +165,14 @@ test.each([
 test.each(["never", "late"])(
   "callback acquisition is bounded even when it resolves %s",
   async (mode) => {
-    const { configureWorkload, acquireAssertion } =
+    const { parseWorkload, acquireAssertion } =
       await import("../../src/internal/connector/workload/provider.js");
     let finish: ((token: string) => void) | undefined;
     let entered: (() => void) | undefined;
     const started = new Promise<void>((resolve) => {
       entered = resolve;
     });
-    configureWorkload({
+    const configuration = parseWorkload({
       name: "worker",
       token: () =>
         new Promise((resolve) => {
@@ -182,7 +182,7 @@ test.each(["never", "late"])(
     });
     const controller = new AbortController();
     const reason = new DOMException("acquisition deadline", "TimeoutError");
-    const acquiring = acquireAssertion(callbackSelection, controller.signal);
+    const acquiring = acquireAssertion(callbackSelection, controller.signal, configuration);
     await started;
     controller.abort(reason);
     if (mode === "late") finish?.("late.private.assertion");
@@ -198,10 +198,10 @@ test.each(["never", "late"])(
 );
 
 test("the SDK's ten-second acquisition deadline rejects a callback that never settles", async () => {
-  const { configureWorkload, acquireAssertion } =
+  const { parseWorkload, acquireAssertion } =
     await import("../../src/internal/connector/workload/provider.js");
   let finish: ((token: string) => void) | undefined;
-  configureWorkload({
+  const configuration = parseWorkload({
     name: "worker",
     token: () =>
       new Promise((resolve) => {
@@ -210,60 +210,60 @@ test("the SDK's ten-second acquisition deadline rejects a callback that never se
   });
   const started = performance.now();
   await expect(
-    acquireAssertion(callbackSelection, new AbortController().signal),
+    acquireAssertion(callbackSelection, new AbortController().signal, configuration),
   ).rejects.toMatchObject({ name: "TimeoutError" });
   expect(performance.now() - started).toBeGreaterThanOrEqual(9900);
   finish?.("assertion.after.deadline");
 }, 12_000);
 
-test("generic callback registration is fixed, request-scoped, and never verifies or routes using untrusted JWT claims", async () => {
-  const { configureWorkload, acquireAssertion } =
+test("explicit callback configuration is immutable, request-scoped, and never verifies or routes using untrusted JWT claims", async () => {
+  const { parseWorkload, acquireAssertion } =
     await import("../../src/internal/connector/workload/provider.js");
   const storage = new AsyncLocalStorage<string>();
   const callback = vi.fn(async () => storage.getStore() ?? "");
-  configureWorkload({ name: "worker", token: callback });
-  configureWorkload({ name: "worker", token: callback });
-  expect(() =>
-    configureWorkload({ name: "worker", token: async () => "changed-global-token" }),
-  ).toThrow(expect.objectContaining({ code: "sdk.workload_required" }));
+  const input = { name: "worker", token: callback };
+  const configuration = parseWorkload(input);
+  input.token = vi.fn(async () => "changed-input");
+  expect(configuration.token).toBe(callback);
+  expect(Object.isFrozen(configuration)).toBe(true);
+  expect(() => Object.assign(configuration, { token: input.token })).toThrow(TypeError);
   const signal = AbortSignal.timeout(1000);
   const tokens = await Promise.all(
     ["opaque-one", "opaque-two"].map((token) =>
-      storage.run(token, () => acquireAssertion(callbackSelection, signal)),
+      storage.run(token, () => acquireAssertion(callbackSelection, signal, configuration)),
     ),
   );
   expect(tokens).toEqual(["opaque-one", "opaque-two"]);
   expect(callback).toHaveBeenCalledTimes(2);
-  await expect(acquireAssertion(callbackSelection, signal)).rejects.toMatchObject({
+  await expect(acquireAssertion(callbackSelection, signal, configuration)).rejects.toMatchObject({
     code: "sdk.workload_assertion_unavailable",
   });
 });
 
-test("independent copies share request callbacks only within the selected context", async () => {
+test("independent copies acquire only explicitly passed callbacks, never another instance's source", async () => {
   const first = await import("../../src/internal/connector/workload/provider.js");
   vi.resetModules();
   const second = await import("../../src/internal/connector/workload/provider.js");
   const storage = new AsyncLocalStorage<string>();
   const callback = async () => storage.getStore() ?? "";
-  first.configureWorkload({ name: "worker", token: callback });
-  second.configureWorkload({ name: "worker", token: callback });
-  expect(() =>
-    second.configureWorkload({ name: "worker", token: async () => "replacement" }),
-  ).toThrow(expect.objectContaining({ code: "sdk.workload_required" }));
+  const configuration = first.parseWorkload({ name: "worker", token: callback });
+  await expect(
+    second.acquireAssertion(callbackSelection, AbortSignal.timeout(1000)),
+  ).rejects.toHaveProperty("code", "sdk.workload_assertion_unavailable");
   for (const variable of ["TNL_SERVER", "TNL_STATE_DIR", "TNL_CONNECTION_HANDLE"]) {
     const previous = process.env[variable];
     vi.stubEnv(variable, "/another/context");
     expect(second.usesWorkload()).toBe(false);
-    second.configureWorkload({ name: "worker", token: async () => "isolated" });
-    expect(await second.acquireAssertion(callbackSelection, AbortSignal.timeout(1000))).toBe(
-      "isolated",
-    );
+    const isolated = second.parseWorkload({ name: "worker", token: async () => "isolated" });
+    expect(
+      await second.acquireAssertion(callbackSelection, AbortSignal.timeout(1000), isolated),
+    ).toBe("isolated");
     vi.stubEnv(variable, previous);
   }
   const values = await Promise.all(
     ["one", "two"].map((token) =>
       storage.run(token, () =>
-        second.acquireAssertion(callbackSelection, AbortSignal.timeout(1000)),
+        second.acquireAssertion(callbackSelection, AbortSignal.timeout(1000), configuration),
       ),
     ),
   );
@@ -271,18 +271,20 @@ test("independent copies share request callbacks only within the selected contex
 });
 
 test("callback and parser causes stay private under normal Node error inspection", async () => {
-  const { configureWorkload, acquireAssertion } =
+  const { parseWorkload, acquireAssertion } =
     await import("../../src/internal/connector/workload/provider.js");
   const cause = new Error("Bearer private-provider-secret");
-  configureWorkload({
+  const configuration = parseWorkload({
     name: "worker",
     token: async () => {
       throw cause;
     },
   });
-  const error: unknown = await acquireAssertion(callbackSelection, AbortSignal.timeout(1000)).catch(
-    (error: unknown) => error,
-  );
+  const error: unknown = await acquireAssertion(
+    callbackSelection,
+    AbortSignal.timeout(1000),
+    configuration,
+  ).catch((error: unknown) => error);
   expect(error).toMatchObject({
     code: "sdk.workload_assertion_unavailable",
     retry: "after_change",

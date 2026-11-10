@@ -1,10 +1,8 @@
 import * as z from "zod";
 import { privateTnlError, TnlError } from "../../../errors.js";
-import type { WorkloadOptions } from "../../../workload.js";
 import { parseValue } from "../../validation.js";
 import { pathTextSchema, serviceNameSchema } from "../../values.js";
 import { cancellable } from "../cancellation.js";
-import { context, contextKey } from "../context.js";
 import {
   workloadSelectionSchema,
   type WorkloadRequest,
@@ -16,9 +14,7 @@ const workloadOptionsSchema = z
   .union([
     z.strictObject({
       name: serviceNameSchema,
-      token: z.custom<NonNullable<WorkloadOptions["token"]>>(
-        (value) => typeof value === "function",
-      ),
+      token: z.custom<() => Promise<string>>((value) => typeof value === "function"),
       tokenFile: z.undefined().optional(),
     }),
     z.strictObject({
@@ -36,25 +32,8 @@ const workloadOptionsSchema = z
 
 export type WorkloadConfiguration = z.output<typeof workloadOptionsSchema>;
 
-export function parseWorkload(options: WorkloadOptions | { name: string }): WorkloadConfiguration {
+export function parseWorkload(options: unknown): WorkloadConfiguration {
   return parseValue(workloadOptionsSchema, options, "sdk.workload_required");
-}
-
-/** register a fixed request-scoped source, never a mutable current token. */
-export function configureWorkload(options: WorkloadOptions): void {
-  const selected = parseWorkload(options);
-  const key = contextKey();
-  const configuration = context.workloads.get(key);
-  if (
-    configuration !== undefined &&
-    (configuration.name !== selected.name ||
-      configuration.token !== selected.token ||
-      configuration.tokenFile !== selected.tokenFile)
-  )
-    throw new TnlError("sdk.workload_required");
-  if (configuration === undefined && context.workloads.size >= 32)
-    throw new TnlError("sdk.workload_required");
-  context.workloads.set(key, selected);
 }
 
 export function workloadRuntime(): WorkloadRequest["runtime"] {
@@ -69,15 +48,10 @@ export function workloadRuntime(): WorkloadRequest["runtime"] {
   };
 }
 
-export function usesWorkload(
-  key = contextKey(),
-  runtime = workloadRuntime(),
-  inheritHandle = true,
-): boolean {
+export function usesWorkload(runtime = workloadRuntime(), inheritHandle = true): boolean {
   return (
     (!inheritHandle || process.env.TNL_CONNECTION_HANDLE === undefined) &&
     (runtime.workload !== undefined ||
-      context.workloads.has(key) ||
       runtime.vercel === "1" ||
       Boolean(runtime.fly_app_name) ||
       Boolean(runtime.cloud_run_service) ||
@@ -91,8 +65,7 @@ export function usesWorkload(
 // request context remain in this process; provider environment travels privately.
 export async function selectWorkload(
   select: (request: WorkloadRequest) => Promise<unknown>,
-  key = contextKey(),
-  configuration = context.workloads.get(key),
+  configuration?: WorkloadConfiguration,
   runtime = workloadRuntime(),
 ): Promise<SelectionOptions> {
   const request: WorkloadRequest = {
@@ -110,12 +83,7 @@ export async function selectWorkload(
     await select(request),
     "sdk.response_invalid",
   );
-  const assertion = await acquireAssertion(
-    selection,
-    AbortSignal.timeout(10_000),
-    key,
-    configuration,
-  );
+  const assertion = await acquireAssertion(selection, AbortSignal.timeout(10_000), configuration);
   return {
     sdk_workload: request,
     sdk_workload_policy: selection.policy,
@@ -144,8 +112,7 @@ function boundedAssertion(raw: unknown): string {
 export async function acquireAssertion(
   selection: Pick<WorkloadSelection, "name" | "source">,
   signal: AbortSignal,
-  key = contextKey(),
-  configuration = context.workloads.get(key),
+  configuration?: WorkloadConfiguration,
 ): Promise<string | undefined> {
   const lifetime = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
   try {

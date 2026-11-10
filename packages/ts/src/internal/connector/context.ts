@@ -1,6 +1,5 @@
 import { realpathSync } from "node:fs";
 import type { TnlFetch } from "../../project.js";
-import type { WorkloadConfiguration } from "./workload/provider.js";
 import { TnlError } from "../../errors.js";
 import type { OwnerIPC } from "./connection_ipc.js";
 import type { SelectionOptions, WorkloadRequest } from "./workload/contract.js";
@@ -41,7 +40,6 @@ interface ConnectorContext {
   readonly selectedScopes: Map<string, Map<string, NativeScope>>;
   readonly fetches: Map<string, TnlFetch>;
   readonly external: Map<string, CachedIPC>;
-  readonly workloads: Map<string, WorkloadConfiguration>;
 }
 
 declare global {
@@ -56,7 +54,6 @@ export const context: ConnectorContext = (globalThis.__tnlConnectorContextV3 ??=
   selectedScopes: new Map(),
   fetches: new Map(),
   external: new Map(),
-  workloads: new Map(),
 });
 
 export function contextKey(): string {

@@ -5,7 +5,7 @@ import { expect, test } from "vitest";
 
 const directory = fileURLToPath(new URL("../../", import.meta.url));
 
-test("import and require share errors, workload configuration, and lazy handles", () => {
+test("import and require share errors and lazy handles but own workload instances independently", () => {
   execFileSync(
     process.execPath,
     [
@@ -15,7 +15,6 @@ test("import and require share errors, workload configuration, and lazy handles"
     import assert from 'node:assert/strict';
     import {createRequire} from 'node:module';
     import * as esm from '@tnldotdev/tnl';
-    import * as workload from '@tnldotdev/tnl/workload';
     const require = createRequire(import.meta.url);
     const cjs = require('@tnldotdev/tnl');
     assert.equal(cjs.tnl, esm.tnl);
@@ -28,9 +27,15 @@ test("import and require share errors, workload configuration, and lazy handles"
     assert.equal(Object.getOwnPropertyDescriptor(handle, 'then').enumerable, false);
     assert.throws(() => ({...handle}), e => e instanceof esm.TnlError && e.code === 'sdk.connection_unprepared');
     const token = async () => 'request-scoped-assertion';
-    workload.configureWorkload({name:'worker', token});
-    require('@tnldotdev/tnl/workload').configureWorkload({name:'worker', token});
-    assert.throws(() => workload.configureWorkload({name:'worker', token:async()=> 'replacement'}), e => e instanceof esm.TnlError && e.code === 'sdk.workload_required');
+    assert.equal(cjs.createTnl, esm.createTnl);
+    const first=esm.createTnl({credential:{workload:'worker',token}});
+    const second=cjs.createTnl({credential:{workload:'worker',token:async()=> 'independent'}});
+    assert.notEqual(first,second);
+    assert.equal('configureWorkload' in esm,false);
+    assert.throws(()=>require('@tnldotdev/tnl/workload'),{code:'ERR_PACKAGE_PATH_NOT_EXPORTED'});
+    await assert.rejects(import('@tnldotdev/tnl/workload'),{code:'ERR_PACKAGE_PATH_NOT_EXPORTED'});
+    await first.close();
+    await second.close();
   `,
     ],
     {
