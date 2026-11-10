@@ -1,6 +1,12 @@
 version: "3"
 
 tasks:
+  sdk-publications:
+    desc: Check built TypeScript application publication traffic through native registration and real publisher TLS streams
+    deps: [":js:build"]
+    cmds:
+      - go test -race -v ./internal/publisher/local -run='^TestIntegrationSDKApplicationPublicationTraffic$' -count=1 -timeout=2m -args -tnl-test-tier=integration
+
   application-http:
     desc: Check TypeScript Web Crypto and Python application proofs against disposable control
     deps: [":js:build", ":py:sync"]

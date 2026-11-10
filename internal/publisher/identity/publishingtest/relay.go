@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"sync"
 	"time"
 
@@ -109,9 +108,42 @@ func (f *Fixture) startRelay(ctx context.Context, setup controlv1.PublishRunSetu
 // Visit carries a real HTTPS request through an authenticated publisher
 // connection, including the unchanged PROXY v2 boundary and visitor TLS.
 func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error) {
-	u, err := url.Parse(address)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return 0, nil, err
+	}
+	response, err := f.RoundTrip(request)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	return response.StatusCode, body, err
+}
+
+type visitorResponseBody struct {
+	io.ReadCloser
+	connection *tls.Conn
+	stop       func() bool
+	once       sync.Once
+	err        error
+}
+
+func (b *visitorResponseBody) Close() error {
+	b.once.Do(func() {
+		b.stop()
+		b.err = errors.Join(b.ReadCloser.Close(), b.connection.Close())
+	})
+	return b.err
+}
+
+// RoundTrip lets native readiness probes traverse the same authenticated visitor
+// stream as Visit. request headers and response proofs are preserved end to end.
+func (f *Fixture) RoundTrip(request *http.Request) (*http.Response, error) {
+	ctx := request.Context()
+	u := request.URL
+	if u.Scheme != "https" || u.User != nil {
+		return nil, errors.New("fixture needs one HTTPS visitor request")
 	}
 	f.mu.Lock()
 	var selected relaySession
@@ -124,18 +156,23 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 	setup := f.setups[selected.ref.PublishRunID]
 	f.mu.Unlock()
 	if selected.session == nil {
-		return 0, nil, errors.New("publisher connection is not ready")
+		return nil, errors.New("publisher connection is not ready")
 	}
 	id, err := opaqueid.New(opaqueid.VisitorConnectionPrefix)
 	if err != nil {
-		return 0, nil, err
+		return nil, err
 	}
 	r := selected.ref
 	stream, err := selected.session.OpenVisitorStream(ctx, tunnelv1.VisitorStreamHeader{ProtocolVersion: tunnelv1.Version, Kind: tunnelv1.VisitorStream, VisitorConnectionID: id, PublicURLID: r.PublicURLID, PublishRunID: r.PublishRunID, PublishRunNumber: r.PublishRunNumber, PublisherConnectionID: r.PublisherConnectionID, ConnectionAssignmentRevision: r.ConnectionAssignmentRevision}, nil, tunnel.ReturnEvents{})
 	if err != nil {
-		return 0, nil, err
+		return nil, err
 	}
-	defer stream.Close()
+	transferred := false
+	defer func() {
+		if !transferred {
+			_ = stream.Close()
+		}
+	}()
 	deadline := time.Now().Add(5 * time.Second)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
@@ -143,7 +180,7 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 	_ = stream.SetDeadline(deadline)
 	master, err := publicSourceKey(setup)
 	if err != nil {
-		return 0, nil, err
+		return nil, err
 	}
 	now := time.Now()
 	authority, child, err := visitortoken.IssueVisitorSourceAuthority(master, tunnelv1.VisitorSourceAuthority{
@@ -151,7 +188,7 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 		IngressID: "fixture-ingress", IngressRunID: "fixture-process", IngressLeaseRevision: 1, VisitorPolicyRevision: 1, ValidUntil: now.Add(10 * time.Second).Unix(),
 	}, now)
 	if err != nil {
-		return 0, nil, err
+		return nil, err
 	}
 	header := proxyproto.Header{Source: netip.MustParseAddrPort("127.0.0.1:45123"), Destination: netip.MustParseAddrPort("127.0.0.1:443")}
 	proof, err := visitortoken.SignVisitorSource(child, authority, f.sourceSequence.Add(1), tunnelv1.VisitorSourceBinding{
@@ -159,35 +196,32 @@ func (f *Fixture) Visit(ctx context.Context, address string) (int, []byte, error
 		VisitorID: id, Source: header.Source, Destination: header.Destination,
 	}, now)
 	if err != nil {
-		return 0, nil, err
+		return nil, err
 	}
 	wire, err := proof.MarshalBinary()
 	if err != nil {
-		return 0, nil, err
+		return nil, err
 	}
 	header.VisitorSourceProof = string(wire)
 	metadata, err := proxyproto.Encode(header)
 	if err != nil {
-		return 0, nil, err
+		return nil, err
 	}
 	if _, err := stream.Write(metadata); err != nil {
-		return 0, nil, err
+		return nil, err
 	}
 	connection := tls.Client(stream, &tls.Config{MinVersion: tls.VersionTLS13, ServerName: u.Hostname()})
-	defer connection.Close()
-	request, err := http.NewRequestWithContext(ctx, "GET", address, nil)
-	if err != nil {
-		return 0, nil, err
-	}
+	request = request.Clone(ctx)
 	request.Close = true
 	if err := request.Write(connection); err != nil {
-		return 0, nil, err
+		return nil, err
 	}
 	response, err := http.ReadResponse(bufio.NewReader(connection), request)
 	if err != nil {
-		return 0, nil, err
+		return nil, err
 	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
-	return response.StatusCode, body, err
+	stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
+	response.Body = &visitorResponseBody{ReadCloser: response.Body, connection: connection, stop: stop}
+	transferred = true
+	return response, nil
 }

@@ -46,7 +46,7 @@ func IsolatedPublishingTest(t *testing.T) bool {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, executable, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v", "-test.timeout=40s")
+	command := exec.CommandContext(ctx, executable, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v", "-test.timeout=40s", "-tnl-test-tier="+*testTier)
 	command.Env = append(os.Environ(), "GO_TEST_PUBLISHING_HELPER="+t.Name(), "GORACE=atexit_sleep_ms=0")
 	command.WaitDelay = time.Second
 	output, err := command.CombinedOutput()

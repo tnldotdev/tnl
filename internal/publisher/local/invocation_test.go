@@ -36,9 +36,13 @@ import (
 
 // the handler, registration manager, worker and SQLite journal are real. only
 // remote control HTTPS and the publisher transport use the existing fixtures.
-func invocationRuntime(t *testing.T) (*appRuntime, publisherprotocol.Endpoint, map[string]any, *publishingtest.Fixture) {
+func invocationRuntime(t *testing.T, hooks ...testutil.PublishingHooks) (*appRuntime, publisherprotocol.Endpoint, map[string]any, *publishingtest.Fixture) {
 	t.Helper()
-	f := publishingtest.New(t, testutil.PublishingHooks{})
+	var selected testutil.PublishingHooks
+	if len(hooks) != 0 {
+		selected = hooks[0]
+	}
+	f := publishingtest.New(t, selected)
 	original := http.DefaultTransport
 	http.DefaultTransport = invocationTransport(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Scheme+"://"+r.URL.Host == f.URL {
@@ -214,9 +218,9 @@ func TestInvocationWorkerPublicationAndLimits(t *testing.T) {
 	}
 }
 
-func applicationInvocation(t *testing.T) (*appRuntime, publisherprotocol.Endpoint, map[string]any, *publishingtest.Fixture, credentialfile.File, controlv1.PublicURL) {
+func applicationInvocation(t *testing.T, hooks ...testutil.PublishingHooks) (*appRuntime, publisherprotocol.Endpoint, map[string]any, *publishingtest.Fixture, credentialfile.File, controlv1.PublicURL) {
 	t.Helper()
-	a, endpoint, body, fixture := invocationRuntime(t)
+	a, endpoint, body, fixture := invocationRuntime(t, hooks...)
 	url, err := fixture.SavedPublicURL(t.Context(), controlv1.App, "http://127.0.0.1:3000")
 	if err != nil {
 		t.Fatal(err)
