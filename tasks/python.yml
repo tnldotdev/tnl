@@ -1,6 +1,13 @@
 version: "3"
 
 tasks:
+  test:application-http:
+    desc: Check Python application document proofs, exact visit grants and HTTP client bindings
+    cmds:
+      - task: :py:test
+        vars:
+          CLI_ARGS: "-k 'application_http or token_http'"
+
   test:token-http:
     desc: Check explicit Python visitor tokens, origin-bound HTTPX and joined cleanup without native authentication
     cmds:
@@ -13,7 +20,7 @@ tasks:
     cmds:
       - task: :py:test
         vars:
-          CLI_ARGS: "-k 'runtime or workload or client or publication or forked or token_http'"
+          CLI_ARGS: "-k 'runtime or workload or client or publication or forked or token_http or application_http'"
 
   test:publications:
     desc: Check Python publication observations, ASGI ownership and native registration

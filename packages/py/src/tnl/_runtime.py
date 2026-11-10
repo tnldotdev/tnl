@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import weakref
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from enum import Enum
 from pathlib import Path
@@ -294,9 +294,9 @@ class TnlInstance(_Lifetime):
 
 
 class TnlHTTPInstance(_Lifetime):
-    """visit HTTPS origins with an explicit token and ordinary async clients."""
+    """visit exact application resources or token HTTPS origins with ordinary clients."""
 
-    def __init__(self, credential: str) -> None:
+    def __init__(self, credential: str | Mapping[str, object]) -> None:
         super().__init__()
         self._http = _HTTPResources(credential, self._check, self._http_context)
 
@@ -304,25 +304,21 @@ class TnlHTTPInstance(_Lifetime):
         self._check()
         self._context()
 
-    def connect(self, origin: str) -> HTTPClientSettings:
+    def connect(self, resource: str) -> HTTPClientSettings:
         self._check()
-        return self._http.connect(origin)
+        return self._http.connect(resource)
 
     def client[T](
         self,
-        origin: str,
+        resource: str,
         *,
         create: Callable[[HTTPClientSettings], T | Awaitable[T]],
         close: Callable[[T], None | Awaitable[None]],
     ) -> ClientFactory[T]:
-        settings = self.connect(origin)
-
-        async def acquire() -> tuple[str, HTTPClientSettings]:
-            self._http_context()
-            return origin, settings
+        self.connect(resource)
 
         factory = _Factory(
-            acquire,
+            lambda: self._http.acquire(resource),
             create=create,
             close=close,
             active=lambda: not self._closed and self._pid == os.getpid(),
@@ -333,9 +329,12 @@ class TnlHTTPInstance(_Lifetime):
     async def _release(self) -> None:
         await self._http.close()
 
+    def _fence(self) -> None:
+        self._http.fence()
+
 
 @overload
-def create_tnl(*, credential: str) -> TnlHTTPInstance: ...
+def create_tnl(*, credential: str | Mapping[str, object]) -> TnlHTTPInstance: ...
 
 
 @overload
@@ -353,12 +352,14 @@ def create_tnl(
     directory: str | Path | None = None,
     state_dir: str | Path | None = None,
     server: str | None = None,
-    credential: str | Workload | _Omitted = _Omitted.CREDENTIAL,
+    credential: str | Mapping[str, object] | Workload | _Omitted = _Omitted.CREDENTIAL,
 ) -> TnlInstance | TnlHTTPInstance:
     """construct an independently owned runtime without starting native work."""
-    if isinstance(credential, str):
+    if isinstance(credential, (str, Mapping)):
         if any(value is not None for value in (directory, state_dir, server)):
-            raise TnlError("sdk.configuration_invalid", "token HTTP does not select native state")
+            raise TnlError(
+                "sdk.configuration_invalid", "credential HTTP does not select native state"
+            )
         return TnlHTTPInstance(credential)
     return TnlInstance(
         directory=directory, state_dir=state_dir, server=server, credential=credential

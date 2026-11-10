@@ -1,66 +1,78 @@
-"""explicit visitor-token HTTP settings; no native or personal authentication."""
+"""explicit HTTP credentials, bound settings, and joined transport ownership."""
 
 from __future__ import annotations
 
 import asyncio
-import base64
-import re
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Hashable
 from dataclasses import dataclass
+from typing import Protocol
 
 import httpx
 
+from ._application import ApplicationHTTP
+from ._credential import ApplicationDocument, application_document, https_origin, visitor_token
 from ._protocol import TnlError
 
 
-def visitor_token(value: object) -> str:
-    if isinstance(value, str) and 0 < len(value) <= 2048:
-        parts = value.split(".")
-        if len(parts) == 3 and all(re.fullmatch(r"[A-Za-z0-9_-]+", part) for part in parts):
-            kind, identifier, secret = parts
-            if kind in {"vsh1", "vsg1"}:
-                prefix = "shr_" if kind == "vsh1" else "shg_"
-                if re.fullmatch(prefix + r"[A-Za-z0-9]{22}", identifier) and len(secret) == 43:
-                    decoded = base64.urlsafe_b64decode(secret + "=")
-                    if base64.urlsafe_b64encode(decoded).decode().rstrip("=") == secret:
-                        return value
-            elif kind.startswith("ey"):
-                # signed permissions remain opaque; the publisher verifies them.
-                return value
-    raise TnlError("sdk.configuration_invalid", "supply a valid explicit visitor credential")
+class HTTPClientSettings(Protocol):
+    """pass url and transport to an ordinary httpx.AsyncClient."""
 
+    @property
+    def url(self) -> str: ...
 
-def https_origin(value: str) -> httpx.URL:
-    try:
-        url = httpx.URL(value)
-        if (
-            url.scheme == "https"
-            and url.host
-            and not url.userinfo
-            and not url.query
-            and not url.fragment
-            and url.raw_path == b"/"
-            and str(url) == value == "https://" + url.netloc.decode()
-            and len(value) <= 4096
-            and "\\" not in value
-            and not any(character.isspace() or ord(character) < 32 for character in value)
-            and (url.port is None or 1 <= url.port <= 65535)
-        ):
-            return url
-    except (httpx.InvalidURL, ValueError, TypeError):
-        pass
-    raise TnlError("sdk.configuration_invalid", "select one canonical HTTPS origin without a path")
+    @property
+    def transport(self) -> httpx.AsyncBaseTransport: ...
+
+    def __await__(self) -> Generator[object, None, HTTPClientSettings]: ...
 
 
 @dataclass(frozen=True, slots=True, repr=False)
-class HTTPClientSettings:
-    """pass url and transport to an ordinary httpx.AsyncClient."""
-
+class _ReadySettings:
     url: str
     transport: httpx.AsyncBaseTransport
+    _check: Callable[[], None]
 
     def __repr__(self) -> str:
         return "<tnl HTTP client settings (private)>"
+
+    def __await__(self) -> Generator[object, None, HTTPClientSettings]:
+        async def ready() -> HTTPClientSettings:
+            self._check()
+            return self
+
+        return ready().__await__()
+
+
+class _ApplicationSettings:
+    def __init__(self, owner: _HTTPResources, resource: str) -> None:
+        self._owner, self._resource = owner, resource
+        self._current: HTTPClientSettings | None = None
+
+    def __repr__(self) -> str:
+        return "<tnl HTTP connection handle (private)>"
+
+    def _settings(self) -> HTTPClientSettings:
+        self._owner._check()
+        if self._current is None:
+            raise TnlError(
+                "sdk.connection_unprepared", "await this exact application resource first"
+            )
+        return self._current
+
+    @property
+    def url(self) -> str:
+        return self._settings().url
+
+    @property
+    def transport(self) -> httpx.AsyncBaseTransport:
+        return self._settings().transport
+
+    def __await__(self) -> Generator[object, None, HTTPClientSettings]:
+        async def prepare() -> HTTPClientSettings:
+            _, self._current = await self._owner.acquire(self._resource)
+            return self._current
+
+        return prepare().__await__()
 
 
 def _unavailable() -> TnlError:
@@ -75,8 +87,8 @@ class _Response(httpx.Response):
         return False
 
 
-class _ResponseStream(httpx.AsyncByteStream):
-    def __init__(self, owner: _TokenTransport, stream: httpx.AsyncByteStream) -> None:
+class _OwnedStream(httpx.AsyncByteStream):
+    def __init__(self, owner: _HTTPTransport, stream: httpx.AsyncByteStream) -> None:
         self._owner, self._stream = owner, stream
         self._closing: asyncio.Task[None] | None = None
 
@@ -99,6 +111,9 @@ class _ResponseStream(httpx.AsyncByteStream):
         raise _unavailable() from None
 
     async def aclose(self) -> None:
+        await asyncio.shield(self.start_close())
+
+    def start_close(self) -> asyncio.Task[None]:
         if self._closing is None:
             self._closing = asyncio.create_task(self._close())
 
@@ -108,7 +123,7 @@ class _ResponseStream(httpx.AsyncByteStream):
                         self._closing = None
 
             self._closing.add_done_callback(finished)
-        await asyncio.shield(self._closing)
+        return self._closing
 
     async def _close(self) -> None:
         try:
@@ -121,19 +136,33 @@ class _ResponseStream(httpx.AsyncByteStream):
         raise _unavailable() from None
 
 
-class _TokenTransport(httpx.AsyncBaseTransport):
-    def __init__(self, origin: httpx.URL, credential: str, check: Callable[[], None]) -> None:
-        self._origin, self._credential, self._check = origin, credential, check
+class _HTTPTransport(httpx.AsyncBaseTransport):
+    def __init__(
+        self, origin: httpx.URL, authorize: Callable[[], Awaitable[str]], check: Callable[[], None]
+    ) -> None:
+        self._origin, self._authorize, self._check = origin, authorize, check
         self._transport: httpx.AsyncHTTPTransport | None = None
         self._pending: set[asyncio.Task[httpx.Response]] = set()
         self._reading: set[asyncio.Future[bytes]] = set()
-        self._streams: set[_ResponseStream] = set()
+        self._streams: set[_OwnedStream] = set()
 
     def __repr__(self) -> str:
         return "<tnl HTTP transport (private)>"
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         self._check()
+        try:
+            return await self._handle(request)
+        except BaseException:
+            if isinstance(request.stream, httpx.AsyncByteStream):
+                stream = _OwnedStream(self, request.stream)
+                self._streams.add(stream)
+                # request failure and cancellation do not wait on a caller's
+                # stream close. the runtime retains and joins that exact cleanup.
+                stream.start_close()
+            raise
+
+    async def _handle(self, request: httpx.Request) -> httpx.Response:
         url = request.url
         if (
             (url.scheme, url.host, url.port)
@@ -146,13 +175,23 @@ class _TokenTransport(httpx.AsyncBaseTransport):
             or request.headers.get("host", "") != self._origin.netloc.decode()
         ):
             raise TnlError("sdk.configuration_invalid", "the request must use its selected origin")
+        pending = asyncio.create_task(self._dispatch(request))
+        self._pending.add(pending)
+        try:
+            return await pending
+        finally:
+            self._pending.discard(pending)
+
+    async def _dispatch(self, request: httpx.Request) -> httpx.Response:
+        credential = await self._authorize()
+        self._check()
         headers = request.headers.copy()
         # browser access cookies cannot substitute ambient sign-in for this token.
         headers.pop("cookie", None)
-        headers["Tnl-Visitor-Token"] = self._credential
+        headers["Tnl-Visitor-Token"] = credential
         private = httpx.Request(
             request.method,
-            url,
+            request.url,
             headers=headers,
             stream=request.stream,
             extensions={
@@ -161,15 +200,6 @@ class _TokenTransport(httpx.AsyncBaseTransport):
         )
         if self._transport is None:
             self._transport = httpx.AsyncHTTPTransport(trust_env=False, retries=0)
-        pending = asyncio.create_task(self._dispatch(private, request))
-        self._pending.add(pending)
-        try:
-            return await pending
-        finally:
-            self._pending.discard(pending)
-
-    async def _dispatch(self, private: httpx.Request, request: httpx.Request) -> httpx.Response:
-        assert self._transport is not None
         try:
             response = await self._transport.handle_async_request(private)
         except asyncio.CancelledError:
@@ -179,7 +209,7 @@ class _TokenTransport(httpx.AsyncBaseTransport):
         if response is None:
             raise _unavailable() from None
         assert isinstance(response.stream, httpx.AsyncByteStream)
-        stream = _ResponseStream(self, response.stream)
+        stream = _OwnedStream(self, response.stream)
         self._streams.add(stream)
         try:
             self._check()
@@ -225,32 +255,77 @@ class _TokenTransport(httpx.AsyncBaseTransport):
 
 class _HTTPResources:
     def __init__(
-        self, credential: str, check: Callable[[], None], context: Callable[[], None]
+        self, credential: object, check: Callable[[], None], context: Callable[[], None]
     ) -> None:
-        self._credential, self._check = visitor_token(credential), check
+        self._application: ApplicationHTTP | None = None
+        if isinstance(credential, str) and not credential.lstrip().startswith("{"):
+            self._credential: str | None = visitor_token(credential)
+        else:
+            self._credential = None
+            document = (
+                credential
+                if isinstance(credential, ApplicationDocument)
+                else application_document(credential)
+            )
+            self._application = ApplicationHTTP(document, context)
+        self._check = check
         self._context = context
-        self._connections: dict[str, HTTPClientSettings] = {}
-        self._transports: set[_TokenTransport] = set()
+        self._connections: dict[Hashable, HTTPClientSettings] = {}
+        self._transports: set[_HTTPTransport] = set()
 
-    def connect(self, origin: str) -> HTTPClientSettings:
+    def connect(self, resource: str) -> HTTPClientSettings:
         self._check()
-        url = https_origin(origin)
-        if origin not in self._connections:
+        if self._application is not None:
+            self._application.resource(resource)
+            return _ApplicationSettings(self, resource)
+        https_origin(resource)
+
+        async def authorize() -> str:
+            assert self._credential is not None
+            return self._credential
+
+        return self._connection(resource, resource, authorize)
+
+    def _connection(
+        self, url: str, key: Hashable, authorize: Callable[[], Awaitable[str]]
+    ) -> HTTPClientSettings:
+        if key not in self._connections:
             if len(self._connections) >= 64:
-                raise TnlError("sdk.client_capacity", "the runtime has too many HTTP origins")
-            transport = _TokenTransport(url, self._credential, self._context)
+                raise TnlError("sdk.client_capacity", "the runtime has too many HTTP bindings")
+            transport = _HTTPTransport(https_origin(url), authorize, self._context)
             self._transports.add(transport)
-            self._connections[origin] = HTTPClientSettings(origin, transport)
-        return self._connections[origin]
+            self._connections[key] = _ReadySettings(url, transport, self._context)
+        return self._connections[key]
+
+    async def acquire(self, resource: str) -> tuple[Hashable, HTTPClientSettings]:
+        self._context()
+        if self._application is None:
+            return resource, self.connect(resource)
+        application = self._application
+        selected = await application.resolve(resource)
+        self._check()
+
+        async def authorize() -> str:
+            current = await application.resolve(resource)
+            if current.key != selected.key:
+                raise TnlError("sdk.credential_denied", "the application resource binding changed")
+            return current.credential
+
+        return selected.key, self._connection(selected.url, selected.key, authorize)
+
+    def fence(self) -> None:
+        if self._application is not None:
+            self._application.fence()
 
     async def close(self) -> None:
-        async def close(transport: _TokenTransport) -> None:
+        async def close(transport: _HTTPTransport) -> None:
             await transport.close()
             self._transports.discard(transport)
 
-        results = await asyncio.gather(
-            *(close(transport) for transport in tuple(self._transports)), return_exceptions=True
-        )
+        work = [close(transport) for transport in tuple(self._transports)]
+        if self._application is not None:
+            work.append(self._application.close())
+        results = await asyncio.gather(*work, return_exceptions=True)
         failures = [result for result in results if isinstance(result, BaseException)]
         if failures:
             raise BaseExceptionGroup("HTTP cleanup failed", failures)

@@ -2,10 +2,10 @@ version: "3"
 
 tasks:
   application-http:
-    desc: Check real Web Crypto application proofs and exact HTTP acquisition against disposable control
-    deps: [":js:build"]
+    desc: Check TypeScript Web Crypto and Python application proofs against disposable control
+    deps: [":js:build", ":py:sync"]
     cmds:
-      - go -C tools/testharness run . postgres -- go test -race -v ./packages/ts/test/control -run='^TestIntegrationApplicationHTTP' -count=1 -timeout=3m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . postgres -- go test -race -v ./packages/ts/test/control ./packages/py/tests/control -run='^TestIntegrationApplicationHTTP' -count=1 -timeout=3m -args -tnl-test-tier=integration
 
   application-registrations:
     desc: Check atomic application registrations, exact visitor grants, key rotation and bounded policy projection

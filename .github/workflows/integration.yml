@@ -53,7 +53,7 @@ jobs:
         if: matrix.suite == 'application-http'
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: node pnpm
+          tools: node pnpm python uv
           pnpm: "true"
 
       - name: Check test harness and shard selection

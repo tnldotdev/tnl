@@ -174,7 +174,12 @@ def test_noncanonical_origins_fail_before_dispatch(origin: str) -> None:
 def test_invalid_explicit_credentials_never_fall_back(token: object) -> None:
     with pytest.raises(tnl.TnlError) as failure:
         tnl.create_tnl(credential=cast(str, token))
-    assert failure.value.code == "sdk.configuration_invalid"
+    expected = (
+        "sdk.credential_invalid"
+        if isinstance(token, dict) or isinstance(token, str) and token.startswith("{")
+        else "sdk.configuration_invalid"
+    )
+    assert failure.value.code == expected
     assert "secret" not in str(failure.value) and failure.value.__context__ is None
 
 
