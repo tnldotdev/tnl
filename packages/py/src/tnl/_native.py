@@ -166,6 +166,8 @@ class NativeRuntime:
             "check",
             "events",
             "ad-hoc/register",
+            "publications/prepare",
+            "publications/register",
         }:
             raise InvalidResponse()
         address = endpoint.url + "/v1/" + operation
@@ -216,6 +218,7 @@ class NativeRuntime:
                             "check",
                             "events",
                             "ad-hoc/register",
+                            "publications/prepare",
                         }:
                             raise InvalidResponse()
                         return None
@@ -232,6 +235,7 @@ class NativeRuntime:
                             "check",
                             "events",
                             "ad-hoc/register",
+                            "publications/prepare",
                         }:
                             raise InvalidResponse()
                         return value
@@ -252,6 +256,9 @@ class NativeRuntime:
                         "runtime.publisher_credential_file_invalid": (
                             "sdk.publisher_credential_file_invalid"
                         ),
+                        "runtime.credential_invalid": "sdk.credential_invalid",
+                        "runtime.credential_denied": "sdk.credential_denied",
+                        "runtime.credential_unavailable": "sdk.credential_unavailable",
                     }.get(value["code"], "sdk.request_rejected")
                     if response.status_code >= 500 and code == "sdk.request_rejected":
                         raise NativeUnavailable()
@@ -268,6 +275,9 @@ class NativeRuntime:
                             "the selected publisher file is invalid; check the file"
                             " and its permissions"
                         ),
+                        "sdk.credential_invalid": "the application credential is invalid",
+                        "sdk.credential_denied": "the selected application grant is not authorized",
+                        "sdk.credential_unavailable": "application credential acquisition failed",
                     }.get(code, "the local publisher rejected the request")
                     raise TnlError(code, message)
         except (httpx.HTTPError, TimeoutError):

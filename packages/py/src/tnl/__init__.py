@@ -1,6 +1,6 @@
 """publish Python ASGI apps and visit services with independently owned runtimes."""
 
-from ._app import PreparedService, Server, prepare, run
+from ._app import PreparedPublication, PreparedService, Server, prepare, run
 from ._asgi import AccessPolicy, Limits, RateLimit, publish
 from ._client import ClientFactory, client
 from ._connections import (
@@ -54,6 +54,7 @@ __all__ = [
     "Limits",
     "NativeUnavailable",
     "PreparedService",
+    "PreparedPublication",
     "RateLimit",
     "RegistrationLost",
     "TnlError",

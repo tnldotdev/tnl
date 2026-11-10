@@ -14,10 +14,11 @@ from urllib.parse import urlsplit
 
 from starlette.types import ASGIApp
 
-from ._app import PreparedService
+from ._app import PreparedPublication, PreparedService
 from ._asgi import AccessPolicy, Limits, publish_runtime
 from ._client import ClientFactory, _Factory, connection_client
 from ._connections import Connection, ConnectionHandle, _Scope, _Session
+from ._credential import ApplicationDocument, application_document
 from ._http import HTTPClientSettings, _HTTPResources
 from ._native import NativeRuntime
 from ._protocol import TnlError, service_name
@@ -285,6 +286,9 @@ class TnlInstance(_Lifetime):
 
     def _fence(self) -> None:
         self._scope.closed = True
+        for publication in tuple(self._publications):
+            if isinstance(publication, PreparedService):
+                publication.fence()
 
     async def _release(self) -> None:
         await asyncio.gather(*tuple(self._scope.operations), return_exceptions=True)
@@ -296,9 +300,52 @@ class TnlInstance(_Lifetime):
 class TnlHTTPInstance(_Lifetime):
     """visit exact application resources or token HTTPS origins with ordinary clients."""
 
-    def __init__(self, credential: str | Mapping[str, object]) -> None:
+    def __init__(
+        self,
+        credential: str | Mapping[str, object],
+        *,
+        directory: str | Path | None = None,
+        state_dir: str | Path | None = None,
+        server: str | None = None,
+    ) -> None:
+        self._document: ApplicationDocument | None = None
+        if (
+            isinstance(credential, Mapping)
+            or isinstance(credential, str)
+            and credential.lstrip().startswith("{")
+        ):
+            self._document = application_document(credential)
+        if self._document is None and any(
+            value is not None for value in (directory, state_dir, server)
+        ):
+            raise TnlError("sdk.configuration_invalid", "token HTTP does not select native state")
+        if self._document is not None:
+            if server is not None and server != self._document.control_url:
+                raise TnlError("sdk.credential_denied", "the credential selects its control URL")
+            try:
+                root = Path(directory if directory is not None else os.getcwd()).resolve(
+                    strict=True
+                )
+                state = state_dir if state_dir is not None else os.environ.get("TNL_STATE_DIR")
+                if not root.is_dir() or directory == "" or state == "" or "\0" in str(root):
+                    raise ValueError("selection")
+                self._publication_directory = str(root)
+                self._publication_state = None if state is None else str(Path(state).resolve())
+            except (OSError, ValueError, TypeError):
+                raise TnlError(
+                    "sdk.configuration_invalid", "select an existing publication directory"
+                ) from None
+            self._publication_native = NativeRuntime(
+                {
+                    "TNL_STATE_DIR": self._publication_state,
+                    "TNL_SERVER": self._document.control_url,
+                    "TNL_CONFIG": os.environ.get("TNL_CONFIG"),
+                    "TNL_APP_ENDPOINT": None,
+                    "TNL_PUBLISHER_CREDENTIAL_FILE": None,
+                }
+            )
         super().__init__()
-        self._http = _HTTPResources(credential, self._check, self._http_context)
+        self._http = _HTTPResources(self._document or credential, self._check, self._http_context)
 
     def _http_context(self) -> None:
         self._check()
@@ -326,15 +373,45 @@ class TnlHTTPInstance(_Lifetime):
         self._clients.add(factory)
         return factory
 
+    async def prepare(self, *, resource: str | None = None) -> PreparedPublication:
+        self._check()
+        if self._document is None:
+            raise TnlError("sdk.credential_denied", "visitor tokens do not authorize publication")
+        document = self._document
+        document.publish(resource)
+
+        async def start() -> PreparedPublication:
+            result = PreparedPublication(
+                self._publication_directory,
+                self._publication_state,
+                self._publication_native,
+                document,
+                resource,
+            )
+            self._publications.add(result)
+            await result.start()
+            return result
+
+        return await self._own(start)
+
     async def _release(self) -> None:
         await self._http.close()
 
     def _fence(self) -> None:
         self._http.fence()
+        for publication in tuple(self._publications):
+            if isinstance(publication, PreparedPublication):
+                publication.fence()
 
 
 @overload
-def create_tnl(*, credential: str | Mapping[str, object]) -> TnlHTTPInstance: ...
+def create_tnl(
+    *,
+    credential: str | Mapping[str, object],
+    directory: str | Path | None = None,
+    state_dir: str | Path | None = None,
+    server: str | None = None,
+) -> TnlHTTPInstance: ...
 
 
 @overload
@@ -356,11 +433,7 @@ def create_tnl(
 ) -> TnlInstance | TnlHTTPInstance:
     """construct an independently owned runtime without starting native work."""
     if isinstance(credential, (str, Mapping)):
-        if any(value is not None for value in (directory, state_dir, server)):
-            raise TnlError(
-                "sdk.configuration_invalid", "credential HTTP does not select native state"
-            )
-        return TnlHTTPInstance(credential)
+        return TnlHTTPInstance(credential, directory=directory, state_dir=state_dir, server=server)
     return TnlInstance(
         directory=directory, state_dir=state_dir, server=server, credential=credential
     )

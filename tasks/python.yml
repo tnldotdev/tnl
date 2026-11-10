@@ -1,6 +1,13 @@
 version: "3"
 
 tasks:
+  test:application-publications:
+    desc: Check exact Python application preparation, listener replacement and joined native cleanup
+    cmds:
+      - task: :py:test
+        vars:
+          CLI_ARGS: "-k 'application_preparation or native or publication or runtime'"
+
   test:application-http:
     desc: Check Python application document proofs, exact visit grants and HTTP client bindings
     cmds:
@@ -27,7 +34,7 @@ tasks:
     cmds:
       - task: :py:test
         vars:
-          CLI_ARGS: "-k 'publication or asgi or status or worker_registers or native_assignment'"
+          CLI_ARGS: "-k 'publication or asgi or status or worker_registers or native_assignment or application_preparation'"
 
   test:client-factories:
     dir: "{{.ROOT_DIR}}"

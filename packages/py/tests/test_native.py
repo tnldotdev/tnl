@@ -89,6 +89,9 @@ def test_requests_bound_responses_and_never_follow_redirects(
     [
         ("runtime.publisher_setup_required", "tnl publisher setup --namespace"),
         ("runtime.publisher_credential_file_invalid", "publisher file"),
+        ("runtime.credential_invalid", "application credential"),
+        ("runtime.credential_denied", "application grant"),
+        ("runtime.credential_unavailable", "acquisition failed"),
     ],
 )
 def test_publisher_selection_failure_is_authored_without_private_details(
@@ -120,6 +123,64 @@ def test_publisher_selection_failure_is_authored_without_private_details(
                 await NativeRuntime().request(endpoint, "ad-hoc/register", {})
             assert caught.value.code == code.replace("runtime.", "sdk.")
             assert "secret provider detail" not in str(caught.value)
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["publications/prepare", "publications/register"])
+def test_application_preparation_uses_the_private_native_http_contract(operation: str) -> None:
+    async def scenario() -> None:
+        failures: list[BaseException] = []
+        payload: dict[str, object] = (
+            {"application_credential": "private fixture document"}
+            if operation.endswith("prepare")
+            else {"registration_id": "reg_" + "a" * 32}
+        )
+        reply = {"version": 1, "resource_id": "url_" + "A" * 22}
+
+        async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            try:
+                headers = (await reader.readuntil(b"\r\n\r\n")).decode()
+                lines = headers.split("\r\n")
+                assert lines[0] == f"POST /v1/{operation} HTTP/1.1"
+                assert f"Authorization: Bearer {'b' * 64}" in lines
+                length = next(
+                    int(line.split(":", 1)[1])
+                    for line in lines
+                    if line.lower().startswith("content-length:")
+                )
+                assert json.loads(await reader.readexactly(length)) == payload
+                body = json.dumps(reply).encode() if operation.endswith("prepare") else b""
+                status = 200 if body else 204
+                writer.write(
+                    (
+                        f"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\n"
+                        f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+                    ).encode()
+                    + body
+                )
+                await writer.drain()
+            except BaseException as error:
+                failures.append(error)
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(handle, "127.0.0.1", 0)
+        endpoint = Endpoint(
+            f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}",
+            "b" * 64,
+            "a" * 32,
+            "invocation",
+            invocation_id="ivk_" + "A" * 22,
+        )
+        try:
+            result = await NativeRuntime().request(endpoint, operation, payload)
+            assert result == (reply if operation.endswith("prepare") else None)
+            assert not failures
         finally:
             server.close()
             await server.wait_closed()

@@ -14,6 +14,7 @@ import uvicorn
 from starlette.types import ASGIApp
 from uvicorn.supervisors import ChangeReload
 
+from ._credential import ApplicationDocument, https_origin
 from ._native import NativeRuntime
 from ._protocol import (
     Endpoint,
@@ -27,6 +28,8 @@ from ._protocol import (
     text,
 )
 from ._publication import Publication, Selection, join_cleanup
+
+_RENEW_INTERVAL = 5
 
 
 def _service_metadata(name: str, value: object) -> dict[str, object]:
@@ -93,6 +96,15 @@ class _PublicationRun:
     done: asyncio.Future[None]
 
 
+@dataclass(frozen=True, slots=True)
+class _Assignment:
+    endpoint: Endpoint
+    registration_id: str
+    name: str
+    hostname: str
+    public_url: str
+
+
 class PreparedService:
     def __init__(
         self, directory: str, service: str | None, state_dir: str | None, native: NativeRuntime
@@ -111,11 +123,15 @@ class PreparedService:
         self._cleanup: asyncio.Task[None] | None = None
         self._close_complete = False
         self._closing_requested = False
+        self._starting: asyncio.Task[None] | None = None
+        self._register_operation = "register"
+        self._failure: TnlError | None = None
+        self._rejected: set[_Prepared] = set()
         self.service = ""
         self.hostname = ""
         self.public_url = ""
 
-    async def _prepare(self) -> None:
+    async def _assignment(self) -> _Assignment:
         endpoint = await self._native.start(
             self._directory, service=self._service, state_dir=self._state_dir
         )
@@ -176,12 +192,26 @@ class PreparedService:
             )
         ):
             raise InvalidResponse()
-        if self.service and (url != self.public_url or name != self.service):
-            await self._native.request(
-                endpoint,
-                "unregister",
-                {"version": 1, "registration_id": ident, "owner": self._owner},
-            )
+        return _Assignment(endpoint, ident, name, host, url)
+
+    def _authorize(self) -> None:
+        if self._failure is not None:
+            raise self._failure
+
+    async def _reconcile_initial(self) -> None:
+        pass
+
+    async def _prepare(self) -> None:
+        self._authorize()
+        assignment = await self._assignment()
+        endpoint, ident, name = assignment.endpoint, assignment.registration_id, assignment.name
+        host, url = assignment.hostname, assignment.public_url
+        if self.service and (
+            url != self.public_url or host != self.hostname or name != self.service
+        ):
+            rejected = _Prepared(endpoint, ident)
+            self._rejected.add(rejected)
+            await self._discard_rejected(rejected)
             raise InvalidResponse()
         if isinstance(self._phase, _Closed):
             raise RegistrationLost()
@@ -202,14 +232,32 @@ class PreparedService:
             value["target"] = self._target
         return value
 
+    async def _discard_rejected(self, prepared: _Prepared) -> None:
+        try:
+            await self._native.request(
+                prepared.endpoint, "unregister", self._registration(prepared)
+            )
+        except RegistrationLost:
+            pass
+        self._rejected.discard(prepared)
+
     async def start(self) -> None:
-        await self._prepare()
-        self._renewal = asyncio.create_task(self._renew())
+        if self._closing_requested:
+            raise RegistrationLost()
+        if self._starting is None:
+            self._starting = asyncio.create_task(self._prepare())
+            self._starting.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
+        await asyncio.shield(self._starting)
+        if not self._closing_requested and self._renewal is None:
+            self._renewal = asyncio.create_task(self._renew())
 
     async def register(self, target: str) -> Publication:
         async with self._lock:
             if self._closing_requested or isinstance(self._phase, _Closed):
                 raise RegistrationLost()
+            self._authorize()
             if self._released:
                 await self._prepare()
                 self._released = False
@@ -218,20 +266,23 @@ class PreparedService:
             assert isinstance(prepared, _Prepared)
             try:
                 await self._native.request(
-                    prepared.endpoint, "register", self._registration(prepared)
+                    prepared.endpoint, self._register_operation, self._registration(prepared)
                 )
             except (NativeUnavailable, RegistrationLost):
                 await self._prepare()
                 prepared = self._phase
                 assert isinstance(prepared, _Prepared)
                 await self._native.request(
-                    prepared.endpoint, "register", self._registration(prepared)
+                    prepared.endpoint, self._register_operation, self._registration(prepared)
                 )
 
             self._finish_active()
             if self._closing_requested:
                 raise RegistrationLost()
             active = _PublicationRun(asyncio.Event(), asyncio.get_running_loop().create_future())
+            active.done.add_done_callback(
+                lambda future: future.exception() if not future.cancelled() else None
+            )
             self._active = active
 
             def current() -> Selection:
@@ -241,6 +292,7 @@ class PreparedService:
                     or self._target is None
                 ):
                     raise RegistrationLost()
+                self._authorize()
                 return Selection(
                     self._phase.endpoint, self.service, self._phase.registration_id, self._target
                 )
@@ -286,7 +338,7 @@ class PreparedService:
 
     async def _renew(self) -> None:
         while not isinstance(self._phase, _Closed):
-            await asyncio.sleep(5)
+            await asyncio.sleep(_RENEW_INTERVAL)
             async with self._lock:
                 prepared = self._phase
                 if isinstance(prepared, _Closed):
@@ -295,6 +347,7 @@ class PreparedService:
                     continue
                 assert isinstance(prepared, _Prepared)
                 try:
+                    self._authorize()
                     await self._native.request(
                         prepared.endpoint, "renew", self._registration(prepared)
                     )
@@ -305,23 +358,47 @@ class PreparedService:
                         assert isinstance(prepared, _Prepared)
                         if self._target is not None:
                             await self._native.request(
-                                prepared.endpoint, "register", self._registration(prepared)
+                                prepared.endpoint,
+                                self._register_operation,
+                                self._registration(prepared),
                             )
-                    except TnlError:
-                        pass
-                except TnlError:
-                    pass
+                    except TnlError as error:
+                        if error.code == "sdk.credential_denied":
+                            self._terminal(error)
+                            return
+                except TnlError as error:
+                    if error.code == "sdk.credential_denied":
+                        self._terminal(error)
+                        return
 
-    async def close(self) -> None:
+    def _terminal(self, error: TnlError) -> None:
+        self._failure = error
+        if self._active is not None:
+            self._active.stopped.set()
+            if not self._active.done.done():
+                self._active.done.set_exception(error)
+
+    def fence(self) -> None:
         self._closing_requested = True
         if self._active is not None:
             self._active.stopped.set()
+
+    async def close(self) -> None:
+        self.fence()
         if self._cleanup is None or self._cleanup.done() and not self._close_complete:
             self._cleanup = asyncio.create_task(self._close())
         await join_cleanup(self._cleanup)
 
     async def _close(self) -> None:
+        if self._starting is not None:
+            try:
+                await self._starting
+            except TnlError:
+                pass
         async with self._lock:
+            await self._reconcile_initial()
+            for rejected in tuple(self._rejected):
+                await self._discard_rejected(rejected)
             if self._close_complete:
                 return
             prepared = (
@@ -347,6 +424,101 @@ class PreparedService:
                     pass
             self._finish_active()
             self._close_complete = True
+
+
+class PreparedPublication(PreparedService):
+    """one exact application resource and its prepared native registration."""
+
+    def __init__(
+        self,
+        directory: str,
+        state_dir: str | None,
+        native: NativeRuntime,
+        document: ApplicationDocument,
+        resource: str | None,
+    ) -> None:
+        super().__init__(directory, None, state_dir, native)
+        self._document = document
+        self._resource, self._credential = document.publication(resource)
+        self._invocation = "ivk_" + "".join(
+            secrets.choice("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+            for _ in range(22)
+        )
+        self._register_operation = "publications/register"
+        self._uncertain = False
+
+    def __repr__(self) -> str:
+        return "<tnl prepared publication (private)>"
+
+    def _authorize(self) -> None:
+        super()._authorize()
+        self._document.publish(self._resource)
+
+    async def _assignment(self) -> _Assignment:
+        endpoint = await self._native.start(
+            self._directory,
+            invocation_id=self._invocation,
+            state_dir=self._state_dir,
+        )
+        if endpoint.scope != "invocation" or endpoint.invocation_id != self._invocation:
+            raise InvalidResponse()
+        self._uncertain = True
+        try:
+            reply = await self._native.request(
+                endpoint,
+                "publications/prepare",
+                {
+                    "version": 1,
+                    "invocation_id": self._invocation,
+                    "owner": self._owner,
+                    "pid": os.getpid(),
+                    "server_url": self._document.control_url,
+                    "application_credential": self._credential,
+                    "resource_id": self._resource,
+                },
+            )
+        except TnlError as error:
+            if error.code in {"sdk.credential_denied", "sdk.credential_invalid"}:
+                self._uncertain = False
+            raise
+        assignment = object_value(
+            reply,
+            {
+                "version",
+                "registration_id",
+                "resource_id",
+                "hostname",
+                "public_url",
+            },
+        )
+        ident = text(assignment.get("registration_id"), 128)
+        host = hostname(assignment.get("hostname"))
+        url = assignment.get("public_url")
+        if (
+            type(assignment.get("version")) is not int
+            or assignment["version"] != 1
+            or re.fullmatch(r"reg_[a-f0-9]{32}", ident) is None
+            or assignment.get("resource_id") != self._resource
+            or not isinstance(url, str)
+        ):
+            raise InvalidResponse()
+        if self._resource.startswith("url_"):
+            if url != "https://" + host:
+                raise InvalidResponse()
+        elif url:
+            try:
+                origin = https_origin(url)
+            except TnlError:
+                raise InvalidResponse() from None
+            if origin.host != host or origin.port is None or not 1024 <= origin.port <= 65535:
+                raise InvalidResponse()
+        self._uncertain = False
+        return _Assignment(endpoint, ident, self._invocation, host, url)
+
+    async def _reconcile_initial(self) -> None:
+        if self._uncertain:
+            assignment = await self._assignment()
+            self._phase = _Prepared(assignment.endpoint, assignment.registration_id)
 
 
 async def prepare(

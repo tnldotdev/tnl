@@ -10,7 +10,8 @@ import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
+from math import isfinite
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -125,6 +126,43 @@ class ApplicationDocument:
             ):
                 return grant
         raise TnlError("sdk.credential_denied", "select an exact current application visit grant")
+
+    def publish(self, resource: str | None = None) -> ApplicationGrant:
+        selected = [
+            grant
+            for grant in self.grants
+            if grant.operation == "publish"
+            and grant.kind in {"saved_public_url", "service"}
+            and (resource is None or grant.resource == resource)
+            and grant.expires > time.time()
+        ]
+        if len(selected) != 1:
+            raise TnlError(
+                "sdk.credential_denied", "select one exact current application publish grant"
+            )
+        return selected[0]
+
+    def publication(self, resource: str | None = None) -> tuple[str, str]:
+        grant = self.publish(resource)
+        record: dict[str, object] = {
+            "id": grant.id,
+            "operation": grant.operation,
+            "kind": grant.kind,
+            "public_url_id" if grant.kind == "saved_public_url" else "service_id": grant.resource,
+        }
+        if isfinite(grant.expires):
+            record["expires_at"] = datetime.fromtimestamp(grant.expires, UTC).isoformat()
+        raw = self.key.private_bytes_raw() + self.key.public_key().public_bytes_raw()
+        document = {
+            "version": 1,
+            "control_url": self.control_url,
+            "client_id": self.client_id,
+            "key_id": self.key_id,
+            "team_id": self.team_id,
+            "private_key": base64.urlsafe_b64encode(raw).decode().rstrip("="),
+            "grants": [record],
+        }
+        return grant.resource, json.dumps(document, separators=(",", ":"))
 
 
 def application_document(value: object) -> ApplicationDocument:

@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -46,7 +47,11 @@ func IsolatedPublishingTest(t *testing.T) bool {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, executable, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v", "-test.timeout=40s", "-tnl-test-tier="+*testTier)
+	parts := strings.Split(t.Name(), "/")
+	for index, part := range parts {
+		parts[index] = "^" + regexp.QuoteMeta(part) + "$"
+	}
+	command := exec.CommandContext(ctx, executable, "-test.run="+strings.Join(parts, "/"), "-test.v", "-test.timeout=40s", "-tnl-test-tier="+*testTier)
 	command.Env = append(os.Environ(), "GO_TEST_PUBLISHING_HELPER="+t.Name(), "GORACE=atexit_sleep_ms=0")
 	command.WaitDelay = time.Second
 	output, err := command.CombinedOutput()

@@ -26,12 +26,13 @@ import (
 
 func TestIntegrationSDKApplicationPublicationTraffic(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
-	for _, mode := range []string{"prepare", "publish", "fetch"} {
+	for _, mode := range []string{"prepare", "publish", "fetch", "python-prepare"} {
 		t.Run(mode, func(t *testing.T) {
 			if !testutil.IsolatedPublishingTest(t) {
 				return
 			}
 			release := make(chan struct{})
+			prepared := strings.HasSuffix(mode, "prepare")
 			ready := sync.OnceFunc(func() { close(release) })
 			defer ready()
 			var joined atomic.Int32
@@ -101,13 +102,16 @@ func TestIntegrationSDKApplicationPublicationTraffic(t *testing.T) {
 				t.Fatal(err)
 			}
 			command := exec.CommandContext(t.Context(), "node", filepath.Join(repo, "packages/ts/test/fixtures/publication-runtime.ts"), credential, saved.Id, mode, binary)
+			if mode == "python-prepare" {
+				command = exec.CommandContext(t.Context(), filepath.Join(repo, "packages/py/.venv/bin/python"), filepath.Join(repo, "packages/py/tests/application_publication_native.py"), credential, saved.Id, binary)
+			}
 			command.Dir = root
 			for _, entry := range os.Environ() {
-				if !strings.HasPrefix(entry, "TNL_") && !strings.HasPrefix(entry, "NODE_PATH=") {
+				if !strings.HasPrefix(entry, "TNL_") && !strings.HasPrefix(entry, "NODE_PATH=") && !strings.HasPrefix(entry, "PYTHONPATH=") {
 					command.Env = append(command.Env, entry)
 				}
 			}
-			command.Env = append(command.Env, "NODE_PATH="+filepath.Join(root, "node_modules"), "TNL_PUBLISHER_CREDENTIAL_FILE=/private/must-not-read.json")
+			command.Env = append(command.Env, "NODE_PATH="+filepath.Join(root, "node_modules"), "PYTHONPATH="+filepath.Join(repo, "packages/py/src"), "TNL_PUBLISHER_CREDENTIAL_FILE=/private/must-not-read.json")
 			var diagnostics bytes.Buffer
 			command.Stderr = &diagnostics
 			output, err := command.StdoutPipe()
@@ -164,7 +168,7 @@ func TestIntegrationSDKApplicationPublicationTraffic(t *testing.T) {
 			}
 			before := fixture.Enrollments.Load()
 			address := "https://" + saved.CanonicalHostname
-			if mode == "prepare" {
+			if prepared {
 				expect("prepared " + address)
 				if fixture.Runs.Load() != 0 {
 					t.Fatal("unbound SDK preparation started a publish run")
@@ -180,11 +184,11 @@ func TestIntegrationSDKApplicationPublicationTraffic(t *testing.T) {
 				}
 				return false
 			})
-			if mode == "prepare" {
+			if prepared {
 				expect("bound")
 			}
 			ready()
-			if mode == "prepare" {
+			if prepared {
 				send("ready")
 			}
 			expect("ready " + address)
@@ -197,7 +201,7 @@ func TestIntegrationSDKApplicationPublicationTraffic(t *testing.T) {
 			}
 			visit("first SDK listener")
 			send("visit")
-			if mode == "prepare" {
+			if prepared {
 				expect("replaced")
 				visit("replacement SDK listener")
 				send("visit")
@@ -245,7 +249,7 @@ func TestIntegrationSDKApplicationPublicationTraffic(t *testing.T) {
 				}
 			}
 			wantRuns := int32(1)
-			if mode == "prepare" {
+			if prepared {
 				wantRuns = 2
 			}
 			if fixture.Runs.Load() != wantRuns || joined.Load() != wantRuns || fixture.Allocations.Load() != 0 || fixture.Deletions.Load() != 0 || fixture.Enrollments.Load() != before {
