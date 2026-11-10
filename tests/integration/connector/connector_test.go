@@ -701,7 +701,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 	if protocol == "kubernetes" {
 		targetDefinition = map[string]any{"type": "eks", "cluster": "fixture", "region": "us-east-1"}
 	}
-	workloadPolicy := map[string]any{"github": map[string]any{"workflow": ".github/workflows/test.yml", "branch": "main", "events": []string{"push"}}, "services": []string{serviceName}}
+	workloadPolicy := map[string]any{"github": map[string]any{"workflow": ".github/workflows/test.yml", "branch": "main", "events": []string{"push"}}, "grants": config.ServiceVisitGrants(serviceName)}
 	if startup == "borrowed-refresh" {
 		workloadPolicy["token"] = map[string]any{"file": "assertion"}
 	}
@@ -819,7 +819,7 @@ func runConnectionNativeOwnerBinary(t *testing.T, protocol string, public bool, 
 		command.Stdout = &output
 		command.Stderr = &diagnostics
 		if err := command.Run(); err != nil {
-			t.Fatalf("native call: %v %s", err, diagnostics.Bytes())
+			t.Fatalf("native %s call: %v %s", args[0], err, diagnostics.Bytes())
 		}
 		return output.Bytes()
 	}

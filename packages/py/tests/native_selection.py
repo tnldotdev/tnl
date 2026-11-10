@@ -16,14 +16,18 @@ _connections.native_binary = lambda: Path(sys.argv[1])
 token = Path("assertion").read_text().strip()
 native_provider = "provider" in sys.argv
 rotating_file = "refresh" in sys.argv
-if rotating_file:
-    tnl.configure_workload("test", token_file="assertion")
-elif not native_provider:
-    tnl.configure_workload("test", token=lambda: token)
 
 
 async def main() -> None:
-    handle = tnl.connect("api")
+    credential = (
+        tnl.Workload("test", token_file=str(Path("assertion").resolve()))
+        if rotating_file
+        else tnl.Workload("test")
+        if native_provider
+        else tnl.Workload("test", token=lambda: token)
+    )
+    app = tnl.create_tnl(credential=credential)
+    handle = app.connect("api")
     get_client: tnl.ClientFactory[ssl.SSLSocket] | None = None
     try:
 
@@ -76,7 +80,7 @@ async def main() -> None:
                 closed += 1
                 client.close()
 
-            get_client = tnl.client("api", create=create_socket, close=close_socket)
+            get_client = app.client("api", create=create_socket, close=close_socket)
             stream = await get_client()
             for _ in range(3):
                 assert await get_client() is stream
@@ -110,14 +114,17 @@ async def main() -> None:
         if "lifecycle" in sys.argv:
             from native_lifecycle import run
 
-            await run(handle, first)
+            await run(app, handle, first)
         assert await asyncio.to_thread(input) == "stop"
     finally:
         try:
             if get_client is not None:
                 await get_client.aclose()
         finally:
-            await handle.aclose()
+            try:
+                await handle.aclose()
+            finally:
+                await app.aclose()
 
 
 asyncio.run(main())

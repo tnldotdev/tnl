@@ -18,7 +18,7 @@ from test_publication import PublicationRuntime
 from test_workload_connections import prepared
 
 import tnl
-from tnl import _connections, _runtime, _workload
+from tnl import _connections, _runtime
 
 
 class ScopedNative:
@@ -192,12 +192,8 @@ def test_scoped_callbacks_select_each_getter_and_reuse_a_b_a_bindings(
         global_calls.append("called")
         return "global"
 
-    monkeypatch.setattr(
-        _workload,
-        "_configuration",
-        ("global", global_token, None),
-    )
-    app = tnl.create_tnl(directory=tmp_path, workload=tnl.Workload("job", token=current.get))
+    unrelated = tnl.create_tnl(credential=tnl.Workload("global", token=global_token))
+    app = tnl.create_tnl(directory=tmp_path, credential=tnl.Workload("job", token=current.get))
     monkeypatch.setenv("TNL_WORKLOAD", "changed")
     created: list[object] = []
     closed: list[object] = []
@@ -216,6 +212,7 @@ def test_scoped_callbacks_select_each_getter_and_reuse_a_b_a_bindings(
         native.deadline = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
         assert await get() is first and second is not first
         assert len(created) == 2 and not global_calls
+        await unrelated.aclose()
         assert all(request["name"] == "job" for request in native.previews)
         for request in native.previews:
             runtime = request["runtime"]
@@ -313,7 +310,7 @@ def test_pending_workload_callback_is_joined_without_human_fallback(
             await release.wait()
             return "first"
 
-        app = tnl.create_tnl(directory=tmp_path, workload=tnl.Workload("job", token=token))
+        app = tnl.create_tnl(directory=tmp_path, credential=tnl.Workload("job", token=token))
         handle = app.connect("db")
 
         async def prepare() -> tnl.Connection:

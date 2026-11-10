@@ -7,16 +7,18 @@ import os
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from enum import Enum
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, Self, overload
 from urllib.parse import urlsplit
 
 from starlette.types import ASGIApp
 
 from ._app import PreparedService
 from ._asgi import AccessPolicy, Limits, publish_runtime
-from ._client import ClientFactory, connection_client
+from ._client import ClientFactory, _Factory, connection_client
 from ._connections import Connection, ConnectionHandle, _Scope, _Session
+from ._http import HTTPClientSettings, _HTTPResources
 from ._native import NativeRuntime
 from ._protocol import TnlError, service_name
 from ._publication import Publication, join_cleanup
@@ -27,7 +29,110 @@ class _Owned(Protocol):
     async def close(self) -> None: ...
 
 
-class TnlInstance:
+class _Omitted(Enum):
+    CREDENTIAL = 0
+
+
+class _Lifetime:
+    def __init__(self) -> None:
+        self._pid = os.getpid()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._closed = False
+        self._closing: asyncio.Task[None] | None = None
+        self._publications: set[_Owned] = set()
+        self._clients: set[ClientFactory[object]] = set()
+        self._pending: set[asyncio.Task[object]] = set()
+
+    def __repr__(self) -> str:
+        return "<tnl runtime instance (private)>"
+
+    def _check(self) -> None:
+        if self._pid != os.getpid() or self._closed:
+            raise TnlError("sdk.client_closed", "the runtime instance is closed")
+
+    def _context(self) -> None:
+        loop = asyncio.get_running_loop()
+        if self._loop is None:
+            self._loop = loop
+        elif self._loop is not loop:
+            raise TnlError(
+                "sdk.client_context_invalid", "the runtime instance belongs to another event loop"
+            )
+
+    async def _own[T](self, operation: Callable[[], Awaitable[T]]) -> T:
+        self._check()
+        self._context()
+
+        async def run() -> T:
+            try:
+                self._check()
+                value = await operation()
+                self._check()
+                return value
+            except asyncio.CancelledError:
+                self._check()
+                raise
+
+        work = asyncio.create_task(run())
+        self._pending.add(work)
+
+        def finished(task: asyncio.Task[T]) -> None:
+            self._pending.discard(task)
+            if not task.cancelled():
+                task.exception()
+
+        work.add_done_callback(finished)
+        return await asyncio.shield(work)
+
+    async def aclose(self) -> None:
+        if self._pid != os.getpid():
+            return
+        self._context()
+        self._closed = True
+        self._fence()
+        if self._closing is None:
+            self._closing = asyncio.create_task(self._cleanup())
+        try:
+            await join_cleanup(self._closing)
+        except BaseException:
+            if self._closing.done():
+                self._closing = None
+            raise
+
+    def _fence(self) -> None:
+        pass
+
+    async def _release(self) -> None:
+        raise NotImplementedError
+
+    async def _cleanup(self) -> None:
+        for task in tuple(self._pending):
+            task.cancel()
+        await asyncio.gather(*tuple(self._pending), return_exceptions=True)
+        await self._close_all(tuple(self._publications), lambda item: item.close())
+        self._publications.clear()
+        await self._close_all(tuple(self._clients), lambda item: item.aclose())
+        self._clients.clear()
+        await self._release()
+
+    async def _close_all[T](
+        self, values: tuple[T, ...], close: Callable[[T], Awaitable[None]]
+    ) -> None:
+        results = await asyncio.gather(*(close(value) for value in values), return_exceptions=True)
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if failures:
+            raise BaseExceptionGroup("runtime cleanup failed", failures)
+
+    async def __aenter__(self) -> Self:
+        self._check()
+        self._context()
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self.aclose()
+
+
+class TnlInstance(_Lifetime):
     """pin native selection without mutating process-wide SDK configuration."""
 
     def __init__(
@@ -36,8 +141,11 @@ class TnlInstance:
         directory: str | Path | None = None,
         state_dir: str | Path | None = None,
         server: str | None = None,
-        workload: Workload | None = None,
+        credential: Workload | _Omitted = _Omitted.CREDENTIAL,
     ) -> None:
+        workload = credential if isinstance(credential, Workload) else None
+        if credential is not _Omitted.CREDENTIAL and workload is None:
+            raise TnlError("sdk.configuration_invalid", "supply an explicit workload credential")
         try:
             root = Path(directory if directory is not None else os.getcwd()).resolve(strict=True)
             state = state_dir if state_dir is not None else os.environ.get("TNL_STATE_DIR")
@@ -83,30 +191,8 @@ class TnlInstance:
         self._native = NativeRuntime(environment)
         self._state_dir = state
         self._server = selected_server
-        self._pid = os.getpid()
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._closed = False
-        self._closing: asyncio.Task[None] | None = None
-        self._publications: set[_Owned] = set()
+        super().__init__()
         self._handles: weakref.WeakSet[ConnectionHandle[Connection]] = weakref.WeakSet()
-        self._clients: set[ClientFactory[object]] = set()
-        self._pending: set[asyncio.Task[object]] = set()
-
-    def __repr__(self) -> str:
-        return "<tnl runtime instance (private)>"
-
-    def _check(self) -> None:
-        if self._pid != os.getpid() or self._closed:
-            raise TnlError("sdk.client_closed", "the runtime instance is closed")
-
-    def _context(self) -> None:
-        loop = asyncio.get_running_loop()
-        if self._loop is None:
-            self._loop = loop
-        elif self._loop is not loop:
-            raise TnlError(
-                "sdk.client_context_invalid", "the runtime instance belongs to another event loop"
-            )
 
     def _publisher(self) -> None:
         self._check()
@@ -114,31 +200,6 @@ class TnlInstance:
             raise TnlError(
                 "sdk.workload_denied", "the selected workload does not authorize publishing"
             )
-
-    async def _own[T](self, operation: Callable[[], Awaitable[T]]) -> T:
-        self._check()
-        self._context()
-
-        async def run() -> T:
-            try:
-                self._check()
-                value = await operation()
-                self._check()
-                return value
-            except asyncio.CancelledError:
-                self._check()
-                raise
-
-        work = asyncio.create_task(run())
-        self._pending.add(work)
-
-        def finished(task: asyncio.Task[T]) -> None:
-            self._pending.discard(task)
-            if not task.cancelled():
-                task.exception()
-
-        work.add_done_callback(finished)
-        return await asyncio.shield(work)
 
     def connect(self, service: str) -> ConnectionHandle[Connection]:
         self._check()
@@ -222,49 +283,69 @@ class TnlInstance:
             if publication._close_complete:
                 self._publications.discard(publication)
 
-    async def aclose(self) -> None:
-        if self._pid != os.getpid():
-            return
-        self._context()
-        self._closed = True
+    def _fence(self) -> None:
         self._scope.closed = True
-        if self._closing is None:
-            self._closing = asyncio.create_task(self._cleanup())
-        try:
-            await join_cleanup(self._closing)
-        except BaseException:
-            if self._closing.done():
-                self._closing = None
-            raise
 
-    async def _cleanup(self) -> None:
-        for task in tuple(self._pending):
-            task.cancel()
-        await asyncio.gather(*tuple(self._pending), return_exceptions=True)
-        await self._close_all(tuple(self._publications), lambda item: item.close())
-        self._publications.clear()
-        await self._close_all(tuple(self._clients), lambda item: item.aclose())
-        self._clients.clear()
+    async def _release(self) -> None:
         await asyncio.gather(*tuple(self._scope.operations), return_exceptions=True)
         await self._close_all(tuple(self._handles), lambda item: item.aclose())
         self._handles.clear()
         await asyncio.to_thread(self._scope.stop)
 
-    async def _close_all[T](
-        self, values: tuple[T, ...], close: Callable[[T], Awaitable[None]]
-    ) -> None:
-        results = await asyncio.gather(*(close(value) for value in values), return_exceptions=True)
-        failures = [result for result in results if isinstance(result, BaseException)]
-        if failures:
-            raise BaseExceptionGroup("runtime cleanup failed", failures)
 
-    async def __aenter__(self) -> TnlInstance:
+class TnlHTTPInstance(_Lifetime):
+    """visit HTTPS origins with an explicit token and ordinary async clients."""
+
+    def __init__(self, credential: str) -> None:
+        super().__init__()
+        self._http = _HTTPResources(credential, self._check, self._http_context)
+
+    def _http_context(self) -> None:
         self._check()
         self._context()
-        return self
 
-    async def __aexit__(self, *_: object) -> None:
-        await self.aclose()
+    def connect(self, origin: str) -> HTTPClientSettings:
+        self._check()
+        return self._http.connect(origin)
+
+    def client[T](
+        self,
+        origin: str,
+        *,
+        create: Callable[[HTTPClientSettings], T | Awaitable[T]],
+        close: Callable[[T], None | Awaitable[None]],
+    ) -> ClientFactory[T]:
+        settings = self.connect(origin)
+
+        async def acquire() -> tuple[str, HTTPClientSettings]:
+            self._http_context()
+            return origin, settings
+
+        factory = _Factory(
+            acquire,
+            create=create,
+            close=close,
+            active=lambda: not self._closed and self._pid == os.getpid(),
+        )
+        self._clients.add(factory)
+        return factory
+
+    async def _release(self) -> None:
+        await self._http.close()
+
+
+@overload
+def create_tnl(*, credential: str) -> TnlHTTPInstance: ...
+
+
+@overload
+def create_tnl(
+    *,
+    directory: str | Path | None = None,
+    state_dir: str | Path | None = None,
+    server: str | None = None,
+    credential: Workload | _Omitted = _Omitted.CREDENTIAL,
+) -> TnlInstance: ...
 
 
 def create_tnl(
@@ -272,7 +353,13 @@ def create_tnl(
     directory: str | Path | None = None,
     state_dir: str | Path | None = None,
     server: str | None = None,
-    workload: Workload | None = None,
-) -> TnlInstance:
+    credential: str | Workload | _Omitted = _Omitted.CREDENTIAL,
+) -> TnlInstance | TnlHTTPInstance:
     """construct an independently owned runtime without starting native work."""
-    return TnlInstance(directory=directory, state_dir=state_dir, server=server, workload=workload)
+    if isinstance(credential, str):
+        if any(value is not None for value in (directory, state_dir, server)):
+            raise TnlError("sdk.configuration_invalid", "token HTTP does not select native state")
+        return TnlHTTPInstance(credential)
+    return TnlInstance(
+        directory=directory, state_dir=state_dir, server=server, credential=credential
+    )

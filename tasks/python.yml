@@ -1,12 +1,19 @@
 version: "3"
 
 tasks:
+  test:token-http:
+    desc: Check explicit Python visitor tokens, origin-bound HTTPX and joined cleanup without native authentication
+    cmds:
+      - task: :py:test
+        vars:
+          CLI_ARGS: "-k token_http"
+
   test:runtime-instances:
     desc: Check Python runtime selection, isolated workload callbacks and joined cleanup
     cmds:
       - task: :py:test
         vars:
-          CLI_ARGS: "-k 'runtime or workload or client or publication or forked'"
+          CLI_ARGS: "-k 'runtime or workload or client or publication or forked or token_http'"
 
   test:publications:
     desc: Check Python publication observations, ASGI ownership and native registration

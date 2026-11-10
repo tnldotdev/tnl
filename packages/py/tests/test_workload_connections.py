@@ -27,7 +27,6 @@ from tnl import _connections, _workload
 def test_platform_selection_hints_stay_native(
     monkeypatch: pytest.MonkeyPatch, environment: str, key: str, hint: str
 ) -> None:
-    monkeypatch.setattr(_workload, "_configuration", None)
     for name in (
         "TNL_CONNECTION_HANDLE",
         "TNL_WORKLOAD",
@@ -39,9 +38,9 @@ def test_platform_selection_hints_stay_native(
         "GITLAB_CI",
     ):
         monkeypatch.delenv(name, raising=False)
-    assert not _workload.uses_workload()
+    assert not _workload.selected_workload(_workload.runtime(), None)
     monkeypatch.setenv(environment, hint)
-    assert _workload.uses_workload()
+    assert _workload.selected_workload(_workload.runtime(), None)
 
     def preview(service: str, request: dict[str, object]) -> object:
         assert service == "db"
@@ -56,7 +55,9 @@ def test_platform_selection_hints_stay_native(
             "source": "native",
         }
 
-    selected = asyncio.run(_workload.select_workload("db", preview))
+    selected = asyncio.run(
+        _workload.select_scoped_workload("db", preview, _workload.runtime(), None)
+    )
     assert selected.assertion is None
 
 
@@ -111,7 +112,6 @@ class NativeFixture:
         self.fail_close = False
         self.human = False
         monkeypatch.setattr(_connections, "_sessions", {})
-        monkeypatch.setattr(_workload, "_configuration", None)
         monkeypatch.setattr(_connections, "native_binary", lambda: Path(sys.executable))
         monkeypatch.delenv("TNL_CONNECTION_HANDLE", raising=False)
         monkeypatch.setenv("TNL_WORKLOAD", "job")
@@ -163,6 +163,12 @@ class NativeFixture:
                 pass
 
         monkeypatch.setattr(_connections, "OwnerIPC", IPC)
+
+    def credential(self, credential: tnl.Workload) -> None:
+        # these owner-boundary tests intentionally share the process-wide root scope;
+        # install validated selection there without a production global API.
+        scope = tnl.connect("db", directory=self.directory)._session.scope
+        scope.configuration = credential.configuration()
 
     def command(self, binary: Path, *args: str, input_value: object = None) -> object:
         self.calls.append(args[0])
@@ -284,11 +290,11 @@ def test_human_alias_close_retains_the_late_owner_until_exact_cleanup_joins(
     async def scenario() -> None:
         peer: _connections.ConnectionHandle[_connections.Connection] | None = None
         if peer_owner:
-            tnl.configure_workload("job", token=lambda: "other")
+            native.credential(tnl.Workload("job", token=lambda: "other"))
             peer = tnl.connect("db", directory=tmp_path)
             await peer
-        configuration = _workload._configuration
-        monkeypatch.setattr(_workload, "_configuration", None)
+        scope = tnl.connect("db", directory=tmp_path)._session.scope
+        configuration, scope.configuration = scope.configuration, None
         monkeypatch.delenv("TNL_WORKLOAD")
         native.human = True
         handle, alias = tnl.connect("db", directory=tmp_path), tnl.connect("db", directory=tmp_path)
@@ -354,7 +360,7 @@ def test_human_alias_close_retains_the_late_owner_until_exact_cleanup_joins(
             assert native.closed == [owner, replacement]
             if peer is not None:
                 native.human = False
-                monkeypatch.setattr(_workload, "_configuration", configuration)
+                scope.configuration = configuration
                 monkeypatch.setenv("TNL_WORKLOAD", "job")
                 assert peer.snapshot().protocol == "postgres"
                 await peer
@@ -424,7 +430,7 @@ def test_policy_reclamation_pins_identity_waiters_and_preserves_active_capacity(
 ) -> None:
     # native capacity assertions: TestConnectionSDKRegistryCapacityAndReclamation.
     native = NativeFixture(tmp_path, monkeypatch)
-    tnl.configure_workload("job", token=lambda: "first")
+    native.credential(tnl.Workload("job", token=lambda: "first"))
 
     async def scenario() -> None:
         original = tnl.connect("db", directory=tmp_path)
@@ -460,7 +466,7 @@ def test_inactive_manifest_policies_do_not_exhaust_the_process_lifetime_limit(
     native = NativeFixture(tmp_path, monkeypatch)
     native.failure = failure
     current = ""
-    tnl.configure_workload("job", token=lambda: current)
+    native.credential(tnl.Workload("job", token=lambda: current))
 
     async def scenario() -> None:
         nonlocal current
@@ -502,7 +508,7 @@ def test_rotating_assertions_and_services_share_only_control_verified_owners(
         callbacks += 1
         return current
 
-    tnl.configure_workload("job", token=token)
+    native.credential(tnl.Workload("job", token=token))
 
     async def scenario() -> None:
         nonlocal current
@@ -546,7 +552,7 @@ def test_closing_failed_identity_releases_only_its_native_observation(
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
     current = "first"
-    tnl.configure_workload("job", token=lambda: current)
+    native.credential(tnl.Workload("job", token=lambda: current))
     native.fail_start.add("first")
 
     async def scenario() -> None:
@@ -588,9 +594,9 @@ def test_closing_failed_identity_releases_only_its_native_observation(
 def test_reselecting_one_handle_cannot_transfer_a_siblings_close_ownership(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    NativeFixture(tmp_path, monkeypatch)
+    native = NativeFixture(tmp_path, monkeypatch)
     current = "first"
-    tnl.configure_workload("job", token=lambda: current)
+    native.credential(tnl.Workload("job", token=lambda: current))
 
     async def scenario() -> None:
         nonlocal current
@@ -613,7 +619,7 @@ def test_initial_service_failure_keeps_cleanup_without_stopping_a_peer(
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
     current = "other"
-    tnl.configure_workload("job", token=lambda: current)
+    native.credential(tnl.Workload("job", token=lambda: current))
 
     async def scenario() -> None:
         nonlocal current
@@ -649,7 +655,7 @@ def test_close_joins_an_inflight_identity_reselection_without_leaking_its_owner(
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
     current = "first"
-    tnl.configure_workload("job", token=lambda: current)
+    native.credential(tnl.Workload("job", token=lambda: current))
 
     async def scenario() -> None:
         nonlocal current
@@ -713,7 +719,7 @@ def test_closing_an_old_owner_alias_does_not_close_a_pending_new_selection(
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
     current = "first"
-    tnl.configure_workload("job", token=lambda: current)
+    native.credential(tnl.Workload("job", token=lambda: current))
 
     async def scenario() -> None:
         nonlocal current
@@ -749,7 +755,7 @@ def test_cancelled_reselection_retains_its_worker_for_joined_close(
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
     current = "first"
-    tnl.configure_workload("job", token=lambda: current)
+    native.credential(tnl.Workload("job", token=lambda: current))
 
     async def scenario() -> None:
         nonlocal current
@@ -785,7 +791,7 @@ def test_close_retains_all_concurrent_identity_selections(
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
     current = "first"
-    tnl.configure_workload("job", token=lambda: current)
+    native.credential(tnl.Workload("job", token=lambda: current))
     entered = {name: threading.Event() for name in ("other", "third")}
     select = native.select
 
@@ -841,9 +847,9 @@ def test_close_retains_all_concurrent_identity_selections(
 def test_unretained_preparation_errors_do_not_accumulate_cleanup_operations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    NativeFixture(tmp_path, monkeypatch)
+    native = NativeFixture(tmp_path, monkeypatch)
     current = "first"
-    tnl.configure_workload("job", token=lambda: current)
+    native.credential(tnl.Workload("job", token=lambda: current))
 
     async def scenario() -> None:
         nonlocal current
@@ -864,7 +870,7 @@ def test_interrupted_preparation_retains_request_and_original_error_until_close_
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
     current = "first"
-    tnl.configure_workload("job", token=lambda: current)
+    native.credential(tnl.Workload("job", token=lambda: current))
     interrupted = _connections._InterruptedError("sdk.connection_unavailable", "lost native reply")
     references: list[str] = []
     command = native.command
@@ -923,7 +929,7 @@ def test_unresolved_request_receipts_are_bounded_and_reclaimed_on_close(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
-    tnl.configure_workload("job", token=lambda: "first")
+    native.credential(tnl.Workload("job", token=lambda: "first"))
     attempts = 0
     command = native.command
 
@@ -953,7 +959,7 @@ def test_interrupted_recovery_retains_receipt_without_replacing_original_ipc_err
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
-    tnl.configure_workload("job", token=lambda: "first")
+    native.credential(tnl.Workload("job", token=lambda: "first"))
     original = tnl.TnlError("sdk.connection_unavailable", "the entry owner is unavailable")
     command = native.command
 
@@ -990,7 +996,7 @@ def test_recovery_failure_keeps_exact_replacement_cleanup(
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
     current = "other"
-    tnl.configure_workload("job", token=lambda: current)
+    native.credential(tnl.Workload("job", token=lambda: current))
     original = tnl.TnlError("sdk.connection_unavailable", "the old owner is unavailable")
     replacement = str(tmp_path / "replacement") if failure == "owner" else "b" * 64 + "." + "2" * 16
     diagnostic: dict[str, object] = {"reason": "TNL_CLIENT_CONNECTION_EXPIRED"}
@@ -1081,7 +1087,7 @@ def test_recovery_failure_without_cleanup_reference_preserves_original_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reference: dict[str, object]
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
-    tnl.configure_workload("job", token=lambda: "first")
+    native.credential(tnl.Workload("job", token=lambda: "first"))
     original = tnl.TnlError("sdk.connection_unavailable", "the old owner is unavailable")
 
     def unavailable(name: str, assertion: str | None) -> object:
@@ -1119,9 +1125,15 @@ def test_callback_failures_do_not_expose_private_cause(
     def token() -> str:
         raise RuntimeError("private-assertion")
 
-    tnl.configure_workload("job", token=token)
     with pytest.raises(tnl.TnlError) as caught:
-        asyncio.run(_workload.select_workload("db", native.preview))
+        asyncio.run(
+            _workload.select_scoped_workload(
+                "db",
+                native.preview,
+                _workload.runtime(),
+                tnl.Workload("job", token=token).configuration(),
+            )
+        )
     assert "private-assertion" not in str(caught.value)
     assert caught.value.__cause__ is None and caught.value.__context__ is None
 
@@ -1129,7 +1141,6 @@ def test_callback_failures_do_not_expose_private_cause(
 def test_selected_environment_source_is_current_and_private(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(_workload, "_configuration", None)
 
     def preview(service: str, request: dict[str, object]) -> object:
         assert service == "db"
@@ -1147,7 +1158,9 @@ def test_selected_environment_source_is_current_and_private(
     monkeypatch.setenv("UNRELATED_SECRET", "unrelated.private.secret")
     for token in ("first.private.jwt", "second.private.jwt", ""):
         monkeypatch.setenv("JOB_ID_TOKEN", token)
-        selected = asyncio.run(_workload.select_workload("db", preview))
+        selected = asyncio.run(
+            _workload.select_scoped_workload("db", preview, _workload.runtime(), None)
+        )
         assert selected.assertion is None
         assert selected.environment["token_env"] == "JOB_ID_TOKEN"
         assert selected.environment["token_value"] == token

@@ -38,8 +38,8 @@ def released(port: int) -> None:
 async def main(binary: Path, startup: bool) -> None:
     _connections.native_binary = lambda: binary
     assertion = Path("assertion").read_text().strip()
-    tnl.configure_workload("test", token=lambda: assertion)
-    failed = tnl.connect("api")
+    app = tnl.create_tnl(credential=tnl.Workload("test", token=lambda: assertion))
+    failed = app.connect("api")
     scope = failed._session.scope
     original_timeout = _connections._TIMEOUT
     registry: str | None = None
@@ -98,7 +98,7 @@ async def main(binary: Path, startup: bool) -> None:
         # a different native-verified identity shares this registry. no SDK entry
         # was returned by the first command, so this is another cold dispatch.
         assertion = Path("peer-assertion").read_text().strip()
-        peer = tnl.connect("api")
+        peer = app.connect("api")
         assert peer._session.scope is scope
         snapshot = await peer
         assert isinstance(snapshot, tnl.HTTPConnection)
@@ -178,8 +178,11 @@ async def main(binary: Path, startup: bool) -> None:
                     assert isinstance(healthy, tnl.HTTPConnection)
                     peer_responds(healthy)
         finally:
-            if peer is not None:
-                await peer.aclose()
+            try:
+                if peer is not None:
+                    await peer.aclose()
+            finally:
+                await app.aclose()
 
 
 if __name__ == "__main__":

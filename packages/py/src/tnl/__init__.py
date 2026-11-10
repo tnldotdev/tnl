@@ -1,4 +1,4 @@
-"""publish Python ASGI apps and connect services through the native tnl runtime."""
+"""publish Python ASGI apps and visit services with independently owned runtimes."""
 
 from ._app import PreparedService, Server, prepare, run
 from ._asgi import AccessPolicy, Limits, RateLimit, publish
@@ -20,6 +20,7 @@ from ._connections import (
     connect,
 )
 from ._handler import handler
+from ._http import HTTPClientSettings
 from ._protocol import (
     InvalidResponse,
     NativeUnavailable,
@@ -29,8 +30,8 @@ from ._protocol import (
     TnlError,
 )
 from ._publication import Publication
-from ._runtime import TnlInstance, create_tnl
-from ._workload import Workload, configure_workload
+from ._runtime import TnlHTTPInstance, TnlInstance, create_tnl
+from ._workload import Workload
 
 __all__ = [
     "AccessPolicy",
@@ -38,6 +39,7 @@ __all__ = [
     "ConnectionHandle",
     "ClientFactory",
     "HTTPConnection",
+    "HTTPClientSettings",
     "HTTPConnectionHandle",
     "KubernetesConnection",
     "KubernetesConnectionHandle",
@@ -60,12 +62,12 @@ __all__ = [
     "PublicationStatus",
     "Server",
     "TnlInstance",
+    "TnlHTTPInstance",
     "Workload",
     "create_tnl",
     "handler",
     "connect",
     "client",
-    "configure_workload",
     "publish",
     "prepare",
     "run",

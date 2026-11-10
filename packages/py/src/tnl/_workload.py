@@ -13,7 +13,6 @@ from ._protocol import TnlError, service_name
 
 type TokenSource = Callable[[], str | Awaitable[str]]
 type Configuration = tuple[str, TokenSource | None, str | None]
-_configuration: tuple[str, TokenSource | None, str | None] | None = None
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -25,7 +24,8 @@ class Workload:
     def __post_init__(self) -> None:
         service_name(self.name)
         if (
-            (self.token is None) == (self.token_file is None)
+            self.token is not None
+            and self.token_file is not None
             or self.token is not None
             and not callable(self.token)
             or self.token_file is not None
@@ -37,7 +37,8 @@ class Workload:
             )
         ):
             raise TnlError(
-                "sdk.configuration_invalid", "select one workload callback or absolute token file"
+                "sdk.configuration_invalid",
+                "select at most one workload callback or absolute token file",
             )
 
     def configuration(self) -> Configuration:
@@ -71,26 +72,6 @@ def selected_workload(context: Mapping[str, str], configuration: Configuration |
     )
 
 
-def configure_workload(
-    name: str, *, token: TokenSource | None = None, token_file: str | None = None
-) -> None:
-    """install a request-scoped token source once in server setup."""
-    global _configuration
-    service_name(name)
-    if (token is None) == (token_file is None):
-        raise TnlError("sdk.workload_required", "select exactly one workload token source")
-    selected = (name, token, token_file)
-    if _configuration is not None and _configuration != selected:
-        raise TnlError("sdk.workload_required", "the workload token source is already configured")
-    _configuration = selected
-
-
-def uses_workload() -> bool:
-    return os.environ.get("TNL_CONNECTION_HANDLE") is None and selected_workload(
-        runtime(), _configuration
-    )
-
-
 @dataclass(frozen=True, repr=False)
 class Selection:
     name: str
@@ -106,12 +87,6 @@ class Selection:
             "sdk_environment": self.environment,
             **({"assertion": self.assertion} if self.assertion is not None else {}),
         }
-
-
-async def select_workload(
-    service: str, preview: Callable[[str, dict[str, object]], object]
-) -> Selection:
-    return await select_scoped_workload(service, preview, runtime(), _configuration)
 
 
 async def select_scoped_workload(

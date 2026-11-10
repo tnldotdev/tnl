@@ -116,6 +116,13 @@ tasks:
     cmds:
       - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwnerSDKPythonLifecycle$' -count=1 -timeout=1m -args -tnl-test-tier=integration
 
+  sdk-python-acquisition:
+    dir: "{{.ROOT_DIR}}"
+    desc: Check Python native workload acquisition and rotating proof through built native HTTP connections
+    deps: [":py:sync"]
+    cmds:
+      - go test -race -v ./tests/integration/connector -run='^TestIntegrationConnectionConnectorOwnerSDK(NativeWorkloadAcquisition|BackgroundRefresh)$/python' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
   sdk-python-prepare-timeout:
     dir: "{{.ROOT_DIR}}"
     desc: Check lost Python preparation replies before and after native readiness without stopping peers

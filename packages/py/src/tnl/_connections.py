@@ -31,9 +31,7 @@ from ._workload import (
     Workload,
     runtime,
     select_scoped_workload,
-    select_workload,
     selected_workload,
-    uses_workload,
 )
 
 if TYPE_CHECKING:
@@ -638,17 +636,18 @@ class _Scope:
         )
 
     def uses_workload(self) -> bool:
-        if self.environment is None:
-            return uses_workload()
-        return selected_workload(self.runtime, self.configuration)
+        return self.mounted is None and selected_workload(
+            runtime() if self.environment is None else self.runtime, self.configuration
+        )
 
     async def select(self, service: str) -> Selection | None:
         if not self.uses_workload():
             return None
-        if self.environment is None:
-            return await select_workload(service, self.workload)
         return await select_scoped_workload(
-            service, self.workload, self.runtime, self.configuration
+            service,
+            self.workload,
+            runtime() if self.environment is None else self.runtime,
+            self.configuration,
         )
 
     def prepare(
@@ -1270,7 +1269,7 @@ def connect(
         if scope is None:
             scope = _Scope(str(root), mounted)
             _sessions[key] = scope
-        if uses_workload():
+        if scope.uses_workload():
             session = _Session(scope)
         else:
             if scope.selected.closed:

@@ -48,7 +48,7 @@ def test_connection_client_failed_acquisition_releases_failure_for_a_fresh_facto
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
     current = "other"
-    tnl.configure_workload("job", token=lambda: current)
+    native.credential(tnl.Workload("job", token=lambda: current))
     failed, fresh = NativeClientFactory(tmp_path), NativeClientFactory(tmp_path)
     attempts: list[tuple[str, ...]] = []
     close_errors: list[tnl.TnlError] = []
@@ -134,7 +134,7 @@ def test_connection_client_canceled_getter_joins_pending_native_acquisition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_start: bool
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
-    tnl.configure_workload("job", token=lambda: "first")
+    native.credential(tnl.Workload("job", token=lambda: "first"))
     if fail_start:
         native.fail_start.add("first")
     native.pause = True
@@ -180,7 +180,7 @@ def test_connection_client_success_closes_only_drivers_not_shared_native_owners(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
-    tnl.configure_workload("job", token=lambda: "first")
+    native.credential(tnl.Workload("job", token=lambda: "first"))
     first, sibling = NativeClientFactory(tmp_path), NativeClientFactory(tmp_path)
 
     async def scenario() -> None:
@@ -275,7 +275,7 @@ def test_connection_client_failure_cleanup_bookkeeping_is_bounded(
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
     current = "0"
-    tnl.configure_workload("job", token=lambda: current)
+    native.credential(tnl.Workload("job", token=lambda: current))
     factory, fresh = NativeClientFactory(tmp_path), NativeClientFactory(tmp_path)
     select = native.select
 
@@ -322,7 +322,7 @@ def test_connection_client_canceled_close_waiter_does_not_cancel_native_cleanup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
-    tnl.configure_workload("job", token=lambda: "first")
+    native.credential(tnl.Workload("job", token=lambda: "first"))
     native.fail_start.add("first")
     factory = NativeClientFactory(tmp_path)
     entered, release = threading.Event(), threading.Event()
@@ -368,7 +368,7 @@ def test_connection_client_driver_creation_failure_does_not_own_the_native_owner
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     native = NativeFixture(tmp_path, monkeypatch)
-    tnl.configure_workload("job", token=lambda: "first")
+    native.credential(tnl.Workload("job", token=lambda: "first"))
     fixture = NativeClientFactory(tmp_path)
     failure = RuntimeError("ordinary driver setup failed")
 
