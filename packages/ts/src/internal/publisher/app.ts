@@ -209,6 +209,7 @@ export async function createPreparedRegistration<Metadata extends object>(
     readonly framework: Framework;
     readonly selection: EndpointSelection;
     readonly owner: string;
+    readonly authorize?: () => Promise<void>;
     readonly registerOperation: "register" | "publications/register";
     readonly bootstrap: (endpoint: RuntimeEndpoint) => Promise<PreparedAssignment<Metadata>>;
     readonly reportTarget?: (
@@ -233,18 +234,19 @@ export async function createPreparedRegistration<Metadata extends object>(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending: Promise<unknown> = Promise.resolve();
   let closing: Promise<void> | undefined;
+  let authorizationFailure: unknown;
   const lifetime = new AbortController();
   let active:
     | {
         readonly revision: number;
         readonly lifetime: AbortController;
         readonly done: Promise<void>;
-        finish(): void;
+        finish(cause?: unknown): void;
       }
     | undefined;
-  const finishPublication = () => {
-    active?.lifetime.abort(new TnlError("sdk.registration_stale"));
-    active?.finish();
+  const finishPublication = (cause?: unknown) => {
+    active?.lifetime.abort(cause ?? new TnlError("sdk.registration_stale"));
+    active?.finish(cause);
     active = undefined;
   };
   const isClosed = () => state.phase === "closed";
@@ -290,11 +292,19 @@ export async function createPreparedRegistration<Metadata extends object>(
     finishPublication();
   };
   const schedule = () => {
-    if (state.phase !== "prepared") return;
+    if (state.phase !== "prepared" || authorizationFailure !== undefined) return;
     clearTimeout(timer);
     const renew = independent("sdk.app.renew", () =>
       enqueue(async () => {
         if (state.phase !== "prepared") return;
+        try {
+          await options.authorize?.();
+        } catch (cause) {
+          authorizationFailure = cause;
+          finishPublication(cause);
+          await release();
+          return;
+        }
         try {
           if (server !== undefined && !isBunServer(server) && !server.listening) {
             await release();
@@ -326,6 +336,8 @@ export async function createPreparedRegistration<Metadata extends object>(
     timer.unref();
   };
   const setTarget = async (bound: CanonicalTarget, listener?: LocalHTTPServer) => {
+    if (authorizationFailure !== undefined) throw authorizationFailure;
+    await options.authorize?.();
     if (state.phase === "closed") throw new TnlError("sdk.registration_stale");
     if (state.phase === "released") await reconnect();
     if (target !== bound || server !== listener) observeBound();
@@ -411,11 +423,13 @@ export async function createPreparedRegistration<Metadata extends object>(
         enqueue(async () => {
           await setTarget(await listeningTarget(listener, { signal: lifetime.signal }), listener);
           const done = Promise.withResolvers<void>();
+          void done.promise.catch(() => {});
           const selected = {
             revision,
             lifetime: new AbortController(),
             done: done.promise,
-            finish: () => done.resolve(),
+            finish: (cause?: unknown) =>
+              cause === undefined ? done.resolve() : done.reject(cause),
           };
           active = selected;
           return publicationHandle({

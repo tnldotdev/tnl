@@ -3,6 +3,7 @@ import * as z from "zod";
 import { projectRuntimeSchema } from "../project/runtime.js";
 import { deadlineSchema, digestSchema, pathTextSchema } from "../values.js";
 import { connectionSnapshotSchema } from "./snapshot.js";
+import { applicationCredentialSchema } from "../credential.js";
 
 const assertionDeadlineSchema = deadlineSchema.refine(
   (value) => value <= Date.now() + 12 * 3600_000 + 60_000,
@@ -30,6 +31,11 @@ export const sdkPreparationSchema = z.union([
   z.strictObject({
     schema: z.literal(1),
     owner: sdkOwnerSchema,
+    application: z.unknown().nonoptional(),
+  }),
+  z.strictObject({
+    schema: z.literal(1),
+    owner: sdkOwnerSchema,
     // the prepared reader validates this once, including metadata binding.
     prepared: z.unknown().nonoptional(),
   }),
@@ -41,6 +47,14 @@ export const sdkPreparationSchema = z.union([
     sdk_owner_handle: pathTextSchema.exactOptional(),
   }),
 ]);
+
+export const preparedApplicationSchema = z.strictObject({
+  schema: z.literal(1),
+  credential: applicationCredentialSchema,
+  source_session_id: z.string().regex(/^wls_[A-Za-z0-9]{22}$/),
+  lease_expires_at: deadlineSchema.refine((value) => value <= Date.now() + 91_000),
+  verification: verificationSchema,
+});
 export const connectionHandleSchema = z.strictObject({
   schema: z.literal(1),
   url: z

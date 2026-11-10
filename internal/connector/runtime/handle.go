@@ -222,7 +222,7 @@ func Call(ctx context.Context, path, operation string, request Request, result a
 	if request.Schema != Schema || request.Directory != h.Directory || request.ConfigDigest != h.ConfigDigest {
 		return ErrUnauthorized
 	}
-	if operation != "status" && operation != "connect" && operation != "prepare" && operation != "prepared" && operation != "stop" && operation != "kube-credential" && operation != "attach" {
+	if operation != "status" && operation != "connect" && operation != "prepare" && operation != "prepared" && operation != "stop" && operation != "kube-credential" && operation != "attach" && operation != "application" {
 		return ErrInvalid
 	}
 	data, err := json.Marshal(request)

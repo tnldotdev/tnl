@@ -91,7 +91,11 @@ func ValidatePrepared(p Prepared, service string) error {
 			return ErrInvalid
 		}
 	}
-	if v := p.Verification; v != nil {
+	return validateVerification(p.Verification)
+}
+
+func validateVerification(v *AssertionVerification) error {
+	if v != nil {
 		if len(v.Digest) != 64 || len(v.Binding) != 64 || !v.ExpiresAt.After(time.Now()) || v.ExpiresAt.After(time.Now().Add(12*time.Hour+time.Minute)) {
 			return ErrInvalid
 		}

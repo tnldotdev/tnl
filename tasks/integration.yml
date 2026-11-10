@@ -34,6 +34,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./internal/control/api/public -run='^TestIntegration(Workload|MigrationRejectsSiblingWorkloadBaselines)' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
+  workload-application-runtime:
+    desc: Check one workload source session through authenticated native IPC and publisher access without personal client state
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/connector -run='^TestIntegrationWorkloadApplicationOwner' -count=1 -timeout=3m -args -tnl-test-tier=integration
+
   public-capacity:
     desc: Check public capacity across two ingress processes and standalone with both transports
     cmds:

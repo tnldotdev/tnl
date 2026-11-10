@@ -70,8 +70,10 @@ export function prepareApplicationPublication(
       owner,
       framework: "node",
       registerOperation: "publications/register",
+      ...(source.authorize === undefined ? {} : { authorize: source.authorize }),
       selection: { invocationID: invocation, ...(stateDir === undefined ? {} : { stateDir }) },
       bootstrap: async (endpoint) => {
+        await source.authorize?.();
         if (endpoint.scope !== "invocation" || endpoint.invocation_id !== invocation)
           throw new TnlError("sdk.response_invalid");
         const assignment = parseValue(

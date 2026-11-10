@@ -61,6 +61,7 @@ export type ApplicationPublication = Readonly<{
   document: string;
   resource: TnlApplicationResource;
   server: string;
+  authorize?: () => Promise<void>;
 }>;
 
 interface Dependencies {
@@ -102,6 +103,7 @@ async function publishServerUntraced(
   application?: ApplicationPublication,
 ): Promise<Publication> {
   validateOptions(options, application);
+  await application?.authorize?.();
   const target = await listeningTarget(server, options);
   bound();
   const directory = path.resolve(options.directory ?? process.cwd());
@@ -273,10 +275,12 @@ async function publishServerUntraced(
   const statusRequest = independent("sdk.publish.status", () =>
     runtime.request(endpoint, "status"),
   );
-  const renew = independent("sdk.publish.renew", () =>
-    runtime.request(endpoint, "renew", registration),
-  );
+  const renew = independent("sdk.publish.renew", async () => {
+    await application?.authorize?.();
+    return runtime.request(endpoint, "renew", registration);
+  });
   const recover = independent("sdk.publish.recover", async () => {
+    await application?.authorize?.();
     endpoint = await runtime.start(directory, undefined, selection);
     registration = parseRegistration(
       await runtime.request(endpoint, "ad-hoc/register", request),

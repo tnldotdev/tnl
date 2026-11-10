@@ -27,6 +27,8 @@ jobs:
             shard: 1/1
           - suite: application-registrations
             shard: 1/1
+          - suite: workload-application-runtime
+            shard: 1/1
           - suite: application-http
             shard: 1/1
           - suite: runtime:leases

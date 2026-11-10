@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/credentialfile"
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -216,6 +217,38 @@ type SDKPrepared struct {
 	Prepared Prepared `json:"prepared"`
 }
 
+// application credentials travel only on private IPC, never in owner records or
+// browser-safe project metadata. the source lease remains independently finite.
+type PreparedApplication struct {
+	Schema          int                    `json:"schema"`
+	Credential      credentialfile.File    `json:"credential"`
+	SourceSessionID string                 `json:"source_session_id"`
+	LeaseExpiresAt  time.Time              `json:"lease_expires_at"`
+	Verification    *AssertionVerification `json:"verification"`
+}
+
+func (PreparedApplication) String() string   { return "private prepared application" }
+func (PreparedApplication) GoString() string { return "private prepared application" }
+
+func (p PreparedApplication) Validate() error {
+	if p.Schema != Schema || !opaqueid.Valid(p.SourceSessionID, "wls_") || !p.LeaseExpiresAt.After(time.Now()) || p.LeaseExpiresAt.After(time.Now().Add(91*time.Second)) || p.Verification == nil {
+		return ErrInvalid
+	}
+	if _, err := p.Credential.Validate(); err != nil {
+		return ErrInvalid
+	}
+	return validateVerification(p.Verification)
+}
+
+type SDKApplication struct {
+	Schema      int                 `json:"schema"`
+	Owner       SDKOwner            `json:"owner"`
+	Application PreparedApplication `json:"application"`
+}
+
+func (SDKApplication) String() string   { return "private SDK application" }
+func (SDKApplication) GoString() string { return "private SDK application" }
+
 // SDKOwner is the same capability reference on cold startup and warm selection.
 // project metadata belongs to the prepared snapshot, not the owner reference.
 type SDKOwner struct {
@@ -285,7 +318,7 @@ func ReadJSON(reader io.Reader, destination any) error {
 func (c Context) Validate() error {
 	if c.Schema != Schema || !filepath.IsAbs(c.Directory) || len(c.Directory) > 4096 || len(c.ConfigDigest) != 64 ||
 		c.Server == "" || c.Audience != c.Server || c.ProjectKey == "" || c.SourceID == "" || c.WorktreeKey == "" ||
-		len(c.Services) == 0 || len(c.Services) > 32 {
+		len(c.Services) == 0 && c.Workload == "" || len(c.Services) > 64 {
 		return ErrInvalid
 	}
 	seen := map[string]bool{}

@@ -12,22 +12,23 @@ import (
 )
 
 type connectionsCommand struct {
-	Capabilities   connectionsCapabilities       `cmd:""`
-	Context        connectionsContextOptions     `cmd:""`
-	Start          connectionsStartOptions       `cmd:""`
-	Identity       connectionsContextOptions     `cmd:"" hidden:""`
-	Attach         connectionsHandleOptions      `cmd:"" hidden:""`
-	Recover        connectionsHandleOptions      `cmd:"" hidden:""`
-	Serve          connectionsServeOptions       `cmd:"" hidden:""`
-	Status         connectionsHandleOptions      `cmd:""`
-	Read           connectionsReadOptions        `cmd:"" help:"Read one prepared connection from its existing owner without starting or authenticating."`
-	Prepare        connectionsReadOptions        `cmd:"" hidden:""`
-	SDKPrepare     connectionsSDKOptions         `cmd:"" hidden:""`
-	SDKWorkload    connectionsSDKWorkloadOptions `cmd:"" hidden:""`
-	SDKStop        connectionsSDKStopOptions     `cmd:"" hidden:""`
-	SDKClose       connectionsSDKCloseOptions    `cmd:"" hidden:""`
-	Stop           connectionsHandleOptions      `cmd:""`
-	KubeCredential connectionsKubeOptions        `cmd:"" hidden:""`
+	Capabilities   connectionsCapabilities          `cmd:""`
+	Context        connectionsContextOptions        `cmd:""`
+	Start          connectionsStartOptions          `cmd:""`
+	Identity       connectionsContextOptions        `cmd:"" hidden:""`
+	Attach         connectionsHandleOptions         `cmd:"" hidden:""`
+	Recover        connectionsHandleOptions         `cmd:"" hidden:""`
+	Serve          connectionsServeOptions          `cmd:"" hidden:""`
+	Status         connectionsHandleOptions         `cmd:""`
+	Read           connectionsReadOptions           `cmd:"" help:"Read one prepared connection from its existing owner without starting or authenticating."`
+	Prepare        connectionsReadOptions           `cmd:"" hidden:""`
+	SDKPrepare     connectionsSDKOptions            `cmd:"" hidden:""`
+	SDKApplication connectionsSDKApplicationOptions `cmd:"" hidden:""`
+	SDKWorkload    connectionsSDKWorkloadOptions    `cmd:"" hidden:""`
+	SDKStop        connectionsSDKStopOptions        `cmd:"" hidden:""`
+	SDKClose       connectionsSDKCloseOptions       `cmd:"" hidden:""`
+	Stop           connectionsHandleOptions         `cmd:""`
+	KubeCredential connectionsKubeOptions           `cmd:"" hidden:""`
 }
 type connectionsCapabilities struct {
 	Output string `name:"output" enum:"json" default:"json"`
@@ -78,7 +79,14 @@ type connectionsSDKOptions struct {
 }
 type connectionsSDKWorkloadOptions struct {
 	Directory string `name:"directory" required:"" type:"path"`
-	Service   string `name:"service" required:""`
+	Service   string `name:"service"`
+}
+
+type connectionsSDKApplicationOptions struct {
+	connectionsStartOptions `embed:""`
+	Registry                string `name:"registry" required:"" type:"path"`
+	RecoverHandle           string `name:"recover-handle" type:"path"`
+	RequestedAt             string `name:"requested-at"`
 }
 type connectionsSDKStopOptions struct {
 	Registry  string `name:"registry" required:"" type:"path"`
@@ -137,6 +145,8 @@ func runConnections(ctx context.Context, command string, flags connectionsComman
 		return write(connector.Prepare(ctx, flags.Prepare.Handle, flags.Prepare.Service))
 	case "runtime connections sdk-prepare":
 		return write(connector.PrepareSDK(ctx, connector.SDKOptions{OwnerStartOptions: flags.SDKPrepare.connectionsStartOptions.options(), Registry: flags.SDKPrepare.Registry, Service: flags.SDKPrepare.SelectedService, RecoverHandle: flags.SDKPrepare.RecoverHandle, RequestedAt: flags.SDKPrepare.RequestedAt, RetainStartFailure: flags.SDKPrepare.RetainStartFailure}, os.Stdin))
+	case "runtime connections sdk-application":
+		return write(connector.PrepareSDKApplication(ctx, connector.SDKOptions{OwnerStartOptions: flags.SDKApplication.connectionsStartOptions.options(), Registry: flags.SDKApplication.Registry, RecoverHandle: flags.SDKApplication.RecoverHandle, RequestedAt: flags.SDKApplication.RequestedAt}, os.Stdin))
 	case "runtime connections sdk-workload":
 		return write(connector.SelectSDKWorkload(flags.SDKWorkload.Directory, flags.SDKWorkload.Service, os.Stdin))
 	case "runtime connections sdk-stop":

@@ -119,16 +119,22 @@ export type TnlApplicationInstance = Omit<TnlInstance, "connect" | "client" | "p
 export type TnlCredentialInstance = Omit<TnlApplicationInstance, "connect" | "client"> &
   TnlHTTPInstance<`https://${string}` | TnlApplicationResource>;
 
+export type TnlWorkloadInstance = Omit<TnlInstance, "prepare"> & {
+  prepare(options?: ApplicationPrepareOptions): Promise<PreparedPublication>;
+};
+
 /** construct an isolated native connection scope without starting native work. */
 export function createTnl(
   options: TnlOptions & { credential: TnlApplicationCredential },
 ): TnlApplicationInstance;
-export function createTnl(options: TnlOptions & { credential: TnlWorkloadCredential }): TnlInstance;
+export function createTnl(
+  options: TnlOptions & { credential: TnlWorkloadCredential },
+): TnlWorkloadInstance;
 export function createTnl(options: TnlOptions & { credential: string }): TnlCredentialInstance;
 export function createTnl(options?: TnlOptions): TnlInstance;
 export function createTnl(
   options: TnlOptions = {},
-): TnlInstance | TnlApplicationInstance | TnlCredentialInstance {
+): TnlInstance | TnlApplicationInstance | TnlCredentialInstance | TnlWorkloadInstance {
   const {
     createConnectionScope,
     closeConnectionScope,
@@ -151,16 +157,29 @@ export function createTnl(
     throw new TnlError("sdk.configuration_invalid");
   const explicitServer = options.server;
   const workloadSelected =
-    workload || scope.workload !== undefined || usesWorkload(scope.key, scope.runtime, false);
-  const checkPublisher = (settings?: PublishOptions): ApplicationPublication | undefined => {
-    if (application !== undefined && settings !== undefined) {
+    workload ||
+    (credential === undefined &&
+      (scope.workload !== undefined || usesWorkload(scope.key, scope.runtime, false)));
+  const checkPublisher = async (
+    settings: PublishOptions = {},
+  ): Promise<ApplicationPublication | undefined> => {
+    if (
+      workloadSelected &&
+      (settings.publisherCredentialFile !== undefined || settings.publisherIdentityID !== undefined)
+    )
+      throw new TnlError("sdk.credential_denied");
+    const acquired = workloadSelected
+      ? await loadConnection().workloadApplication(scope)
+      : undefined;
+    const selectedApplication = acquired?.credential ?? application;
+    if (selectedApplication !== undefined) {
       if (
         settings.publisherCredentialFile !== undefined ||
         settings.publisherIdentityID !== undefined ||
-        (settings.server !== undefined && settings.server !== application.control_url)
+        (settings.server !== undefined && settings.server !== selectedApplication.control_url)
       )
         throw new TnlError("sdk.credential_denied");
-      const grants = application.grants.filter(
+      const grants = selectedApplication.grants.filter(
         (grant) =>
           grant.operation === "publish" &&
           (settings.resource === undefined ||
@@ -175,14 +194,24 @@ export function createTnl(
       )
         throw new TnlError("sdk.credential_denied");
       return {
-        document: JSON.stringify(application),
+        document: JSON.stringify(selectedApplication),
         resource: (grant.kind === "saved_public_url"
           ? grant.public_url_id
           : grant.service_id) as TnlApplicationResource,
-        server: application.control_url,
+        server: selectedApplication.control_url,
+        ...(acquired === undefined
+          ? {}
+          : {
+              authorize: () =>
+                acquired.authorize(
+                  (grant.kind === "saved_public_url"
+                    ? grant.public_url_id
+                    : grant.service_id) as TnlApplicationResource,
+                ),
+            }),
       };
     }
-    // current workload grants authorize visiting only; never use a human publisher.
+    // an explicit credential never borrows a personal publisher.
     if (http !== undefined) throw new TnlError("sdk.credential_denied");
     if (workloadSelected) throw new TnlError("sdk.workload_denied");
     return undefined;
@@ -269,8 +298,8 @@ export function createTnl(
     },
     prepare: (settings: PrepareOptions & ApplicationPrepareOptions = {}) =>
       own(async () => {
-        if (application !== undefined) {
-          const source = checkPublisher(settings);
+        if (application !== undefined || workloadSelected) {
+          const source = await checkPublisher(settings);
           if (source === undefined) throw new TnlError("sdk.credential_denied");
           const { prepareApplicationPublication } =
             await import("./internal/publisher/app_credential.js");
@@ -281,7 +310,7 @@ export function createTnl(
             settings,
           );
         }
-        checkPublisher();
+        await checkPublisher();
         if (explicitServer !== undefined) throw new TnlError("sdk.configuration_invalid");
         const { prepareService } = await import("./internal/publisher/app.js");
         const prepared = await prepareService(
@@ -300,7 +329,7 @@ export function createTnl(
       }),
     publish: (server: LocalHTTPServer | FetchHandler, settings: PublishOptions = {}) =>
       own(async () => {
-        const source = checkPublisher(settings);
+        const source = await checkPublisher(settings);
         const { publishServer, publishFetch } = await import("./internal/publisher/publish.js");
         const startup = new AbortController();
         const abortStartup = () => startup.abort(lifetime.signal.reason);

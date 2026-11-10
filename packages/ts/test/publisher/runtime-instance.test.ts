@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { TnlApplicationCredential } from "@tnldotdev/tnl";
+import { TnlError } from "../../src/errors.js";
 
 const fixture = vi.hoisted(() => ({
   order: [] as string[],
@@ -8,6 +9,8 @@ const fixture = vi.hoisted(() => ({
   gate: undefined as Promise<void> | undefined,
   fail: false,
   workload: false,
+  acquired: undefined as TnlApplicationCredential | undefined,
+  authorized: 0,
   source: undefined as { document: string; resource: string; server: string } | undefined,
   scope: {
     key: "scope",
@@ -25,6 +28,15 @@ vi.mock("../../src/internal/connector/connection_bridge.js", () => ({
     connectionHandle: () => ({}),
     connectionClient: () => ({}),
     usesWorkload: () => fixture.workload,
+    workloadApplication: async () => {
+      if (fixture.acquired === undefined) throw new TnlError("sdk.workload_denied");
+      return {
+        credential: fixture.acquired,
+        authorize: async () => {
+          fixture.authorized++;
+        },
+      };
+    },
   }),
 }));
 vi.mock("../../src/internal/publisher/publish.js", () => ({
@@ -69,6 +81,8 @@ beforeEach(() => {
   fixture.gate = undefined;
   fixture.fail = false;
   fixture.workload = false;
+  fixture.acquired = undefined;
+  fixture.authorized = 0;
   fixture.source = undefined;
 });
 
@@ -183,6 +197,21 @@ test("application publication refuses ambiguous grants and explicit source chang
   expect(fixture.source).toBeUndefined();
 });
 
+test("an explicit application document ignores ambient workload selection", async () => {
+  const { createTnl } = await import("../../src/index.js");
+  fixture.workload = true;
+  const credential = applicationCredential();
+  const app = createTnl({ credential });
+  try {
+    await app.publish(() => new Response("app"), { resource: `url_${"A".repeat(22)}` });
+    expect(JSON.parse(fixture.source?.document ?? "{}")).toMatchObject({
+      client_id: credential.client_id,
+    });
+  } finally {
+    await app.close();
+  }
+});
+
 test("application preparation selects the same pinned exact publish grant and retains failed drain for retry", async () => {
   const { createTnl } = await import("../../src/index.js");
   const credential = applicationCredential();
@@ -259,6 +288,31 @@ test("an explicit workload credential never becomes a personal publication", asy
     await expect(app.prepare()).rejects.toHaveProperty("code", "sdk.workload_denied");
     expect(fixture.selected).toBeUndefined();
   } finally {
+    await app.close();
+  }
+});
+
+test("workload publication and preparation use the acquired application and retain source ownership across failed drain", async () => {
+  const { createTnl } = await import("../../src/index.js");
+  fixture.acquired = applicationCredential();
+  const app = createTnl({ credential: { workload: "deploy" } });
+  const resource = `url_${"B".repeat(22)}` as const;
+  try {
+    await app.publish(() => new Response("app"), { resource });
+    expect(JSON.parse(fixture.source?.document ?? "{}")).toMatchObject({
+      client_id: fixture.acquired.client_id,
+      key_id: fixture.acquired.key_id,
+    });
+    await app.prepare({ resource });
+    expect(fixture.source?.resource).toBe(resource);
+    fixture.fail = true;
+    await expect(app.close()).rejects.toBeInstanceOf(AggregateError);
+    expect(fixture.order).not.toContain("connector");
+    fixture.fail = false;
+    await app.close();
+    expect(fixture.order.at(-1)).toBe("connector");
+  } finally {
+    fixture.fail = false;
     await app.close();
   }
 });

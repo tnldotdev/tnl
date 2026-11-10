@@ -211,9 +211,6 @@ func (b *connectorConnectionBackend) Start(ctx context.Context) (meta.PublicMeta
 				selected = append(selected, name)
 			}
 		}
-		if len(selected) == 0 {
-			return meta.PublicMetadata{}, time.Time{}, connectorruntime.ErrUnauthorized
-		}
 		requested := b.scope
 		requested.Services = selected
 		assertion := b.assertion

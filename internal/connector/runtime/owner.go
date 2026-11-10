@@ -161,7 +161,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 				return
 			}
 			_ = json.NewEncoder(w).Encode(selected)
-		case "sdk-prepare":
+		case "sdk-prepare", "sdk-application":
 			provider, ok := backend.(interface {
 				SDKPrepare(context.Context, Request) (SDKPrepared, error)
 			})
@@ -171,7 +171,20 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			}
 			bounded, done := context.WithTimeout(r.Context(), 25*time.Second)
 			defer done()
-			prepared, err := provider.SDKPrepare(bounded, request)
+			var prepared any
+			var err error
+			if operation == "sdk-application" {
+				applicationProvider, ok := backend.(interface {
+					SDKApplication(context.Context, Request) (SDKApplication, error)
+				})
+				if !ok {
+					writeConnectionFailure(w, ErrInvalid)
+					return
+				}
+				prepared, err = applicationProvider.SDKApplication(bounded, request)
+			} else {
+				prepared, err = provider.SDKPrepare(bounded, request)
+			}
 			if err != nil {
 				reason, known := failure.ReasonOf(err)
 				if !known {
@@ -197,6 +210,33 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 					FailureHandle string         `json:"sdk_failure_handle,omitempty"`
 					OwnerHandle   string         `json:"sdk_owner_handle,omitempty"`
 				}{Schema: 1, Reason: reason, Retained: sticky, FailureHandle: failureHandle, OwnerHandle: ownerHandle})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(prepared)
+		case "application":
+			provider, ok := backend.(interface {
+				PrepareApplication(context.Context, string) (PreparedApplication, error)
+			})
+			if !ok {
+				writeConnectionFailure(w, ErrUnauthorized)
+				return
+			}
+			bounded, done := context.WithTimeout(r.Context(), 25*time.Second)
+			defer done()
+			var prepared PreparedApplication
+			var err error
+			if refresher, ok := backend.(interface {
+				Application(context.Context, Request) (PreparedApplication, error)
+			}); ok {
+				prepared, err = refresher.Application(bounded, request)
+			} else {
+				prepared, err = provider.PrepareApplication(bounded, request.Assertion)
+			}
+			if err == nil {
+				err = prepared.Validate()
+			}
+			if err != nil {
+				writeConnectionFailure(w, err)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(prepared)

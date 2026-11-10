@@ -52,8 +52,12 @@ type projectConfiguration struct{ clientproject.Project }
 func exchangeConnectionWorkload(ctx context.Context, client *workload.Client, scope connectorruntime.Context, assertion string) (authorityv1.WorkloadSession, error) {
 	var session authorityv1.WorkloadSession
 	var err error
+	services := scope.Services
+	if len(services) == 0 {
+		services = nil
+	}
 	for attempt := range 3 {
-		session, err = client.Exchange(ctx, scope.TeamID, scope.ProjectKey, scope.SourceID, scope.Workload, assertion, scope.Services)
+		session, err = client.Exchange(ctx, scope.TeamID, scope.ProjectKey, scope.SourceID, scope.Workload, assertion, services)
 		if err == nil {
 			return session, nil
 		}

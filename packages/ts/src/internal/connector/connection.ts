@@ -22,7 +22,12 @@ import { cancellable } from "./cancellation.js";
 import type { ConnectionSnapshot } from "./snapshot.js";
 import * as z from "zod";
 import { parseValue } from "../validation.js";
-import { sdkPreparationSchema, preparedConnectionSchema } from "./contract.js";
+import {
+  sdkPreparationSchema,
+  preparedConnectionSchema,
+  preparedApplicationSchema,
+} from "./contract.js";
+import type { TnlApplicationResource } from "../../credential.js";
 import {
   usesWorkload,
   selectWorkload,
@@ -154,7 +159,10 @@ function machineError(cause: unknown, operation?: string): TnlError {
         case "TNL_CLIENT_WORKLOAD_ASSERTION_UNAVAILABLE":
           return new TnlError("sdk.workload_assertion_unavailable");
       }
-      if (problem.reason === "TNL_CLIENT_CONNECTION_CLEANUP_FAILED" && operation === "sdk-prepare")
+      if (
+        problem.reason === "TNL_CLIENT_CONNECTION_CLEANUP_FAILED" &&
+        (operation === "sdk-prepare" || operation === "sdk-application")
+      )
         return new TnlCleanupError(
           new TnlError("sdk.response_invalid"),
           new TnlError("sdk.connection_unavailable"),
@@ -187,7 +195,7 @@ async function machineUntraced(
         scope.binary,
         [...command, ...args],
         {
-          timeout: args[0] === "sdk-prepare" ? 45_000 : 25_000,
+          timeout: args[0] === "sdk-prepare" || args[0] === "sdk-application" ? 45_000 : 25_000,
           maxBuffer: maximumBytes,
           encoding: "utf8",
           env: { ...launchEnvironment(), ...scope.environment },
@@ -331,12 +339,25 @@ async function prepareUntraced(
   externalFile: string | undefined,
   selection?: ConnectionScope,
 ): Promise<Prepared> {
-  const requestedAt = new Date().toISOString();
-  const base = selection?.key ?? contextKey();
   if (externalFile !== undefined) {
     readArgs(externalFile, name);
     return parsePrepared(await prepareExternal(externalFile, name), name, externalFile);
   }
+  const { value, scope } = await selectNative(name, selection, false);
+  if (!("prepared" in value)) throw new TnlError("sdk.response_invalid");
+  const prepared = parsePrepared(value.prepared, name, value.owner.connection_handle);
+  acceptSelection(scope, value.owner.connection_handle, value.owner.expires_at);
+  return prepared;
+}
+
+async function selectNative(
+  name: string,
+  selection: ConnectionScope | undefined,
+  application: boolean,
+) {
+  if (selection?.closed) throw new TnlError("sdk.client_closed");
+  const requestedAt = new Date().toISOString();
+  const base = selection?.key ?? contextKey();
   const workload =
     selection?.workload !== undefined ||
     usesWorkload(base, selection?.runtime, selection === undefined);
@@ -355,7 +376,7 @@ async function prepareUntraced(
   const assertion = selectionOptions.assertion;
   const startArgs = ["--directory", scope.directory];
   const args = [
-    "sdk-prepare",
+    application ? "sdk-application" : "sdk-prepare",
     ...startArgs,
     "--registry",
     scope.registry,
@@ -363,8 +384,7 @@ async function prepareUntraced(
     String(process.pid),
     "--requested-at",
     requestedAt,
-    "--selected-service",
-    name,
+    ...(application ? [] : ["--selected-service", name]),
   ];
   const { requested_at: _requestedAt, ...privateInput } = selectionOptions;
   const input = { schema: 1, ...privateInput };
@@ -374,7 +394,7 @@ async function prepareUntraced(
     workload && assertion === undefined
       ? randomUUID()
       : createHash("sha256")
-          .update(JSON.stringify([startArgs, name, privateInput]))
+          .update(JSON.stringify([startArgs, name, application, privateInput]))
           .digest("hex");
   let request = scope.requests.get(key);
   if (request === undefined) {
@@ -394,16 +414,79 @@ async function prepareUntraced(
   }
   const owner = value.owner;
   const file = owner.connection_handle;
-  readArgs(file, name);
+  readArgs(file, name || "application");
   if (owner.executable !== scope.binary) throw new TnlError("sdk.response_invalid");
-  const prepared = parsePrepared(value.prepared, name, file);
-  scope.selected = { file, expiresAt: owner.expires_at };
+  return { value, scope };
+}
+
+function acceptSelection(scope: NativeScope, file: string, expiresAt: number) {
+  scope.selected = { file, expiresAt };
   if (scope.entry === undefined) {
     const ipc = scope.open(file);
     void ipc.catch(() => {});
     scope.entry = { file, ipc };
   }
-  return prepared;
+}
+
+// this private source belongs to the same registry and key as visitor work. its
+// credential never becomes public project metadata or a persisted SDK record.
+export async function workloadApplication(selection: ConnectionScope) {
+  const { value, scope } = await selectNative("", selection, true);
+  if (!("application" in value)) throw new TnlError("sdk.response_invalid");
+  const prepared = parseValue(preparedApplicationSchema, value.application, "sdk.response_invalid");
+  if (
+    selection.environment.TNL_SERVER !== undefined &&
+    selection.environment.TNL_SERVER !== prepared.credential.control_url
+  )
+    throw new TnlError("sdk.credential_denied");
+  const file = value.owner.connection_handle;
+  acceptSelection(scope, file, value.owner.expires_at);
+  const ipc = scope.entry?.file === file ? await scope.entry.ipc : await scope.open(file);
+  selection.clients.add({
+    async close() {
+      ipc.close();
+    },
+  });
+  const authorize = async (resource: TnlApplicationResource) => {
+    if (selection.closed) throw new TnlError("sdk.client_closed");
+    if (ipc.application === undefined) throw new TnlError("sdk.response_invalid");
+    let raw: unknown;
+    try {
+      const refresh = await selectWorkload(
+        (request) => scope.workload("", request),
+        selection.key,
+        selection.workload,
+        selection.runtime,
+      );
+      raw = await ipc.application(refresh.assertion, refresh, true);
+      // failed refresh retains only the original owner's still-finite authority.
+      if (typeof raw === "object" && raw !== null && !("credential" in raw))
+        raw = await ipc.application();
+    } catch {
+      raw = await ipc.application();
+    }
+    const current = parseValue(preparedApplicationSchema, raw, "sdk.workload_denied");
+    if (
+      current.source_session_id !== prepared.source_session_id ||
+      current.credential.client_id !== prepared.credential.client_id ||
+      current.credential.key_id !== prepared.credential.key_id ||
+      current.credential.private_key !== prepared.credential.private_key ||
+      current.credential.team_id !== prepared.credential.team_id ||
+      current.credential.control_url !== prepared.credential.control_url ||
+      !current.credential.grants.some(
+        (grant) =>
+          grant.operation === "publish" &&
+          (grant.kind === "saved_public_url"
+            ? grant.public_url_id
+            : grant.kind === "service"
+              ? grant.service_id
+              : undefined) === resource &&
+          (grant.expires_at === undefined || Date.parse(grant.expires_at) > Date.now()),
+      )
+    )
+      throw new TnlError("sdk.workload_denied");
+  };
+  return { credential: prepared.credential, authorize };
 }
 
 async function requestSelection(
@@ -419,7 +502,11 @@ async function requestSelection(
   if (entry === undefined) raw = await machine(scope, args, undefined, input);
   else {
     try {
-      raw = await (await entry.ipc).prepare(name, assertion, selectionOptions);
+      const ipc = await entry.ipc;
+      if (args[0] === "sdk-application") {
+        if (ipc.application === undefined) throw new TnlError("sdk.connection_unavailable");
+        raw = await ipc.application(assertion, selectionOptions);
+      } else raw = await ipc.prepare(name, assertion, selectionOptions);
     } catch (cause) {
       // native recovery checks the kernel lock before doing any selection or
       // network work. a timeout or service denial cannot authorize replacement.
@@ -456,7 +543,7 @@ async function requestWorkload(
     // sdk-prepare before any provider acquisition or control request.
     raw = await machine(
       scope,
-      ["sdk-workload", "--directory", scope.directory, "--service", name],
+      ["sdk-workload", "--directory", scope.directory, ...(name === "" ? [] : ["--service", name])],
       undefined,
       { schema: 1, sdk_workload: request },
     );

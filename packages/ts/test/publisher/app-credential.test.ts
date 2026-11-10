@@ -158,6 +158,46 @@ test("application preparation registers a port-zero listener without waiting for
   }
 });
 
+test("source authority loss fences preparation and finishes its publication without releasing unconfirmed cleanup", async () => {
+  vi.useFakeTimers();
+  let denied = false;
+  const failure = new TnlError("sdk.workload_denied");
+  const selected = {
+    ...source,
+    authorize: async () => {
+      if (denied) throw failure;
+    },
+  };
+  const { calls, state, runtime } = fixture(selected);
+  const prepared = await prepareApplicationPublication(
+    selected,
+    "/project",
+    undefined,
+    {},
+    runtime,
+  );
+  const server = await listener();
+  try {
+    const publication = await prepared.register(server);
+    const finished = publication.finished();
+    void finished.catch(() => {});
+    denied = true;
+    state.failCleanup = true;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(finished).rejects.toBe(failure);
+    await expect(prepared.register(server)).rejects.toBe(failure);
+    await expect(prepared.close()).rejects.toHaveProperty("code", "sdk.dev_unavailable");
+    expect(server.listening).toBe(true);
+    state.failCleanup = false;
+    await prepared.close();
+    expect(calls.filter((call) => call.operation === "unregister")).toHaveLength(3);
+  } finally {
+    state.failCleanup = false;
+    await prepared.close();
+    await stop(server);
+  }
+});
+
 test("application listener replacement fences old handles without letting old cleanup stop the new target", async () => {
   const { calls, runtime } = fixture();
   const prepared = await prepareApplicationPublication(source, "/project", undefined, {}, runtime);

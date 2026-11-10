@@ -13,6 +13,11 @@ export interface OwnerIPC {
   readonly expiresAt: number;
   prepare(service: string, assertion?: string, selection?: SelectionOptions): Promise<unknown>;
   workload(service: string, request: WorkloadRequest): Promise<unknown>;
+  application?(
+    assertion?: string,
+    selection?: SelectionOptions,
+    refresh?: boolean,
+  ): Promise<unknown>;
   close(): void;
 }
 
@@ -170,7 +175,7 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
     };
     scheduleExpiry();
     const send = (
-      operationName: "prepare" | "sdk-prepare" | "sdk-workload",
+      operationName: "prepare" | "sdk-prepare" | "sdk-workload" | "application" | "sdk-application",
       service: string,
       assertion?: string,
       selection?: SelectionOptions,
@@ -247,6 +252,13 @@ export async function ownerIPC(filename: string): Promise<OwnerIPC> {
         send(selection === undefined ? "prepare" : "sdk-prepare", service, assertion, selection),
       workload: (service: string, request: WorkloadRequest) =>
         send("sdk-workload", service, undefined, { sdk_workload: request }),
+      application: (assertion?: string, selection?: SelectionOptions, refresh = false) =>
+        send(
+          selection === undefined || refresh ? "application" : "sdk-application",
+          "",
+          assertion,
+          selection,
+        ),
       close,
     });
   } catch {
