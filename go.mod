@@ -1,6 +1,6 @@
 module github.com/tnldotdev/tnl
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/alecthomas/kong v1.16.1

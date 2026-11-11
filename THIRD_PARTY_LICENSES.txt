@@ -27,9 +27,9 @@ go runtime and standard library
 
 --------------------------------------------------------------------------------
 Package: Go runtime and standard library
-Version: go1.27.3
+Version: go1.27.4
 License: BSD-3-Clause
-Source: https://github.com/golang/go/blob/go1.27.3/LICENSE
+Source: https://github.com/golang/go/blob/go1.27.4/LICENSE
 
 LICENSE
 
