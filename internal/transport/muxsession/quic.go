@@ -35,17 +35,24 @@ type QUICConfig struct {
 	PinnedRemoteIPLimit int
 }
 
+// QUICDialer borrows a role owner's shared UDP transport. the connector owns the
+// returned connection, not the dialer or its underlying socket.
+type QUICDialer interface {
+	DialQUIC(context.Context, net.Addr, *tls.Config, *quic.Config) (*quic.Conn, error)
+}
+
 // QUICConnector establishes QUIC multiplexed sessions.
 type QUICConnector struct {
 	TLSConfig *tls.Config
 	Config    QUICConfig
+	Dialer    QUICDialer
 }
 
 func (c QUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session, error) {
-	return connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, ALPN)
+	return connectQUIC(ctx, endpoint, c.TLSConfig, c.Config, c.Dialer, ALPN)
 }
 
-func connectQUIC(ctx context.Context, endpoint Endpoint, roots *tls.Config, transport QUICConfig, alpn string) (Session, error) {
+func connectQUIC(ctx context.Context, endpoint Endpoint, roots *tls.Config, transport QUICConfig, dialer QUICDialer, alpn string) (Session, error) {
 	if endpoint.Address == "" || endpoint.ServerName == "" {
 		return nil, errors.New("muxsession: QUIC endpoint requires address and server name")
 	}
@@ -57,7 +64,12 @@ func connectQUIC(ctx context.Context, endpoint Endpoint, roots *tls.Config, tran
 	if config.KeepAlivePeriod == 0 {
 		config.KeepAlivePeriod = defaultQUICKeepAlivePeriod
 	}
-	connection, err := quic.DialAddr(ctx, endpoint.Address, tlsConfig, config)
+	var connection *quic.Conn
+	if dialer == nil {
+		connection, err = quic.DialAddr(ctx, endpoint.Address, tlsConfig, config)
+	} else {
+		connection, err = dialSharedQUIC(ctx, dialer, endpoint.Address, tlsConfig, config, net.DefaultResolver.LookupNetIP)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("muxsession: dial QUIC: %w", err)
 	}
@@ -77,6 +89,8 @@ type QUICListener struct {
 	closeErr   error
 	alpn       string
 	sources    *sourceQUICListener
+	nonQUICMu  sync.Mutex
+	nonQUIC    net.PacketConn
 }
 
 // ListenQUIC starts a QUIC listener. the returned listener never accepts 0-RTT.
@@ -215,6 +229,11 @@ func (l *QUICListener) StopAccepting() error {
 // timers alive, so the same UDP address may not be immediately reusable.
 func (l *QUICListener) Close() error {
 	l.closeOnce.Do(func() {
+		l.nonQUICMu.Lock()
+		if l.nonQUIC != nil {
+			_ = l.nonQUIC.Close()
+		}
+		l.nonQUICMu.Unlock()
 		if l.sources != nil {
 			l.closeErr = l.sources.close()
 			return
