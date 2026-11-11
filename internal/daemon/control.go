@@ -103,6 +103,7 @@ func newPublicAPIHandler(
 	}
 	authorityConfig := authorityAPIConfigFrom(cfg, httpClient)
 	authorityConfig.Machines = database
+	authorityConfig.Publications = database
 	authorityRoutes, err = controlauthority.Register(mux, authorityConfig, database)
 	if err != nil {
 		return nil, err

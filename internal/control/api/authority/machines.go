@@ -19,6 +19,7 @@ type MachineStore interface {
 	RotateMachineIdentityKey(context.Context, string, string, string, string, ed25519.PublicKey, time.Time) error
 	RevokeMachineIdentity(context.Context, string, string, string, time.Time) error
 	MachineIdentityPolicy(context.Context, string) (controlstate.MachineIdentity, error)
+	ProvisioningIdentityPolicy(context.Context, string, time.Time) (controlstate.MachineIdentity, error)
 	CreateProvisioningGrant(context.Context, controlstate.ProvisioningGrant, string, time.Time) (controlstate.ProvisioningGrant, error)
 	RevokeProvisioningGrant(context.Context, string, string, string, time.Time) error
 	CreateMachineWorkloadPermission(context.Context, controlstate.MachineWorkloadPermission, string, time.Time) (controlstate.MachineWorkloadPermission, error)
@@ -34,7 +35,7 @@ type MachineStore interface {
 var _ MachineStore = (*controlstate.Database)(nil)
 
 func machineProblem(ctx context.Context, w http.ResponseWriter, err error) {
-	if errors.Is(err, controlstate.ErrMachineDenied) || errors.Is(err, controlstate.ErrWorkloadDenied) || errors.Is(err, oidc.ErrUnauthenticated) {
+	if errors.Is(err, controlstate.ErrMachineDenied) || errors.Is(err, controlstate.ErrPublisherIdentity) || errors.Is(err, controlstate.ErrWorkloadDenied) || errors.Is(err, oidc.ErrUnauthenticated) {
 		writeProblem(w, 403, authorityv1.Forbidden, "current machine proof or workload policy does not authorize this operation")
 		return
 	}
@@ -199,7 +200,11 @@ func (h *handler) RevokeMachineWorkloadPermission(w http.ResponseWriter, r *http
 	w.WriteHeader(204)
 }
 
-func (h *handler) machineProof(r *http.Request, s MachineStore, id, assertion string) (proof controlstate.MachineProof, err error) {
+type machinePolicyStore interface {
+	MachineIdentityPolicy(context.Context, string) (controlstate.MachineIdentity, error)
+}
+
+func (h *handler) machineProof(r *http.Request, s machinePolicyStore, id, assertion string) (proof controlstate.MachineProof, err error) {
 	proof.Assertion = assertion
 	policy, err := s.MachineIdentityPolicy(r.Context(), id)
 	if err != nil {
@@ -221,12 +226,24 @@ func (h *handler) ExchangeProvisioning(w http.ResponseWriter, r *http.Request) {
 		machineProblem(r.Context(), w, controlstate.ErrProjectConfigurationInvalid)
 		return
 	}
-	proof, err := h.machineProof(r, s, body.MachineId, body.Assertion)
+	policy, err := s.ProvisioningIdentityPolicy(r.Context(), body.GrantId, time.Now())
 	if err != nil {
 		machineProblem(r.Context(), w, err)
 		return
 	}
-	result, err := s.ExchangeProvisioning(r.Context(), body.MachineId, body.GrantId, controlstate.ProvisioningOperation(body.Operation), proof, h.config.ControlURL+"/v1/provisioning-sessions/exchange", time.Now())
+	if body.MachineId != "" && body.MachineId != policy.ID {
+		machineProblem(r.Context(), w, controlstate.ErrMachineDenied)
+		return
+	}
+	proof := controlstate.MachineProof{Assertion: body.Assertion}
+	if policy.ProofKind == "oidc" {
+		proof.Execution, err = h.workloads.Verify(r.Context(), policy.Trust, body.Assertion)
+	}
+	if err != nil {
+		machineProblem(r.Context(), w, err)
+		return
+	}
+	result, err := s.ExchangeProvisioning(r.Context(), policy.ID, body.GrantId, controlstate.ProvisioningOperation(body.Operation), proof, h.config.ControlURL+"/v1/provisioning-sessions/exchange", time.Now())
 	if err != nil {
 		machineProblem(r.Context(), w, err)
 		return

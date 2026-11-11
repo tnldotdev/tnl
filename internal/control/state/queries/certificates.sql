@@ -177,7 +177,7 @@ INSERT INTO control.admin_audit_events (
     occurred_at
 ) VALUES (
     sqlc.arg(actor_identity_id),
-    sqlc.arg(actor_identity_id),
+    sqlc.arg(actor),
     sqlc.arg(request_id),
     'certificate_issuance.create',
     'certificate_issuance',

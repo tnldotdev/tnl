@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
@@ -44,6 +46,9 @@ func (d *Database) livePublisher(ctx context.Context, q *controlstatedb.Queries,
 	}
 	if !available {
 		return PublisherIdentity{}, g, ErrPublisherIdentity
+	}
+	if _, err := machinePublisherDeadline(ctx, q, id, grant, now); err != nil {
+		return PublisherIdentity{}, g, err
 	}
 	if i.Kind == "guest" {
 		trial, err := q.LockGuestTrialByID(ctx, i.GuestID.String)
@@ -105,6 +110,17 @@ func (d *Database) ExchangePublisherAssertion(ctx context.Context, id, grant, au
 	if claimed != 1 {
 		return result, ErrPublisherIdentity
 	}
+	result, err = d.issuePublisherAccess(ctx, tx, identity, g, kid, now, now.Add(PublisherAccessLifetime))
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit(ctx)
+}
+
+func (d *Database) issuePublisherAccess(ctx context.Context, tx pgx.Tx, identity PublisherIdentity, g controlstatedb.ControlPublisherGrant, kid string, now, maximum time.Time) (result PublisherAccess, retErr error) {
+	q := controlstatedb.New(tx)
+	id := identity.ID
+	grant := g.ID
 	if err := q.PrunePublisherAccess(ctx, controlstatedb.PrunePublisherAccessParams{PublisherIdentityID: id, Now: timestamptz(now)}); err != nil {
 		return result, err
 	}
@@ -122,7 +138,14 @@ func (d *Database) ExchangePublisherAssertion(ctx context.Context, id, grant, au
 	}
 	token := "pta_" + base64.RawURLEncoding.EncodeToString(secret[:])
 	digest := sha256.Sum256([]byte(token))
-	until := now.Add(PublisherAccessLifetime)
+	until := minTime(now.Add(PublisherAccessLifetime), maximum)
+	deadline, err := machinePublisherDeadline(ctx, q, id, grant, now)
+	if err != nil {
+		return result, err
+	}
+	if deadline != nil {
+		until = minTime(until, *deadline)
+	}
 	if g.ExpiresAt.Valid && g.ExpiresAt.Time.Before(until) {
 		until = g.ExpiresAt.Time
 	}
@@ -130,7 +153,7 @@ func (d *Database) ExchangePublisherAssertion(ctx context.Context, id, grant, au
 	if err := q.InsertPublisherAccess(ctx, controlstatedb.InsertPublisherAccessParams{AccessTokenDigest: digest[:], PublisherIdentityID: id, GrantID: grant, KeyID: kid, CreatedAt: timestamptz(now), ExpiresAt: timestamptz(until)}); err != nil {
 		return result, err
 	}
-	return PublisherAccess{identity, token, until}, tx.Commit(ctx)
+	return PublisherAccess{identity, token, until}, nil
 }
 
 func (d *Database) AuthenticatePublisherAccess(ctx context.Context, token, sourceIP string, now time.Time) (result PublisherIdentity, retErr error) {
@@ -166,6 +189,13 @@ func (d *Database) RotatePublisherKey(ctx context.Context, token, sourceIP, repl
 	identity, err := d.AuthenticatePublisherAccess(ctx, token, sourceIP, now)
 	if err != nil {
 		return err
+	}
+	deadline, err := machinePublisherDeadline(ctx, controlstatedb.New(d.pool), identity.ID, identity.GrantID, now)
+	if err != nil {
+		return err
+	}
+	if deadline != nil {
+		return ErrPublisherIdentity
 	}
 	if !opaqueid.Valid(replacementID, opaqueid.PublisherIdentityKeyPrefix) {
 		return ErrPublisherIdentity

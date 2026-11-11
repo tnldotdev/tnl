@@ -363,7 +363,7 @@ func (h *handler) CreatePublishRun(
 	}
 	setup, err := h.store.CreatePublishRun(request.Context(), controlstate.PublishRunRequest{
 		PublicURLID: publicURL.ID, TeamID: publicURL.TeamID, MembershipID: publicURL.MembershipID,
-		ActingIdentityID: publisher.CreatorID, GuestID: publisher.GuestID,
+		ActingIdentityID: publisher.CreatorID, ActingMachineID: publisher.CreatorMachineID, GuestID: publisher.GuestID,
 		IdempotencyKey: idempotencyKey, RequestDigest: [32]byte(digest),
 		PolicyRevision: uint64(publicURL.PolicyRevision), CertificateCacheKey: plan.CacheKey,
 		CertificateScope: plan.Scope, CertificateIdentifiers: plan.Identifiers,

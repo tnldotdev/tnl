@@ -98,8 +98,9 @@ func (d *Database) RegisterMachineIdentity(ctx context.Context, r RegisterMachin
 	return MachineIdentity{ID: id, TeamID: r.TeamID, Name: r.Name, ProofKind: r.ProofKind, Trust: r.Trust, Revision: 1}, tx.Commit(ctx)
 }
 
-// manager rotation invalidates all old provisioning tokens and linked visitor
-// sessions. key IDs and public keys cannot be reused after revocation.
+// manager rotation invalidates all old provisioning tokens, linked visitor
+// sessions and application publication sessions. key IDs and public keys cannot
+// be reused after revocation.
 func (d *Database) RotateMachineIdentityKey(ctx context.Context, team, id, actor, key string, public ed25519.PublicKey, now time.Time) (retErr error) {
 	if !config.ExactWorkloadValue(key) || len(key) > 128 || len(public) != ed25519.PublicKeySize {
 		return ErrProjectConfigurationInvalid
@@ -109,6 +110,9 @@ func (d *Database) RotateMachineIdentityKey(ctx context.Context, team, id, actor
 		return err
 	}
 	defer rollback(ctx, tx, "rotate machine identity key", &retErr)()
+	if err = closeMachinePublicationRuns(ctx, tx, team, id, "", now); err != nil {
+		return err
+	}
 	var kind string
 	if err = tx.QueryRow(ctx, `SELECT proof_kind FROM control.machine_identities WHERE id=$1 AND team_id=$2 AND revoked_at IS NULL FOR UPDATE`, id, team).Scan(&kind); err != nil {
 		return publisherLookupError(err, ErrMachineDenied)
@@ -134,6 +138,9 @@ func (d *Database) RevokeMachineIdentity(ctx context.Context, team, id, actor st
 		return err
 	}
 	defer rollback(ctx, tx, "revoke machine identity", &retErr)()
+	if err = closeMachinePublicationRuns(ctx, tx, team, id, "", now); err != nil {
+		return err
+	}
 	tag, err := tx.Exec(ctx, `UPDATE control.machine_identities SET revoked_at=COALESCE(revoked_at,$3) WHERE id=$1 AND team_id=$2`, id, team, now)
 	if err != nil {
 		return err
@@ -163,6 +170,15 @@ func (d *Database) MachineIdentityPolicy(ctx context.Context, id string) (r Mach
 	}
 	defer rollback(ctx, tx, "read machine identity policy", &retErr)()
 	return machineIdentity(ctx, tx, id)
+}
+
+func (d *Database) ProvisioningIdentityPolicy(ctx context.Context, grant string, now time.Time) (MachineIdentity, error) {
+	var id string
+	err := d.pool.QueryRow(ctx, `SELECT machine_id FROM control.machine_provisioning_grants WHERE id=$1 AND revoked_at IS NULL AND expires_at>$2`, grant, now).Scan(&id)
+	if err != nil {
+		return MachineIdentity{}, publisherLookupError(err, ErrMachineDenied)
+	}
+	return d.MachineIdentityPolicy(ctx, id)
 }
 
 type MachineProof struct {

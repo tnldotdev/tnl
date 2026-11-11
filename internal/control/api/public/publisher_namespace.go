@@ -187,7 +187,7 @@ func (h *handler) DeletePublisherPublicURL(w http.ResponseWriter, r *http.Reques
 		publisherProblem(r.Context(), w, "read allocated URL", err)
 		return
 	}
-	if err := h.store.DeleteAuthorizedPublicURL(r.Context(), controlstate.AuthorizedPublicURLDeleteRequest{PublicURLID: id, TeamID: p.Scope.TeamID, ActingIdentityID: p.CreatorID, PolicyRevision: uint64(u.PolicyRevision), ExpectedMutationRevision: u.MutationRevision, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID}, time.Now()); err != nil {
+	if err := h.store.DeleteAuthorizedPublicURL(r.Context(), controlstate.AuthorizedPublicURLDeleteRequest{ActingMachineID: p.CreatorMachineID, PublicURLID: id, TeamID: p.Scope.TeamID, ActingIdentityID: p.CreatorID, PolicyRevision: uint64(u.PolicyRevision), ExpectedMutationRevision: u.MutationRevision, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID}, time.Now()); err != nil {
 		publisherProblem(r.Context(), w, "delete allocated URL", err)
 		return
 	}

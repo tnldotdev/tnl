@@ -97,9 +97,14 @@ schemas:
   ProvisioningExchange:
     type: object
     additionalProperties: false
-    required: [machine_id, grant_id, operation, assertion]
+    required: [grant_id, operation, assertion]
     properties:
-      machine_id: { type: string }
+      machine_id:
+        {
+          type: string,
+          x-go-type-skip-optional-pointer: true,
+          description: Optional identity assertion; the grant selects the saved machine identity.,
+        }
       grant_id: { type: string }
       operation: { $ref: "../openapi.yaml#/components/schemas/ProvisioningOperation" }
       assertion:
@@ -146,8 +151,7 @@ schemas:
           type: integer,
           format: int64,
           minimum: 0,
-          description: Current applied project revision,
-          not permission to overwrite project configuration.,
+          description: "Current applied project revision, not permission to overwrite project configuration.",
         }
       source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
   PublisherGroupWorkloadResolution:
@@ -160,8 +164,7 @@ schemas:
       publisher_group:
         {
           type: string,
-          description: Authoritative configuration definition key; the concrete group's template name,
-          or its declared group name. Not its mutable display name.,
+          description: "Authoritative configuration definition key; the concrete group's template name, or its declared group name. Not its mutable display name.",
         }
   ResolvePublisherGroupWorkload:
     type: object

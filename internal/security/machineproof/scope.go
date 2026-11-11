@@ -4,9 +4,30 @@ package machineproof
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 )
+
+// publication proves one resource or namespace selection, never a provisioning
+// grant. refresh replaces nonce with the immutable publication session ID.
+func Publication(resource, namespace, operation, publicKey, nonce string) string {
+	return scope("publication", resource, namespace, operation, publicKey, nonce)
+}
+
+// cleanup is signed by the original native publisher key, not the machine's
+// source key. it selects one session-owned invocation and grants no publication.
+func PublicationCleanup(session, invocation string) string {
+	return scope("publication_cleanup", session, invocation)
+}
+
+// assertion digest binds the verified identity. OIDC callers intentionally do
+// not need to know the server's machine identity ID to prove key possession.
+func PublicationPossession(resource, namespace, operation, publicKey, nonce string, assertion [32]byte) []byte {
+	b, _ := json.Marshal([]string{"tnl-machine-publication/v1", resource, namespace, operation, publicKey, nonce, base64.RawURLEncoding.EncodeToString(assertion[:])})
+	d := sha256.Sum256(b)
+	return d[:]
+}
 
 // scopes are "machine/v1/" plus lowercase hex SHA-256 of the compact JSON string
 // array. Workload embeds the compact services array as its last string; nil is

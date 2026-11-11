@@ -213,7 +213,7 @@ func (d *Database) CreateCertificateIssuance(
 		return CertificateIssuance{}, fmt.Errorf("controlstate: create certificate issuance: insert order: %w", err)
 	}
 	if err := queries.InsertCertificateIssuanceAuditEvent(ctx, controlstatedb.InsertCertificateIssuanceAuditEventParams{
-		ActorIdentityID: text(session.ActingIdentityID), RequestID: request.IdempotencyKey,
+		ActorIdentityID: session.ActingIdentityID, Actor: publisherIssuer{IdentityID: session.ActingIdentityID.String, MachineID: session.ActingMachineID.String}.actor(), RequestID: request.IdempotencyKey,
 		IssuanceID: issuanceID, OccurredAt: timestamptz(now),
 	}); err != nil {
 		return CertificateIssuance{}, fmt.Errorf("controlstate: create certificate issuance: insert audit event: %w", err)

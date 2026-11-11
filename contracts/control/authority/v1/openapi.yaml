@@ -9,6 +9,16 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example
 paths:
+  /v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions:
+    $ref: "./paths/machine-publications.yaml#/paths/~1v1~1teams~1{team_id}~1machine-identities~1{machine_id}~1publication-permissions"
+  /v1/teams/{team_id}/machine-publication-permissions/{permission_id}:
+    $ref: "./paths/machine-publications.yaml#/paths/~1v1~1teams~1{team_id}~1machine-publication-permissions~1{permission_id}"
+  /v1/machine-publication-sessions/exchange:
+    $ref: "./paths/machine-publications.yaml#/paths/~1v1~1machine-publication-sessions~1exchange"
+  /v1/machine-publication-sessions/{session_id}/refresh:
+    $ref: "./paths/machine-publications.yaml#/paths/~1v1~1machine-publication-sessions~1{session_id}~1refresh"
+  /v1/machine-publication-sessions/{session_id}/cleanup:
+    $ref: "./paths/machine-publications.yaml#/paths/~1v1~1machine-publication-sessions~1{session_id}~1cleanup"
   /v1/teams/{team_id}/machine-identities:
     $ref: "./paths/machines.yaml#/paths/~1v1~1teams~1{team_id}~1machine-identities"
   /v1/teams/{team_id}/machine-identities/{machine_id}:
@@ -170,6 +180,16 @@ components:
     BearerProblem:
       $ref: "./schemas/common.yaml#/responses/BearerProblem"
   schemas:
+    MachinePublicationPermissionRequest:
+      $ref: "./schemas/machine-publications.yaml#/schemas/MachinePublicationPermissionRequest"
+    MachinePublicationExchange:
+      $ref: "./schemas/machine-publications.yaml#/schemas/MachinePublicationExchange"
+    MachinePublicationRefresh:
+      $ref: "./schemas/machine-publications.yaml#/schemas/MachinePublicationRefresh"
+    MachinePublicationSession:
+      $ref: "./schemas/machine-publications.yaml#/schemas/MachinePublicationSession"
+    MachinePublicationCleanup:
+      $ref: "./schemas/machine-publications.yaml#/schemas/MachinePublicationCleanup"
     MachineTrust:
       $ref: "./schemas/machines.yaml#/schemas/MachineTrust"
     RegisterMachineRequest:

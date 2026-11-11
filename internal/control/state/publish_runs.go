@@ -44,6 +44,7 @@ type PublishRunRequest struct {
 	TeamID                   string
 	MembershipID             string
 	ActingIdentityID         string
+	ActingMachineID          string
 	GuestID                  string
 	RetrySecret              []byte
 	IdempotencyKey           string
@@ -314,7 +315,7 @@ func (d *Database) createPublishRun(
 	}
 	session, err := queries.InsertPublishRun(ctx, controlstatedb.InsertPublishRunParams{
 		ID: publishRunID, PublicURLID: request.PublicURLID, TeamID: request.TeamID, MembershipID: membershipID,
-		ActingIdentityID: request.ActingIdentityID, ExpectedMutationRevision: positive(request.ExpectedMutationRevision),
+		ActingIdentityID: nullableText(request.ActingIdentityID), ActingMachineID: nullableText(request.ActingMachineID), ExpectedMutationRevision: positive(request.ExpectedMutationRevision),
 		PublisherIdentityID: nullableText(request.PublisherIdentityID), PublisherGrantID: nullableText(request.PublisherGrantID),
 		IdempotencyKey:          request.IdempotencyKey,
 		RequestDigestCiphertext: digestCiphertext, RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
@@ -389,7 +390,7 @@ func (d *Database) createPublishRun(
 		return PublishRunSetup{}, err
 	}
 	if err := queries.InsertPublishRunAuditEvent(ctx, controlstatedb.InsertPublishRunAuditEventParams{
-		ActorIdentityID: text(request.ActingIdentityID), Actor: request.ActingIdentityID,
+		ActorIdentityID: nullableText(request.ActingIdentityID), Actor: publisherIssuer{IdentityID: request.ActingIdentityID, MachineID: request.ActingMachineID}.actor(),
 		RequestID: request.IdempotencyKey, PublishRunID: publishRunID, OccurredAt: timestamptz(now),
 	}); err != nil {
 		return PublishRunSetup{}, fmt.Errorf("controlstate: create publish run: insert audit event: %w", err)
@@ -606,12 +607,15 @@ func validatePublishRunRequest(
 	connectionCredentialDuration time.Duration,
 ) error {
 	for _, value := range []string{
-		request.PublicURLID, request.TeamID, request.ActingIdentityID, request.IdempotencyKey,
+		request.PublicURLID, request.TeamID, request.IdempotencyKey,
 		request.CertificateCacheKey, request.CertificateScope, string(request.CertificateChallenge),
 	} {
 		if !validStateText(value) {
 			return errors.New("controlstate: publish-run request is invalid")
 		}
+	}
+	if !(publisherIssuer{IdentityID: request.ActingIdentityID, MachineID: request.ActingMachineID}).valid() || request.ActingMachineID != "" && request.PublisherIdentityID == "" {
+		return ErrPublisherIdentity
 	}
 	if request.MembershipID != "" && !validStateText(request.MembershipID) {
 		return errors.New("controlstate: publish-run membership ID is invalid")

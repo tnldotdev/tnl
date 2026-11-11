@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-machine-group-bindings')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-machine-publications')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-machine-group-bindings');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-machine-publications');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -504,7 +504,9 @@ CREATE TABLE control.public_urls (
     domain_id text NOT NULL CHECK (domain_id <> ''),
     ingress_pool_id text NOT NULL DEFAULT 'ingress-a' REFERENCES control.ingress_pools(id) ON DELETE RESTRICT,
     membership_id text,
-    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_machine_id text,
+    CHECK ((created_by_identity_id IS NOT NULL) <> (created_by_machine_id IS NOT NULL)),
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
     request_digest_ciphertext bytea,
     request_digest_storage_key_id text,
@@ -589,7 +591,9 @@ CREATE TABLE control.publish_runs (
     public_url_id text NOT NULL,
     team_id text NOT NULL CHECK (team_id <> ''),
     membership_id text,
-    acting_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    acting_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    acting_machine_id text,
+    CHECK ((acting_identity_id IS NOT NULL) <> (acting_machine_id IS NOT NULL)),
     publisher_identity_id text,
     publisher_grant_id text,
     publish_run_number bigint NOT NULL CHECK (publish_run_number >= 1),
@@ -2998,10 +3002,48 @@ CREATE TABLE control.workload_session_machines (
     permission_id text NOT NULL REFERENCES control.machine_workload_permissions(id),
     group_id text NOT NULL REFERENCES control.project_publisher_groups(id)
 );
-ALTER TABLE control.publisher_identities ADD FOREIGN KEY(created_by_machine_id) REFERENCES control.machine_identities(id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
+ALTER TABLE control.publisher_identities ADD FOREIGN KEY(created_by_machine_id,team_id) REFERENCES control.machine_identities(id,team_id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
 ALTER TABLE control.publisher_grants ADD FOREIGN KEY(created_by_machine_id) REFERENCES control.machine_identities(id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
 ALTER TABLE control.services ADD FOREIGN KEY(created_by_machine_id,team_id) REFERENCES control.machine_identities(id,team_id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
 ALTER TABLE control.visitor_grants ADD FOREIGN KEY(created_by_machine_id,team_id) REFERENCES control.machine_identities(id,team_id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
 ALTER TABLE control.publisher_group_enrollments ADD FOREIGN KEY(created_by_machine_id) REFERENCES control.machine_identities(id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
 CREATE UNIQUE INDEX services_machine_idempotency ON control.services(created_by_machine_id,idempotency_key) WHERE created_by_machine_id IS NOT NULL;
 CREATE UNIQUE INDEX visitor_grants_machine_idempotency ON control.visitor_grants(resource_kind,created_by_machine_id,kind,idempotency_key) WHERE created_by_machine_id IS NOT NULL;
+ALTER TABLE control.public_urls ADD FOREIGN KEY(created_by_machine_id,team_id) REFERENCES control.machine_identities(id,team_id);
+ALTER TABLE control.publish_runs ADD FOREIGN KEY(acting_machine_id,team_id) REFERENCES control.machine_identities(id,team_id);
+CREATE UNIQUE INDEX public_urls_machine_idempotency ON control.public_urls(created_by_machine_id,idempotency_key) WHERE created_by_machine_id IS NOT NULL;
+
+CREATE TABLE control.machine_publication_permissions (
+    id text PRIMARY KEY,
+    machine_id text NOT NULL,
+    team_id text NOT NULL,
+    public_url_id text REFERENCES control.public_urls(id),
+    domain_id text REFERENCES control.domains(id),
+    namespace text,
+    membership_id text REFERENCES control.team_memberships(id),
+    public_url_scope text CHECK(public_url_scope IN('shared','member')),
+    allow_anonymous boolean NOT NULL DEFAULT false,
+    created_by_identity_id text NOT NULL REFERENCES control.identities(id),
+    expires_at timestamptz NOT NULL,
+    revoked_at timestamptz,
+    FOREIGN KEY(machine_id,team_id) REFERENCES control.machine_identities(id,team_id),
+    CHECK ((public_url_id IS NOT NULL AND namespace IS NULL AND domain_id IS NULL AND membership_id IS NULL AND public_url_scope IS NULL AND NOT allow_anonymous)
+        OR (public_url_id IS NULL AND namespace IS NOT NULL AND domain_id IS NOT NULL AND public_url_scope IS NOT NULL AND (public_url_scope='member')=(membership_id IS NOT NULL)))
+);
+CREATE UNIQUE INDEX machine_publication_permission_resource ON control.machine_publication_permissions(machine_id,public_url_id) WHERE revoked_at IS NULL AND public_url_id IS NOT NULL;
+CREATE UNIQUE INDEX machine_publication_permission_namespace ON control.machine_publication_permissions(machine_id,namespace) WHERE revoked_at IS NULL AND namespace IS NOT NULL;
+CREATE TABLE control.machine_publication_sessions (
+    id text PRIMARY KEY,
+    machine_id text NOT NULL REFERENCES control.machine_identities(id),
+    permission_id text NOT NULL REFERENCES control.machine_publication_permissions(id),
+    identity_revision bigint NOT NULL,
+    publisher_identity_id text NOT NULL UNIQUE REFERENCES control.publisher_identities(id),
+    key_id text NOT NULL REFERENCES control.publisher_identity_keys(id),
+    grant_id text NOT NULL REFERENCES control.publisher_grants(id),
+    session_nonce text NOT NULL,
+    created_at timestamptz NOT NULL,
+    refreshed_at timestamptz NOT NULL,
+    proof_expires_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,
+    UNIQUE(machine_id,session_nonce)
+);

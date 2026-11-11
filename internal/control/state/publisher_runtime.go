@@ -265,7 +265,13 @@ func publisherRuntimeStatus(ctx context.Context, q *controlstatedb.Queries, id s
 	if err != nil {
 		return nil, err
 	}
-	active, err := q.PublisherRuntimeActive(ctx, controlstatedb.PublisherRuntimeActiveParams{PublisherIdentityID: id, ProcessRunID: r.ProcessRunID, Epoch: r.Epoch, Now: timestamptz(now)})
+	// source authority is shared with token issuance and run renewal. keep its
+	// canonical check rather than copying machine policy into runtime queries.
+	_, machineErr := machinePublisherDeadline(ctx, q, id, r.ScopeID, now)
+	if machineErr != nil && !errors.Is(machineErr, ErrPublisherIdentity) {
+		return nil, machineErr
+	}
+	active, err := q.PublisherRuntimeActive(ctx, controlstatedb.PublisherRuntimeActiveParams{PublisherIdentityID: id, ProcessRunID: r.ProcessRunID, Epoch: r.Epoch, Now: timestamptz(now), MachineAuthorityCurrent: machineErr == nil})
 	if err != nil {
 		return nil, err
 	}

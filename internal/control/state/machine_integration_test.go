@@ -119,7 +119,7 @@ func (f machineFixture) authorize(t *testing.T, token string, scope Provisioning
 func TestIntegrationMachineOIDCReusableProofCurrentAuthority(t *testing.T) {
 	f := newMachineFixture(t, "oidc")
 	for _, op := range []ProvisioningOperation{ProvisioningCreate, ProvisioningRead, ProvisioningEnroll, ProvisioningCreate} {
-		s, err := f.d.ExchangeProvisioning(t.Context(), f.machine.ID, f.grant.ID, op, f.proof, machineTestAudience, f.now)
+		s, err := f.d.ExchangeProvisioning(t.Context(), "", f.grant.ID, op, f.proof, machineTestAudience, f.now)
 		if err != nil {
 			t.Fatal("valid projected token must be reusable for current grant operations", op, err)
 		}
@@ -151,7 +151,7 @@ func TestIntegrationMachineOIDCReusableProofCurrentAuthority(t *testing.T) {
 	if err := f.d.RevokeProvisioningGrant(t.Context(), f.r.TeamID, f.grant.ID, f.r.ActorID, f.now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.d.ExchangeProvisioning(t.Context(), f.machine.ID, f.grant.ID, ProvisioningCreate, f.proof, machineTestAudience, f.now); !errors.Is(err, ErrMachineDenied) {
+	if _, err := f.d.ExchangeProvisioning(t.Context(), "", f.grant.ID, ProvisioningCreate, f.proof, machineTestAudience, f.now); !errors.Is(err, ErrMachineDenied) {
 		t.Fatal("reused OIDC proof bypassed current revocation", err)
 	}
 }

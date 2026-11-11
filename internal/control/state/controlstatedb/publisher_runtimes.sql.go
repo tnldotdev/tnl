@@ -47,6 +47,7 @@ JOIN control.publisher_identity_keys k ON k.id=r.key_id AND k.publisher_identity
 JOIN control.teams t ON t.id=r.team_id AND t.id=p.team_id
 WHERE r.publisher_identity_id=$1 AND r.process_run_id=$2 AND r.epoch=$3
 AND r.stopped_at IS NULL AND r.lease_expires_at>$4
+AND $5::boolean
 AND control.active_publisher(p.id,$4) AND k.retired_at IS NULL AND t.deleted_at IS NULL
 AND (EXISTS(SELECT 1 FROM control.publisher_group_members m JOIN control.project_publisher_groups g ON g.id=m.group_id WHERE m.publisher_identity_id=p.id AND m.key_id=k.id AND g.team_id=p.team_id AND g.id=r.scope_id AND g.deleted_at IS NULL)
  OR EXISTS(SELECT 1 FROM control.publisher_grants g
@@ -62,18 +63,21 @@ AND (EXISTS(SELECT 1 FROM control.publisher_group_members m JOIN control.project
 `
 
 type PublisherRuntimeActiveParams struct {
-	PublisherIdentityID string
-	ProcessRunID        string
-	Epoch               int64
-	Now                 pgtype.Timestamptz
+	PublisherIdentityID     string
+	ProcessRunID            string
+	Epoch                   int64
+	Now                     pgtype.Timestamptz
+	MachineAuthorityCurrent bool
 }
 
+// the caller supplies the canonical MachinePublisherAuthority result at now.
 func (q *Queries) PublisherRuntimeActive(ctx context.Context, arg PublisherRuntimeActiveParams) (bool, error) {
 	row := q.db.QueryRow(ctx, publisherRuntimeActive,
 		arg.PublisherIdentityID,
 		arg.ProcessRunID,
 		arg.Epoch,
 		arg.Now,
+		arg.MachineAuthorityCurrent,
 	)
 	var column_1 bool
 	err := row.Scan(&column_1)

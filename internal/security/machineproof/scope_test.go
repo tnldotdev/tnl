@@ -1,14 +1,48 @@
 package machineproof_test
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/security/machineproof"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
+
+func TestPublicationCleanupBindsOnlyOriginalRemoval(t *testing.T) {
+	scope := machineproof.PublicationCleanup("session", "invocation")
+	for _, other := range []string{
+		machineproof.PublicationCleanup("other", "invocation"),
+		machineproof.PublicationCleanup("session", "other"),
+		machineproof.Publication("session", "", "cleanup", "", "invocation"),
+		machineproof.Provisioning("session", "invocation"),
+	} {
+		if scope == other {
+			t.Fatal("cleanup proof authorized another purpose or allocation")
+		}
+	}
+}
+
+func TestPublicationScopesAndPossessionDoNotMixPurposes(t *testing.T) {
+	scope := machineproof.Publication("resource", "", "exchange", "public", "nonce")
+	for _, other := range []string{machineproof.Publication("other", "", "exchange", "public", "nonce"), machineproof.Publication("", "resource", "exchange", "public", "nonce"), machineproof.Publication("resource", "", "refresh", "public", "nonce"), machineproof.Publication("resource", "", "exchange", "other", "nonce"), machineproof.Publication("resource", "", "exchange", "public", "other"), machineproof.Provisioning("resource", "read")} {
+		if scope == other {
+			t.Fatal("publication scope collision")
+		}
+	}
+	digest := sha256.Sum256([]byte("platform assertion"))
+	message := machineproof.PublicationPossession("resource", "", "exchange", "public", "nonce", digest)
+	if bytes.Equal(message, machineproof.PublicationPossession("resource", "", "refresh", "public", "nonce", digest)) {
+		t.Fatal("exchange possession authorized refresh")
+	}
+	other := sha256.Sum256([]byte("different platform assertion"))
+	if bytes.Equal(message, machineproof.PublicationPossession("resource", "", "exchange", "public", "nonce", other)) {
+		t.Fatal("possession did not bind the identity assertion")
+	}
+}
 
 func TestMachineProofOperationAndScopeBinding(t *testing.T) {
 	public, private, err := ed25519.GenerateKey(rand.Reader)

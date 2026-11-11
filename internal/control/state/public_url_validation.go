@@ -15,12 +15,15 @@ import (
 
 func validateCreatePublicURLRequest(request CreatePublicURLRequest) ([]netip.Prefix, error) {
 	for _, value := range []string{
-		request.TeamID, request.DomainID, request.ActingIdentityID, request.IdempotencyKey,
+		request.TeamID, request.DomainID, request.IdempotencyKey,
 		string(request.PublicURLScope), string(request.DNSState),
 	} {
 		if !validStateText(value) {
 			return nil, ErrPublicURLInvalid
 		}
+	}
+	if !(publisherIssuer{IdentityID: request.ActingIdentityID, MachineID: request.ActingMachineID}).valid() || request.ActingMachineID != "" && request.PublisherIdentityID == "" {
+		return nil, ErrPublicURLInvalid
 	}
 	if len(request.IdempotencyKey) > 128 || request.MembershipID != "" && !validStateText(request.MembershipID) ||
 		request.PublisherIdentityID == "" && !validStateText(request.CanonicalHostname) ||

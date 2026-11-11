@@ -680,6 +680,36 @@ type ControlMachineProvisioningSession struct {
 	ExpiresAt        pgtype.Timestamptz
 }
 
+type ControlMachinePublicationPermission struct {
+	ID                  string
+	MachineID           string
+	TeamID              string
+	PublicURLID         pgtype.Text
+	DomainID            pgtype.Text
+	Namespace           pgtype.Text
+	MembershipID        pgtype.Text
+	PublicURLScope      pgtype.Text
+	AllowAnonymous      bool
+	CreatedByIdentityID string
+	ExpiresAt           pgtype.Timestamptz
+	RevokedAt           pgtype.Timestamptz
+}
+
+type ControlMachinePublicationSession struct {
+	ID                  string
+	MachineID           string
+	PermissionID        string
+	IdentityRevision    int64
+	PublisherIdentityID string
+	KeyID               string
+	GrantID             string
+	SessionNonce        string
+	CreatedAt           pgtype.Timestamptz
+	RefreshedAt         pgtype.Timestamptz
+	ProofExpiresAt      pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+}
+
 type ControlMachineWorkloadPermission struct {
 	ID         string
 	MachineID  string
@@ -786,7 +816,8 @@ type ControlPublicUrl struct {
 	DomainID                    string
 	IngressPoolID               string
 	MembershipID                pgtype.Text
-	CreatedByIdentityID         string
+	CreatedByIdentityID         pgtype.Text
+	CreatedByMachineID          pgtype.Text
 	IdempotencyKey              string
 	RequestDigestCiphertext     []byte
 	RequestDigestStorageKeyID   pgtype.Text
@@ -860,7 +891,8 @@ type ControlPublishRun struct {
 	PublicURLID                string
 	TeamID                     string
 	MembershipID               pgtype.Text
-	ActingIdentityID           string
+	ActingIdentityID           pgtype.Text
+	ActingMachineID            pgtype.Text
 	PublisherIdentityID        pgtype.Text
 	PublisherGrantID           pgtype.Text
 	PublishRunNumber           int64

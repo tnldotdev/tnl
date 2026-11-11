@@ -309,7 +309,7 @@ func browserTestAuthentication(t *testing.T, d *Database, urlID string, now time
 		if loadErr != nil {
 			t.Fatal(loadErr)
 		}
-		insertTestPublishRun(t, d, testPublishRun{ID: "pr_browser_" + urlID, PublicURLID: urlID, TeamID: url.TeamID, MembershipID: url.MembershipID.String, ActingIdentityID: url.CreatedByIdentityID, CertificateCacheKey: "browser", CertificateScope: "public-url", CertificateIdentifiers: []string{url.CanonicalHostname}, ChallengeMethod: "dns-01", CreatedAt: now, ExpiresAt: now.Add(time.Hour)})
+		insertTestPublishRun(t, d, testPublishRun{ID: "pr_browser_" + urlID, PublicURLID: urlID, TeamID: url.TeamID, MembershipID: url.MembershipID.String, ActingIdentityID: url.CreatedByIdentityID.String, CertificateCacheKey: "browser", CertificateScope: "public-url", CertificateIdentifiers: []string{url.CanonicalHostname}, ChallengeMethod: "dns-01", CreatedAt: now, ExpiresAt: now.Add(time.Hour)})
 		run, err = q.GetOpenPublishRun(t.Context(), urlID)
 	}
 	if err != nil {

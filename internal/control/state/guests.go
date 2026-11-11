@@ -278,7 +278,7 @@ func boundGuestServingAuthority(ctx context.Context, queries *controlstatedb.Que
 		PublishRunID: run.ID, Now: timestamptz(now),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return run, nil
+		return boundMachineServingAuthority(ctx, queries, run, now)
 	}
 	if err != nil {
 		return run, fmt.Errorf("record guest serving authority: %w", err)

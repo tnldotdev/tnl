@@ -16,7 +16,7 @@ SELECT r.*,
         ORDER BY s.publish_run_number DESC LIMIT 1
     ), '')::text AS open_publish_run_id
 FROM control.public_urls AS r
-WHERE r.created_by_identity_id = sqlc.arg(identity_id)
+WHERE (r.created_by_identity_id = sqlc.narg(identity_id) OR r.created_by_machine_id = sqlc.narg(machine_id))
   AND r.idempotency_key = sqlc.arg(idempotency_key);
 
 -- name: LockPublicURLCreationControl :one
@@ -73,6 +73,7 @@ INSERT INTO control.public_urls (
     domain_id,
     membership_id,
     created_by_identity_id,
+    created_by_machine_id,
     idempotency_key,
     request_digest_ciphertext,
     request_digest_storage_key_id,
@@ -105,7 +106,8 @@ INSERT INTO control.public_urls (
     sqlc.arg(team_id),
     sqlc.arg(domain_id),
     sqlc.narg(membership_id),
-    sqlc.arg(created_by_identity_id),
+    sqlc.narg(created_by_identity_id),
+    sqlc.narg(created_by_machine_id),
     sqlc.arg(idempotency_key),
     sqlc.arg(request_digest_ciphertext),
     sqlc.arg(request_digest_storage_key_id),
@@ -200,7 +202,7 @@ INSERT INTO control.admin_audit_events (
     occurred_at
 ) VALUES (
     sqlc.arg(actor_identity_id),
-    sqlc.arg(actor_identity_id),
+    sqlc.arg(actor),
     sqlc.arg(request_id),
     'public_url.create',
     'public_url',
@@ -320,7 +322,7 @@ INSERT INTO control.admin_audit_events (
     occurred_at
 ) VALUES (
     sqlc.arg(actor_identity_id),
-    sqlc.arg(actor_identity_id),
+    sqlc.arg(actor),
     sqlc.arg(request_id),
     'public_url.delete',
     'public_url',

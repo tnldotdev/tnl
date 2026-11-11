@@ -73,6 +73,13 @@ func (i publisherIssuer) valid() bool {
 	return (i.IdentityID != "") != (i.MachineID != "") && (i.ProvisioningGrantID == "" || i.MachineID != "")
 }
 
+func (i publisherIssuer) actor() string {
+	if i.MachineID != "" {
+		return "machine:" + i.MachineID
+	}
+	return i.IdentityID
+}
+
 type PublisherEnrollment struct {
 	ID, Key string
 	Scope   PublisherScope

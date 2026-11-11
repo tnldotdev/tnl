@@ -69,6 +69,7 @@ type CreatePublicURLRequest struct {
 	DomainID              string
 	MembershipID          string
 	ActingIdentityID      string
+	ActingMachineID       string
 	IdempotencyKey        string
 	RequestDigest         [32]byte
 	CanonicalHostname     string
@@ -102,6 +103,7 @@ type AuthorizedPublicURLUpdateRequest struct {
 }
 
 type AuthorizedPublicURLDeleteRequest struct {
+	ActingMachineID          string
 	PublicURLID              string
 	TeamID                   string
 	ActingIdentityID         string
@@ -177,7 +179,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	}
 
 	existing, err := queries.GetPublicURLByCreatorIdempotency(ctx, controlstatedb.GetPublicURLByCreatorIdempotencyParams{
-		IdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
+		IdentityID: nullableText(request.ActingIdentityID), MachineID: nullableText(request.ActingMachineID), IdempotencyKey: request.IdempotencyKey,
 	})
 	if err == nil {
 		if request.PublisherIdentityID != "" {
@@ -350,7 +352,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 	}
 	row, err := queries.InsertPublicURL(ctx, controlstatedb.InsertPublicURLParams{
 		ID: publicURLID, TeamID: request.TeamID, DomainID: request.DomainID, MembershipID: membershipID,
-		CreatedByIdentityID: request.ActingIdentityID, IdempotencyKey: request.IdempotencyKey,
+		CreatedByIdentityID: nullableText(request.ActingIdentityID), CreatedByMachineID: nullableText(request.ActingMachineID), IdempotencyKey: request.IdempotencyKey,
 		RequestDigestCiphertext:   digestCiphertext,
 		RequestDigestStorageKeyID: text(d.storageKey.CurrentID()),
 		CanonicalHostname:         request.CanonicalHostname, Namespace: namespace, Target: request.Target,
@@ -391,7 +393,7 @@ func (d *Database) CreatePublicURL(ctx context.Context, request CreatePublicURLR
 		}
 	}
 	if err := queries.InsertPublicURLCreateAuditEvent(ctx, controlstatedb.InsertPublicURLCreateAuditEventParams{
-		ActorIdentityID: text(request.ActingIdentityID), RequestID: request.IdempotencyKey,
+		ActorIdentityID: nullableText(request.ActingIdentityID), Actor: publisherIssuer{IdentityID: request.ActingIdentityID, MachineID: request.ActingMachineID}.actor(), RequestID: request.IdempotencyKey,
 		PublicURLID: publicURLID, OccurredAt: timestamptz(now),
 	}); err != nil {
 		return PublicURL{}, fmt.Errorf("controlstate: create public_url: insert audit event: %w", err)

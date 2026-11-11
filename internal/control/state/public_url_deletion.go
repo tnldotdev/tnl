@@ -26,7 +26,7 @@ func (d *Database) DeleteAuthorizedPublicURL(
 func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublicURLDeleteRequest, now time.Time) (retErr error) {
 	identityID := request.ActingIdentityID
 	publicURLID := request.PublicURLID
-	if !validStateText(identityID) || !validStateText(publicURLID) {
+	if !(publisherIssuer{IdentityID: identityID, MachineID: request.ActingMachineID}).valid() || request.ActingMachineID != "" && request.PublisherIdentityID == "" || !validStateText(publicURLID) {
 		return ErrPublicURLInvalid
 	}
 	if request.GuestID != "" && (!validStateText(request.GuestID) || !validStateText(request.TeamID) ||
@@ -42,7 +42,6 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 	}
 	defer rollback(ctx, tx, "delete route", &retErr)()
 	queries := controlstatedb.New(tx)
-	pendingEvents := pendingIngressRoutingTableEvents{}
 	var route controlstatedb.ControlPublicUrl
 	if request.GuestID == "" && request.PublisherIdentityID != "" {
 		if _, err := queries.LockLocalPublicURLTeamForMutation(ctx, publicURLID); errors.Is(err, pgx.ErrNoRows) {
@@ -105,6 +104,20 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 		}
 		expectedMutationRevision = positive(request.ExpectedMutationRevision)
 	}
+	if err := deleteLockedPublicURL(ctx, queries, route, expectedMutationRevision, publisherIssuer{IdentityID: identityID, MachineID: request.ActingMachineID}, now); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("controlstate: delete public_url: commit: %w", err)
+	}
+	return nil
+}
+
+// authorization and project ownership checks belong to the caller. both normal
+// deletion and allocation cleanup use this transaction-held closure and audit.
+func deleteLockedPublicURL(ctx context.Context, queries *controlstatedb.Queries, route controlstatedb.ControlPublicUrl, expectedMutationRevision int64, issuer publisherIssuer, now time.Time) error {
+	publicURLID := route.ID
+	pendingEvents := pendingIngressRoutingTableEvents{}
 	if err := closeOpenPublishRun(ctx, queries, &pendingEvents, route, now, "public_url_deleted"); err != nil {
 		return err
 	}
@@ -122,15 +135,12 @@ func (d *Database) deletePublicURL(ctx context.Context, request AuthorizedPublic
 		return fmt.Errorf("controlstate: delete public_url: generate request ID: %w", err)
 	}
 	if err := queries.InsertPublicURLDeleteAuditEvent(ctx, controlstatedb.InsertPublicURLDeleteAuditEventParams{
-		ActorIdentityID: text(identityID), RequestID: requestID, PublicURLID: publicURLID, OccurredAt: timestamptz(now),
+		ActorIdentityID: nullableText(issuer.IdentityID), Actor: issuer.actor(), RequestID: requestID, PublicURLID: publicURLID, OccurredAt: timestamptz(now),
 	}); err != nil {
 		return fmt.Errorf("controlstate: delete public_url: insert audit event: %w", err)
 	}
 	if err := pendingEvents.publish(ctx, queries); err != nil {
 		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("controlstate: delete public_url: commit: %w", err)
 	}
 	return nil
 }

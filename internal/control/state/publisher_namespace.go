@@ -35,10 +35,19 @@ func (d *Database) validatePublisherAllocation(ctx context.Context, q *controlst
 	if err != nil {
 		return p, controlstatedb.ControlDomain{}, err
 	}
-	if p.GuestID != "" || p.Scope.Kind != "namespace" || p.Scope.Namespace != r.PublisherNamespace || p.Scope.DomainID != r.DomainID || p.Scope.TeamID != r.TeamID || p.CreatorID != r.ActingIdentityID || r.ServiceProtocol != PublicURLServiceHTTP || r.Purpose != PublicURLPurposeApp || r.DNSState != PublicURLDNSPending {
+	if p.GuestID != "" || p.Scope.Kind != "namespace" || p.Scope.Namespace != r.PublisherNamespace || p.Scope.DomainID != r.DomainID || p.Scope.TeamID != r.TeamID || p.CreatorID != r.ActingIdentityID || p.CreatorMachineID != r.ActingMachineID || r.ServiceProtocol != PublicURLServiceHTTP || r.Purpose != PublicURLPurposeApp || r.DNSState != PublicURLDNSPending {
 		return p, controlstatedb.ControlDomain{}, ErrPublisherIdentity
 	}
 	domain, err := q.GetPublisherDomain(ctx, controlstatedb.GetPublisherDomainParams{ID: r.DomainID, TeamID: text(r.TeamID)})
+	if err == nil && p.CreatorMachineID != "" && r.AccessMode == VisitorAccessAnonymous {
+		allowed, e := q.MachinePublisherAnonymousAllocation(ctx, p.ID)
+		if e != nil {
+			return p, domain, e
+		}
+		if !allowed {
+			return p, domain, ErrPublisherIdentity
+		}
+	}
 	return p, domain, err
 }
 
@@ -77,7 +86,7 @@ func (d *Database) AllocatePublisherPublicURL(ctx context.Context, p PublisherId
 	// hashing the ownership tuple keeps URL idempotency scoped to the exact
 	// grant even when one identity has several namespace grants.
 	idempotency := sha256.Sum256([]byte(p.ID + "\x00" + p.GrantID + "\x00" + invocation))
-	return d.CreatePublicURL(ctx, CreatePublicURLRequest{RequirePostQuantum: requirePostQuantum, TeamID: p.Scope.TeamID, DomainID: p.Scope.DomainID, MembershipID: p.Scope.MembershipID, ActingIdentityID: p.CreatorID, IdempotencyKey: base32.StdEncoding.EncodeToString(idempotency[:]), RequestDigest: sha256.Sum256(encoded), Target: target, ServiceProtocol: PublicURLServiceHTTP, Purpose: PublicURLPurposeApp, PublicURLScope: p.Scope.PublicURLScope, AccessMode: mode, AllowedIPPrefixes: prefixes, PolicyRevision: uint64(revision), Ephemeral: true, DNSState: PublicURLDNSPending, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, PublisherInvocationID: invocation, PublisherNamespace: p.Scope.Namespace}, now)
+	return d.CreatePublicURL(ctx, CreatePublicURLRequest{ActingMachineID: p.CreatorMachineID, RequirePostQuantum: requirePostQuantum, TeamID: p.Scope.TeamID, DomainID: p.Scope.DomainID, MembershipID: p.Scope.MembershipID, ActingIdentityID: p.CreatorID, IdempotencyKey: base32.StdEncoding.EncodeToString(idempotency[:]), RequestDigest: sha256.Sum256(encoded), Target: target, ServiceProtocol: PublicURLServiceHTTP, Purpose: PublicURLPurposeApp, PublicURLScope: p.Scope.PublicURLScope, AccessMode: mode, AllowedIPPrefixes: prefixes, PolicyRevision: uint64(revision), Ephemeral: true, DNSState: PublicURLDNSPending, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID, PublisherInvocationID: invocation, PublisherNamespace: p.Scope.Namespace}, now)
 }
 
 func (d *Database) validatePublisherDeletion(ctx context.Context, q *controlstatedb.Queries, r AuthorizedPublicURLDeleteRequest, u controlstatedb.ControlPublicUrl, now time.Time) error {
@@ -85,7 +94,7 @@ func (d *Database) validatePublisherDeletion(ctx context.Context, q *controlstat
 	if err != nil {
 		return err
 	}
-	if p.GuestID != "" || p.Scope.Kind != "namespace" || u.CreatedByIdentityID != p.CreatorID || r.ActingIdentityID != p.CreatorID {
+	if p.GuestID != "" || p.Scope.Kind != "namespace" || u.CreatedByIdentityID.String != p.CreatorID || u.CreatedByMachineID.String != p.CreatorMachineID || r.ActingMachineID != p.CreatorMachineID || r.ActingIdentityID != p.CreatorID {
 		return ErrPublisherIdentity
 	}
 	return publisherOwnsRun(ctx, q, p, u)

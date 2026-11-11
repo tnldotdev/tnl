@@ -229,13 +229,13 @@ func (d *Database) EnrollGuestPublisher(ctx context.Context, guestID, urlID, sou
 		if revoked || subtle.ConstantTimeCompare(existingPublic, public) != 1 {
 			return result, ErrPublisherIdentity
 		}
-		return PublisherIdentity{ID: existing, KeyID: existingKey, GrantID: existingGrant, CreatorID: u.CreatedByIdentityID, Kind: "guest", GuestID: guestID, Scope: s}, nil
+		return PublisherIdentity{ID: existing, KeyID: existingKey, GrantID: existingGrant, CreatorID: u.CreatedByIdentityID.String, Kind: "guest", GuestID: guestID, Scope: s}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
 	until := trial.ExpiresAt.Time
-	result, err = insertPublisher(ctx, q, resolved, "guest", "guest", u.CreatedByIdentityID, guestID, "guest", "", public, &until, now)
+	result, err = insertPublisher(ctx, q, resolved, "guest", "guest", u.CreatedByIdentityID.String, guestID, "guest", "", public, &until, now)
 	if err != nil {
 		return result, err
 	}

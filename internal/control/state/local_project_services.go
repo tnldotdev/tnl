@@ -252,7 +252,7 @@ func (d *Database) RealizeLocalProjectService(ctx context.Context, r RealizeLoca
 		if e != nil {
 			return result, publisherLookupError(e, ErrPublicURLAccess)
 		}
-		if u.TeamID != r.TeamID || u.CreatedByIdentityID != r.ActorID || u.Purpose != "app" || u.PublisherPool || u.LifecycleState != "enabled" {
+		if u.TeamID != r.TeamID || u.CreatedByIdentityID.String != r.ActorID || u.Purpose != "app" || u.PublisherPool || u.LifecycleState != "enabled" {
 			return result, ErrPublicURLAccess
 		}
 		if e = d.authorizeLocalProjectPublicURL(ctx, q, u, r.ActorID); e != nil {

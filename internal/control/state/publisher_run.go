@@ -41,7 +41,7 @@ func (d *Database) authorizePublisherRun(ctx context.Context, q *controlstatedb.
 	if err != nil {
 		return [32]byte{}, err
 	}
-	if r.ActingIdentityID != p.CreatorID || r.GuestID != p.GuestID || p.GuestID != "" && r.PublisherSourceIP == "" {
+	if r.ActingIdentityID != p.CreatorID || r.ActingMachineID != p.CreatorMachineID || r.GuestID != p.GuestID || p.GuestID != "" && r.PublisherSourceIP == "" {
 		return [32]byte{}, ErrPublisherIdentity
 	}
 	if err := publisherOwnsRun(ctx, q, p, u); err != nil {

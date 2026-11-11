@@ -76,7 +76,7 @@ func TestIntegrationPublisherRuntimeResourceAvailability(t *testing.T) {
 			if _, err := d.pool.Exec(t.Context(), test.mutation, args...); err != nil {
 				t.Fatal(err)
 			}
-			active, err := q.PublisherRuntimeActive(t.Context(), controlstatedb.PublisherRuntimeActiveParams{PublisherIdentityID: p.ID, ProcessRunID: before.ProcessRunID, Epoch: before.Epoch, Now: timestamptz(now)})
+			active, err := q.PublisherRuntimeActive(t.Context(), controlstatedb.PublisherRuntimeActiveParams{PublisherIdentityID: p.ID, ProcessRunID: before.ProcessRunID, Epoch: before.Epoch, Now: timestamptz(now), MachineAuthorityCurrent: true})
 			if err != nil || active {
 				t.Fatal("unavailable scope still active", err)
 			}

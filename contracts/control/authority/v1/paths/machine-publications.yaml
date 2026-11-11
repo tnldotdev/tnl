@@ -1,0 +1,83 @@
+paths:
+  /v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions:
+    post:
+      operationId: createMachinePublicationPermission
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamID" }
+        - { name: machine_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "../openapi.yaml#/components/schemas/MachinePublicationPermissionRequest" }
+      responses:
+        "201":
+          description: Separate publication approval with no visitor or provisioning rights.
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/MachinePermissionResult" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/teams/{team_id}/machine-publication-permissions/{permission_id}:
+    delete:
+      operationId: revokeMachinePublicationPermission
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamID" }
+        - { name: permission_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          {
+            description: Publication approval revoked; dependent application runs close and routing removals commit with revocation.,
+          }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/machine-publication-sessions/exchange:
+    post:
+      operationId: exchangeMachinePublication
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/MachinePublicationExchange" }
+      responses:
+        "200":
+          description: Existing publisher identity, exact grant and proof-capped publisher token. Resource or namespace selects approval; no grant selector is needed.
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/MachinePublicationSession" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/machine-publication-sessions/{session_id}/refresh:
+    post:
+      operationId: refreshMachinePublication
+      security: []
+      parameters:
+        - { name: session_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/MachinePublicationRefresh" }
+      responses:
+        "200":
+          description: Fresh source proof for the same publisher key and exact original grant. Cannot resurrect expired source authority, widen scope or extend the original approval deadline.
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/MachinePublicationSession" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/machine-publication-sessions/{session_id}/cleanup:
+    post:
+      operationId: cleanupMachinePublication
+      security: []
+      parameters:
+        - { name: session_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/MachinePublicationCleanup" }
+      responses:
+        "204":
+          description: Exact native-owned invocation allocation removed or already absent. Retries are idempotent. A forgotten session has no remaining live allocations and returns the same result without mutation.
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }

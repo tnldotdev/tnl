@@ -39,6 +39,7 @@ type Querier interface {
 	// run only after RegisterRelay succeeds, inside the same transaction. on a
 	// mismatched historical key the caller rolls back the lease replacement too.
 	BindRelayRunSigningKey(ctx context.Context, arg BindRelayRunSigningKeyParams) (int64, error)
+	BoundMachinePublishRunExpiry(ctx context.Context, arg BoundMachinePublishRunExpiryParams) (ControlPublishRun, error)
 	BrowserSessionCurrentHost(ctx context.Context, arg BrowserSessionCurrentHostParams) (string, error)
 	BrowserSessionPublicURLIncluded(ctx context.Context, arg BrowserSessionPublicURLIncludedParams) (string, error)
 	CancelOpenPublicURLRecoveryEpisode(ctx context.Context, arg CancelOpenPublicURLRecoveryEpisodeParams) (ControlPublicUrlRecoveryEpisode, error)
@@ -424,6 +425,9 @@ type Querier interface {
 	// public URL. different public URLs may start together while team, role, or
 	// domain mutations wait. callers must not upgrade this guard by writing the team.
 	LockLocalTeamForSession(ctx context.Context, teamID string) (string, error)
+	// cleanup retains the same team guard as refresh, including terminal teams.
+	// this lock permits only removing owned allocation/source state, not serving.
+	LockMachinePublicationCleanupTeam(ctx context.Context, teamID string) (string, error)
 	LockManagedDomainForClaim(ctx context.Context) (ControlDomain, error)
 	LockMembershipPublicURLs(ctx context.Context, arg LockMembershipPublicURLsParams) ([]ControlPublicUrl, error)
 	LockPendingServiceInvitation(ctx context.Context, arg LockPendingServiceInvitationParams) (ControlServiceInvitation, error)
@@ -462,6 +466,9 @@ type Querier interface {
 	LockVisitorTokenSigningKey(ctx context.Context) (ControlVisitorTokenKey, error)
 	LockWorkloadSession(ctx context.Context, id string) (ControlWorkloadSession, error)
 	LoginTeamRequiresCompany(ctx context.Context, id string) (bool, error)
+	MachinePublisherAnonymousAllocation(ctx context.Context, publisherIdentityID string) (bool, error)
+	// a nullable deadline distinguishes ordinary publishers from machine sessions.
+	MachinePublisherAuthority(ctx context.Context, arg MachinePublisherAuthorityParams) (MachinePublisherAuthorityRow, error)
 	MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderInstalledParams) (ControlAcmeOrder, error)
 	MarkCustomDomainReleasing(ctx context.Context, arg MarkCustomDomainReleasingParams) (int64, error)
 	MarkDNSAuthorityReleasing(ctx context.Context, arg MarkDNSAuthorityReleasingParams) (int64, error)
@@ -498,6 +505,7 @@ type Querier interface {
 	PrunePublisherAccess(ctx context.Context, arg PrunePublisherAccessParams) error
 	PrunePublisherAssertions(ctx context.Context, arg PrunePublisherAssertionsParams) error
 	PublishRunServingPrepared(ctx context.Context, arg PublishRunServingPreparedParams) (pgtype.Bool, error)
+	// the caller supplies the canonical MachinePublisherAuthority result at now.
 	PublisherRuntimeActive(ctx context.Context, arg PublisherRuntimeActiveParams) (bool, error)
 	// this read does not lock resources after identities. URL and service
 	// run transactions lock their own saved resource first and recheck the grant.

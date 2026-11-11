@@ -1,0 +1,103 @@
+schemas:
+  MachinePublicationCleanup:
+    type: object
+    additionalProperties: false
+    required: [invocation_id, assertion]
+    properties:
+      invocation_id: { type: string }
+      assertion:
+        type: string
+        minLength: 1
+        maxLength: 32768
+        description: Original native publisher key signs a publisherproof JWT with its publisher identity and key IDs. The grant_id is machineproof.PublicationCleanup(session_id, invocation_id) and the audience is this exact cleanup endpoint URL. Fresh source proof and publishing permission are not needed. Cleanup owns only the recorded allocation tuple until deletion; its short JWT deadline still applies and the ephemeral reaper remains unchanged.
+  MachinePublicationPermissionRequest:
+    type: object
+    additionalProperties: false
+    required: [expires_at]
+    oneOf:
+      - required: [resource]
+        not: { required: [namespace] }
+      - required: [namespace, domain_id]
+        not: { required: [resource] }
+    properties:
+      resource:
+        {
+          type: string,
+          x-go-type-skip-optional-pointer: true,
+          description: "Exact existing HTTP app public URL ID, not a remote publisher-group resource.",
+        }
+      namespace:
+        {
+          type: string,
+          x-go-type-skip-optional-pointer: true,
+          description: Exact approved namespace. Allocation cannot publish other URLs in this namespace.,
+        }
+      domain_id: { type: string, x-go-type-skip-optional-pointer: true }
+      allow_anonymous:
+        {
+          type: boolean,
+          default: false,
+          x-go-type-skip-optional-pointer: true,
+          description: Allows an explicit anonymous policy only for new allocations. The default remains restricted.,
+        }
+      expires_at: { type: string, format: date-time }
+  MachinePublicationExchange:
+    type: object
+    additionalProperties: false
+    required: [assertion, nonce, public_key, signature]
+    oneOf:
+      - required: [resource]
+        not: { required: [namespace] }
+      - required: [namespace]
+        not: { required: [resource] }
+    properties:
+      machine_id:
+        {
+          type: string,
+          x-go-type-skip-optional-pointer: true,
+          description: Required for registered signing keys; optional for OIDC. OIDC is matched only against bounded saved identity policies already approved for this resource or namespace.,
+        }
+      resource: { type: string, x-go-type-skip-optional-pointer: true }
+      namespace: { type: string, x-go-type-skip-optional-pointer: true }
+      assertion: { type: string, minLength: 1, maxLength: 32768 }
+      nonce: { type: string, pattern: "^[A-Za-z0-9_-]{16,128}$" }
+      public_key:
+        { type: string, description: Unpadded base64url native session Ed25519 public key. }
+      signature:
+        {
+          type: string,
+          description: Unpadded base64url signature over machineproof.PublicationPossession with operation exchange. Registered identity JWT grant_id is machineproof.Publication with operation exchange and exact endpoint audience.,
+        }
+  MachinePublicationRefresh:
+    type: object
+    additionalProperties: false
+    required: [assertion, signature]
+    properties:
+      assertion: { type: string, minLength: 1, maxLength: 32768 }
+      signature:
+        {
+          type: string,
+          description: Existing native session key signs machineproof.PublicationPossession with operation refresh and session ID in place of nonce. Registered identity JWT grant_id uses the same immutable scope and exact refresh URL audience.,
+        }
+  MachinePublicationSession:
+    type: object
+    additionalProperties: false
+    required:
+      [id, publisher, access_token, token_type, expires_at, identity_expires_at, renew_after]
+    properties:
+      id: { type: string }
+      publisher: { $ref: "../openapi.yaml#/components/schemas/PublisherEnrollmentResult" }
+      access_token:
+        {
+          type: string,
+          description: "Existing publisher-only credential. Grants no human control, provisioning, policy mutation, saved deletion, or visitor authority.",
+        }
+      token_type: { type: string, enum: [Bearer] }
+      expires_at: { type: string, format: date-time }
+      identity_expires_at:
+        {
+          type: string,
+          format: date-time,
+          description: Current verified source-proof expiry capped by the original permission deadline. Publish-run serving leases cannot exceed it.,
+        }
+      renew_after: { type: string, format: date-time }

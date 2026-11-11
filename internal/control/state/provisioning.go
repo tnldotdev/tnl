@@ -131,6 +131,11 @@ func (d *Database) ExchangeProvisioning(ctx context.Context, machine, grant stri
 		return r, err
 	}
 	defer rollback(ctx, tx, "exchange provisioning proof", &retErr)()
+	if machine == "" {
+		if err = tx.QueryRow(ctx, `SELECT machine_id FROM control.machine_provisioning_grants WHERE id=$1`, grant).Scan(&machine); err != nil {
+			return r, publisherLookupError(err, ErrMachineDenied)
+		}
+	}
 	var team string
 	if err = tx.QueryRow(ctx, `SELECT team_id FROM control.machine_identities WHERE id=$1`, machine).Scan(&team); err != nil {
 		return r, publisherLookupError(err, ErrMachineDenied)

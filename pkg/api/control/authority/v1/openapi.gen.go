@@ -277,6 +277,21 @@ func (e MachineIdentityProofKind) Valid() bool {
 	}
 }
 
+// Defines values for MachinePublicationSessionTokenType.
+const (
+	MachinePublicationSessionTokenTypeBearer MachinePublicationSessionTokenType = "Bearer"
+)
+
+// Valid indicates whether the value is a known member of the MachinePublicationSessionTokenType enum.
+func (e MachinePublicationSessionTokenType) Valid() bool {
+	switch e {
+	case MachinePublicationSessionTokenTypeBearer:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MachineTrustProvider.
 const (
 	MachineTrustProviderOidc MachineTrustProvider = "oidc"
@@ -915,6 +930,83 @@ type MachinePermissionResult struct {
 	Id string `json:"id"`
 }
 
+// MachinePublicationCleanup defines model for MachinePublicationCleanup.
+type MachinePublicationCleanup struct {
+	// Assertion Original native publisher key signs a publisherproof JWT with its publisher identity and key IDs. The grant_id is machineproof.PublicationCleanup(session_id, invocation_id) and the audience is this exact cleanup endpoint URL. Fresh source proof and publishing permission are not needed. Cleanup owns only the recorded allocation tuple until deletion; its short JWT deadline still applies and the ephemeral reaper remains unchanged.
+	Assertion    string `json:"assertion"`
+	InvocationId string `json:"invocation_id"`
+}
+
+// MachinePublicationExchange defines model for MachinePublicationExchange.
+type MachinePublicationExchange struct {
+	Assertion string `json:"assertion"`
+
+	// MachineId Required for registered signing keys; optional for OIDC. OIDC is matched only against bounded saved identity policies already approved for this resource or namespace.
+	MachineId string `json:"machine_id,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Nonce     string `json:"nonce"`
+
+	// PublicKey Unpadded base64url native session Ed25519 public key.
+	PublicKey string `json:"public_key"`
+	Resource  string `json:"resource,omitempty"`
+
+	// Signature Unpadded base64url signature over machineproof.PublicationPossession with operation exchange. Registered identity JWT grant_id is machineproof.Publication with operation exchange and exact endpoint audience.
+	Signature string `json:"signature"`
+	union     json.RawMessage
+}
+
+// MachinePublicationExchange0 defines model for MachinePublicationExchange.0.
+type MachinePublicationExchange0 = interface{}
+
+// MachinePublicationExchange1 defines model for MachinePublicationExchange.1.
+type MachinePublicationExchange1 = interface{}
+
+// MachinePublicationPermissionRequest defines model for MachinePublicationPermissionRequest.
+type MachinePublicationPermissionRequest struct {
+	// AllowAnonymous Allows an explicit anonymous policy only for new allocations. The default remains restricted.
+	AllowAnonymous bool      `json:"allow_anonymous,omitempty"`
+	DomainId       string    `json:"domain_id,omitempty"`
+	ExpiresAt      time.Time `json:"expires_at"`
+
+	// Namespace Exact approved namespace. Allocation cannot publish other URLs in this namespace.
+	Namespace string `json:"namespace,omitempty"`
+
+	// Resource Exact existing HTTP app public URL ID, not a remote publisher-group resource.
+	Resource string `json:"resource,omitempty"`
+	union    json.RawMessage
+}
+
+// MachinePublicationPermissionRequest0 defines model for MachinePublicationPermissionRequest.0.
+type MachinePublicationPermissionRequest0 = interface{}
+
+// MachinePublicationPermissionRequest1 defines model for MachinePublicationPermissionRequest.1.
+type MachinePublicationPermissionRequest1 = interface{}
+
+// MachinePublicationRefresh defines model for MachinePublicationRefresh.
+type MachinePublicationRefresh struct {
+	Assertion string `json:"assertion"`
+
+	// Signature Existing native session key signs machineproof.PublicationPossession with operation refresh and session ID in place of nonce. Registered identity JWT grant_id uses the same immutable scope and exact refresh URL audience.
+	Signature string `json:"signature"`
+}
+
+// MachinePublicationSession defines model for MachinePublicationSession.
+type MachinePublicationSession struct {
+	// AccessToken Existing publisher-only credential. Grants no human control, provisioning, policy mutation, saved deletion, or visitor authority.
+	AccessToken string    `json:"access_token"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	Id          string    `json:"id"`
+
+	// IdentityExpiresAt Current verified source-proof expiry capped by the original permission deadline. Publish-run serving leases cannot exceed it.
+	IdentityExpiresAt time.Time                          `json:"identity_expires_at"`
+	Publisher         PublisherEnrollmentResult          `json:"publisher"`
+	RenewAfter        time.Time                          `json:"renew_after"`
+	TokenType         MachinePublicationSessionTokenType `json:"token_type"`
+}
+
+// MachinePublicationSessionTokenType defines model for MachinePublicationSession.TokenType.
+type MachinePublicationSessionTokenType string
+
 // MachineTrust defines model for MachineTrust.
 type MachineTrust struct {
 	Audience string               `json:"audience"`
@@ -991,9 +1083,11 @@ type ProblemCode string
 // ProvisioningExchange defines model for ProvisioningExchange.
 type ProvisioningExchange struct {
 	// Assertion Current OIDC assertions may be reused across exchanges; each exchange verifies current trust and grant. Registered-key JWTs require a fresh jti, exact exchange audience and machineproof.Provisioning grant_id scope for this grant and operation.
-	Assertion string                `json:"assertion"`
-	GrantId   string                `json:"grant_id"`
-	MachineId string                `json:"machine_id"`
+	Assertion string `json:"assertion"`
+	GrantId   string `json:"grant_id"`
+
+	// MachineId Optional identity assertion; the grant selects the saved machine identity.
+	MachineId string                `json:"machine_id,omitempty"`
 	Operation ProvisioningOperation `json:"operation"`
 }
 
@@ -1022,7 +1116,7 @@ type ProvisioningSession struct {
 	Operation  ProvisioningOperation `json:"operation"`
 	ProjectKey string                `json:"project_key"`
 
-	// ProjectRevision Current applied project revision
+	// ProjectRevision Current applied project revision, not permission to overwrite project configuration.
 	ProjectRevision   int64                        `json:"project_revision"`
 	SourceFingerprint string                       `json:"source_fingerprint"`
 	TeamId            string                       `json:"team_id"`
@@ -1059,7 +1153,7 @@ type PublisherEnrollmentResultKind string
 type PublisherGroupWorkloadResolution struct {
 	Connection externalRef0.PublisherGroupConnection `json:"connection"`
 
-	// PublisherGroup Authoritative configuration definition key; the concrete group's template name
+	// PublisherGroup Authoritative configuration definition key; the concrete group's template name, or its declared group name. Not its mutable display name.
 	PublisherGroup string `json:"publisher_group"`
 }
 
@@ -1608,6 +1702,15 @@ type RecoverCompanyOwnerJSONRequestBody RecoverCompanyOwnerJSONBody
 // AcceptInvitationJSONRequestBody defines body for AcceptInvitation for application/json ContentType.
 type AcceptInvitationJSONRequestBody = AcceptInvitationRequest
 
+// ExchangeMachinePublicationJSONRequestBody defines body for ExchangeMachinePublication for application/json ContentType.
+type ExchangeMachinePublicationJSONRequestBody = MachinePublicationExchange
+
+// CleanupMachinePublicationJSONRequestBody defines body for CleanupMachinePublication for application/json ContentType.
+type CleanupMachinePublicationJSONRequestBody = MachinePublicationCleanup
+
+// RefreshMachinePublicationJSONRequestBody defines body for RefreshMachinePublication for application/json ContentType.
+type RefreshMachinePublicationJSONRequestBody = MachinePublicationRefresh
+
 // ExchangeMachineWorkloadJSONRequestBody defines body for ExchangeMachineWorkload for application/json ContentType.
 type ExchangeMachineWorkloadJSONRequestBody = MachineWorkloadExchange
 
@@ -1695,6 +1798,9 @@ type RotateMachineIdentityKeyJSONRequestBody = MachineKey
 // CreateProvisioningGrantJSONRequestBody defines body for CreateProvisioningGrant for application/json ContentType.
 type CreateProvisioningGrantJSONRequestBody = ProvisioningGrantRequest
 
+// CreateMachinePublicationPermissionJSONRequestBody defines body for CreateMachinePublicationPermission for application/json ContentType.
+type CreateMachinePublicationPermissionJSONRequestBody = MachinePublicationPermissionRequest
+
 // CreateMachineWorkloadPermissionJSONRequestBody defines body for CreateMachineWorkloadPermission for application/json ContentType.
 type CreateMachineWorkloadPermissionJSONRequestBody = MachineWorkloadPermissionRequest
 
@@ -1712,6 +1818,316 @@ type AttachWorkloadAssertionJSONRequestBody = WorkloadAssertion
 
 // RenewWorkloadSessionJSONRequestBody defines body for RenewWorkloadSession for application/json ContentType.
 type RenewWorkloadSessionJSONRequestBody = WorkloadRenewal
+
+// AsMachinePublicationExchange0 returns the union data inside the MachinePublicationExchange as a MachinePublicationExchange0
+func (t MachinePublicationExchange) AsMachinePublicationExchange0() (MachinePublicationExchange0, error) {
+	var body MachinePublicationExchange0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMachinePublicationExchange0 overwrites any union data inside the MachinePublicationExchange as the provided MachinePublicationExchange0
+func (t *MachinePublicationExchange) FromMachinePublicationExchange0(v MachinePublicationExchange0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeMachinePublicationExchange0 performs a merge with any union data inside the MachinePublicationExchange, using the provided MachinePublicationExchange0
+func (t *MachinePublicationExchange) MergeMachinePublicationExchange0(v MachinePublicationExchange0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsMachinePublicationExchange1 returns the union data inside the MachinePublicationExchange as a MachinePublicationExchange1
+func (t MachinePublicationExchange) AsMachinePublicationExchange1() (MachinePublicationExchange1, error) {
+	var body MachinePublicationExchange1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMachinePublicationExchange1 overwrites any union data inside the MachinePublicationExchange as the provided MachinePublicationExchange1
+func (t *MachinePublicationExchange) FromMachinePublicationExchange1(v MachinePublicationExchange1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeMachinePublicationExchange1 performs a merge with any union data inside the MachinePublicationExchange, using the provided MachinePublicationExchange1
+func (t *MachinePublicationExchange) MergeMachinePublicationExchange1(v MachinePublicationExchange1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t MachinePublicationExchange) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	object := make(map[string]json.RawMessage)
+	if t.union != nil {
+		err = json.Unmarshal(b, &object)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	object["assertion"], err = json.Marshal(t.Assertion)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'assertion': %w", err)
+	}
+
+	object["machine_id"], err = json.Marshal(t.MachineId)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'machine_id': %w", err)
+	}
+
+	object["namespace"], err = json.Marshal(t.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'namespace': %w", err)
+	}
+
+	object["nonce"], err = json.Marshal(t.Nonce)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'nonce': %w", err)
+	}
+
+	object["public_key"], err = json.Marshal(t.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'public_key': %w", err)
+	}
+
+	object["resource"], err = json.Marshal(t.Resource)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'resource': %w", err)
+	}
+
+	object["signature"], err = json.Marshal(t.Signature)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'signature': %w", err)
+	}
+
+	b, err = json.Marshal(object)
+	return b, err
+}
+
+func (t *MachinePublicationExchange) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	if err != nil {
+		return err
+	}
+	object := make(map[string]json.RawMessage)
+	err = json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["assertion"]; found {
+		err = json.Unmarshal(raw, &t.Assertion)
+		if err != nil {
+			return fmt.Errorf("error reading 'assertion': %w", err)
+		}
+	}
+
+	if raw, found := object["machine_id"]; found {
+		err = json.Unmarshal(raw, &t.MachineId)
+		if err != nil {
+			return fmt.Errorf("error reading 'machine_id': %w", err)
+		}
+	}
+
+	if raw, found := object["namespace"]; found {
+		err = json.Unmarshal(raw, &t.Namespace)
+		if err != nil {
+			return fmt.Errorf("error reading 'namespace': %w", err)
+		}
+	}
+
+	if raw, found := object["nonce"]; found {
+		err = json.Unmarshal(raw, &t.Nonce)
+		if err != nil {
+			return fmt.Errorf("error reading 'nonce': %w", err)
+		}
+	}
+
+	if raw, found := object["public_key"]; found {
+		err = json.Unmarshal(raw, &t.PublicKey)
+		if err != nil {
+			return fmt.Errorf("error reading 'public_key': %w", err)
+		}
+	}
+
+	if raw, found := object["resource"]; found {
+		err = json.Unmarshal(raw, &t.Resource)
+		if err != nil {
+			return fmt.Errorf("error reading 'resource': %w", err)
+		}
+	}
+
+	if raw, found := object["signature"]; found {
+		err = json.Unmarshal(raw, &t.Signature)
+		if err != nil {
+			return fmt.Errorf("error reading 'signature': %w", err)
+		}
+	}
+
+	return err
+}
+
+// AsMachinePublicationPermissionRequest0 returns the union data inside the MachinePublicationPermissionRequest as a MachinePublicationPermissionRequest0
+func (t MachinePublicationPermissionRequest) AsMachinePublicationPermissionRequest0() (MachinePublicationPermissionRequest0, error) {
+	var body MachinePublicationPermissionRequest0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMachinePublicationPermissionRequest0 overwrites any union data inside the MachinePublicationPermissionRequest as the provided MachinePublicationPermissionRequest0
+func (t *MachinePublicationPermissionRequest) FromMachinePublicationPermissionRequest0(v MachinePublicationPermissionRequest0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeMachinePublicationPermissionRequest0 performs a merge with any union data inside the MachinePublicationPermissionRequest, using the provided MachinePublicationPermissionRequest0
+func (t *MachinePublicationPermissionRequest) MergeMachinePublicationPermissionRequest0(v MachinePublicationPermissionRequest0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsMachinePublicationPermissionRequest1 returns the union data inside the MachinePublicationPermissionRequest as a MachinePublicationPermissionRequest1
+func (t MachinePublicationPermissionRequest) AsMachinePublicationPermissionRequest1() (MachinePublicationPermissionRequest1, error) {
+	var body MachinePublicationPermissionRequest1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMachinePublicationPermissionRequest1 overwrites any union data inside the MachinePublicationPermissionRequest as the provided MachinePublicationPermissionRequest1
+func (t *MachinePublicationPermissionRequest) FromMachinePublicationPermissionRequest1(v MachinePublicationPermissionRequest1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeMachinePublicationPermissionRequest1 performs a merge with any union data inside the MachinePublicationPermissionRequest, using the provided MachinePublicationPermissionRequest1
+func (t *MachinePublicationPermissionRequest) MergeMachinePublicationPermissionRequest1(v MachinePublicationPermissionRequest1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t MachinePublicationPermissionRequest) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	object := make(map[string]json.RawMessage)
+	if t.union != nil {
+		err = json.Unmarshal(b, &object)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	object["allow_anonymous"], err = json.Marshal(t.AllowAnonymous)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'allow_anonymous': %w", err)
+	}
+
+	object["domain_id"], err = json.Marshal(t.DomainId)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'domain_id': %w", err)
+	}
+
+	object["expires_at"], err = json.Marshal(t.ExpiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'expires_at': %w", err)
+	}
+
+	object["namespace"], err = json.Marshal(t.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'namespace': %w", err)
+	}
+
+	object["resource"], err = json.Marshal(t.Resource)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'resource': %w", err)
+	}
+
+	b, err = json.Marshal(object)
+	return b, err
+}
+
+func (t *MachinePublicationPermissionRequest) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	if err != nil {
+		return err
+	}
+	object := make(map[string]json.RawMessage)
+	err = json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["allow_anonymous"]; found {
+		err = json.Unmarshal(raw, &t.AllowAnonymous)
+		if err != nil {
+			return fmt.Errorf("error reading 'allow_anonymous': %w", err)
+		}
+	}
+
+	if raw, found := object["domain_id"]; found {
+		err = json.Unmarshal(raw, &t.DomainId)
+		if err != nil {
+			return fmt.Errorf("error reading 'domain_id': %w", err)
+		}
+	}
+
+	if raw, found := object["expires_at"]; found {
+		err = json.Unmarshal(raw, &t.ExpiresAt)
+		if err != nil {
+			return fmt.Errorf("error reading 'expires_at': %w", err)
+		}
+	}
+
+	if raw, found := object["namespace"]; found {
+		err = json.Unmarshal(raw, &t.Namespace)
+		if err != nil {
+			return fmt.Errorf("error reading 'namespace': %w", err)
+		}
+	}
+
+	if raw, found := object["resource"]; found {
+		err = json.Unmarshal(raw, &t.Resource)
+		if err != nil {
+			return fmt.Errorf("error reading 'resource': %w", err)
+		}
+	}
+
+	return err
+}
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -1936,6 +2352,30 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangeMachinePublicationWithBody performs a POST /v1/machine-publication-sessions/exchange (the `ExchangeMachinePublication` operationId) request,
+	// with any type of body and a specified content type.
+	ExchangeMachinePublicationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangeMachinePublication performs a POST /v1/machine-publication-sessions/exchange (the `ExchangeMachinePublication` operationId) request.
+	// Takes a body of the `application/json` content type.
+	ExchangeMachinePublication(ctx context.Context, body ExchangeMachinePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CleanupMachinePublicationWithBody performs a POST /v1/machine-publication-sessions/{session_id}/cleanup (the `CleanupMachinePublication` operationId) request,
+	// with any type of body and a specified content type.
+	CleanupMachinePublicationWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CleanupMachinePublication performs a POST /v1/machine-publication-sessions/{session_id}/cleanup (the `CleanupMachinePublication` operationId) request.
+	// Takes a body of the `application/json` content type.
+	CleanupMachinePublication(ctx context.Context, sessionId string, body CleanupMachinePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RefreshMachinePublicationWithBody performs a POST /v1/machine-publication-sessions/{session_id}/refresh (the `RefreshMachinePublication` operationId) request,
+	// with any type of body and a specified content type.
+	RefreshMachinePublicationWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RefreshMachinePublication performs a POST /v1/machine-publication-sessions/{session_id}/refresh (the `RefreshMachinePublication` operationId) request.
+	// Takes a body of the `application/json` content type.
+	RefreshMachinePublication(ctx context.Context, sessionId string, body RefreshMachinePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExchangeMachineWorkloadWithBody performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request,
 	// with any type of body and a specified content type.
@@ -2316,6 +2756,14 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	CreateProvisioningGrant(ctx context.Context, teamId TeamID, machineId string, body CreateProvisioningGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CreateMachinePublicationPermissionWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions (the `CreateMachinePublicationPermission` operationId) request,
+	// with any type of body and a specified content type.
+	CreateMachinePublicationPermissionWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateMachinePublicationPermission performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions (the `CreateMachinePublicationPermission` operationId) request.
+	// Takes a body of the `application/json` content type.
+	CreateMachinePublicationPermission(ctx context.Context, teamId TeamID, machineId string, body CreateMachinePublicationPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateMachineWorkloadPermissionWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request,
 	// with any type of body and a specified content type.
 	CreateMachineWorkloadPermissionWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2323,6 +2771,9 @@ type ClientInterface interface {
 	// CreateMachineWorkloadPermission performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request.
 	// Takes a body of the `application/json` content type.
 	CreateMachineWorkloadPermission(ctx context.Context, teamId TeamID, machineId string, body CreateMachineWorkloadPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeMachinePublicationPermission performs a DELETE /v1/teams/{team_id}/machine-publication-permissions/{permission_id} (the `RevokeMachinePublicationPermission` operationId) request.
+	RevokeMachinePublicationPermission(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeMachineWorkloadPermission performs a DELETE /v1/teams/{team_id}/machine-workload-permissions/{permission_id} (the `RevokeMachineWorkloadPermission` operationId) request.
 	RevokeMachineWorkloadPermission(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2790,6 +3241,90 @@ func (c *Client) AcceptInvitationWithBody(ctx context.Context, contentType strin
 // Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 func (c *Client) AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAcceptInvitationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangeMachinePublicationWithBody performs a POST /v1/machine-publication-sessions/exchange (the `ExchangeMachinePublication` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) ExchangeMachinePublicationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeMachinePublicationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangeMachinePublication performs a POST /v1/machine-publication-sessions/exchange (the `ExchangeMachinePublication` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) ExchangeMachinePublication(ctx context.Context, body ExchangeMachinePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeMachinePublicationRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CleanupMachinePublicationWithBody performs a POST /v1/machine-publication-sessions/{session_id}/cleanup (the `CleanupMachinePublication` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) CleanupMachinePublicationWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCleanupMachinePublicationRequestWithBody(c.Server, sessionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CleanupMachinePublication performs a POST /v1/machine-publication-sessions/{session_id}/cleanup (the `CleanupMachinePublication` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) CleanupMachinePublication(ctx context.Context, sessionId string, body CleanupMachinePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCleanupMachinePublicationRequest(c.Server, sessionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RefreshMachinePublicationWithBody performs a POST /v1/machine-publication-sessions/{session_id}/refresh (the `RefreshMachinePublication` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) RefreshMachinePublicationWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRefreshMachinePublicationRequestWithBody(c.Server, sessionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RefreshMachinePublication performs a POST /v1/machine-publication-sessions/{session_id}/refresh (the `RefreshMachinePublication` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) RefreshMachinePublication(ctx context.Context, sessionId string, body RefreshMachinePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRefreshMachinePublicationRequest(c.Server, sessionId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3949,6 +4484,34 @@ func (c *Client) CreateProvisioningGrant(ctx context.Context, teamId TeamID, mac
 	return c.Client.Do(req)
 }
 
+// CreateMachinePublicationPermissionWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions (the `CreateMachinePublicationPermission` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) CreateMachinePublicationPermissionWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateMachinePublicationPermissionRequestWithBody(c.Server, teamId, machineId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateMachinePublicationPermission performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions (the `CreateMachinePublicationPermission` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) CreateMachinePublicationPermission(ctx context.Context, teamId TeamID, machineId string, body CreateMachinePublicationPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateMachinePublicationPermissionRequest(c.Server, teamId, machineId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CreateMachineWorkloadPermissionWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request,
 // with any type of body and a specified content type.
 func (c *Client) CreateMachineWorkloadPermissionWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3967,6 +4530,19 @@ func (c *Client) CreateMachineWorkloadPermissionWithBody(ctx context.Context, te
 // Takes a body of the `application/json` content type.
 func (c *Client) CreateMachineWorkloadPermission(ctx context.Context, teamId TeamID, machineId string, body CreateMachineWorkloadPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateMachineWorkloadPermissionRequest(c.Server, teamId, machineId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeMachinePublicationPermission performs a DELETE /v1/teams/{team_id}/machine-publication-permissions/{permission_id} (the `RevokeMachinePublicationPermission` operationId) request.
+func (c *Client) RevokeMachinePublicationPermission(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeMachinePublicationPermissionRequest(c.Server, teamId, permissionId)
 	if err != nil {
 		return nil, err
 	}
@@ -4798,6 +5374,140 @@ func NewAcceptInvitationRequestWithBody(server string, contentType string, body 
 	}
 
 	operationPath := fmt.Sprintf("/v1/invitations/accept")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewExchangeMachinePublicationRequest calls the generic ExchangeMachinePublication builder with application/json body
+func NewExchangeMachinePublicationRequest(server string, body ExchangeMachinePublicationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExchangeMachinePublicationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewExchangeMachinePublicationRequestWithBody constructs an http.Request for the ExchangeMachinePublication method, with any body, and a specified content type
+func NewExchangeMachinePublicationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/machine-publication-sessions/exchange")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCleanupMachinePublicationRequest calls the generic CleanupMachinePublication builder with application/json body
+func NewCleanupMachinePublicationRequest(server string, sessionId string, body CleanupMachinePublicationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCleanupMachinePublicationRequestWithBody(server, sessionId, "application/json", bodyReader)
+}
+
+// NewCleanupMachinePublicationRequestWithBody constructs an http.Request for the CleanupMachinePublication method, with any body, and a specified content type
+func NewCleanupMachinePublicationRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/machine-publication-sessions/%s/cleanup", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRefreshMachinePublicationRequest calls the generic RefreshMachinePublication builder with application/json body
+func NewRefreshMachinePublicationRequest(server string, sessionId string, body RefreshMachinePublicationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRefreshMachinePublicationRequestWithBody(server, sessionId, "application/json", bodyReader)
+}
+
+// NewRefreshMachinePublicationRequestWithBody constructs an http.Request for the RefreshMachinePublication method, with any body, and a specified content type
+func NewRefreshMachinePublicationRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/machine-publication-sessions/%s/refresh", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -7282,6 +7992,60 @@ func NewCreateProvisioningGrantRequestWithBody(server string, teamId TeamID, mac
 	return req, nil
 }
 
+// NewCreateMachinePublicationPermissionRequest calls the generic CreateMachinePublicationPermission builder with application/json body
+func NewCreateMachinePublicationPermissionRequest(server string, teamId TeamID, machineId string, body CreateMachinePublicationPermissionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateMachinePublicationPermissionRequestWithBody(server, teamId, machineId, "application/json", bodyReader)
+}
+
+// NewCreateMachinePublicationPermissionRequestWithBody constructs an http.Request for the CreateMachinePublicationPermission method, with any body, and a specified content type
+func NewCreateMachinePublicationPermissionRequestWithBody(server string, teamId TeamID, machineId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "machine_id", machineId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/machine-identities/%s/publication-permissions", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewCreateMachineWorkloadPermissionRequest calls the generic CreateMachineWorkloadPermission builder with application/json body
 func NewCreateMachineWorkloadPermissionRequest(server string, teamId TeamID, machineId string, body CreateMachineWorkloadPermissionJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -7332,6 +8096,47 @@ func NewCreateMachineWorkloadPermissionRequestWithBody(server string, teamId Tea
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeMachinePublicationPermissionRequest constructs an http.Request for the RevokeMachinePublicationPermission method
+func NewRevokeMachinePublicationPermissionRequest(server string, teamId TeamID, permissionId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "permission_id", permissionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/machine-publication-permissions/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -7965,6 +8770,36 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitationWithResponse(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptInvitationResponse, error)
 
+	// ExchangeMachinePublicationWithBodyWithResponse performs a POST /v1/machine-publication-sessions/exchange (the `ExchangeMachinePublication` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ExchangeMachinePublicationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeMachinePublicationResponse, error)
+
+	// ExchangeMachinePublicationWithResponse performs a POST /v1/machine-publication-sessions/exchange (the `ExchangeMachinePublication` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	ExchangeMachinePublicationWithResponse(ctx context.Context, body ExchangeMachinePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeMachinePublicationResponse, error)
+
+	// CleanupMachinePublicationWithBodyWithResponse performs a POST /v1/machine-publication-sessions/{session_id}/cleanup (the `CleanupMachinePublication` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CleanupMachinePublicationWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CleanupMachinePublicationResponse, error)
+
+	// CleanupMachinePublicationWithResponse performs a POST /v1/machine-publication-sessions/{session_id}/cleanup (the `CleanupMachinePublication` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	CleanupMachinePublicationWithResponse(ctx context.Context, sessionId string, body CleanupMachinePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*CleanupMachinePublicationResponse, error)
+
+	// RefreshMachinePublicationWithBodyWithResponse performs a POST /v1/machine-publication-sessions/{session_id}/refresh (the `RefreshMachinePublication` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RefreshMachinePublicationWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RefreshMachinePublicationResponse, error)
+
+	// RefreshMachinePublicationWithResponse performs a POST /v1/machine-publication-sessions/{session_id}/refresh (the `RefreshMachinePublication` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	RefreshMachinePublicationWithResponse(ctx context.Context, sessionId string, body RefreshMachinePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*RefreshMachinePublicationResponse, error)
+
 	// ExchangeMachineWorkloadWithBodyWithResponse performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -8422,6 +9257,16 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	CreateProvisioningGrantWithResponse(ctx context.Context, teamId TeamID, machineId string, body CreateProvisioningGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateProvisioningGrantResponse, error)
 
+	// CreateMachinePublicationPermissionWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions (the `CreateMachinePublicationPermission` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateMachinePublicationPermissionWithBodyWithResponse(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMachinePublicationPermissionResponse, error)
+
+	// CreateMachinePublicationPermissionWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions (the `CreateMachinePublicationPermission` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	CreateMachinePublicationPermissionWithResponse(ctx context.Context, teamId TeamID, machineId string, body CreateMachinePublicationPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMachinePublicationPermissionResponse, error)
+
 	// CreateMachineWorkloadPermissionWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -8431,6 +9276,11 @@ type ClientWithResponsesInterface interface {
 	// CreateMachineWorkloadPermissionWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	CreateMachineWorkloadPermissionWithResponse(ctx context.Context, teamId TeamID, machineId string, body CreateMachineWorkloadPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMachineWorkloadPermissionResponse, error)
+
+	// RevokeMachinePublicationPermissionWithResponse performs a DELETE /v1/teams/{team_id}/machine-publication-permissions/{permission_id} (the `RevokeMachinePublicationPermission` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokeMachinePublicationPermissionWithResponse(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*RevokeMachinePublicationPermissionResponse, error)
 
 	// RevokeMachineWorkloadPermissionWithResponse performs a DELETE /v1/teams/{team_id}/machine-workload-permissions/{permission_id} (the `RevokeMachineWorkloadPermission` operationId) request.
 	//
@@ -9206,6 +10056,143 @@ func (r AcceptInvitationResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AcceptInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExchangeMachinePublicationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MachinePublicationSession
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExchangeMachinePublicationResponse) GetJSON200() *MachinePublicationSession {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ExchangeMachinePublicationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExchangeMachinePublicationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExchangeMachinePublicationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExchangeMachinePublicationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExchangeMachinePublicationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CleanupMachinePublicationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CleanupMachinePublicationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CleanupMachinePublicationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CleanupMachinePublicationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CleanupMachinePublicationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CleanupMachinePublicationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RefreshMachinePublicationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MachinePublicationSession
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RefreshMachinePublicationResponse) GetJSON200() *MachinePublicationSession {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RefreshMachinePublicationResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RefreshMachinePublicationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RefreshMachinePublicationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RefreshMachinePublicationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RefreshMachinePublicationResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -11439,6 +12426,54 @@ func (r CreateProvisioningGrantResponse) ContentType() string {
 	return ""
 }
 
+type CreateMachinePublicationPermissionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *MachinePermissionResult
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateMachinePublicationPermissionResponse) GetJSON201() *MachinePermissionResult {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateMachinePublicationPermissionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateMachinePublicationPermissionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateMachinePublicationPermissionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateMachinePublicationPermissionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateMachinePublicationPermissionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CreateMachineWorkloadPermissionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -11481,6 +12516,47 @@ func (r CreateMachineWorkloadPermissionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateMachineWorkloadPermissionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeMachinePublicationPermissionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeMachinePublicationPermissionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeMachinePublicationPermissionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeMachinePublicationPermissionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeMachinePublicationPermissionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeMachinePublicationPermissionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12259,6 +13335,72 @@ func (c *ClientWithResponses) AcceptInvitationWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseAcceptInvitationResponse(rsp)
+}
+
+// ExchangeMachinePublicationWithBodyWithResponse performs a POST /v1/machine-publication-sessions/exchange (the `ExchangeMachinePublication` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ExchangeMachinePublicationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeMachinePublicationResponse, error) {
+	rsp, err := c.ExchangeMachinePublicationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangeMachinePublicationResponse(rsp)
+}
+
+// ExchangeMachinePublicationWithResponse performs a POST /v1/machine-publication-sessions/exchange (the `ExchangeMachinePublication` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ExchangeMachinePublicationWithResponse(ctx context.Context, body ExchangeMachinePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeMachinePublicationResponse, error) {
+	rsp, err := c.ExchangeMachinePublication(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangeMachinePublicationResponse(rsp)
+}
+
+// CleanupMachinePublicationWithBodyWithResponse performs a POST /v1/machine-publication-sessions/{session_id}/cleanup (the `CleanupMachinePublication` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CleanupMachinePublicationWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CleanupMachinePublicationResponse, error) {
+	rsp, err := c.CleanupMachinePublicationWithBody(ctx, sessionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCleanupMachinePublicationResponse(rsp)
+}
+
+// CleanupMachinePublicationWithResponse performs a POST /v1/machine-publication-sessions/{session_id}/cleanup (the `CleanupMachinePublication` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CleanupMachinePublicationWithResponse(ctx context.Context, sessionId string, body CleanupMachinePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*CleanupMachinePublicationResponse, error) {
+	rsp, err := c.CleanupMachinePublication(ctx, sessionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCleanupMachinePublicationResponse(rsp)
+}
+
+// RefreshMachinePublicationWithBodyWithResponse performs a POST /v1/machine-publication-sessions/{session_id}/refresh (the `RefreshMachinePublication` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RefreshMachinePublicationWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RefreshMachinePublicationResponse, error) {
+	rsp, err := c.RefreshMachinePublicationWithBody(ctx, sessionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRefreshMachinePublicationResponse(rsp)
+}
+
+// RefreshMachinePublicationWithResponse performs a POST /v1/machine-publication-sessions/{session_id}/refresh (the `RefreshMachinePublication` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RefreshMachinePublicationWithResponse(ctx context.Context, sessionId string, body RefreshMachinePublicationJSONRequestBody, reqEditors ...RequestEditorFn) (*RefreshMachinePublicationResponse, error) {
+	rsp, err := c.RefreshMachinePublication(ctx, sessionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRefreshMachinePublicationResponse(rsp)
 }
 
 // ExchangeMachineWorkloadWithBodyWithResponse performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request,
@@ -13180,6 +14322,28 @@ func (c *ClientWithResponses) CreateProvisioningGrantWithResponse(ctx context.Co
 	return ParseCreateProvisioningGrantResponse(rsp)
 }
 
+// CreateMachinePublicationPermissionWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions (the `CreateMachinePublicationPermission` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateMachinePublicationPermissionWithBodyWithResponse(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMachinePublicationPermissionResponse, error) {
+	rsp, err := c.CreateMachinePublicationPermissionWithBody(ctx, teamId, machineId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateMachinePublicationPermissionResponse(rsp)
+}
+
+// CreateMachinePublicationPermissionWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions (the `CreateMachinePublicationPermission` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateMachinePublicationPermissionWithResponse(ctx context.Context, teamId TeamID, machineId string, body CreateMachinePublicationPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMachinePublicationPermissionResponse, error) {
+	rsp, err := c.CreateMachinePublicationPermission(ctx, teamId, machineId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateMachinePublicationPermissionResponse(rsp)
+}
+
 // CreateMachineWorkloadPermissionWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -13200,6 +14364,17 @@ func (c *ClientWithResponses) CreateMachineWorkloadPermissionWithResponse(ctx co
 		return nil, err
 	}
 	return ParseCreateMachineWorkloadPermissionResponse(rsp)
+}
+
+// RevokeMachinePublicationPermissionWithResponse performs a DELETE /v1/teams/{team_id}/machine-publication-permissions/{permission_id} (the `RevokeMachinePublicationPermission` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokeMachinePublicationPermissionWithResponse(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*RevokeMachinePublicationPermissionResponse, error) {
+	rsp, err := c.RevokeMachinePublicationPermission(ctx, teamId, permissionId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeMachinePublicationPermissionResponse(rsp)
 }
 
 // RevokeMachineWorkloadPermissionWithResponse performs a DELETE /v1/teams/{team_id}/machine-workload-permissions/{permission_id} (the `RevokeMachineWorkloadPermission` operationId) request.
@@ -13854,6 +15029,101 @@ func ParseAcceptInvitationResponse(rsp *http.Response) (*AcceptInvitationRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Membership
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExchangeMachinePublicationResponse parses an HTTP response from a ExchangeMachinePublicationWithResponse call
+func ParseExchangeMachinePublicationResponse(rsp *http.Response) (*ExchangeMachinePublicationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExchangeMachinePublicationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MachinePublicationSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCleanupMachinePublicationResponse parses an HTTP response from a CleanupMachinePublicationWithResponse call
+func ParseCleanupMachinePublicationResponse(rsp *http.Response) (*CleanupMachinePublicationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CleanupMachinePublicationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRefreshMachinePublicationResponse parses an HTTP response from a RefreshMachinePublicationWithResponse call
+func ParseRefreshMachinePublicationResponse(rsp *http.Response) (*RefreshMachinePublicationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RefreshMachinePublicationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MachinePublicationSession
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -15423,6 +16693,39 @@ func ParseCreateProvisioningGrantResponse(rsp *http.Response) (*CreateProvisioni
 	return response, nil
 }
 
+// ParseCreateMachinePublicationPermissionResponse parses an HTTP response from a CreateMachinePublicationPermissionWithResponse call
+func ParseCreateMachinePublicationPermissionResponse(rsp *http.Response) (*CreateMachinePublicationPermissionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateMachinePublicationPermissionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest MachinePermissionResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseCreateMachineWorkloadPermissionResponse parses an HTTP response from a CreateMachineWorkloadPermissionWithResponse call
 func ParseCreateMachineWorkloadPermissionResponse(rsp *http.Response) (*CreateMachineWorkloadPermissionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -15443,6 +16746,35 @@ func ParseCreateMachineWorkloadPermissionResponse(rsp *http.Response) (*CreateMa
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeMachinePublicationPermissionResponse parses an HTTP response from a RevokeMachinePublicationPermissionWithResponse call
+func ParseRevokeMachinePublicationPermissionResponse(rsp *http.Response) (*RevokeMachinePublicationPermissionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeMachinePublicationPermissionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -15818,6 +17150,15 @@ type ServerInterface interface {
 	// (POST /v1/invitations/accept)
 	AcceptInvitation(w http.ResponseWriter, r *http.Request)
 
+	// (POST /v1/machine-publication-sessions/exchange)
+	ExchangeMachinePublication(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/machine-publication-sessions/{session_id}/cleanup)
+	CleanupMachinePublication(w http.ResponseWriter, r *http.Request, sessionId string)
+
+	// (POST /v1/machine-publication-sessions/{session_id}/refresh)
+	RefreshMachinePublication(w http.ResponseWriter, r *http.Request, sessionId string)
+
 	// (POST /v1/machine-workload-sessions/exchange)
 	ExchangeMachineWorkload(w http.ResponseWriter, r *http.Request)
 
@@ -15962,8 +17303,14 @@ type ServerInterface interface {
 	// (POST /v1/teams/{team_id}/machine-identities/{machine_id}/provisioning-grants)
 	CreateProvisioningGrant(w http.ResponseWriter, r *http.Request, teamId TeamID, machineId string)
 
+	// (POST /v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions)
+	CreateMachinePublicationPermission(w http.ResponseWriter, r *http.Request, teamId TeamID, machineId string)
+
 	// (POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions)
 	CreateMachineWorkloadPermission(w http.ResponseWriter, r *http.Request, teamId TeamID, machineId string)
+
+	// (DELETE /v1/teams/{team_id}/machine-publication-permissions/{permission_id})
+	RevokeMachinePublicationPermission(w http.ResponseWriter, r *http.Request, teamId TeamID, permissionId string)
 
 	// (DELETE /v1/teams/{team_id}/machine-workload-permissions/{permission_id})
 	RevokeMachineWorkloadPermission(w http.ResponseWriter, r *http.Request, teamId TeamID, permissionId string)
@@ -16282,6 +17629,72 @@ func (siw *ServerInterfaceWrapper) AcceptInvitation(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.AcceptInvitation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExchangeMachinePublication operation middleware
+func (siw *ServerInterfaceWrapper) ExchangeMachinePublication(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExchangeMachinePublication(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CleanupMachinePublication operation middleware
+func (siw *ServerInterfaceWrapper) CleanupMachinePublication(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CleanupMachinePublication(w, r, sessionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RefreshMachinePublication operation middleware
+func (siw *ServerInterfaceWrapper) RefreshMachinePublication(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RefreshMachinePublication(w, r, sessionId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -18305,6 +19718,41 @@ func (siw *ServerInterfaceWrapper) CreateProvisioningGrant(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// CreateMachinePublicationPermission operation middleware
+func (siw *ServerInterfaceWrapper) CreateMachinePublicationPermission(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "machine_id" -------------
+	var machineId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "machine_id", r.PathValue("machine_id"), &machineId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "machine_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateMachinePublicationPermission(w, r, teamId, machineId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreateMachineWorkloadPermission operation middleware
 func (siw *ServerInterfaceWrapper) CreateMachineWorkloadPermission(w http.ResponseWriter, r *http.Request) {
 
@@ -18331,6 +19779,41 @@ func (siw *ServerInterfaceWrapper) CreateMachineWorkloadPermission(w http.Respon
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateMachineWorkloadPermission(w, r, teamId, machineId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeMachinePublicationPermission operation middleware
+func (siw *ServerInterfaceWrapper) RevokeMachinePublicationPermission(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "permission_id" -------------
+	var permissionId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "permission_id", r.PathValue("permission_id"), &permissionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "permission_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeMachinePublicationPermission(w, r, teamId, permissionId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -18732,6 +20215,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/machine-identities/{machine_id}/publication-permissions", wrapper.CreateMachinePublicationPermission)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/machine-publication-permissions/{permission_id}", wrapper.RevokeMachinePublicationPermission)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/machine-publication-sessions/exchange", wrapper.ExchangeMachinePublication)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/machine-publication-sessions/{session_id}/refresh", wrapper.RefreshMachinePublication)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/machine-publication-sessions/{session_id}/cleanup", wrapper.CleanupMachinePublication)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/machine-identities", wrapper.RegisterMachineIdentity)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/machine-identities/{machine_id}", wrapper.RevokeMachineIdentity)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/machine-identities/{machine_id}/keys", wrapper.RotateMachineIdentityKey)

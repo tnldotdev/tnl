@@ -24,6 +24,8 @@ JOIN control.publisher_identity_keys k ON k.id=r.key_id AND k.publisher_identity
 JOIN control.teams t ON t.id=r.team_id AND t.id=p.team_id
 WHERE r.publisher_identity_id=sqlc.arg(publisher_identity_id) AND r.process_run_id=sqlc.arg(process_run_id) AND r.epoch=sqlc.arg(epoch)
 AND r.stopped_at IS NULL AND r.lease_expires_at>sqlc.arg(now)
+-- the caller supplies the canonical MachinePublisherAuthority result at now.
+AND sqlc.arg(machine_authority_current)::boolean
 AND control.active_publisher(p.id,sqlc.arg(now)) AND k.retired_at IS NULL AND t.deleted_at IS NULL
 AND (EXISTS(SELECT 1 FROM control.publisher_group_members m JOIN control.project_publisher_groups g ON g.id=m.group_id WHERE m.publisher_identity_id=p.id AND m.key_id=k.id AND g.team_id=p.team_id AND g.id=r.scope_id AND g.deleted_at IS NULL)
  OR EXISTS(SELECT 1 FROM control.publisher_grants g

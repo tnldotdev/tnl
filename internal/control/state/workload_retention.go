@@ -54,6 +54,7 @@ func (d *Database) CleanupWorkloads(ctx context.Context, now time.Time, limit in
 		{"machine provisioning sessions", func() (int64, error) {
 			return q.CleanupMachineProvisioningSessions(ctx, controlstatedb.CleanupMachineProvisioningSessionsParams{NowTime: timestamptz(now), BatchSize: batch})
 		}},
+		{"machine publications", func() (int64, error) { return d.cleanupMachinePublications(ctx, now, limit) }},
 		{"machine proof uses", func() (int64, error) {
 			return q.CleanupMachineProofUses(ctx, controlstatedb.CleanupMachineProofUsesParams{NowTime: timestamptz(now), BatchSize: batch})
 		}},

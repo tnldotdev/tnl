@@ -51,7 +51,7 @@ func lockVisitorURLWithTeamGuard(ctx context.Context, q *controlstatedb.Queries,
 		// require the exact guest ownership link before accepting that boundary;
 		// lockAuthenticatedRun checks the trial's live run in this transaction.
 		guestID, guestErr := q.GuestForPublicURL(ctx, id)
-		if errors.Is(guestErr, pgx.ErrNoRows) || guestErr == nil && guestID != candidate.CreatedByIdentityID {
+		if errors.Is(guestErr, pgx.ErrNoRows) || guestErr == nil && guestID != candidate.CreatedByIdentityID.String {
 			return candidate, ErrPreviewAccess
 		}
 		if guestErr != nil {

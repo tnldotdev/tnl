@@ -80,7 +80,7 @@ func newMachineAPIFixture(t *testing.T) machineAPIFixture {
 	mux := http.NewServeMux()
 	server := httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
-	if _, err = Register(mux, Config{ControlURL: server.URL, HTTPClient: issuer.Client, Machines: d}, d); err != nil {
+	if _, err = Register(mux, Config{ControlURL: server.URL, HTTPClient: issuer.Client, Machines: d, Publications: d}, d); err != nil {
 		t.Fatal(err)
 	}
 	client, err := authorityv1.NewClientWithResponses(server.URL, authorityv1.WithHTTPClient(server.Client()))
@@ -117,9 +117,10 @@ func TestIntegrationMachineAuthorityOIDCVerificationAndReusableToken(t *testing.
 	claims := f.claims()
 	raw := f.issuer.Sign(t, claims)
 	for _, op := range []authorityv1.ProvisioningOperation{authorityv1.ProvisioningCreate, authorityv1.ProvisioningRead, authorityv1.ProvisioningEnroll, authorityv1.ProvisioningRead} {
-		r, err := f.client.ExchangeProvisioningWithResponse(ctx, authorityv1.ProvisioningExchange{MachineId: machine, GrantId: grant.JSON201.Id, Operation: op, Assertion: raw})
+		// ordinary OIDC callers know the grant, not the registered identity ID.
+		r, err := f.client.ExchangeProvisioningWithResponse(ctx, authorityv1.ProvisioningExchange{GrantId: grant.JSON201.Id, Operation: op, Assertion: raw})
 		if err != nil || r.JSON200 == nil {
-			t.Fatal("reusable projected token", r, err)
+			t.Fatal("grant-derived identity with reusable projected token", r, err)
 		}
 		if r.JSON200.TokenType != "Bearer" || r.JSON200.TeamId != f.team || r.JSON200.ProjectKey != "equipment" || !reflect.DeepEqual(r.JSON200.Templates, []string{"equipment"}) || r.JSON200.ProjectRevision != 3 || r.JSON200.AccessToken == "" {
 			t.Fatal("incomplete authoritative scope", r.JSON200)
@@ -133,6 +134,10 @@ func TestIntegrationMachineAuthorityOIDCVerificationAndReusableToken(t *testing.
 			t.Fatal("credential response cacheable")
 		}
 	}
+	bad, err := f.client.ExchangeProvisioningWithResponse(ctx, authorityv1.ProvisioningExchange{MachineId: "mci_other", GrantId: grant.JSON201.Id, Operation: authorityv1.ProvisioningRead, Assertion: raw})
+	if err != nil || bad.StatusCode() != 403 {
+		t.Fatal("explicit identity overrode the grant's saved identity", bad, err)
+	}
 	for _, field := range []string{"iss", "aud", "sub", "exp"} {
 		t.Run(field, func(t *testing.T) {
 			bad := f.claims()
@@ -140,14 +145,14 @@ func TestIntegrationMachineAuthorityOIDCVerificationAndReusableToken(t *testing.
 			if field == "exp" {
 				bad[field] = f.now.Add(-time.Second).Unix()
 			}
-			r, err := f.client.ExchangeProvisioningWithResponse(ctx, authorityv1.ProvisioningExchange{MachineId: machine, GrantId: grant.JSON201.Id, Operation: authorityv1.ProvisioningRead, Assertion: f.issuer.Sign(t, bad)})
+			r, err := f.client.ExchangeProvisioningWithResponse(ctx, authorityv1.ProvisioningExchange{GrantId: grant.JSON201.Id, Operation: authorityv1.ProvisioningRead, Assertion: f.issuer.Sign(t, bad)})
 			if err != nil || r.StatusCode() != 403 {
 				t.Fatal("invalid provider proof accepted", r, err)
 			}
 		})
 	}
 	foreign := githubtest.NewKeySet(t, f.trust.JWKSURL)
-	bad, err := f.client.ExchangeProvisioningWithResponse(ctx, authorityv1.ProvisioningExchange{MachineId: machine, GrantId: grant.JSON201.Id, Operation: authorityv1.ProvisioningRead, Assertion: foreign.Sign(t, claims)})
+	bad, err = f.client.ExchangeProvisioningWithResponse(ctx, authorityv1.ProvisioningExchange{GrantId: grant.JSON201.Id, Operation: authorityv1.ProvisioningRead, Assertion: foreign.Sign(t, claims)})
 	if err != nil || bad.StatusCode() != 403 {
 		t.Fatal("unregistered provider key accepted", bad, err)
 	}
@@ -181,7 +186,7 @@ func TestIntegrationMachineAuthorityOIDCVerificationAndReusableToken(t *testing.
 	if err != nil || revoked.StatusCode() != 204 {
 		t.Fatal(err)
 	}
-	bad, err = f.client.ExchangeProvisioningWithResponse(ctx, authorityv1.ProvisioningExchange{MachineId: machine, GrantId: grant.JSON201.Id, Operation: authorityv1.ProvisioningRead, Assertion: raw})
+	bad, err = f.client.ExchangeProvisioningWithResponse(ctx, authorityv1.ProvisioningExchange{GrantId: grant.JSON201.Id, Operation: authorityv1.ProvisioningRead, Assertion: raw})
 	if err != nil || bad.StatusCode() != 403 {
 		t.Fatal("current revocation bypassed by reused platform token", bad, err)
 	}
