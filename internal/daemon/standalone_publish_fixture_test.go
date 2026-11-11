@@ -17,6 +17,7 @@ import (
 )
 
 type standalonePublishFixture struct {
+	relayTransport                 *muxsession.QUICTransport
 	owner                          *runtimeTopology
 	databaseURL                    string
 	inspect                        *sql.DB
@@ -70,7 +71,7 @@ func newStandalonePublishFixture(t *testing.T, hostnameLabel string, beforeStart
 	waitForProcessReady(t, process)
 	controlHTTP, _ := newIntegrationHTTPSClient(t, ca.roots, publicControl, false, owner)
 	identity := newIntegrationPublishingIdentity(t, "https://"+cfg.ServerHostname(), controlHTTP, hostnameLabel, owner)
-	return &standalonePublishFixture{owner: owner, databaseURL: databaseURL, inspect: inspect, publicAddress: publicAddress,
+	return &standalonePublishFixture{relayTransport: owner.quicTransport(t), owner: owner, databaseURL: databaseURL, inspect: inspect, publicAddress: publicAddress,
 		relayUDPAddress: relayUDPAddress, pebble: pebble, relayTLS: relayTLS, process: process, identity: identity,
 		visitor: newIntegrationVisitor(t, pebble.roots, publicAddress, owner)}
 }
@@ -109,7 +110,7 @@ func standalonePublishConfig(t *testing.T, databaseURL string, publicListener ne
 }
 
 func (f *standalonePublishFixture) connectors() (muxsession.Connector, muxsession.Connector) {
-	return redirectIntegrationConnector(f.relayUDPAddress, muxsession.QUICConnector{TLSConfig: f.relayTLS}),
+	return redirectIntegrationConnector(f.relayUDPAddress, muxsession.QUICConnector{TLSConfig: f.relayTLS, Dialer: f.relayTransport}),
 		redirectIntegrationConnector(f.publicAddress, muxsession.TLSYamuxConnector{TLSConfig: f.relayTLS})
 }
 

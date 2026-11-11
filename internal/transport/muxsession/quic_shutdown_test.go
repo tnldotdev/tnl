@@ -69,7 +69,7 @@ func TestQUICListenerCloseReleasesAcceptedSocket(t *testing.T) {
 		session, err := listener.Accept(ctx)
 		accepted <- acceptedSession{session, err}
 	}()
-	client, err := (QUICConnector{TLSConfig: clientTLS}).Connect(ctx, Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
+	client, err := (QUICConnector{TLSConfig: clientTLS, Dialer: testQUICTransport(t)}).Connect(ctx, Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
 	if err != nil {
 		t.Fatal(err)
 	}

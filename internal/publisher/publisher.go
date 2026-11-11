@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -39,9 +40,6 @@ func Run(ctx context.Context, config Config) (result error) {
 	}
 	if config.ProvisioningStalledDelay == 0 {
 		config.ProvisioningStalledDelay = defaultProvisioningStalledDelay
-	}
-	if config.QUICConnector == nil || config.TCPConnector == nil {
-		return errors.New("publisher: QUIC and TLS/yamux connectors are required")
 	}
 	hostname, err := naming.CanonicalizeHostname(config.Hostname)
 	if err != nil {
@@ -83,6 +81,20 @@ func Run(ctx context.Context, config Config) (result error) {
 		return err
 	}
 	defer hostLock.Close()
+	if config.QUICConnector == nil {
+		transport, udpErr := muxsession.ListenQUICTransport("udp", ":0")
+		if udpErr == nil {
+			defer func() { result = errors.Join(result, transport.Close()) }()
+			config.QUICConnector = muxsession.QUICConnector{TLSConfig: config.TransportTLS, Config: config.QUICConfig, Dialer: transport}
+		} else {
+			config.QUICConnector = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
+				return nil, udpErr
+			})
+		}
+	}
+	if config.TCPConnector == nil {
+		config.TCPConnector = muxsession.TLSYamuxConnector{TLSConfig: config.TransportTLS}
+	}
 	publicURL, createdPublicURL, err := createOrLoadPublicURL(ctx, config)
 	if err != nil {
 		return err

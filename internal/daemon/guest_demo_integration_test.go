@@ -456,7 +456,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		t.Fatal(err)
 	}
 	relayTLS := &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}
-	quic := redirectIntegrationConnector(relayUDPAddress, muxsession.QUICConnector{TLSConfig: relayTLS})
+	quic := redirectIntegrationConnector(relayUDPAddress, muxsession.QUICConnector{TLSConfig: relayTLS, Dialer: owner.quicTransport(t)})
 	tcp := redirectIntegrationConnector(publicAddress, muxsession.TLSYamuxConnector{TLSConfig: relayTLS})
 	hostname := "demo-1." + issued.Namespace
 	prefixes := []string{netip.PrefixFrom(address.Unmap(), address.Unmap().BitLen()).String()}

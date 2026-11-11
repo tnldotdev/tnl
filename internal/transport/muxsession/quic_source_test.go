@@ -79,9 +79,11 @@ func testQUICSourcePinRejectsMigratedFramesBeforeDispatch(t *testing.T, mode str
 		t.Fatal(err)
 	}
 	defer listener.Close()
+	nonQUIC := listener.NonQUICPackets(ctx)
+	defer nonQUIC.Close()
 	dial := func() (Session, Session) {
 		t.Helper()
-		client, err := (QUICConnector{TLSConfig: clientTLS, Config: QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}).Connect(ctx, Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
+		client, err := (QUICConnector{TLSConfig: clientTLS, Config: QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: testQUICTransport(t)}).Connect(ctx, Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -112,6 +114,22 @@ func testQUICSourcePinRejectsMigratedFramesBeforeDispatch(t *testing.T, mode str
 	}
 	relabeled.portMoved.Store(false)
 	relabeled.moved.Store(true)
+	// discovery from the new IP shares the physical reader without granting
+	// access to the old IP's connection-ID table or encrypted stream dispatch.
+	discovery, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer discovery.Close()
+	if _, err := discovery.WriteTo([]byte("\x00discovery on new IP"), listener.Addr()); err != nil {
+		t.Fatal(err)
+	}
+	_ = nonQUIC.SetReadDeadline(time.Now().Add(time.Second))
+	buffer := make([]byte, 64)
+	_, address, err := nonQUIC.ReadFrom(buffer)
+	if err != nil || address.(interface{ UDPAddr() *net.UDPAddr }).UDPAddr().IP.String() != "127.0.0.2" {
+		t.Fatal("new-IP discovery did not use the shared source demultiplexer", err)
+	}
 	for range 4 {
 		if err := client.(DatagramSession).SendDatagram(ctx, []byte("migrated")); err != nil {
 			t.Fatal(err)

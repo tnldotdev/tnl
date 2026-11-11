@@ -86,7 +86,11 @@ func TestRelayTransportRejectsRetiredALPNAndWrongHostname(t *testing.T) {
 						_ = connection.Close()
 					}
 				} else {
-					connection, problem := quic.DialAddr(ctx, address, client, nil)
+					remote, problem := net.ResolveUDPAddr("udp", address)
+					if problem != nil {
+						t.Fatal(problem)
+					}
+					connection, problem := testQUICTransport(t).DialQUIC(ctx, remote, client, nil)
 					err = problem
 					if connection != nil {
 						_ = connection.CloseWithError(0, "")

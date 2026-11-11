@@ -264,8 +264,8 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 			Ephemeral: config.Ephemeral,
 			TeamID:    team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member, Purpose: controlv1.App,
 			PolicyRevision: uint64(team.PolicyRevision), AccessMode: controlv1.Anonymous, AllowedIPPrefixes: config.AllowedIPPrefixes,
-			QUICConnector: muxsession.QUICConnector{TLSConfig: config.RelayTLS, Config: benchmarkQUICConfig(config.QUICDisablePathMTUDiscovery, config.QUICQlog, config.QUICKeepAlive)},
-			TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: config.RelayTLS},
+			TransportTLS:  config.RelayTLS,
+			QUICConfig:    benchmarkQUICConfig(config.QUICDisablePathMTUDiscovery, config.QUICQlog, config.QUICKeepAlive),
 			FallbackDelay: 250 * time.Millisecond},
 	}, nil
 }

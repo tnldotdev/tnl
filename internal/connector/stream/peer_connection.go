@@ -51,6 +51,7 @@ type connectorConnection struct {
 	owner         string
 	endpoint      *peer.Endpoint
 	transport     *quic.Transport
+	udpTransport  *muxsession.QUICTransport
 	connection    *quic.Conn
 	session       muxsession.Session
 	permissions   *tunnel.ConnectorPermissionWriter
@@ -130,6 +131,16 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	var results [2]error
 	var starts sync.WaitGroup
 	stage = "relay legs"
+	if config.RelayQUIC == nil {
+		transport, udpErr := muxsession.ListenQUICTransport("udp", ":0")
+		if udpErr == nil {
+			p.udpTransport = transport
+			config.RelayQUIC = muxsession.QUICConnector{TLSConfig: config.TransportTLS, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: transport}
+		} else {
+			config.RelayQUIC = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return nil, udpErr })
+		}
+	}
+	p.config = config
 	for slot := range 2 {
 		starts.Go(func() {
 			p.paths[slot].leg, results[slot] = connectConnectorLeg(setup, life, config, signer, p.pair, key, slot)
@@ -394,7 +405,13 @@ func (p *connectorConnection) watch() {
 			return
 		case <-p.session.Done():
 			timer.Stop()
-			p.cancel(fmt.Errorf("connector inner session ended: %w", errors.Join(ErrServiceConnection, p.session.Err())))
+			cause := p.session.Err()
+			if p.permissions != nil {
+				// a terminal permission read may reset its stream and cause remote
+				// session closure before the permission notification worker runs.
+				cause = errors.Join(cause, p.permissions.Err())
+			}
+			p.cancel(fmt.Errorf("connector inner session ended: %w", errors.Join(ErrServiceConnection, cause)))
 			return
 		case <-changed:
 			timer.Stop()
@@ -887,5 +904,8 @@ func (p *connectorConnection) Close() {
 			_ = warm.prepared.Close()
 		}
 		p.uses.Wait()
+		if p.udpTransport != nil {
+			_ = p.udpTransport.Close()
+		}
 	})
 }

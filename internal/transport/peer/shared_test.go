@@ -18,6 +18,7 @@ import (
 	"time"
 
 	quic "github.com/quic-go/quic-go"
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -36,7 +37,8 @@ func sharedQUICPair(t *testing.T, ctx context.Context, serverTLS, clientTLS *tls
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-	left, err := (muxsession.QUICConnector{TLSConfig: clientTLS, Config: config}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "peer.test"})
+	dialer := transporttest.QUICTransport(t)
+	left, err := (muxsession.QUICConnector{TLSConfig: clientTLS, Config: config, Dialer: dialer}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "peer.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +62,7 @@ func TestPeerSharedDatagramsUseOptedInMuxsession(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = listener.Close() })
-			client, err := (muxsession.QUICConnector{TLSConfig: clientTLS, Config: config}).Connect(ctx,
+			client, err := (muxsession.QUICConnector{TLSConfig: clientTLS, Config: config, Dialer: transporttest.QUICTransport(t)}).Connect(ctx,
 				muxsession.Endpoint{Address: listener.Addr().String(), ServerName: "peer.test"})
 			if err != nil {
 				t.Fatal(err)

@@ -2,6 +2,7 @@ package publisher
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net/http"
 	"time"
@@ -76,6 +77,8 @@ type Config struct {
 	Ephemeral                    bool
 	AssignedPublicURL            *controlv1.PublicURL
 	State                        *clientstate.Store
+	TransportTLS                 *tls.Config
+	QUICConfig                   muxsession.QUICConfig
 	QUICConnector                muxsession.Connector
 	TCPConnector                 muxsession.Connector
 	FallbackDelay                time.Duration

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -69,7 +70,7 @@ func TestRelayTransportRejectsConnectorPublisherRoleConfusion(t *testing.T) {
 					rejected <- err
 					return err
 				})
-				var connector muxsession.Connector = muxsession.QUICConnector{TLSConfig: &tls.Config{RootCAs: roots}}
+				var connector muxsession.Connector = muxsession.QUICConnector{TLSConfig: &tls.Config{RootCAs: roots}, Dialer: transporttest.QUICTransport(t)}
 				if transport == tunnel.TransportTLSTCP {
 					connector = muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{RootCAs: roots}}
 				}

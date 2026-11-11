@@ -13,6 +13,7 @@ import (
 
 	yamux "github.com/libp2p/go-yamux/v5"
 	quic "github.com/quic-go/quic-go"
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 )
@@ -67,7 +68,7 @@ func stdioTransportSessions(t *testing.T, transport string) (muxsession.Session,
 			}
 		})
 	}
-	var connector muxsession.Connector = muxsession.QUICConnector{TLSConfig: clientTLS}
+	var connector muxsession.Connector = muxsession.QUICConnector{TLSConfig: clientTLS, Dialer: transporttest.QUICTransport(t)}
 	if transport != "quic" {
 		connector = muxsession.TLSYamuxConnector{TLSConfig: clientTLS}
 	}
