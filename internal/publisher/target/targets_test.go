@@ -4,7 +4,31 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	"github.com/tnldotdev/tnl/internal/config"
 )
+
+func TestTargetSnapshotRequiresContainerIdentity(t *testing.T) {
+	protocol, container, port := "tcp", "database", 5432
+	project := clientproject.Project{Root: "/project", Config: config.TNL{Services: config.Services{
+		"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "docker", Container: &container, Port: &port}},
+	}}}
+	if _, err := ResolveTargetSnapshot(t.Context(), project, "db", nil); err == nil {
+		t.Fatal("container accepted without an identity-bearing resolver")
+	}
+	identity := ""
+	resolver := TargetResolverFunc(func(context.Context, clientproject.Project, string) (string, string, error) {
+		return "127.0.0.1:15432", identity, nil
+	})
+	if _, err := ResolveTargetSnapshot(t.Context(), project, "db", resolver); err == nil {
+		t.Fatal("container accepted without immutable identity")
+	}
+	identity = "container-a"
+	if snapshot, err := ResolveTargetSnapshot(t.Context(), project, "db", resolver); err != nil || snapshot.Address != "127.0.0.1:15432" || snapshot.Identity != identity {
+		t.Fatalf("container snapshot lost its explicit identity: %+v, %v", snapshot, err)
+	}
+}
 
 func TestTargetBindingFencesSameAddressReplacementAndLostTargets(t *testing.T) {
 	identity := "container-a"

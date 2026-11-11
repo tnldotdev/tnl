@@ -19,11 +19,10 @@ func (n *Native) serviceCertificates(service string) (ServiceCertificateControl,
 	if n.identity.kind != authorityv1.Service || n.identity.serviceID != service {
 		return nil, ErrScope
 	}
-	control, ok := n.NativeControl.(ServiceCertificateControl)
-	if !ok {
+	if n.Services == nil {
 		return nil, ErrScope
 	}
-	return control, nil
+	return n.Services, nil
 }
 
 func (n *Native) CreateServiceCertificateIssuance(ctx context.Context, service, run string, number int64, token credentials.ServiceRunToken, csr []byte, key string) (controlv1.ServiceCertificateIssuance, error) {
@@ -54,24 +53,12 @@ func (n *Native) StartServiceRun(ctx context.Context, service, run, access strin
 	if _, err := n.serviceCertificates(service); err != nil {
 		return controlv1.ServiceRunSetup{}, err
 	}
-	control, ok := n.NativeControl.(interface {
-		StartServiceRun(context.Context, string, string, string, int64) (controlv1.ServiceRunSetup, error)
-	})
-	if !ok {
-		return controlv1.ServiceRunSetup{}, ErrScope
-	}
-	return control.StartServiceRun(ctx, service, run, access, number)
+	return n.Services.StartServiceRun(ctx, service, run, access, number)
 }
 
 func (n *Native) AuthorizeServiceClientCertificate(ctx context.Context, service, run string, token credentials.ServiceRunToken, body controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error) {
 	if _, err := n.serviceCertificates(service); err != nil {
 		return controlv1.ServiceClientCertificateDecision{}, err
 	}
-	control, ok := n.NativeControl.(interface {
-		AuthorizeServiceClientCertificate(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error)
-	})
-	if !ok {
-		return controlv1.ServiceClientCertificateDecision{}, ErrScope
-	}
-	return control.AuthorizeServiceClientCertificate(ctx, service, run, token, body)
+	return n.Services.AuthorizeServiceClientCertificate(ctx, service, run, token, body)
 }

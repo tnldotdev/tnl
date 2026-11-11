@@ -32,7 +32,7 @@ func (h *handler) resolveWebsiteIdentity(response http.ResponseWriter, request *
 	}
 	result, err := h.store.EnsureServiceIdentity(request.Context(), h.config.ManagedDomain, identity, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "resolve website identity", err)
+		writeControlStateProblem(request.Context(), response, "resolve website identity", err)
 		return result, false
 	}
 	return result, true
@@ -76,7 +76,7 @@ func (h *handler) websiteInvitation(response http.ResponseWriter, request *http.
 	if accept {
 		membership, err := h.store.AcceptInvitation(request.Context(), identity.Identity.ID, credentials.InvitationToken(body.Secret), time.Now())
 		if err != nil {
-			writeControlStateProblem(response, "accept website invitation", err)
+			writeControlStateProblem(request.Context(), response, "accept website invitation", err)
 			return
 		}
 		writeJSON(response, http.StatusOK, membershipResponse(membership))
@@ -84,7 +84,7 @@ func (h *handler) websiteInvitation(response http.ResponseWriter, request *http.
 	}
 	preview, err := h.store.PreviewInvitation(request.Context(), identity.Identity.ID, body.Secret, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "preview website invitation", err)
+		writeControlStateProblem(request.Context(), response, "preview website invitation", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, authorityv1.InvitationPreview{TeamDisplayName: authorityv1.CanonicalLabel(preview.TeamDisplayName), InitialRole: authorityv1.TeamRole(preview.InitialRole), ExpiresAt: preview.ExpiresAt})

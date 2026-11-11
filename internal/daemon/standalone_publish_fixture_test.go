@@ -11,6 +11,7 @@ import (
 	"time"
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"golang.org/x/net/websocket"
@@ -96,6 +97,7 @@ func standalonePublishConfig(t *testing.T, databaseURL string, publicListener ne
 		Route53ManagedZoneID: "fixture-zone", Route53ServerZoneID: "fixture-zone", Route53Region: "us-east-1", IngressIPv4Addresses: []string{"127.0.0.1"},
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: relayUDP.LocalAddr().String(), InternalRelayListen: "127.0.0.1:1",
 		ServerDomain: serverDomain, ManagedDomain: "routes." + serverDomain,
+		ManagedURLMode:   naming.ManagedURLModeGenerated,
 		ACMEDirectoryURL: directoryURL, ACMEEmail: "integration@example.test", ACMEAcceptTerms: true, ACMEProfile: "tlsserver",
 		PublicURLCertificateWorkers: 4,
 		OIDCIssuer:                  testOIDCIssuer, OIDCClientID: "server", StorageKey: testStorageKey, AccessTokenLifetime: 5 * time.Minute, RefreshTokenLifetime: time.Hour,

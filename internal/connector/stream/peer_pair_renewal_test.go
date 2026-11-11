@@ -24,7 +24,7 @@ func (c renewalControl) RenewConnectorPeerPair(ctx context.Context, service stri
 func TestConnectorRefreshRenewsPinnedPairWithoutReselectionOrPermissionRPC(t *testing.T) {
 	f := newConnectorFixture(t, "quic")
 	var selections, permissions, renewals atomic.Int64
-	control, err := NewControlWithConfig(ControlConfig{Signer: f.ConnectorSigner, Pair: f.PrepareConnectorPeerPair,
+	control, err := NewControlWithConfig(ControlConfig{Signer: f.ConnectorSigner, Pair: f.PrepareConnectorPeerPair, RebindPair: f.RebindConnectorPeerPair,
 		Resolve: func(ctx context.Context, service string) (Run, error) {
 			if selections.Add(1) != 1 {
 				return Run{}, ErrServiceConnection
@@ -40,7 +40,7 @@ func TestConnectorRefreshRenewsPinnedPairWithoutReselectionOrPermissionRPC(t *te
 		RenewPair: func(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error) {
 			renewals.Add(1)
 			return f.RenewConnectorPeerPair(ctx, service, body)
-		}, Close: func() error { return nil }})
+		}, Close: f.Close})
 	if err != nil {
 		t.Fatal(err)
 	}

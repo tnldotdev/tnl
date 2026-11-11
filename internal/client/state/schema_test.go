@@ -65,11 +65,26 @@ func TestV1ProjectJournalAndHandoffState(t *testing.T) {
 		root, "member.example.test", "tun_0123456789abcdefghijkl"); err != nil {
 		t.Fatal(err)
 	}
-	var primary, namespace, group string
-	if err := database.db.QueryRowContext(ctx, `SELECT primary_project_root, integration_namespace, integration_group FROM local_tunnels WHERE id = ?`,
-		"tun_0123456789abcdefghijkl").Scan(&primary, &namespace, &group); err != nil ||
-		primary != root || namespace != "member.example.test" || group != root+"\x00member.example.test" {
-		t.Fatalf("stored integration group = %q / %q / %q: %v", primary, namespace, group, err)
+	var primary, namespace string
+	if err := database.db.QueryRowContext(ctx, `SELECT primary_project_root, integration_namespace FROM local_tunnels WHERE id = ?`,
+		"tun_0123456789abcdefghijkl").Scan(&primary, &namespace); err != nil ||
+		primary != root || namespace != "member.example.test" {
+		t.Fatalf("stored integration scope = %q / %q: %v", primary, namespace, err)
+	}
+	for _, components := range [][2]any{
+		{root, nil}, {nil, "member.example.test"}, {"", "member.example.test"},
+		{root + "\x00other", "member.example.test"}, {root, "member.example.test\x00other"},
+	} {
+		if _, err := database.db.ExecContext(ctx, `UPDATE local_tunnels SET primary_project_root = ?, integration_namespace = ? WHERE id = ?`,
+			components[0], components[1], "tun_0123456789abcdefghijkl"); err == nil {
+			t.Fatalf("accepted incomplete or NUL-containing scope: %#v", components)
+		}
+	}
+	for _, table := range []string{"local_tunnels", "webhook_owners"} {
+		var projections int
+		if err := database.db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_xinfo(?) WHERE name = 'integration_group'`, table).Scan(&projections); err != nil || projections != 0 {
+			t.Fatalf("%s retained an encoded integration projection: %v", table, err)
+		}
 	}
 	if _, err := database.db.ExecContext(ctx, `INSERT INTO oauth_alias_handoffs
 		(server_origin, hostname, state_digest, callback_path, public_url_id, publish_run_number, created_at, expires_at)

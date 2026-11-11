@@ -64,6 +64,9 @@ func TestPublisherDeploymentProofBindsEveryFieldAndPresence(t *testing.T) {
 	scope := func(report *controlv1.PublisherDeploymentReport) string {
 		return publisherproof.RuntimeScope("group", "start", strings.Repeat("a", 32), 7, Digest(report))
 	}
+	if Digest(nil) != "" || scope(nil) == scope(&r) {
+		t.Fatal("absent and reported deployments did not retain distinct scope bindings")
+	}
 	proof, err := publisherproof.Sign("publisher", "key", scope(&r), "https://control.example/v1/publisher-runtime", private, now)
 	if err != nil {
 		t.Fatal(err)
@@ -91,5 +94,15 @@ func TestPublisherDeploymentProofBindsEveryFieldAndPresence(t *testing.T) {
 	}
 	if _, err := publisherproof.Verify(proof, "publisher", "key", scope(nil), "https://control.example/v1/publisher-runtime", public, now); err == nil {
 		t.Fatal("metadata stripped from signed proof")
+	}
+	absentProof, err := publisherproof.Sign("publisher", "key", scope(nil), "https://control.example/v1/publisher-runtime", private, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publisherproof.Verify(absentProof, "publisher", "key", scope(nil), "https://control.example/v1/publisher-runtime", public, now); err != nil {
+		t.Fatal("absent deployment proof rejected", err)
+	}
+	if _, err := publisherproof.Verify(absentProof, "publisher", "key", scope(&r), "https://control.example/v1/publisher-runtime", public, now); err == nil {
+		t.Fatal("metadata added to a proof signed without a report")
 	}
 }

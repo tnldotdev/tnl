@@ -31,12 +31,12 @@ func (h *handler) verifiedHumanRequest(w http.ResponseWriter, r *http.Request, b
 		}
 	}
 	if h.config.OIDCVerifier == nil {
-		writeAuthenticationUnavailable(w, "verify human request", nil)
+		writeAuthenticationUnavailable(r.Context(), w, "verify human request", nil)
 		return oidc.Identity{}, "", false
 	}
 	i, err := h.config.OIDCVerifier.Verify(r.Context(), r.Header.Get("X-Tnl-Actor-Token"))
 	if err != nil {
-		companyError(w, "verify human request", err)
+		companyError(r.Context(), w, "verify human request", err)
 		return oidc.Identity{}, "", false
 	}
 	if i.Issuer != h.config.OIDCIssuer || i.ClientID != h.config.OIDCClientID || h.config.OIDCClientID == "" {

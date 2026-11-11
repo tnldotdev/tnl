@@ -14,6 +14,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const clientBaselineIdentity = "tnl-client-fresh-v1-integration-scope"
+
 // openReadOnlySQLite reads existing client state without creating or migrating it.
 func openReadOnlySQLite(ctx context.Context, path string) (*sql.DB, error) {
 	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
@@ -27,6 +29,9 @@ func openReadOnlySQLite(ctx context.Context, path string) (*sql.DB, error) {
 	}
 	db.SetMaxOpenConns(1)
 	if err := db.PingContext(ctx); err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+	if err := validateClientBaseline(ctx, db); err != nil {
 		return nil, errors.Join(err, db.Close())
 	}
 	return db, nil
@@ -93,12 +98,8 @@ func openClientSQLite(ctx context.Context, path string, fresh bool) (_ *sql.DB, 
 	if version != 1 || target != 1 {
 		return nil, errors.New("clientstate: unsupported v1 database baseline")
 	}
-	var baseline string
-	if err := db.QueryRowContext(ctx, "SELECT identity FROM baseline_identity WHERE id = 1").Scan(&baseline); err != nil {
-		return nil, fmt.Errorf("read client state baseline; select a fresh state directory: %w", err)
-	}
-	if baseline != "tnl-client-fresh-v1-services" {
-		return nil, errors.New("client state baseline does not match; select a fresh state directory")
+	if err := validateClientBaseline(ctx, db); err != nil {
+		return nil, err
 	}
 	rows, err := db.QueryContext(ctx, "PRAGMA foreign_key_check")
 	if err != nil {
@@ -112,6 +113,24 @@ func openClientSQLite(ctx context.Context, path string, fresh bool) (_ *sql.DB, 
 		return nil, err
 	}
 	return db, nil
+}
+
+func validateClientBaseline(ctx context.Context, db *sql.DB) error {
+	var version int64
+	if err := db.QueryRowContext(ctx, "SELECT version_id FROM goose_db_version WHERE is_applied = 1 ORDER BY id DESC LIMIT 1").Scan(&version); err != nil {
+		return fmt.Errorf("read client state schema version; select a fresh state directory: %w", err)
+	}
+	if version != 1 {
+		return errors.New("clientstate: unsupported v1 database baseline")
+	}
+	var baseline string
+	if err := db.QueryRowContext(ctx, "SELECT identity FROM baseline_identity WHERE id = 1").Scan(&baseline); err != nil {
+		return fmt.Errorf("read client state baseline; select a fresh state directory: %w", err)
+	}
+	if baseline != clientBaselineIdentity {
+		return errors.New("client state baseline does not match; select a fresh state directory")
+	}
+	return nil
 }
 
 // initializeClientSQLite publishes the database filename only after the fresh

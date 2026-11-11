@@ -15,6 +15,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -29,7 +30,7 @@ func TestIntegrationDrainingControlAuthenticatedRenewalAndCleanup(t *testing.T) 
 	if err := controlstate.Migrate(ctx, dsn); err != nil {
 		t.Fatal(err)
 	}
-	d, err := controlstate.Open(ctx, dsn, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	d, err := controlstate.Open(ctx, dsn, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

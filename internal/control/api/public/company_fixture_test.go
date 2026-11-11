@@ -19,6 +19,7 @@ import (
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
@@ -51,7 +52,7 @@ func newCompanyHTTPFixture(t *testing.T, name string) *companyHTTPFixture {
 		t.Fatal(err)
 	}
 	var err error
-	f.d, err = controlstate.Open(t.Context(), dbURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	f.d, err = controlstate.Open(t.Context(), dbURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

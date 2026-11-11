@@ -16,6 +16,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -46,7 +47,7 @@ func testPublisherIdentityHTTPContract(t *testing.T, selection *trafficlimits.Se
 	if err := controlstate.Migrate(t.Context(), url); err != nil {
 		t.Fatal(err)
 	}
-	d, err := controlstate.Open(t.Context(), url, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	d, err := controlstate.Open(t.Context(), url, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

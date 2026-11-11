@@ -255,7 +255,7 @@ func (q *Queries) InsertTunnel(ctx context.Context, arg InsertTunnelParams) erro
 }
 
 const listOpenTunnels = `-- name: ListOpenTunnels :many
-SELECT id, command, process_id, server_origin, project_root, service, service_protocol, primary_project_root, integration_namespace, integration_group, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
+SELECT id, command, process_id, server_origin, project_root, service, service_protocol, primary_project_root, integration_namespace, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
 FROM local_tunnels
 WHERE stopped_at IS NULL
 ORDER BY started_at, id
@@ -280,7 +280,6 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 			&i.ServiceProtocol,
 			&i.PrimaryProjectRoot,
 			&i.IntegrationNamespace,
-			&i.IntegrationGroup,
 			&i.Hostname,
 			&i.Target,
 			&i.Framework,
@@ -308,7 +307,7 @@ func (q *Queries) ListOpenTunnels(ctx context.Context) ([]LocalTunnel, error) {
 }
 
 const listOpenTunnelsForProject = `-- name: ListOpenTunnelsForProject :many
-SELECT id, command, process_id, server_origin, project_root, service, service_protocol, primary_project_root, integration_namespace, integration_group, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
+SELECT id, command, process_id, server_origin, project_root, service, service_protocol, primary_project_root, integration_namespace, hostname, target, framework, public_url_id, publish_run_number, state, started_at, updated_at, heartbeat_at, lease_expires_at, stopped_at, failure_code
 FROM local_tunnels
 WHERE stopped_at IS NULL AND project_root = ?1
 ORDER BY started_at, id
@@ -333,7 +332,6 @@ func (q *Queries) ListOpenTunnelsForProject(ctx context.Context, projectRoot str
 			&i.ServiceProtocol,
 			&i.PrimaryProjectRoot,
 			&i.IntegrationNamespace,
-			&i.IntegrationGroup,
 			&i.Hostname,
 			&i.Target,
 			&i.Framework,

@@ -112,13 +112,13 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 		if err != nil {
 			t.Fatal(err)
 		}
-		var metadata []controlv1.ServiceMetadata
+		metadata := controlv1.ServiceMetadata{Protocol: controlv1.Tcp}
 		target := "127.0.0.1:8080"
 		if *runtimeLoadWorkload == "postgres" {
-			metadata = append(metadata, postgresLoadMetadata(t))
+			metadata = postgresLoadMetadata(t)
 			target = postgresLoadTarget
 		}
-		service, err := authenticated.Control.CreateService(ctx, person.PersonalTeamId, fmt.Sprintf("connect-%d", index), key, metadata...)
+		service, err := authenticated.Control.CreateService(ctx, person.PersonalTeamId, fmt.Sprintf("connect-%d", index), key, metadata)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -126,7 +126,7 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 		if err != nil {
 			t.Fatal(err)
 		}
-		native, identity, err := publisheridentity.EnrollNative(ctx, profile, authenticated.Control, authenticated.Authority, enrollment.EnrollmentKey)
+		native, identity, err := publisheridentity.EnrollNative(ctx, profile, publisheridentity.NativeControl{PublicURLControl: authenticated.Control, Services: authenticated.Control}, authenticated.Authority, enrollment.EnrollmentKey)
 		if err != nil {
 			t.Fatal(err)
 		}

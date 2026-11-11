@@ -17,14 +17,14 @@ type serviceAuditStore interface {
 	IngestPublisherServiceObservations(context.Context, controlstate.PublishRunAuthentication, serviceaudit.Batch, time.Time) (controlstate.ServiceObservationResult, error)
 }
 
-func serviceAuditError(w http.ResponseWriter, err error) {
+func serviceAuditError(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, serviceaudit.ErrInvalid):
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid service audit request")
 	case errors.Is(err, controlstate.ErrServiceAuditAccess):
 		writeProblem(w, 403, controlv1.Forbidden, "service audit access denied")
 	default:
-		writeControlStateProblem(w, "service audit", err)
+		writeControlStateProblem(ctx, w, "service audit", err)
 	}
 }
 
@@ -51,13 +51,13 @@ func (h *handler) ListServiceAudit(w http.ResponseWriter, r *http.Request, team 
 	if p.Limit != nil {
 		f.Limit = *p.Limit
 		if f.Limit < 1 {
-			serviceAuditError(w, serviceaudit.ErrInvalid)
+			serviceAuditError(r.Context(), w, serviceaudit.ErrInvalid)
 			return
 		}
 	}
 	page, err := store.ListServiceAudit(r.Context(), team, principal.identityID, f, time.Now().UTC())
 	if err != nil {
-		serviceAuditError(w, err)
+		serviceAuditError(r.Context(), w, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -70,7 +70,7 @@ func (h *handler) ReportPublishRunServiceObservations(w http.ResponseWriter, r *
 		Events           []serviceaudit.Observation `json:"events"`
 	}
 	if decodeJSONLimited(w, r, &body, serviceaudit.MaxPayloadBytes) != nil || body.PublishRunNumber < 1 {
-		serviceAuditError(w, serviceaudit.ErrInvalid)
+		serviceAuditError(r.Context(), w, serviceaudit.ErrInvalid)
 		return
 	}
 	auth, ok := h.authenticatePublishRunRequest(w, r, runID, uint64(body.PublishRunNumber))
@@ -87,13 +87,13 @@ func (h *handler) ReportPublishRunServiceObservations(w http.ResponseWriter, r *
 			body.Events[i].RunNumber = body.PublishRunNumber
 		}
 		if body.Events[i].PairID != "" {
-			serviceAuditError(w, serviceaudit.ErrInvalid)
+			serviceAuditError(r.Context(), w, serviceaudit.ErrInvalid)
 			return
 		}
 	}
 	result, err := store.IngestPublisherServiceObservations(r.Context(), auth, serviceaudit.Batch{Events: body.Events}, time.Now().UTC())
 	if err != nil {
-		serviceAuditError(w, err)
+		serviceAuditError(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -106,7 +106,7 @@ func (h *handler) ReportServiceRunObservations(w http.ResponseWriter, r *http.Re
 		Events    []serviceaudit.Observation `json:"events"`
 	}
 	if decodeJSONLimited(w, r, &body, serviceaudit.MaxPayloadBytes) != nil || body.RunNumber < 1 {
-		serviceAuditError(w, serviceaudit.ErrInvalid)
+		serviceAuditError(r.Context(), w, serviceaudit.ErrInvalid)
 		return
 	}
 	token, ok := requestBearerToken(r)
@@ -121,7 +121,7 @@ func (h *handler) ReportServiceRunObservations(w http.ResponseWriter, r *http.Re
 	}
 	result, err := store.IngestServiceRunObservations(r.Context(), serviceID, runID, token, body.RunNumber, serviceaudit.Batch{Events: body.Events}, time.Now().UTC())
 	if err != nil {
-		serviceAuditError(w, err)
+		serviceAuditError(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, 200, result)

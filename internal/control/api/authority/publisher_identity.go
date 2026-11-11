@@ -61,19 +61,19 @@ func PublisherEnrollmentResponse(p controlstate.PublisherIdentity) authorityv1.P
 	return r
 }
 
-func publisherAuthError(w http.ResponseWriter, operation string, err error) {
+func publisherAuthError(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	if errors.Is(err, controlstate.ErrPublisherIdentity) || errors.Is(err, controlstate.ErrPublisherEnrollment) || errors.Is(err, pgx.ErrNoRows) {
 		writeBearerProblem(w)
 		return
 	}
-	writeAuthenticationUnavailable(w, operation, err)
+	writeAuthenticationUnavailable(ctx, w, operation, err)
 }
 
 func (h *handler) RedeemPublisherEnrollment(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	store, ok := h.store.(PublisherIdentityStore)
-	if !ok {
-		writeAuthenticationUnavailable(w, "enroll publisher", nil)
+	store := h.store
+	if store == nil {
+		writeAuthenticationUnavailable(r.Context(), w, "enroll publisher", nil)
 		return
 	}
 	var body authorityv1.RedeemPublisherEnrollmentRequest
@@ -88,7 +88,7 @@ func (h *handler) RedeemPublisherEnrollment(w http.ResponseWriter, r *http.Reque
 	}
 	p, err := store.RedeemPublisherEnrollment(r.Context(), body.EnrollmentKey, key, time.Now())
 	if err != nil {
-		publisherAuthError(w, "enroll publisher", err)
+		publisherAuthError(r.Context(), w, "enroll publisher", err)
 		return
 	}
 	writeJSON(w, 200, PublisherEnrollmentResponse(p))
@@ -96,9 +96,9 @@ func (h *handler) RedeemPublisherEnrollment(w http.ResponseWriter, r *http.Reque
 
 func (h *handler) ExchangePublisherAssertion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	store, ok := h.store.(PublisherIdentityStore)
-	if !ok || h.config.ControlURL == "" {
-		writeAuthenticationUnavailable(w, "exchange publisher assertion", nil)
+	store := h.store
+	if store == nil || h.config.ControlURL == "" {
+		writeAuthenticationUnavailable(r.Context(), w, "exchange publisher assertion", nil)
 		return
 	}
 	var b authorityv1.PublisherTokenRequest
@@ -109,16 +109,16 @@ func (h *handler) ExchangePublisherAssertion(w http.ResponseWriter, r *http.Requ
 	now := time.Now()
 	access, err := store.ExchangePublisherAssertion(r.Context(), b.ClientId, b.GrantId, h.config.ControlURL+"/v1/publisher-token", b.ClientAssertion, publisherSource(r), now)
 	if err != nil {
-		publisherAuthError(w, "exchange publisher assertion", err)
+		publisherAuthError(r.Context(), w, "exchange publisher assertion", err)
 		return
 	}
 	writeJSON(w, 200, authorityv1.PublisherTokenResponse{AccessToken: access.Token, TokenType: "Bearer", GrantId: b.GrantId, ExpiresIn: max(1, int(access.Until.Sub(now).Seconds()))})
 }
 
 func (h *handler) RotatePublisherKey(w http.ResponseWriter, r *http.Request) {
-	store, ok := h.store.(PublisherIdentityStore)
-	if !ok || h.config.ControlURL == "" {
-		writeAuthenticationUnavailable(w, "rotate publisher key", nil)
+	store := h.store
+	if store == nil || h.config.ControlURL == "" {
+		writeAuthenticationUnavailable(r.Context(), w, "rotate publisher key", nil)
 		return
 	}
 	token, err := credentials.Bearer(r.Header)
@@ -137,7 +137,7 @@ func (h *handler) RotatePublisherKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := store.RotatePublisherKey(r.Context(), token, publisherSource(r), b.KeyId, h.config.ControlURL+"/v1/publisher-keys/rotate", key, b.Proof, b.CurrentProof, time.Now()); err != nil {
-		publisherAuthError(w, "rotate publisher key", err)
+		publisherAuthError(r.Context(), w, "rotate publisher key", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

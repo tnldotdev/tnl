@@ -21,6 +21,7 @@ import (
 	controlrelay "github.com/tnldotdev/tnl/internal/control/api/private/relay"
 	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -40,7 +41,7 @@ func TestIntegrationConnectorPeerPairRelayClaimHTTPDirect(t *testing.T) {
 	if err := controlstate.Migrate(ctx, url); err != nil {
 		t.Fatal(err)
 	}
-	d, err := controlstate.Open(ctx, url, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	d, err := controlstate.Open(ctx, url, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

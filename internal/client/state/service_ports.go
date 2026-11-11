@@ -250,12 +250,6 @@ func (s *Store) ListenServiceAt(ctx context.Context, identity, service, address 
 	return nil, errors.New("clientstate: no unreserved loopback port available")
 }
 
-// ListenServiceOverride retains the original override spelling for
-// callers selecting a foreground listener.
-func (s *Store) ListenServiceOverride(ctx context.Context, identity, service, address string) (net.Listener, error) {
-	return s.ListenServiceAt(ctx, identity, service, address)
-}
-
 func privateListenAddress(value string) (string, int, error) {
 	host, text, err := net.SplitHostPort(value)
 	address, hostErr := netip.ParseAddr(host)

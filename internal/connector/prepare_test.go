@@ -227,6 +227,10 @@ func TestConnectionPreparationInvalidResolvedRunClosesAdapterOnce(t *testing.T) 
 		t.Run(strconv.FormatInt(revision, 10), func(t *testing.T) {
 			b, service := connectionPreparationFixture(t)
 			var closes atomic.Int32
+			var cleanupFailure error
+			if revision < 0 {
+				cleanupFailure = errors.Join(context.Canceled, errors.New("adapter cleanup failed"))
+			}
 			control, err := connectorstream.NewControlWithConfig(connectorstream.ControlConfig{
 				Resolve: func(context.Context, string) (connectorstream.Run, error) {
 					return connectorstream.Run{Protocol: string(service.Protocol), Endpoint: service.Endpoint, TrustRevision: revision}, nil
@@ -243,11 +247,21 @@ func TestConnectionPreparationInvalidResolvedRunClosesAdapterOnce(t *testing.T) 
 					t.Error("invalid resolved run reached pair renewal")
 					return controlv1.ConnectorPeerPairRenewal{}, connectorstream.ErrServiceConnection
 				},
+				RebindPair: func(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+					t.Error("invalid resolved run reached pair rebind")
+					return controlv1.ConnectorPeerPairRebindState{}, connectorstream.ErrServiceConnection
+				},
 				Permission: func(context.Context, string) (controlv1.VisitorTokenResponse, error) {
 					t.Error("invalid resolved run reached visitor permission")
 					return controlv1.VisitorTokenResponse{}, connectorstream.ErrServiceConnection
 				},
-				Close: func() error { closes.Add(1); return nil },
+				Close: func(cleanup context.Context) error {
+					closes.Add(1)
+					if _, bounded := cleanup.Deadline(); cleanup.Err() != nil || !bounded {
+						t.Error("early adapter cleanup lost its independent deadline")
+					}
+					return cleanupFailure
+				},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -255,6 +269,12 @@ func TestConnectionPreparationInvalidResolvedRunClosesAdapterOnce(t *testing.T) 
 			p, err := b.prepareListener(t.Context(), "api", nil, service, nil, control, "")
 			if p != nil || !errors.Is(err, connectorruntime.ErrUnavailable) || !errors.Is(err, connectorstream.ErrServiceConnection) {
 				t.Fatal("invalid resolved run changed the startup failure", err)
+			}
+			if cleanupFailure != nil {
+				var cleanup *connectorstream.CleanupError
+				if !errors.Is(err, cleanupFailure) || !errors.As(err, &cleanup) {
+					t.Error("early adapter cleanup lost its failure", err)
+				}
 			}
 			if closes.Load() != 1 {
 				t.Error("invalid resolved run did not close its adapter exactly once", closes.Load())
@@ -305,11 +325,15 @@ func TestConnectionPreparationFailureJoinsResourcesAndReusesListener(t *testing.
 					t.Error("failed preparation reached pair renewal")
 					return controlv1.ConnectorPeerPairRenewal{}, failure
 				},
+				RebindPair: func(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
+					t.Error("failed preparation reached pair rebind")
+					return controlv1.ConnectorPeerPairRebindState{}, failure
+				},
 				Permission: func(context.Context, string) (controlv1.VisitorTokenResponse, error) {
 					t.Error("failed preparation reached visitor permission")
 					return controlv1.VisitorTokenResponse{}, failure
 				},
-				Close: func() error { closes.Add(1); close(closed); return nil },
+				Close: func(context.Context) error { closes.Add(1); close(closed); return nil },
 			})
 			if err != nil {
 				t.Fatal(err)

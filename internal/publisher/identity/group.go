@@ -40,7 +40,7 @@ type Group struct {
 
 func NewGroup(control NativeControl, groups GroupControl, authority AssertionExchanger, server string, member controlv1.PublisherGroupMember, private ed25519.PrivateKey) (*Group, error) {
 	canonical, err := naming.CanonicalControlURL(server)
-	if err != nil || canonical != server || control == nil || groups == nil || authority == nil || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private.Seed()), private) || !opaqueid.Valid(member.PublisherIdentityId, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(member.KeyId, opaqueid.PublisherIdentityKeyPrefix) || member.TeamId == "" || member.ProjectKey == "" || member.GroupId == "" || member.GroupName == "local" || member.GroupName == "" {
+	if err != nil || canonical != server || control.PublicURLControl == nil || control.ControlURL() != server || control.Services == nil || groups == nil || authority == nil || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private.Seed()), private) || !opaqueid.Valid(member.PublisherIdentityId, opaqueid.PublisherIdentityPrefix) || !opaqueid.Valid(member.KeyId, opaqueid.PublisherIdentityKeyPrefix) || member.TeamId == "" || member.ProjectKey == "" || member.GroupId == "" || member.GroupName == "local" || member.GroupName == "" {
 		return nil, ErrScope
 	}
 	return &Group{control: control, groups: groups, authority: authority, server: server, member: member, private: append(ed25519.PrivateKey(nil), private...)}, nil

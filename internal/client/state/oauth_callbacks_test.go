@@ -29,7 +29,7 @@ func TestOAuthCallbackNamedBoundariesAndExactStateDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := SaveOAuthCallbackInput{
-		Scope:       OAuthCallbackScope{Server: scope.Server, Hostname: "oauth." + scope.Namespace, IntegrationGroup: scope.ProjectKey + "\x00" + scope.Namespace},
+		Scope:       OAuthCallbackScope{Server: scope.Server, Hostname: "oauth." + scope.Namespace, IntegrationScope: IntegrationScope{PrimaryProjectRoot: scope.ProjectKey, Namespace: scope.Namespace}},
 		Origin:      OAuthRedirectOrigin{Hostname: selection.Hostname, PublicURLID: id, PublishRunNumber: 7},
 		Destination: OAuthCallbackDestination{TunnelID: tunnel.ID(), Path: "/callback", Query: "flow=github"}, State: "abc",
 	}

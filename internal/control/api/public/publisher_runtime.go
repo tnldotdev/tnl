@@ -23,7 +23,7 @@ func (h *handler) ObservePublisherRuntime(w http.ResponseWriter, r *http.Request
 		writeProblem(w, http.StatusBadRequest, controlv1.InvalidRequest, "invalid publisher runtime request")
 		return
 	}
-	if b.Action == controlv1.RuntimeStart && !h.acceptingNewWork(w) {
+	if b.Action == controlv1.RuntimeStart && !h.acceptingNewWork(r.Context(), w) {
 		return
 	}
 	// controlproxy replaces RemoteAddr only after trusted-peer validation. raw
@@ -39,7 +39,7 @@ func (h *handler) ObservePublisherRuntime(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err != nil {
-		publisherProblem(w, "observe publisher runtime", err)
+		publisherProblem(r.Context(), w, "observe publisher runtime", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

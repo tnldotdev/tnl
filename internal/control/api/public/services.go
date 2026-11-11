@@ -45,7 +45,7 @@ func (h *handler) serviceVisitor(w http.ResponseWriter, r *http.Request) (servic
 	return store, principal.identityID, true
 }
 
-func serviceVisitorError(w http.ResponseWriter, operation string, err error) {
+func serviceVisitorError(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrProjectConfigurationInvalid):
 		writeProblem(w, 400, controlv1.InvalidRequest, "select a ready team domain and a valid source-bound worktree placement")
@@ -54,7 +54,7 @@ func serviceVisitorError(w http.ResponseWriter, operation string, err error) {
 	case errors.Is(err, controlstate.ErrServiceConflict):
 		writeProblem(w, 409, controlv1.Conflict, "service state or idempotency key conflicts with this request; read the current service and retry")
 	default:
-		writeControlStateProblem(w, operation, err)
+		writeControlStateProblem(ctx, w, operation, err)
 	}
 }
 
@@ -89,7 +89,7 @@ func (h *handler) ConfigureService(w http.ResponseWriter, r *http.Request, id co
 	}
 	record, err := store.ConfigureService(r.Context(), id, identity, metadata, time.Now())
 	if err != nil {
-		serviceVisitorError(w, "configure service", err)
+		serviceVisitorError(r.Context(), w, "configure service", err)
 		return
 	}
 	writeJSON(w, 200, serviceaccess.Service(record))
@@ -124,7 +124,7 @@ func (h *handler) CreateService(w http.ResponseWriter, r *http.Request, _ contro
 	}
 	record, err := store.CreateServiceAt(r.Context(), body.TeamId, identity, body.Name, r.Header.Get("Idempotency-Key"), placement, time.Now(), metadata)
 	if err != nil {
-		serviceVisitorError(w, "create service", err)
+		serviceVisitorError(r.Context(), w, "create service", err)
 		return
 	}
 	writeJSON(w, 201, serviceaccess.Service(record))
@@ -141,7 +141,7 @@ func (h *handler) ListServices(w http.ResponseWriter, r *http.Request, params co
 	}
 	rows, next, err := store.ListServices(r.Context(), params.TeamId, identity, cursor)
 	if err != nil {
-		serviceVisitorError(w, "list services", err)
+		serviceVisitorError(r.Context(), w, "list services", err)
 		return
 	}
 	page := controlv1.ServicePage{Services: make([]controlv1.Service, 0, len(rows))}
@@ -161,7 +161,7 @@ func (h *handler) GetService(w http.ResponseWriter, r *http.Request, id controlv
 	}
 	record, err := store.GetService(r.Context(), id, identity)
 	if err != nil {
-		serviceVisitorError(w, "get service", err)
+		serviceVisitorError(r.Context(), w, "get service", err)
 		return
 	}
 	writeJSON(w, 200, serviceaccess.Service(record))
@@ -183,7 +183,7 @@ func (h *handler) GetPublisherService(w http.ResponseWriter, r *http.Request) {
 	}
 	record, err := store.GetServiceForPublisher(r.Context(), publisher.Scope.ServiceID, publisher, time.Now())
 	if err != nil {
-		serviceVisitorError(w, "read publisher service", err)
+		serviceVisitorError(r.Context(), w, "read publisher service", err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -196,7 +196,7 @@ func (h *handler) DeleteService(w http.ResponseWriter, r *http.Request, id contr
 		return
 	}
 	if err := store.DeleteService(r.Context(), id, identity, time.Now()); err != nil {
-		serviceVisitorError(w, "delete service", err)
+		serviceVisitorError(r.Context(), w, "delete service", err)
 		return
 	}
 	w.WriteHeader(204)
@@ -218,7 +218,7 @@ func (h *handler) CreateServiceGrant(w http.ResponseWriter, r *http.Request, id 
 	}
 	grant, err := store.CreateServiceGrant(r.Context(), id, identity, r.Header.Get("Idempotency-Key"), string(body.Kind), identityID, body.ExpiresAt, time.Now())
 	if err != nil {
-		serviceVisitorError(w, "create service grant", err)
+		serviceVisitorError(r.Context(), w, "create service grant", err)
 		return
 	}
 	writeJSON(w, 201, serviceaccess.Grant(grant))
@@ -231,7 +231,7 @@ func (h *handler) ListServiceGrants(w http.ResponseWriter, r *http.Request, id c
 	}
 	grants, next, err := store.ListServiceGrants(r.Context(), id, identity, optionalFeedbackString(params.Cursor))
 	if err != nil {
-		serviceVisitorError(w, "list service grants", err)
+		serviceVisitorError(r.Context(), w, "list service grants", err)
 		return
 	}
 	result := controlv1.ServiceGrantPage{Grants: make([]controlv1.ServiceGrant, 0, len(grants))}
@@ -250,7 +250,7 @@ func (h *handler) RevokeServiceGrant(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	if err := store.RevokeServiceGrant(r.Context(), id, identity, grantID, time.Now()); err != nil {
-		serviceVisitorError(w, "revoke service grant", err)
+		serviceVisitorError(r.Context(), w, "revoke service grant", err)
 		return
 	}
 	w.WriteHeader(204)
@@ -268,7 +268,7 @@ func (h *handler) InviteServiceVisitor(w http.ResponseWriter, r *http.Request, i
 	}
 	invitation, err := store.InviteServiceVisitor(r.Context(), id, identity, r.Header.Get("Idempotency-Key"), string(body.Email), body.ExpiresAt, time.Now())
 	if err != nil {
-		serviceVisitorError(w, "invite service visitor", err)
+		serviceVisitorError(r.Context(), w, "invite service visitor", err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -286,7 +286,7 @@ func (h *handler) ListServiceInvitations(w http.ResponseWriter, r *http.Request,
 	}
 	rows, next, err := store.ListServiceInvitations(r.Context(), id, identity, optionalFeedbackString(params.Cursor))
 	if err != nil {
-		serviceVisitorError(w, "list service invitations", err)
+		serviceVisitorError(r.Context(), w, "list service invitations", err)
 		return
 	}
 	result := controlv1.ServiceInvitationPage{Invitations: make([]controlv1.ServiceInvitation, 0, len(rows))}
@@ -311,7 +311,7 @@ func (h *handler) AcceptServiceInvitation(w http.ResponseWriter, r *http.Request
 	}
 	grant, err := store.AcceptServiceInvitation(r.Context(), identity, body.Secret, time.Now())
 	if err != nil {
-		serviceVisitorError(w, "accept service invitation", err)
+		serviceVisitorError(r.Context(), w, "accept service invitation", err)
 		return
 	}
 	writeJSON(w, 200, serviceaccess.Grant(grant))
@@ -323,7 +323,7 @@ func (h *handler) RevokeServiceInvitation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := store.RevokeServiceInvitation(r.Context(), id, identity, invitationID, time.Now()); err != nil {
-		serviceVisitorError(w, "revoke service invitation", err)
+		serviceVisitorError(r.Context(), w, "revoke service invitation", err)
 		return
 	}
 	w.WriteHeader(204)
@@ -340,7 +340,7 @@ func (h *handler) ListAvailableServices(w http.ResponseWriter, r *http.Request, 
 	}
 	rows, next, err := store.ListAvailableServices(r.Context(), identity, cursor, time.Now())
 	if err != nil {
-		serviceVisitorError(w, "list available services", err)
+		serviceVisitorError(r.Context(), w, "list available services", err)
 		return
 	}
 	page := controlv1.ServicePage{Services: make([]controlv1.Service, 0, len(rows))}
@@ -370,7 +370,7 @@ func (h *handler) SelectServiceRun(w http.ResponseWriter, r *http.Request, id co
 	}
 	selected, err := store.SelectServiceRun(r.Context(), id, identity, body.DeviceId, time.Now())
 	if err != nil {
-		serviceVisitorError(w, "select service run", err)
+		serviceVisitorError(r.Context(), w, "select service run", err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -394,7 +394,7 @@ func (h *handler) EnrollVisitorDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	device, err := store.EnrollVisitorDevice(r.Context(), identity, ed25519.PublicKey(key), time.Now())
 	if err != nil {
-		serviceVisitorError(w, "enroll visitor device", err)
+		serviceVisitorError(r.Context(), w, "enroll visitor device", err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -407,7 +407,7 @@ func (h *handler) RevokeVisitorDevice(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	if err := store.RevokeVisitorDevice(r.Context(), identity, id, time.Now()); err != nil {
-		serviceVisitorError(w, "revoke visitor device", err)
+		serviceVisitorError(r.Context(), w, "revoke visitor device", err)
 		return
 	}
 	w.WriteHeader(204)

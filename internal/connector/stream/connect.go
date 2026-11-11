@@ -59,6 +59,7 @@ type Control interface {
 	RenewConnectorPeerPair(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error)
 	RebindConnectorPeerPair(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error)
 	VisitorPermission(context.Context, string) (controlv1.VisitorTokenResponse, error)
+	Close(context.Context) error
 }
 
 type Config struct {
@@ -126,12 +127,7 @@ func serveConnections(ctx context.Context, config Config, consume connectionCons
 		}
 		bounded, stop := context.WithTimeout(cleanup, 5*time.Second)
 		defer stop()
-		var err error
-		if closer, ok := config.Control.(interface{ CloseContext(context.Context) error }); ok {
-			err = closer.CloseContext(bounded)
-		} else if closer, ok := config.Control.(interface{ Close() error }); ok {
-			err = closer.Close()
-		}
+		err := config.Control.Close(bounded)
 		if err != nil {
 			result = errors.Join(result, &CleanupError{Err: err})
 		}

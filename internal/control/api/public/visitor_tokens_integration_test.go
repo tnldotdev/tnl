@@ -12,6 +12,7 @@ import (
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
@@ -24,7 +25,7 @@ func TestIntegrationVisitorTokenAPIHasOneSourceAndNoManagementAuthority(t *testi
 	if err := controlstate.Migrate(t.Context(), databaseURL); err != nil {
 		t.Fatal(err)
 	}
-	d, err := controlstate.Open(t.Context(), databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	d, err := controlstate.Open(t.Context(), databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

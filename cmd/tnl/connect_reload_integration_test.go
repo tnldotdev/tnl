@@ -19,6 +19,7 @@ import (
 	"time"
 
 	clientdetached "github.com/tnldotdev/tnl/internal/client/detached"
+	"github.com/tnldotdev/tnl/internal/naming"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/config"
@@ -274,7 +275,7 @@ func TestIntegrationCLIConnectMetadataReload(t *testing.T) {
 					t.Fatalf("pending authorization advertised readiness: %q %v", status, err)
 				}
 			}
-			database, err := controlstate.Open(t.Context(), f.databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+			database, err := controlstate.Open(t.Context(), f.databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 			if err != nil {
 				t.Fatal(err)
 			}

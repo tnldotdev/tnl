@@ -10,6 +10,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -24,7 +25,7 @@ func TestIntegrationServiceAccessClient(t *testing.T) {
 	if err := controlstate.Migrate(ctx, url); err != nil {
 		t.Fatal(err)
 	}
-	d, err := controlstate.Open(ctx, url, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	d, err := controlstate.Open(ctx, url, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,11 +64,11 @@ func TestIntegrationServiceAccessClient(t *testing.T) {
 	wrongEmail, _ := person("other", "other@example.test")
 	unverified, _ := person("unverified", "")
 	team := ownerSession.Identity.Memberships[0].TeamID
-	a, err := owner.CreateService(ctx, team, "orders", "orders")
+	a, err := owner.CreateService(ctx, team, "orders", "orders", controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := owner.CreateService(ctx, team, "another", "another")
+	b, err := owner.CreateService(ctx, team, "another", "another", controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
 	if err != nil {
 		t.Fatal(err)
 	}

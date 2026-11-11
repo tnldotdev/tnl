@@ -110,7 +110,7 @@ func (o *publishOutput) provisioningStalled(publishRunNumber uint64) error {
 	return o.emitLocked(publishEvent{
 		Type: publishEventWarning, Message: diagnostic.Summary(diagnostic.ProvisioningStalled),
 		Reason: string(diagnostic.ProvisioningStalled),
-		Code:   string(diagnostic.ProvisioningStalled), HelpURL: diagnostic.HelpURL(diagnostic.ProvisioningStalled),
+		Code:   string(diagnostic.ProvisioningStalled), HelpURL: diagnostic.HelpURL(diagnostic.ProvisioningStalled, ""),
 		Retryable: &retryable, PublishRunNumber: publishRunNumber,
 	})
 }
@@ -125,7 +125,7 @@ func (o *publishOutput) targetUnavailable() error {
 	return o.emitLocked(publishEvent{
 		Type: publishEventWarning, Message: diagnostic.Summary(diagnostic.TargetUnavailable),
 		Reason: string(diagnostic.TargetUnavailable),
-		Code:   string(diagnostic.TargetUnavailable), HelpURL: diagnostic.HelpURL(diagnostic.TargetUnavailable),
+		Code:   string(diagnostic.TargetUnavailable), HelpURL: diagnostic.HelpURL(diagnostic.TargetUnavailable, ""),
 		Retryable: &retryable,
 	})
 }

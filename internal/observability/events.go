@@ -16,12 +16,16 @@ func (m *Metrics) ObserveWebhookProviderSource(provider, outcome string) {
 	if !controlv1.WebhookProvider(provider).Valid() {
 		provider = "unknown"
 	}
+	result := semanticResult{Error, ReasonUnavailable}
 	switch outcome {
-	case "served", "not_modified", "unavailable", "unknown":
-	default:
-		outcome = "unavailable"
+	case "served":
+		result = semanticResult{Success, ReasonServed}
+	case "not_modified":
+		result = semanticResult{Success, ReasonNotModified}
+	case "unknown":
+		result = semanticResult{Error, ReasonOther}
 	}
-	m.webhookProviderSources.With(providerKey.Dimension(provider), resultDimension(outcome)).Inc()
+	m.webhookProviderSources.With(providerKey.Dimension(provider), result.dimension()).Inc()
 }
 
 func validPublicURLPurpose(purpose string) bool {
@@ -56,18 +60,18 @@ func (m *Metrics) ObserveVisitor(outcome VisitorOutcome) {
 	default:
 		outcome = VisitorOther
 	}
-	m.visitorConnections.With(resultDimension(string(outcome))).Inc()
+	m.visitorConnections.With(outcome.result().dimension()).Inc()
 }
 
 func (m *Metrics) ObserveVisitorOpen(success bool, elapsed time.Duration) {
 	if m == nil || elapsed < 0 {
 		return
 	}
-	outcome := "error"
+	outcome := Error
 	if success {
-		outcome = "success"
+		outcome = Success
 	}
-	m.visitorOpenDuration.With(resultDimension(outcome)).Observe(elapsed.Seconds())
+	m.visitorOpenDuration.With(OutcomeKey.Dimension(outcome)).Observe(elapsed.Seconds())
 }
 
 func (m *Metrics) SetIngressConnections(class string, count int) {
@@ -144,7 +148,7 @@ func (m *Metrics) ObserveRecoveryAttempt(outcome RecoveryAttemptOutcome) {
 	default:
 		return
 	}
-	m.recoveryAttempts.With(resultDimension(string(outcome))).Inc()
+	m.recoveryAttempts.With(outcome.result().dimension()).Inc()
 }
 
 func (m *Metrics) ObserveCertificateClaim(kind string, outcome CertificateClaimOutcome) {
@@ -154,7 +158,7 @@ func (m *Metrics) ObserveCertificateClaim(kind string, outcome CertificateClaimO
 	if outcome != CertificateClaimed && outcome != CertificateEmpty && outcome != CertificateError {
 		return
 	}
-	m.certificateClaims.With(CertificateKind.Dimension(kind), resultDimension(string(outcome))).Inc()
+	m.certificateClaims.With(CertificateKind.Dimension(kind), outcome.result().dimension()).Inc()
 }
 
 func (m *Metrics) ObserveCertificateOrder(kind, domain, plan string) {
@@ -199,9 +203,9 @@ func (m *Metrics) ObserveDNSWorkContext(ctx context.Context, kind, phase string,
 	default:
 		return
 	}
-	ctx, finish := m.completedResult(ctx, operationName("dns."+kind+"."+phase), string(outcome), elapsed)
+	ctx, finish := m.completedResult(ctx, operationName("dns."+kind+"."+phase), outcome.result(), elapsed)
 	trace.SpanFromContext(ctx).SetAttributes(DNSKind.String(kind), Operation.Value(operationName(phase)))
-	m.dnsWork.With(DNSKind.Dimension(kind), Operation.Dimension(operationName(phase)), resultDimension(string(outcome))).ObserveContext(ctx, elapsed.Seconds())
+	m.dnsWork.With(DNSKind.Dimension(kind), Operation.Dimension(operationName(phase)), outcome.result().dimension()).ObserveContext(ctx, elapsed.Seconds())
 	finish()
 }
 
@@ -226,14 +230,14 @@ func (m *Metrics) ObserveCleanup(kind string, count int, busy bool, err error) {
 	default:
 		return
 	}
-	outcome := "success"
+	result := semanticResult{outcome: Success}
 	if err != nil {
-		outcome = "error"
+		result.outcome = Error
 	} else if busy {
-		outcome = "busy"
+		result.reason = ReasonBusy
 	}
-	m.cleanupRuns.With(CleanupKind.Dimension(kind), resultDimension(outcome)).Inc()
-	if outcome == "success" {
+	m.cleanupRuns.With(CleanupKind.Dimension(kind), result.dimension()).Inc()
+	if err == nil && !busy {
 		m.cleanupLastSuccess.With(CleanupKind.Dimension(kind)).SetToCurrentTime()
 		if count > 0 {
 			m.cleanupItems.With(CleanupKind.Dimension(kind)).Add(float64(count))
@@ -253,7 +257,7 @@ func (m *Metrics) ObservePlacement(action string, outcome PlacementOutcome) {
 	default:
 		return
 	}
-	m.placementDecisions.With(Operation.Dimension(operationName(action)), resultDimension(string(outcome))).Inc()
+	m.placementDecisions.With(Operation.Dimension(operationName(action)), outcome.result().dimension()).Inc()
 }
 
 func (m *Metrics) AddAssignmentReplacements(reason string, count int) {

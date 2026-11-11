@@ -12,6 +12,7 @@ import (
 	"time"
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/naming"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -32,6 +33,7 @@ func TestIntegrationStandaloneLifecycle(t *testing.T) {
 		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
 		RelayTCPListen: "127.0.0.1:1", RelayUDPListen: relayUDP.LocalAddr().String(), InternalRelayListen: "127.0.0.1:1",
 		ServerDomain: "tnl.test", ManagedDomain: "tunnels.test",
+		ManagedURLMode:            naming.ManagedURLModeGenerated,
 		ControlTLSCertificateFile: controlCertificate.certificateFile,
 		ControlTLSPrivateKeyFile:  controlCertificate.privateKeyFile,
 		RelayTLSCertificateFile:   relayCertificate.certificateFile,

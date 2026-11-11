@@ -509,7 +509,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			if flags.Publish.System || flags.Publish.ServiceName != "" || flags.Publish.SystemStateDir != "" || flags.Publish.ServerCAFile != "" {
 				return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
 			}
-			return detachPublish(ctx, args, flags.Publish.StateDir, stdout)
+			return detachPublish(ctx, args, flags.Publish.StateDir, stdout, "tnl publish")
 		}
 		if flags.Publish.DetachedChild != "" {
 			root, err := clientStateRoot(flags.Publish.StateDir)
@@ -679,7 +679,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
 		return err
 	case "publish <service-or-target>":
-		return runPublish(ctx, flags.Publish, stdout, stderr, telemetry)
+		var reporter telemetryReporter
+		if telemetry != nil {
+			reporter = telemetry
+		}
+		return runPublish(ctx, flags.Publish, stdout, stderr, reporter)
 	case "connect available":
 		return runConnectAvailable(ctx, flags.Connect.Available, stdout, stderr)
 	case "connect start <name>":

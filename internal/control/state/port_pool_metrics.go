@@ -12,7 +12,7 @@ import (
 // held includes services; a quarantined port stays unavailable until
 // control releases it, regardless of an observer's clock.
 func (d *Database) RefreshPortPoolMetrics(ctx context.Context, metrics *observability.Metrics) (retErr error) {
-	ctx, finish := observability.ControlOperation(observability.WithMetrics(ctx, metrics), "RefreshPortPoolMetrics")
+	ctx, finish := observability.ControlOperation(observability.WithMetrics(ctx, metrics), observability.OpRefreshPortPoolMetrics)
 	defer func() { finish(retErr) }()
 	rows, err := controlstatedb.New(d.pool).ServicePortPoolCapacity(ctx)
 	if err != nil {

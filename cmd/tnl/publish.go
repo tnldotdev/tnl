@@ -44,8 +44,7 @@ type publishCommand struct {
 	namedOverrides   bool
 }
 
-func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, reporters ...telemetryReporter) (result error) {
-	telemetry := optionalTelemetryReporter(reporters)
+func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, telemetry telemetryReporter) (result error) {
 	if flags.Enrolled {
 		var err error
 		flags, err = retainedPublishFlags(ctx, flags)

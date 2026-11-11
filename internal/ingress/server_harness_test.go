@@ -156,6 +156,7 @@ type backendResult struct {
 	err                          error
 }
 type tlsBackend struct {
+	slot       uint8
 	connection net.Conn
 	result     chan backendResult
 	opens      atomic.Int32
@@ -187,6 +188,8 @@ func newTLSBackend(t *testing.T, protos ...string) *tlsBackend {
 	})
 	return backend
 }
+func (b *tlsBackend) ConnectionSlot() uint8 { return b.slot }
+
 func (b *tlsBackend) Start(ctx context.Context, id string, pending bool, proxy, initial []byte) (net.Conn, error) {
 	if b.opens.Add(1) != 1 {
 		return nil, errors.New("TLS fixture unexpectedly opened twice")
@@ -233,8 +236,10 @@ type testMetrics struct {
 	forwardedBytes       map[string]int64
 }
 
-func (*testMetrics) IncCapacityRejection(string) {}
-func (*testMetrics) IncInspectionFailure(string) {}
+func (*testMetrics) IncCapacityRejection(string)            {}
+func (*testMetrics) IncInspectionFailure(string)            {}
+func (*testMetrics) ObserveTrafficAdmission(string, string) {}
+
 func (m *testMetrics) ObserveVisitor(outcome observability.VisitorOutcome) {
 	if outcome == "policy_denied" {
 		m.ipAllowlistDenials.Add(1)

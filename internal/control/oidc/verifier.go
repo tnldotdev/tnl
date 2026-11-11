@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
+
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -104,7 +106,7 @@ func NewVerifier(config VerifierConfig) (Verifier, error) {
 }
 
 func (v *providerVerifier) Verify(ctx context.Context, raw string) (_ Identity, retErr error) {
-	ctx, finish := observe(ctx, "oidc.verify")
+	ctx, finish := observe(ctx, observability.OpOIDCVerify)
 	defer func() { finish(retErr) }()
 	if raw == "" || len(raw) > 64<<10 || strings.TrimSpace(raw) != raw {
 		return Identity{}, ErrUnauthenticated
@@ -117,7 +119,7 @@ func (v *providerVerifier) Verify(ctx context.Context, raw string) (_ Identity, 
 }
 
 func (v *providerVerifier) getProvider(ctx context.Context) (_ *oidc.Provider, retErr error) {
-	ctx, finish := observe(ctx, "oidc.discovery")
+	ctx, finish := observe(ctx, observability.OpOIDCDiscovery)
 	defer func() { finish(retErr) }()
 	select {
 	case v.discovery <- struct{}{}:
@@ -146,17 +148,7 @@ func (v *providerVerifier) getProvider(ctx context.Context) (_ *oidc.Provider, r
 	return provider, nil
 }
 
-func verifyToken(ctx context.Context, provider *oidc.Provider, clientID, raw string, keySets ...oidc.KeySet) (Identity, error) {
-	var keySet oidc.KeySet
-	if len(keySets) != 0 {
-		keySet = keySets[0]
-	} else {
-		var err error
-		keySet, err = providerKeySet(ctx, provider)
-		if err != nil {
-			return Identity{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
-		}
-	}
+func verifyToken(ctx context.Context, provider *oidc.Provider, clientID, raw string, keySet oidc.KeySet) (Identity, error) {
 	observed := &observedKeySet{KeySet: keySet}
 	token, err := oidc.NewVerifier(providerIssuer(provider), observed, &oidc.Config{
 		ClientID: clientID, SupportedSigningAlgs: []string{"RS256"},

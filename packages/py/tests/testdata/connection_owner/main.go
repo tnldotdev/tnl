@@ -41,15 +41,11 @@ type backend struct {
 }
 
 func (b *backend) SDKPrepare(ctx context.Context, request connectorruntime.Request) (connectorruntime.SDKPrepared, error) {
-	metadata, _, err := b.Start(ctx)
+	prepared, err := connectorruntime.PrepareSnapshot(ctx, b, request)
 	if err != nil {
 		return connectorruntime.SDKPrepared{}, err
 	}
-	connection, err := b.Connect(ctx, request.Service)
-	if err != nil {
-		return connectorruntime.SDKPrepared{}, err
-	}
-	return connectorruntime.SDKPrepared{Schema: 1, Owner: b.status.SDKOwner(), Prepared: connectorruntime.Prepared{Schema: 1, ProjectRuntime: metadata, Connection: connection}}, nil
+	return connectorruntime.SDKPrepared{Schema: 1, Owner: b.status.SDKOwner(), Prepared: prepared}, nil
 }
 
 func (b *backend) Start(context.Context) (meta.PublicMetadata, time.Time, error) {
@@ -72,6 +68,16 @@ func (b *backend) Connect(_ context.Context, service string) (connectorruntime.C
 func (b *backend) Renew(context.Context) (time.Time, error) { return b.expires, nil }
 func (b *backend) Prepared(service string) (connectorruntime.Connection, error) {
 	return b.Connect(context.Background(), service)
+}
+func (*backend) UseAssertion(context.Context, string) error { return connectorruntime.ErrInvalid }
+func (*backend) Attach(context.Context, string) error       { return connectorruntime.ErrInvalid }
+func (b *backend) ProjectRuntime() meta.PublicMetadata      { return b.status.ProjectRuntime }
+func (b *backend) SnapshotFor(service, assertion string) (connectorruntime.Prepared, error) {
+	if assertion != "" {
+		return connectorruntime.Prepared{}, connectorruntime.ErrInvalid
+	}
+	connection, err := b.Prepared(service)
+	return connectorruntime.Prepared{Schema: 1, ProjectRuntime: b.ProjectRuntime(), Connection: connection}, err
 }
 func (b *backend) Close(context.Context) error {
 	var result error
@@ -148,7 +154,7 @@ func run() error {
 		return err
 	}
 	b.status = connectorruntime.Status{Schema: 1, State: "ready", PID: os.Getpid(), ExpiresAt: expires, ConnectionHandle: filepath.Join(directory, "handle.json"), Executable: flags.Arg(1), ProjectRuntime: metadata}
-	return connectorruntime.Serve(ctx, scope, directory, flags.Arg(1), b, os.Stdout)
+	return connectorruntime.Serve(ctx, scope, directory, flags.Arg(1), connectorruntime.OwnerConfig{Backend: b, SDKPrepare: b.SDKPrepare}, os.Stdout)
 }
 
 func echo(listener net.Listener, tlsConfig *tls.Config, postgresAuth bool) {

@@ -35,7 +35,7 @@ func (d *Database) PrometheusMetrics(now time.Time) observability.DatabaseSnapsh
 
 // register this defer before transaction cleanup so the duration and outcome
 // include rollback and any error it adds to the returned error.
-func (d *Database) observeOperation(ctx context.Context, operation string) (context.Context, func(error)) {
+func (d *Database) observeOperation(ctx context.Context, operation observability.ServerOperation) (context.Context, func(error)) {
 	if d == nil || d.activity == nil {
 		return ctx, func(error) {}
 	}

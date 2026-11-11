@@ -27,7 +27,7 @@ func (h *handler) IssueServiceClientCertificate(w http.ResponseWriter, r *http.R
 	}
 	result, err := store.IssueServiceClientCertificate(r.Context(), service, principal.identityID, body.DeviceId, body.Csr, time.Now())
 	if err != nil {
-		writeManagedCertificateProblem(w, "issue service client certificate", err)
+		writeManagedCertificateProblem(r.Context(), w, "issue service client certificate", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, result)
@@ -53,7 +53,7 @@ func (h *handler) AuthorizeServiceClientCertificate(w http.ResponseWriter, r *ht
 	}
 	decision, err := store.AuthorizeServiceClientCertificate(r.Context(), service, run, token, body.VisitorConnectionId, body.RunNumber, source, body.Certificate, time.Now())
 	if err != nil {
-		writeManagedCertificateProblem(w, "authorize service client certificate", err)
+		writeManagedCertificateProblem(r.Context(), w, "authorize service client certificate", err)
 		return
 	}
 	observability.AuthorizationAdmission(r.Context(), "service_client_certificate", decision.Allowed, decision.Admitted)

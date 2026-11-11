@@ -129,7 +129,7 @@ schemas:
       operation_id:
         type: string
         x-go-type-skip-optional-pointer: true
-        description: Rebind operation that issued this revision; absent for a legacy initial binding.
+        description: Rebind operation that issued this revision; absent for the initial binding, which has no rebind operation.
       binding_challenge:
         type: string
         pattern: "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"

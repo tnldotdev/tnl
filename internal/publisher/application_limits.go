@@ -74,11 +74,11 @@ type applicationAdmission struct {
 	completed chan struct{}
 }
 
-func newApplicationAdmission(limits ApplicationLimits, tcp ...bool) (*applicationAdmission, error) {
+func newApplicationAdmission(limits ApplicationLimits) (*applicationAdmission, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
-	limits = limits.Defaults(len(tcp) > 0 && tcp[0])
+	limits = limits.Defaults(false)
 	return &applicationAdmission{limits: limits, tokens: float64(limits.RateBurst), completed: make(chan struct{})}, nil
 }
 

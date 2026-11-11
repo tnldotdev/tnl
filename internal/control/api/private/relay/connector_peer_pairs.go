@@ -54,11 +54,7 @@ func (s *service) ClaimConnectorPeerPairLeg(ctx context.Context, pairID string, 
 		base64.RawURLEncoding.EncodeToString(signature) != body.RelaySignature {
 		return invalid()
 	}
-	store, ok := s.store.(connectorPeerLegStore)
-	if !ok {
-		return relayv1.ConnectorPeerPairLegClaim{}, serviceapi.NewProblemError(http.StatusServiceUnavailable, "publisher_connection_unavailable", "connector peer pair claim is unavailable")
-	}
-	claim, err := store.ClaimConnectorPeerPairLeg(ctx, lease, source.Unmap(), proof, signature, s.now())
+	claim, err := s.store.ClaimConnectorPeerPairLeg(ctx, lease, source.Unmap(), proof, signature, s.now())
 	if err != nil {
 		if ctx.Err() != nil {
 			return relayv1.ConnectorPeerPairLegClaim{}, context.Cause(ctx)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
@@ -92,7 +93,7 @@ func newControlStateIntegrationDatabaseWithURL(t *testing.T, suffix string) (*Da
 	if err := Migrate(t.Context(), databaseURL); err != nil {
 		t.Fatal(err)
 	}
-	database, err := Open(t.Context(), databaseURL, testStorageKey, "")
+	database, err := Open(t.Context(), databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

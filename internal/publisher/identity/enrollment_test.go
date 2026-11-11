@@ -47,7 +47,7 @@ func TestEnrollmentResumesRecordedResultBeforePromotion(t *testing.T) {
 		t.Fatal(err)
 	}
 	authority := &scopedAuthority{}
-	n, returned, err := EnrollNative(t.Context(), state, control, authority, secret)
+	n, returned, err := EnrollNative(t.Context(), state, NativeControl{PublicURLControl: control, Services: control}, authority, secret)
 	if err != nil || authority.calls != 0 || n == nil {
 		t.Fatal("recorded redemption was sent to the authority again", err)
 	}
@@ -84,14 +84,14 @@ func TestNativeEnrollmentRejectsOpaqueOrInconsistentSigningKey(t *testing.T) {
 			t.Fatal("opaque state storage unexpectedly applied native crypto validation", err)
 		}
 		authority := &scopedAuthority{}
-		if _, _, err := EnrollNative(t.Context(), state, &unusedControl{}, authority, id+".secret"); !errors.Is(err, ErrScope) || authority.calls != 0 {
+		if _, _, err := EnrollNative(t.Context(), state, NativeControl{PublicURLControl: &unusedControl{}}, authority, id+".secret"); !errors.Is(err, ErrScope) || authority.calls != 0 {
 			t.Fatal("invalid native key reached one-use redemption", err)
 		}
 	}
 }
 
 type ownerEnrollmentControl struct {
-	NativeControl
+	unusedControl
 	enrollment controlv1.PublisherEnrollment
 	calls      int
 }
@@ -151,7 +151,9 @@ func (*lostEnrollmentResponse) ExchangePublisherAssertion(context.Context, strin
 	return "access", nil
 }
 
-type unusedControl struct{ NativeControl }
+type unusedControl struct{ PublicURLControl }
+
+func (*unusedControl) ControlURL() string { return "https://control.example" }
 
 func TestEnrollmentPersistsKeyBeforeOneUseRedemption(t *testing.T) {
 	d, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
@@ -169,17 +171,17 @@ func TestEnrollmentPersistsKeyBeforeOneUseRedemption(t *testing.T) {
 	url, _ := opaqueid.New(opaqueid.PublicURLPrefix)
 	enrollment, _ := opaqueid.New(opaqueid.PublisherEnrollmentPrefix)
 	a := &lostEnrollmentResponse{result: authorityv1.PublisherEnrollmentResult{ClientId: id, KeyId: key, GrantId: grant, TeamId: "team", Kind: "saved_public_url", PublicUrlId: &url}}
-	if _, _, err := EnrollNative(t.Context(), state, &unusedControl{}, a, enrollment+".secret"); err == nil {
+	if _, _, err := EnrollNative(t.Context(), state, NativeControl{PublicURLControl: &unusedControl{}}, a, enrollment+".secret"); err == nil {
 		t.Fatal("lost enrollment response succeeded")
 	}
-	adapter, result, err := EnrollNative(t.Context(), state, &unusedControl{}, a, enrollment+".secret")
+	adapter, result, err := EnrollNative(t.Context(), state, NativeControl{PublicURLControl: &unusedControl{}}, a, enrollment+".secret")
 	if err != nil || result.ClientId != id || adapter == nil || a.calls != 2 {
 		t.Fatalf("same-key recovery = %+v, %v", result, err)
 	}
-	if _, _, err := EnrollNative(t.Context(), state, &unusedControl{}, a, enrollment+".secret"); err != nil || a.calls != 2 {
+	if _, _, err := EnrollNative(t.Context(), state, NativeControl{PublicURLControl: &unusedControl{}}, a, enrollment+".secret"); err != nil || a.calls != 2 {
 		t.Fatalf("completed enrollment reconsumed its secret: %v", err)
 	}
-	loaded, result, err := LoadNative(t.Context(), state, &unusedControl{}, a, id)
+	loaded, result, err := LoadNative(t.Context(), state, NativeControl{PublicURLControl: &unusedControl{}}, a, id)
 	if err != nil || loaded == nil || result.GrantId != grant {
 		t.Fatalf("saved publisher reuse = %+v, %v", result, err)
 	}

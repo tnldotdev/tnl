@@ -348,11 +348,9 @@ func removeDeadDetachedSocket(root, id string) {
 	}
 }
 
-func startDetachedProcess(binary string, args []string, environment ...[]string) (*exec.Cmd, error) {
+func startDetachedProcess(binary string, args []string, environment []string) (*exec.Cmd, error) {
 	cmd := exec.Command(binary, args...)
-	if len(environment) != 0 {
-		cmd.Env = environment[0]
-	}
+	cmd.Env = environment
 	// nil uses the null device directly. io.Discard creates parent-owned pipes;
 	// writes after the launcher exits can otherwise kill the child with SIGPIPE.
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil

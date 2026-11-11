@@ -94,13 +94,13 @@ func aliasScope(project projectConfiguration, name string, services publisherSer
 		MembershipID: services.membershipID, Namespace: services.namespace, Name: name}
 }
 
-func registerProjectAlias(ctx context.Context, state *clientstate.Database, project projectConfiguration, name string, definition config.Alias, services publisherServices, tunnelID, group string) (clientstate.AliasSelection, error) {
+func registerProjectAlias(ctx context.Context, state *clientstate.Database, project projectConfiguration, name string, definition config.Alias, services publisherServices, tunnelID string, group clientstate.IntegrationScope) (clientstate.AliasSelection, error) {
 	_, fingerprint, err := definition.DefinitionBytes(name)
 	if err != nil {
 		return clientstate.AliasSelection{}, err
 	}
 	return state.RegisterAlias(ctx, clientstate.AliasRegistration{Scope: aliasScope(project, name, services), Hostname: services.hostname,
-		Service: definition.Service, TunnelID: tunnelID, IntegrationGroup: group, Fingerprint: fingerprint})
+		Service: definition.Service, TunnelID: tunnelID, IntegrationScope: group, Fingerprint: fingerprint})
 }
 
 type AliasChoice struct {
@@ -143,7 +143,7 @@ func ChooseAlias(ctx context.Context, state *clientstate.Database, flags AliasCh
 		var receiver *clientstate.TunnelInfo
 		for i := range snapshot.Tunnels {
 			tunnel := &snapshot.Tunnels[i]
-			if tunnel.Server == server && tunnel.Service == definition.Service && tunnel.State == clientstate.TunnelStateReady && tunnel.IntegrationGroup != "" {
+			if tunnel.Server == server && tunnel.Service == definition.Service && tunnel.State == clientstate.TunnelStateReady && !tunnel.IntegrationScope.IsZero() {
 				if receiver != nil {
 					return clientstate.AliasSelection{}, failure.Wrap("select alias service", failure.InvalidTunnelFlags, errors.New("more than one entry-service tunnel is running in this worktree"))
 				}
@@ -153,7 +153,7 @@ func ChooseAlias(ctx context.Context, state *clientstate.Database, flags AliasCh
 		if receiver == nil {
 			return clientstate.AliasSelection{}, failure.Wrap("select alias service", failure.AliasReceiverUnready, clientstate.ErrAliasReceiverUnavailable)
 		}
-		if _, err := registerProjectAlias(ctx, state, project, flags.Name, definition, services, receiver.ID, receiver.IntegrationGroup); err != nil {
+		if _, err := registerProjectAlias(ctx, state, project, flags.Name, definition, services, receiver.ID, receiver.IntegrationScope); err != nil {
 			return clientstate.AliasSelection{}, aliasChoiceError(err)
 		}
 	}
@@ -184,7 +184,7 @@ func aliasChoiceError(err error) error {
 	return failure.Wrap("update alias selection", reason, err)
 }
 
-func startProjectAliases(ctx context.Context, state *clientstate.Database, project projectConfiguration, service, team string, parent publisherServices, base publisher.Config, group string, tunnel *clientstate.Tunnel, output *Presentation) func() {
+func startProjectAliases(ctx context.Context, state *clientstate.Database, project projectConfiguration, service, team string, parent publisherServices, base publisher.Config, group clientstate.IntegrationScope, tunnel *clientstate.Tunnel, output *Presentation) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
 	for _, name := range slices.Sorted(maps.Keys(project.Config.Aliases)) {
@@ -269,8 +269,9 @@ func projectAliasPublisher(state *clientstate.Database, services publisherServic
 		if err != nil {
 			return integrations.Snapshot{}, err
 		}
-		snapshot.Config.Control = nativePublicationControl(native, services.routes)
+		snapshot.Config.Control = native
 		snapshot.Config.PublisherIdentityID = native.PublisherIdentityID()
+		configureNativePublication(&snapshot.Config, native, services.routes)
 		snapshot.Config.PreserveSavedPublicURLTarget = true
 		return snapshot, nil
 	}

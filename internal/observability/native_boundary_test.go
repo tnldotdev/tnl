@@ -35,7 +35,7 @@ func TestNativeDisabledProviderIgnoresAmbientEnvironment(t *testing.T) {
 		}
 		_, finish := Start(ctx, "disabled.fixture")
 		finish(nil)
-		m.ObserveOperation("CreatePublishRun", nil, time.Millisecond)
+		m.ObserveOperationContext(ctx, OpCreatePublishRun, nil, time.Millisecond)
 		text := metricsText(t, m)
 		if strings.Contains(text, "tnl_") || !strings.Contains(text, "go_goroutines") {
 			t.Fatal("disabled owner must keep only passive runtime metrics")

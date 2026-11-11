@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 )
@@ -120,7 +122,7 @@ func (d *Database) RenewIngress(
 	now time.Time,
 	leaseDuration time.Duration,
 ) (result IngressLease, retErr error) {
-	ctx, finish := d.observeOperation(ctx, "RenewIngress")
+	ctx, finish := d.observeOperation(ctx, observability.OpRenewIngress)
 	defer func() { finish(retErr) }()
 	if err := validateIngressLeaseIdentity(renewal.IngressLeaseIdentity); err != nil {
 		return IngressLease{}, err

@@ -12,20 +12,27 @@ import (
 
 const activeWebhookEndpoints = `-- name: ActiveWebhookEndpoints :many
 SELECT e.tunnel_id, e.name, e.service, e.path, e.definition, e.fingerprint FROM webhook_declarations e JOIN local_tunnels t ON t.id = e.tunnel_id
-WHERE t.server_origin = ?1 AND t.integration_group = ?2
-  AND t.stopped_at IS NULL AND t.lease_expires_at > ?3
+WHERE t.server_origin = ?1 AND t.primary_project_root = ?2
+  AND t.integration_namespace = ?3
+  AND t.stopped_at IS NULL AND t.lease_expires_at > ?4
   AND t.state IN ('starting', 'provisioning', 'ready')
 ORDER BY e.name, e.tunnel_id
 `
 
 type ActiveWebhookEndpointsParams struct {
-	ServerOrigin     string
-	IntegrationGroup string
-	Now              int64
+	ServerOrigin         string
+	PrimaryProjectRoot   sql.NullString
+	IntegrationNamespace sql.NullString
+	Now                  int64
 }
 
 func (q *Queries) ActiveWebhookEndpoints(ctx context.Context, arg ActiveWebhookEndpointsParams) ([]WebhookDeclaration, error) {
-	rows, err := q.db.QueryContext(ctx, activeWebhookEndpoints, arg.ServerOrigin, arg.IntegrationGroup, arg.Now)
+	rows, err := q.db.QueryContext(ctx, activeWebhookEndpoints,
+		arg.ServerOrigin,
+		arg.PrimaryProjectRoot,
+		arg.IntegrationNamespace,
+		arg.Now,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -55,38 +62,42 @@ func (q *Queries) ActiveWebhookEndpoints(ctx context.Context, arg ActiveWebhookE
 }
 
 const readyWebhookReceivers = `-- name: ReadyWebhookReceivers :many
-SELECT t.id, t.server_origin, t.integration_group, t.hostname, t.target, t.public_url_id, t.publish_run_number, e.fingerprint
+SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.target, t.public_url_id, t.publish_run_number, e.fingerprint
 FROM webhook_declarations e JOIN local_tunnels t ON t.id = e.tunnel_id
 WHERE e.name = ?1 AND t.server_origin = ?2
-  AND t.integration_group = ?3 AND e.service = t.service
-  AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > ?4
+  AND t.primary_project_root = ?3 AND t.integration_namespace = ?4
+  AND e.service = t.service
+  AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > ?5
   AND t.public_url_id <> '' AND t.publish_run_number > 0
 ORDER BY t.id
 `
 
 type ReadyWebhookReceiversParams struct {
-	Name             string
-	ServerOrigin     string
-	IntegrationGroup string
-	Now              int64
+	Name                 string
+	ServerOrigin         string
+	PrimaryProjectRoot   sql.NullString
+	IntegrationNamespace sql.NullString
+	Now                  int64
 }
 
 type ReadyWebhookReceiversRow struct {
-	ID               string
-	ServerOrigin     string
-	IntegrationGroup string
-	Hostname         sql.NullString
-	Target           sql.NullString
-	PublicURLID      sql.NullString
-	PublishRunNumber sql.NullInt64
-	Fingerprint      []byte
+	ID                   string
+	ServerOrigin         string
+	PrimaryProjectRoot   sql.NullString
+	IntegrationNamespace sql.NullString
+	Hostname             sql.NullString
+	Target               sql.NullString
+	PublicURLID          sql.NullString
+	PublishRunNumber     sql.NullInt64
+	Fingerprint          []byte
 }
 
 func (q *Queries) ReadyWebhookReceivers(ctx context.Context, arg ReadyWebhookReceiversParams) ([]ReadyWebhookReceiversRow, error) {
 	rows, err := q.db.QueryContext(ctx, readyWebhookReceivers,
 		arg.Name,
 		arg.ServerOrigin,
-		arg.IntegrationGroup,
+		arg.PrimaryProjectRoot,
+		arg.IntegrationNamespace,
 		arg.Now,
 	)
 	if err != nil {
@@ -99,7 +110,8 @@ func (q *Queries) ReadyWebhookReceivers(ctx context.Context, arg ReadyWebhookRec
 		if err := rows.Scan(
 			&i.ID,
 			&i.ServerOrigin,
-			&i.IntegrationGroup,
+			&i.PrimaryProjectRoot,
+			&i.IntegrationNamespace,
 			&i.Hostname,
 			&i.Target,
 			&i.PublicURLID,
@@ -123,10 +135,12 @@ const registerWebhookEndpoint = `-- name: RegisterWebhookEndpoint :execrows
 INSERT INTO webhook_declarations (tunnel_id, name, service, path, definition, fingerprint)
 SELECT t.id, ?1, ?2, ?3, ?4, ?5
 FROM local_tunnels t
-WHERE t.id = ?6 AND t.integration_group <> '' AND t.stopped_at IS NULL AND t.lease_expires_at > ?7
+WHERE t.id = ?6 AND t.primary_project_root IS NOT NULL AND t.integration_namespace IS NOT NULL
+  AND t.stopped_at IS NULL AND t.lease_expires_at > ?7
   AND NOT EXISTS (
     SELECT 1 FROM webhook_declarations e JOIN local_tunnels other ON other.id = e.tunnel_id
-    WHERE other.server_origin = t.server_origin AND other.integration_group = t.integration_group
+    WHERE other.server_origin = t.server_origin AND other.primary_project_root = t.primary_project_root
+      AND other.integration_namespace = t.integration_namespace
       AND other.stopped_at IS NULL AND other.lease_expires_at > ?7
       AND ((e.name = ?1 AND e.fingerprint <> ?5)
            OR (e.path = ?3 AND e.name <> ?1))

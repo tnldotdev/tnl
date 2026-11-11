@@ -28,7 +28,7 @@ type serviceAccessStore interface {
 	RevokeServiceHTTPGrant(context.Context, string, string, string, time.Time) error
 }
 
-func serviceAccessError(w http.ResponseWriter, operation string, err error) {
+func serviceAccessError(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrServiceManagerRequired):
 		writeProblem(w, 403, authorityv1.ManagerRequired, "current service manager permission is required")
@@ -41,7 +41,7 @@ func serviceAccessError(w http.ResponseWriter, operation string, err error) {
 	case errors.Is(err, controlstate.ErrServiceConflict):
 		writeProblem(w, 409, authorityv1.Conflict, "service access state or idempotency key conflicts")
 	default:
-		companyError(w, operation, err)
+		companyError(ctx, w, operation, err)
 	}
 }
 
@@ -50,8 +50,8 @@ func (h *handler) serviceHuman(w http.ResponseWriter, r *http.Request, body any)
 	if !ok {
 		return nil, "", false
 	}
-	s, ok := h.store.(serviceAccessStore)
-	if !ok {
+	s := h.store
+	if s == nil {
 		writeProblem(w, 503, authorityv1.Unavailable, "service access is unavailable")
 		return nil, "", false
 	}
@@ -60,7 +60,7 @@ func (h *handler) serviceHuman(w http.ResponseWriter, r *http.Request, body any)
 		if errors.Is(err, controlstate.ErrControlIdentity) || errors.Is(err, controlstate.ErrAuthorityAccess) {
 			writeBearerProblem(w)
 		} else {
-			serviceAccessError(w, "resolve service actor", err)
+			serviceAccessError(r.Context(), w, "resolve service actor", err)
 		}
 		return nil, "", false
 	}
@@ -79,7 +79,7 @@ func (h *handler) ListWebsiteServices(w http.ResponseWriter, r *http.Request, te
 	}
 	rows, next, err := s.ListServices(r.Context(), team, actor, cursor)
 	if err != nil {
-		serviceAccessError(w, "list website services", err)
+		serviceAccessError(r.Context(), w, "list website services", err)
 		return
 	}
 	page := controlv1.ServicePage{Services: make([]controlv1.Service, 0, len(rows))}
@@ -99,7 +99,7 @@ func (h *handler) GetWebsiteService(w http.ResponseWriter, r *http.Request, id c
 	}
 	row, err := s.GetService(r.Context(), id, actor)
 	if err != nil {
-		serviceAccessError(w, "get website service", err)
+		serviceAccessError(r.Context(), w, "get website service", err)
 		return
 	}
 	writeJSON(w, 200, serviceaccess.Service(row))
@@ -116,7 +116,7 @@ func (h *handler) ListWebsiteServiceGrants(w http.ResponseWriter, r *http.Reques
 	}
 	rows, next, err := s.ListServiceGrants(r.Context(), id, actor, cursor)
 	if err != nil {
-		serviceAccessError(w, "list website service grants", err)
+		serviceAccessError(r.Context(), w, "list website service grants", err)
 		return
 	}
 	result := controlv1.ServiceGrantPage{Grants: make([]controlv1.ServiceGrant, 0, len(rows))}
@@ -140,7 +140,7 @@ func (h *handler) ListWebsiteServiceInvitations(w http.ResponseWriter, r *http.R
 	}
 	rows, next, err := s.ListServiceInvitations(r.Context(), id, actor, cursor)
 	if err != nil {
-		serviceAccessError(w, "list website service invitations", err)
+		serviceAccessError(r.Context(), w, "list website service invitations", err)
 		return
 	}
 	result := controlv1.ServiceInvitationPage{Invitations: make([]controlv1.ServiceInvitation, 0, len(rows))}
@@ -161,7 +161,7 @@ func (h *handler) InviteWebsiteServiceVisitor(w http.ResponseWriter, r *http.Req
 	}
 	row, err := s.InviteServiceVisitor(r.Context(), id, actor, p.IdempotencyKey, string(body.Email), body.ExpiresAt, time.Now())
 	if err != nil {
-		serviceAccessError(w, "invite website service visitor", err)
+		serviceAccessError(r.Context(), w, "invite website service visitor", err)
 		return
 	}
 	status := http.StatusCreated
@@ -179,7 +179,7 @@ func (h *handler) PreviewWebsiteServiceInvitation(w http.ResponseWriter, r *http
 	}
 	row, err := s.PreviewServiceInvitation(r.Context(), actor, body.Secret, time.Now())
 	if err != nil {
-		serviceAccessError(w, "preview website service invitation", err)
+		serviceAccessError(r.Context(), w, "preview website service invitation", err)
 		return
 	}
 	writeJSON(w, 200, row)
@@ -193,7 +193,7 @@ func (h *handler) AcceptWebsiteServiceInvitation(w http.ResponseWriter, r *http.
 	}
 	row, err := s.AcceptServiceInvitation(r.Context(), actor, body.Secret, time.Now())
 	if err != nil {
-		serviceAccessError(w, "accept website service invitation", err)
+		serviceAccessError(r.Context(), w, "accept website service invitation", err)
 		return
 	}
 	writeJSON(w, 200, serviceaccess.Grant(row))
@@ -205,7 +205,7 @@ func (h *handler) RevokeWebsiteServiceGrant(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := s.RevokeServiceGrant(r.Context(), id, actor, grant, time.Now()); err != nil {
-		serviceAccessError(w, "revoke website service grant", err)
+		serviceAccessError(r.Context(), w, "revoke website service grant", err)
 		return
 	}
 	w.WriteHeader(204)
@@ -217,7 +217,7 @@ func (h *handler) RevokeWebsiteServiceInvitation(w http.ResponseWriter, r *http.
 		return
 	}
 	if err := s.RevokeServiceInvitation(r.Context(), id, actor, invitation, time.Now()); err != nil {
-		serviceAccessError(w, "revoke website service invitation", err)
+		serviceAccessError(r.Context(), w, "revoke website service invitation", err)
 		return
 	}
 	w.WriteHeader(204)
@@ -230,7 +230,7 @@ func (h *handler) ListWebsiteServiceHTTPGrants(w http.ResponseWriter, r *http.Re
 	}
 	rows, err := s.ListServiceHTTPGrants(r.Context(), id, actor, time.Now())
 	if err != nil {
-		serviceAccessError(w, "list website HTTP grants", err)
+		serviceAccessError(r.Context(), w, "list website HTTP grants", err)
 		return
 	}
 	writeJSON(w, 200, rows)
@@ -244,7 +244,7 @@ func (h *handler) CreateWebsiteServiceVisitorCredential(w http.ResponseWriter, r
 	}
 	row, err := s.CreateServiceHTTPGrant(r.Context(), id, actor, body, time.Now())
 	if err != nil {
-		serviceAccessError(w, "create website HTTP grant", err)
+		serviceAccessError(r.Context(), w, "create website HTTP grant", err)
 		return
 	}
 	writeJSON(w, 201, row)
@@ -256,7 +256,7 @@ func (h *handler) RevokeWebsiteServiceHTTPGrant(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err := s.RevokeServiceHTTPGrant(r.Context(), id, actor, grant, time.Now()); err != nil {
-		serviceAccessError(w, "revoke website HTTP grant", err)
+		serviceAccessError(r.Context(), w, "revoke website HTTP grant", err)
 		return
 	}
 	w.WriteHeader(204)

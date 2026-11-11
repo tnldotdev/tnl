@@ -61,7 +61,7 @@ func TestConnectionSharedOwnerSubprocess(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := &connectorConnectionBackend{scope: input.Scope, assertion: "first", parentPID: input.ParentPID, project: projectConfiguration{Project: clientproject.Project{Config: config.TNL{Services: config.Services{"api": {Protocol: new("http")}, "db": {Protocol: new("postgres")}}, Workloads: map[string]config.Workload{"worker": {Vercel: &config.WorkloadVercel{Environment: "production"}, Services: []string{"api", "db"}}}}}}}
-	if err := connectorruntime.Serve(t.Context(), input.Scope, input.Directory, "/fixture/tnl", b, os.Stdout); err != nil {
+	if err := connectorruntime.Serve(t.Context(), input.Scope, input.Directory, "/fixture/tnl", b.ownerConfig(), os.Stdout); err != nil {
 		t.Fatal(err)
 	}
 }

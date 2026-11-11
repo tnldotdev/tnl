@@ -23,7 +23,7 @@ func (h *handler) CreatePublishRunPreview(response http.ResponseWriter, request 
 	}
 	preview, err := h.feedback.CreatePublishRunPreview(request.Context(), auth, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "create demo feedback", err)
+		writeControlStateProblem(request.Context(), response, "create demo feedback", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, previewResponse(preview))

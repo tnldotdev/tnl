@@ -146,7 +146,7 @@ func LocalRequests(next http.Handler) http.Handler {
 			return
 		}
 		ctx, end := ClientOperation(ctx, operation, trace.WithSpanKind(trace.SpanKindServer))
-		response := &controlResponseWriter{ResponseWriter: w, status: 200, ctx: ctx}
+		response := &controlResponseWriter{ResponseWriter: w, status: 200}
 		completed := false
 		defer func() {
 			if completed || response.wroteHeader {

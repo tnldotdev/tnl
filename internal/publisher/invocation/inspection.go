@@ -18,7 +18,7 @@ func InspectionRoots(ctx context.Context, project string) (string, string, error
 	return worktree.PrimaryCheckoutRoot(), clientproject.SharedProjectIdentity(worktree, project), nil
 }
 
-func NewInspectionRecorder(ctx context.Context, tunnel *clientstate.Tunnel, project, service string, mode config.InspectionMode, settings ...*config.Inspection) (*clientstate.InspectionRecorder, error) {
+func NewInspectionRecorder(ctx context.Context, tunnel *clientstate.Tunnel, project, service string, mode config.InspectionMode, settings *config.Inspection) (*clientstate.InspectionRecorder, error) {
 	if mode == config.InspectionNone {
 		return nil, nil
 	}
@@ -26,11 +26,7 @@ func NewInspectionRecorder(ctx context.Context, tunnel *clientstate.Tunnel, proj
 	if err != nil {
 		return nil, err
 	}
-	var configured *config.Inspection
-	if len(settings) != 0 {
-		configured = settings[0]
-	}
-	selected := config.MergeInspection(configured, &config.Inspection{Mode: &mode})
+	selected := config.MergeInspection(settings, &config.Inspection{Mode: &mode})
 	policy, err := config.ResolveInspection(selected, "http")
 	if err != nil {
 		return nil, err
@@ -43,10 +39,6 @@ func SummaryObservation(recorder *clientstate.InspectionRecorder) inspection.Obs
 		return nil
 	}
 	return func(event inspection.Summary) {
-		record := clientstate.InspectionRecordFromSummary(event)
-		if event.Protocol == inspection.HTTP {
-			record.Result = ""
-		}
-		recorder.Observe(record)
+		recorder.Observe(clientstate.InspectionRecordFromSummary(event))
 	}
 }

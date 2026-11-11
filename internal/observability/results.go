@@ -60,7 +60,7 @@ func FailureCode(err error) string {
 }
 
 func finishError(span trace.Span, err error) {
-	finishSpan(span, ErrorOutcome(err).String())
+	finishSpan(span, semanticResult{outcome: ErrorOutcome(err)})
 	if err != nil {
 		span.SetAttributes(ErrorType.String(FailureCode(err)))
 	}

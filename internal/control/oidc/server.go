@@ -9,6 +9,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
+
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"golang.org/x/oauth2"
@@ -110,7 +112,7 @@ func (s *Server) CompanyAuthorizationURL(ctx context.Context, state, nonce, veri
 }
 
 func (s *Server) Redeem(ctx context.Context, code, nonce, verifier string) (_ Identity, retErr error) {
-	ctx, finish := observe(ctx, "oidc.redeem")
+	ctx, finish := observe(ctx, observability.OpOIDCRedeem)
 	defer func() { finish(retErr) }()
 	if !validClaim(code, 4096) || !validClaim(nonce, 256) || len(verifier) < 43 || len(verifier) > 128 {
 		return Identity{}, ErrUnauthenticated

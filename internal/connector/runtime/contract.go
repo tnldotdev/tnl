@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/project/workloadmanifest"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
 
 const Schema = 1
@@ -261,14 +262,45 @@ type Status struct {
 // Backend is implemented by the native CLI's human/workload adapters. Start
 // establishes identity and the authorized snapshot; Connect prepares only its
 // requested service. Renew returns its current finite authorization deadline.
-// a backend exposing AuthorizationDeadline may advance that proof horizon after
-// verified refresh, while preserving any absolute hard limit in its session.
+// snapshots contain metadata and assertion verification from one atomic read.
 type Backend interface {
+	PreparationBackend
 	Start(context.Context) (meta.PublicMetadata, time.Time, error)
-	Connect(context.Context, string) (Connection, error)
-	Prepared(string) (Connection, error)
+	Attach(context.Context, string) error
+	ProjectRuntime() meta.PublicMetadata
 	Renew(context.Context) (time.Time, error)
 	Close(context.Context) error
+}
+
+// PreparationBackend prepares a service and reads its owner's coherent snapshot.
+// assertion verification belongs to that snapshot, not a separately sampled value.
+type PreparationBackend interface {
+	UseAssertion(context.Context, string) error
+	Connect(context.Context, string) (Connection, error)
+	SnapshotFor(string, string) (Prepared, error)
+}
+
+// OwnerConfig declares the capabilities composed into this owner. an absent
+// operation is intentionally unavailable, not inferred from the backend's type.
+type OwnerConfig struct {
+	Backend Backend
+	// refreshed authority may advance the proof horizon; the backend retains
+	// any absolute hard limit. without this source, renewal can only shorten it.
+	AuthorizationDeadline func() (time.Time, <-chan struct{})
+	// persistent owners follow their application instead of a session deadline.
+	// their service snapshots and admissions still retain finite authorization.
+	Persistent  bool
+	OwnerAlive  func() bool
+	Done        <-chan error
+	SDKWorkload func(context.Context, Request) (SDKWorkload, error)
+	SDKPrepare  func(context.Context, Request) (SDKPrepared, error)
+	Kubernetes  KubernetesBackend
+}
+
+// KubernetesBackend owns generated kubeconfig files and exec credentials.
+type KubernetesBackend interface {
+	Kubeconfig() string
+	Credential(context.Context, string) (credentialv1.ExecCredential, error)
 }
 
 func ReadJSON(reader io.Reader, destination any) error {

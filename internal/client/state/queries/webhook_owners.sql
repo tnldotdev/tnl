@@ -3,14 +3,16 @@ INSERT INTO webhook_owners (server_origin, primary_project_root, integration_nam
 SELECT t.server_origin, t.primary_project_root, t.integration_namespace, e.name, t.id
 FROM local_tunnels t JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.service = t.service
 WHERE t.id = sqlc.arg(tunnel_id) AND t.server_origin = sqlc.arg(server_origin)
-  AND t.integration_group = sqlc.arg(integration_group) AND e.name = sqlc.arg(name)
+  AND t.primary_project_root = sqlc.arg(primary_project_root) AND t.integration_namespace = sqlc.arg(integration_namespace)
+  AND e.name = sqlc.arg(name)
   AND e.fingerprint = sqlc.arg(fingerprint) AND t.state = 'ready'
   AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now)
 ON CONFLICT DO NOTHING;
 
 -- name: DeleteExpiredWebhookOwner :exec
 DELETE FROM webhook_owners AS o WHERE o.server_origin = sqlc.arg(server_origin)
-  AND o.integration_group = sqlc.arg(integration_group) AND o.name = sqlc.arg(name)
+  AND o.primary_project_root = sqlc.arg(primary_project_root) AND o.integration_namespace = sqlc.arg(integration_namespace)
+  AND o.name = sqlc.arg(name)
   AND NOT EXISTS (
     SELECT 1 FROM local_tunnels t WHERE t.id = o.tunnel_id
       AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now)
@@ -18,13 +20,15 @@ DELETE FROM webhook_owners AS o WHERE o.server_origin = sqlc.arg(server_origin)
 
 -- name: ReleaseWebhookReceiver :execrows
 DELETE FROM webhook_owners WHERE server_origin = sqlc.arg(server_origin)
-  AND integration_group = sqlc.arg(integration_group) AND name = sqlc.arg(name) AND tunnel_id = sqlc.arg(tunnel_id);
+  AND primary_project_root = sqlc.arg(primary_project_root) AND integration_namespace = sqlc.arg(integration_namespace)
+  AND name = sqlc.arg(name) AND tunnel_id = sqlc.arg(tunnel_id);
 
 -- name: ExclusiveWebhookReceiver :one
-SELECT t.id, t.server_origin, t.integration_group, t.hostname, t.target, t.public_url_id, t.publish_run_number
+SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.target, t.public_url_id, t.publish_run_number
 FROM webhook_owners owner JOIN local_tunnels t ON t.id = owner.tunnel_id
 JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.name = owner.name AND e.service = t.service
-WHERE owner.server_origin = sqlc.arg(server_origin) AND owner.integration_group = sqlc.arg(integration_group)
+WHERE owner.server_origin = sqlc.arg(server_origin) AND owner.primary_project_root = sqlc.arg(primary_project_root)
+  AND owner.integration_namespace = sqlc.arg(integration_namespace)
   AND owner.name = sqlc.arg(name) AND e.fingerprint = sqlc.arg(fingerprint)
   AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now);
 
@@ -35,17 +39,20 @@ WHERE server_origin = sqlc.arg(server_origin) AND primary_project_root = sqlc.ar
 
 -- name: WebhookOwnerID :one
 SELECT owner.tunnel_id FROM webhook_owners owner JOIN local_tunnels t ON t.id = owner.tunnel_id
-WHERE owner.server_origin = sqlc.arg(server_origin) AND owner.integration_group = sqlc.arg(integration_group)
+WHERE owner.server_origin = sqlc.arg(server_origin) AND owner.primary_project_root = sqlc.arg(primary_project_root)
+  AND owner.integration_namespace = sqlc.arg(integration_namespace)
   AND owner.name = sqlc.arg(name) AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now);
 
 -- name: ForceWebhookReceiver :execrows
 UPDATE webhook_owners SET tunnel_id = sqlc.arg(tunnel_id)
-WHERE server_origin = sqlc.arg(server_origin) AND integration_group = sqlc.arg(integration_group)
+WHERE server_origin = sqlc.arg(server_origin) AND primary_project_root = sqlc.arg(primary_project_root)
+  AND integration_namespace = sqlc.arg(integration_namespace)
   AND name = sqlc.arg(name);
 
 -- name: ReadyExclusiveReceiver :one
 SELECT COUNT(*) FROM local_tunnels t JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.service = t.service
 WHERE t.id = sqlc.arg(tunnel_id) AND t.server_origin = sqlc.arg(server_origin)
-  AND t.integration_group = sqlc.arg(integration_group) AND e.name = sqlc.arg(name)
+  AND t.primary_project_root = sqlc.arg(primary_project_root) AND t.integration_namespace = sqlc.arg(integration_namespace)
+  AND e.name = sqlc.arg(name)
   AND e.fingerprint = sqlc.arg(fingerprint) AND t.state = 'ready'
   AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now);

@@ -9,6 +9,8 @@ import (
 	"io"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
@@ -54,7 +56,7 @@ func (d *Database) ReadIngressRoutingTableSnapshot(
 	identity IngressLeaseIdentity,
 	now time.Time,
 ) (result IngressRoutingTableSnapshot, retErr error) {
-	ctx, finish := d.observeOperation(ctx, "ReadIngressRoutingTableSnapshot")
+	ctx, finish := d.observeOperation(ctx, observability.OpReadIngressRoutingTableSnapshot)
 	defer func() { finish(retErr) }()
 	if err := validateIngressLeaseIdentity(identity); err != nil {
 		return IngressRoutingTableSnapshot{}, err
@@ -114,7 +116,7 @@ func (d *Database) ReadIngressRoutingTableEvents(
 	pageSize int,
 	now time.Time,
 ) (result IngressRoutingTablePage, retErr error) {
-	ctx, finish := d.observeOperation(ctx, "ReadIngressRoutingTableEvents")
+	ctx, finish := d.observeOperation(ctx, observability.OpReadIngressRoutingTableEvents)
 	defer func() { finish(retErr) }()
 	if err := validateIngressLeaseIdentity(identity); err != nil {
 		return IngressRoutingTablePage{}, err

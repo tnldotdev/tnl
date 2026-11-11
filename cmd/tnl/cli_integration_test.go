@@ -45,7 +45,7 @@ func TestBackgroundDispatchDoesNotOpenForegroundState(t *testing.T) {
 func TestEnrolledDispatchRejectsMixedAuthorityBeforeSignIn(t *testing.T) {
 	var output, diagnostics bytes.Buffer
 	root := filepath.Join(t.TempDir(), "state")
-	err := runPublish(t.Context(), publishCommand{EnrollmentKey: "-", PublisherIdentityID: "pub_example", Output: publishOutputHuman, remoteFlags: remoteFlags{StateDir: root}}, &output, &diagnostics)
+	err := runPublish(t.Context(), publishCommand{EnrollmentKey: "-", PublisherIdentityID: "pub_example", Output: publishOutputHuman, remoteFlags: remoteFlags{StateDir: root}}, &output, &diagnostics, nil)
 	if reason, ok := failure.ReasonOf(err); !ok || reason != failure.PublisherSelectionInvalid {
 		t.Fatalf("mixed enrollment selection = %v", err)
 	}

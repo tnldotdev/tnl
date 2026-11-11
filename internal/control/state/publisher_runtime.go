@@ -62,28 +62,36 @@ type PublisherRuntimeStatus struct {
 // token exchange and preflight group leases never call it.
 func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeRequest) (result PublisherRuntimeResponse, retErr error) {
 	started := time.Now()
-	operation := "publisher_runtime.invalid"
+	operation := observability.OpPublisherRuntimeInvalid
 	switch r.Action {
-	case "inspect", "start", "renew", "stop":
-		operation = "publisher_runtime." + r.Action
+	case "inspect":
+		operation = observability.OpPublisherRuntimeInspect
+	case "start":
+		operation = observability.OpPublisherRuntimeStart
+	case "renew":
+		operation = observability.OpPublisherRuntimeRenew
+	case "stop":
+		operation = observability.OpPublisherRuntimeStop
 	}
 	ctx, finish := d.observeOperation(ctx, operation)
 	defer func() {
 		err := retErr
-		result := observability.ErrorOutcome(err).String()
+		result := observability.ErrorOutcome(err)
+		var reason observability.DomainReason
 		switch {
 		case errors.Is(err, ErrPublisherRuntimeStale):
-			observability.MarkReason(ctx, "stale")
-			result = "stale"
+			reason = observability.ReasonStale
+			observability.MarkReason(ctx, reason)
+			result = observability.Rejected
 			err = failure.Wrap("observe publisher runtime", failure.ServerConflict, err)
 		case errors.Is(err, ErrPublisherDeploymentConflict):
-			result = "rejected"
+			result = observability.Rejected
 			err = failure.Wrap("observe publisher runtime", failure.ServerConflict, err)
 		case errors.Is(err, ErrPublisherIdentity):
-			result = "denied"
+			result = observability.Denied
 			err = failure.Wrap("observe publisher runtime", failure.Authentication, err)
 		}
-		observability.ObservePublisherRuntime(ctx, r.Action, result, time.Since(started))
+		observability.ObservePublisherRuntime(ctx, r.Action, result, reason, time.Since(started))
 		finish(err)
 	}()
 	run, err := hex.DecodeString(r.ProcessRunID)

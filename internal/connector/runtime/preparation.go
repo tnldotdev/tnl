@@ -12,45 +12,17 @@ import (
 
 // PrepareSnapshot is the explicit assertion -> service preparation -> atomic
 // snapshot operation. local SDK selection and owner IPC use this same boundary.
-func PrepareSnapshot(ctx context.Context, backend Backend, request Request, metadata meta.PublicMetadata) (Prepared, error) {
+func PrepareSnapshot(ctx context.Context, backend PreparationBackend, request Request) (Prepared, error) {
 	if request.Assertion != "" || request.AcquireAssertion {
-		if provider, ok := backend.(interface {
-			UseAssertion(context.Context, string) error
-		}); ok {
-			if err := provider.UseAssertion(ctx, request.Assertion); err != nil {
-				return Prepared{}, err
-			}
-		} else if provider, ok := backend.(interface {
-			Attach(context.Context, string) error
-		}); ok {
-			if err := provider.Attach(ctx, request.Assertion); err != nil {
-				return Prepared{}, err
-			}
-		} else {
-			return Prepared{}, ErrInvalid
+		if err := backend.UseAssertion(ctx, request.Assertion); err != nil {
+			return Prepared{}, err
 		}
 	}
-	connection, err := backend.Connect(ctx, request.Service)
+	_, err := backend.Connect(ctx, request.Service)
 	if err != nil {
 		return Prepared{}, err
 	}
-	return preparedSnapshot(backend, request, metadata, connection)
-}
-
-func preparedSnapshot(backend Backend, request Request, metadata meta.PublicMetadata, connection Connection) (Prepared, error) {
-	if provider, ok := backend.(interface {
-		SnapshotFor(string, string) (Prepared, error)
-	}); ok {
-		return provider.SnapshotFor(request.Service, request.Assertion)
-	}
-	if provider, ok := backend.(interface{ ProjectRuntime() meta.PublicMetadata }); ok {
-		metadata = provider.ProjectRuntime()
-	}
-	result := Prepared{Schema: Schema, ProjectRuntime: metadata, Connection: connection}
-	if provider, ok := backend.(interface{ Verification() *AssertionVerification }); ok {
-		result.Verification = provider.Verification()
-	}
-	return result, nil
+	return backend.SnapshotFor(request.Service, request.Assertion)
 }
 
 // ValidatePrepared is the native SDK wire boundary. a read never calls it to

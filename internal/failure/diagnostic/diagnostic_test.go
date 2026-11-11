@@ -64,7 +64,7 @@ func TestDefinitionsHaveStableBoundedASCIIOutput(t *testing.T) {
 			t.Fatalf("duplicate code %q", code)
 		}
 		seenCodes[code] = true
-		url := HelpURL(code)
+		url := HelpURL(code, "")
 		if seenURLs[url] {
 			t.Fatalf("duplicate help URL %q", url)
 		}
@@ -97,7 +97,7 @@ func TestKnownCaseChangesGuidanceButNotDiagnosticIdentity(t *testing.T) {
 		!strings.Contains(text, string(TargetUnavailable)) {
 		t.Fatalf("contextual diagnostic = %q", text)
 	}
-	if got := HelpURL(TargetUnavailable, "connection-refused&token=secret"); got != HelpURL(TargetUnavailable) {
+	if got := HelpURL(TargetUnavailable, "connection-refused&token=secret"); got != HelpURL(TargetUnavailable, "") {
 		t.Fatalf("untrusted context = %q", got)
 	}
 	response := httptest.NewRecorder()
@@ -117,7 +117,7 @@ func TestActionableDiagnosticHelpURLsAreStable(t *testing.T) {
 		PublicURLConflict:     "https://tnl.dev/e/public-url-conflict",
 		ProvisioningStalled:   "https://tnl.dev/e/provisioning-stalled",
 	} {
-		if got := HelpURL(code); got != want {
+		if got := HelpURL(code, ""); got != want {
 			t.Fatalf("HelpURL(%q) = %q, want %q", code, got, want)
 		}
 	}
@@ -133,7 +133,7 @@ func TestErrorPreservesCauseAndRendersDetail(t *testing.T) {
 		t.Fatalf("CodeOf() = %q, %t", code, ok)
 	}
 	text, ok := TextForError(err)
-	if !ok || !strings.Contains(text, err.Error()) || !strings.Contains(text, "help  "+HelpURL(TargetUnavailable)) ||
+	if !ok || !strings.Contains(text, err.Error()) || !strings.Contains(text, "help  "+HelpURL(TargetUnavailable, "")) ||
 		!strings.Contains(text, "+-- "+string(TargetUnavailable)+" ") {
 		t.Fatalf("TextForError() = %q, %t", text, ok)
 	}
@@ -146,7 +146,7 @@ func TestWriteWarningUsesDiagnosticFrame(t *testing.T) {
 	}
 	text := output.String()
 	if !strings.HasPrefix(text, "+--[ tnl publish ]-- provisioning stalled ") ||
-		!strings.Contains(text, "help  "+HelpURL(ProvisioningStalled)) ||
+		!strings.Contains(text, "help  "+HelpURL(ProvisioningStalled, "")) ||
 		!strings.Contains(text, "+-- "+string(ProvisioningStalled)+" ") ||
 		!strings.HasSuffix(text, "\n\n") {
 		t.Fatalf("warning = %q", text)
@@ -178,7 +178,7 @@ func TestWriteHTTPNegotiatesRepresentation(t *testing.T) {
 			request := httptest.NewRequest(test.method, "https://route.example/", nil)
 			request.Header.Set("Accept", test.accept)
 			response := httptest.NewRecorder()
-			WriteHTTP(response, request, TargetUnavailable)
+			WriteHTTP(response, request, TargetUnavailable, "")
 			if response.Code != http.StatusBadGateway || response.Header().Get("Content-Type") != test.contentType ||
 				response.Header().Get("Tnl-Error-Code") != string(TargetUnavailable) ||
 				response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("Vary") != "Accept" ||
@@ -191,7 +191,7 @@ func TestWriteHTTPNegotiatesRepresentation(t *testing.T) {
 			get := httptest.NewRecorder()
 			getRequest := httptest.NewRequest(http.MethodGet, "https://route.example/", nil)
 			getRequest.Header.Set("Accept", test.accept)
-			WriteHTTP(get, getRequest, TargetUnavailable)
+			WriteHTTP(get, getRequest, TargetUnavailable, "")
 			if response.Header().Get("Content-Length") != strconv.Itoa(get.Body.Len()) {
 				t.Fatalf("Content-Length = %q, GET bytes = %d", response.Header().Get("Content-Length"), get.Body.Len())
 			}

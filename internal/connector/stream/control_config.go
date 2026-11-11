@@ -9,14 +9,13 @@ import (
 // ControlConfig supplies background connector authority operations, never ingress
 // assignments. application arrivals consume the already prepared connection.
 type ControlConfig struct {
-	Signer       func(context.Context, string) (Signer, error)
-	Resolve      func(context.Context, string) (Run, error)
-	Pair         func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error)
-	RenewPair    func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error)
-	RebindPair   func(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error)
-	Permission   func(context.Context, string) (controlv1.VisitorTokenResponse, error)
-	Close        func() error
-	CloseContext func(context.Context) error
+	Signer     func(context.Context, string) (Signer, error)
+	Resolve    func(context.Context, string) (Run, error)
+	Pair       func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error)
+	RenewPair  func(context.Context, string, controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPairRenewal, error)
+	RebindPair func(context.Context, string, string, controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error)
+	Permission func(context.Context, string) (controlv1.VisitorTokenResponse, error)
+	Close      func(context.Context) error
 }
 
 func (ControlConfig) String() string   { return "private connector control configuration" }
@@ -25,7 +24,7 @@ func (ControlConfig) GoString() string { return "private connector control confi
 type configuredControl struct{ config ControlConfig }
 
 func NewControlWithConfig(config ControlConfig) (Control, error) {
-	if config.Signer == nil || config.Resolve == nil || config.Pair == nil || config.RenewPair == nil || config.Permission == nil || config.Close == nil {
+	if config.Signer == nil || config.Resolve == nil || config.Pair == nil || config.RenewPair == nil || config.RebindPair == nil || config.Permission == nil || config.Close == nil {
 		return nil, ErrServiceConnection
 	}
 	return &configuredControl{config}, nil
@@ -43,18 +42,9 @@ func (c *configuredControl) RenewConnectorPeerPair(ctx context.Context, id strin
 	return c.config.RenewPair(ctx, id, body)
 }
 func (c *configuredControl) RebindConnectorPeerPair(ctx context.Context, service, pair string, body controlv1.ConnectorPeerPairRebindRequest) (controlv1.ConnectorPeerPairRebindState, error) {
-	if c.config.RebindPair == nil {
-		return controlv1.ConnectorPeerPairRebindState{}, ErrServiceConnection
-	}
 	return c.config.RebindPair(ctx, service, pair, body)
 }
 func (c *configuredControl) VisitorPermission(ctx context.Context, id string) (controlv1.VisitorTokenResponse, error) {
 	return c.config.Permission(ctx, id)
 }
-func (c *configuredControl) Close() error { return c.config.Close() }
-func (c *configuredControl) CloseContext(ctx context.Context) error {
-	if c.config.CloseContext != nil {
-		return c.config.CloseContext(ctx)
-	}
-	return c.config.Close()
-}
+func (c *configuredControl) Close(ctx context.Context) error { return c.config.Close(ctx) }

@@ -59,7 +59,7 @@ func Run(ctx context.Context, options Options) (result error) {
 	if err != nil {
 		return err
 	}
-	native, err := publisheridentity.Resolve(ctx, options.State, client, authority, options.EnrollmentKey, options.PublisherIdentityID, options.Publisher)
+	native, err := publisheridentity.Resolve(ctx, options.State, publisheridentity.NativeControl{PublicURLControl: client}, authority, options.EnrollmentKey, options.PublisherIdentityID, options.Publisher)
 	if err != nil {
 		return err
 	}
@@ -126,7 +126,11 @@ func Run(ctx context.Context, options Options) (result error) {
 	publication := publisher.Config{
 		RequirePostQuantum: &options.RequirePostQuantum,
 		Control:            native,
+		Identity:           native,
+		Audit:              native,
+		Shares:             native,
 		VisitorControl:     client,
+		BrowserControl:     client,
 		ControlURL:         options.ControlURL, State: options.State,
 		TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, MembershipID: membershipID,
 		PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLScope: publicURL.PublicUrlScope,

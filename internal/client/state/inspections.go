@@ -150,9 +150,6 @@ func (d *Database) saveInspection(ctx context.Context, tunnelID, primary, projec
 		policy.MaxBytes < inspection.MinMaxBytes || policy.MaxBytes > inspection.MaxMaxBytes {
 		return errors.New("clientstate: invalid inspection scope or policy")
 	}
-	if record.Protocol == "" {
-		record.Protocol = inspection.HTTP
-	}
 	if !validInspectionRecord(record) {
 		return errors.New("clientstate: invalid inspection observation")
 	}

@@ -99,7 +99,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 		t.Run(fmt.Sprintf("standalone=%t", standalone), func(t *testing.T) {
 			opened := make(chan privateObservation, 8)
 			f := newServiceRuntimeFixture(t, standalone, opened)
-			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "audit-private", "audit-private")
+			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "audit-private", "audit-private", controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -107,7 +107,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, f.identity.routes, f.identity.authority, e.EnrollmentKey)
+			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.authority, e.EnrollmentKey)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -273,7 +273,7 @@ func TestIntegrationServiceAuditRuntimePrivate(t *testing.T) {
 						}
 					}
 				})
-				go func() { cleanupDone <- maintenance.RunServiceAuditCleanup(cleanupCtx, f.composed.database) }()
+				go func() { cleanupDone <- maintenance.RunServiceAuditCleanup(cleanupCtx, f.composed.database, nil) }()
 				privateWait(t, 5*time.Second, func(ctx context.Context) (bool, error) {
 					var count int
 					err := f.inspect.QueryRowContext(ctx, `SELECT count(*) FROM control.service_audit_events WHERE id=$1`, oldID).Scan(&count)

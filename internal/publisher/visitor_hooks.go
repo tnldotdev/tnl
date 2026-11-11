@@ -74,7 +74,7 @@ type visitorSession struct {
 	requests  sync.WaitGroup
 }
 
-func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
+func (v *visitorSession) admit(ctx context.Context, readiness bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -88,7 +88,7 @@ func (v *visitorSession) admit(ctx context.Context, readiness ...bool) error {
 		return v.life.Err()
 	}
 	visitor := v.visitor
-	visitor.Readiness = len(readiness) > 0 && readiness[0]
+	visitor.Readiness = readiness
 	if v.guard != nil {
 		check, finish := observability.PublisherOperation(ctx, "visitor_authorization")
 		err := v.guard(check, visitor)

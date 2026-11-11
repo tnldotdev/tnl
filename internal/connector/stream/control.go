@@ -116,5 +116,4 @@ func (c *controlAdapter) VisitorPermission(ctx context.Context, service string) 
 
 // control has no per-ingress reservations. the connection joins its packet and
 // application work; unrenewed control authority expires at its original bound.
-func (*controlAdapter) Close() error                       { return nil }
-func (*controlAdapter) CloseContext(context.Context) error { return nil }
+func (*controlAdapter) Close(context.Context) error { return nil }

@@ -32,13 +32,13 @@ func TestExclusiveWebhookCommandClaimsOnlyCurrentReadyWorktree(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = state.Close() })
 	const server, hooks = "https://control.example.test", "hooks.project.example.test"
-	group := projectRoot + "\x00project.example.test"
+	group := clientstate.IntegrationScope{PrimaryProjectRoot: projectRoot, Namespace: "project.example.test"}
 	if _, err := state.IntegrationURLHostname(t.Context(), server, projectRoot, "project.example.test", "hooks", hooks); err != nil {
 		t.Fatal(err)
 	}
 	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: server, Project: projectRoot, Service: "api",
-		Target: "3000", IntegrationGroup: group,
+		Target: "3000", IntegrationScope: group,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +74,7 @@ func TestExclusiveWebhookCommandClaimsOnlyCurrentReadyWorktree(t *testing.T) {
 	otherRoot := t.TempDir()
 	other, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: server, Project: otherRoot, Service: "api",
-		Target: "4000", IntegrationGroup: group,
+		Target: "4000", IntegrationScope: group,
 	})
 	if err != nil {
 		t.Fatal(err)

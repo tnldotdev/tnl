@@ -105,15 +105,15 @@ func TestInspectListAndShowTypeAnHTTPObservation(t *testing.T) {
 	}
 	recorder := tunnel.NewInspectionRecorder(primary, project, shared, "web", inspection.Policy{Retention: 24 * time.Hour, MaxBytes: 64 << 20})
 	recorder.Observe(clientstate.InspectionRecord{
-		ReceivedAt: time.Now().UTC(), Method: "GET", Path: "/health", Status: 200,
+		Protocol: inspection.HTTP, ReceivedAt: time.Now().UTC(), Method: "GET", Path: "/health", Status: 200,
 		Origin: "local_service", DurationMS: 12,
 	})
 	recorder.Observe(clientstate.InspectionRecord{
-		ReceivedAt: time.Now().UTC(), Method: "POST", Path: "/checkout", Status: 500,
+		Protocol: inspection.HTTP, ReceivedAt: time.Now().UTC(), Method: "POST", Path: "/checkout", Status: 500,
 		Origin: "local_service", DurationMS: 25,
 	})
 	recorder.Observe(clientstate.InspectionRecord{
-		ReceivedAt: time.Now().UTC(), Method: "GET", Path: "/missing", Status: 404,
+		Protocol: inspection.HTTP, ReceivedAt: time.Now().UTC(), Method: "GET", Path: "/missing", Status: 404,
 		Origin: "tnl", DurationMS: 1,
 	})
 	recorder.Close()

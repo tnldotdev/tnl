@@ -60,24 +60,25 @@ func (d *daemon) startPrivateControlAPIs(_ context.Context, settings privateCont
 	return nil
 }
 
-func privateControlHandler(ingressHandler, relayHandler http.Handler, metrics *observability.Metrics) http.Handler {
+type privateAPIHandler interface {
+	http.Handler
+	MatchedPattern(*http.Request) string
+}
+
+func privateControlHandler(ingressHandler, relayHandler privateAPIHandler, metrics *observability.Metrics) http.Handler {
 	ingressObserved := metrics.APIRequests("private_ingress", ingressHandler)
 	relayObserved := metrics.APIRequests("private_relay", relayHandler)
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Cache-Control", "no-store")
 		switch {
-		case matchedAPIPattern(request, func(candidate *http.Request) string {
-			return matchedPrivatePattern(ingressHandler, candidate)
-		}) != "":
-			request.Pattern = matchedPrivatePattern(ingressHandler, request)
+		case matchedAPIPattern(request, ingressHandler.MatchedPattern) != "":
+			request.Pattern = ingressHandler.MatchedPattern(request)
 			ingressObserved.ServeHTTP(response, request)
-		case matchedAPIPattern(request, func(candidate *http.Request) string {
-			return matchedPrivatePattern(relayHandler, candidate)
-		}) != "":
-			request.Pattern = matchedPrivatePattern(relayHandler, request)
+		case matchedAPIPattern(request, relayHandler.MatchedPattern) != "":
+			request.Pattern = relayHandler.MatchedPattern(request)
 			relayObserved.ServeHTTP(response, request)
 		default:
-			serviceapi.WriteProblem(response, http.StatusNotFound, "not_found", "Private control endpoint not found")
+			serviceapi.WriteProblem(response, http.StatusNotFound, "not_found", "Private control endpoint not found", "")
 		}
 	})
 }

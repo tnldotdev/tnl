@@ -48,7 +48,7 @@ func fixtureDatagramConfig() *quic.Config { return &quic.Config{EnableDatagrams:
 
 func (p *fixtureConnectorPeer) receipt(slot int) tunnelv1.ConnectorPairLegAccepted {
 	return tunnelv1.ConnectorPairLegAccepted{PairID: p.pair.PairId, DeliveryID: p.pair.DeliveryId, DeliveryGeneration: p.pair.DeliveryGeneration,
-		ConnectionSlot: slot, SourceIP: "127.0.0.1", ObservedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}
+		BindingState: tunnelv1.ConnectorPeerLegBindingActive, ConnectionSlot: slot, SourceIP: "127.0.0.1", ObservedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}
 }
 
 func (f *connectorFixture) PrepareConnectorPeerPair(ctx context.Context, service string, body controlv1.ConnectorPeerPairRequest) (controlv1.ConnectorPeerPair, error) {
@@ -179,6 +179,7 @@ func (f *connectorFixture) serveConnectorPeer(p *fixtureConnectorPeer, ready cha
 	f.mu.Unlock()
 	control, cancelControl := context.WithCancel(f.ctx)
 	defer cancelControl()
+	var permissionGate tunnel.ConnectorPermissionGate
 	workers.Go(func() {
 		_ = tunnel.ServeConnectorPermissionControl(control, permissions, func(update tunnelv1.ConnectorPermissionUpdate, responder *tunnel.ConnectorPermissionResponder) {
 			f.mu.Lock()
@@ -196,7 +197,7 @@ func (f *connectorFixture) serveConnectorPeer(p *fixtureConnectorPeer, ready cha
 			} else {
 				_ = responder.Respond(update, true)
 			}
-		}, func() { _ = session.Close() })
+		}, func() { _ = session.Close() }, &permissionGate)
 	})
 	for {
 		stream, err := session.AcceptStream(f.ctx)

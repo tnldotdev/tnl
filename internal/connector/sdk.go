@@ -509,7 +509,7 @@ func (b *connectorConnectionBackend) SDKPrepare(ctx context.Context, request con
 		if owner.ConnectionHandle != filepath.Join(b.directory, "handle.json") {
 			return remote(ctx, owner, service, assertion)
 		}
-		return connectorruntime.PrepareSnapshot(ctx, b, connectorruntime.Request{Service: service, Assertion: assertion}, b.ProjectRuntime())
+		return connectorruntime.PrepareSnapshot(ctx, b, connectorruntime.Request{Service: service, Assertion: assertion})
 	}
 	prepared, err := operations.selectSDK(ctx, options, request.Assertion)
 	if err != nil {

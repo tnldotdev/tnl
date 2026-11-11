@@ -136,7 +136,6 @@ type LocalTunnel struct {
 	ServiceProtocol      string
 	PrimaryProjectRoot   sql.NullString
 	IntegrationNamespace sql.NullString
-	IntegrationGroup     string
 	Hostname             sql.NullString
 	Target               sql.NullString
 	Framework            sql.NullString
@@ -357,7 +356,6 @@ type WebhookOwner struct {
 	ServerOrigin         string
 	PrimaryProjectRoot   string
 	IntegrationNamespace string
-	IntegrationGroup     string
 	Name                 string
 	TunnelID             string
 }

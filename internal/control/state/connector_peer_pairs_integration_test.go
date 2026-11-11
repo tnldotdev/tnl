@@ -19,6 +19,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -89,7 +90,7 @@ func rotateConnectorPairStorage(t *testing.T, d *Database, pair ConnectorPeerPai
 	}
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{11}, 32))
 	databaseURL := d.pool.Config().ConnString()
-	rotating, err := Open(ctx, databaseURL, newKey, testStorageKey)
+	rotating, err := Open(ctx, databaseURL, newKey, testStorageKey, naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +132,7 @@ func rotateConnectorPairStorage(t *testing.T, d *Database, pair ConnectorPeerPai
 	}
 	rotating.Close()
 	d.Close()
-	reopened, err := Open(ctx, databaseURL, newKey, "")
+	reopened, err := Open(ctx, databaseURL, newKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +444,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 		t.Fatal("revoked publisher recovered claimed key", err)
 	}
 	if err := d.ConfirmConnectorPeerPairPrepared(ctx, service.ID, run.RunID, first.ID, run.Token,
-		ConnectorPeerPairPrepared{DeliveryID: first.DeliveryID, DeliveryGeneration: first.DeliveryGeneration, BindingExpiresAt: clipped.ExpiresAt}, now); !errors.Is(err, ErrServiceAccess) {
+		ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: first.DeliveryID, DeliveryGeneration: first.DeliveryGeneration, BindingExpiresAt: clipped.ExpiresAt}, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("revoked publisher advanced the installation report", err)
 	}
 	if _, err := d.PrepareConnectorPeerPair(visitor, request, now); !errors.Is(err, ErrServiceAccess) {
@@ -501,7 +502,7 @@ func TestIntegrationConnectorPeerPairExactAuthority(t *testing.T) {
 		t.Fatal("replaced pair recovered key", err)
 	}
 	if err := d.ConfirmConnectorPeerPairPrepared(ctx, service.ID, run.RunID, first.ID, run.Token,
-		ConnectorPeerPairPrepared{DeliveryID: first.DeliveryID, DeliveryGeneration: first.DeliveryGeneration, BindingExpiresAt: first.ExpiresAt}, replacement.RequestedAt); !errors.Is(err, ErrServiceAccess) {
+		ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: first.DeliveryID, DeliveryGeneration: first.DeliveryGeneration, BindingExpiresAt: first.ExpiresAt}, replacement.RequestedAt); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("replaced pair retained the publisher barrier", err)
 	}
 	if !second.PublisherPreparedUntil.IsZero() {
@@ -684,7 +685,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 	if binding, err := d.DeliverConnectorPeerPair(ctx, serviceID, run.RunID, pair.ID, pair.DeliveryGeneration, run.Token, checkedNow()); err != nil || binding.Key != pair.Key || binding.SourceIP != allowedSource || binding.ExpiresAt.After(workload.LeaseExpiresAt) {
 		t.Fatal("publisher did not get IP-allowed workload binding", err)
 	}
-	report := ConnectorPeerPairPrepared{DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: pair.ExpiresAt}
+	report := ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: pair.ExpiresAt}
 	if err := d.ConfirmConnectorPeerPairPrepared(ctx, serviceID, run.RunID, pair.ID, run.Token, report, checkedNow()); err != nil {
 		t.Fatal("workload publisher barrier rejected two checked claims", err)
 	}
@@ -819,7 +820,7 @@ func TestIntegrationConnectorPeerPairWorkloadCredentialAndSelectedService(t *tes
 func assertConnectorPairPreparationBarrier(t *testing.T, d *Database, pair ConnectorPeerPair, run ServiceRunState, now time.Time) {
 	t.Helper()
 	ctx := t.Context()
-	report := ConnectorPeerPairPrepared{DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: pair.ExpiresAt.Add(-time.Second)}
+	report := ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: pair.ExpiresAt.Add(-time.Second)}
 	var authorizedAt, expiresAt time.Time
 	if err := d.pool.QueryRow(ctx, `SELECT last_authorized_at,expires_at FROM control.connector_peer_pairs WHERE id=$1`, pair.ID).Scan(&authorizedAt, &expiresAt); err != nil {
 		t.Fatal(err)
@@ -849,6 +850,8 @@ func assertConnectorPairPreparationBarrier(t *testing.T, d *Database, pair Conne
 		}
 	}
 	for _, mutate := range []func(*ConnectorPeerPairPrepared){
+		func(r *ConnectorPeerPairPrepared) { r.Phase = "" },
+		func(r *ConnectorPeerPairPrepared) { r.Phase = "prepared" },
 		func(r *ConnectorPeerPairPrepared) { r.DeliveryID[0] ^= 1 },
 		func(r *ConnectorPeerPairPrepared) { r.DeliveryGeneration++ },
 		func(r *ConnectorPeerPairPrepared) { r.BindingExpiresAt = pair.ExpiresAt.Add(time.Microsecond) },

@@ -29,7 +29,7 @@ func (h *handler) EnableShareAccess(response http.ResponseWriter, request *http.
 		previewID = *body.PreviewId
 	}
 	if err := h.shareAccess.EnableShareAccess(request.Context(), auth, previewID); err != nil {
-		writeControlStateProblem(response, "enable share access", err)
+		writeControlStateProblem(request.Context(), response, "enable share access", err)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
@@ -65,12 +65,12 @@ func (h *handler) RedeemPublishRunShare(response http.ResponseWriter, request *h
 	}
 	result, err := h.shareAccess.RedeemShare(request.Context(), auth, shareID, secret, handoff, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "redeem share", err)
+		writeControlStateProblem(request.Context(), response, "redeem share", err)
 		return
 	}
 	permission, err := h.redeemedVisitorPermission(request.Context(), visitorscope.Scope{Kind: visitorscope.PublicURL, ID: auth.PublicURLID}, controlstate.ShareSessionTokenSource{ShareID: result.ShareID, Secret: result.CookieSecret})
 	if err != nil {
-		writeVisitorTokenProblem(response, err)
+		writeVisitorTokenProblem(request.Context(), response, err)
 		return
 	}
 	writeJSON(response, http.StatusOK, controlv1.ShareRedemption{

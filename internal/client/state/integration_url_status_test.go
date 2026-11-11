@@ -21,10 +21,10 @@ func TestIntegrationURLStatusUsesPublisherLeaseAndProjectIdentity(t *testing.T) 
 	const server, project = "https://control.example.test", "/projects/shop"
 	// the service uses another namespace, but oauth remains on the project's
 	// root namespace. the local project identity connects the two.
-	group := project + "\x00app.member.example.test"
+	group := IntegrationScope{PrimaryProjectRoot: project, Namespace: "app.member.example.test"}
 	tunnel, err := database.BeginTunnel(t.Context(), BeginTunnelOptions{
 		Command: TunnelCommandPublish, Server: server, Target: "3000", Project: t.TempDir(),
-		Service: "api", IntegrationGroup: group,
+		Service: "api", IntegrationScope: group,
 	})
 	if err != nil {
 		t.Fatal(err)

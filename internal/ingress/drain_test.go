@@ -15,6 +15,8 @@ import (
 
 type singleBackend struct{ connection net.Conn }
 
+func (singleBackend) ConnectionSlot() uint8 { return 0 }
+
 type drainReadConn struct {
 	net.Conn
 	reading func()

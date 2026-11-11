@@ -16,6 +16,8 @@ import (
 )
 
 type Store interface {
+	serviceConnectionStore
+	connectorPeerLegStore
 	RegisterRelay(context.Context, controlstate.RelayRegistration, time.Time, time.Duration) (controlstate.RelayLease, error)
 	RenewRelay(context.Context, controlstate.RelayRenewal, time.Time, time.Duration) (controlstate.RelayLease, error)
 	BeginRelayDrain(context.Context, controlstate.RelayLeaseIdentity, time.Time, time.Time) (controlstate.RelayLease, error)
@@ -40,7 +42,7 @@ type handler struct {
 }
 
 // NewHandler constructs the private relay service.
-func NewHandler(config Config) (http.Handler, error) {
+func NewHandler(config Config) (*handler, error) {
 	if config.Store == nil || !config.ClusterSecrets.Valid() {
 		return nil, errors.New("relayapi: store and cluster secrets are required")
 	}
@@ -59,11 +61,11 @@ func NewHandler(config Config) (http.Handler, error) {
 	relayv1.HandlerWithOptions(generatedServer{handler: h}, relayv1.StdHTTPServerOptions{
 		BaseRouter: h.mux,
 		ErrorHandlerFunc: func(response http.ResponseWriter, _ *http.Request, _ error) {
-			serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Relay request parameters are invalid")
+			serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Relay request parameters are invalid", "")
 		},
 	})
 	h.mux.HandleFunc("/", func(response http.ResponseWriter, _ *http.Request) {
-		serviceapi.WriteProblem(response, http.StatusNotFound, "not_found", "Relay service endpoint not found")
+		serviceapi.WriteProblem(response, http.StatusNotFound, "not_found", "Relay service endpoint not found", "")
 	})
 	return h, nil
 }

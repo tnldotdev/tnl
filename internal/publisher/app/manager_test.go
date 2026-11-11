@@ -56,14 +56,14 @@ func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T
 		t.Fatal(err)
 	}
 	run := <-started
-	if !manager.Observe(Observation{RegistrationID: id, RunNumber: run, Ready: true}) {
+	if !manager.Observe(Observation{Target: "http://127.0.0.1:1234", RegistrationID: id, RunNumber: run, Ready: true}) {
 		t.Fatal("current observation rejected")
 	}
 	if err := manager.Register(id, "owner", "http://127.0.0.1:1235", "node"); err != nil {
 		t.Fatal(err)
 	}
 	next := <-started
-	if next == run || manager.Observe(Observation{RegistrationID: id, RunNumber: run, Ready: true}) {
+	if next == run || manager.Observe(Observation{Target: "http://127.0.0.1:1234", RegistrationID: id, RunNumber: run, Ready: true}) {
 		t.Fatal("old run observation crossed listener replacement")
 	}
 	if !manager.CurrentRun("web", id, "http://127.0.0.1:1235", next) || manager.CurrentRun("web", id, "http://127.0.0.1:1234", run) {
@@ -78,7 +78,7 @@ func TestListenerOwnershipPublicationAndReplacementRejectsStaleRuns(t *testing.T
 	if err := manager.Unregister(id, "owner"); err != nil {
 		t.Fatal(err)
 	}
-	if manager.CurrentRun("web", id, "http://127.0.0.1:1235", next) || manager.Observe(Observation{RegistrationID: id, RunNumber: next, Ready: true}) {
+	if manager.CurrentRun("web", id, "http://127.0.0.1:1235", next) || manager.Observe(Observation{Target: "http://127.0.0.1:1235", RegistrationID: id, RunNumber: next, Ready: true}) {
 		t.Fatal("unregistered listener admitted work")
 	}
 	restarted, err := manager.Reserve("web", "new", 2, "https://web.example")
@@ -460,7 +460,9 @@ func TestConfigurationReconciliationPreservesLiveAppsAndJoinsRemovedPublishers(t
 		t.Fatal(err)
 	}
 	<-started
-	manager.Observe(Observation{RegistrationID: id, RunNumber: 1, Ready: true, Readiness: Readiness{Path: "/"}})
+	if !manager.Observe(Observation{Target: "http://127.0.0.1:1234", RegistrationID: id, RunNumber: 1, Ready: true, Readiness: Readiness{Path: "/"}}) {
+		t.Fatal("current readiness observation rejected")
+	}
 	if err := manager.Configure([]Service{{Name: "api", Readiness: Readiness{Path: "/health"}}, {Name: "worker"}}); err != nil {
 		t.Fatal(err)
 	}

@@ -46,7 +46,7 @@ func TestInstalledGroupRuntimeConflictBlocksWithoutReclaim(t *testing.T) {
 			requests = append(requests, body)
 			mu.Unlock()
 			if replaced.Load() {
-				serviceapi.WriteProblem(w, http.StatusConflict, "conflict", "publisher runtime has been replaced or stopped")
+				serviceapi.WriteProblem(w, http.StatusConflict, "conflict", "publisher runtime has been replaced or stopped", "")
 				return
 			}
 			if body.Action == controlv1.RuntimeInspect {

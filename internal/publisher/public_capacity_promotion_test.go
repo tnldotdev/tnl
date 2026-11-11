@@ -171,7 +171,7 @@ func TestPublicCapacityRejectedPromotionKeepsOriginalDeadline(t *testing.T) {
 		}}
 		defer ownTestVisitorSession(t, route, v)()
 		for range 2 {
-			if err := v.admit(t.Context()); err == nil {
+			if err := v.admit(t.Context(), false); err == nil {
 				t.Fatal("rejected promotion admitted a request")
 			}
 		}

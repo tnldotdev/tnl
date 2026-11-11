@@ -1987,7 +1987,7 @@ type ConnectorPeerPair struct {
 	// ObservedAt Control's authority observation time; subtract request transit when installing local deadlines.
 	ObservedAt time.Time `json:"observed_at"`
 
-	// OperationId Rebind operation that issued this revision; absent for a legacy initial binding.
+	// OperationId Rebind operation that issued this revision; absent for the initial binding, which has no rebind operation.
 	OperationId         string `json:"operation_id,omitempty"`
 	PairId              string `json:"pair_id"`
 	PublisherIdentityId string `json:"publisher_identity_id"`
@@ -2091,11 +2091,11 @@ type ConnectorPeerPairPrepared struct {
 	// PathProofs Empty for installed; two ordered publisher-initiated proofs for proved. A duplicate proof cannot extend its freshness bound.
 	PathProofs []ConnectorPeerPairPathProof `json:"path_proofs,omitempty"`
 
-	// Phase An absent phase is the legacy installation report; it is never a rebind path proof.
-	Phase ConnectorPeerPairPreparedPhase `json:"phase,omitempty"`
+	// Phase Installed reports binding installation; proved reports publisher-initiated path proofs for that binding.
+	Phase ConnectorPeerPairPreparedPhase `json:"phase"`
 }
 
-// ConnectorPeerPairPreparedPhase An absent phase is the legacy installation report; it is never a rebind path proof.
+// ConnectorPeerPairPreparedPhase Installed reports binding installation; proved reports publisher-initiated path proofs for that binding.
 type ConnectorPeerPairPreparedPhase string
 
 // ConnectorPeerPairReady A short-lived, credential-free snapshot for signing an exact pair request. It never grants a relay claim.

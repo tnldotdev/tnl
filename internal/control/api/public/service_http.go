@@ -52,23 +52,23 @@ func (h *handler) RedeemServiceBrowserHandoff(w http.ResponseWriter, r *http.Req
 	}
 	result, err := store.RedeemServiceBrowserHandoff(r.Context(), serviceHTTPRun(service, run, token, body.RunNumber), body.Secret, time.Now())
 	if err != nil {
-		writeServiceHTTPBrowserProblem(w, err)
+		writeServiceHTTPBrowserProblem(r.Context(), w, err)
 		return
 	}
 	result.Permission, err = h.redeemedVisitorPermission(r.Context(), visitorscope.Scope{Kind: visitorscope.Service, ID: service}, controlstate.BrowserSessionTokenSource{Secret: result.CookieSecret})
 	if err != nil {
-		writeVisitorTokenProblem(w, err)
+		writeVisitorTokenProblem(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, 200, result)
 }
 
-func writeServiceHTTPBrowserProblem(w http.ResponseWriter, err error) {
+func writeServiceHTTPBrowserProblem(ctx context.Context, w http.ResponseWriter, err error) {
 	if errors.Is(err, controlstate.ErrVisitorSignIn) || errors.Is(err, controlstate.ErrPreviewAccess) {
 		writeBearerProblem(w)
 		return
 	}
-	writeManagedCertificateProblem(w, "authorize managed browser", err)
+	writeManagedCertificateProblem(ctx, w, "authorize managed browser", err)
 }
 
 func (h *handler) CheckServiceBrowserSession(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID, run controlv1.ServiceRunID) {
@@ -89,7 +89,7 @@ func (h *handler) serviceBrowserSession(w http.ResponseWriter, r *http.Request, 
 	}
 	result, err := store.ServiceBrowserSession(r.Context(), serviceHTTPRun(service, run, token, body.RunNumber), body.Secret, revoke, time.Now())
 	if err != nil {
-		writeServiceHTTPBrowserProblem(w, err)
+		writeServiceHTTPBrowserProblem(r.Context(), w, err)
 		return
 	}
 	if revoke {
@@ -116,7 +116,7 @@ func (h *handler) CreateServiceHTTPGrant(w http.ResponseWriter, r *http.Request,
 	}
 	result, err := store.CreateServiceHTTPGrant(r.Context(), service, actor.identityID, body, time.Now())
 	if err != nil {
-		writeManagedCertificateProblem(w, "create service HTTP grant", err)
+		writeManagedCertificateProblem(r.Context(), w, "create service HTTP grant", err)
 		return
 	}
 	writeJSON(w, 201, result)
@@ -132,7 +132,7 @@ func (h *handler) RevokeServiceHTTPGrant(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if err := store.RevokeServiceHTTPGrant(r.Context(), service, actor.identityID, grant, time.Now()); err != nil {
-		writeManagedCertificateProblem(w, "revoke service HTTP grant", err)
+		writeManagedCertificateProblem(r.Context(), w, "revoke service HTTP grant", err)
 		return
 	}
 	w.WriteHeader(204)
@@ -151,7 +151,7 @@ func (h *handler) ListServiceHTTPGrants(w http.ResponseWriter, r *http.Request, 
 	}
 	result, err := store.ListServiceHTTPGrants(r.Context(), service, actor.identityID, time.Now())
 	if err != nil {
-		serviceVisitorError(w, "list service HTTP grants", err)
+		serviceVisitorError(r.Context(), w, "list service HTTP grants", err)
 		return
 	}
 	writeJSON(w, 200, result)

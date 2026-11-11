@@ -16,8 +16,8 @@ import (
 )
 
 type privateScopeControl struct {
-	NativeControl
-	serviceRunControl
+	unusedControl
+	ServiceControl
 	service      controlv1.Service
 	declarations []controlv1.ServiceRunDeclaration
 	reads        int
@@ -100,7 +100,7 @@ func privateScopeFixture(t *testing.T) (*Native, *privateScopeControl) {
 		t.Fatal(err)
 	}
 	control := &privateScopeControl{service: controlv1.Service{Id: serviceID, TeamId: "team", Name: "orders", Enabled: true, Protocol: controlv1.Postgres, TrustRevision: 3}}
-	native, err := NewNative(control, &lostEnrollmentResponse{}, identity, key)
+	native, err := NewNative(NativeControl{PublicURLControl: control, Services: control}, &lostEnrollmentResponse{}, identity, key)
 	if err != nil {
 		t.Fatal(err)
 	}

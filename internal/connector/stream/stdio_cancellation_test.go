@@ -158,7 +158,7 @@ type stdioFailureControl struct {
 	cleanup error
 }
 
-func (c stdioFailureControl) Close() error { return c.cleanup }
+func (c stdioFailureControl) Close(context.Context) error { return c.cleanup }
 
 func TestStdioCancellationPreservesIndependentFailureAndCleanup(t *testing.T) {
 	for _, transport := range []string{"quic", "tls-tcp"} {

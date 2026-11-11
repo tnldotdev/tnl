@@ -17,7 +17,8 @@ import (
 
 const testServer = "https://control.example.test"
 const testOAuthHost = "oauth.project.example.test"
-const testIntegrationGroup = "primary-project\x00project.example.test"
+
+var testIntegrationScope = clientstate.IntegrationScope{PrimaryProjectRoot: "/projects/primary-project", Namespace: "project.example.test"}
 
 func callbackState(t *testing.T) (*clientstate.Database, string) {
 	t.Helper()
@@ -37,7 +38,7 @@ func readyTunnel(t *testing.T, state *clientstate.Database, target, hostname str
 	t.Helper()
 	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
 		Command: clientstate.TunnelCommandPublish, Server: testServer, Target: target,
-		Project: t.TempDir(), Service: "api", IntegrationGroup: testIntegrationGroup,
+		Project: t.TempDir(), Service: "api", IntegrationScope: testIntegrationScope,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +80,7 @@ func TestOAuthCallbacksDispatchAcrossWorktreesAndStateHandles(t *testing.T) {
 	redirects := 0
 	for _, label := range []string{"main", "feature"} {
 		tunnel, run := readyTunnel(t, state, "3000", label+".example.test")
-		observer := Observer(state, testServer, testOAuthHost, testIntegrationGroup, tunnel.ID())
+		observer := Observer(state, testServer, testOAuthHost, testIntegrationScope, tunnel.ID())
 		// the provider returns the existing redirect-URI query followed by its
 		// authorization response; the dispatcher must not duplicate that query.
 		if err := observer(authorizationResponse(label+"-state", "%3Fflow%3Dgithub"), run); err != nil {
@@ -106,7 +107,7 @@ func TestOAuthCallbacksDispatchAcrossWorktreesAndStateHandles(t *testing.T) {
 func TestOAuthObservationRejectsUnavailableOrReplacedRuns(t *testing.T) {
 	state, _ := callbackState(t)
 	tunnel, run := readyTunnel(t, state, "3000", "feature.example.test")
-	observe := Observer(state, testServer, testOAuthHost, testIntegrationGroup, tunnel.ID())
+	observe := Observer(state, testServer, testOAuthHost, testIntegrationScope, tunnel.ID())
 	if err := observe(authorizationResponse("one", ""), run); err == nil {
 		t.Fatal("unready integration URL publisher accepted a login")
 	}
@@ -127,7 +128,7 @@ func TestOAuthObservationRejectsUnavailableOrReplacedRuns(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodGet, "https://"+testOAuthHost+"/api/auth/callback/github?code=opaque&state=one", nil)
 	response := httptest.NewRecorder()
-	OAuthHandler(state, testServer, testOAuthHost).ServeHTTP(response, request)
+	OAuthHandler(state, testServer, testOAuthHost, nil).ServeHTTP(response, request)
 	if response.Code != http.StatusGone {
 		t.Fatalf("old run got callback: %d", response.Code)
 	}
@@ -139,7 +140,7 @@ func TestOAuthObserverRejectsDuplicateStateAndIgnoresUnrelatedRedirects(t *testi
 	if err := state.MarkIntegrationURLReady(t.Context(), testServer, testOAuthHost, "leader"); err != nil {
 		t.Fatal(err)
 	}
-	observe := Observer(state, testServer, testOAuthHost, testIntegrationGroup, tunnel.ID())
+	observe := Observer(state, testServer, testOAuthHost, testIntegrationScope, tunnel.ID())
 	withoutResponseType := authorizationResponse("provider-without-response-type", "")
 	withoutResponseType.Header.Set("Location", strings.Replace(withoutResponseType.Header.Get("Location"), "response_type=code&", "", 1))
 	if err := observe(withoutResponseType, run); err != nil {
@@ -147,7 +148,7 @@ func TestOAuthObserverRejectsDuplicateStateAndIgnoresUnrelatedRedirects(t *testi
 	}
 	callback := httptest.NewRequest(http.MethodGet, "https://"+testOAuthHost+"/api/auth/callback/github?code=opaque&state=provider-without-response-type", nil)
 	response := httptest.NewRecorder()
-	OAuthHandler(state, testServer, testOAuthHost).ServeHTTP(response, callback)
+	OAuthHandler(state, testServer, testOAuthHost, nil).ServeHTTP(response, callback)
 	if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), "feature.example.test") {
 		t.Fatalf("provider callback was not routed: %d %q", response.Code, response.Header().Get("Location"))
 	}
@@ -175,12 +176,12 @@ func TestOAuthConcurrentConsumptionAndCrossServerAdmission(t *testing.T) {
 	if err := state.MarkIntegrationURLReady(t.Context(), testServer, testOAuthHost, "leader"); err != nil {
 		t.Fatal(err)
 	}
-	if err := Observer(state, testServer, testOAuthHost, testIntegrationGroup, tunnel.ID())(authorizationResponse("one", ""), run); err != nil {
+	if err := Observer(state, testServer, testOAuthHost, testIntegrationScope, tunnel.ID())(authorizationResponse("one", ""), run); err != nil {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "https://"+testOAuthHost+"/api/auth/callback/github?code=opaque&state=one", nil)
 	wrong := httptest.NewRecorder()
-	OAuthHandler(state, "https://other.example.test", testOAuthHost).ServeHTTP(wrong, request)
+	OAuthHandler(state, "https://other.example.test", testOAuthHost, nil).ServeHTTP(wrong, request)
 	if wrong.Code != http.StatusGone {
 		t.Fatalf("another server used the callback: %d", wrong.Code)
 	}
@@ -189,7 +190,7 @@ func TestOAuthConcurrentConsumptionAndCrossServerAdmission(t *testing.T) {
 	for range 2 {
 		wg.Go(func() {
 			response := httptest.NewRecorder()
-			OAuthHandler(state, testServer, testOAuthHost).ServeHTTP(response, request.Clone(t.Context()))
+			OAuthHandler(state, testServer, testOAuthHost, nil).ServeHTTP(response, request.Clone(t.Context()))
 			statuses <- response.Code
 		})
 	}
@@ -204,7 +205,7 @@ func TestOAuthFailuresDoNotExposeCallbackValues(t *testing.T) {
 	state, _ := callbackState(t)
 	request := httptest.NewRequest(http.MethodGet, "https://"+testOAuthHost+"/api/auth/callback/github?code=secret-code&state=secret-state", nil)
 	response := httptest.NewRecorder()
-	OAuthHandler(state, testServer, testOAuthHost).ServeHTTP(response, request)
+	OAuthHandler(state, testServer, testOAuthHost, nil).ServeHTTP(response, request)
 	if response.Header().Get("Tnl-Error-Code") != string(diagnostic.OAuthCallbackExpired) || strings.Contains(response.Body.String(), "secret-code") || strings.Contains(response.Body.String(), "secret-state") {
 		t.Fatalf("unexpected callback diagnostic: %d %q", response.Code, response.Header().Get("Tnl-Error-Code"))
 	}

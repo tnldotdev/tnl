@@ -127,7 +127,7 @@ func TestAppWorkflowEnrolledPreflightPreservesTLSName(t *testing.T) {
 	}
 	profile, _ := state.Server(ctx, f.URL)
 	authority, _ := clientauthority.New(f.URL, f.HTTP, "")
-	_, identity, err := publisheridentity.EnrollNative(ctx, profile, owner, authority, enrollment.EnrollmentKey)
+	_, identity, err := publisheridentity.EnrollNative(ctx, profile, publisheridentity.NativeControl{PublicURLControl: owner}, authority, enrollment.EnrollmentKey)
 	if err != nil {
 		t.Fatal(err)
 	}

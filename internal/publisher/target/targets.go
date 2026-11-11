@@ -15,10 +15,6 @@ type TargetSnapshot struct {
 	Revision uint64
 }
 
-type identityResolver interface {
-	ResolveTargetIdentity(context.Context, clientproject.Project, string) (string, string, error)
-}
-
 // ResolveTargetSnapshot preserves identity when a replacement reuses an address.
 func ResolveTargetSnapshot(ctx context.Context, project clientproject.Project, name string, resolver TargetResolver) (TargetSnapshot, error) {
 	service, found := project.Config.Services[name]
@@ -32,11 +28,10 @@ func ResolveTargetSnapshot(ctx context.Context, project clientproject.Project, n
 		}
 		return TargetSnapshot{Address: string(*resolved.Target), Identity: string(*resolved.Target)}, nil
 	}
-	identities, ok := resolver.(identityResolver)
-	if !ok {
+	if resolver == nil {
 		return TargetSnapshot{}, errors.New("container resolver must return immutable target identity")
 	}
-	address, identity, err := identities.ResolveTargetIdentity(ctx, project, name)
+	address, identity, err := resolver.ResolveTargetIdentity(ctx, project, name)
 	if err != nil {
 		return TargetSnapshot{}, err
 	}

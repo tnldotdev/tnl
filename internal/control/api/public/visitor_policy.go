@@ -41,7 +41,7 @@ func (h *handler) ReadPublisherVisitorPolicy(w http.ResponseWriter, r *http.Requ
 	}
 	result, err := store.ReadPublisherVisitorPolicy(r.Context(), scope, body.RunId, body.RunNumber, credential, body.AfterRevision, observed)
 	if err != nil {
-		writeVisitorTokenProblem(w, err)
+		writeVisitorTokenProblem(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, 200, result)

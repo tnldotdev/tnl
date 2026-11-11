@@ -56,6 +56,7 @@ type PublicURL struct {
 type LookupFunc func(string) ([]PublicURL, LookupReason)
 
 type Metrics interface {
+	ObserveTrafficAdmission(string, string)
 	IncCapacityRejection(string)
 	IncInspectionFailure(string)
 	ObserveVisitor(observability.VisitorOutcome)
@@ -437,7 +438,7 @@ func (s *Server) trackBackend(connection net.Conn) bool {
 	return true
 }
 
-func (s *Server) releaseBackend(connection net.Conn) error {
+func (s *Server) releaseBackend(ctx context.Context, connection net.Conn) error {
 	s.mu.Lock()
 	delete(s.backends, connection)
 	active := len(s.backends)
@@ -448,7 +449,7 @@ func (s *Server) releaseBackend(connection net.Conn) error {
 	started := time.Now()
 	err := connection.Close()
 	if s.config.Observer != nil {
-		s.config.Observer.ObserveOperation("IngressBackendCleanup", err, time.Since(started))
+		s.config.Observer.ObserveOperationContext(ctx, observability.OpIngressBackendCleanup, err, time.Since(started))
 	}
 	return err
 }

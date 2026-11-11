@@ -44,9 +44,9 @@ func TestProjectAliasPreparesAnExactNativePublisherOnlyForTheSelectedReadyReceiv
 		return id
 	}
 	project, target := t.TempDir(), "https://127.0.0.1:3000"
-	group := project + "\x00member.example"
+	group := clientstate.IntegrationScope{PrimaryProjectRoot: project, Namespace: "member.example"}
 	parentID := newID(opaqueid.PublicURLPrefix)
-	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: server, Project: project, Service: "web", Target: target, IntegrationGroup: group})
+	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: server, Project: project, Service: "web", Target: target, IntegrationScope: group})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestProjectAliasPreparesAnExactNativePublisherOnlyForTheSelectedReadyReceiv
 	}
 	services := publisherServices{state: store, hostname: publicURL.CanonicalHostname, teamID: publicURL.TeamId, domainID: publicURL.DomainId, membershipID: membership, namespace: "member.example", publicURLScope: controlv1.Member, routes: control, authenticated: &auth.Client{ServerEndpoint: server, Control: control, Authority: authority}}
 	scope := clientstate.AliasScope{Server: server, ProjectKey: project, TeamID: publicURL.TeamId, MembershipID: membership, Namespace: services.namespace, Name: "review"}
-	selection, err := state.RegisterAlias(t.Context(), clientstate.AliasRegistration{Scope: scope, Hostname: publicURL.CanonicalHostname, Service: "web", TunnelID: tunnel.ID(), IntegrationGroup: group})
+	selection, err := state.RegisterAlias(t.Context(), clientstate.AliasRegistration{Scope: scope, Hostname: publicURL.CanonicalHostname, Service: "web", TunnelID: tunnel.ID(), IntegrationScope: group})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,6 +198,9 @@ func TestProjectAliasPreparesAnExactNativePublisherOnlyForTheSelectedReadyReceiv
 		}
 		if _, ok := cfg.Control.(publisher.PublicURLManagementClient); ok {
 			t.Fatal("alias runtime retained person mutation authority")
+		}
+		if cfg.Management != nil || cfg.AccessManagement != nil {
+			t.Fatal("alias runtime retained explicit management authority")
 		}
 		if _, err := cfg.Control.CreatePublishRun(t.Context(), publicURL.Id, newID(opaqueid.IdempotencyPrefix)); !errors.Is(err, clientcontrol.ErrUnavailable) {
 			t.Fatalf("signed alias run: %v", err)

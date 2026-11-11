@@ -5,6 +5,7 @@
     "pair_id": "cpp_1234567890123456789012",
     "delivery_id": "AQEBAQEBAQEBAQEBAQEBAQ",
     "delivery_generation": 3,
+    "binding_state": "active",
     "connection_slot": 1,
     "source_ip": "192.0.2.10%en0",
     "observed_at": "2026-01-02T03:04:05Z",

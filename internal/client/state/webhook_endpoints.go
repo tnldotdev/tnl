@@ -59,8 +59,12 @@ func decodeWebhook(name string, encoded []byte) (config.Webhook, error) {
 	return definition, nil
 }
 
-func (d *Database) ActiveWebhookDefinitions(ctx context.Context, server, group string) (map[string]config.Webhook, error) {
-	rows, err := d.queries.ActiveWebhookEndpoints(ctx, clientstatedb.ActiveWebhookEndpointsParams{ServerOrigin: server, IntegrationGroup: group, Now: d.now().UTC().UnixNano()})
+func (d *Database) ActiveWebhookDefinitions(ctx context.Context, server string, scope IntegrationScope) (map[string]config.Webhook, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	rows, err := d.queries.ActiveWebhookEndpoints(ctx, clientstatedb.ActiveWebhookEndpointsParams{ServerOrigin: server,
+		PrimaryProjectRoot: scope.primaryProjectRoot(), IntegrationNamespace: scope.namespace(), Now: d.now().UTC().UnixNano()})
 	if err != nil {
 		return nil, err
 	}
@@ -89,8 +93,12 @@ func (d *Database) ActiveWebhookDefinitions(ctx context.Context, server, group s
 	return definitions, nil
 }
 
-func (d *Database) WebhookReceivers(ctx context.Context, server, group, name string, digest [32]byte) ([]TunnelInfo, error) {
-	rows, err := d.queries.ReadyWebhookReceivers(ctx, clientstatedb.ReadyWebhookReceiversParams{ServerOrigin: server, IntegrationGroup: group, Name: name, Now: d.now().UTC().UnixNano()})
+func (d *Database) WebhookReceivers(ctx context.Context, server string, scope IntegrationScope, name string, digest [32]byte) ([]TunnelInfo, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	rows, err := d.queries.ReadyWebhookReceivers(ctx, clientstatedb.ReadyWebhookReceiversParams{ServerOrigin: server,
+		PrimaryProjectRoot: scope.primaryProjectRoot(), IntegrationNamespace: scope.namespace(), Name: name, Now: d.now().UTC().UnixNano()})
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +108,7 @@ func (d *Database) WebhookReceivers(ctx context.Context, server, group, name str
 			return nil, ErrWebhookPolicyConflict
 		}
 		receivers = append(receivers, TunnelInfo{
-			ID: row.ID, Server: row.ServerOrigin, IntegrationGroup: row.IntegrationGroup, Hostname: row.Hostname.String,
+			ID: row.ID, Server: row.ServerOrigin, IntegrationScope: IntegrationScope{PrimaryProjectRoot: row.PrimaryProjectRoot.String, Namespace: row.IntegrationNamespace.String}, Hostname: row.Hostname.String,
 			Target: row.Target.String, PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64),
 			PublicURL: "https://" + row.Hostname.String,
 		})

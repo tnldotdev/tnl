@@ -222,7 +222,7 @@ func (s *Server) PromotePendingAdmission(ctx context.Context, h tunnelv1.Admissi
 }
 
 func (s *Server) observeTraffic(stage, result string) {
-	if metrics, ok := s.config.Metrics.(interface{ ObserveTrafficAdmission(string, string) }); ok {
-		metrics.ObserveTrafficAdmission(stage, result)
+	if s.config.Metrics != nil {
+		s.config.Metrics.ObserveTrafficAdmission(stage, result)
 	}
 }

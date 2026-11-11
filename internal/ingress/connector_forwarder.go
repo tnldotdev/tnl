@@ -33,7 +33,7 @@ func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRela
 		}
 		started := time.Now()
 		stream, err := session.OpenServiceForwardingStream(ctx, header)
-		f.observe("IngressForwardingAck", err, started)
+		f.observe(ctx, observability.OpIngressForwardingAck, err, started)
 		if err == nil {
 			return stream, nil
 		}
@@ -41,7 +41,7 @@ func (f *Forwarder) OpenPrivate(ctx context.Context, relay ingressv1.ServiceRela
 		if errors.As(err, &rejected) || ctx.Err() != nil || session.Err() == nil && f.currentSession(target.key(), session) {
 			return nil, err
 		}
-		err = errors.Join(err, f.invalidate(target.key(), session))
+		err = errors.Join(err, f.invalidate(ctx, target.key(), session))
 		if !reused || attempt == 1 {
 			return nil, err
 		}

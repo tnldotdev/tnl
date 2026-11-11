@@ -18,21 +18,13 @@ type serviceConnectionStore interface {
 	DisconnectServicePublisherConnection(context.Context, string, string, int64, int64, controlstate.RelayLeaseIdentity, time.Time) (controlstate.ServicePublisherConnection, error)
 }
 
-func (h *handler) serviceConnections(w http.ResponseWriter) (serviceConnectionStore, bool) {
-	store, ok := h.service.store.(serviceConnectionStore)
-	if !ok {
-		serviceapi.WriteProblem(w, 503, "unavailable", "Private publisher connection state is unavailable")
-	}
-	return store, ok
-}
-
 func privateRelayIdentity(id, run string, revision int64) controlstate.RelayLeaseIdentity {
 	return controlstate.RelayLeaseIdentity{RelayID: id, RelayRunID: run, RelayLeaseRevision: uint64(revision)}
 }
 
 func privateRelayProblem(h *handler, w http.ResponseWriter, r *http.Request, err error) bool {
 	if errors.Is(err, controlstate.ErrServiceAccess) {
-		serviceapi.WriteProblem(w, 409, "stale_connection_assignment", "Private publisher connection is not current")
+		serviceapi.WriteProblem(w, 409, "stale_connection_assignment", "Private publisher connection is not current", "")
 		return true
 	}
 	return h.writeServiceError(w, r, err)
@@ -51,14 +43,10 @@ func (h *handler) claimServicePublisherConnection(w http.ResponseWriter, r *http
 	}
 	if !opaqueid.Valid(id, opaqueid.PublisherConnectionPrefix) || !opaqueid.Valid(body.ServiceId, opaqueid.ServicePrefix) ||
 		!opaqueid.Valid(body.ServiceRunId, opaqueid.ServiceRunPrefix) || body.RunNumber <= 0 || body.ConnectionAssignmentRevision <= 0 || body.RelayLeaseRevision <= 0 {
-		serviceapi.WriteProblem(w, 400, "invalid_request", "Private connection claim is invalid")
+		serviceapi.WriteProblem(w, 400, "invalid_request", "Private connection claim is invalid", "")
 		return
 	}
-	store, ok := h.serviceConnections(w)
-	if !ok {
-		return
-	}
-	row, err := store.ClaimServicePublisherConnection(r.Context(), id, body.ServiceId, body.ServiceRunId,
+	row, err := h.service.store.ClaimServicePublisherConnection(r.Context(), id, body.ServiceId, body.ServiceRunId,
 		body.RunNumber, body.ConnectionAssignmentRevision, body.Credential,
 		privateRelayIdentity(body.RelayId, body.RelayRunId, body.RelayLeaseRevision), h.service.now())
 	if privateRelayProblem(h, w, r, err) {
@@ -82,13 +70,10 @@ func (h *handler) servicePublisherTransition(w http.ResponseWriter, r *http.Requ
 	}
 	if !opaqueid.Valid(id, opaqueid.PublisherConnectionPrefix) || !opaqueid.Valid(body.ServiceRunId, opaqueid.ServiceRunPrefix) ||
 		body.RunNumber <= 0 || body.ConnectionAssignmentRevision <= 0 || body.RelayLeaseRevision <= 0 {
-		serviceapi.WriteProblem(w, 400, "invalid_request", "Private connection transition is invalid")
+		serviceapi.WriteProblem(w, 400, "invalid_request", "Private connection transition is invalid", "")
 		return
 	}
-	store, ok := h.serviceConnections(w)
-	if !ok {
-		return
-	}
+	store := h.service.store
 	lease := privateRelayIdentity(body.RelayId, body.RelayRunId, body.RelayLeaseRevision)
 	var row controlstate.ServicePublisherConnection
 	var err error
@@ -110,31 +95,19 @@ func (h *handler) servicePublisherTransition(w http.ResponseWriter, r *http.Requ
 }
 
 func (c *DirectClient) ClaimServicePublisherConnection(ctx context.Context, id string, body relayv1.ServicePublisherConnectionClaim) (relayv1.ServicePublisherConnection, error) {
-	store, ok := c.store.(serviceConnectionStore)
-	if !ok {
-		return relayv1.ServicePublisherConnection{}, errors.New("private publisher connection state is unavailable")
-	}
-	row, err := store.ClaimServicePublisherConnection(ctx, id, body.ServiceId, body.ServiceRunId, body.RunNumber, body.ConnectionAssignmentRevision, body.Credential,
+	row, err := c.store.ClaimServicePublisherConnection(ctx, id, body.ServiceId, body.ServiceRunId, body.RunNumber, body.ConnectionAssignmentRevision, body.Credential,
 		privateRelayIdentity(body.RelayId, body.RelayRunId, body.RelayLeaseRevision), c.now())
 	return privateRelayResponse(row), err
 }
 
 func (c *DirectClient) ReadyServicePublisherConnection(ctx context.Context, id string, body relayv1.ServicePublisherConnectionTransition) (relayv1.ServicePublisherConnection, error) {
-	store, ok := c.store.(serviceConnectionStore)
-	if !ok {
-		return relayv1.ServicePublisherConnection{}, errors.New("private publisher connection state is unavailable")
-	}
-	row, err := store.ReadyServicePublisherConnection(ctx, id, body.ServiceRunId, body.RunNumber, body.ConnectionAssignmentRevision,
+	row, err := c.store.ReadyServicePublisherConnection(ctx, id, body.ServiceRunId, body.RunNumber, body.ConnectionAssignmentRevision,
 		privateRelayIdentity(body.RelayId, body.RelayRunId, body.RelayLeaseRevision), c.now())
 	return privateRelayResponse(row), err
 }
 
 func (c *DirectClient) DisconnectServicePublisherConnection(ctx context.Context, id string, body relayv1.ServicePublisherConnectionTransition) error {
-	store, ok := c.store.(serviceConnectionStore)
-	if !ok {
-		return errors.New("private publisher connection state is unavailable")
-	}
-	_, err := store.DisconnectServicePublisherConnection(ctx, id, body.ServiceRunId, body.RunNumber, body.ConnectionAssignmentRevision,
+	_, err := c.store.DisconnectServicePublisherConnection(ctx, id, body.ServiceRunId, body.RunNumber, body.ConnectionAssignmentRevision,
 		privateRelayIdentity(body.RelayId, body.RelayRunId, body.RelayLeaseRevision), c.now())
 	return err
 }

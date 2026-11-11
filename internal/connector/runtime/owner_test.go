@@ -30,7 +30,19 @@ type fixtureBackend struct {
 }
 
 func (b *fixtureBackend) Start(context.Context) (meta.PublicMetadata, time.Time, error) {
-	return meta.PublicMetadata{Namespace: "db.example", Services: map[string]meta.Service{"database": {Protocol: "postgres", Namespace: "example", Hostname: "db.example", Port: 15432, Public: true}}}, b.deadline, b.startError
+	return b.ProjectRuntime(), b.deadline, b.startError
+}
+func (*fixtureBackend) ProjectRuntime() meta.PublicMetadata {
+	return meta.PublicMetadata{Namespace: "db.example", Services: map[string]meta.Service{"database": {Protocol: "postgres", Namespace: "example", Hostname: "db.example", Port: 15432, Public: true}}}
+}
+func (*fixtureBackend) UseAssertion(context.Context, string) error { return ErrInvalid }
+func (*fixtureBackend) Attach(context.Context, string) error       { return ErrInvalid }
+func (b *fixtureBackend) SnapshotFor(name, assertion string) (Prepared, error) {
+	if assertion != "" {
+		return Prepared{}, ErrInvalid
+	}
+	connection, err := b.Prepared(name)
+	return Prepared{Schema: Schema, ProjectRuntime: b.ProjectRuntime(), Connection: connection}, err
 }
 func (b *fixtureBackend) Connect(ctx context.Context, name string) (Connection, error) {
 	if b.started != nil {
@@ -53,7 +65,6 @@ func (b *fixtureBackend) Prepared(name string) (Connection, error) {
 	return Connection{Schema: 1, Protocol: "postgres", Host: "127.0.0.1", Port: 15432, ExpiresAt: b.deadline, SSL: &TLSOptions{ServerName: "db.example", RejectUnauthorized: true}, TransportID: "ctg_aaaaaaaaaaaaaaaaaaaaaa"}, nil
 }
 func (b *fixtureBackend) Close(context.Context) error { b.closed.Store(true); return nil }
-func (b *fixtureBackend) Done() <-chan error          { return b.failed }
 
 func fixtureScope(t *testing.T) Context {
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -99,7 +110,9 @@ func TestConnectionPreparedReadDoesNotWaitForSiblingNetwork(t *testing.T) {
 	done := make(chan error, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer func() { cancel(); <-done }()
-	go func() { done <- Serve(ctx, scope, directory, "/test/tnl", b, writer) }()
+	go func() {
+		done <- Serve(ctx, scope, directory, "/test/tnl", OwnerConfig{Backend: b, Done: b.failed}, writer)
+	}()
 	var status Status
 	if err := json.NewDecoder(reader).Decode(&status); err != nil {
 		t.Fatal(err)
@@ -177,6 +190,13 @@ func (b *lazyFixtureBackend) Prepared(name string) (Connection, error) {
 	}
 	return Connection{Schema: 1, Protocol: "tcp", Host: "127.0.0.1", Port: 15432, ExpiresAt: b.deadline, TransportID: "ctg_bbbbbbbbbbbbbbbbbbbbbb"}, nil
 }
+func (b *lazyFixtureBackend) SnapshotFor(name, assertion string) (Prepared, error) {
+	if assertion != "" {
+		return Prepared{}, ErrInvalid
+	}
+	connection, err := b.Prepared(name)
+	return Prepared{Schema: Schema, ProjectRuntime: b.ProjectRuntime(), Connection: connection}, err
+}
 
 func TestConnectionPreparedSiblingNeverStartsNetworkWork(t *testing.T) {
 	scope := fixtureScope(t)
@@ -190,7 +210,9 @@ func TestConnectionPreparedSiblingNeverStartsNetworkWork(t *testing.T) {
 	done := make(chan error, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer func() { cancel(); <-done }()
-	go func() { done <- Serve(ctx, scope, directory, "/test/tnl", b, writer) }()
+	go func() {
+		done <- Serve(ctx, scope, directory, "/test/tnl", OwnerConfig{Backend: b, Done: b.failed}, writer)
+	}()
 	var status Status
 	if err := json.NewDecoder(reader).Decode(&status); err != nil {
 		t.Fatal(err)
@@ -213,7 +235,9 @@ func TestConnectionOwnerTargetTrustsAndJoinedStop(t *testing.T) {
 	b := &fixtureBackend{deadline: time.Now().Add(time.Hour), failed: make(chan error, 1)}
 	reader, writer := io.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- Serve(t.Context(), scope, directory, "/test/tnl", b, writer) }()
+	go func() {
+		done <- Serve(t.Context(), scope, directory, "/test/tnl", OwnerConfig{Backend: b, Done: b.failed}, writer)
+	}()
 	var state Status
 	if err := json.NewDecoder(reader).Decode(&state); err != nil {
 		t.Fatal(err)
@@ -277,7 +301,9 @@ func TestConnectionOwnerFailureQuiescesAndSetupAlwaysCloses(t *testing.T) {
 			}
 			reader, writer := io.Pipe()
 			done := make(chan error, 1)
-			go func() { done <- Serve(t.Context(), scope, directory, "/test/tnl", b, writer) }()
+			go func() {
+				done <- Serve(t.Context(), scope, directory, "/test/tnl", OwnerConfig{Backend: b, Done: b.failed}, writer)
+			}()
 			if !startup {
 				var state Status
 				if err := json.NewDecoder(reader).Decode(&state); err != nil {
@@ -354,7 +380,9 @@ func TestConnectionStopCancelsHangingCredentialAndJoins(t *testing.T) {
 	b := &fixtureBackend{deadline: time.Now().Add(time.Hour), started: make(chan struct{}), finished: make(chan struct{})}
 	reader, writer := io.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- Serve(t.Context(), scope, directory, "/test/tnl", b, writer) }()
+	go func() {
+		done <- Serve(t.Context(), scope, directory, "/test/tnl", OwnerConfig{Backend: b, Done: b.failed}, writer)
+	}()
 	var state Status
 	if err := json.NewDecoder(reader).Decode(&state); err != nil {
 		t.Fatal(err)
@@ -398,7 +426,9 @@ func TestConnectionIPCRejectsWrongProofProjectAndBrowserOrigin(t *testing.T) {
 	b := &fixtureBackend{deadline: time.Now().Add(time.Hour)}
 	reader, writer := io.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- Serve(t.Context(), scope, directory, "/test/tnl", b, writer) }()
+	go func() {
+		done <- Serve(t.Context(), scope, directory, "/test/tnl", OwnerConfig{Backend: b, Done: b.failed}, writer)
+	}()
 	var state Status
 	if err := json.NewDecoder(reader).Decode(&state); err != nil {
 		t.Fatal(err)
@@ -455,7 +485,9 @@ func TestConnectionAbsoluteDeadlineStopsOwner(t *testing.T) {
 	b := &fixtureBackend{deadline: time.Now().Add(time.Second)}
 	reader, writer := io.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- Serve(t.Context(), scope, directory, "/test/tnl", b, writer) }()
+	go func() {
+		done <- Serve(t.Context(), scope, directory, "/test/tnl", OwnerConfig{Backend: b, Done: b.failed}, writer)
+	}()
 	var state Status
 	if err := json.NewDecoder(reader).Decode(&state); err != nil {
 		t.Fatal(err)

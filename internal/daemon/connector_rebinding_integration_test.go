@@ -277,7 +277,7 @@ func startRebindingConnector(t *testing.T, f *privateSeparatedFixture, tcp, sile
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "rebind", key)
+	service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "rebind", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
 	if err != nil {
 		t.Fatal(err)
 	}

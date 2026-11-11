@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
+	publisherruntime "github.com/tnldotdev/tnl/internal/publisher/runtime"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -68,7 +69,7 @@ func (a *jobAuthority) ExchangePublisherAssertion(_ context.Context, client, gra
 }
 
 type jobControl struct {
-	publisheridentity.NativeControl
+	publisheridentity.PublicURLControl
 	publicURL       controlv1.PublicURL
 	public          ed25519.PublicKey
 	runs            chan string
@@ -76,6 +77,34 @@ type jobControl struct {
 	renewError      error
 	runtimeMu       sync.Mutex
 	runtimeRequests []controlv1.PublisherRuntimeRequest
+}
+
+func (*jobControl) ControlURL() string { return "https://control.example" }
+
+func (*jobControl) Discovery(context.Context) (controlv1.ControlDiscovery, error) {
+	return controlv1.ControlDiscovery{}, nil
+}
+
+func jobClients(control *jobControl) PublisherClients {
+	return PublisherClients{NativeControl: publisheridentity.NativeControl{PublicURLControl: control, Runtime: control}, Discovery: control}
+}
+
+func TestInstalledURLRequiresExplicitDiscovery(t *testing.T) {
+	registry := testRegistry(t)
+	job, identity, private := fixture(t, "web")
+	control, authority := jobBoundary(job, identity, private)
+	if err := registry.Install(t.Context(), job, identity, private); err != nil {
+		t.Fatal(err)
+	}
+	engine := Engine{Registry: registry, Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+		clients := jobClients(control)
+		clients.Discovery = nil
+		return clients, authority, nil
+	}}
+	var runtime *publisherruntime.Owner
+	if _, err := engine.attempt(t.Context(), job, 1, &runtime); !errors.Is(err, ErrScope) || runtime != nil {
+		t.Fatal("missing discovery capability started a deployed URL runtime", err)
+	}
 }
 
 func (c *jobControl) PublisherRuntime(_ context.Context, r controlv1.PublisherRuntimeRequest) (controlv1.PublisherRuntimeResponse, error) {
@@ -89,7 +118,7 @@ func (c *jobControl) PublisherRuntime(_ context.Context, r controlv1.PublisherRu
 	if err != nil {
 		return controlv1.PublisherRuntimeResponse{}, err
 	}
-	if _, err = publisherproof.Verify(r.Assertion, r.PublisherIdentityId, kid, publisherproof.RuntimeScope(r.ScopeId, string(r.Action), r.ProcessRunId, r.ExpectedEpoch), "https://control.example/v1/publisher-runtime", c.public, time.Now()); err != nil {
+	if _, err = publisherproof.Verify(r.Assertion, r.PublisherIdentityId, kid, publisherproof.RuntimeScope(r.ScopeId, string(r.Action), r.ProcessRunId, r.ExpectedEpoch, ""), "https://control.example/v1/publisher-runtime", c.public, time.Now()); err != nil {
 		return controlv1.PublisherRuntimeResponse{}, err
 	}
 	epoch := r.ExpectedEpoch
@@ -113,8 +142,8 @@ func TestInstalledRunConflictRetriesOnlyWhileRuntimeIsCurrent(t *testing.T) {
 			}
 			var attempts atomic.Int64
 			engine := Engine{Registry: registry, PollInterval: 5 * time.Millisecond, RetryMin: 5 * time.Millisecond, RetryMax: 10 * time.Millisecond,
-				Clients: func(Job) (publisheridentity.NativeControl, publisheridentity.EnrollmentAuthority, error) {
-					return control, authority, nil
+				Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+					return jobClients(control), authority, nil
 				},
 				Publish: func(ctx context.Context, cfg publisher.Config) error {
 					if attempts.Add(1) == 1 {
@@ -244,8 +273,8 @@ func TestRealNativeRunSignsWithTheSameKeyAfterBoot(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 10 * time.Millisecond, RetryMax: 20 * time.Millisecond, Clients: func(Job) (publisheridentity.NativeControl, publisheridentity.EnrollmentAuthority, error) {
-			return control, authority, nil
+		engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 10 * time.Millisecond, RetryMax: 20 * time.Millisecond, Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+			return jobClients(control), authority, nil
 		}}
 		// Publish is deliberately unset: this executes publisher.Run, target
 		// preflight, URL reconciliation, and the signed native run adapter.
@@ -311,15 +340,15 @@ func TestIndependentTargetsAndServersUseBoundedRetries(t *testing.T) {
 	}
 	var retryMu sync.Mutex
 	var retries []time.Time
-	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 15 * time.Millisecond, RetryMax: 30 * time.Millisecond, Clients: func(job Job) (publisheridentity.NativeControl, publisheridentity.EnrollmentAuthority, error) {
+	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, RetryMin: 15 * time.Millisecond, RetryMax: 30 * time.Millisecond, Clients: func(job Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		if job.ID == "server-down" {
 			retryMu.Lock()
 			retries = append(retries, time.Now())
 			retryMu.Unlock()
-			return nil, nil, errors.New("server unavailable with token=secret")
+			return PublisherClients{}, nil, errors.New("server unavailable with token=secret")
 		}
 		boundary := boundaries[job.ID]
-		return boundary.c, boundary.a, nil
+		return jobClients(boundary.c), boundary.a, nil
 	}}
 	cancel, done := startEngine(t, engine)
 	await(t, func() bool {
@@ -375,8 +404,8 @@ func TestReconcileDoesNotBlockOnAnotherJobsDrain(t *testing.T) {
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
 	var slowDraining, nextRunning atomic.Bool
-	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Clients: func(job Job) (publisheridentity.NativeControl, publisheridentity.EnrollmentAuthority, error) {
-		return controls[job.ID], authorities[job.ID], nil
+	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Clients: func(job Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+		return jobClients(controls[job.ID]), authorities[job.ID], nil
 	}, Publish: func(ctx context.Context, cfg publisher.Config) error {
 		if err := cfg.Observe(publisher.Event{Type: publisher.EventReady, PublishRunNumber: 7}); err != nil {
 			return err
@@ -438,9 +467,9 @@ func TestBlockedGrantCanRestartWithoutLeakingErrorText(t *testing.T) {
 	control, authority := jobBoundary(job, identity, private)
 	control.publicURL.Id, _ = opaqueid.New(opaqueid.PublicURLPrefix)
 	var calls atomic.Int64
-	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Clients: func(Job) (publisheridentity.NativeControl, publisheridentity.EnrollmentAuthority, error) {
+	engine := Engine{Registry: r, PollInterval: 5 * time.Millisecond, Clients: func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 		calls.Add(1)
-		return control, authority, nil
+		return jobClients(control), authority, nil
 	}}
 	cancel, done := startEngine(t, engine)
 	await(t, func() bool {

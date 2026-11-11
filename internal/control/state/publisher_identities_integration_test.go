@@ -68,13 +68,13 @@ func TestIntegrationPublisherResolvedScopeUsesAuthorizedFacts(t *testing.T) {
 
 func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 	d, _ := newControlStateIntegrationDatabase(t, "publisher_baseline")
-	for _, name := range []string{"public_url_publish_credentials", "publish_run_publish_credentials", "ephemeral_public_url_allocations", "authority_revision_states", "tcp_port_claims", "ingress_pool_ports", "service_tickets"} {
+	for _, name := range []string{"public_url_publish_credentials", "publish_run_publish_credentials", "ephemeral_public_url_allocations", "authority_revision_states", "tcp_port_claims", "ingress_pool_ports", "service_tickets", "publish_run_publisher_grants"} {
 		var absent bool
 		if err := d.pool.QueryRow(t.Context(), `SELECT to_regclass('control.' || $1) IS NULL`, name).Scan(&absent); err != nil || !absent {
 			t.Fatalf("legacy table %s exists: %v", name, err)
 		}
 	}
-	for _, name := range []string{"publisher_identities", "publisher_identity_keys", "publisher_grants", "publisher_enrollments", "publisher_assertions", "publisher_access_tokens", "publisher_namespace_allocations", "publish_run_publisher_grants", "publisher_certificate_checkpoints", "previews", "shares", "feedback_threads", "browser_access_sessions", "publisher_service_runs", "publisher_service_connection_slots", "visitor_devices", "connector_peer_pairs"} {
+	for _, name := range []string{"publisher_identities", "publisher_identity_keys", "publisher_grants", "publisher_enrollments", "publisher_assertions", "publisher_access_tokens", "publisher_namespace_allocations", "publisher_certificate_checkpoints", "previews", "shares", "feedback_threads", "browser_access_sessions", "publisher_service_runs", "publisher_service_connection_slots", "visitor_devices", "connector_peer_pairs"} {
 		var present bool
 		if err := d.pool.QueryRow(t.Context(), `SELECT to_regclass('control.' || $1) IS NOT NULL`, name).Scan(&present); err != nil || !present {
 			t.Fatalf("final table %s missing: %v", name, err)
@@ -94,7 +94,7 @@ func TestIntegrationPublisherFreshBaseline(t *testing.T) {
 	}
 	// an older database's larger migration counter cannot pass this baseline's
 	// readiness check just because its numeric version is greater than one.
-	if _, err := d.pool.Exec(t.Context(), `ALTER TABLE control.publish_run_publisher_grants RENAME TO missing_publisher_baseline`); err != nil {
+	if _, err := d.pool.Exec(t.Context(), `INSERT INTO control.goose_db_version (version_id, is_applied) VALUES (2, true)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.Readiness(t.Context()); err == nil {
@@ -287,7 +287,7 @@ func TestIntegrationPublisherNamespaceMemberOwnershipAndRemoval(t *testing.T) {
 	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://other.internal:3000", []string{}, []byte("null"), now, options); !errors.Is(err, ErrPublicURLIdempotency) {
 		t.Fatalf("changed retry target = %v", err)
 	}
-	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://app.internal:3000", []string{}, []byte("null"), now); !errors.Is(err, ErrPublicURLIdempotency) {
+	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation, "http://app.internal:3000", []string{}, []byte("null"), now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted}); !errors.Is(err, ErrPublicURLIdempotency) {
 		t.Fatalf("retry changed the post-quantum requirement: %v", err)
 	}
 	if !strings.HasSuffix(u.CanonicalHostname, "."+p.Scope.Namespace) || !u.Ephemeral {
@@ -321,7 +321,7 @@ func TestIntegrationPublisherNamespaceMemberOwnershipAndRemoval(t *testing.T) {
 		t.Fatalf("member-owned credential survived removal: %v", err)
 	}
 	invocation2, _ := opaqueid.New(opaqueid.InvocationPrefix)
-	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation2, "http://app.internal:3000", []string{}, nil, now); !errors.Is(err, ErrPublisherIdentity) {
+	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, invocation2, "http://app.internal:3000", []string{}, nil, now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted}); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("removed member allocated another URL: %v", err)
 	}
 }
@@ -351,11 +351,7 @@ func TestIntegrationPublisherRunRetryAndHeartbeatRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// the baseline retains this compatibility view, but retries, live authority,
-	// and revocation must use the binding already stored on each publish run.
-	if _, err := d.pool.Exec(t.Context(), `DROP VIEW control.publish_run_publisher_grants`); err != nil {
-		t.Fatal(err)
-	}
+	// retries, live authority, and revocation use the binding stored on each run.
 	repeated, err := d.CreatePublishRun(t.Context(), r, now, time.Minute, time.Minute)
 	if err != nil || repeated.PublishRunToken != setup.PublishRunToken || repeated.PublishRunID != setup.PublishRunID {
 		t.Fatalf("identity run retry = %+v, %v", repeated, err)
@@ -447,7 +443,7 @@ func TestIntegrationGuestPublisherScopeSourceAndExpiry(t *testing.T) {
 	if _, err := d.AuthenticatePublisherAccess(t.Context(), a.Token, "192.0.2.8/32", now); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("guest token moved to another IP")
 	}
-	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, "invocation", "http://127.0.0.1:3000", []string{}, nil, now); !errors.Is(err, ErrPublisherIdentity) {
+	if _, err := d.AllocatePublisherPublicURL(t.Context(), p, "invocation", "http://127.0.0.1:3000", []string{}, nil, now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted}); !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatal("guest received namespace allocation")
 	}
 	if owns, err := d.PublisherMayStartRun(t.Context(), p, "some-other-demo"); err != nil || owns {

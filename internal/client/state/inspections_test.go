@@ -21,10 +21,10 @@ func TestInspectionProtocolStorageAndFilterContracts(t *testing.T) {
 	defer state.Close()
 	project := t.TempDir()
 	now := time.Now().UTC()
-	for _, protocol := range []inspection.Protocol{"", inspection.Postgres, inspection.MySQL, inspection.Redis} {
+	for _, protocol := range []inspection.Protocol{inspection.HTTP, inspection.Postgres, inspection.MySQL, inspection.Redis} {
 		record := InspectionRecord{Protocol: protocol, ReceivedAt: now, Origin: "tnl"}
 		switch protocol {
-		case "":
+		case inspection.HTTP:
 			record.Method, record.Path, record.Status = "GET", "/health", 200
 		case inspection.Redis:
 			record.RedisCommand, record.Result = "PING", inspection.ResultOK
@@ -34,6 +34,10 @@ func TestInspectionProtocolStorageAndFilterContracts(t *testing.T) {
 		if err := state.saveInspection(t.Context(), "tun_test", project, project, project, "service", record, testInspectionPolicy()); err != nil {
 			t.Fatal(err)
 		}
+	}
+	missingProtocol := InspectionRecord{ReceivedAt: now, Method: "GET", Path: "/health", Status: 200, Origin: "local_service"}
+	if err := state.saveInspection(t.Context(), "tun_test", project, project, project, "service", missingProtocol, testInspectionPolicy()); err == nil {
+		t.Fatal("accepted HTTP observation without an explicit protocol")
 	}
 	filter := InspectionFilter{Project: project, SharedProject: project, Limit: 10}
 	items, err := state.ListInspections(t.Context(), filter)
@@ -84,7 +88,7 @@ func TestInspectionNumbersAndTypedResultsAcrossWorktrees(t *testing.T) {
 		project string
 		record  InspectionRecord
 	}{
-		{project, InspectionRecord{ReceivedAt: now, Method: "POST", Path: "/checkout", Status: 500,
+		{project, InspectionRecord{Protocol: inspection.HTTP, ReceivedAt: now, Method: "POST", Path: "/checkout", Status: 500,
 			Origin: "local_service"}},
 		{otherWorktree, InspectionRecord{ReceivedAt: now.Add(time.Second), Protocol: "postgres",
 			Origin: "tnl", Operation: inspection.OperationExecute, Result: inspection.ResultError, SQLState: "42703"}},
@@ -148,7 +152,7 @@ func TestInspectionRetentionAndByteBudgetArePerServiceAndWorktree(t *testing.T) 
 	state.now = func() time.Time { return now }
 	short := inspection.Policy{Retention: time.Hour, MaxBytes: inspection.MinMaxBytes}
 	long := inspection.Policy{Retention: 48 * time.Hour, MaxBytes: inspection.MinMaxBytes}
-	observation := InspectionRecord{ReceivedAt: now, Method: "GET", Path: "/", Status: 200, Origin: "local_service"}
+	observation := InspectionRecord{Protocol: inspection.HTTP, ReceivedAt: now, Method: "GET", Path: "/", Status: 200, Origin: "local_service"}
 	if err := state.saveInspection(t.Context(), "tun_test", project, project, project, "web", observation, short); err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +171,7 @@ func TestInspectionRetentionAndByteBudgetArePerServiceAndWorktree(t *testing.T) 
 		t.Fatal(err)
 	}
 	for index := range 150 {
-		record := InspectionRecord{ReceivedAt: now.Add(time.Duration(index) * time.Second), Method: "GET",
+		record := InspectionRecord{Protocol: inspection.HTTP, ReceivedAt: now.Add(time.Duration(index) * time.Second), Method: "GET",
 			Path: "/" + strings.Repeat("x", 8<<10), Status: 200, Origin: "local_service"}
 		if err := state.saveInspection(t.Context(), "tun_test", project, project, project, "orders", record, long); err != nil {
 			t.Fatal(err)

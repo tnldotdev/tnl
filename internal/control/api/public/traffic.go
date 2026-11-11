@@ -33,7 +33,7 @@ func publishRunTrafficSelection(w http.ResponseWriter, r *http.Request) (*traffi
 		Burst: s.Burst, UploadBytes: s.UploadBytes, DownloadBytes: s.DownloadBytes,
 		TotalConnections: s.TotalConnections, TotalUploadBytes: s.TotalUploadBytes, TotalDownloadBytes: s.TotalDownloadBytes}
 	if err := selection.Validate(); err != nil {
-		writeControlStateProblem(w, "select publish-run traffic limits", controlstate.ErrTrafficSelection)
+		writeControlStateProblem(r.Context(), w, "select publish-run traffic limits", controlstate.ErrTrafficSelection)
 		return nil, false
 	}
 	return selection, true

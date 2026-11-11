@@ -25,7 +25,7 @@ func TestCreateOrLoadRouteReusesDurablePublicURL(t *testing.T) {
 	}
 	control := &publisherControlStub{allowed: []string{"lookup"}, routes: []controlv1.PublicURL{want}}
 	got, created, err := createOrLoadPublicURL(t.Context(), Config{
-		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
+		Control: control, Management: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App, Target: "http://127.0.0.1:3000",
 	})
 	if err != nil {
@@ -39,6 +39,18 @@ func TestCreateOrLoadRouteReusesDurablePublicURL(t *testing.T) {
 	}
 }
 
+func TestPublicURLManagementRequiresExplicitAuthority(t *testing.T) {
+	control := &publisherControlStub{allowed: []string{"create"}}
+	config := Config{Control: control, TeamID: "team_1", DomainID: "domain_1", Hostname: "demo.example", PublicURLScope: controlv1.Shared, Purpose: controlv1.App, Target: "http://127.0.0.1:3000", Ephemeral: true}
+	if _, _, err := createOrLoadPublicURL(t.Context(), config); err == nil || control.created != nil {
+		t.Fatal("serving client supplied implicit public URL management authority", err)
+	}
+	config.Management = control
+	if _, created, err := createOrLoadPublicURL(t.Context(), config); err != nil || !created {
+		t.Fatal("explicit public URL management authority rejected", err)
+	}
+}
+
 func TestCreateOrLoadRouteReconcilesTargetAndIPPolicy(t *testing.T) {
 	existingPolicy := []string{"192.0.2.0/24"}
 	control := &publisherControlStub{allowed: []string{"lookup", "update"}, routes: []controlv1.PublicURL{{
@@ -48,7 +60,7 @@ func TestCreateOrLoadRouteReconcilesTargetAndIPPolicy(t *testing.T) {
 	}}}
 	wantPolicy := []string{"198.51.100.0/24"}
 	got, created, err := createOrLoadPublicURL(t.Context(), Config{
-		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
+		Control: control, Management: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App, Target: "http://127.0.0.1:4000",
 		AllowedIPPrefixes: wantPolicy,
 	})
@@ -112,7 +124,7 @@ func TestCreateOrLoadRouteNeverReusesEphemeralPublicURL(t *testing.T) {
 		Id: "public_url_existing", CanonicalHostname: "demo.example", Ephemeral: true,
 	}}}
 	publicURL, created, err := createOrLoadPublicURL(t.Context(), Config{
-		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
+		Control: control, Management: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App, Target: "http://127.0.0.1:3000", Ephemeral: true,
 	})
 	if err != nil {
@@ -154,7 +166,7 @@ func TestCreateOrLoadRouteFindsSuspendedRouteWithoutRecreating(t *testing.T) {
 func TestCreateOrLoadRouteClassifiesHostnameConflict(t *testing.T) {
 	control := &publisherControlStub{allowed: []string{"create"}, createErr: clientcontrol.ErrNameUnavailable}
 	_, _, err := createOrLoadPublicURL(t.Context(), Config{
-		Control: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
+		Control: control, Management: control, TeamID: "team_1", DomainID: "domain_1", MembershipID: "membership_1",
 		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App, Target: "http://127.0.0.1:3000", Ephemeral: true,
 	})
 	if code, ok := diagnostic.CodeOf(err); !ok || code != diagnostic.PublicURLConflict ||
@@ -166,7 +178,7 @@ func TestCreateOrLoadRouteClassifiesHostnameConflict(t *testing.T) {
 func TestReconcileRouteClassifiesUpdateConflict(t *testing.T) {
 	control := &publisherControlStub{allowed: []string{"update"}, updateErr: clientcontrol.ErrStatusConflict}
 	_, err := reconcilePublicURL(t.Context(), Config{
-		Control: control, Target: "http://127.0.0.1:4000",
+		Control: control, Management: control, Target: "http://127.0.0.1:4000",
 	}, controlv1.PublicURL{
 		Id: "public_url_existing", LifecycleState: controlv1.Enabled, Target: "http://127.0.0.1:3000",
 	})
@@ -190,7 +202,7 @@ func TestCreateOrLoadRouteCreatesTeamScopedPublicURL(t *testing.T) {
 	allowed := []string{"2001:db8::1/64", "192.0.2.9/24"}
 	wantAllowed := []string{"192.0.2.0/24", "2001:db8::/64"}
 	got, created, err := createOrLoadPublicURL(t.Context(), Config{
-		Control: control, TeamID: "team_1", MembershipID: "membership_1", DomainID: "domain_1",
+		Control: control, Management: control, TeamID: "team_1", MembershipID: "membership_1", DomainID: "domain_1",
 		Hostname: "demo.example", PublicURLScope: controlv1.Member, Purpose: controlv1.App, Target: "http://127.0.0.1:3000",
 		AllowedIPPrefixes: allowed,
 	})
@@ -219,7 +231,7 @@ func TestCreateOrLoadRouteLookupErrorsDoNotCreate(t *testing.T) {
 func TestCreateOrLoadRoutePreservesConcurrentCreationConflict(t *testing.T) {
 	control := &publisherControlStub{allowed: []string{"lookup", "create"}, createErr: clientcontrol.ErrNameUnavailable}
 	_, created, err := createOrLoadPublicURL(t.Context(), Config{
-		Control: control, TeamID: "team_1", DomainID: "domain_1", Hostname: "demo.example", PublicURLScope: controlv1.Shared, Purpose: controlv1.App,
+		Control: control, Management: control, TeamID: "team_1", DomainID: "domain_1", Hostname: "demo.example", PublicURLScope: controlv1.Shared, Purpose: controlv1.App,
 	})
 	if created || !errors.Is(err, clientcontrol.ErrNameUnavailable) || control.lookupCalls != 1 || control.created == nil {
 		t.Fatalf("concurrent create result = %t, %v", created, err)

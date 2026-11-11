@@ -79,8 +79,8 @@ type completionCleanup struct {
 	calls  atomic.Int32
 }
 
-func (o *completionCleanup) ObserveOperation(name string, err error, _ time.Duration) {
-	if name == "IngressBackendCleanup" {
+func (o *completionCleanup) ObserveOperationContext(_ context.Context, name observability.ServerOperation, err error, _ time.Duration) {
+	if name == observability.OpIngressBackendCleanup {
 		o.calls.Add(1)
 		select {
 		case o.result <- err:

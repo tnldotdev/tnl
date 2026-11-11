@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -263,7 +265,7 @@ func (d *Database) ClaimPublisherConnection(
 	request PublisherConnectionClaimRequest,
 	now time.Time,
 ) (result ClaimedPublisherConnection, retErr error) {
-	ctx, finish := d.observeOperation(ctx, "ClaimPublisherConnection")
+	ctx, finish := d.observeOperation(ctx, observability.OpClaimPublisherConnection)
 	defer func() { finish(retErr) }()
 	if err := validatePublisherConnectionClaim(request); err != nil {
 		return ClaimedPublisherConnection{}, err
@@ -356,7 +358,7 @@ func (d *Database) MarkPublisherConnectionReady(
 	request PublisherConnectionClaimRequest,
 	now time.Time,
 ) (result ClaimedPublisherConnection, retErr error) {
-	ctx, finish := d.observeOperation(ctx, "MarkPublisherConnectionReady")
+	ctx, finish := d.observeOperation(ctx, observability.OpMarkPublisherConnectionReady)
 	defer func() { finish(retErr) }()
 	return d.markPublisherConnectionReady(ctx, request, now)
 }

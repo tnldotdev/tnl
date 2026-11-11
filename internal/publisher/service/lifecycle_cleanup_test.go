@@ -38,3 +38,15 @@ func TestServiceRunInvalidSetupStillClosesAndPreservesCleanupFailure(t *testing.
 		t.Fatal("invalid setup skipped its close or lost either error", err)
 	}
 }
+
+func TestServiceRunRequiresExplicitProtocolBeforeAccess(t *testing.T) {
+	config, _ := lifecycleFixture(t)
+	config.Metadata.Protocol = ""
+	config.Access = func(context.Context) (string, error) {
+		t.Fatal("missing service protocol reached credential exchange")
+		return "", nil
+	}
+	if err := Publish(t.Context(), config); !errors.Is(err, ErrPrivateStream) {
+		t.Fatal("missing service protocol used an implicit TCP declaration", err)
+	}
+}

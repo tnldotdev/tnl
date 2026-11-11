@@ -94,7 +94,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 	if err != nil {
 		return publisherprotocol.Registration{}, err
 	}
-	native, err := publisheridentity.ResolveAdHoc(ctx, profile, control, authority, server, "", "", "", file, "", request.PublisherIdentityId, nil)
+	native, err := publisheridentity.ResolveAdHoc(ctx, profile, publisheridentity.NativeControl{PublicURLControl: control}, authority, server, "", "", "", file, "", request.PublisherIdentityId, nil)
 	if err != nil {
 		if file != "" && errors.Is(err, publisheridentity.ErrScope) {
 			return publisherprotocol.Registration{}, credentialfile.ErrInvalid
@@ -140,7 +140,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		return publisherprotocol.Registration{}, err
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
-	cfg := publisher.Config{Control: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: true, AssignedPublicURL: &publicURL, TransportTLS: tlsConfig}
+	cfg := publisher.Config{Control: native, Identity: native, Audit: native, VisitorControl: native, BrowserControl: native, Shares: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: true, AssignedPublicURL: &publicURL, TransportTLS: tlsConfig}
 	cfg.PublisherIdentityID = native.PublisherIdentityID()
 	cfg.RequirePostQuantum = request.RequirePostQuantum
 	if publicURL.MembershipId != nil {

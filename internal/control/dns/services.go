@@ -17,10 +17,7 @@ type serviceEndpointStore interface {
 }
 
 func (w *Worker) processServiceEndpoint(ctx context.Context, now time.Time) (_ bool, retErr error) {
-	store, ok := w.store.(serviceEndpointStore)
-	if !ok {
-		return false, nil
-	}
+	store := w.store
 	ctx, finish := observability.WorkerAttempt(ctx, "dns.service.attempt")
 	var attemptErr error
 	defer func() { finishDNSAttempt(ctx, finish, errors.Join(retErr, attemptErr)) }()

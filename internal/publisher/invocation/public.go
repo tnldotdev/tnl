@@ -107,6 +107,7 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 		return app.Configuration{}, err
 	}
 	cfg.Control, cfg.PublisherIdentityID = native, native.PublisherIdentityID()
+	configureNativePublication(&cfg, native, native)
 	if a.AttachPublication != nil {
 		if err := a.AttachPublication(ctx, service, &cfg); err != nil {
 			return app.Configuration{}, err
@@ -142,8 +143,8 @@ func (a *ProjectRuntime) PublicConfiguration(ctx context.Context, service app.Se
 		}
 		return nil
 	}
-	group := projectIntegrationGroup(project.Project, services.namespace)
-	configuration := app.Configuration{Publisher: cfg, TargetBinding: binding, Inspection: inspectionPolicy, PrimaryRoot: project.Worktree.PrimaryCheckoutRoot(), SharedRoot: project.Worktree.PrimaryCheckoutRoot(), IntegrationGroup: group}
+	group := projectIntegrationScope(project.Project, services.namespace)
+	configuration := app.Configuration{Publisher: cfg, TargetBinding: binding, Inspection: inspectionPolicy, PrimaryRoot: project.Worktree.PrimaryCheckoutRoot(), SharedRoot: project.Worktree.PrimaryCheckoutRoot(), IntegrationScope: group}
 	configuration.Attach = func(ctx context.Context, tunnel *clientstate.Tunnel, cfg *publisher.Config) (func(), error) {
 		if project.Config.OAuth {
 			origin, _, err := projectOAuthPublisher(ctx, a.state, project.Project, server, valueOrEmpty(project.Config.Team), services.authenticated)

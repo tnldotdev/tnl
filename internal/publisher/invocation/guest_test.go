@@ -5,10 +5,13 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
 
+	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
@@ -29,8 +32,10 @@ type guestEnrollmentStub struct {
 	public      ed25519.PublicKey
 	calls, runs int
 	lost        error
-	publisheridentity.NativeControl
+	publisheridentity.PublicURLControl
 }
+
+func (*guestEnrollmentStub) ControlURL() string { return "https://control.example" }
 
 func (s *guestEnrollmentStub) EnrollGuestPublisher(_ context.Context, id string, public ed25519.PublicKey) (controlv1.GuestPublisherIdentity, error) {
 	s.calls++
@@ -88,20 +93,27 @@ func TestGuestPublicationRetriesEnrollmentWithItsDurableKeyAndUsesSignedRuns(t *
 	publicURL := controlv1.PublicURL{Id: newID(opaqueid.PublicURLPrefix), TeamId: newID(opaqueid.TeamPrefix), LifecycleState: controlv1.Enabled, Purpose: controlv1.Demo, ServiceProtocol: controlv1.Http, Ephemeral: true}
 	lost := errors.New("lost enrollment response")
 	stub := &guestEnrollmentStub{identity: controlv1.GuestPublisherIdentity{ClientId: newID(opaqueid.PublisherIdentityPrefix), KeyId: newID(opaqueid.PublisherIdentityKeyPrefix), GrantId: newID(opaqueid.PublisherGrantPrefix), PublicUrlId: publicURL.Id, TeamId: publicURL.TeamId}, lost: lost}
-	if _, err := enrollGuestNativeWithClients(t.Context(), store, publicURL, stub, stub, stub); !errors.Is(err, lost) {
+	if _, err := enrollGuestNativeWithClients(t.Context(), store, publicURL, stub, publisheridentity.NativeControl{PublicURLControl: stub}, stub); !errors.Is(err, lost) {
 		t.Fatalf("lost bootstrap response = %v", err)
 	}
 	for range 2 {
-		native, err := enrollGuestNativeWithClients(t.Context(), store, publicURL, stub, stub, stub)
+		native, err := enrollGuestNativeWithClients(t.Context(), store, publicURL, stub, publisheridentity.NativeControl{PublicURLControl: stub}, stub)
 		if err != nil {
 			t.Fatal(err)
 		}
-		control := nativePublicationControl(native, nil)
-		if _, err := control.CreatePublishRun(t.Context(), publicURL.Id, newID(opaqueid.IdempotencyPrefix)); err != nil {
+		cfg := publisher.Config{Control: guestPublicationControl{PublicURLControlClient: native, assigned: publicURL}}
+		configureNativePublication(&cfg, native, native)
+		if cfg.Management != nil || cfg.AccessManagement != nil {
+			t.Fatal("guest publication retained management authority")
+		}
+		if _, err := cfg.Control.CreatePublishRun(t.Context(), publicURL.Id, newID(opaqueid.IdempotencyPrefix)); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := any(control).(publisher.PublicURLManagementClient); ok {
+		if _, ok := any(native).(publisher.PublicURLManagementClient); ok {
 			t.Fatal("guest acquired a broader creation scope")
+		}
+		if _, ok := cfg.Control.(publisher.PublicURLManagementClient); ok {
+			t.Fatal("guest serving client exposed management authority")
 		}
 	}
 	if stub.calls != 2 || stub.runs != 2 {
@@ -114,6 +126,30 @@ func TestGuestAssignmentCannotDeleteAnotherURL(t *testing.T) {
 	control := guestPublicationControl{assigned: publicURL}
 	if err := control.DeletePublicURL(t.Context(), "url_another"); !errors.Is(err, publisheridentity.ErrScope) {
 		t.Fatalf("guest assignment deleted another URL: %v", err)
+	}
+}
+
+func TestGuestAssignmentDeletesAssignedURLWithTrialAuthentication(t *testing.T) {
+	publicURL := controlv1.PublicURL{Id: "url_assigned"}
+	deletions := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deletions++
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/public-urls/"+publicURL.Id || r.Header.Get("Authorization") != "Bearer trial-session" {
+			t.Error("guest cleanup lost its assigned URL or trial credential")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	bootstrap, err := clientcontrol.New(server.URL, server.Client(), credentials.AccessToken("trial-session"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := publisher.Config{Control: guestPublicationControl{assigned: publicURL, bootstrap: bootstrap}}
+	if err := cfg.Control.DeletePublicURL(t.Context(), publicURL.Id); err != nil {
+		t.Fatal(err)
+	}
+	if deletions != 1 {
+		t.Fatal("guest cleanup did not delete the assigned URL exactly once")
 	}
 }
 

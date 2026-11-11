@@ -11,7 +11,7 @@ import (
 
 func TestWriteProvidesACompleteCorrelatedProblem(t *testing.T) {
 	response := httptest.NewRecorder()
-	requestID := Write(response, http.StatusConflict, "ingress_lease_stale", "ingress lease stale", "register a new ingress process run")
+	requestID := Write(response, http.StatusConflict, "ingress_lease_stale", "ingress lease stale", "register a new ingress process run", "")
 	if response.Code != http.StatusConflict || response.Header().Get("Content-Type") != "application/problem+json" ||
 		!opaqueid.Valid(requestID, opaqueid.RequestPrefix) {
 		t.Fatalf("problem response = %d, %v; request_id = %q", response.Code, response.Header(), requestID)

@@ -37,7 +37,9 @@ func TestConnectionOwnerRefreshUpdatesExactHandleBeforeProofExpiry(t *testing.T)
 	reader, writer := io.Pipe()
 	defer reader.Close()
 	done := make(chan error, 1)
-	go func() { done <- Serve(life, scope, directory, "/test/tnl", b, writer) }()
+	go func() {
+		done <- Serve(life, scope, directory, "/test/tnl", OwnerConfig{Backend: b, AuthorizationDeadline: b.AuthorizationDeadline}, writer)
+	}()
 	t.Cleanup(func() {
 		cancel()
 		_ = writer.Close()

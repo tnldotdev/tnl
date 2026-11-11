@@ -100,6 +100,8 @@ type gatedOpenBackend struct {
 	err        error
 }
 
+func (*gatedOpenBackend) ConnectionSlot() uint8 { return 0 }
+
 type gatedDeniedBackend struct {
 	*gatedOpenBackend
 }

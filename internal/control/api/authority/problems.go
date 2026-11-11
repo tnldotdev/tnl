@@ -1,6 +1,7 @@
 package authority
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,12 +10,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/httpjson"
-	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
-func writeControlStateProblem(response http.ResponseWriter, operation string, err error) {
+func writeControlStateProblem(ctx context.Context, response http.ResponseWriter, operation string, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrProjectManaged):
 		writeProblem(response, http.StatusConflict, authorityv1.ProjectManaged, "resource is managed by project configuration; change the declaration and run tnl apply")
@@ -33,7 +33,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusConflict, authorityv1.Conflict, "authority state conflict")
 	default:
 		requestID := writeProblem(response, http.StatusInternalServerError, authorityv1.Internal, "internal server error")
-		operatorlog.ReportContext(observability.ResponseContext(response), failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(ctx, failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
 	}
 }
 
@@ -52,7 +52,7 @@ func notFound(response http.ResponseWriter, _ *http.Request) {
 }
 
 func writeProblem(response http.ResponseWriter, status int, code authorityv1.ProblemCode, title string) string {
-	return failureproblem.Write(response, status, string(code), title, title)
+	return failureproblem.Write(response, status, string(code), title, title, "")
 }
 
 func writeJSON(response http.ResponseWriter, status int, value any) {

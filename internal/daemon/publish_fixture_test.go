@@ -274,6 +274,10 @@ func prepareIntegrationPublisher(ctx context.Context, config publisher.Config) (
 			return config, fmt.Errorf("prepare enrolled public publisher: %w", err)
 		}
 		config.Control, config.PublisherIdentityID = native, identity.ClientId
+		config.Identity, config.Audit = native, native
+		config.VisitorControl, config.BrowserControl = bootstrap.Client, bootstrap.Client
+		config.Shares, config.Previews, config.FeedbackControl = bootstrap.Client, bootstrap.Client, bootstrap.Client
+		config.Management, config.AccessManagement = nil, nil
 		if observed != nil {
 			observed.Native = native
 			config.Control = observed

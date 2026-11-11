@@ -7,6 +7,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/control/maintenance"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -25,7 +26,7 @@ func (s cancelingAuditDatabase) CleanupServiceAudit(ctx context.Context, now tim
 func TestIntegrationServiceAuditCleanupObservedOnce(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	url, inspect := standaloneTestDatabase(t)
-	db, err := controlstate.Open(t.Context(), url, testStorageKey, "")
+	db, err := controlstate.Open(t.Context(), url, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

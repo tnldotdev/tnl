@@ -36,7 +36,7 @@ func TestDetachedChildProcess(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		child, err := startDetachedProcess(binary, []string{"-test.run=^TestDetachedChildProcess$", "-tnl-detached-child-root=" + *detachedHelperRoot, "-tnl-detached-child-mode=write-" + output})
+		child, err := startDetachedProcess(binary, []string{"-test.run=^TestDetachedChildProcess$", "-tnl-detached-child-root=" + *detachedHelperRoot, "-tnl-detached-child-mode=write-" + output}, os.Environ())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -148,7 +148,7 @@ func TestDetachedConnectorReturnsPreparedAddressForEveryProtocol(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cmd, err := startDetachedProcess(binary, []string{"-test.run=^TestDetachedChildProcess$", "-tnl-detached-child-root=" + state, "-tnl-detached-child-mode=connection-" + protocol})
+			cmd, err := startDetachedProcess(binary, []string{"-test.run=^TestDetachedChildProcess$", "-tnl-detached-child-root=" + state, "-tnl-detached-child-mode=connection-" + protocol}, os.Environ())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -198,7 +198,7 @@ func TestDetachedHandshakeWaitsForReadyAndReapsStartupFailures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cmd, err := startDetachedProcess(binary, []string{"-test.run=^TestDetachedChildProcess$", "-tnl-detached-child-root=" + stateRoot, "-tnl-detached-child-mode=" + mode})
+			cmd, err := startDetachedProcess(binary, []string{"-test.run=^TestDetachedChildProcess$", "-tnl-detached-child-root=" + stateRoot, "-tnl-detached-child-mode=" + mode}, os.Environ())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -258,7 +258,7 @@ func TestDetachedProcessHasIndependentSessionAndStopsBySocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd, err := startDetachedProcess(binary, []string{"-test.run=^TestDetachedChildProcess$", "-tnl-detached-child-root=" + stateRoot})
+	cmd, err := startDetachedProcess(binary, []string{"-test.run=^TestDetachedChildProcess$", "-tnl-detached-child-root=" + stateRoot}, os.Environ())
 	if err != nil {
 		t.Fatal(err)
 	}

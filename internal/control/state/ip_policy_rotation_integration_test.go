@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 )
 
@@ -30,7 +31,7 @@ func TestIntegrationStorageRotationVisitorIPGrant(t *testing.T) {
 	}
 	d.Close()
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))
-	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey)
+	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey, naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +40,7 @@ func TestIntegrationStorageRotationVisitorIPGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	rotating.Close()
-	reopened, err := Open(t.Context(), databaseURL, newKey, "")
+	reopened, err := Open(t.Context(), databaseURL, newKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +70,7 @@ func TestIntegrationStorageRotationDeviceLogin(t *testing.T) {
 	}
 	d.Close()
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))
-	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey)
+	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey, naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func TestIntegrationStorageRotationDeviceLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	rotating.Close()
-	reopened, err := Open(t.Context(), databaseURL, newKey, "")
+	reopened, err := Open(t.Context(), databaseURL, newKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +135,7 @@ func TestIntegrationStorageRotationBrowserSecrets(t *testing.T) {
 	}
 	d.Close()
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{6}, 32))
-	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey)
+	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey, naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func TestIntegrationStorageRotationBrowserSecrets(t *testing.T) {
 		t.Fatal("browser secret rotation did not converge", n, err)
 	}
 	rotating.Close()
-	reopened, err := Open(t.Context(), databaseURL, newKey, "")
+	reopened, err := Open(t.Context(), databaseURL, newKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +207,7 @@ func TestIntegrationSignedInIPPolicySurvivesStorageKeyRotation(t *testing.T) {
 	}
 	database.Close()
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{2}, 32))
-	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey)
+	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey, naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +215,7 @@ func TestIntegrationSignedInIPPolicySurvivesStorageKeyRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	rotating.Close()
-	reopened, err := Open(t.Context(), databaseURL, newKey, "")
+	reopened, err := Open(t.Context(), databaseURL, newKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,13 +275,13 @@ func TestIntegrationPreviousKeyStaysRequiredUntilGuestTrialExpires(t *testing.T)
 	}
 	database.Close()
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{3}, 32))
-	if reopened, err := Open(t.Context(), databaseURL, newKey, ""); err == nil {
+	if reopened, err := Open(t.Context(), databaseURL, newKey, "", naming.ManagedURLModeGenerated); err == nil {
 		reopened.Close()
 		t.Fatal("an active guest trial lost its IP verifier key")
 	} else if !strings.Contains(err.Error(), "previous storage key") {
 		t.Fatalf("missing guest key failure = %v", err)
 	}
-	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey)
+	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey, naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +296,7 @@ func TestIntegrationPreviousKeyStaysRequiredUntilGuestTrialExpires(t *testing.T)
 		t.Fatal(err)
 	}
 	rotating.Close()
-	withoutPrevious, err := Open(t.Context(), databaseURL, newKey, "")
+	withoutPrevious, err := Open(t.Context(), databaseURL, newKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatalf("expired guest still required its old key: %v", err)
 	}

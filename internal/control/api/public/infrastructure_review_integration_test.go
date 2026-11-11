@@ -11,6 +11,7 @@ import (
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -26,7 +27,7 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 	if err := controlstate.Migrate(ctx, databaseURL); err != nil {
 		t.Fatal(err)
 	}
-	d, err := controlstate.Open(ctx, databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	d, err := controlstate.Open(ctx, databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

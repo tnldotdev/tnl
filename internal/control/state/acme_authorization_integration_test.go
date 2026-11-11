@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestIntegrationBaselineACMEAuthorizationConstraints(t *testing.T) {
@@ -13,7 +14,7 @@ func TestIntegrationBaselineACMEAuthorizationConstraints(t *testing.T) {
 	if err := Migrate(t.Context(), databaseURL); err != nil {
 		t.Fatal(err)
 	}
-	database, err := Open(t.Context(), databaseURL, testStorageKey, "")
+	database, err := Open(t.Context(), databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

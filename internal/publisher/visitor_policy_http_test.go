@@ -191,4 +191,4 @@ func TestPublisherVisitorPolicyHTTPMaximumPublicRunSourceKey(t *testing.T) {
 	}
 }
 
-var _ visitorPolicyClient = (*clientcontrol.Client)(nil)
+var _ VisitorPolicyClient = (*clientcontrol.Client)(nil)

@@ -26,7 +26,7 @@ import (
 const (
 	// the coordinated baseline requires the exact migration and identity.
 	schemaVersion       int64 = 1
-	baselineID                = "tnl-control-fresh-v1-workload-gitlab"
+	baselineID                = "tnl-control-fresh-v1-explicit-capabilities"
 	versionTable              = "control.goose_db_version"
 	bootstrapRetryDelay       = 25 * time.Millisecond
 )
@@ -140,15 +140,8 @@ func Migrate(ctx context.Context, directURL string) (retErr error) {
 }
 
 // Open connects to already-migrated control state using a pooled PostgreSQL
-// URL. Open never creates or migrates schema objects.
-func Open(ctx context.Context, pooledURL, currentStorageKey, previousStorageKey string, modes ...naming.ManagedURLMode) (*Database, error) {
-	mode := naming.ManagedURLModeGenerated
-	if len(modes) > 1 {
-		return nil, errors.New("controlstate: specify one managed URL mode")
-	}
-	if len(modes) == 1 && modes[0] != "" {
-		mode = modes[0]
-	}
+// URL and an explicit managed URL mode. it never creates or migrates schema objects.
+func Open(ctx context.Context, pooledURL, currentStorageKey, previousStorageKey string, mode naming.ManagedURLMode) (*Database, error) {
 	if mode != naming.ManagedURLModeSimple && mode != naming.ManagedURLModeGenerated {
 		return nil, errors.New("controlstate: invalid managed URL mode")
 	}
@@ -242,8 +235,7 @@ type schemaVersionQuerier interface {
 func readSchemaVersion(ctx context.Context, database schemaVersionQuerier) (int64, error) {
 	var version int64
 	if err := database.QueryRow(ctx, `
-		SELECT CASE WHEN to_regclass('control.publish_run_publisher_grants') IS NULL THEN 0
-		    ELSE COALESCE(MAX(version_id) FILTER (WHERE is_applied), 0) END
+		SELECT COALESCE(MAX(version_id) FILTER (WHERE is_applied), 0)
 		FROM control.goose_db_version
 	`).Scan(&version); err != nil {
 		return 0, fmt.Errorf("controlstate: read schema version: %w", err)

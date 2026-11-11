@@ -124,3 +124,13 @@ func TestServiceEndpointDNSFencesStaleWork(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestWorkerClaimsServiceEndpointWhenOtherQueuesAreEmpty(t *testing.T) {
+	now := time.Now().UTC()
+	store := &dnsStoreStub{}
+	provider := &providerStub{}
+	worker := testDNSWorker(t, store, provider, &verifierStub{}, now)
+	if found, err := worker.processOne(t.Context()); found || err != nil || store.serviceEndpointClaims != 1 || provider.publishCalls != 0 {
+		t.Fatalf("empty service queue = %t, %v; claims = %d, publishes = %d", found, err, store.serviceEndpointClaims, provider.publishCalls)
+	}
+}

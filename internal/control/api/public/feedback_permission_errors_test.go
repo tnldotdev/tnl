@@ -18,7 +18,7 @@ func TestFeedbackPermissionFailureBoundaries(t *testing.T) {
 	}{{"sign-in", controlstate.ErrVisitorSignIn, 401}, {"permission", controlstate.ErrFeedbackAccess, 403}, {"authority outage", authorization.ErrUnavailable, 503}, {"database outage", errors.New("private database credential"), 503}} {
 		t.Run(test.Name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			writeFeedbackProblem(w, "write feedback", test.Err)
+			writeFeedbackProblem(t.Context(), w, "write feedback", test.Err)
 			if w.Code != test.Status {
 				t.Fatalf("status=%d want=%d", w.Code, test.Status)
 			}

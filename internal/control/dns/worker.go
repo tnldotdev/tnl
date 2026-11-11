@@ -57,6 +57,7 @@ type DNSVerifier interface {
 }
 
 type Store interface {
+	serviceEndpointStore
 	ClaimDNSAuthorityWork(context.Context, string, time.Time, time.Duration) (controlstate.DNSAuthorityWork, bool, error)
 	SaveDNSAuthorityWork(context.Context, controlstate.DNSAuthorityWork, time.Time) (controlstate.DNSAuthorityWork, error)
 	DNSAuthorityReleaseReady(context.Context, string, time.Time) (bool, error)

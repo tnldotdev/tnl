@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"time"
 
-	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
+	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
@@ -36,11 +36,40 @@ type PublicURLManagementClient interface {
 	UpdatePublicURL(context.Context, string, controlv1.UpdatePublicURLRequest) (controlv1.PublicURL, error)
 }
 
+type PublisherIdentityClient interface {
+	PublisherIdentityID() string
+}
+
+type PublisherAuditClient interface {
+	ReportPublisherServiceObservations(context.Context, string, uint64, credentials.PublishRunToken, serviceaudit.Batch) error
+}
+
+type BrowserControlClient interface {
+	browserTokenClient
+	browserAccessClient
+}
+
+type PreviewClient interface {
+	CreatePublishRunPreview(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.Preview, error)
+}
+
+type VisitorAccessManagementClient interface {
+	ReplaceVisitorAccess(context.Context, string, controlv1.ReplaceVisitorAccessRequest) (controlv1.PublicURL, error)
+}
+
 type Config struct {
 	RequirePostQuantum           *bool
 	PublisherIdentityID          string
 	Control                      PublicURLControlClient
-	VisitorControl               *clientcontrol.Client
+	Identity                     PublisherIdentityClient
+	Audit                        PublisherAuditClient
+	VisitorControl               VisitorPolicyClient
+	BrowserControl               BrowserControlClient
+	Shares                       ShareAccessClient
+	Previews                     PreviewClient
+	FeedbackControl              FeedbackClient
+	Management                   PublicURLManagementClient
+	AccessManagement             VisitorAccessManagementClient
 	ControlURL                   string
 	BrowserLoginAvailable        bool
 	TeamID                       string
@@ -103,13 +132,14 @@ type ResponseObserver func(*http.Response, PublishRunIdentity) error
 // enrolled identity. an explicit caller ID cannot override its signed adapter.
 func configuredPublisherIdentityID(config Config) (string, error) {
 	id := config.PublisherIdentityID
-	if source, ok := config.Control.(interface{ PublisherIdentityID() string }); ok {
-		selected := source.PublisherIdentityID()
-		if id != "" && id != selected {
-			return "", errors.New("public publisher identity differs from the selected grant")
-		}
-		id = selected
+	if config.Identity == nil {
+		return "", errors.New("public publisher requires an enrolled publisher identity")
 	}
+	selected := config.Identity.PublisherIdentityID()
+	if id != "" && id != selected {
+		return "", errors.New("public publisher identity differs from the selected grant")
+	}
+	id = selected
 	if !opaqueid.Valid(id, opaqueid.PublisherIdentityPrefix) {
 		return "", errors.New("public publisher requires an enrolled publisher identity")
 	}

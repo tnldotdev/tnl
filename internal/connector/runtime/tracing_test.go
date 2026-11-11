@@ -64,7 +64,7 @@ func TestConnectionOwnerReadinessAndIPCDoNotWaitForExporter(t *testing.T) {
 	done := make(chan struct{})
 	var result error
 	go func() {
-		result = Serve(lifetime, scope, directory, "/test/tnl", &fixtureBackend{deadline: time.Now().Add(time.Hour)}, writer)
+		result = Serve(lifetime, scope, directory, "/test/tnl", OwnerConfig{Backend: &fixtureBackend{deadline: time.Now().Add(time.Hour)}}, writer)
 		close(done)
 	}()
 	defer func() { cancel(); <-done }()

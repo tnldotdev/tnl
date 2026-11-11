@@ -77,12 +77,12 @@ func TestBackgroundLabelsAreClosed(t *testing.T) {
 
 func TestOperationDurationsUseFixedRoleLabels(t *testing.T) {
 	metrics := New("standalone")
-	for _, operation := range []string{
-		"CreatePublishRun", "IngressRegister", "RelayDisconnectPublisherConnection",
+	for _, operation := range []ServerOperation{
+		OpCreatePublishRun, OpIngressRegister, OpRelayDisconnectPublisherConnection,
 	} {
-		metrics.ObserveOperation(operation, nil, time.Millisecond)
+		metrics.ObserveOperationContext(t.Context(), operation, nil, time.Millisecond)
 	}
-	metrics.ObserveOperation("IngressPrivateHostname", nil, time.Millisecond)
+	metrics.ObserveOperationContext(t.Context(), ServerOperation(255), nil, time.Millisecond)
 	for _, test := range []struct {
 		name      string
 		operation string

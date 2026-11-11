@@ -11,11 +11,11 @@ import (
 
 // ControlOperation starts before database work so driver spans inherit the
 // operation, rather than constructing a disconnected span after completion.
-func ControlOperation(ctx context.Context, operation string) (context.Context, func(error)) {
-	name, ok := controlOperationName(operation)
-	if !ok {
+func ControlOperation(ctx context.Context, operation ServerOperation) (context.Context, func(error)) {
+	if operation < OpCreatePublishRun || operation > OpPublisherRuntimeInvalid {
 		return ctx, func(error) {}
 	}
+	name := operation.operation()
 	m := FromContext(ctx)
 	started := time.Now()
 	ctx, end := Start(ctx, name)
@@ -42,9 +42,9 @@ func WorkerAttempt(ctx context.Context, operation operationName) (context.Contex
 }
 
 // MarkReason accepts only closed domain classifications, never cause text.
-func MarkReason(ctx context.Context, reason string) {
-	if _, ok := domainOutcomes[reason]; ok {
-		trace.SpanFromContext(ctx).SetAttributes(Reason.String(reason))
+func MarkReason(ctx context.Context, reason DomainReason) {
+	if value := reason.String(); value != "" {
+		trace.SpanFromContext(ctx).SetAttributes(Reason.String(value))
 	}
 }
 
@@ -73,7 +73,7 @@ func CertificateDNSKind(ctx context.Context) string {
 	return "public_url_challenge"
 }
 
-func ObservePublisherRuntime(ctx context.Context, action, result string, elapsed time.Duration) {
+func ObservePublisherRuntime(ctx context.Context, action string, outcome Outcome, reason DomainReason, elapsed time.Duration) {
 	switch action {
 	case "inspect", "start", "renew", "stop":
 	default:
@@ -83,15 +83,14 @@ func ObservePublisherRuntime(ctx context.Context, action, result string, elapsed
 	if m == nil {
 		return
 	}
-	outcome, reason := classifyResult(result)
 	attrs := append(Attributes(ctx, TeamID, PublisherGroupID, PublisherIdentityID, DeploymentID, ReplicaKey), Operation.Value(operationName(action)), OutcomeKey.Value(outcome))
-	if reason != "" {
-		attrs = append(attrs, Reason.String(reason))
+	if value := reason.String(); value != "" {
+		attrs = append(attrs, Reason.String(value))
 	}
 	m.publisherruntime.instrument.Record(ctx, elapsed.Seconds(), metric.WithAttributes(attrs...))
 }
 
-func (m *Metrics) completedResult(ctx context.Context, name operationName, outcome string, elapsed time.Duration) (context.Context, func()) {
+func (m *Metrics) completedResult(ctx context.Context, name operationName, outcome semanticResult, elapsed time.Duration) (context.Context, func()) {
 	now := time.Now()
 	ctx, span := m.tracer().Start(ctx, name.String(), trace.WithTimestamp(now.Add(-elapsed)), trace.WithAttributes(append(identityAttributes(ctx), fieldAttributes(ctx)...)...))
 	span.SetAttributes(Operation.Value(name))

@@ -16,7 +16,7 @@ import (
 )
 
 // Observer records a login before sending the authorization response to the browser.
-func Observer(state *clientstate.Database, server, hostname, group, tunnelID string) publisher.ResponseObserver {
+func Observer(state *clientstate.Database, server, hostname string, group clientstate.IntegrationScope, tunnelID string) publisher.ResponseObserver {
 	return func(response *http.Response, run publisher.PublishRunIdentity) error {
 		location, err := url.Parse(response.Header.Get("Location"))
 		if err != nil || location.Scheme != "https" || location.Host == "" {
@@ -53,7 +53,7 @@ func Observer(state *clientstate.Database, server, hostname, group, tunnelID str
 			return diagnostic.Wrap(diagnostic.OAuthCallbackUnavailable, errors.New("OAuth callback publisher is not ready"))
 		}
 		if err := state.SaveOAuthCallback(ctx, clientstate.SaveOAuthCallbackInput{
-			Scope:       clientstate.OAuthCallbackScope{Server: server, Hostname: hostname, IntegrationGroup: group},
+			Scope:       clientstate.OAuthCallbackScope{Server: server, Hostname: hostname, IntegrationScope: group},
 			Origin:      clientstate.OAuthRedirectOrigin{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number},
 			Destination: clientstate.OAuthCallbackDestination{TunnelID: tunnelID, Path: callback.Path, Query: callback.RawQuery}, State: query.Get("state"),
 		}); err != nil {
@@ -64,19 +64,19 @@ func Observer(state *clientstate.Database, server, hostname, group, tunnelID str
 }
 
 // OAuthHandler returns the browser to the same path on the originating worktree.
-func OAuthHandler(state *clientstate.Database, server, hostname string, onRedirect ...func()) http.Handler {
+func OAuthHandler(state *clientstate.Database, server, hostname string, onRedirect func()) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Referrer-Policy", "no-referrer")
 		authority, err := naming.CanonicalizeAuthority(request.Host)
 		if err != nil || authority != hostname {
-			diagnostic.WriteHTTP(response, request, diagnostic.RequestMisdirected)
+			diagnostic.WriteHTTP(response, request, diagnostic.RequestMisdirected, "")
 			return
 		}
 		query, err := url.ParseQuery(request.URL.RawQuery)
 		if err != nil || request.Method != http.MethodGet || request.URL.RawPath != "" || !targetsyntax.ValidMountPrefix(request.URL.EscapedPath()) ||
 			len(query["state"]) != 1 || query.Get("state") == "" || len(query.Get("state")) > 8192 {
-			diagnostic.WriteHTTP(response, request, diagnostic.RequestRejected)
+			diagnostic.WriteHTTP(response, request, diagnostic.RequestRejected, "")
 			return
 		}
 		callback, origin, err := state.ConsumeOAuthCallback(request.Context(), server, hostname, query.Get("state"), request.URL.EscapedPath())
@@ -85,14 +85,14 @@ func OAuthHandler(state *clientstate.Database, server, hostname string, onRedire
 			if errors.Is(err, sql.ErrNoRows) {
 				code = diagnostic.OAuthCallbackExpired
 			}
-			diagnostic.WriteHTTP(response, request, code)
+			diagnostic.WriteHTTP(response, request, code, "")
 			return
 		}
 		// providers already retain static redirect-URI query parameters. preserve
 		// their response exactly instead of appending the static query a second time.
 		http.Redirect(response, request, "https://"+origin.Hostname+callback.Path+"?"+request.URL.RawQuery, http.StatusSeeOther)
-		if len(onRedirect) != 0 && onRedirect[0] != nil {
-			onRedirect[0]()
+		if onRedirect != nil {
+			onRedirect()
 		}
 	})
 }

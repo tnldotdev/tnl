@@ -263,10 +263,10 @@ func (f *Fixture) serve(t *testing.T, w http.ResponseWriter, r *http.Request) {
 		}
 		// stop before relay admission: the fixture proves connector preparation and
 		// real verified target preflight, without inventing a ready relay.
-		serviceapi.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture heartbeat boundary")
+		serviceapi.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture heartbeat boundary", "")
 	default:
 		if strings.HasSuffix(r.URL.Path, "/certificate-issuances") {
-			serviceapi.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture certificate boundary")
+			serviceapi.WriteProblem(w, http.StatusServiceUnavailable, "unavailable", "fixture certificate boundary", "")
 			return
 		}
 		t.Errorf("unexpected control operation %s %s", r.Method, r.URL.Path)

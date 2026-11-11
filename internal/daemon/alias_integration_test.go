@@ -80,14 +80,14 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 	quic, tcp := fixture.connectors()
 	oauthConfig := fixture.identity.publisherConfig("", quic, tcp)
 	oauthConfig.Purpose = controlv1.Oauth
-	oauthConfig.Handler = integrations.OAuthHandler(state, server, oauthHost)
+	oauthConfig.Handler = integrations.OAuthHandler(state, server, oauthHost, nil)
 	oauthReady := startIntegrationURLWorker(t, integrations.Publisher{State: state, Store: store, Server: server, Hostname: oauthHost,
 		Prepare: func(context.Context) (integrations.Snapshot, error) {
 			return integrations.Snapshot{Config: oauthConfig}, nil
 		}})
 	waitIntegrationURLWorkerReady(t, oauthReady)
 	primary := filepath.Join(t.TempDir(), "main")
-	group := primary + "\x00" + namespace
+	group := clientstate.IntegrationScope{PrimaryProjectRoot: primary, Namespace: namespace}
 	scope := clientstate.AliasScope{Server: server, ProjectKey: primary, TeamID: fixture.identity.teamID, MembershipID: fixture.identity.membershipID, Namespace: namespace, Name: "review"}
 	aliasHost := "review." + namespace
 	type app struct {
@@ -115,7 +115,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		t.Cleanup(target.Close)
 		project := filepath.Join(filepath.Dir(primary), name)
 		tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: server,
-			Project: project, Service: "api", Target: target.URL, IntegrationGroup: group})
+			Project: project, Service: "api", Target: target.URL, IntegrationScope: group})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -137,7 +137,7 @@ func TestIntegrationAliasHandoffKeepsOAuthOriginAndRestoresPrimary(t *testing.T)
 		parent := startOwnedIntegrationPublisher(t, fixture.owner, config, fixture.diagnostics)
 		waitForPublisherReady(t, parent)
 		selection, err := state.RegisterAlias(t.Context(), clientstate.AliasRegistration{Scope: scope, Hostname: aliasHost, Service: "api",
-			TunnelID: tunnel.ID(), IntegrationGroup: group, Fingerprint: sha256.Sum256([]byte("review"))})
+			TunnelID: tunnel.ID(), IntegrationScope: group, Fingerprint: sha256.Sum256([]byte("review"))})
 		if err != nil {
 			t.Fatal(err)
 		}

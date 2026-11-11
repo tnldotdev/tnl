@@ -465,7 +465,7 @@ func TestIntegrationAppliedProjectStorageRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
-	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey)
+	rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey, naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,7 +473,7 @@ func TestIntegrationAppliedProjectStorageRotation(t *testing.T) {
 	if err = rotating.CompleteStorageKeyRotation(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(t.Context(), databaseURL, newKey, "")
+	reopened, err := Open(t.Context(), databaseURL, newKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

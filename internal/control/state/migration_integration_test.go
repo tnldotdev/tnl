@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestIntegrationWorkloadRenewalMigration(t *testing.T) {
@@ -72,7 +73,7 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	if err := Migrate(ctx, databaseURL); err != nil {
 		t.Fatalf("repeat migration: %v", err)
 	}
-	database, err := Open(ctx, databaseURL, testStorageKey, "")
+	database, err := Open(ctx, databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func TestIntegrationPostgresMigrationAndOpen(t *testing.T) {
 	if err := database.Readiness(ctx); err == nil {
 		t.Fatal("readiness accepted a newer database schema")
 	}
-	if newer, err := Open(ctx, databaseURL, testStorageKey, ""); err == nil {
+	if newer, err := Open(ctx, databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated); err == nil {
 		newer.Close()
 		t.Fatal("open accepted a newer database schema")
 	}
@@ -149,7 +150,7 @@ func TestIntegrationMigrationRejectsOtherVersionOneBaseline(t *testing.T) {
 	if err := Migrate(ctx, url); err == nil {
 		t.Fatal("migration accepted a different version-one baseline")
 	}
-	if database, err := Open(ctx, url, testStorageKey, ""); err == nil {
+	if database, err := Open(ctx, url, testStorageKey, "", naming.ManagedURLModeGenerated); err == nil {
 		database.Close()
 		t.Fatal("serving accepted a different version-one baseline")
 	}
@@ -162,6 +163,7 @@ func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, previous := range []string{
+		"tnl-control-fresh-v1-workload-gitlab",
 		"tnl-control-fresh-v1-workload-kubernetes",
 		"tnl-control-fresh-v1-workload-google",
 		"tnl-control-fresh-v1-workload-optional-duration",
@@ -195,7 +197,7 @@ func TestIntegrationMigrationRejectsSiblingWorkloadBaselines(t *testing.T) {
 			if err := d.Readiness(ctx); err == nil {
 				t.Fatal("readiness accepted a sibling workload baseline")
 			}
-			if opened, err := Open(ctx, d.pool.Config().ConnString(), testStorageKey, ""); err == nil {
+			if opened, err := Open(ctx, d.pool.Config().ConnString(), testStorageKey, "", naming.ManagedURLModeGenerated); err == nil {
 				opened.Close()
 				t.Fatal("serving accepted a sibling workload baseline")
 			}

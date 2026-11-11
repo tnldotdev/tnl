@@ -97,7 +97,7 @@ func TestIntegrationPublisherRuntimeLifecycle(t *testing.T) {
 				t.Helper()
 				r := PublisherRuntimeRequest{PublisherIdentityID: id, ScopeID: scope, ProcessRunID: run, Action: action, ExpectedEpoch: epoch, SourceIP: source, Audience: "https://control.example/v1/publisher-runtime", Now: now}
 				var err error
-				r.Assertion, err = publisherproof.Sign(id, key, publisherproof.RuntimeScope(scope, action, run, epoch), r.Audience, private, now)
+				r.Assertion, err = publisherproof.Sign(id, key, publisherproof.RuntimeScope(scope, action, run, epoch, ""), r.Audience, private, now)
 				if err != nil {
 					t.Fatal(err)
 				}

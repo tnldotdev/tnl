@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
@@ -118,7 +119,7 @@ func relayLifecycleDatabase(t *testing.T) (*controlstate.Database, *pgx.Conn) {
 	if err := controlstate.Migrate(t.Context(), databaseURL); err != nil {
 		t.Fatal(err)
 	}
-	database, err := controlstate.Open(t.Context(), databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	database, err := controlstate.Open(t.Context(), databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

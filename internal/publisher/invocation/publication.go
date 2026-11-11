@@ -146,7 +146,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	if err != nil {
 		return err
 	}
-	integrationGroup := ""
+	var integrationScope clientstate.IntegrationScope
 	if protocol == controlv1.Http && !flags.Demo && (project.Config.OAuth || len(project.Config.Webhooks) != 0 || len(project.Config.Aliases) != 0) {
 		if project.Root == "" {
 			worktree, resolveErr := clientproject.ResolveWorktree(ctx, flags.ProjectRoot)
@@ -155,8 +155,8 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 			}
 			project.Project = clientproject.Project{Root: flags.ProjectRoot, Worktree: worktree}
 		}
-		integrationGroup = projectIntegrationGroup(project.Project, services.namespace)
-		if err := tunnel.SetIntegrationGroup(ctx, integrationGroup); err != nil {
+		integrationScope = projectIntegrationScope(project.Project, services.namespace)
+		if err := tunnel.SetIntegrationScope(ctx, integrationScope); err != nil {
 			return err
 		}
 	}
@@ -170,7 +170,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		oauthHostname = oauth.Hostname
 	}
 	if protocol == controlv1.Http && !flags.Demo && len(project.Config.Webhooks) > 0 {
-		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, project.Project, tunnel, flags.Service, integrationGroup, output, telemetryReporter(output.Observe))
+		stopWebhooks := startWebhookIntegrationURL(ctx, state, services, project.Project, tunnel, flags.Service, integrationScope, output, telemetryReporter(output.Observe))
 		defer stopWebhooks()
 	}
 	publisherConfig := services.config(target, policy.prefixes, flags.Limits)
@@ -192,7 +192,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	publisherConfig.InspectionMode = inspection.Mode(flags.InspectionMode)
 	publisherConfig.OnWarning = publishWarning(tunnel, output)
 	if oauthHostname != "" {
-		publisherConfig.ObserveResponse = integrations.Observer(state, serverURL, oauthHostname, integrationGroup, tunnel.ID())
+		publisherConfig.ObserveResponse = integrations.Observer(state, serverURL, oauthHostname, integrationScope, tunnel.ID())
 	}
 	publisherConfig.ControlURL = authenticated.ServerEndpoint
 	publisherConfig.BrowserLoginAvailable = authenticated.Discovery.BrowserLoginAvailable != nil && *authenticated.Discovery.BrowserLoginAvailable
@@ -244,7 +244,7 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 		return output.publisherEvent(ctx, tunnel, serverURL, event)
 	}
 	if protocol == controlv1.Http && !flags.Demo && len(project.Config.Aliases) != 0 {
-		stopAliases := startProjectAliases(ctx, state, project, flags.Service, flags.SelectedTeam, services, publisherConfig, integrationGroup, tunnel, output)
+		stopAliases := startProjectAliases(ctx, state, project, flags.Service, flags.SelectedTeam, services, publisherConfig, integrationScope, tunnel, output)
 		defer stopAliases()
 	}
 	err = publisher.Run(ctx, publisherConfig)

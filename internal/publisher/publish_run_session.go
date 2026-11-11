@@ -11,7 +11,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
-	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -40,12 +39,10 @@ func runSession(
 	publishRunToken := authority.token
 	version := authority.identity.Number
 	var auditSink serviceaudit.Sink
-	if reporter, ok := config.Control.(interface {
-		ReportPublisherServiceObservations(context.Context, string, uint64, credentials.PublishRunToken, serviceaudit.Batch) error
-	}); ok {
+	if config.Audit != nil {
 		queue, err := serviceaudit.NewQueue(context.WithoutCancel(ctx), serviceaudit.QueueConfig{
 			Report: func(ctx context.Context, batch serviceaudit.Batch) error {
-				return reporter.ReportPublisherServiceObservations(ctx, setup.PublishRun.Id, version, publishRunToken, batch)
+				return config.Audit.ReportPublisherServiceObservations(ctx, setup.PublishRun.Id, version, publishRunToken, batch)
 			},
 			Dropped: func(count uint64) {
 				if config.Logf != nil {
@@ -106,15 +103,10 @@ func runSession(
 		setup.PublisherConnections = heartbeat.PublisherConnections
 	}
 	ctx = sessionCtx
-	var visitorClient any = config.Control
-	if config.VisitorControl != nil {
-		visitorClient = config.VisitorControl
-	}
-	policyClient, ok := visitorClient.(visitorPolicyClient)
-	if !ok {
+	if config.VisitorControl == nil {
 		return errors.New("publisher visitor policy client is required")
 	}
-	policy, err := prepareVisitorPolicy(ctx, policyClient, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: setup.PublicUrl.Id}, setup.PublishRun.Id,
+	policy, err := prepareVisitorPolicy(ctx, config.VisitorControl, visitorscope.Scope{Kind: visitorscope.PublicURL, ID: setup.PublicUrl.Id}, setup.PublishRun.Id,
 		int64(version), publishRunToken.String(), func(error) {
 			if config.Logf != nil {
 				config.Logf("publisher: visitor policy renewal failed")
@@ -125,13 +117,10 @@ func runSession(
 	}
 	defer policy.Close()
 	if config.Demo && config.Feedback {
-		client, ok := config.Control.(interface {
-			CreatePublishRunPreview(context.Context, string, uint64, credentials.PublishRunToken) (controlv1.Preview, error)
-		})
-		if !ok {
+		if config.Previews == nil {
 			return errors.New("publisher: demo feedback requires a preview-capable control client")
 		}
-		preview, err := client.CreatePublishRunPreview(ctx, setup.PublishRun.Id, version, publishRunToken)
+		preview, err := config.Previews.CreatePublishRunPreview(ctx, setup.PublishRun.Id, version, publishRunToken)
 		if err != nil {
 			return fmt.Errorf("publisher: create demo feedback preview: %w", err)
 		}
@@ -145,8 +134,8 @@ func runSession(
 		if err := progress("share_access"); err != nil {
 			return err
 		}
-		client, ok := config.Control.(shareAccessClient)
-		if !ok {
+		client := config.Shares
+		if client == nil {
 			return errors.New("publisher: share-capable control client is required for HTTP public URLs")
 		}
 		previewID := config.PreviewID
@@ -171,11 +160,7 @@ func runSession(
 	browser := browserAccessForRun(config, setup, publishRunToken)
 	var browserRenewal *browserTokens
 	if browser != nil {
-		issuer, ok := visitorClient.(browserTokenClient)
-		if !ok {
-			return errors.New("publisher visitor token client is required")
-		}
-		browserRenewal, err = startBrowserTokens(ctx, issuer, policy.lease, func(error) {
+		browserRenewal, err = startBrowserTokens(ctx, config.BrowserControl, policy.lease, func(error) {
 			if config.Logf != nil {
 				config.Logf("publisher: browser visitor token renewal failed")
 			}

@@ -17,7 +17,7 @@ const (
 	maximumFailedRequests     = 20
 )
 
-type feedbackClient interface {
+type FeedbackClient interface {
 	CreateFeedbackReport(context.Context, string, string, controlv1.CreateFeedbackReportRequest, credentials.PublishRunToken) (controlv1.FeedbackThread, error)
 	ListPreviewPageFeedback(context.Context, string, controlv1.PreviewPageFeedbackRequest, credentials.PublishRunToken) (controlv1.FeedbackThreadPage, error)
 	GetReviewerFeedbackThread(context.Context, string, string, controlv1.ReviewerFeedbackReadRequest, credentials.PublishRunToken) (controlv1.FeedbackThread, error)
@@ -26,7 +26,7 @@ type feedbackClient interface {
 }
 
 type feedbackRuntime struct {
-	client      feedbackClient
+	client      FeedbackClient
 	previewID   string
 	publicURLID string
 	service     string
@@ -47,8 +47,8 @@ func newFeedbackRuntime(config Config, setup controlv1.PublishRunSetup, token cr
 	if !config.Feedback {
 		return nil, nil
 	}
-	client, ok := config.Control.(feedbackClient)
-	if !ok || config.PreviewID == "" || config.Service == "" || !config.Demo && config.ProjectRoot == "" {
+	client := config.FeedbackControl
+	if client == nil || config.PreviewID == "" || config.Service == "" || !config.Demo && config.ProjectRoot == "" {
 		return nil, errors.New("publisher: feedback requires a configured preview, project service, and control client")
 	}
 	asset, assetPath := toolbar.Script()

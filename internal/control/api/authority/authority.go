@@ -22,7 +22,7 @@ func (h *handler) RefreshControlSession(response http.ResponseWriter, request *h
 		return
 	}
 	if h.store == nil {
-		writeAuthenticationUnavailable(response, "refresh control session", nil)
+		writeAuthenticationUnavailable(request.Context(), response, "refresh control session", nil)
 		return
 	}
 	issued, err := h.store.RefreshControlSession(
@@ -34,7 +34,7 @@ func (h *handler) RefreshControlSession(response http.ResponseWriter, request *h
 		return
 	}
 	if err != nil {
-		writeAuthenticationUnavailable(response, "refresh control session", err)
+		writeAuthenticationUnavailable(request.Context(), response, "refresh control session", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, controlSessionResponse(issued))
@@ -49,7 +49,7 @@ func (h *handler) LogoutControlSession(response http.ResponseWriter, request *ht
 		writeBearerProblem(response)
 		return
 	} else if err != nil {
-		writeAuthenticationUnavailable(response, "revoke control session", err)
+		writeAuthenticationUnavailable(request.Context(), response, "revoke control session", err)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
@@ -111,7 +111,7 @@ func (h *handler) CreateTeam(
 		RequestDigest: digest, DisplayName: string(body.DisplayName), MemberSlug: optionalMemberSlug(body.MemberSlug),
 	}, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "create team", err)
+		writeControlStateProblem(request.Context(), response, "create team", err)
 		return
 	}
 	writeJSON(response, http.StatusCreated, teamResponse(team))
@@ -149,7 +149,7 @@ func (h *handler) ListTeamMemberships(response http.ResponseWriter, request *htt
 	}
 	memberships, err := h.store.ListTeamMemberships(request.Context(), principal.IdentityID, string(teamID))
 	if err != nil {
-		writeControlStateProblem(response, "list team memberships", err)
+		writeControlStateProblem(request.Context(), response, "list team memberships", err)
 		return
 	}
 	page := authorityv1.MembershipPage{Memberships: make([]authorityv1.Membership, len(memberships))}
@@ -178,7 +178,7 @@ func (h *handler) SetMembershipRole(
 		request.Context(), principal.IdentityID, string(teamID), string(membershipID), controlstate.TeamRole(body.Role), time.Now(),
 	)
 	if err != nil {
-		writeControlStateProblem(response, "set membership role", err)
+		writeControlStateProblem(request.Context(), response, "set membership role", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, membershipResponse(membership))
@@ -197,7 +197,7 @@ func (h *handler) RemoveMembership(
 	if err := h.store.RemoveMembership(
 		request.Context(), principal.IdentityID, string(teamID), string(membershipID), time.Now(),
 	); err != nil {
-		writeControlStateProblem(response, "remove membership", err)
+		writeControlStateProblem(request.Context(), response, "remove membership", err)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
@@ -210,7 +210,7 @@ func (h *handler) ListTeamInvitations(response http.ResponseWriter, request *htt
 	}
 	invitations, err := h.store.ListTeamInvitations(request.Context(), principal.IdentityID, string(teamID), time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "list team invitations", err)
+		writeControlStateProblem(request.Context(), response, "list team invitations", err)
 		return
 	}
 	page := authorityv1.InvitationPage{Invitations: make([]authorityv1.Invitation, len(invitations))}
@@ -258,7 +258,7 @@ func (h *handler) CreateTeamInvitation(
 		ExpiresAt: body.ExpiresAt, EmailRestriction: email, RetrySecret: principal.RetrySecret[:], SendEmail: h.config.EmailDelivery,
 	}, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "create team invitation", err)
+		writeControlStateProblem(request.Context(), response, "create team invitation", err)
 		return
 	}
 	writeJSON(response, http.StatusCreated, authorityv1.InvitationSecret{
@@ -279,7 +279,7 @@ func (h *handler) RevokeTeamInvitation(
 	if err := h.store.RevokeTeamInvitation(
 		request.Context(), principal.IdentityID, string(teamID), string(invitationID), time.Now(),
 	); err != nil {
-		writeControlStateProblem(response, "revoke team invitation", err)
+		writeControlStateProblem(request.Context(), response, "revoke team invitation", err)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
@@ -299,7 +299,7 @@ func (h *handler) AcceptInvitation(response http.ResponseWriter, request *http.R
 		request.Context(), principal.IdentityID, credentials.InvitationToken(body.Secret), time.Now(),
 	)
 	if err != nil {
-		writeControlStateProblem(response, "accept invitation", err)
+		writeControlStateProblem(request.Context(), response, "accept invitation", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, membershipResponse(membership))
@@ -364,7 +364,7 @@ func (h *handler) ClaimTeamDomain(
 		RequestDigest: digest, Domain: body.Domain, MakeDefault: makeDefault,
 	}, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "claim team domain", err)
+		writeControlStateProblem(request.Context(), response, "claim team domain", err)
 		return
 	}
 	writeJSON(response, http.StatusCreated, domainResponse(domain))
@@ -384,7 +384,7 @@ func (h *handler) SetTeamDefaultDomain(
 		request.Context(), principal.IdentityID, string(teamID), string(domainID), time.Now(),
 	)
 	if err != nil {
-		writeControlStateProblem(response, "set team default domain", err)
+		writeControlStateProblem(request.Context(), response, "set team default domain", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, teamResponse(team))
@@ -403,7 +403,7 @@ func (h *handler) ReleaseTeamDomain(
 	if err := h.store.ReleaseTeamDomain(
 		request.Context(), principal.IdentityID, string(teamID), string(domainID), time.Now(),
 	); err != nil {
-		writeControlStateProblem(response, "release team domain", err)
+		writeControlStateProblem(request.Context(), response, "release team domain", err)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)

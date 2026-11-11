@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -368,20 +367,12 @@ func (m *Metrics) ObserveRelayAttempt(slot string, outcome RelayAttemptOutcome) 
 	if slot == "1" {
 		dimensions = append(dimensions, ConnectionSlot.Dimension(1))
 	}
-	dimensions = append(dimensions, resultDimension(string(outcome)))
+	dimensions = append(dimensions, outcome.result().dimension())
 	m.relayAttempts.With(dimensions...).Inc()
 }
 
-func (m *Metrics) ObserveAPIRequest(surface, operation string, outcome APIRequestOutcome, duration time.Duration) {
-	method, route, matched := strings.Cut(operation, " ")
-	if !matched {
-		method, route = "_OTHER", operation
-	}
-	m.observeAPIRequest(surface, method, route, outcome, duration)
-}
-
 func (m *Metrics) observeAPIRequest(surface, method, route string, outcome APIRequestOutcome, duration time.Duration) {
-	m.apiDuration.With(Component.Dimension(surface), HTTPMethod.Dimension(httpMethod(method)), HTTPRoute.Dimension(route), resultDimension(string(outcome))).Observe(duration.Seconds())
+	m.apiDuration.With(Component.Dimension(surface), HTTPMethod.Dimension(httpMethod(method)), HTTPRoute.Dimension(route), outcome.result().dimension()).Observe(duration.Seconds())
 }
 
 // outcomes and stages are closed sets, independent of public URL and order identity.
@@ -398,14 +389,6 @@ func (m *Metrics) ObservePublishRunReadiness(outcome readiness.Outcome, duration
 	}
 }
 
-func (m *Metrics) ObserveCertificateWork(stage string, outcome CertificateWorkOutcome, duration time.Duration) {
-	m.ObserveCertificateIteration("public_url", stage, outcome, duration)
-}
-
-func (m *Metrics) ObserveCertificateIteration(kind, stage string, outcome CertificateWorkOutcome, duration time.Duration) {
-	m.ObserveCertificateIterationContext(context.Background(), kind, stage, outcome, duration)
-}
-
 func (m *Metrics) ObserveCertificateIterationContext(ctx context.Context, kind, stage string, outcome CertificateWorkOutcome, duration time.Duration) {
 	if m == nil || kind != "public_url" && kind != "relay" && kind != "service" {
 		return
@@ -420,9 +403,9 @@ func (m *Metrics) ObserveCertificateIterationContext(ctx context.Context, kind, 
 	default:
 		outcome = CertificateRetry
 	}
-	ctx, finish := m.completedResult(ctx, operationName("certificate."+kind+"."+stage), string(outcome), duration)
+	ctx, finish := m.completedResult(ctx, operationName("certificate."+kind+"."+stage), outcome.result(), duration)
 	trace.SpanFromContext(ctx).SetAttributes(CertificateKind.String(kind), Operation.Value(operationName(stage)))
-	m.certificateDuration.With(CertificateKind.Dimension(kind), Operation.Dimension(operationName(stage)), resultDimension(string(outcome))).ObserveContext(ctx, duration.Seconds())
+	m.certificateDuration.With(CertificateKind.Dimension(kind), Operation.Dimension(operationName(stage)), outcome.result().dimension()).ObserveContext(ctx, duration.Seconds())
 	finish()
 }
 

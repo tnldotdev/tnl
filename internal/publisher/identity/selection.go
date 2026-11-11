@@ -102,7 +102,7 @@ func EnsureNamespace(ctx context.Context, state *clientstate.Store, control Owne
 	if state == nil || team == "" || domain == "" || namespace == "" {
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
-	return ensureSelectedEnrollment(ctx, state, control, authority, enrollmentSelection{kind: "namespace", team: team, id: domain, namespace: namespace})
+	return ensureSelectedEnrollment(ctx, state, control, nil, authority, enrollmentSelection{kind: "namespace", team: team, id: domain, namespace: namespace})
 }
 
 // LoadFile uses only a portable signing key. an explicit server must match the
@@ -115,7 +115,7 @@ func LoadFile(path, server string, control NativeControl, authority AssertionExc
 	if server == "" || f.ControlURL != server {
 		return nil, ErrScope
 	}
-	if selected, ok := control.(interface{ ControlURL() string }); ok && selected.ControlURL() != f.ControlURL {
+	if control.PublicURLControl == nil || control.ControlURL() != f.ControlURL {
 		return nil, ErrScope
 	}
 	i, key, err := f.Validate()

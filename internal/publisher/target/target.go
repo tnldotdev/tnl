@@ -13,11 +13,17 @@ import (
 // labels and worktree placement before returning a private address.
 type TargetResolver interface {
 	ResolveTarget(context.Context, clientproject.Project, string) (string, error)
+	ResolveTargetIdentity(context.Context, clientproject.Project, string) (string, string, error)
 }
 
-type TargetResolverFunc func(context.Context, clientproject.Project, string) (string, error)
+type TargetResolverFunc func(context.Context, clientproject.Project, string) (string, string, error)
 
 func (f TargetResolverFunc) ResolveTarget(ctx context.Context, p clientproject.Project, name string) (string, error) {
+	address, _, err := f(ctx, p, name)
+	return address, err
+}
+
+func (f TargetResolverFunc) ResolveTargetIdentity(ctx context.Context, p clientproject.Project, name string) (string, string, error) {
 	return f(ctx, p, name)
 }
 

@@ -27,7 +27,7 @@ type detachedStopCommand struct {
 	ID                  string `arg:"" name:"id" help:"Detached publication ID."`
 }
 
-func detachPublish(ctx context.Context, args []string, stateDir string, output io.Writer, titles ...string) error {
+func detachPublish(ctx context.Context, args []string, stateDir string, output io.Writer, title string) error {
 	root, err := clientStateRoot(stateDir)
 	if err != nil {
 		return err
@@ -47,12 +47,8 @@ func detachPublish(ctx context.Context, args []string, stateDir string, output i
 		}
 	}
 	childArgs = append(childArgs, "--detached-child="+id)
-	command := "tnl publish"
-	if len(titles) != 0 {
-		command = titles[0]
-	}
 	return detached.Launch(ctx, root, id, binary, childArgs, func(root, pid string) error {
-		if command == "tnl connect" {
+		if title == "tnl connect" {
 			mode := statusOutputHuman
 			for i, arg := range args {
 				if arg == "--output=json" || arg == "--output" && i+1 < len(args) && args[i+1] == "json" {
@@ -61,7 +57,7 @@ func detachPublish(ctx context.Context, args []string, stateDir string, output i
 			}
 			return writeDetachedConnection(root, id, mode, output)
 		}
-		return writeHumanFrame(output, command, "detached", "", clioutput.Fields(clioutput.Field{Label: "id", Value: id}, clioutput.Field{Label: "pid", Value: pid}, clioutput.Field{Label: "state", Value: "ready"}))
+		return writeHumanFrame(output, title, "detached", "", clioutput.Fields(clioutput.Field{Label: "id", Value: id}, clioutput.Field{Label: "pid", Value: pid}, clioutput.Field{Label: "state", Value: "ready"}))
 	})
 }
 

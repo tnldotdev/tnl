@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"strconv"
 	"sync"
 	"time"
 
@@ -202,7 +203,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 		s.reportForwardingFailure(route, visitorID, ForwardingNoBackend, len(backends))
 		return openErr
 	}
-	defer s.releaseBackend(opened.connection)
+	defer s.releaseBackend(ctx, opened.connection)
 	upstreamClosed := make(chan struct{})
 	stopUpstream := context.AfterFunc(ctx, func() {
 		defer close(upstreamClosed)
@@ -324,7 +325,7 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []Backend, visi
 		candidate, openErr := backend.Start(attemptCtx, visitorID, kind == pendingConnection, header, prefix)
 		stopAttempt()
 		if openErr != nil {
-			s.observeAttempt(attempt, openErr, started)
+			s.observeAttempt(ctx, attempt, openErr, started)
 			lastErr = fmt.Errorf("ingress: open public_url: %w", openErr)
 			var opening *tunnel.OpeningError
 			if errors.As(openErr, &opening) && opening.Committed {
@@ -337,7 +338,7 @@ func (s *Server) openVisitorStream(ctx context.Context, backends []Backend, visi
 		if !s.trackBackend(candidate) {
 			return committedVisitorStream{}, &tunnel.OpeningError{Committed: len(prefix) > 0, VisitorBytes: int64(len(prefix)), Err: errors.Join(errBackendTrackingClosed, candidate.Close())}
 		}
-		s.observeAttempt(attempt, nil, started)
+		s.observeAttempt(ctx, attempt, nil, started)
 		s.observeRelayAttempt(backend, observability.RelayAttemptCommitted)
 		return committedVisitorStream{connection: candidate, bytes: int64(len(prefix))}, nil
 	}
@@ -370,10 +371,7 @@ func (s *Server) observeRelayAttempt(backend Backend, outcome observability.Rela
 	if s.config.Metrics == nil {
 		return
 	}
-	slot := "unknown"
-	if selected, ok := backend.(interface{ connectionSlot() string }); ok {
-		slot = selected.connectionSlot()
-	}
+	slot := strconv.Itoa(int(backend.ConnectionSlot()))
 	s.config.Metrics.ObserveRelayAttempt(slot, outcome)
 }
 
@@ -392,13 +390,13 @@ func backendAttemptContext(ctx context.Context, remaining int) (context.Context,
 	return context.WithTimeout(ctx, min(alternateAttemptTimeout, time.Until(deadline)/time.Duration(remaining)))
 }
 
-func (s *Server) observeAttempt(index int, err error, started time.Time) {
+func (s *Server) observeAttempt(ctx context.Context, index int, err error, started time.Time) {
 	if s.config.Observer == nil {
 		return
 	}
-	s.config.Observer.ObserveOperation("IngressBackendAttempt", err, time.Since(started))
+	s.config.Observer.ObserveOperationContext(ctx, observability.OpIngressBackendAttempt, err, time.Since(started))
 	if index != 0 {
-		s.config.Observer.ObserveOperation("IngressFallback", err, time.Since(started))
+		s.config.Observer.ObserveOperationContext(ctx, observability.OpIngressFallback, err, time.Since(started))
 	}
 }
 

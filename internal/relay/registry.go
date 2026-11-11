@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
+
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -17,9 +19,14 @@ type slotKey struct {
 	slot         uint8
 }
 
+type RegistryObserver interface {
+	OperationObserver
+	AddRegisteredPublisherConnections(int)
+}
+
 // Registry is a concurrency-safe registry of publisher connections held by one relay process.
 type Registry struct {
-	observer    OperationObserver
+	observer    RegistryObserver
 	mu          sync.Mutex
 	connections map[string]*PublisherConnection
 	slots       map[slotKey]*PublisherConnection
@@ -32,7 +39,7 @@ type Registry struct {
 func NewRegistry() *Registry { return new(Registry) }
 
 // Instrument configures observation before the registry begins serving work.
-func (r *Registry) Instrument(observer OperationObserver) { r.observer = observer }
+func (r *Registry) Instrument(observer RegistryObserver) { r.observer = observer }
 
 func (r *Registry) Insert(connection *PublisherConnection) error {
 	if connection == nil {
@@ -68,8 +75,8 @@ func (r *Registry) Insert(connection *PublisherConnection) error {
 	r.connections[ref.PublisherConnectionID] = connection
 	r.slots[key] = connection
 	if previous == nil {
-		if observer, ok := r.observer.(interface{ AddRegisteredPublisherConnections(int) }); ok {
-			observer.AddRegisteredPublisherConnections(1)
+		if r.observer != nil {
+			r.observer.AddRegisteredPublisherConnections(1)
 		}
 	}
 	r.mu.Unlock()
@@ -119,8 +126,8 @@ func (r *Registry) Remove(connection *PublisherConnection) bool {
 		return false
 	}
 	delete(r.connections, connection.ref.PublisherConnectionID)
-	if observer, ok := r.observer.(interface{ AddRegisteredPublisherConnections(int) }); ok {
-		observer.AddRegisteredPublisherConnections(-1)
+	if r.observer != nil {
+		r.observer.AddRegisteredPublisherConnections(-1)
 	}
 	key := slotKey{publishRunID: connection.ref.PublishRunID, slot: connection.ref.ConnectionSlot}
 	if r.slots[key] == connection {
@@ -147,7 +154,7 @@ func (r *Registry) Load() (connections, streams int64) {
 }
 
 func (r *Registry) Drain(ctx context.Context) (retErr error) {
-	finish := startOperation(ctx, r.observer, "RelayDrain")
+	finish := startOperation(ctx, r.observer, observability.OpRelayDrain)
 	defer func() { finish(retErr) }()
 	r.mu.Lock()
 	if r.closed {
@@ -194,8 +201,8 @@ func (r *Registry) Close() error {
 	connections := r.snapshotLocked()
 	clear(r.connections)
 	clear(r.slots)
-	if observer, ok := r.observer.(interface{ AddRegisteredPublisherConnections(int) }); ok {
-		observer.AddRegisteredPublisherConnections(-len(connections))
+	if r.observer != nil {
+		r.observer.AddRegisteredPublisherConnections(-len(connections))
 	}
 	r.mu.Unlock()
 	var result error

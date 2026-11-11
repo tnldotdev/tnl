@@ -176,7 +176,7 @@ func runPublisherProvision(ctx context.Context, f publisherProvisionCommand, pro
 	if !opaqueid.Valid(e.Id, opaqueid.PublisherEnrollmentPrefix) || !strings.HasPrefix(e.EnrollmentKey, e.Id+".") || e.TeamId != current.Team().Id || !e.ExpiresAt.After(time.Now()) || url != nil && (e.Kind != "saved_public_url" || e.PublicUrlId == nil || *e.PublicUrlId != *url || e.DomainId != nil || e.Namespace != nil) || domain != nil && (e.Kind != "namespace" || e.PublicUrlId != nil || e.DomainId == nil || *e.DomainId != *domain || e.Namespace == nil || *e.Namespace != namespace) {
 		return failure.Wrap("read publisher enrollment", failure.ServerResponseInvalid, errors.New("control returned a different publisher scope"))
 	}
-	n, identity, err := publisheridentity.EnrollNative(ctx, session.Store(), session.Authenticated().Control, session.Authenticated().Authority, e.EnrollmentKey)
+	n, identity, err := publisheridentity.EnrollNative(ctx, session.Store(), publisheridentity.NativeControl{PublicURLControl: session.Authenticated().Control, Services: session.Authenticated().Control}, session.Authenticated().Authority, e.EnrollmentKey)
 	if err != nil {
 		return err
 	}

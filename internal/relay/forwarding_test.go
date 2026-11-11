@@ -211,8 +211,8 @@ type forwardingMetricObserver struct {
 	done chan struct{}
 }
 
-func (o *forwardingMetricObserver) ObserveOperation(operation string, err error, elapsed time.Duration) {
-	o.Metrics.ObserveOperation(operation, err, elapsed)
+func (o *forwardingMetricObserver) ObserveOperationContext(ctx context.Context, operation observability.ServerOperation, err error, elapsed time.Duration) {
+	o.Metrics.ObserveOperationContext(ctx, operation, err, elapsed)
 	close(o.done)
 }
 

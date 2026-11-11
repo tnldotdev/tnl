@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
@@ -56,7 +57,7 @@ func stateTestVisitorView(permission visitortoken.Permission, keys map[string]ed
 
 func TestIntegrationVisitorSigningKeysAreEncryptedSharedAndIssuerBound(t *testing.T) {
 	d, url, now := newControlStateIntegrationDatabaseWithURL(t, "visitor_signing_keys")
-	other, err := Open(t.Context(), url, testStorageKey, "")
+	other, err := Open(t.Context(), url, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +154,7 @@ func TestIntegrationStorageRotationIncludesVisitorSigningKeys(t *testing.T) {
 	firstKeys := stateTestVisitorKeys(t, d, now)
 	d.Close()
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{19}, 32))
-	rotating, err := Open(t.Context(), url, newKey, testStorageKey)
+	rotating, err := Open(t.Context(), url, newKey, testStorageKey, naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +163,7 @@ func TestIntegrationStorageRotationIncludesVisitorSigningKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	rotating.Close()
-	reopened, err := Open(t.Context(), url, newKey, "")
+	reopened, err := Open(t.Context(), url, newKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

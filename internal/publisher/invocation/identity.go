@@ -141,7 +141,7 @@ func selectNativeProjectPublisher(ctx context.Context, services publisherService
 	if selected, found, err := services.state.SelectedPublisherIdentity(ctx, "project", scope); err != nil {
 		return nil, err
 	} else if found {
-		native, _, err = publisheridentity.LoadNative(ctx, services.state, control, authority, selected.ID)
+		native, _, err = publisheridentity.LoadNative(ctx, services.state, publisheridentity.NativeControl{PublicURLControl: control}, authority, selected.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -150,7 +150,7 @@ func selectNativeProjectPublisher(ctx context.Context, services publisherService
 		if err != nil {
 			return nil, err
 		}
-		native, identity, err := publisheridentity.EnrollNative(ctx, services.state, control, authority, enrollment.EnrollmentKey)
+		native, identity, err := publisheridentity.EnrollNative(ctx, services.state, publisheridentity.NativeControl{PublicURLControl: control}, authority, enrollment.EnrollmentKey)
 		if err != nil {
 			return nil, err
 		}

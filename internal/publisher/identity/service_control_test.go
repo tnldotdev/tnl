@@ -13,10 +13,8 @@ import (
 var _ publisherservice.RunControl = (*Native)(nil)
 
 type serviceBoundaryControl struct {
-	NativeControl
-	serviceRunControl
-	ServiceCertificateControl
-	serviceHTTPControl
+	unusedControl
+	ServiceControl
 	token  credentials.ServiceRunToken
 	health controlv1.ServiceRunHeartbeat
 	calls  int
@@ -36,7 +34,7 @@ func (c *serviceBoundaryControl) CheckServiceBrowserSession(_ context.Context, _
 func TestServiceControlBindsRunTokenAndExactScope(t *testing.T) {
 	n, _ := privateScopeFixture(t)
 	c := &serviceBoundaryControl{}
-	n.NativeControl = c
+	n.NativeControl = NativeControl{PublicURLControl: c, Services: c}
 	token, _, err := credentials.NewServiceRunToken()
 	if err != nil {
 		t.Fatal(err)

@@ -8,7 +8,8 @@ SELECT sqlc.arg(alias_id), t.server_origin, sqlc.arg(project_key), sqlc.arg(team
     sqlc.arg(service), sqlc.arg(fingerprint), sqlc.arg(project_key), 1
 FROM local_tunnels t
 WHERE t.id = sqlc.arg(tunnel_id) AND t.server_origin = sqlc.arg(server_origin)
-    AND t.service = sqlc.arg(service) AND t.integration_group = sqlc.arg(integration_group)
+    AND t.service = sqlc.arg(service) AND t.primary_project_root = sqlc.arg(project_key)
+    AND t.integration_namespace = sqlc.arg(integration_namespace)
     AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now)
 ON CONFLICT DO NOTHING;
 
@@ -35,7 +36,8 @@ WHERE id = sqlc.arg(alias_id) AND selection_revision < 9223372036854775807;
 INSERT INTO alias_declarations (alias_id, tunnel_id, fingerprint)
 SELECT sqlc.arg(alias_id), t.id, sqlc.arg(fingerprint) FROM local_tunnels t
 WHERE t.id = sqlc.arg(tunnel_id) AND t.server_origin = sqlc.arg(server_origin)
-    AND t.service = sqlc.arg(service) AND t.integration_group = sqlc.arg(integration_group)
+    AND t.service = sqlc.arg(service) AND t.primary_project_root = sqlc.arg(primary_project_root)
+    AND t.integration_namespace = sqlc.arg(integration_namespace)
     AND t.stopped_at IS NULL AND t.lease_expires_at > sqlc.arg(now)
 ON CONFLICT(alias_id, tunnel_id) DO UPDATE SET fingerprint = excluded.fingerprint;
 

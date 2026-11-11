@@ -15,26 +15,29 @@ INSERT INTO webhook_owners (server_origin, primary_project_root, integration_nam
 SELECT t.server_origin, t.primary_project_root, t.integration_namespace, e.name, t.id
 FROM local_tunnels t JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.service = t.service
 WHERE t.id = ?1 AND t.server_origin = ?2
-  AND t.integration_group = ?3 AND e.name = ?4
-  AND e.fingerprint = ?5 AND t.state = 'ready'
-  AND t.stopped_at IS NULL AND t.lease_expires_at > ?6
+  AND t.primary_project_root = ?3 AND t.integration_namespace = ?4
+  AND e.name = ?5
+  AND e.fingerprint = ?6 AND t.state = 'ready'
+  AND t.stopped_at IS NULL AND t.lease_expires_at > ?7
 ON CONFLICT DO NOTHING
 `
 
 type ClaimWebhookReceiverParams struct {
-	TunnelID         string
-	ServerOrigin     string
-	IntegrationGroup string
-	Name             string
-	Fingerprint      []byte
-	Now              int64
+	TunnelID             string
+	ServerOrigin         string
+	PrimaryProjectRoot   sql.NullString
+	IntegrationNamespace sql.NullString
+	Name                 string
+	Fingerprint          []byte
+	Now                  int64
 }
 
 func (q *Queries) ClaimWebhookReceiver(ctx context.Context, arg ClaimWebhookReceiverParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, claimWebhookReceiver,
 		arg.TunnelID,
 		arg.ServerOrigin,
-		arg.IntegrationGroup,
+		arg.PrimaryProjectRoot,
+		arg.IntegrationNamespace,
 		arg.Name,
 		arg.Fingerprint,
 		arg.Now,
@@ -47,24 +50,27 @@ func (q *Queries) ClaimWebhookReceiver(ctx context.Context, arg ClaimWebhookRece
 
 const deleteExpiredWebhookOwner = `-- name: DeleteExpiredWebhookOwner :exec
 DELETE FROM webhook_owners AS o WHERE o.server_origin = ?1
-  AND o.integration_group = ?2 AND o.name = ?3
+  AND o.primary_project_root = ?2 AND o.integration_namespace = ?3
+  AND o.name = ?4
   AND NOT EXISTS (
     SELECT 1 FROM local_tunnels t WHERE t.id = o.tunnel_id
-      AND t.stopped_at IS NULL AND t.lease_expires_at > ?4
+      AND t.stopped_at IS NULL AND t.lease_expires_at > ?5
   )
 `
 
 type DeleteExpiredWebhookOwnerParams struct {
-	ServerOrigin     string
-	IntegrationGroup string
-	Name             string
-	Now              int64
+	ServerOrigin         string
+	PrimaryProjectRoot   string
+	IntegrationNamespace string
+	Name                 string
+	Now                  int64
 }
 
 func (q *Queries) DeleteExpiredWebhookOwner(ctx context.Context, arg DeleteExpiredWebhookOwnerParams) error {
 	_, err := q.db.ExecContext(ctx, deleteExpiredWebhookOwner,
 		arg.ServerOrigin,
-		arg.IntegrationGroup,
+		arg.PrimaryProjectRoot,
+		arg.IntegrationNamespace,
 		arg.Name,
 		arg.Now,
 	)
@@ -72,36 +78,40 @@ func (q *Queries) DeleteExpiredWebhookOwner(ctx context.Context, arg DeleteExpir
 }
 
 const exclusiveWebhookReceiver = `-- name: ExclusiveWebhookReceiver :one
-SELECT t.id, t.server_origin, t.integration_group, t.hostname, t.target, t.public_url_id, t.publish_run_number
+SELECT t.id, t.server_origin, t.primary_project_root, t.integration_namespace, t.hostname, t.target, t.public_url_id, t.publish_run_number
 FROM webhook_owners owner JOIN local_tunnels t ON t.id = owner.tunnel_id
 JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.name = owner.name AND e.service = t.service
-WHERE owner.server_origin = ?1 AND owner.integration_group = ?2
-  AND owner.name = ?3 AND e.fingerprint = ?4
-  AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > ?5
+WHERE owner.server_origin = ?1 AND owner.primary_project_root = ?2
+  AND owner.integration_namespace = ?3
+  AND owner.name = ?4 AND e.fingerprint = ?5
+  AND t.state = 'ready' AND t.stopped_at IS NULL AND t.lease_expires_at > ?6
 `
 
 type ExclusiveWebhookReceiverParams struct {
-	ServerOrigin     string
-	IntegrationGroup string
-	Name             string
-	Fingerprint      []byte
-	Now              int64
+	ServerOrigin         string
+	PrimaryProjectRoot   string
+	IntegrationNamespace string
+	Name                 string
+	Fingerprint          []byte
+	Now                  int64
 }
 
 type ExclusiveWebhookReceiverRow struct {
-	ID               string
-	ServerOrigin     string
-	IntegrationGroup string
-	Hostname         sql.NullString
-	Target           sql.NullString
-	PublicURLID      sql.NullString
-	PublishRunNumber sql.NullInt64
+	ID                   string
+	ServerOrigin         string
+	PrimaryProjectRoot   sql.NullString
+	IntegrationNamespace sql.NullString
+	Hostname             sql.NullString
+	Target               sql.NullString
+	PublicURLID          sql.NullString
+	PublishRunNumber     sql.NullInt64
 }
 
 func (q *Queries) ExclusiveWebhookReceiver(ctx context.Context, arg ExclusiveWebhookReceiverParams) (ExclusiveWebhookReceiverRow, error) {
 	row := q.db.QueryRowContext(ctx, exclusiveWebhookReceiver,
 		arg.ServerOrigin,
-		arg.IntegrationGroup,
+		arg.PrimaryProjectRoot,
+		arg.IntegrationNamespace,
 		arg.Name,
 		arg.Fingerprint,
 		arg.Now,
@@ -110,7 +120,8 @@ func (q *Queries) ExclusiveWebhookReceiver(ctx context.Context, arg ExclusiveWeb
 	err := row.Scan(
 		&i.ID,
 		&i.ServerOrigin,
-		&i.IntegrationGroup,
+		&i.PrimaryProjectRoot,
+		&i.IntegrationNamespace,
 		&i.Hostname,
 		&i.Target,
 		&i.PublicURLID,
@@ -121,22 +132,25 @@ func (q *Queries) ExclusiveWebhookReceiver(ctx context.Context, arg ExclusiveWeb
 
 const forceWebhookReceiver = `-- name: ForceWebhookReceiver :execrows
 UPDATE webhook_owners SET tunnel_id = ?1
-WHERE server_origin = ?2 AND integration_group = ?3
-  AND name = ?4
+WHERE server_origin = ?2 AND primary_project_root = ?3
+  AND integration_namespace = ?4
+  AND name = ?5
 `
 
 type ForceWebhookReceiverParams struct {
-	TunnelID         string
-	ServerOrigin     string
-	IntegrationGroup string
-	Name             string
+	TunnelID             string
+	ServerOrigin         string
+	PrimaryProjectRoot   string
+	IntegrationNamespace string
+	Name                 string
 }
 
 func (q *Queries) ForceWebhookReceiver(ctx context.Context, arg ForceWebhookReceiverParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, forceWebhookReceiver,
 		arg.TunnelID,
 		arg.ServerOrigin,
-		arg.IntegrationGroup,
+		arg.PrimaryProjectRoot,
+		arg.IntegrationNamespace,
 		arg.Name,
 	)
 	if err != nil {
@@ -167,25 +181,28 @@ func (q *Queries) GetWebhookHostname(ctx context.Context, arg GetWebhookHostname
 const readyExclusiveReceiver = `-- name: ReadyExclusiveReceiver :one
 SELECT COUNT(*) FROM local_tunnels t JOIN webhook_declarations e ON e.tunnel_id = t.id AND e.service = t.service
 WHERE t.id = ?1 AND t.server_origin = ?2
-  AND t.integration_group = ?3 AND e.name = ?4
-  AND e.fingerprint = ?5 AND t.state = 'ready'
-  AND t.stopped_at IS NULL AND t.lease_expires_at > ?6
+  AND t.primary_project_root = ?3 AND t.integration_namespace = ?4
+  AND e.name = ?5
+  AND e.fingerprint = ?6 AND t.state = 'ready'
+  AND t.stopped_at IS NULL AND t.lease_expires_at > ?7
 `
 
 type ReadyExclusiveReceiverParams struct {
-	TunnelID         string
-	ServerOrigin     string
-	IntegrationGroup string
-	Name             string
-	Fingerprint      []byte
-	Now              int64
+	TunnelID             string
+	ServerOrigin         string
+	PrimaryProjectRoot   sql.NullString
+	IntegrationNamespace sql.NullString
+	Name                 string
+	Fingerprint          []byte
+	Now                  int64
 }
 
 func (q *Queries) ReadyExclusiveReceiver(ctx context.Context, arg ReadyExclusiveReceiverParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, readyExclusiveReceiver,
 		arg.TunnelID,
 		arg.ServerOrigin,
-		arg.IntegrationGroup,
+		arg.PrimaryProjectRoot,
+		arg.IntegrationNamespace,
 		arg.Name,
 		arg.Fingerprint,
 		arg.Now,
@@ -197,20 +214,23 @@ func (q *Queries) ReadyExclusiveReceiver(ctx context.Context, arg ReadyExclusive
 
 const releaseWebhookReceiver = `-- name: ReleaseWebhookReceiver :execrows
 DELETE FROM webhook_owners WHERE server_origin = ?1
-  AND integration_group = ?2 AND name = ?3 AND tunnel_id = ?4
+  AND primary_project_root = ?2 AND integration_namespace = ?3
+  AND name = ?4 AND tunnel_id = ?5
 `
 
 type ReleaseWebhookReceiverParams struct {
-	ServerOrigin     string
-	IntegrationGroup string
-	Name             string
-	TunnelID         string
+	ServerOrigin         string
+	PrimaryProjectRoot   string
+	IntegrationNamespace string
+	Name                 string
+	TunnelID             string
 }
 
 func (q *Queries) ReleaseWebhookReceiver(ctx context.Context, arg ReleaseWebhookReceiverParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, releaseWebhookReceiver,
 		arg.ServerOrigin,
-		arg.IntegrationGroup,
+		arg.PrimaryProjectRoot,
+		arg.IntegrationNamespace,
 		arg.Name,
 		arg.TunnelID,
 	)
@@ -222,21 +242,24 @@ func (q *Queries) ReleaseWebhookReceiver(ctx context.Context, arg ReleaseWebhook
 
 const webhookOwnerID = `-- name: WebhookOwnerID :one
 SELECT owner.tunnel_id FROM webhook_owners owner JOIN local_tunnels t ON t.id = owner.tunnel_id
-WHERE owner.server_origin = ?1 AND owner.integration_group = ?2
-  AND owner.name = ?3 AND t.stopped_at IS NULL AND t.lease_expires_at > ?4
+WHERE owner.server_origin = ?1 AND owner.primary_project_root = ?2
+  AND owner.integration_namespace = ?3
+  AND owner.name = ?4 AND t.stopped_at IS NULL AND t.lease_expires_at > ?5
 `
 
 type WebhookOwnerIDParams struct {
-	ServerOrigin     string
-	IntegrationGroup string
-	Name             string
-	Now              int64
+	ServerOrigin         string
+	PrimaryProjectRoot   string
+	IntegrationNamespace string
+	Name                 string
+	Now                  int64
 }
 
 func (q *Queries) WebhookOwnerID(ctx context.Context, arg WebhookOwnerIDParams) (string, error) {
 	row := q.db.QueryRowContext(ctx, webhookOwnerID,
 		arg.ServerOrigin,
-		arg.IntegrationGroup,
+		arg.PrimaryProjectRoot,
+		arg.IntegrationNamespace,
 		arg.Name,
 		arg.Now,
 	)

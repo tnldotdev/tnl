@@ -24,12 +24,12 @@ func (h *handler) serviceRuns(w http.ResponseWriter) (serviceRunStore, bool) {
 	return store, ok
 }
 
-func serviceRunProblem(w http.ResponseWriter, operation string, err error) {
+func serviceRunProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	if errors.Is(err, controlstate.ErrInsufficientRelayServices) {
 		writeProblem(w, 503, controlv1.Unavailable, "two live relay services are required")
 		return
 	}
-	serviceVisitorError(w, operation, err)
+	serviceVisitorError(ctx, w, operation, err)
 }
 
 func serviceRunConnections(rows []controlstate.ServiceRunAssignment) []controlv1.ConnectionAssignment {
@@ -48,7 +48,7 @@ func serviceRunConnections(rows []controlstate.ServiceRunAssignment) []controlv1
 }
 
 func (h *handler) PrepareServiceRun(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, _ controlv1.PrepareServiceRunParams) {
-	if !h.acceptingNewWork(w) {
+	if !h.acceptingNewWork(r.Context(), w) {
 		return
 	}
 	var body controlv1.ServiceRunDeclaration
@@ -75,7 +75,7 @@ func (h *handler) PrepareServiceRun(w http.ResponseWriter, r *http.Request, serv
 	}
 	prepared, err := store.PrepareServiceRun(r.Context(), serviceID, publisher, r.Header.Get("Idempotency-Key"), time.Now(), declaration)
 	if err != nil {
-		serviceRunProblem(w, "prepare service run", err)
+		serviceRunProblem(r.Context(), w, "prepare service run", err)
 		return
 	}
 	response := controlv1.ServiceRunPreparation{
@@ -94,7 +94,7 @@ func (h *handler) PrepareServiceRun(w http.ResponseWriter, r *http.Request, serv
 }
 
 func (h *handler) StartServiceRun(w http.ResponseWriter, r *http.Request, service controlv1.ServiceID, run controlv1.ServiceRunID) {
-	if !h.acceptingNewWork(w) {
+	if !h.acceptingNewWork(r.Context(), w) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -114,7 +114,7 @@ func (h *handler) StartServiceRun(w http.ResponseWriter, r *http.Request, servic
 	}
 	state, err := store.StartServiceRun(r.Context(), service, run, body.RunNumber, publisher, time.Now())
 	if err != nil {
-		serviceRunProblem(w, "start service run", err)
+		serviceRunProblem(r.Context(), w, "start service run", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, controlv1.ServiceRunSetup{ServiceId: state.ServiceID, ServiceRunId: state.RunID, RunNumber: state.RunNumber, RunToken: state.Token, PublisherConnections: serviceRunConnections(state.Connections)})
@@ -137,7 +137,7 @@ func (h *handler) HeartbeatServiceRun(w http.ResponseWriter, r *http.Request, se
 	}
 	state, err := store.HeartbeatServiceRun(r.Context(), serviceID, runID, token, time.Now(), controlstate.ServiceRunHealth{Healthy: body.Healthy, StreamCapacity: body.StreamCapacity, ActiveStreams: body.ActiveStreams})
 	if err != nil {
-		serviceRunProblem(w, "heartbeat service run", err)
+		serviceRunProblem(r.Context(), w, "heartbeat service run", err)
 		return
 	}
 	writeJSON(w, 200, controlv1.ServiceRunState{
@@ -159,7 +159,7 @@ func (h *handler) CloseServiceRun(w http.ResponseWriter, r *http.Request, servic
 		return
 	}
 	if err := store.CloseServiceRun(r.Context(), serviceID, runID, token, time.Now()); err != nil {
-		serviceRunProblem(w, "close service run", err)
+		serviceRunProblem(r.Context(), w, "close service run", err)
 		return
 	}
 	w.WriteHeader(204)

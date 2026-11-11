@@ -8,6 +8,7 @@ import (
 
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
 
@@ -16,7 +17,7 @@ func TestIntegrationWebsiteIdentityDoesNotIssuePublishingCredentials(t *testing.
 	if err := controlstate.Migrate(t.Context(), url); err != nil {
 		t.Fatal(err)
 	}
-	database, err := controlstate.Open(t.Context(), url, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	database, err := controlstate.Open(t.Context(), url, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

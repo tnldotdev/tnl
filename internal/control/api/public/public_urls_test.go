@@ -60,6 +60,7 @@ func TestUpdateRouteAuthorizesExactRouteAndCanonicalMutation(t *testing.T) {
 		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000", PublicURLScope: controlstate.PublicURLScopeMember,
 		PolicyRevision: 3, LifecycleState: controlstate.PublicURLLifecycleEnabled,
 		Purpose:           controlstate.PublicURLPurposeApp,
+		ServiceProtocol:   controlstate.PublicURLServiceHTTP,
 		AllowedIPPrefixes: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, MutationRevision: 4,
 		Ephemeral: true,
 	}}
@@ -110,7 +111,7 @@ func TestUpdateRouteAcceptsLargeIPPolicyRequest(t *testing.T) {
 		CanonicalHostname: "demo.example", Target: "http://127.0.0.1:3000",
 		PublicURLScope: controlstate.PublicURLScopeMember, LifecycleState: controlstate.PublicURLLifecycleEnabled,
 		PolicyRevision: 3, MutationRevision: 4,
-		Purpose: controlstate.PublicURLPurposeApp,
+		Purpose: controlstate.PublicURLPurposeApp, ServiceProtocol: controlstate.PublicURLServiceHTTP,
 	}}
 	authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), decision: authorization.Decision{
 		IdentityID: "identity_1", TeamID: "team_1", ActingMembershipID: "membership_1",
@@ -153,6 +154,26 @@ func TestUpdateRouteRequiresCompleteDesiredState(t *testing.T) {
 			h.UpdatePublicURL(response, request, "public_url_1")
 			if response.Code != http.StatusBadRequest || store.authorizationReads != 0 {
 				t.Fatalf("response = %d, authorization reads = %d", response.Code, store.authorizationReads)
+			}
+		})
+	}
+}
+
+func TestUpdatePublicURLRejectsInvalidStoredProtocol(t *testing.T) {
+	for _, protocol := range []controlstate.PublicURLServiceProtocol{"", "tcp", "invalid-stored-protocol"} {
+		t.Run(string(protocol), func(t *testing.T) {
+			store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{
+				ID: "public_url_1", TeamID: "team_1", Purpose: controlstate.PublicURLPurposeApp,
+				ServiceProtocol: protocol, Target: "http://127.0.0.1:3000", MutationRevision: 1,
+			}}
+			authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal()}
+			request := httptest.NewRequest(http.MethodPatch, "/v1/public-urls/public_url_1", strings.NewReader(`{"target":"http://127.0.0.1:4000","allowed_ip_prefixes":[]}`))
+			request.Header.Set("Authorization", "Bearer access-token")
+			response := httptest.NewRecorder()
+			(&handler{store: store, authorizer: authorizer}).UpdatePublicURL(response, request, "public_url_1")
+			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) ||
+				strings.Contains(response.Body.String(), "invalid-stored-protocol") || len(authorizer.requests) != 0 || store.update.PublicURLID != "" {
+				t.Fatalf("invalid stored protocol reached mutation or leaked state: %d %s; update = %+v", response.Code, response.Body.String(), store.update)
 			}
 		})
 	}
@@ -230,7 +251,7 @@ func TestRouteMutationsDoNotRevealRoutesOutsideCurrentTeams(t *testing.T) {
 
 func TestUpdateRouteMapsOpenSessionConflict(t *testing.T) {
 	response := httptest.NewRecorder()
-	writeControlStateProblem(response, "update route", controlstate.ErrPublishRunOpen)
+	writeControlStateProblem(t.Context(), response, "update route", controlstate.ErrPublishRunOpen)
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"code":"publish_run_open"`) {
 		t.Fatalf("response = %d: %s", response.Code, response.Body.String())
 	}
@@ -447,7 +468,7 @@ func publicURLMutationCalls() []publicURLMutationCall {
 func TestRouteMutationRejectionDoesNotReachStore(t *testing.T) {
 	for _, test := range publicURLMutationCalls() {
 		t.Run(test.name, func(t *testing.T) {
-			store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_1", Purpose: controlstate.PublicURLPurposeApp, MutationRevision: 7}}
+			store := &publicURLMutationStoreStub{publicURL: controlstate.PublicURL{ID: "public_url_1", TeamID: "team_1", Purpose: controlstate.PublicURLPurposeApp, ServiceProtocol: controlstate.PublicURLServiceHTTP, MutationRevision: 7}}
 			authorizer := &recordingAuthorizer{principal: testPublicURLReadPrincipal(), mutationErr: authorization.ErrForbidden}
 			h := &handler{store: store, authorizer: authorizer}
 			request := httptest.NewRequest(http.MethodPost, "/v1/public-urls/public_url_1", strings.NewReader(`{"target":"http://127.0.0.1:4000","allowed_ip_prefixes":[]}`))

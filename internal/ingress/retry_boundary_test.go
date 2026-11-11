@@ -91,6 +91,8 @@ func TestIngressRotatedRelayDoesNotRetryCommittedByte(t *testing.T) {
 
 type waitingBackend struct{ entered chan struct{} }
 
+func (waitingBackend) ConnectionSlot() uint8 { return 0 }
+
 type contextBackend struct{ Backend }
 
 func (b contextBackend) Start(ctx context.Context, id string, pending bool, proxy, initial []byte) (net.Conn, error) {
@@ -199,6 +201,8 @@ type failAfterProxyBackend struct {
 	mu         sync.Mutex
 	visitorID  string
 }
+
+func (*failAfterProxyBackend) ConnectionSlot() uint8 { return 0 }
 
 func newFailAfterProxyBackend(t *testing.T, visitorBytes int) *failAfterProxyBackend {
 	t.Helper()

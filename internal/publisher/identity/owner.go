@@ -13,7 +13,7 @@ import (
 // OwnerControl uses a current control session only to issue enrollment. the
 // resulting adapter authenticates publishing with its own key and exact grant.
 type OwnerControl interface {
-	NativeControl
+	PublicURLControl
 	CreatePublisherEnrollment(context.Context, controlv1.CreatePublisherEnrollmentRequest) (controlv1.PublisherEnrollment, error)
 }
 
@@ -25,7 +25,7 @@ func EnsureOwner(ctx context.Context, state *clientstate.Store, control OwnerCon
 	if state == nil || control == nil || authority == nil || publicURL.Ephemeral || publicURL.LifecycleState != controlv1.Enabled || !publicURL.Purpose.Valid() || !opaqueid.Valid(publicURL.Id, opaqueid.PublicURLPrefix) || publicURL.TeamId == "" {
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
-	return ensureSelectedEnrollment(ctx, state, control, authority, enrollmentSelection{
+	return ensureSelectedEnrollment(ctx, state, control, nil, authority, enrollmentSelection{
 		kind: "saved_public_url", team: publicURL.TeamId, id: publicURL.Id, publicURL: &publicURL,
 	})
 }
@@ -53,13 +53,7 @@ func (n *Native) Fork() (*Native, error) {
 // ControlURL lets native-only callers keep certificate state on the same
 // server as the adapter's explicit HTTP authentication boundary.
 func (n *Native) ControlURL() string {
-	if n == nil {
-		return ""
-	}
-	if client, ok := n.NativeControl.(interface{ ControlURL() string }); ok {
-		return client.ControlURL()
-	}
-	return ""
+	return n.NativeControl.ControlURL()
 }
 
 var ErrSelection = errors.New("select one publisher enrollment key, saved publisher ID, or native publisher")

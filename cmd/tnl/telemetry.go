@@ -107,6 +107,7 @@ type telemetryPayload struct {
 
 type telemetryReporter interface {
 	Report(telemetryPayload)
+	flushReady()
 }
 
 type telemetryReporterFactory func(string) telemetryReporter
@@ -164,9 +165,7 @@ func (i *telemetryInvocation) SetPublishMode(mode telemetryPublishMode) {
 }
 
 func (i *telemetryInvocation) flushReady() {
-	if reporter, ok := i.reporter.(interface{ flushReady() }); ok {
-		reporter.flushReady()
-	}
+	i.reporter.flushReady()
 }
 
 func (i *telemetryInvocation) failed(command telemetryTrackedCommand, stage telemetryFailureStage, err error) {
@@ -406,16 +405,6 @@ func hasEnvironment(environments []string, name string) bool {
 	return false
 }
 
-func optionalTelemetryReporter(reporters []telemetryReporter) telemetryReporter {
-	if len(reporters) == 0 {
-		return nil
-	}
-	if invocation, ok := reporters[0].(*telemetryInvocation); ok && invocation == nil {
-		return nil
-	}
-	return reporters[0]
-}
-
 func withTelemetryObserver(
 	reporter telemetryReporter,
 	command telemetryTrackedCommand, serverURL string,
@@ -443,9 +432,7 @@ func withTelemetryObserver(
 					name = telemetryFramework(framework())
 				}
 				reporter.Report(newTelemetryReady(command, serverKind, name))
-				if invocation, ok := reporter.(*telemetryInvocation); ok {
-					invocation.flushReady()
-				}
+				reporter.flushReady()
 			})
 		}
 		return nil

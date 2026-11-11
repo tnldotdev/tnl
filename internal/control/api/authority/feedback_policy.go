@@ -22,14 +22,14 @@ func (h *handler) GetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	store, ok := h.store.(visitorAuthorityStore)
-	if !ok {
-		writeAuthenticationUnavailable(w, "read feedback author policy", nil)
+	store := h.store
+	if store == nil {
+		writeAuthenticationUnavailable(r.Context(), w, "read feedback author policy", nil)
 		return
 	}
 	policy, err := store.GetTeamFeedbackPolicy(r.Context(), principal.IdentityID, teamID)
 	if err != nil {
-		writeControlStateProblem(w, "read feedback author policy", err)
+		writeControlStateProblem(r.Context(), w, "read feedback author policy", err)
 		return
 	}
 	writeJSON(w, 200, policy)
@@ -39,9 +39,9 @@ func (h *handler) SetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	store, ok := h.store.(visitorAuthorityStore)
-	if !ok {
-		writeAuthenticationUnavailable(w, "set feedback author policy", nil)
+	store := h.store
+	if store == nil {
+		writeAuthenticationUnavailable(r.Context(), w, "set feedback author policy", nil)
 		return
 	}
 	var body authorityv1.TeamFeedbackPolicy
@@ -51,7 +51,7 @@ func (h *handler) SetTeamFeedbackPolicy(w http.ResponseWriter, r *http.Request, 
 	}
 	policy, err := store.SetTeamFeedbackPolicy(r.Context(), principal.IdentityID, teamID, string(body.Authors), time.Now())
 	if err != nil {
-		writeControlStateProblem(w, "set feedback author policy", err)
+		writeControlStateProblem(r.Context(), w, "set feedback author policy", err)
 		return
 	}
 	writeJSON(w, 200, policy)
@@ -60,9 +60,9 @@ func (h *handler) IssueControlBrowserHandoff(w http.ResponseWriter, r *http.Requ
 	if _, ok := h.authenticateControlRequest(w, r); !ok {
 		return
 	}
-	store, ok := h.store.(visitorAuthorityStore)
-	if !ok {
-		writeAuthenticationUnavailable(w, "create browser handoff", nil)
+	store := h.store
+	if store == nil {
+		writeAuthenticationUnavailable(r.Context(), w, "create browser handoff", nil)
 		return
 	}
 	var body authorityv1.IssueControlBrowserHandoffJSONRequestBody
@@ -83,7 +83,7 @@ func (h *handler) IssueControlBrowserHandoff(w http.ResponseWriter, r *http.Requ
 		case errors.Is(err, controlstate.ErrPreviewAccess):
 			writeProblem(w, 403, authorityv1.Forbidden, "browser access denied")
 		default:
-			writeAuthenticationUnavailable(w, "create browser handoff", err)
+			writeAuthenticationUnavailable(r.Context(), w, "create browser handoff", err)
 		}
 		return
 	}

@@ -20,6 +20,7 @@ func TestConnectorTLSHalfCloseKeepsBoundedRenewalAndResponse(t *testing.T) {
 			defer cancel()
 			permission := connectorPermissionFixture()
 			renewed := make(chan struct{}, 1)
+			var permissionGate ConnectorPermissionGate
 			done := tunnelWorker(t, cancel, func() error {
 				return ServeConnectorPermissionControl(ctx, control, func(got tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
 					if got != permission {
@@ -27,7 +28,7 @@ func TestConnectorTLSHalfCloseKeepsBoundedRenewalAndResponse(t *testing.T) {
 					}
 					renewed <- struct{}{}
 					_ = responder.Respond(got, got == permission)
-				}, func() {})
+				}, func() {}, &permissionGate)
 			})
 			serverTLS, clientTLS := realTunnelTLS(t)
 			serverTLS.MinVersion, serverTLS.MaxVersion = version, version

@@ -3,16 +3,47 @@ package ingress
 import (
 	"context"
 	"net"
+	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 type pendingTLSBackend struct{ connection net.Conn }
 
+func (pendingTLSBackend) ConnectionSlot() uint8 { return 0 }
+
 func (b pendingTLSBackend) Start(ctx context.Context, _ string, _ bool, proxy, initial []byte) (net.Conn, error) {
 	return startTestBackend(ctx, b.connection, proxy, initial)
+}
+
+type relayAttemptMetrics struct {
+	testMetrics
+	slots []string
+}
+
+func (m *relayAttemptMetrics) ObserveRelayAttempt(slot string, _ observability.RelayAttemptOutcome) {
+	m.slots = append(m.slots, slot)
+}
+
+func TestRelayAttemptReportsAssignedConnectionSlot(t *testing.T) {
+	forwarder := newTestForwarder(t, newForwardingTestMaterial(t))
+	metrics := &relayAttemptMetrics{}
+	server := &Server{config: Config{Metrics: metrics}}
+	for _, slot := range []int{0, 1} {
+		entry := forwardingTestEntry(time.Now(), "relay.example:443")
+		entry.PublisherConnections[0].ConnectionSlot = slot
+		backend := mustOnlyBackend(t, forwarder, entry)
+		if backend.ConnectionSlot() != uint8(slot) {
+			t.Fatalf("backend slot=%d, want %d", backend.ConnectionSlot(), slot)
+		}
+		server.observeRelayAttempt(backend, observability.RelayAttemptCommitted)
+	}
+	if !slices.Equal(metrics.slots, []string{"0", "1"}) {
+		t.Fatalf("reported slots=%v, want [0 1]", metrics.slots)
+	}
 }
 
 func TestRestrictedVisitorForwardingHasSuccessfulOutcome(t *testing.T) {
@@ -56,7 +87,7 @@ func TestConcurrentBackendGaugeReturnsToZero(t *testing.T) {
 				t.Error("failed to track backend")
 				return
 			}
-			if err := server.releaseBackend(left); err != nil {
+			if err := server.releaseBackend(t.Context(), left); err != nil {
 				t.Error(err)
 			}
 		}()

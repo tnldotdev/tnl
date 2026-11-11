@@ -79,10 +79,6 @@ func (c *heldConnectorControl) RenewConnectorPeerPair(ctx context.Context, servi
 	return c.Control.RenewConnectorPeerPair(ctx, service, body)
 }
 
-func (c *heldConnectorControl) CloseContext(ctx context.Context) error {
-	return c.Control.(interface{ CloseContext(context.Context) error }).CloseContext(ctx)
-}
-
 func TestIntegrationPreparedConnectorHasNoArrivalRPCOrSigning(t *testing.T) {
 	testutil.RequireTestTier(t, testutil.TestTierIntegration)
 	for _, standalone := range []bool{false, true} {
@@ -94,7 +90,7 @@ func TestIntegrationPreparedConnectorHasNoArrivalRPCOrSigning(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "native", key)
+				service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "native", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
 				if err != nil {
 					t.Fatal(err)
 				}

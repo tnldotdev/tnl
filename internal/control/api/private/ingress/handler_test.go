@@ -358,6 +358,8 @@ func timePointer(value time.Time) *time.Time { return &value }
 
 type ingressStoreStub struct {
 	visitorPolicyStore
+	publicServiceStore
+	serviceAuditStore
 	registerIngress     func(context.Context, controlstate.IngressRegistration, time.Time, time.Duration) (controlstate.IngressLease, error)
 	renewIngress        func(context.Context, controlstate.IngressRenewal, time.Time, time.Duration) (controlstate.IngressLease, error)
 	beginIngressDrain   func(context.Context, controlstate.IngressLeaseIdentity, time.Time, time.Time) (controlstate.IngressLease, error)

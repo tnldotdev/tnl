@@ -39,12 +39,12 @@ func (h *handler) visitorActor(w http.ResponseWriter, r *http.Request) (string, 
 	}
 	return actor.identityID, true
 }
-func visitorResult(w http.ResponseWriter, operation string, value any, err error, status int) {
+func visitorResult(ctx context.Context, w http.ResponseWriter, operation string, value any, err error, status int) {
 	if err != nil {
 		if errors.Is(err, controlstate.ErrShareInvalid) || errors.Is(err, controlstate.ErrShareNotFound) || errors.Is(err, controlstate.ErrShareIdempotency) || errors.Is(err, controlstate.ErrPublicURLInvalid) || errors.Is(err, controlstate.ErrPublicURLMutationStale) {
-			writeControlStateProblem(w, operation, err)
+			writeControlStateProblem(ctx, w, operation, err)
 		} else {
-			writeVisitorDecisionProblem(w, operation, err)
+			writeVisitorDecisionProblem(ctx, w, operation, err)
 		}
 		return
 	}
@@ -59,14 +59,14 @@ func validVisitorSource(value string) bool {
 	addr, err := netip.ParseAddr(value)
 	return err == nil && addr.Zone() == "" && addr.Unmap().String() == value
 }
-func writeVisitorDecisionProblem(w http.ResponseWriter, operation string, err error) {
+func writeVisitorDecisionProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrVisitorSignIn), errors.Is(err, controlstate.ErrControlAuthentication), errors.Is(err, controlstate.ErrPublishRunCredential), errors.Is(err, clientauthority.ErrUnauthenticated), errors.Is(err, authorization.ErrUnauthenticated):
 		writeBearerProblem(w)
 	case errors.Is(err, controlstate.ErrPreviewAccess), errors.Is(err, controlstate.ErrFeedbackAccess), errors.Is(err, controlstate.ErrPublishRunStale), errors.Is(err, authorization.ErrForbidden):
 		writeProblem(w, 403, controlv1.Forbidden, "visitor permission denied")
 	default:
-		writeUnavailableProblem(w, failure.Operation(operation), "visitor authorization is unavailable; retry", failure.ServerAuthorityUnavailable, err)
+		writeUnavailableProblem(ctx, w, failure.Operation(operation), "visitor authorization is unavailable; retry", failure.ServerAuthorityUnavailable, err)
 	}
 }
 func (h *handler) ListAvailablePublicURLs(w http.ResponseWriter, r *http.Request, p controlv1.ListAvailablePublicURLsParams) {
@@ -75,7 +75,7 @@ func (h *handler) ListAvailablePublicURLs(w http.ResponseWriter, r *http.Request
 		return
 	}
 	result, err := h.visitorState.ListAvailablePublicURLs(r.Context(), actor, optionalFeedbackString(p.TeamId), optionalFeedbackString(p.Cursor), time.Now())
-	visitorResult(w, "list visitor inventory", result, err, 200)
+	visitorResult(r.Context(), w, "list visitor inventory", result, err, 200)
 }
 func (h *handler) CreateTeamVisitorGrant(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, p controlv1.CreateTeamVisitorGrantParams) {
 	actor, ok := h.visitorActor(w, r)
@@ -88,7 +88,7 @@ func (h *handler) CreateTeamVisitorGrant(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	result, err := h.visitorState.CreateTeamVisitorGrant(r.Context(), id, actor, p.IdempotencyKey, body.ExpiresAt, time.Now())
-	visitorResult(w, "create team visitor grant", result, err, 201)
+	visitorResult(r.Context(), w, "create team visitor grant", result, err, 201)
 }
 
 func (h *handler) CreateIdentityVisitorGrant(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, p controlv1.CreateIdentityVisitorGrantParams) {
@@ -102,7 +102,7 @@ func (h *handler) CreateIdentityVisitorGrant(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	result, err := h.visitorState.CreateIdentityVisitorGrant(r.Context(), id, actor, p.IdempotencyKey, body.IdentityId, body.ExpiresAt, time.Now())
-	visitorResult(w, "create identity visitor grant", result, err, 201)
+	visitorResult(r.Context(), w, "create identity visitor grant", result, err, 201)
 }
 
 func (h *handler) ListVisitorGrants(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
@@ -111,7 +111,7 @@ func (h *handler) ListVisitorGrants(w http.ResponseWriter, r *http.Request, id c
 		return
 	}
 	result, err := h.visitorState.ListVisitorGrants(r.Context(), id, actor)
-	visitorResult(w, "list visitor grants", result, err, 200)
+	visitorResult(r.Context(), w, "list visitor grants", result, err, 200)
 }
 func (h *handler) RevokeVisitorGrant(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, grantID string) {
 	actor, ok := h.visitorActor(w, r)
@@ -119,7 +119,7 @@ func (h *handler) RevokeVisitorGrant(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	err := h.visitorState.RevokeVisitorGrant(r.Context(), id, actor, grantID, time.Now())
-	visitorResult(w, "revoke visitor grant", nil, err, 204)
+	visitorResult(r.Context(), w, "revoke visitor grant", nil, err, 204)
 }
 func (h *handler) CreateVisitorInvitation(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, p controlv1.CreateVisitorInvitationParams) {
 	actor, ok := h.visitorActor(w, r)
@@ -139,7 +139,7 @@ func (h *handler) CreateVisitorInvitation(w http.ResponseWriter, r *http.Request
 	var digest [32]byte
 	copy(digest[:], raw)
 	result, err := h.visitorState.CreateVisitorInvitation(r.Context(), id, actor, p.IdempotencyKey, body.Email, digest, body.ExpiresAt, time.Now())
-	visitorResult(w, "create visitor invitation", result, err, 201)
+	visitorResult(r.Context(), w, "create visitor invitation", result, err, 201)
 }
 func (h *handler) ListVisitorInvitations(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
 	actor, ok := h.visitorActor(w, r)
@@ -147,7 +147,7 @@ func (h *handler) ListVisitorInvitations(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	result, err := h.visitorState.ListVisitorInvitations(r.Context(), id, actor)
-	visitorResult(w, "list visitor invitations", result, err, 200)
+	visitorResult(r.Context(), w, "list visitor invitations", result, err, 200)
 }
 func (h *handler) RevokeVisitorInvitation(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID, inviteID string) {
 	actor, ok := h.visitorActor(w, r)
@@ -155,7 +155,7 @@ func (h *handler) RevokeVisitorInvitation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	err := h.visitorState.RevokeVisitorInvitation(r.Context(), id, actor, inviteID, time.Now())
-	visitorResult(w, "revoke visitor invitation", nil, err, 204)
+	visitorResult(r.Context(), w, "revoke visitor invitation", nil, err, 204)
 }
 func (h *handler) AcceptVisitorInvitation(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.visitorActor(w, r)
@@ -168,7 +168,7 @@ func (h *handler) AcceptVisitorInvitation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	result, err := h.visitorState.AcceptVisitorInvitation(r.Context(), actor, body.Secret, time.Now())
-	visitorResult(w, "accept visitor invitation", result, err, 200)
+	visitorResult(r.Context(), w, "accept visitor invitation", result, err, 200)
 }
 
 func (h *handler) ReplaceVisitorAccess(w http.ResponseWriter, r *http.Request, id controlv1.PublicURLID) {
@@ -193,7 +193,7 @@ func (h *handler) ReplaceVisitorAccess(w http.ResponseWriter, r *http.Request, i
 	}
 	result, err := h.visitorState.ReplaceVisitorAccess(r.Context(), id, actor, mode, prefixes, uint64(body.ExpectedRevision), time.Now())
 	if err != nil {
-		writeControlStateProblem(w, "replace visitor access", err)
+		writeControlStateProblem(r.Context(), w, "replace visitor access", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, publicURLResponse(result))

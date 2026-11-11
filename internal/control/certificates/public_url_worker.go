@@ -36,6 +36,8 @@ type PublicURLConfig struct {
 type PublicURLWorkObserver interface {
 	ObserveCertificateIterationContext(context.Context, string, string, observability.CertificateWorkOutcome, time.Duration)
 	ObserveCertificateMilestone(kind, milestone string, age time.Duration)
+	ObserveCertificateClaim(string, observability.CertificateClaimOutcome)
+	ObserveCertificateTransition(string, string)
 }
 
 type PublicURLDNSChallenges interface {
@@ -99,9 +101,7 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (_ bool, retErr error)
 	}()
 	now := w.now()
 	work, found, err := w.store.ClaimACMEOrderWork(ctx, w.config.WorkerID, now, w.config.LeaseDuration)
-	if observer, ok := w.config.Observer.(interface {
-		ObserveCertificateClaim(string, observability.CertificateClaimOutcome)
-	}); ok && !workerloop.LifetimeEnded(ctx) {
+	if w.config.Observer != nil && !workerloop.LifetimeEnded(ctx) {
 		outcome := observability.CertificateClaimed
 		kind := "service_queue"
 		if err != nil {
@@ -111,7 +111,7 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (_ bool, retErr error)
 		} else {
 			kind = certificateKind(work)
 		}
-		observer.ObserveCertificateClaim(kind, outcome)
+		w.config.Observer.ObserveCertificateClaim(kind, outcome)
 	}
 	if err != nil || !found {
 		return found, err
@@ -144,18 +144,16 @@ func (w *PublicURLWorker) processOne(ctx context.Context) (_ bool, retErr error)
 		return true, saveErr
 	}
 	if w.config.Observer != nil {
-		if observer, ok := w.config.Observer.(interface{ ObserveCertificateTransition(string, string) }); ok {
-			if stage != saved.State {
-				switch saved.State {
-				case "waiting_for_install":
-					observer.ObserveCertificateTransition(certificateKind(work), "available")
-				case "failed":
-					observer.ObserveCertificateTransition(certificateKind(work), "failed")
-				}
+		if stage != saved.State {
+			switch saved.State {
+			case "waiting_for_install":
+				w.config.Observer.ObserveCertificateTransition(certificateKind(work), "available")
+			case "failed":
+				w.config.Observer.ObserveCertificateTransition(certificateKind(work), "failed")
 			}
-			if hadPendingCleanup && !hasPendingDNSCleanup(saved.Authorizations) {
-				observer.ObserveCertificateTransition(certificateKind(work), "cleanup_complete")
-			}
+		}
+		if hadPendingCleanup && !hasPendingDNSCleanup(saved.Authorizations) {
+			w.config.Observer.ObserveCertificateTransition(certificateKind(work), "cleanup_complete")
 		}
 		if stage != "waiting_for_install" && saved.State == "waiting_for_install" && len(saved.CertificatePEM) != 0 {
 			w.config.Observer.ObserveCertificateMilestone(certificateKind(work), "ready", completedAt.Sub(saved.CreatedAt))

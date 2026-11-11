@@ -33,6 +33,12 @@ type Config struct {
 
 // Store is the stored state used by the built-in authority API.
 type Store interface {
+	DeviceStore
+	companyAccessStore
+	serviceAccessStore
+	visitorAuthorityStore
+	WorkloadStore
+	PublisherIdentityStore
 	AuthorizeTeamSession(context.Context, controlstate.ControlPrincipal, string, time.Time) error
 	EnsureServiceIdentity(context.Context, string, controlstate.OIDCIdentity, time.Time) (controlstate.IdentityContext, error)
 	PreviewInvitation(context.Context, string, string, time.Time) (controlstate.InvitationPreview, error)
@@ -62,7 +68,6 @@ type handler struct {
 	config    Config
 	store     Store
 	oidc      *oidc.Server
-	devices   DeviceStore
 	webSecret serviceapi.BearerSecrets
 }
 
@@ -119,7 +124,6 @@ func Register(mux *http.ServeMux, cfg Config, store Store) (Routes, error) {
 		if err != nil {
 			return nil, err
 		}
-		h.devices, _ = store.(DeviceStore)
 	}
 	parameterError := func(response http.ResponseWriter, _ *http.Request, _ error) {
 		response.Header().Set("Cache-Control", "no-store")

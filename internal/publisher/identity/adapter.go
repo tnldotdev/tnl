@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 	publisherruntime "github.com/tnldotdev/tnl/internal/publisher/runtime"
@@ -23,10 +24,12 @@ type AssertionExchanger interface {
 	ExchangePublisherAssertion(context.Context, string, string, string, ed25519.PrivateKey) (string, error)
 }
 
-// NativeControl supplies the HTTP boundary without a dependency on the native
+// PublicURLControl supplies the HTTP boundary without a dependency on the native
 // publisher runtime. lifecycle operations keep using the publish run token.
-type NativeControl interface {
+type PublicURLControl interface {
 	RunControl
+	PublisherAuditControl
+	ControlURL() string
 	PublisherPublicURL(context.Context, string) (controlv1.PublicURL, error)
 	AllocatePublisherPublicURL(context.Context, string, controlv1.AllocateEphemeralPublicURLRequest) (controlv1.PublicURL, error)
 	DeletePublisherPublicURL(context.Context, string, string) error
@@ -38,6 +41,14 @@ type NativeControl interface {
 	CreateCertificateIssuance(context.Context, string, uint64, credentials.PublishRunToken, []byte, string) (controlv1.CertificateIssuance, error)
 	GetCertificateIssuance(context.Context, string, credentials.PublishRunToken) (controlv1.CertificateIssuance, error)
 	MarkPublishRunCertificateInstalled(context.Context, string, uint64, string, time.Time, credentials.PublishRunToken) error
+}
+
+// NativeControl supplies explicit capabilities for the selected operation.
+// public URL callers leave Services nil; deployed owners supply Runtime.
+type NativeControl struct {
+	PublicURLControl
+	Services ServiceControl
+	Runtime  publisherruntime.Control
 }
 
 // Native is the single grant-scoped adapter for CLI, app, SDK, and guest
@@ -53,12 +64,19 @@ type Native struct {
 }
 
 func NewNative(control NativeControl, authority AssertionExchanger, identity authorityv1.PublisherEnrollmentResult, private ed25519.PrivateKey) (*Native, error) {
-	if control == nil || authority == nil || !validSigningKey(private) {
+	if control.PublicURLControl == nil || authority == nil || !validSigningKey(private) {
+		return nil, ErrScope
+	}
+	server, err := naming.CanonicalControlURL(control.ControlURL())
+	if err != nil || server != control.ControlURL() {
 		return nil, ErrScope
 	}
 	scope, err := newNativeScope(identity)
 	if err != nil {
 		return nil, err
+	}
+	if scope.kind == authorityv1.Service && control.Services == nil {
+		return nil, ErrScope
 	}
 	return &Native{NativeControl: control, authority: authority, identity: scope, private: append(ed25519.PrivateKey(nil), private...)}, nil
 }

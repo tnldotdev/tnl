@@ -52,7 +52,7 @@ type BeginTunnelOptions struct {
 	ServiceProtocol  controlv1.PublicURLServiceProtocol
 	Project          string
 	Service          string
-	IntegrationGroup string
+	IntegrationScope IntegrationScope
 }
 
 // Tunnel is the write handle for one local publication.
@@ -100,7 +100,7 @@ type TunnelInfo struct {
 	PublicURL        string                             `json:"public_url,omitempty"`
 	Target           string                             `json:"target,omitempty"`
 	Framework        string                             `json:"framework,omitempty"`
-	IntegrationGroup string                             `json:"-"`
+	IntegrationScope IntegrationScope                   `json:"-"`
 	StartedAt        time.Time                          `json:"started_at"`
 	UpdatedAt        time.Time                          `json:"updated_at"`
 	HeartbeatAt      time.Time                          `json:"heartbeat_at"`
@@ -141,12 +141,10 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 	if options.Service != "" && !naming.ValidServiceName(options.Service) {
 		return nil, errors.New("clientstate: invalid tunnel service")
 	}
-	if len(options.IntegrationGroup) > 1024 {
-		return nil, failure.Wrap("validate integration URL group", failure.ProjectConfigInvalid, errors.New("integration group exceeds limit"))
-	}
-	primary, namespace, err := splitIntegrationGroup(options.IntegrationGroup)
-	if err != nil {
-		return nil, failure.Wrap("validate integration URL group", failure.ProjectConfigInvalid, err)
+	if !options.IntegrationScope.IsZero() {
+		if err := options.IntegrationScope.Validate(); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := d.Server(ctx, server); err != nil {
 		return nil, err
@@ -166,7 +164,7 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 		ID: id, Command: string(options.Command), ProcessID: int64(os.Getpid()), ServerOrigin: server,
 		ProjectRoot: options.Project, Service: options.Service, ServiceProtocol: string(options.ServiceProtocol), Target: options.Target,
 		Now: now.UnixNano(), LeaseExpiresAt: now.Add(tunnelLeaseDuration).UnixNano(),
-		PrimaryProjectRoot: primary, IntegrationNamespace: namespace,
+		PrimaryProjectRoot: options.IntegrationScope.primaryProjectRoot(), IntegrationNamespace: options.IntegrationScope.namespace(),
 	}); err != nil {
 		return nil, fmt.Errorf("clientstate: begin tunnel: %w", err)
 	}
@@ -178,36 +176,21 @@ func (d *Database) BeginTunnel(ctx context.Context, options BeginTunnelOptions) 
 
 func (t *Tunnel) ID() string { return t.id }
 
-// SetIntegrationGroup joins this tunnel to its machine-local project group.
-func (t *Tunnel) SetIntegrationGroup(ctx context.Context, group string) error {
-	if group == "" || len(group) > 1024 {
-		return failure.Wrap("validate integration URL group", failure.ProjectConfigInvalid, errors.New("group must be nonempty and within 1024 bytes"))
+// SetIntegrationScope joins this tunnel to its machine-local project scope.
+func (t *Tunnel) SetIntegrationScope(ctx context.Context, scope IntegrationScope) error {
+	if err := scope.Validate(); err != nil {
+		return err
 	}
-	primary, namespace, err := splitIntegrationGroup(group)
-	if err != nil {
-		return failure.Wrap("validate integration URL group", failure.ProjectConfigInvalid, err)
-	}
-	count, err := t.database.queries.SetTunnelIntegrationGroup(ctx, clientstatedb.SetTunnelIntegrationGroupParams{
-		PrimaryProjectRoot: primary, IntegrationNamespace: namespace, TunnelID: t.id,
+	count, err := t.database.queries.SetTunnelIntegrationScope(ctx, clientstatedb.SetTunnelIntegrationScopeParams{
+		PrimaryProjectRoot: scope.primaryProjectRoot(), IntegrationNamespace: scope.namespace(), TunnelID: t.id,
 	})
 	if err != nil {
-		return failure.Wrap("register integration URL group", failure.ClientStateUnavailable, err)
+		return failure.Wrap("register integration URL scope", failure.ClientStateUnavailable, err)
 	}
 	if count != 1 {
-		return failure.Wrap("register integration URL group", failure.ClientStateUnavailable, errors.New("tunnel stopped before registration"))
+		return failure.Wrap("register integration URL scope", failure.ClientStateUnavailable, errors.New("tunnel stopped before registration"))
 	}
 	return nil
-}
-
-func splitIntegrationGroup(value string) (sql.NullString, sql.NullString, error) {
-	if value == "" {
-		return sql.NullString{}, sql.NullString{}, nil
-	}
-	primary, namespace, ok := strings.Cut(value, "\x00")
-	if !ok || primary == "" || namespace == "" || strings.ContainsRune(namespace, '\x00') {
-		return sql.NullString{}, sql.NullString{}, errors.New("integration group requires a project and namespace")
-	}
-	return sql.NullString{String: primary, Valid: true}, sql.NullString{String: namespace, Valid: true}, nil
 }
 
 // Context is canceled if the parent ends or a failed heartbeat leaves the
@@ -403,8 +386,9 @@ func tunnelInfo(row clientstatedb.LocalTunnel, observedAt time.Time) TunnelInfo 
 		ID: row.ID, Command: TunnelCommand(row.Command), State: state, ProcessID: int(row.ProcessID),
 		Server: row.ServerOrigin, Project: row.ProjectRoot, Service: row.Service.String,
 		PublicURLID: row.PublicURLID.String, PublishRunNumber: uint64(row.PublishRunNumber.Int64),
-		Hostname: row.Hostname.String, Target: row.Target.String, Framework: row.Framework.String, IntegrationGroup: row.IntegrationGroup,
-		StartedAt: unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
+		Hostname: row.Hostname.String, Target: row.Target.String, Framework: row.Framework.String,
+		IntegrationScope: IntegrationScope{PrimaryProjectRoot: row.PrimaryProjectRoot.String, Namespace: row.IntegrationNamespace.String},
+		StartedAt:        unixNanoTime(row.StartedAt), UpdatedAt: unixNanoTime(row.UpdatedAt),
 		HeartbeatAt: unixNanoTime(row.HeartbeatAt), LeaseExpiresAt: unixNanoTime(row.LeaseExpiresAt),
 		Failure: row.FailureCode.String,
 	}

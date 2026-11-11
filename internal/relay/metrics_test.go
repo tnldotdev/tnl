@@ -64,7 +64,7 @@ func TestRelayControlMetricsRecordCanceledAndTimedOutCalls(t *testing.T) {
 	assertRelayOperation(t, metrics, "RelayRegister", "canceled", 1)
 	assertRelayOperation(t, metrics, "RelayRenewLease", "timeout", 1)
 	// unknown or dynamic names must not create cardinality from user input.
-	metrics.ObserveOperation("route-private-id", nil, time.Second)
+	metrics.ObserveOperationContext(t.Context(), observability.ServerOperation(255), nil, time.Second)
 	assertRelayOperation(t, metrics, "route-private-id", "success", 0)
 }
 

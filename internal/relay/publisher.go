@@ -8,6 +8,8 @@ import (
 	"net"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
+
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -78,7 +80,7 @@ func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, e
 }
 
 func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Session) (retErr error) {
-	finishAdmission := startOperation(ctx, a.observer, "RelayAdmitPublisherConnection")
+	finishAdmission := startOperation(ctx, a.observer, observability.OpRelayAdmitPublisherConnection)
 	var claimed relayv1.ClaimedPublisherConnection
 	var connection *PublisherConnection
 	ready := false
@@ -173,7 +175,7 @@ func (a *PublisherAcceptor) Accept(ctx context.Context, transport muxsession.Ses
 		if claimed.PublisherConnectionId != "" {
 			disconnectCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			unexpected := retErr != nil && ctx.Err() == nil && !errors.Is(retErr, net.ErrClosed)
-			finishDisconnect := startOperation(disconnectCtx, a.observer, "RelayDisconnectPublisherConnection")
+			finishDisconnect := startOperation(disconnectCtx, a.observer, observability.OpRelayDisconnectPublisherConnection)
 			_, disconnectErr := control.DisconnectPublisherConnection(disconnectCtx, claimed, unexpected)
 			finishDisconnect(disconnectErr)
 			cancel()

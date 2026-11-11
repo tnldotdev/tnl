@@ -1,6 +1,7 @@
 package public
 
 import (
+	"context"
 	"errors"
 	"math"
 	"net/http"
@@ -8,7 +9,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/observability"
+	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -66,7 +67,7 @@ func (h *handler) ListAdminRelays(
 	}
 	page, err := h.admin.ListAdminRelayLeases(request.Context(), cursor, time.Now().UTC())
 	if err != nil {
-		h.writeAdminStateError(response, "list admin relays", err)
+		h.writeAdminStateError(request.Context(), response, "list admin relays", err)
 		return
 	}
 	body := controlv1.AdminRelayPage{Relays: make([]controlv1.AdminRelayLease, len(page.Relays))}
@@ -102,9 +103,9 @@ func (h *handler) DrainAdminRelay(response http.ResponseWriter, request *http.Re
 	lease, err := h.admin.BeginAdminRelayDrain(request.Context(), controlstate.RelayLeaseIdentity{
 		RelayID: string(relayID), RelayRunID: body.RelayRunId,
 		RelayLeaseRevision: uint64(body.RelayLeaseRevision),
-	}, principal.identityID, newRequestID(), now, body.Deadline.UTC())
+	}, principal.identityID, failureproblem.NewRequestID(), now, body.Deadline.UTC())
 	if err != nil {
-		h.writeAdminStateError(response, "drain admin relay", err)
+		h.writeAdminStateError(request.Context(), response, "drain admin relay", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, adminRelayLease(lease))
@@ -120,7 +121,7 @@ func (h *handler) ListMaintenanceControls(response http.ResponseWriter, request 
 	}
 	controls, err := h.admin.ListMaintenanceControls(request.Context())
 	if err != nil {
-		h.writeAdminStateError(response, "list maintenance controls", err)
+		h.writeAdminStateError(request.Context(), response, "list maintenance controls", err)
 		return
 	}
 	body := make([]controlv1.MaintenanceControl, len(controls))
@@ -150,10 +151,10 @@ func (h *handler) SetMaintenanceControl(
 	}
 	control, err := h.admin.SetMaintenanceControl(
 		request.Context(), controlstate.MaintenanceControlName(name), body.Allowed,
-		principal.identityID, newRequestID(), time.Now().UTC(),
+		principal.identityID, failureproblem.NewRequestID(), time.Now().UTC(),
 	)
 	if err != nil {
-		h.writeAdminStateError(response, "set maintenance control", err)
+		h.writeAdminStateError(request.Context(), response, "set maintenance control", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, maintenanceControl(control))
@@ -174,7 +175,7 @@ func (h *handler) authorizeAdministrator(
 	return principal, true
 }
 
-func (h *handler) writeAdminStateError(response http.ResponseWriter, operation string, err error) {
+func (h *handler) writeAdminStateError(ctx context.Context, response http.ResponseWriter, operation string, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrAdminInvalid):
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid request")
@@ -184,7 +185,7 @@ func (h *handler) writeAdminStateError(response http.ResponseWriter, operation s
 		writeProblem(response, http.StatusConflict, controlv1.Conflict, "relay lease is stale")
 	default:
 		requestID := writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
-		operatorlog.ReportContext(observability.ResponseContext(response), failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(ctx, failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
 	}
 }
 

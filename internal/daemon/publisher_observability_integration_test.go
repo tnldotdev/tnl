@@ -221,7 +221,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			startSeparatedPrivateIngress(t, f, 1, transport, nil)
 			target := startPrivateEchoTarget(t)
 			key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "trace", key)
+			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "trace", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -229,7 +229,7 @@ func TestIntegrationPublisherObservabilityPrivate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, f.identity.routes, f.identity.authority, enrollment.EnrollmentKey)
+			native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.authority, enrollment.EnrollmentKey)
 			if err != nil {
 				t.Fatal(err)
 			}

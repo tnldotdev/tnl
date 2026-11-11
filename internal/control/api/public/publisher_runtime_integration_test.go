@@ -21,6 +21,7 @@ import (
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlProxy "github.com/tnldotdev/tnl/internal/control/proxy"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherruntime "github.com/tnldotdev/tnl/internal/publisher/runtime"
@@ -82,7 +83,7 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if err := controlstate.Migrate(ctx, dsn); err != nil {
 		t.Fatal(err)
 	}
-	d, err := controlstate.Open(ctx, dsn, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	d, err := controlstate.Open(ctx, dsn, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +319,8 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, err := publisheridentity.NewNative(&runtimeNativeControl{client}, authority, identity, priv)
+	runtimeControl := &runtimeNativeControl{client}
+	native, err := publisheridentity.NewNative(publisheridentity.NativeControl{PublicURLControl: runtimeControl, Runtime: runtimeControl}, authority, identity, priv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +388,8 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, err = publisheridentity.NewNative(&runtimeNativeControl{client}, authority, identity, priv)
+	runtimeControl = &runtimeNativeControl{client}
+	native, err = publisheridentity.NewNative(publisheridentity.NativeControl{PublicURLControl: runtimeControl, Services: runtimeControl, Runtime: runtimeControl}, authority, identity, priv)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -38,7 +38,7 @@ type ControlClient interface {
 type IngressLoadFunc func() int64
 
 type OperationObserver interface {
-	ObserveOperation(operation string, err error, elapsed time.Duration)
+	ObserveOperationContext(context.Context, observability.ServerOperation, error, time.Duration)
 }
 
 type ControllerConfig struct {
@@ -223,7 +223,7 @@ func (c *Controller) runOnce(ctx context.Context) error {
 
 func (c *Controller) register(ctx context.Context) (retErr error) {
 	started := time.Now()
-	defer func() { c.observeOperation("IngressRegister", retErr, started) }()
+	defer func() { c.observeOperation(ctx, observability.OpIngressRegister, retErr, started) }()
 	if lease := c.Lease(); lease.IngressLeaseRevision != 0 && !lease.LeaseExpiresAt.After(c.now()) {
 		return ErrIngressLeaseLost
 	}
@@ -274,7 +274,7 @@ func (c *Controller) renewLoop(ctx context.Context) error {
 			RoutingTableRevision: revision,
 			PreparedPublicRuns:   &observations,
 		})
-		c.observeOperation("IngressRenewLease", err, started)
+		c.observeOperation(ctx, observability.OpIngressRenewLease, err, started)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -312,7 +312,7 @@ func (c *Controller) routingLoop(ctx context.Context) error {
 				After: revision, Limit: &limit, Wait: &wait,
 			},
 		)
-		c.observeOperation("IngressFetchEvents", err, started)
+		c.observeOperation(ctx, observability.OpIngressFetchEvents, err, started)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -335,7 +335,7 @@ func (c *Controller) routingLoop(ctx context.Context) error {
 		}
 		started = time.Now()
 		err = c.routingTable.ApplyPage(revision, page)
-		c.observeOperation("IngressApplyEvents", err, started)
+		c.observeOperation(ctx, observability.OpIngressApplyEvents, err, started)
 		if err != nil {
 			c.routingUpdateFailed()
 			return fmt.Errorf("ingress: apply routing-table page: %w", err)
@@ -360,7 +360,7 @@ func (c *Controller) loadSnapshot(ctx context.Context) error {
 			IngressRunId: c.registration.IngressRunId, IngressLeaseRevision: lease.IngressLeaseRevision,
 		},
 	)
-	c.observeOperation("IngressFetchSnapshot", err, started)
+	c.observeOperation(ctx, observability.OpIngressFetchSnapshot, err, started)
 	if err != nil {
 		if ctx.Err() == nil {
 			c.routingUpdateFailed()
@@ -369,7 +369,7 @@ func (c *Controller) loadSnapshot(ctx context.Context) error {
 	}
 	started = time.Now()
 	err = c.routingTable.ApplySnapshot(snapshot)
-	c.observeOperation("IngressApplySnapshot", err, started)
+	c.observeOperation(ctx, observability.OpIngressApplySnapshot, err, started)
 	if err != nil {
 		c.routingUpdateFailed()
 		return fmt.Errorf("ingress: apply routing-table snapshot: %w", err)
@@ -380,9 +380,9 @@ func (c *Controller) loadSnapshot(ctx context.Context) error {
 	return nil
 }
 
-func (c *Controller) observeOperation(operation string, err error, started time.Time) {
+func (c *Controller) observeOperation(ctx context.Context, operation observability.ServerOperation, err error, started time.Time) {
 	if c.observer != nil {
-		c.observer.ObserveOperation(operation, err, time.Since(started))
+		c.observer.ObserveOperationContext(ctx, operation, err, time.Since(started))
 	}
 }
 

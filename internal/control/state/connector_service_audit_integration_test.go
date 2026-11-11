@@ -34,7 +34,7 @@ func TestIntegrationConnectorServiceAuditExactRunPairAndSource(t *testing.T) {
 	if _, err := report(f.run.Token, o); !errors.Is(err, ErrServiceAuditAccess) {
 		t.Fatal("uninstalled pair reported an admitted visitor", err)
 	}
-	prepared := ConnectorPeerPairPrepared{DeliveryID: delivery.DeliveryID, DeliveryGeneration: delivery.DeliveryGeneration, BindingExpiresAt: delivery.ExpiresAt}
+	prepared := ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: delivery.DeliveryID, DeliveryGeneration: delivery.DeliveryGeneration, BindingExpiresAt: delivery.ExpiresAt}
 	if err := f.d.ConfirmConnectorPeerPairPrepared(ctx, pair.ServiceID, f.run.RunID, pair.ID, f.run.Token, prepared, f.now); err != nil {
 		t.Fatal(err)
 	}

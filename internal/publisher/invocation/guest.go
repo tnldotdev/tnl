@@ -141,7 +141,7 @@ func enrollGuestNative(ctx context.Context, services publisherServices, publicUR
 	if err != nil {
 		return nil, err
 	}
-	return enrollGuestNativeWithClients(ctx, services.state, publicURL, services.routes, control, authority)
+	return enrollGuestNativeWithClients(ctx, services.state, publicURL, services.routes, publisheridentity.NativeControl{PublicURLControl: control}, authority)
 }
 
 type guestEnrollmentClient interface {

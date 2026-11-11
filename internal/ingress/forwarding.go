@@ -298,7 +298,7 @@ func (b forwardingBackend) Start(ctx context.Context, visitorConnectionID string
 				}
 			}
 		}
-		b.forwarder.observe("IngressForwardingAck", err, started)
+		b.forwarder.observe(ctx, observability.OpIngressForwardingAck, err, started)
 		if err == nil {
 			return stream, nil
 		}
@@ -313,7 +313,7 @@ func (b forwardingBackend) Start(ctx context.Context, visitorConnectionID string
 		if session.Err() == nil && b.forwarder.currentSession(b.target.key(), session) {
 			return nil, fmt.Errorf("ingress: open internal forwarding stream: %w", err)
 		}
-		err = errors.Join(err, b.forwarder.invalidate(b.target.key(), session))
+		err = errors.Join(err, b.forwarder.invalidate(ctx, b.target.key(), session))
 		// another visitor may populate the pool before our retry. at most one
 		// retry is allowed, even if it reuses a session.
 		if !reused || attempt == 1 || ctx.Err() != nil {
@@ -322,11 +322,8 @@ func (b forwardingBackend) Start(ctx context.Context, visitorConnectionID string
 	}
 }
 
-func (b forwardingBackend) connectionSlot() string {
-	if b.header.ConnectionSlot == 0 {
-		return "0"
-	}
-	return "1"
+func (b forwardingBackend) ConnectionSlot() uint8 {
+	return b.header.ConnectionSlot
 }
 
 type relayTarget struct {
@@ -392,7 +389,7 @@ func (f *Forwarder) session(ctx context.Context, target relayTarget) (*tunnel.Se
 		}
 		select {
 		case <-entry.session.Done():
-			f.invalidate(key, entry.session)
+			f.invalidate(ctx, key, entry.session)
 			continue
 		default:
 			return entry.session, !created, nil
@@ -414,7 +411,7 @@ func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target rel
 	}
 	entry.cancel()
 	finish(err)
-	f.observe("IngressRelayConnect", err, started)
+	f.observe(ctx, observability.OpIngressRelayConnect, err, started)
 
 	f.mu.Lock()
 	current := !f.closed && f.sessions[key] == entry
@@ -472,7 +469,7 @@ func (f *Forwarder) removeSupersededLocked(current relaySessionKey) ([]*relaySes
 	return obsolete, nil
 }
 
-func (f *Forwarder) invalidate(key relaySessionKey, session *tunnel.Session) error {
+func (f *Forwarder) invalidate(ctx context.Context, key relaySessionKey, session *tunnel.Session) error {
 	f.mu.Lock()
 	entry := f.sessions[key]
 	if entry != nil && entry.session == session {
@@ -486,15 +483,15 @@ func (f *Forwarder) invalidate(key relaySessionKey, session *tunnel.Session) err
 		f.reportSessionClosed(key, "local_invalidation", session.Err())
 		started := time.Now()
 		err := session.Close()
-		f.observe("IngressForwardingCleanup", err, started)
+		f.observe(ctx, observability.OpIngressForwardingCleanup, err, started)
 		return err
 	}
 	return nil
 }
 
-func (f *Forwarder) observe(operation string, err error, started time.Time) {
+func (f *Forwarder) observe(ctx context.Context, operation observability.ServerOperation, err error, started time.Time) {
 	if f.observer != nil {
-		f.observer.ObserveOperation(operation, err, time.Since(started))
+		f.observer.ObserveOperationContext(ctx, operation, err, time.Since(started))
 	}
 }
 
