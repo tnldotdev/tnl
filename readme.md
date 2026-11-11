@@ -24,7 +24,7 @@ For example, take a repo named `demo` with an `app` service. The main checkout a
                              your browser
                                    |
                          https://*.example.com
-                          (or your subdomain)
+                      (tnl.dev or your subdomain)
                                    v
                               tnl ingress
                          (hosted/self-hosted)
@@ -150,8 +150,7 @@ export default defineConfig({
 });
 ```
 
-Start your app with `pnpm dev` and get its URL.
-By default, any visitor needs to sign in or have a share link.
+Start your app (e.g. with `vite dev`) and get its URL. By default, any visitor needs to sign in or have a share link.
 
 Hot reloading, WebSockets, SSE, and streaming responses are all supported.
 
@@ -394,13 +393,13 @@ Here's how `tnl` compares to Tailscale, Cloudflare, and ngrok.
 
 ### in prod
 
-|                                        | tnl                     | tailscale              | cloudflare                   | ngrok                   |
-| -------------------------------------- | ----------------------- | ---------------------- | ---------------------------- | ----------------------- |
-| Connect without a public endpoint      | `tnl connect`           | WireGuard mesh network | Cloudflare One/`cloudflared` | `ngrokd` or Kubernetes  |
-| Use your own domain for public HTTPS   | Yes                     | No, only `*.ts.net`    | Yes                          | Yes                     |
-| Built-in web firewall (WAF)            | No                      | No                     | Yes                          | Yes                     |
-| Run the server infrastructure yourself | Yes                     | w/ Headscale           | No                           | No                      |
-| Route a whole subnet                   | No, individual services | Yes                    | Yes                          | No, individual services |
+|                                               | tnl                     | tailscale              | cloudflare                   | ngrok                   |
+| --------------------------------------------- | ----------------------- | ---------------------- | ---------------------------- | ----------------------- |
+| Connect without a publicly reachable endpoint | `tnl connect`           | WireGuard mesh network | Cloudflare One/`cloudflared` | `ngrokd` or Kubernetes  |
+| Use your own domain for public HTTPS          | Yes                     | No, only `*.ts.net`    | Yes                          | Yes                     |
+| Built-in web firewall (WAF)                   | No                      | No                     | Yes                          | Yes                     |
+| Run the server infrastructure yourself        | Yes                     | w/ Headscale           | No                           | No                      |
+| Route a whole subnet                          | No, individual services | Yes                    | Yes                          | No, individual services |
 
 ## license
 
