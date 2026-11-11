@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { npmPackageMetadataSchema } from "./npm-artifacts.ts";
+import { npmPackageMetadataSchema, packageManifestSchema } from "./npm-artifacts.ts";
 import { parseJSON } from "../validation.ts";
 
 assert(process.argv[2], "usage: verify-npm-packages.ts PACKAGE_DIRECTORY");
@@ -20,6 +20,16 @@ const overrides = Object.fromEntries(
     .filter((p) => p.kind === "native")
     .map((p) => [p.name, `file:${path.join(directory, p.tarball)}`]),
 );
+for (const entry of metadata.packages.filter((p) => p.kind === "native")) {
+  const manifest = parseJSON(
+    execFileSync("tar", ["-xOzf", path.join(directory, entry.tarball), "package/package.json"], {
+      encoding: "utf8",
+    }),
+    packageManifestSchema,
+    "packed native manifest",
+  );
+  assert.deepEqual(manifest.repository, { type: "git", url: "https://github.com/tnldotdev/tnl" });
+}
 for (const manager of ["npm", "pnpm"]) {
   const consumer = await mkdtemp(path.join(tmpdir(), `tnl-${manager}-`));
   try {
