@@ -12,6 +12,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/peer"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -73,6 +74,9 @@ type Config struct {
 	ServiceTLS                      *tls.Config            `json:"-"`
 	CleanupContext                  func() context.Context `json:"-"`
 	RelayQUIC, RelayTCP             muxsession.Connector
+	Connectivity                    peer.ConnectivityOptions
+	// PeerSocket is borrowed by qualification; the default connection owns one.
+	PeerSocket *peer.Socket
 }
 
 func (Config) String() string   { return "private connector configuration" }

@@ -39,6 +39,7 @@ type PeerSession struct {
 	highwater      int64
 	installMu      sync.Mutex
 	packets        *peer.Endpoint
+	connectivity   *peer.Connectivity
 	permissionGate tunnel.ConnectorPermissionGate
 	packetPaths    [2]*peer.CarrierSlot
 	deliverySlots  [2]*Claimed

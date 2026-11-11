@@ -50,6 +50,9 @@ type connectorConnection struct {
 	signer        Signer
 	owner         string
 	endpoint      *peer.Endpoint
+	socket        *peer.Socket
+	ownedSocket   bool
+	connectivity  *peer.Connectivity
 	transport     *quic.Transport
 	udpTransport  *muxsession.QUICTransport
 	connection    *quic.Conn
@@ -106,6 +109,18 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 			result = fmt.Errorf("prepare connector %s: %w", stage, result)
 		}
 	}()
+	if !config.Connectivity.DisableDirect {
+		p.socket = config.PeerSocket
+		if p.socket == nil {
+			// inability to open UDP must not prevent TLS/TCP relay delivery.
+			p.socket, _ = peer.ListenSocket(life, "udp", ":0")
+			p.ownedSocket = p.socket != nil
+		}
+		if p.socket != nil && config.RelayQUIC == nil {
+			config.RelayQUIC = muxsession.QUICConnector{TLSConfig: config.TransportTLS, Dialer: p.socket, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}
+		}
+		p.config = config
+	}
 	p.owner, result = opaqueid.New(opaqueid.IdempotencyPrefix)
 	if result != nil {
 		return nil, result
@@ -173,7 +188,11 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		return nil, result
 	}
 	initialBinding := connectorBindingRevision(p.pair)
-	p.endpoint, result = peer.New(life, peer.Config{Key: frameKey, Role: 0, Paths: [2]peer.Carrier{p.paths[0].carrier, p.paths[1].carrier}, Binding: initialBinding})
+	var direct *peer.CarrierSlot
+	if p.socket != nil {
+		direct = peer.NewCarrierSlot()
+	}
+	p.endpoint, result = peer.New(life, peer.Config{Key: frameKey, Role: 0, Paths: [2]peer.Carrier{p.paths[0].carrier, p.paths[1].carrier}, Direct: direct, Binding: initialBinding})
 	if result != nil {
 		return nil, result
 	}
@@ -240,6 +259,10 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	if setup.Err() != nil || !p.currentLocked() {
 		return nil, errors.Join(ErrServiceConnection, context.Cause(setup))
 	}
+	if p.socket != nil {
+		p.connectivity = peer.NewConnectivity(p.socket, p.connection, p.endpoint, true, config.Connectivity, p.admitDirectPacket)
+		p.connectivity.SetBinding(connectorConnectivityBinding(p.pair))
+	}
 	p.workers.Go(p.watch)
 	p.workers.Go(p.refresh)
 	p.workers.Go(func() {
@@ -257,6 +280,13 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 	})
 	for slot := range 2 {
 		p.workers.Go(func() { p.maintainLeg(slot) })
+	}
+	if p.socket != nil {
+		p.workers.Go(func() {
+			if err := p.connectivity.Serve(life); err != nil && life.Err() == nil {
+				p.cancel(err)
+			}
+		})
 	}
 	return p, nil
 }
@@ -433,7 +463,7 @@ func earliestConnectorDeadline(values ...time.Time) time.Time {
 func (p *connectorConnection) refresh() {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
-	nextAuthority := time.Now().Add(2 * time.Second)
+	lastAuthority := time.Now()
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -449,12 +479,13 @@ func (p *connectorConnection) refresh() {
 		}
 		p.mu.Lock()
 		activationUncertain := p.rebind != nil && p.rebind.activate != nil
+		authorityDelay := connectorAuthorityRefreshDelay(time.Until(p.preparedUntil))
 		p.mu.Unlock()
 		// an activation may have committed while its reply was lost. resolve
 		// that exact phase before renewing with the old delivery generation;
 		// the existing owner deadline remains fixed throughout this wait.
-		if !activationUncertain && !nextAuthority.After(time.Now()) {
-			nextAuthority = time.Now().Add(2 * time.Second)
+		if !activationUncertain && !lastAuthority.Add(authorityDelay).After(time.Now()) {
+			lastAuthority = time.Now()
 			if err := p.refreshAuthority(); err != nil {
 				p.mu.Lock()
 				pending := p.rebind != nil
@@ -466,6 +497,14 @@ func (p *connectorConnection) refresh() {
 			}
 		}
 	}
+}
+
+// a lost phase reply can leave only a short conservative installation interval.
+// observe fresh publisher confirmation before that fence instead of letting the
+// normal two-second polling interval consume it. polling never renews a fence by
+// itself, and the coordinator still owns at most one authority request at a time.
+func connectorAuthorityRefreshDelay(remaining time.Duration) time.Duration {
+	return min(2*time.Second, max(250*time.Millisecond, remaining/4))
 }
 
 // the coordinator is the only writer of refreshed authority and network binding
@@ -885,6 +924,9 @@ func (p *connectorConnection) Close() {
 			_ = p.endpoint.Close()
 		}
 		p.workers.Wait()
+		if p.ownedSocket {
+			_ = p.socket.Close()
+		}
 		if op := p.rebind; op != nil {
 			for _, leg := range op.legs {
 				if leg != nil {

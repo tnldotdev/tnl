@@ -18,6 +18,23 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
+func TestConnectorAuthorityRefreshTracksInstallationDeadline(t *testing.T) {
+	for _, test := range []struct {
+		remaining, delay time.Duration
+	}{
+		{time.Minute, 2 * time.Second},
+		{8 * time.Second, 2 * time.Second},
+		{3 * time.Second, 750 * time.Millisecond},
+		{time.Second, 250 * time.Millisecond},
+		{time.Millisecond, 250 * time.Millisecond},
+		{-time.Second, 250 * time.Millisecond},
+	} {
+		if delay := connectorAuthorityRefreshDelay(test.remaining); delay != test.delay {
+			t.Errorf("remaining=%s: delay=%s, want %s", test.remaining, delay, test.delay)
+		}
+	}
+}
+
 func TestConnectorPairDenialKeepsStartupAndRetirementBoundaries(t *testing.T) {
 	for _, transport := range []string{"quic", "tls-tcp"} {
 		for _, stage := range []string{"startup", "renewal"} {
