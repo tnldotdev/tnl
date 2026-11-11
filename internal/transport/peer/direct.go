@@ -14,11 +14,13 @@ func (e *Endpoint) CurrentBinding() (BindingRevision, bool) {
 // direct delivery belongs only to the exact active binding; replacement fences
 // queued input and output without resetting the endpoint's replay history.
 // a nil carrier may remove delivery for that same binding after suspension.
-func (e *Endpoint) InstallDirect(binding BindingRevision, carrier Carrier) error {
+// nonnil delivery requires an explicit, nonblocking consent check. wrappers may
+// narrow the carrier interface without hiding or bypassing that check.
+func (e *Endpoint) InstallDirect(binding BindingRevision, carrier Carrier, consent func() bool) error {
 	e.bindingMu.Lock()
 	defer e.bindingMu.Unlock()
 	e.mu.Lock()
-	if e.ctx.Err() != nil || binding != e.binding || carrier != nil && !e.bindingActive || e.config.Direct == nil {
+	if e.ctx.Err() != nil || binding != e.binding || carrier != nil && (!e.bindingActive || consent == nil) || e.config.Direct == nil {
 		e.mu.Unlock()
 		if carrier != nil {
 			_ = carrier.Close()
@@ -30,7 +32,7 @@ func (e *Endpoint) InstallDirect(binding BindingRevision, carrier Carrier) error
 	e.chooseLocked()
 	e.mu.Unlock()
 	// carrier cleanup may join physical calls; it must not hold endpoint state.
-	err := e.config.Direct.Install(carrier)
+	err := e.config.Direct.install(carrier, consent)
 	e.mu.Lock()
 	e.paths[Direct].refreshRevisionLocked()
 	e.chooseLocked()
@@ -62,8 +64,5 @@ func (e *Endpoint) directHealthyLocked(now time.Time) bool {
 	if slot.closed || slot.current == nil || p.revision != (carrierRevision{slot: slot, revision: slot.revision}) {
 		return false
 	}
-	if consent, ok := slot.current.carrier.(interface{ DirectConsent() bool }); ok {
-		return consent.DirectConsent()
-	}
-	return true
+	return slot.current.consent != nil && slot.current.consent()
 }

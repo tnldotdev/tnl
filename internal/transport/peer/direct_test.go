@@ -18,6 +18,8 @@ type droppingDirectCarrier struct {
 	drop *atomic.Bool
 }
 
+func testDirectConsent() bool { return true }
+
 func (c droppingDirectCarrier) Send(ctx context.Context, b []byte) error {
 	if c.drop.Load() {
 		return nil
@@ -122,7 +124,7 @@ func TestPeerDirectUpgradeAndFallback(t *testing.T) {
 	drop.Store(true)
 	a, b := memoryPair()
 	for side, carrier := range []Carrier{a, b} {
-		if err := ends[side].InstallDirect(testBinding(1), droppingDirectCarrier{Carrier: carrier, drop: &drop}); err != nil {
+		if err := ends[side].InstallDirect(testBinding(1), droppingDirectCarrier{Carrier: carrier, drop: &drop}, testDirectConsent); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -170,7 +172,7 @@ func TestPeerDirectUpgradeAndFallback(t *testing.T) {
 	if left.PathHealthy(Direct) || left.ActivePath() != RelayA {
 		t.Fatal("removed direct carrier remained selected")
 	}
-	if err := right.InstallDirect(testBinding(1), nil); err != nil {
+	if err := right.InstallDirect(testBinding(1), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := left.WriteTo([]byte("relay after removal"), left.RemoteAddr()); err != nil {
@@ -180,7 +182,7 @@ func TestPeerDirectUpgradeAndFallback(t *testing.T) {
 	// a live but blackholed carrier also falls back using timestamp freshness.
 	a, b = memoryPair()
 	for side, carrier := range []Carrier{a, b} {
-		if err := ends[side].InstallDirect(testBinding(1), droppingDirectCarrier{Carrier: carrier, drop: &drop}); err != nil {
+		if err := ends[side].InstallDirect(testBinding(1), droppingDirectCarrier{Carrier: carrier, drop: &drop}, testDirectConsent); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -198,7 +200,7 @@ func TestPeerDirectSelectionRequiresFreshCurrentCarrier(t *testing.T) {
 	defer slot.Close()
 	a, b := memoryPair()
 	defer b.Close()
-	if err := slot.Install(a); err != nil {
+	if err := slot.install(a, testDirectConsent); err != nil {
 		t.Fatal(err)
 	}
 	e := &Endpoint{ctx: t.Context(), config: Config{Key: [32]byte{7}, Direct: slot, PathTimeout: time.Second},
@@ -260,7 +262,7 @@ func TestPeerDirectRequiresTimelyOwnProbeReply(t *testing.T) {
 	defer slot.Close()
 	a, remote := memoryPair()
 	defer remote.Close()
-	if err := slot.Install(a); err != nil {
+	if err := slot.install(a, testDirectConsent); err != nil {
 		t.Fatal(err)
 	}
 	e := &Endpoint{ctx: ctx, cancel: cancel, config: Config{Key: [32]byte{7}, Role: 1, Direct: slot, PathTimeout: time.Second},
@@ -327,7 +329,7 @@ func TestPeerDirectBindingStagesAndSuspends(t *testing.T) {
 	ends := directEndpoints(t, ctx)
 	a, b := memoryPair()
 	for side, carrier := range []Carrier{a, b} {
-		if err := ends[side].InstallDirect(testBinding(1), carrier); err != nil {
+		if err := ends[side].InstallDirect(testBinding(1), carrier, testDirectConsent); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -361,7 +363,7 @@ func TestPeerDirectBindingStagesAndSuspends(t *testing.T) {
 		}
 		rejected, remote := memoryPair()
 		defer remote.Close()
-		if err := e.InstallDirect(next, rejected); !errors.Is(err, ErrConfiguration) {
+		if err := e.InstallDirect(next, rejected, testDirectConsent); !errors.Is(err, ErrConfiguration) {
 			t.Fatal("pending binding accepted direct installation", err)
 		}
 		awaitEndpointSignal(t, ctx, rejected.stop)
@@ -398,7 +400,7 @@ func TestPeerDirectBindingStagesAndSuspends(t *testing.T) {
 	}
 	a, b = memoryPair()
 	for side, carrier := range []Carrier{a, b} {
-		if err := ends[side].InstallDirect(next, carrier); err != nil {
+		if err := ends[side].InstallDirect(next, carrier, testDirectConsent); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -412,7 +414,7 @@ func TestPeerDirectBindingStagesAndSuspends(t *testing.T) {
 	}
 	directRead(t, ends[1], "fresh after stage")
 	revision := ends[0].config.Direct.Generation()
-	if err := ends[0].InstallDirect(testBinding(1), nil); !errors.Is(err, ErrConfiguration) || ends[0].config.Direct.Generation() != revision {
+	if err := ends[0].InstallDirect(testBinding(1), nil, nil); !errors.Is(err, ErrConfiguration) || ends[0].config.Direct.Generation() != revision {
 		t.Fatal("stale owner removed a newer direct installation", err)
 	}
 	ends[0].SuspendBinding()
@@ -426,11 +428,11 @@ func TestPeerDirectBindingStagesAndSuspends(t *testing.T) {
 	}
 	rejected, remote := memoryPair()
 	defer remote.Close()
-	if err := ends[0].InstallDirect(next, rejected); !errors.Is(err, ErrConfiguration) {
+	if err := ends[0].InstallDirect(next, rejected, testDirectConsent); !errors.Is(err, ErrConfiguration) {
 		t.Fatal("suspended binding accepted a nonnil direct installation", err)
 	}
 	awaitEndpointSignal(t, ctx, rejected.stop)
-	if err := ends[0].InstallDirect(next, nil); err != nil {
+	if err := ends[0].InstallDirect(next, nil, nil); err != nil {
 		t.Fatal("exact suspended binding could not remove direct delivery", err)
 	}
 	awaitEndpointSignal(t, ctx, a.stop)
@@ -445,7 +447,7 @@ func TestPeerDirectReplacementRetainsReplayAndFencesQueues(t *testing.T) {
 	e := directEndpoints(t, ctx)[0]
 	a, remote := memoryPair()
 	defer remote.Close()
-	if err := e.InstallDirect(testBinding(1), a); err != nil {
+	if err := e.InstallDirect(testBinding(1), a, testDirectConsent); err != nil {
 		t.Fatal(err)
 	}
 	proveDirect(t, ctx, e, remote)
@@ -463,7 +465,7 @@ func TestPeerDirectReplacementRetainsReplayAndFencesQueues(t *testing.T) {
 	sequence, stats := e.seq.Load(), e.Stats(Direct)
 	next, successor := memoryPair()
 	defer successor.Close()
-	if err := e.InstallDirect(testBinding(1), next); err != nil {
+	if err := e.InstallDirect(testBinding(1), next, testDirectConsent); err != nil {
 		t.Fatal(err)
 	}
 	buffer := []byte("untouched")
@@ -577,10 +579,10 @@ func TestPeerDirectBoundedQueueAndReplacementSerializesBinding(t *testing.T) {
 	held := &heldEndpointCarrier{Carrier: a, entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{}), closed: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(held.release) })
 	defer release()
-	if err := e.InstallDirect(testBinding(1), heldDirectDataCarrier{held}); err != nil {
+	if err := e.InstallDirect(testBinding(1), heldDirectDataCarrier{held}, testDirectConsent); err != nil {
 		t.Fatal(err)
 	}
-	if err := ends[1].InstallDirect(testBinding(1), b); err != nil {
+	if err := ends[1].InstallDirect(testBinding(1), b, testDirectConsent); err != nil {
 		t.Fatal(err)
 	}
 	awaitPath(t, ctx, e, ends[1], Direct)
@@ -599,7 +601,7 @@ func TestPeerDirectBoundedQueueAndReplacementSerializesBinding(t *testing.T) {
 	next, successor := memoryPair()
 	defer successor.Close()
 	installed := make(chan error, 1)
-	go func() { installed <- e.InstallDirect(testBinding(1), next) }()
+	go func() { installed <- e.InstallDirect(testBinding(1), next, testDirectConsent) }()
 	awaitEndpointSignal(t, ctx, held.canceled)
 	awaitEndpointSignal(t, ctx, held.closed)
 	// selection and relay delivery do not wait for a physical direct call to join.
@@ -658,7 +660,7 @@ func TestPeerDirectBindingCutAndWorkerJoinWithoutEndpointLock(t *testing.T) {
 			held := &heldEndpointCarrier{Carrier: a, read: true, entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{}), closed: make(chan struct{})}
 			release := sync.OnceFunc(func() { close(held.release) })
 			defer release()
-			if err := e.InstallDirect(testBinding(1), held); err != nil {
+			if err := e.InstallDirect(testBinding(1), held, testDirectConsent); err != nil {
 				t.Fatal(err)
 			}
 			awaitEndpointSignal(t, ctx, held.entered)
@@ -688,7 +690,7 @@ func TestPeerDirectBindingCutAndWorkerJoinWithoutEndpointLock(t *testing.T) {
 				default:
 				}
 				// the connectivity worker performs teardown outside role locks.
-				go func() { cut <- e.InstallDirect(testBinding(1), nil) }()
+				go func() { cut <- e.InstallDirect(testBinding(1), nil, nil) }()
 			}
 			awaitEndpointSignal(t, ctx, held.canceled)
 			progress := make(chan bool, 1)
@@ -731,14 +733,14 @@ func TestPeerDirectSuspendDoesNotWaitForInstallation(t *testing.T) {
 	held := &heldEndpointCarrier{Carrier: a, read: true, entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{}), closed: make(chan struct{})}
 	release := sync.OnceFunc(func() { close(held.release) })
 	defer release()
-	if err := e.InstallDirect(testBinding(1), held); err != nil {
+	if err := e.InstallDirect(testBinding(1), held, testDirectConsent); err != nil {
 		t.Fatal(err)
 	}
 	awaitEndpointSignal(t, ctx, held.entered)
 	next, successor := memoryPair()
 	defer successor.Close()
 	installed := make(chan error, 1)
-	go func() { installed <- e.InstallDirect(testBinding(1), next) }()
+	go func() { installed <- e.InstallDirect(testBinding(1), next, testDirectConsent) }()
 	awaitEndpointSignal(t, ctx, held.canceled)
 	suspended := make(chan struct{})
 	go func() { e.SuspendBinding(); close(suspended) }()
@@ -761,7 +763,7 @@ func TestPeerDirectSuspendDoesNotWaitForInstallation(t *testing.T) {
 		t.Fatal("suspended installation did not join", ctx.Err())
 	}
 	awaitEndpointSignal(t, ctx, next.stop)
-	if err := e.InstallDirect(testBinding(1), nil); err != nil {
+	if err := e.InstallDirect(testBinding(1), nil, nil); err != nil {
 		t.Fatal("exact-binding worker teardown failed after suspension", err)
 	}
 }
@@ -774,7 +776,7 @@ func TestPeerDirectRejectedInstallTransfersOwnership(t *testing.T) {
 		{PairID: testBinding(1).PairID, Generation: 1, OperationID: "different", Challenge: testBinding(1).Challenge}} {
 		a, b := memoryPair()
 		defer b.Close()
-		if err := e.InstallDirect(binding, a); !errors.Is(err, ErrConfiguration) {
+		if err := e.InstallDirect(binding, a, testDirectConsent); !errors.Is(err, ErrConfiguration) {
 			t.Fatal("mismatched binding installed direct delivery", err)
 		}
 		awaitEndpointSignal(t, ctx, a.stop)
@@ -784,7 +786,7 @@ func TestPeerDirectRejectedInstallTransfersOwnership(t *testing.T) {
 	}
 	a, b := memoryPair()
 	defer b.Close()
-	if err := e.InstallDirect(testBinding(1), a); !errors.Is(err, ErrConfiguration) {
+	if err := e.InstallDirect(testBinding(1), a, testDirectConsent); !errors.Is(err, ErrConfiguration) {
 		t.Fatal("closed endpoint accepted direct delivery", err)
 	}
 	awaitEndpointSignal(t, ctx, a.stop)
@@ -803,8 +805,52 @@ func TestPeerDirectRejectedInstallTransfersOwnership(t *testing.T) {
 	defer without.Close()
 	a, b = memoryPair()
 	defer b.Close()
-	if err := without.InstallDirect(BindingRevision{Generation: 1}, a); !errors.Is(err, ErrConfiguration) {
+	if err := without.InstallDirect(BindingRevision{Generation: 1}, a, testDirectConsent); !errors.Is(err, ErrConfiguration) {
 		t.Fatal("unconfigured direct slot accepted an installation", err)
 	}
 	awaitEndpointSignal(t, ctx, a.stop)
+}
+
+type methodConsentCarrier struct{ Carrier }
+
+func (methodConsentCarrier) DirectConsent() bool { return true }
+
+func TestPeerDirectRequiresExplicitConsentAcrossWrappers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	e := directEndpoints(t, ctx)[0]
+	for _, exposeMethod := range []bool{true, false} {
+		local, remote := memoryPair()
+		defer remote.Close()
+		var carrier Carrier = methodConsentCarrier{local}
+		if !exposeMethod {
+			carrier = struct{ Carrier }{carrier}
+		}
+		if err := e.InstallDirect(testBinding(1), carrier, nil); !errors.Is(err, ErrConfiguration) {
+			t.Fatal("carrier methods substituted for explicit consent", err)
+		}
+		awaitEndpointSignal(t, ctx, local.stop)
+	}
+	local, remote := memoryPair()
+	defer remote.Close()
+	var consent atomic.Bool
+	// the outer carrier deliberately hides the misleading inner consent method.
+	wrapped := struct{ Carrier }{methodConsentCarrier{local}}
+	if err := e.InstallDirect(testBinding(1), wrapped, consent.Load); err != nil {
+		t.Fatal(err)
+	}
+	probe := directProbe(t, ctx, e, remote)
+	if err := remote.Send(ctx, directFrame(t, e, tunnelv1.PeerProbeReply, probe.Sequence, probe.Payload)); err != nil {
+		t.Fatal(err)
+	}
+	awaitDirectCondition(t, ctx, func() bool { return e.Stats(Direct).RTT > 0 })
+	if e.PathHealthy(Direct) || e.ActivePath() == Direct {
+		t.Fatal("packet proof enabled direct delivery without consent")
+	}
+	consent.Store(true)
+	awaitDirectCondition(t, ctx, func() bool { return e.PathHealthy(Direct) && e.ActivePath() == Direct })
+	consent.Store(false)
+	if e.PathHealthy(Direct) || e.ActivePath() == Direct {
+		t.Fatal("wrapper hid expired consent")
+	}
 }
