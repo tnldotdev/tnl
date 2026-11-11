@@ -111,15 +111,15 @@ Browsers/HTTP clients can use sign-in, a share link, or a token. PostgreSQL and 
 
 ## start developing
 
-First, install the npm package and initialize your project:
+First, install the package with pnpm and initialize your project:
 
 ```bash
-npm install -D @tnldotdev/tnl
-npx tnl init
-npx tnl auth login
+pnpm add -D @tnldotdev/tnl
+pnpm exec tnl init
+pnpm exec tnl auth login
 ```
 
-For example, with Vite, `tnl init` adds `tnl()` alongside your existing plugins:
+For example, with Vite, `pnpm exec tnl init` adds `tnl()` alongside your existing plugins:
 
 ```ts
 // vite.config.ts
@@ -148,12 +148,12 @@ export default defineConfig({
 });
 ```
 
-Start your app with `npm run dev` and get its URL.
+Start your app with `pnpm dev` and get its URL.
 By default, any visitor needs to sign in or have a share link.
 
 Hot reloading, WebSockets, SSE, and streaming responses are all supported.
 
-_Already have an app listening on port 3000? Run `npx tnl publish 3000`._
+_Already have an app listening on port 3000? Run `pnpm exec tnl publish 3000`._
 
 See [installation options](https://tnl.dev/docs/publish), the
 [quickstart](https://tnl.dev/docs), and [framework integrations](https://tnl.dev/docs/frameworks).
@@ -165,8 +165,8 @@ Once your `tnl` setup is committed to Git, you can leave the app running in your
 ```bash
 git worktree add ../perf
 cd ../perf
-npm ci
-npm run dev
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
 This would end up looking like:
@@ -185,7 +185,7 @@ Vite and Next.js can choose another port when the preferred one is taken, and `t
 You can leave inline feedback in your app for your agent to review. Or, send someone on your team a link:
 
 ```bash
-npx tnl share link create app-shop-k7n2p9.calm-otter.tnl.dev \
+pnpm exec tnl share link create app-shop-k7n2p9.calm-otter.tnl.dev \
   --expires-in 7d
 ```
 
@@ -195,7 +195,7 @@ The link expires after a week and can be revoked early. Similar to how Vercel co
 share link -> your app -> click an element -> leave feedback
 ```
 
-Then you (or your agent) can use `tnl feedback list` to read feedback from the CLI. See [sharing and feedback](https://tnl.dev/docs/development#share-a-preview).
+Then you (or your agent) can use `pnpm exec tnl feedback list` to read feedback from the CLI. See [sharing and feedback](https://tnl.dev/docs/development#share-a-preview).
 
 ## register your callbacks once
 
@@ -283,10 +283,10 @@ export default defineConfig({
 });
 ```
 
-Use your RDS instance name and region. Apply it with `npx tnl apply`, then run a `production` publisher in your VPC. From your laptop:
+Use your RDS instance name and region. Apply it with `pnpm exec tnl apply`, then run a `production` publisher in your VPC. From your laptop:
 
 ```bash
-npx tnl connect orders
+pnpm exec tnl connect orders
 ```
 
 Team members use the printed connection settings with `psql` or their database driver and their normal database credentials. Kubernetes works with `kubectl` and your cluster's existing credentials.
@@ -327,7 +327,7 @@ steps:
   - uses: tnldotdev/tnl/connect@<sha>
     with:
       workload: migrate
-  - run: npx drizzle-kit migrate
+  - run: pnpm exec drizzle-kit migrate
     env:
       DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 ```
@@ -358,7 +358,7 @@ See [GitHub Actions setup](https://tnl.dev/docs/workloads#connect-a-github-actio
 
 You can also add a subdomain you own, for URLs like `https://app.alex.dev.example.com`.
 
-Use `tnl domain claim` to get the DNS records to add; once verified, `tnl` manages its public URL DNS and certificates.
+Use `pnpm exec tnl domain claim` to get the DNS records to add; once verified, `tnl` manages its public URL DNS and certificates.
 See [setting up a custom domain](https://tnl.dev/docs/domains).
 
 Or, you can even run the whole stack yourself (control, ingress, and relays), forever free. See [running your own server](https://tnl.dev/docs/self-hosting).
@@ -387,7 +387,7 @@ Here's how `tnl` compares to Tailscale, Cloudflare, and ngrok.
 
 |                                        | tnl                     | tailscale              | cloudflare                   | ngrok                   |
 | -------------------------------------- | ----------------------- | ---------------------- | ---------------------------- | ----------------------- |
-| Connect without a public endpoint      | `tnl connect`           | WireGuard mesh network | Cloudflare One/`cloudflared` | `ngrokd` or Kubernetes  |
+| Connect without a public endpoint      | `pnpm exec tnl connect` | WireGuard mesh network | Cloudflare One/`cloudflared` | `ngrokd` or Kubernetes  |
 | Use your own domain for public HTTPS   | Yes                     | No, only `*.ts.net`    | Yes                          | Yes                     |
 | Built-in web firewall (WAF)            | No                      | No                     | Yes                          | Yes                     |
 | Run the server infrastructure yourself | Yes                     | w/ Headscale           | No                           | No                      |
