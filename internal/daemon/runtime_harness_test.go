@@ -16,6 +16,7 @@ import (
 	"time"
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
 
@@ -345,6 +346,7 @@ func integrationPacketListener(t *testing.T) net.PacketConn {
 func splitTestConfig(role daemonconfig.Role, metricsAddress string) daemonconfig.Config {
 	return daemonconfig.Config{
 		Role: role, MetricsListen: metricsAddress,
+		ManagedURLMode:        naming.ManagedURLModeGenerated,
 		ControlTrustedProxies: []string{"127.0.0.1/32"}, ControlClientIPHeader: "X-Forwarded-For",
 		PublicURLCertificateWorkers:      4,
 		ClientHelloConnectionLimit:       1024,
