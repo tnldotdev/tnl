@@ -3,3 +3,7 @@ tnl
 Copyright Chase Adams
 
 Third-party license terms and notices are provided in THIRD_PARTY_LICENSES.txt.
+
+Direct UDP connectivity uses Pion ICE, STUN, DTLS, mDNS, TURN, transport,
+logging, and random utilities (MIT), developed by the Pion community, and anet
+(BSD-3-Clause), developed by wlynxg.

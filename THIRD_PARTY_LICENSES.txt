@@ -40,6 +40,75 @@ License text: [BSD-3-Clause-1]
 go modules
 
 --------------------------------------------------------------------------------
+Packages with identical license text:
+github.com/pion/ice/v4 v4.4.8
+github.com/pion/dtls/v3 v3.1.9
+github.com/pion/stun/v4 v4.0.1
+github.com/pion/transport/v5 v5.0.1
+github.com/pion/turn/v5 v5.1.2
+License: MIT
+License sources:
+https://github.com/pion/ice/blob/v4.4.8/LICENSE
+https://github.com/pion/dtls/blob/v3.1.9/LICENSE
+https://github.com/pion/stun/blob/v4.0.1/LICENSE
+https://github.com/pion/transport/blob/v5.0.1/LICENSE
+https://github.com/pion/turn/blob/v5.1.2/LICENSE
+
+MIT License
+
+Copyright (c) 2026 The Pion community <https://pion.ly>
+
+License text: [MIT-1]
+
+--------------------------------------------------------------------------------
+Package: github.com/pion/logging
+Version: v0.2.4
+License: MIT
+License source: https://github.com/pion/logging/blob/v0.2.4/LICENSE
+
+MIT License
+
+Copyright (c) 2023 The Pion community <https://pion.ly>
+
+License text: [MIT-1]
+
+--------------------------------------------------------------------------------
+Package: github.com/pion/mdns/v2
+Version: v2.2.2
+License: MIT
+License source: https://github.com/pion/mdns/blob/v2.2.2/LICENSE
+
+MIT License
+
+Copyright (c) 2018
+
+License text: [MIT-1]
+
+--------------------------------------------------------------------------------
+Package: github.com/pion/randutil
+Version: v0.1.0
+License: MIT
+License source: https://github.com/pion/randutil/blob/v0.1.0/LICENSE
+
+MIT License
+
+Copyright (c) 2020 Pion
+
+License text: [MIT-1]
+
+--------------------------------------------------------------------------------
+Package: github.com/wlynxg/anet
+Version: v0.0.5
+License: BSD-3-Clause
+License source: https://github.com/wlynxg/anet/blob/v0.0.5/LICENSE
+
+BSD 3-Clause License
+
+Copyright (c) 2023, wlynxg
+
+License text: [BSD-3-Clause-5]
+
+--------------------------------------------------------------------------------
 Package: github.com/alecthomas/kong
 Version: v1.16.1
 License: MIT
