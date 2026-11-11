@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"time"
 
@@ -9,10 +10,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor string, input controlv1.CreateVisitorCredentialRequest, now time.Time) (result controlv1.VisitorCredential, retErr error) {
+	input.ExpiresAt = input.ExpiresAt.UTC().Truncate(time.Microsecond)
 	kind := string(input.Kind)
 	if input.Resource.Kind != "service" || input.Resource.Id != service || (kind != "token" && kind != "share") || !input.ExpiresAt.After(now) || input.ExpiresAt.After(now.Add(7*24*time.Hour)) {
 		return result, ErrServiceAccess
@@ -45,6 +48,13 @@ func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor st
 		}
 		return result, err
 	}
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM control.service_http_grants WHERE service_id=$1 AND revoked_at IS NULL AND expires_at>$2`, service, now).Scan(&count); err != nil {
+		return result, err
+	}
+	if count >= 256 {
+		return result, ErrServiceAccess
+	}
 	id, err := opaqueid.New("shg_")
 	if err != nil {
 		return result, err
@@ -53,32 +63,47 @@ func (d *Database) CreateServiceHTTPGrant(ctx context.Context, service, actor st
 	if err != nil {
 		return result, err
 	}
-	secret = "vrf1." + id + "." + secret
-	_, digest, err := visitorRefreshDigest(secret)
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(secret)
 	if err != nil {
 		return result, err
 	}
-	err = q.InsertServiceHTTPGrant(ctx, controlstatedb.InsertServiceHTTPGrantParams{ID: id, ServiceID: service, Kind: kind, SecretDigest: digest[:], CreatedByIdentityID: actor, ControlSessionID: nullableText(companySessionID(ctx, actor)), ExpiresAt: timestamptz(input.ExpiresAt)})
+	credential, err := visitortoken.GrantToken(id, raw)
 	if err != nil {
 		return result, err
 	}
-	issuer, err := q.ReadVisitorTokenIssuer(ctx)
+	_, digest, err := visitortoken.GrantTokenDigest(credential)
 	if err != nil {
 		return result, err
 	}
-	issued, err := d.issueVisitorToken(ctx, tx, issuer, visitorscope.Scope{Kind: visitorscope.Service, ID: service}, GrantTokenSource{Credential: secret}, newAuthorizationClock(now))
+	independent, err := q.CompanySubjectSessionAuthorized(ctx, controlstatedb.CompanySubjectSessionAuthorizedParams{TeamID: endpoint.TeamID, IdentityID: actor, SessionID: "", Now: timestamptz(now)})
 	if err != nil {
 		return result, err
 	}
-	permission := issued.Permission
-	result = controlv1.VisitorCredential{GrantId: id, Kind: controlv1.VisitorCredentialKind(input.Kind), RefreshCredential: secret, ExpiresAt: input.ExpiresAt,
-		Permission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service}, Hostname: permission.Hostname, Port: int(permission.Port), ServiceTrustRevision: &issued.ServiceTrustRevision, VisitorPolicyRevision: permission.VisitorPolicyRevision, ExpiresAt: permission.ExpiresAt, VisitorToken: issued.Token.Reveal()}}
+	parent := ""
+	if !independent {
+		parent = companySessionID(ctx, actor)
+	}
+	err = q.InsertServiceHTTPGrant(ctx, controlstatedb.InsertServiceHTTPGrantParams{ID: id, ServiceID: service, Kind: kind, SecretDigest: digest[:], CreatedByIdentityID: actor, ControlSessionID: nullableText(parent), ExpiresAt: timestamptz(input.ExpiresAt)})
+	if err != nil {
+		return result, err
+	}
+	authority, err := d.visitorAuthorityForSource(ctx, tx, visitorscope.Scope{Kind: visitorscope.Service, ID: service}, GrantTokenSource{Credential: credential.Reveal()}, newAuthorizationClock(now))
+	if err != nil {
+		return result, err
+	}
+	saved, err := q.GetService(ctx, service)
+	if err != nil {
+		return result, err
+	}
+	permission := authority.Permission
+	result = controlv1.VisitorCredential{GrantId: id, Kind: controlv1.VisitorCredentialKind(input.Kind), ExpiresAt: input.ExpiresAt,
+		Permission: controlv1.VisitorTokenResponse{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service}, Hostname: permission.Hostname, Port: int(permission.Port), ServiceTrustRevision: &saved.TrustRevision, VisitorPolicyRevision: permission.VisitorPolicyRevision, ExpiresAt: input.ExpiresAt, VisitorToken: credential.Reveal()}}
 	if input.Kind == "share" {
 		origin, err := serviceHTTPOrigin(endpoint)
 		if err != nil {
 			return result, err
 		}
-		link := origin + "/__tnl/share/" + secret
+		link := origin + "/__tnl/share/" + credential.Reveal()
 		result.ShareUrl = &link
 	}
 	return result, tx.Commit(ctx)

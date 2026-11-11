@@ -1449,6 +1449,24 @@ func (e VisitorGrantKind) Valid() bool {
 	}
 }
 
+// Defines values for VisitorGrantVerifierKind.
+const (
+	VisitorGrantVerifierKindShare VisitorGrantVerifierKind = "share"
+	VisitorGrantVerifierKindToken VisitorGrantVerifierKind = "token"
+)
+
+// Valid indicates whether the value is a known member of the VisitorGrantVerifierKind enum.
+func (e VisitorGrantVerifierKind) Valid() bool {
+	switch e {
+	case VisitorGrantVerifierKindShare:
+		return true
+	case VisitorGrantVerifierKindToken:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for VisitorResourceScopeKind.
 const (
 	VisitorResourceScopeKindPublicUrl VisitorResourceScopeKind = "public_url"
@@ -4014,14 +4032,13 @@ type VisitorAccessMode string
 // VisitorConnectionID defines model for VisitorConnectionID.
 type VisitorConnectionID = string
 
-// VisitorCredential defines model for VisitorCredential.
+// VisitorCredential An exact-service HTTP bearer credential, usable until expires_at subject to revocation and current policy. permission.visitor_token is directly reusable; it does not depend on a browser session or publisher run.
 type VisitorCredential struct {
-	ExpiresAt         time.Time             `json:"expires_at"`
-	GrantId           string                `json:"grant_id"`
-	Kind              VisitorCredentialKind `json:"kind"`
-	Permission        VisitorTokenResponse  `json:"permission"`
-	RefreshCredential string                `json:"refresh_credential"`
-	ShareUrl          *string               `json:"share_url,omitempty"`
+	ExpiresAt  time.Time             `json:"expires_at"`
+	GrantId    string                `json:"grant_id"`
+	Kind       VisitorCredentialKind `json:"kind"`
+	Permission VisitorTokenResponse  `json:"permission"`
+	ShareUrl   *string               `json:"share_url,omitempty"`
 }
 
 // VisitorCredentialKind defines model for VisitorCredential.Kind.
@@ -4050,6 +4067,17 @@ type VisitorGrant struct {
 // VisitorGrantKind defines model for VisitorGrant.Kind.
 type VisitorGrantKind string
 
+// VisitorGrantVerifier defines model for VisitorGrantVerifier.
+type VisitorGrantVerifier struct {
+	ExpiresAt    time.Time                `json:"expires_at"`
+	GrantId      string                   `json:"grant_id"`
+	Kind         VisitorGrantVerifierKind `json:"kind"`
+	SecretDigest []byte                   `json:"secret_digest"`
+}
+
+// VisitorGrantVerifierKind defines model for VisitorGrantVerifier.Kind.
+type VisitorGrantVerifierKind string
+
 // VisitorInvitation defines model for VisitorInvitation.
 type VisitorInvitation struct {
 	AcceptedIdentityId *string     `json:"accepted_identity_id,omitempty"`
@@ -4071,12 +4099,13 @@ type VisitorPolicySnapshot struct {
 	Anonymous bool `json:"anonymous"`
 
 	// ConnectionDeadline Guest observation bound, including idle connections after readiness. When present, ingress requires the run's ready routing projection before forwarding visitors, and ingress and publisher bind connections to this policy's locally confirmed lifetime. Enabled policy valid_until must not exceed this deadline. Preparation policy can be installed and acknowledged without granting visitor permission.
-	ConnectionDeadline *time.Time       `json:"connection_deadline,omitempty"`
-	Enabled            bool             `json:"enabled"`
-	Hostname           string           `json:"hostname"`
-	Ip                 *VisitorPolicyIP `json:"ip,omitempty"`
-	Issuer             string           `json:"issuer"`
-	KeyRevision        int64            `json:"key_revision"`
+	ConnectionDeadline *time.Time             `json:"connection_deadline,omitempty"`
+	Enabled            bool                   `json:"enabled"`
+	GrantVerifiers     []VisitorGrantVerifier `json:"grant_verifiers"`
+	Hostname           string                 `json:"hostname"`
+	Ip                 *VisitorPolicyIP       `json:"ip,omitempty"`
+	Issuer             string                 `json:"issuer"`
+	KeyRevision        int64                  `json:"key_revision"`
 
 	// MetadataRevision current service trust revision; zero for public URLs.
 	MetadataRevision int64     `json:"metadata_revision"`
@@ -4085,6 +4114,7 @@ type VisitorPolicySnapshot struct {
 
 	// Resource An explicit authorization scope. A public URL grant never applies to a service, even when they have related names or owners.
 	Resource              VisitorResourceScope     `json:"resource"`
+	ShareVerifiers        []VisitorShareVerifier   `json:"share_verifiers"`
 	ValidUntil            time.Time                `json:"valid_until"`
 	VerificationKeys      []VisitorVerificationKey `json:"verification_keys"`
 	VisitorPolicyRevision int64                    `json:"visitor_policy_revision"`
@@ -4113,6 +4143,13 @@ type VisitorResourceScope struct {
 
 // VisitorResourceScopeKind defines model for VisitorResourceScope.Kind.
 type VisitorResourceScopeKind string
+
+// VisitorShareVerifier defines model for VisitorShareVerifier.
+type VisitorShareVerifier struct {
+	ExpiresAt    time.Time `json:"expires_at"`
+	SecretDigest []byte    `json:"secret_digest"`
+	ShareId      string    `json:"share_id"`
+}
 
 // VisitorSubject Exactly identity_id and device_id for human_device; exactly workload_session_id for workload_session. No synthetic person or device represents a workload.
 type VisitorSubject struct {
@@ -6122,13 +6159,13 @@ type ClientInterface interface {
 	// IssueVisitorTokenWithBody performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+	// Prepare or renew one signed exact-resource visitor permission from current source facts. Serving processes verify it against current local visitor policy. HTTP-service bearer credentials can also be used directly on their exact service without this exchange; browser-session sources cannot authorize application traffic directly.
 	IssueVisitorTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IssueVisitorToken performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request.
 	// Takes a body of the `application/json` content type.
 	//
-	// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+	// Prepare or renew one signed exact-resource visitor permission from current source facts. Serving processes verify it against current local visitor policy. HTTP-service bearer credentials can also be used directly on their exact service without this exchange; browser-session sources cannot authorize application traffic directly.
 	IssueVisitorToken(ctx context.Context, body IssueVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListAvailablePublicURLs performs a GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId) request.
@@ -9410,7 +9447,7 @@ func (c *Client) ReadPublisherVisitorPolicy(ctx context.Context, body ReadPublis
 // IssueVisitorTokenWithBody performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request,
 // with any type of body and a specified content type.
 //
-// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+// Prepare or renew one signed exact-resource visitor permission from current source facts. Serving processes verify it against current local visitor policy. HTTP-service bearer credentials can also be used directly on their exact service without this exchange; browser-session sources cannot authorize application traffic directly.
 func (c *Client) IssueVisitorTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIssueVisitorTokenRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -9426,7 +9463,7 @@ func (c *Client) IssueVisitorTokenWithBody(ctx context.Context, contentType stri
 // IssueVisitorToken performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request.
 // Takes a body of the `application/json` content type.
 //
-// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+// Prepare or renew one signed exact-resource visitor permission from current source facts. Serving processes verify it against current local visitor policy. HTTP-service bearer credentials can also be used directly on their exact service without this exchange; browser-session sources cannot authorize application traffic directly.
 func (c *Client) IssueVisitorToken(ctx context.Context, body IssueVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIssueVisitorTokenRequest(c.Server, body)
 	if err != nil {
@@ -18022,7 +18059,7 @@ type ClientWithResponsesInterface interface {
 	// IssueVisitorTokenWithBodyWithResponse performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request,
 	// with any type of body and a specified content type.
 	//
-	// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+	// Prepare or renew one signed exact-resource visitor permission from current source facts. Serving processes verify it against current local visitor policy. HTTP-service bearer credentials can also be used directly on their exact service without this exchange; browser-session sources cannot authorize application traffic directly.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	IssueVisitorTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueVisitorTokenResponse, error)
@@ -18030,7 +18067,7 @@ type ClientWithResponsesInterface interface {
 	// IssueVisitorTokenWithResponse performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
-	// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+	// Prepare or renew one signed exact-resource visitor permission from current source facts. Serving processes verify it against current local visitor policy. HTTP-service bearer credentials can also be used directly on their exact service without this exchange; browser-session sources cannot authorize application traffic directly.
 	IssueVisitorTokenWithResponse(ctx context.Context, body IssueVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueVisitorTokenResponse, error)
 
 	// ListAvailablePublicURLsWithResponse performs a GET /v1/visitor/public-urls (the `ListAvailablePublicURLs` operationId) request.
@@ -27418,7 +27455,7 @@ func (c *ClientWithResponses) ReadPublisherVisitorPolicyWithResponse(ctx context
 // IssueVisitorTokenWithBodyWithResponse performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request,
 // with any type of body and a specified content type.
 //
-// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+// Prepare or renew one signed exact-resource visitor permission from current source facts. Serving processes verify it against current local visitor policy. HTTP-service bearer credentials can also be used directly on their exact service without this exchange; browser-session sources cannot authorize application traffic directly.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) IssueVisitorTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueVisitorTokenResponse, error) {
@@ -27432,7 +27469,7 @@ func (c *ClientWithResponses) IssueVisitorTokenWithBodyWithResponse(ctx context.
 // IssueVisitorTokenWithResponse performs a POST /v1/visitor-tokens (the `IssueVisitorToken` operationId) request.
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
-// Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+// Prepare or renew one signed exact-resource visitor permission from current source facts. Serving processes verify it against current local visitor policy. HTTP-service bearer credentials can also be used directly on their exact service without this exchange; browser-session sources cannot authorize application traffic directly.
 func (c *ClientWithResponses) IssueVisitorTokenWithResponse(ctx context.Context, body IssueVisitorTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueVisitorTokenResponse, error) {
 	rsp, err := c.IssueVisitorToken(ctx, body, reqEditors...)
 	if err != nil {

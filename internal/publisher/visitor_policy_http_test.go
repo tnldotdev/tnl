@@ -1,8 +1,10 @@
 package publisher
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -21,7 +23,7 @@ import (
 )
 
 func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
-	for _, fault := range []string{"maximum", "keys", "workloads", "prefixes", "events", "nil key", "short key", "overlong key", "bytes"} {
+	for _, fault := range []string{"maximum", "keys", "workloads", "grants", "prefixes", "events", "nil key", "short key", "overlong key", "bytes"} {
 		t.Run(fault, func(t *testing.T) {
 			body, private := policyfixture.Maximum(t, time.Now().UTC())
 			body.Policy.VisitorPolicyRevision = math.MaxInt64 - 256
@@ -33,6 +35,8 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 				body.Policy.VerificationKeys = append(body.Policy.VerificationKeys, body.Policy.VerificationKeys[0])
 			case "workloads":
 				body.Policy.WorkloadLeases = append(body.Policy.WorkloadLeases, body.Policy.WorkloadLeases[0])
+			case "grants":
+				body.Policy.GrantVerifiers = append(body.Policy.GrantVerifiers, body.Policy.GrantVerifiers[0])
 			case "prefixes":
 				body.Policy.Ip.Prefixes = append(body.Policy.Ip.Prefixes, body.Policy.Ip.Prefixes[0])
 			case "events":
@@ -147,6 +151,11 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 func TestPublisherVisitorPolicyHTTPMaximumPublicRunSourceKey(t *testing.T) {
 	body, _ := policyfixture.Maximum(t, time.Now().UTC())
 	body.Policy.Resource = controlv1.VisitorResourceScope{Kind: "public_url", Id: certificateTestPublicURLID}
+	body.Policy.GrantVerifiers = nil
+	for i := range 256 {
+		verifier := sha256.Sum256([]byte(fmt.Sprint(i)))
+		body.Policy.ShareVerifiers = append(body.Policy.ShareVerifiers, controlv1.VisitorShareVerifier{ShareId: fmt.Sprintf("shr_%022d", i), SecretDigest: verifier[:], ExpiresAt: time.Now().Add(7 * 24 * time.Hour)})
+	}
 	body.Policy.Port = 443
 	body.Policy.VisitorPolicyRevision = math.MaxInt64 - 256
 	body.VisitorSourceKey = testVisitorSourceKeyBytes()

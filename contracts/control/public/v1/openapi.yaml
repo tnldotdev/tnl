@@ -358,6 +358,10 @@ components:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorVerificationKey"
     VisitorWorkloadLease:
       $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorWorkloadLease"
+    VisitorShareVerifier:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorShareVerifier"
+    VisitorGrantVerifier:
+      $ref: "./schemas/visitor-policy.yaml#/schemas/VisitorGrantVerifier"
     HashedIPPrefix:
       $ref: "./schemas/visitor-policy.yaml#/schemas/HashedIPPrefix"
     CreateVisitorCredentialRequest:

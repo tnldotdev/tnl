@@ -65,11 +65,24 @@ func TestIntegrationGuestAuthorityBoundsPreparationPolicyAndPermissions(t *testi
 			}
 			owner := registerServingIngress(t, f, "guest-policy", now)
 			scope := visitorscope.Scope{Kind: visitorscope.PublicURL, ID: url.ID}
-			checkPolicy := func(at time.Time) {
+			var token visitortoken.Token
+			checkPolicy := func(at time.Time, serving bool) {
 				t.Helper()
 				publisher, err := db.ReadPublisherVisitorPolicy(t.Context(), scope, setup.PublishRunID, int64(setup.PublishRunNumber), setup.PublishRunToken.String(), 0, at)
 				if err != nil || !publisher.Policy.ValidUntil.Equal(deadline) || publisher.Policy.ConnectionDeadline == nil || !publisher.Policy.ConnectionDeadline.Equal(deadline) {
 					t.Fatalf("publisher policy horizon = %+v, %v", publisher.Policy, err)
+				}
+				decoded, err := visitorlease.Decode(publisher)
+				if err != nil {
+					t.Fatal(err)
+				}
+				verified, err := visitortoken.VerifyBearer(token, decoded.View, at)
+				if serving {
+					if err != nil || !verified.Facts().ExpiresAt.Equal(deadline) {
+						t.Fatal("guest share lost fixed serving horizon", err)
+					}
+				} else if !errors.Is(err, visitortoken.ErrToken) || len(publisher.Policy.ShareVerifiers) != 0 {
+					t.Fatal("preparation granted uncharged visitor access", err)
 				}
 				ingress, err := db.ReadIngressVisitorPolicy(t.Context(), owner, scope, setup.PublishRunID, int64(setup.PublishRunNumber), int64(request.PolicyRevision), 0, at)
 				if err != nil || !ingress.Policy.ValidUntil.Equal(deadline) {
@@ -97,6 +110,10 @@ func TestIntegrationGuestAuthorityBoundsPreparationPolicyAndPermissions(t *testi
 				t.Fatal(err)
 			}
 			source := ShareTokenSource{ShareID: share.ID, Secret: base64.RawURLEncoding.EncodeToString(secret[:])}
+			token, err = visitortoken.ShareToken(share.ID, secret[:])
+			if err != nil {
+				t.Fatal(err)
+			}
 			observations := 1
 			if bound == "ready" {
 				observations = 3
@@ -112,7 +129,7 @@ func TestIntegrationGuestAuthorityBoundsPreparationPolicyAndPermissions(t *testi
 						t.Fatalf("preparation renewal = %v, %v", renewed.ExpiresAt, err)
 					}
 				}
-				checkPolicy(now)
+				checkPolicy(now, false)
 				if _, err := db.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, source, now); !errors.Is(err, ErrVisitorPermission) {
 					t.Fatalf("starting guest issued visitor permission: %v", err)
 				}
@@ -131,7 +148,7 @@ func TestIntegrationGuestAuthorityBoundsPreparationPolicyAndPermissions(t *testi
 						t.Fatalf("heartbeat slid guest authority: %v, %v", renewed.ExpiresAt, err)
 					}
 				}
-				checkPolicy(at)
+				checkPolicy(at, true)
 				issued, err := db.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, source, at)
 				if err != nil || !issued.Permission.ExpiresAt.Equal(deadline) {
 					t.Fatalf("visitor permission = %v, %v", issued.Permission.ExpiresAt, err)

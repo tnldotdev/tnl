@@ -4,6 +4,7 @@ package visitorpolicy
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"fmt"
 	"math"
 	"net/netip"
@@ -31,6 +32,8 @@ func Maximum(t testing.TB, now time.Time) (controlv1.VisitorPolicyUpdate, ed2551
 		ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true,
 		VerificationKeys: make([]controlv1.VisitorVerificationKey, 64),
 		WorkloadLeases:   make([]controlv1.VisitorWorkloadLease, 4096),
+		ShareVerifiers:   []controlv1.VisitorShareVerifier{},
+		GrantVerifiers:   make([]controlv1.VisitorGrantVerifier, 256),
 	}
 	for i := range policy.VerificationKeys {
 		policy.VerificationKeys[i] = controlv1.VisitorVerificationKey{Id: strings.Repeat("\x01", 126) + fmt.Sprintf("%02d", i), PublicKey: private.Public().(ed25519.PublicKey)}
@@ -40,6 +43,10 @@ func Maximum(t testing.TB, now time.Time) (controlv1.VisitorPolicyUpdate, ed2551
 	policy.VerificationKeys[0].Id = strings.Repeat("k", 128)
 	for i := range policy.WorkloadLeases {
 		policy.WorkloadLeases[i] = controlv1.VisitorWorkloadLease{SessionId: fmt.Sprintf("wls_%022d", i), KeySha256: digest, ExpiresAt: now.Add(time.Minute)}
+	}
+	for i := range policy.GrantVerifiers {
+		verifier := sha256.Sum256([]byte(fmt.Sprint(i)))
+		policy.GrantVerifiers[i] = controlv1.VisitorGrantVerifier{GrantId: fmt.Sprintf("shg_%022d", i), Kind: "token", SecretDigest: verifier[:], ExpiresAt: now.Add(7 * 24 * time.Hour)}
 	}
 	var hashKey [32]byte
 	hashKey[0] = 1

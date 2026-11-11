@@ -11,6 +11,100 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const lockVisitorGrantAuthority = `-- name: LockVisitorGrantAuthority :one
+SELECT authority.kind::text AS kind,authority.secret_digest::bytea AS secret_digest,authority.expires_at::timestamptz AS expires_at
+FROM control.visitor_service_grant_authority($1::text,$2::timestamptz) authority
+JOIN control.service_http_grants credential ON credential.id=authority.grant_id
+WHERE credential.id=$3 FOR SHARE OF credential
+`
+
+type LockVisitorGrantAuthorityParams struct {
+	ServiceID string
+	Now       pgtype.Timestamptz
+	GrantID   string
+}
+
+type LockVisitorGrantAuthorityRow struct {
+	Kind         string
+	SecretDigest []byte
+	ExpiresAt    pgtype.Timestamptz
+}
+
+func (q *Queries) LockVisitorGrantAuthority(ctx context.Context, arg LockVisitorGrantAuthorityParams) (LockVisitorGrantAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, lockVisitorGrantAuthority, arg.ServiceID, arg.Now, arg.GrantID)
+	var i LockVisitorGrantAuthorityRow
+	err := row.Scan(&i.Kind, &i.SecretDigest, &i.ExpiresAt)
+	return i, err
+}
+
+const lockVisitorShareAuthority = `-- name: LockVisitorShareAuthority :one
+SELECT authority.secret_digest::bytea AS secret_digest,authority.expires_at::timestamptz AS expires_at
+FROM control.visitor_share_authority($1::text,$2::timestamptz) authority
+JOIN control.shares share ON share.id=authority.share_id
+WHERE share.id=$3 FOR SHARE OF share
+`
+
+type LockVisitorShareAuthorityParams struct {
+	PublicURLID string
+	Now         pgtype.Timestamptz
+	ShareID     string
+}
+
+type LockVisitorShareAuthorityRow struct {
+	SecretDigest []byte
+	ExpiresAt    pgtype.Timestamptz
+}
+
+func (q *Queries) LockVisitorShareAuthority(ctx context.Context, arg LockVisitorShareAuthorityParams) (LockVisitorShareAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, lockVisitorShareAuthority, arg.PublicURLID, arg.Now, arg.ShareID)
+	var i LockVisitorShareAuthorityRow
+	err := row.Scan(&i.SecretDigest, &i.ExpiresAt)
+	return i, err
+}
+
+const readVisitorGrantVerifiers = `-- name: ReadVisitorGrantVerifiers :many
+SELECT authority.grant_id::text AS grant_id,authority.kind::text AS kind,authority.secret_digest::bytea AS secret_digest,authority.expires_at::timestamptz AS expires_at
+FROM control.visitor_service_grant_authority($1::text,$2::timestamptz) authority
+ORDER BY grant_id LIMIT 257
+`
+
+type ReadVisitorGrantVerifiersParams struct {
+	ServiceID string
+	Now       pgtype.Timestamptz
+}
+
+type ReadVisitorGrantVerifiersRow struct {
+	GrantID      string
+	Kind         string
+	SecretDigest []byte
+	ExpiresAt    pgtype.Timestamptz
+}
+
+func (q *Queries) ReadVisitorGrantVerifiers(ctx context.Context, arg ReadVisitorGrantVerifiersParams) ([]ReadVisitorGrantVerifiersRow, error) {
+	rows, err := q.db.Query(ctx, readVisitorGrantVerifiers, arg.ServiceID, arg.Now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReadVisitorGrantVerifiersRow
+	for rows.Next() {
+		var i ReadVisitorGrantVerifiersRow
+		if err := rows.Scan(
+			&i.GrantID,
+			&i.Kind,
+			&i.SecretDigest,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readVisitorPolicyEvents = `-- name: ReadVisitorPolicyEvents :many
 SELECT revision,changed_at FROM control.visitor_policy_events
 WHERE resource_kind=$1 AND resource_id=$2 AND revision>$3
@@ -99,6 +193,43 @@ func (q *Queries) ReadVisitorPolicyService(ctx context.Context, id string) (Cont
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const readVisitorShareVerifiers = `-- name: ReadVisitorShareVerifiers :many
+SELECT authority.share_id::text AS share_id,authority.secret_digest::bytea AS secret_digest,authority.expires_at::timestamptz AS expires_at
+FROM control.visitor_share_authority($1::text,$2::timestamptz) authority
+ORDER BY share_id LIMIT 257
+`
+
+type ReadVisitorShareVerifiersParams struct {
+	PublicURLID string
+	Now         pgtype.Timestamptz
+}
+
+type ReadVisitorShareVerifiersRow struct {
+	ShareID      string
+	SecretDigest []byte
+	ExpiresAt    pgtype.Timestamptz
+}
+
+func (q *Queries) ReadVisitorShareVerifiers(ctx context.Context, arg ReadVisitorShareVerifiersParams) ([]ReadVisitorShareVerifiersRow, error) {
+	rows, err := q.db.Query(ctx, readVisitorShareVerifiers, arg.PublicURLID, arg.Now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReadVisitorShareVerifiersRow
+	for rows.Next() {
+		var i ReadVisitorShareVerifiersRow
+		if err := rows.Scan(&i.ShareID, &i.SecretDigest, &i.ExpiresAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readVisitorTokenIssuer = `-- name: ReadVisitorTokenIssuer :one

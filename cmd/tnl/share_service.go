@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -508,9 +509,9 @@ func createServiceShareHTTP(ctx context.Context, control *clientcontrol.Client, 
 	if err != nil {
 		return err
 	}
-	refresh, versioned := strings.CutPrefix(grant.RefreshCredential, "vrf1.")
 	permission := grant.Permission
-	if permission.Resource.Kind != "service" || permission.Resource.Id != service.Id || string(grant.Kind) != string(kind) || !grant.ExpiresAt.Equal(at) || !opaqueid.Valid(grant.GrantId, "shg_") || !versioned || !serviceShareSecret(refresh, grant.GrantId) || permission.Hostname != service.Endpoint.Hostname || permission.Port != service.Endpoint.Port || permission.VisitorPolicyRevision < 1 || permission.ExpiresAt.After(grant.ExpiresAt) || !permission.ExpiresAt.After(time.Now()) || len(permission.VisitorToken) > 2048 || strings.Count(permission.VisitorToken, ".") != 2 {
+	id, _, tokenErr := visitortoken.GrantTokenDigest(visitortoken.Token(permission.VisitorToken))
+	if permission.Resource.Kind != "service" || permission.Resource.Id != service.Id || string(grant.Kind) != string(kind) || !grant.ExpiresAt.Equal(at) || tokenErr != nil || id != grant.GrantId || permission.Hostname != service.Endpoint.Hostname || permission.Port != service.Endpoint.Port || permission.VisitorPolicyRevision < 1 || !permission.ExpiresAt.Equal(grant.ExpiresAt) || !permission.ExpiresAt.After(time.Now()) {
 		return serviceShareResponse()
 	}
 	value := permission.VisitorToken
@@ -518,7 +519,7 @@ func createServiceShareHTTP(ctx context.Context, control *clientcontrol.Client, 
 		return serviceShareResponse()
 	}
 	if kind == controlv1.CreateVisitorCredentialRequestKindShare {
-		expected := "https://" + net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port)) + "/__tnl/share/" + grant.RefreshCredential
+		expected := "https://" + net.JoinHostPort(service.Endpoint.Hostname, strconv.Itoa(service.Endpoint.Port)) + "/__tnl/share/" + permission.VisitorToken
 		if grant.ShareUrl == nil || *grant.ShareUrl != expected {
 			return serviceShareResponse()
 		}

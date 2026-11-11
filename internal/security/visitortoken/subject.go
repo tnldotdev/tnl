@@ -1,4 +1,4 @@
-// package visitortoken owns the signed visitor credential and local verification.
+// package visitortoken owns visitor credentials and local verification.
 // control supplies authorized facts; serving owners supply current policy views.
 // this leaf has no membership, grant, routing, capacity, or network authority.
 package visitortoken

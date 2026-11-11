@@ -8,6 +8,13 @@ tasks:
         vars:
           RUN: ^TestIntegration(PublisherGroup|ServicePortInventory|IngressPool|PublicURLPinsTeamIngressPool|MigrationRejectsSiblingWorkloadBaselines)
 
+  visitor-credentials:
+    desc: Check durable visitor credentials with disposable PostgreSQL
+    vars:
+      RUN: '{{default "^TestIntegration(Durable|ShareToken)" .RUN}}'
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
   default:
     desc: Run PostgreSQL-backed integration boundaries
     cmds:

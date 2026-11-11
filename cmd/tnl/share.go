@@ -27,6 +27,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -72,7 +73,7 @@ type shareCreateCommand struct {
 }
 
 type tokenShareCommand struct {
-	Create tokenShareCreateCommand `cmd:"" help:"Print a Tnl-Visitor-Token value for one public URL (valid for at most 5m)."`
+	Create tokenShareCreateCommand `cmd:"" help:"Print a Tnl-Visitor-Token value for one public URL, valid for the share lifetime."`
 }
 
 type tokenShareCreateCommand struct {
@@ -310,22 +311,14 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 	if err != nil {
 		return err
 	}
-	if share.Id == "" || !slices.Equal(share.PublicUrlIds, ids) || flags.Preview && (share.PreviewId == nil || *share.PreviewId != preview.Id) || !flags.Preview && share.PreviewId != nil {
+	if !opaqueid.Valid(share.Id, opaqueid.SharePrefix) || !slices.Equal(share.PublicUrlIds, ids) || !share.ExpiresAt.Equal(request.ExpiresAt.UTC().Truncate(time.Microsecond)) || !share.ExpiresAt.After(time.Now()) || flags.Preview && (share.PreviewId == nil || *share.PreviewId != preview.Id) || !flags.Preview && share.PreviewId != nil {
 		return failure.Wrap("create share", failure.ServerResponseInvalid, errors.New("server returned a share with different public URLs"))
 	}
 	encodedSecret := base64.RawURLEncoding.EncodeToString(secret)
 	if token {
-		source, err := json.Marshal(controlv1.VisitorTokenShareSource{Kind: controlv1.VisitorTokenShare, ShareId: share.Id, Secret: encodedSecret})
+		credential, err := visitortoken.ShareToken(share.Id, secret)
 		if err != nil {
 			return err
-		}
-		scope := controlv1.VisitorResourceScope{Kind: "public_url", Id: selected.Id}
-		permission, err := session.Authenticated().Control.IssueVisitorToken(ctx, controlv1.VisitorTokenRequest{Resource: scope, Source: source})
-		if err != nil {
-			return err
-		}
-		if permission.Resource != scope || permission.Hostname != selected.CanonicalHostname || permission.Port != 443 || permission.VisitorPolicyRevision < 1 || permission.ExpiresAt.After(share.ExpiresAt) || !permission.ExpiresAt.After(time.Now()) || len(permission.VisitorToken) > 2048 || strings.Count(permission.VisitorToken, ".") != 2 {
-			return failure.Wrap("prepare share token", failure.ServerResponseInvalid, errors.New("server returned a different public URL scope or invalid permission"))
 		}
 		if flags.Output == statusOutputJSON {
 			return failure.Wrap("write share token", failure.OutputUnavailable, json.NewEncoder(output).Encode(struct {
@@ -334,9 +327,9 @@ func createShare(ctx context.Context, flags shareCreateCommand, project projectC
 				ShareToken    string    `json:"share_token"`
 				PublicURLID   string    `json:"public_url_id"`
 				ExpiresAt     time.Time `json:"expires_at"`
-			}{1, share.Id, permission.VisitorToken, selected.Id, permission.ExpiresAt}))
+			}{1, share.Id, credential.Reveal(), selected.Id, share.ExpiresAt}))
 		}
-		_, err = fmt.Fprintln(output, permission.VisitorToken)
+		_, err = fmt.Fprintln(output, credential.Reveal())
 		return failure.Wrap("write share token", failure.OutputUnavailable, err)
 	}
 	entry := "https://" + selected.CanonicalHostname + "/__tnl/share/" + share.Id + "." + encodedSecret

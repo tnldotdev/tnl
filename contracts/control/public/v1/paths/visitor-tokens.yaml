@@ -2,7 +2,7 @@ paths:
   /v1/visitor-tokens:
     post:
       operationId: issueVisitorToken
-      description: Prepare or renew one exact-resource visitor permission. Control checks current source facts; serving processes verify the returned token against current local visitor policy. Refresh credentials never authorize application traffic.
+      description: Prepare or renew one signed exact-resource visitor permission from current source facts. Serving processes verify it against current local visitor policy. HTTP-service bearer credentials can also be used directly on their exact service without this exchange; browser-session sources cannot authorize application traffic directly.
       security: [{}, { bearerAuth: [] }]
       requestBody:
         required: true

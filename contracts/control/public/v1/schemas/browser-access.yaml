@@ -18,12 +18,12 @@ schemas:
   VisitorCredential:
     type: object
     additionalProperties: false
-    required: [grant_id, kind, permission, refresh_credential, expires_at]
+    required: [grant_id, kind, permission, expires_at]
+    description: An exact-service HTTP bearer credential, usable until expires_at subject to revocation and current policy. permission.visitor_token is directly reusable; it does not depend on a browser session or publisher run.
     properties:
       grant_id: { type: string, pattern: "^shg_[A-Za-z0-9]{22}$" }
       kind: { type: string, enum: [token, share] }
       permission: { $ref: "../openapi.yaml#/components/schemas/VisitorTokenResponse" }
-      refresh_credential: { type: string, maxLength: 128 }
       share_url: { type: string, format: uri }
       expires_at: { type: string, format: date-time }
   ServiceHTTPGrantSummary:

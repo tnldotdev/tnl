@@ -48,6 +48,8 @@ schemas:
         anonymous,
         verification_keys,
         workload_leases,
+        share_verifiers,
+        grant_verifiers,
       ]
     properties:
       resource: { $ref: "../openapi.yaml#/components/schemas/VisitorResourceScope" }
@@ -78,6 +80,31 @@ schemas:
         maxItems: 4096
         items: { $ref: "../openapi.yaml#/components/schemas/VisitorWorkloadLease" }
       ip: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicyIP" }
+      share_verifiers:
+        type: array
+        maxItems: 256
+        items: { $ref: "../openapi.yaml#/components/schemas/VisitorShareVerifier" }
+      grant_verifiers:
+        type: array
+        maxItems: 256
+        items: { $ref: "../openapi.yaml#/components/schemas/VisitorGrantVerifier" }
+  VisitorShareVerifier:
+    type: object
+    additionalProperties: false
+    required: [share_id, secret_digest, expires_at]
+    properties:
+      share_id: { type: string, pattern: "^shr_[A-Za-z0-9]{22}$" }
+      secret_digest: { type: string, format: byte, maxLength: 44 }
+      expires_at: { type: string, format: date-time }
+  VisitorGrantVerifier:
+    type: object
+    additionalProperties: false
+    required: [grant_id, kind, secret_digest, expires_at]
+    properties:
+      grant_id: { type: string, pattern: "^shg_[A-Za-z0-9]{22}$" }
+      kind: { type: string, enum: [token, share] }
+      secret_digest: { type: string, format: byte, maxLength: 44 }
+      expires_at: { type: string, format: date-time }
   VisitorVerificationKey:
     type: object
     additionalProperties: false

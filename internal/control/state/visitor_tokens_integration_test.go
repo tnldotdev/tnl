@@ -232,18 +232,18 @@ func TestIntegrationVisitorTokenNativeAndExplicitCredentialsNeedOneScopedGrantMo
 	}
 	expires := now.Add(48 * time.Hour)
 	credentials, err := d.CreateServiceHTTPGrant(t.Context(), service.ID, principal.IdentityID, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.ID}, Kind: "token", ExpiresAt: expires}, now)
-	if err != nil || !credentials.Permission.ExpiresAt.Equal(expires.Truncate(time.Second)) {
+	if err != nil || !credentials.Permission.ExpiresAt.Equal(expires) {
 		t.Fatal("explicit credential lifetime was replaced by renewable token lifetime", err)
 	}
 	parentBound, err := d.CreateServiceHTTPGrant(ctx, service.ID, principal.IdentityID, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: service.ID}, Kind: "token", ExpiresAt: expires}, now)
-	if err != nil || !parentBound.Permission.ExpiresAt.Equal(session.AccessExpiresAt.Truncate(time.Second)) {
-		t.Fatal("explicit credential outlived its parent session", err)
+	if err != nil || !parentBound.Permission.ExpiresAt.Equal(expires) {
+		t.Fatal("ordinary credential inherited an internal session deadline", err)
 	}
-	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, GrantTokenSource{Credential: credentials.RefreshCredential}, now); err != nil {
+	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, GrantTokenSource{Credential: credentials.Permission.VisitorToken}, now); err != nil {
 		t.Fatal("authority refresh failed", err)
 	}
-	if _, err := visitortoken.VerifyBearer(visitortoken.Token(credentials.RefreshCredential), stateTestVisitorView(issued.Permission, stateTestVisitorKeys(t, d, now), now), now); !errors.Is(err, visitortoken.ErrToken) {
-		t.Fatal("refresh credential became an app credential", err)
+	if _, err := visitortoken.VerifyBearer(visitortoken.Token(credentials.Permission.VisitorToken), stateTestVisitorView(issued.Permission, stateTestVisitorKeys(t, d, now), now), now); !errors.Is(err, visitortoken.ErrToken) {
+		t.Fatal("credential accepted without current verifier", err)
 	}
 	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
 	if err != nil {
@@ -285,7 +285,7 @@ func TestIntegrationVisitorTokenNativeAndExplicitCredentialsNeedOneScopedGrantMo
 	if _, err := d.IssueVisitorToken(ctx, testVisitorIssuer, scope, DeviceTokenSource{DeviceID: device.ID}, now); !errors.Is(err, ErrVisitorPermission) {
 		t.Fatal("device existence or public URL grant authorized a service", err)
 	}
-	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, GrantTokenSource{Credential: credentials.RefreshCredential}, now); !errors.Is(err, ErrVisitorPermission) {
+	if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, GrantTokenSource{Credential: credentials.Permission.VisitorToken}, now); !errors.Is(err, ErrVisitorPermission) {
 		t.Fatal("refresh grant outlived issuer authority", err)
 	}
 }

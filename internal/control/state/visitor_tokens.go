@@ -7,7 +7,6 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -348,15 +347,11 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 			return result, ErrVisitorPermission
 		}
 		digest := sha256.Sum256(secret)
-		var stored []byte
-		var issuerID, guestID string
-		err = tx.QueryRow(ctx, `SELECT share.secret_digest,share.expires_at,share.created_by_identity_id,COALESCE(share.guest_id,'') FROM control.shares share
-		    JOIN control.share_public_urls included ON included.share_id=share.id AND included.public_url_id=$2
-		    WHERE share.id=$1 AND share.revoked_at IS NULL AND share.expires_at>$3
-		    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$3)) FOR SHARE OF share`, shareID, scope.ID, now).Scan(&stored, &until, &issuerID, &guestID)
+		authority, err := q.LockVisitorShareAuthority(ctx, controlstatedb.LockVisitorShareAuthorityParams{PublicURLID: scope.ID, ShareID: shareID, Now: timestamptz(now)})
 		if err != nil {
 			return result, publisherLookupError(err, ErrVisitorPermission)
 		}
+		until = authority.ExpiresAt.Time
 		if session {
 			var deadline time.Time
 			err := tx.QueryRow(ctx, `SELECT expires_at FROM control.share_cookies
@@ -365,67 +360,27 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 				return result, publisherLookupError(err, ErrVisitorPermission)
 			}
 			until = minTime(until, deadline)
-		} else if subtle.ConstantTimeCompare(stored, digest[:]) != 1 {
+		} else if subtle.ConstantTimeCompare(authority.SecretDigest, digest[:]) != 1 {
 			return result, ErrVisitorPermission
-		}
-		if guestID == "" {
-			// a share depends on the issuer retaining management authority, not
-			// merely holding an unrelated visitor grant on the same resource.
-			var authorized bool
-			err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.public_urls url
-			    JOIN control.teams team ON team.id=url.team_id AND team.deleted_at IS NULL
-			    JOIN control.identities person ON person.id=$2 AND person.disabled_at IS NULL
-			    JOIN control.team_memberships member ON member.team_id=url.team_id AND member.identity_id=person.id
-			    WHERE url.id=$1 AND control.active_membership(member.id,$3)
-			    AND control.active_team_subject(url.team_id,person.id,$3)
-			    AND ((url.public_url_scope='member' AND member.id=url.membership_id)
-			        OR (url.public_url_scope='shared' AND member.role IN ('owner','admin'))))`, scope.ID, issuerID, now).Scan(&authorized)
-			if err != nil {
-				return result, err
-			}
-			if !authorized {
-				return result, ErrVisitorPermission
-			}
-		} else {
-			var deadline time.Time
-			if err := tx.QueryRow(ctx, `SELECT expires_at FROM control.guest_trials WHERE id=$1`, guestID).Scan(&deadline); err != nil {
-				return result, err
-			}
-			until = minTime(until, deadline)
 		}
 		subject = visitortoken.Share{ShareID: shareID}
 	case GrantTokenSource:
 		if scope.Kind != visitorscope.Service {
 			return result, ErrVisitorPermission
 		}
-		grantID, digest, err := visitorRefreshDigest(supplied.Credential)
+		grantID, digest, err := visitortoken.GrantTokenDigest(visitortoken.Token(supplied.Credential))
 		if err != nil {
-			return result, err
+			return result, ErrVisitorPermission
 		}
-		var creator, session, kind string
-		err = tx.QueryRow(ctx, `SELECT created_by_identity_id,COALESCE(control_session_id,''),expires_at,kind FROM control.service_http_grants
-		    WHERE id=$1 AND service_id=$2 AND secret_digest=$3 AND revoked_at IS NULL AND expires_at>$4 FOR SHARE`, grantID, scope.ID, digest[:], now).Scan(&creator, &session, &until, &kind)
+		authority, err := q.LockVisitorGrantAuthority(ctx, controlstatedb.LockVisitorGrantAuthorityParams{ServiceID: scope.ID, GrantID: grantID, Now: timestamptz(now)})
 		if err != nil {
 			return result, publisherLookupError(err, ErrVisitorPermission)
 		}
-		if session != "" {
-			parent, err := q.GetVisitorParentSession(ctx, session)
-			if err != nil {
-				return result, publisherLookupError(err, ErrVisitorPermission)
-			}
-			if parent.IdentityID != creator || parent.RevokedAt.Valid || !parent.AccessExpiresAt.Time.After(now) || !parent.RefreshExpiresAt.Time.After(now) {
-				return result, ErrVisitorPermission
-			}
-			until = minTime(until, minTime(parent.AccessExpiresAt.Time, parent.RefreshExpiresAt.Time))
+		if subtle.ConstantTimeCompare(authority.SecretDigest, digest[:]) != 1 {
+			return result, ErrVisitorPermission
 		}
-		decision, err := q.VisitorPermission(ctx, controlstatedb.VisitorPermissionParams{ResourceKind: "service", ResourceID: scope.ID, IdentityID: creator, ControlSessionID: session, Now: timestamptz(now)})
-		if err != nil {
-			return result, publisherLookupError(err, ErrVisitorPermission)
-		}
-		if decision.ExpiresAt.Valid && decision.ExpiresAt.InfinityModifier == 0 {
-			until = minTime(until, decision.ExpiresAt.Time)
-		}
-		subject = visitortoken.Grant{GrantID: grantID, Kind: kind}
+		until = authority.ExpiresAt.Time
+		subject = visitortoken.Grant{GrantID: grantID, Kind: authority.Kind}
 		explicitLifetime = true
 	default:
 		return result, ErrVisitorPermission
@@ -438,21 +393,6 @@ func (d *Database) visitorAuthorityForSource(ctx context.Context, tx pgx.Tx, sco
 		result.Permission.ExpiresAt = until.Truncate(time.Second)
 	}
 	return result, nil
-}
-
-// a refresh credential is authority-facing only. it has a separate format and
-// digest purpose from every retired application-access credential.
-func visitorRefreshDigest(credential string) (string, [32]byte, error) {
-	var zero [32]byte
-	parts := strings.Split(credential, ".")
-	if len(parts) != 3 || parts[0] != "vrf1" || !opaqueid.Valid(parts[1], "shg_") || len(parts[2]) != 43 {
-		return "", zero, ErrVisitorPermission
-	}
-	raw, err := base64.RawURLEncoding.Strict().DecodeString(parts[2])
-	if err != nil || len(raw) != 32 || base64.RawURLEncoding.EncodeToString(raw) != parts[2] {
-		return "", zero, ErrVisitorPermission
-	}
-	return parts[1], sha256.Sum256([]byte("tnl visitor refresh v1\x00" + credential)), nil
 }
 
 type browserTokenFacts struct {

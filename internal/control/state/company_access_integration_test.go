@@ -15,8 +15,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/oidc"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
+	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
+	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func companyTestPrincipal(t *testing.T, d *Database, s ControlSession, now time.Time) ControlPrincipal {
@@ -514,6 +518,51 @@ func TestIntegrationCompanyAuthenticationProofScopeAndContractor(t *testing.T) {
 	if err = d.pool.QueryRow(t.Context(), `SELECT control_session_id FROM control.service_client_certificates WHERE service_id=$1 AND identity_id=$2`, service.ID, person.Identity.ID).Scan(&boundSession); err != nil || boundSession != freshPrincipal.SessionID {
 		t.Fatal("certificate was not rebound to current company proof", boundSession, err)
 	}
+	t.Run("durable service credential retains company provenance", func(t *testing.T) {
+		if _, err := d.pool.Exec(t.Context(), `UPDATE control.team_memberships SET role='admin' WHERE id=$1`, member.ID); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if _, err := d.pool.Exec(t.Context(), `UPDATE control.team_memberships SET role='member' WHERE id=$1`, member.ID); err != nil {
+				t.Error(err)
+			}
+		}()
+		httpService, err := d.CreateServiceAt(companyCtx, team.ID, person.Identity.ID, "company-http", "company-http", ServicePlacement{}, now, ServiceMetadata{Protocol: "http"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		scope := visitorscope.Scope{Kind: visitorscope.Service, ID: httpService.ID}
+		grant, err := d.CreateServiceHTTPGrant(companyCtx, httpService.ID, person.Identity.ID, controlv1.CreateVisitorCredentialRequest{Resource: controlv1.VisitorResourceScope{Kind: "service", Id: httpService.ID}, Kind: "token", ExpiresAt: now.Add(7 * 24 * time.Hour)}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var parent string
+		if err := d.pool.QueryRow(t.Context(), `SELECT control_session_id FROM control.service_http_grants WHERE id=$1`, grant.GrantId).Scan(&parent); err != nil || parent != companyPrincipal.SessionID {
+			t.Fatal("company credential lost exact session provenance", err)
+		}
+		if err := d.PrepareVisitorSigningKeys(t.Context(), testVisitorIssuer, now); err != nil {
+			t.Fatal(err)
+		}
+		body, err := durablePolicyAt(t, d, scope, now)
+		if err != nil || len(body.Policy.GrantVerifiers) != 1 || body.Policy.GrantVerifiers[0].ExpiresAt.After(now.Add(CompanyAuthenticationLifetime)) {
+			t.Fatal("verifier outlived current company authentication", err)
+		}
+		at := now.Add(CompanyAuthenticationLifetime)
+		body, err = durablePolicyAt(t, d, scope, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		update, err := visitorlease.Decode(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := visitortoken.VerifyBearer(visitortoken.Token(grant.Permission.VisitorToken), update.View, at); !errors.Is(err, visitortoken.ErrToken) {
+			t.Fatal("credential bypassed expired company authentication", err)
+		}
+		if _, err := d.IssueVisitorToken(t.Context(), testVisitorIssuer, scope, GrantTokenSource{Credential: grant.Permission.VisitorToken}, at); !errors.Is(err, ErrVisitorPermission) {
+			t.Fatal("exchange bypassed expired company authentication", err)
+		}
+	})
 	companyTestEligibility(t, d, c, person.Identity.ID, 2, false, now)
 	if _, err = d.IssueServiceClientCertificate(companyCtx, service.ID, person.Identity.ID, device.ID, csr, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("offboarded mTLS CSR retry authorized", err)

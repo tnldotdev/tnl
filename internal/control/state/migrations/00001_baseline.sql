@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-publisher-group-bindings')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-durable-visitor-credentials')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-publisher-group-bindings');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-durable-visitor-credentials');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -1377,6 +1377,45 @@ CREATE TABLE control.share_cookies (
     FOREIGN KEY (public_url_id, team_id) REFERENCES control.public_urls(id, team_id) ON DELETE RESTRICT
 );
 CREATE INDEX share_cookies_by_public_url ON control.share_cookies(public_url_id, expires_at);
+
+-- one live-share rule supplies verifier snapshots and browser token exchanges.
+-- possession never substitutes for the issuer's current management authority.
+-- +goose StatementBegin
+CREATE FUNCTION control.visitor_share_authority(url_id text, at_time timestamptz)
+RETURNS TABLE(share_id text, secret_digest bytea, expires_at timestamptz) LANGUAGE sql STABLE AS $$
+    WITH included AS (
+        SELECT share.*,url.membership_id,url.public_url_scope,url.expires_at AS url_expires_at
+        FROM control.share_public_urls captured
+        JOIN control.shares share ON share.id=captured.share_id AND share.team_id=captured.team_id
+        JOIN control.public_urls url ON url.id=captured.public_url_id AND url.team_id=captured.team_id
+        WHERE url.id=url_id AND url.lifecycle_state='enabled' AND url.service_protocol='http'
+            AND url.purpose IN ('app','alias','demo') AND (url.expires_at IS NULL OR url.expires_at>at_time)
+            AND share.revoked_at IS NULL AND share.expires_at>at_time
+    )
+    SELECT share.id,share.secret_digest,LEAST(share.expires_at,share.url_expires_at,
+        CASE WHEN member.personal_account_exception OR (NOT team.company_sign_in_required AND member.identity_connection_id IS NULL)
+            THEN 'infinity'::timestamptz
+            ELSE (SELECT MAX(e.valid_until) FROM control.identity_connections c
+                JOIN control.company_eligibility e ON e.identity_connection_id=c.id AND e.team_id=c.team_id
+                WHERE c.team_id=share.team_id AND c.state='active' AND e.identity_id=person.id
+                    AND (member.identity_connection_id IS NULL OR member.identity_connection_id=c.id)
+                    AND e.connection_revision=c.revision AND e.eligible AND e.valid_until>at_time) END)
+    FROM included share
+    JOIN control.teams team ON team.id=share.team_id AND team.deleted_at IS NULL
+    JOIN control.identities person ON person.id=share.created_by_identity_id AND person.disabled_at IS NULL
+    JOIN control.team_memberships member ON member.team_id=share.team_id AND member.identity_id=person.id
+    WHERE share.scope<>'guest' AND control.active_membership(member.id,at_time)
+        AND control.active_team_subject(share.team_id,person.id,at_time)
+        AND ((share.public_url_scope='member' AND member.id=share.membership_id)
+            OR (share.public_url_scope='shared' AND member.role IN ('owner','admin')))
+    UNION ALL
+    SELECT share.id,share.secret_digest,LEAST(share.expires_at,share.url_expires_at,control.guest_serving_deadline(guest.id,at_time))
+    FROM included share JOIN control.guest_trials guest ON guest.id=share.guest_id AND guest.team_id=share.team_id
+    JOIN control.guest_public_urls owned ON owned.guest_id=guest.id AND owned.public_url_id=url_id
+    WHERE share.scope='guest' AND control.guest_share_live(guest.id,at_time) AND guest.active_ready_at IS NOT NULL
+        AND control.guest_serving_deadline(guest.id,at_time)>at_time
+$$;
+-- +goose StatementEnd
 CREATE TABLE control.share_handoffs (
     token_digest bytea PRIMARY KEY CHECK (octet_length(token_digest) = 32),
     share_id text NOT NULL, public_url_id text NOT NULL, team_id text NOT NULL,
@@ -1997,6 +2036,24 @@ CREATE TABLE control.service_http_grants (
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz
 );
+
+-- delegation is independent of the creator's short access token. company-bound
+-- provenance retains current proof, revocation, and fixed refresh-session limits.
+-- +goose StatementBegin
+CREATE FUNCTION control.visitor_service_grant_authority(service text, at_time timestamptz)
+RETURNS TABLE(grant_id text, kind text, secret_digest bytea, expires_at timestamptz) LANGUAGE sql STABLE AS $$
+    SELECT credential.id,credential.kind,credential.secret_digest,
+        LEAST(credential.expires_at,permission.expires_at,parent.refresh_expires_at)
+    FROM control.service_http_grants credential
+    JOIN control.services s ON s.id=credential.service_id AND s.protocol='http'
+    CROSS JOIN LATERAL control.visitor_identity_permission('service',credential.service_id,credential.created_by_identity_id,
+        COALESCE(credential.control_session_id,''),'',at_time) permission
+    LEFT JOIN control.control_sessions parent ON parent.id=credential.control_session_id
+    WHERE credential.service_id=service AND credential.revoked_at IS NULL AND credential.expires_at>at_time
+        AND (credential.control_session_id IS NULL OR (parent.identity_id=credential.created_by_identity_id AND parent.revoked_at IS NULL
+            AND parent.refresh_expires_at>at_time))
+$$;
+-- +goose StatementEnd
 
 -- direct runtime facts have no mirror or projection trigger. typed run facts
 -- retain their certificate/key-binding boundaries and one active identity index.
