@@ -18,10 +18,12 @@
 
 `tnl` gives every Git worktree its own unique HTTPS URL. Traffic stays encrypted from the browser to your laptop. Here's how it looks:
 
+The diagrams use `example.com` hostnames for readability.
+
 ```text
                              your browser
                                    |
-                     https://*.calm-otter.tnl.dev
+                         https://*.example.com
                           (or your subdomain)
                                    v
                               tnl ingress
@@ -40,7 +42,7 @@
 |                +-----------------+----------------+                 |
 |                v                                  v                 |
 |       tnl (main checkout)                tnl (perf worktree)        |
-|     app.calm-otter.tnl.dev           app-perf.calm-otter.tnl.dev    |
+|       app-shop.example.com            app-shop-perf.example.com     |
 |                |                                  |                 |
 |                v                                  v                 |
 |         localhost:5173                     localhost:5174           |
@@ -85,7 +87,7 @@ If you can't install `tnl` on a client, you can give your service a public hostn
 ```text
                your app or database client
                             |
-              api.calm-otter.tnl.dev:15443
+                  api.example.com:15443
                    (or your subdomain)
                             v
                        tnl ingress
@@ -174,12 +176,12 @@ This would end up looking like:
 ```text
 your browser
 |
-+-- https://app-shop-k7n2p9.calm-otter.tnl.dev
++-- https://app-shop.example.com
 |          |
 |          v
 |   main checkout -> localhost:5173
 |
-+-- https://app-shop-perf-m4q8s2.calm-otter.tnl.dev
++-- https://app-shop-perf.example.com
            |
            v
     perf worktree -> localhost:5174
@@ -192,7 +194,7 @@ Vite and Next.js can choose another port when the preferred one is taken, and `t
 You can leave inline feedback in your app for your agent to review. Or, send someone on your team a link:
 
 ```bash
-pnpm exec tnl share link create app-shop-k7n2p9.calm-otter.tnl.dev \
+pnpm exec tnl share link create app-shop.example.com \
   --expires-in 7d
 ```
 
@@ -228,20 +230,20 @@ The OAuth and webhook URLs do not change when you work across multiple checkouts
 OAuth automatically returns the browser to the worktree that started login:
 
 ```text
-                             perf worktree
+                   https://app-shop-perf.example.com
                                    |
                                    | start login
                                    v
                                  GitHub
                                    |
                                    v
-+---------------------------------------------------------------------+
-|     https://oauth-shop-n6t4c2.calm-otter.tnl.dev/auth/callback      |
++--[ oauth callback url ]---------------------------------------------+
+|             https://oauth-shop.example.com/auth/callback            |
 +---------------------------------------------------------------------+
                                    |
                                    | redirect browser
                                    v
-                             perf worktree
+                   https://app-shop-perf.example.com
 ```
 
 Or, for webhooks, the same event fans out to all running worktrees:
@@ -250,14 +252,14 @@ Or, for webhooks, the same event fans out to all running worktrees:
                          webhook (e.g. Stripe)
                                    |
                                    v
-+---------------------------------------------------------------------+
-| https://hooks-shop-b6m2x7d4qk5ra.calm-otter.tnl.dev/webhooks/stripe |
++--[ webhook url ]----------------------------------------------------+
+|            https://hooks-shop.example.com/webhooks/stripe           |
 +---------------------------------------------------------------------+
                                    |
                        +-----------+-----------+
                        |                       |
                        v                       v
-                      main                    perf
+                 main checkout            perf worktree
 ```
 
 You can also select a single webhook receiver, instead of fanning out. See [OAuth setup](https://tnl.dev/docs/development#register-one-oauth-callback-for-your-worktrees)
