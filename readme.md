@@ -18,8 +18,6 @@
 
 `tnl` gives every Git worktree its own unique HTTPS URL. Traffic stays encrypted from the browser to your laptop. Here's how it looks:
 
-The diagrams use `example.com` hostnames for readability.
-
 ```text
                              your browser
                                    |
@@ -367,7 +365,7 @@ See [GitHub Actions setup](https://tnl.dev/docs/workloads#connect-a-github-actio
 
 You can also add a subdomain you own, for URLs like `https://app.alex.dev.example.com`.
 
-Use `pnpm exec tnl domain claim` to get the DNS records to add; once verified, `tnl` manages its public URL DNS and certificates.
+Use `tnl domain claim` to get the DNS records to add; once verified, `tnl` manages its public URL DNS and certificates.
 See [setting up a custom domain](https://tnl.dev/docs/domains).
 
 Or, you can even run the whole stack yourself (control, ingress, and relays), forever free. See [running your own server](https://tnl.dev/docs/self-hosting).
@@ -396,7 +394,7 @@ Here's how `tnl` compares to Tailscale, Cloudflare, and ngrok.
 
 |                                        | tnl                     | tailscale              | cloudflare                   | ngrok                   |
 | -------------------------------------- | ----------------------- | ---------------------- | ---------------------------- | ----------------------- |
-| Connect without a public endpoint      | `pnpm exec tnl connect` | WireGuard mesh network | Cloudflare One/`cloudflared` | `ngrokd` or Kubernetes  |
+| Connect without a public endpoint      | `tnl connect`           | WireGuard mesh network | Cloudflare One/`cloudflared` | `ngrokd` or Kubernetes  |
 | Use your own domain for public HTTPS   | Yes                     | No, only `*.ts.net`    | Yes                          | Yes                     |
 | Built-in web firewall (WAF)            | No                      | No                     | Yes                          | Yes                     |
 | Run the server infrastructure yourself | Yes                     | w/ Headscale           | No                           | No                      |
