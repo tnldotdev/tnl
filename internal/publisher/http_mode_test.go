@@ -13,7 +13,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
-	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -68,7 +67,7 @@ func TestRunHandlerBackedIntegrationSkipsTargetPreflightAndReloads(t *testing.T)
 			stop := errors.New("stop at publish run")
 			control := &publisherControlStub{allowed: []string{"lookup", "create", "create_session"}, publishRunErr: stop}
 			config := Config{Control: control, State: store, Hostname: "integration.example", TeamID: "team_1", DomainID: "domain_1", PublicURLScope: controlv1.Shared, Purpose: purpose,
-				Handler: http.NotFoundHandler(), InspectionMode: inspection.None, QUICConnector: muxsession.QUICConnector{}, TCPConnector: muxsession.TLSYamuxConnector{}}
+				Handler: http.NotFoundHandler(), InspectionMode: inspection.None}
 			for range 2 {
 				if err := Run(t.Context(), config); !errors.Is(err, stop) {
 					t.Fatalf("handler mode did not reach control without a target: %v", err)

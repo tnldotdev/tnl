@@ -18,7 +18,6 @@ import (
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
-	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -133,9 +132,8 @@ func Run(ctx context.Context, options Options) (result error) {
 		PolicyRevision: uint64(publicURL.PolicyRevision), PublicURLScope: publicURL.PublicUrlScope,
 		Purpose: controlv1.App, Hostname: publicURL.CanonicalHostname, Target: target, ServiceProtocol: controlv1.Http,
 		AllowedIPPrefixes: allowed, Limits: options.Limits, Ephemeral: true, AssignedPublicURL: &publicURL,
-		QUICConnector: muxsession.QUICConnector{TLSConfig: tlsConfig},
-		TCPConnector:  muxsession.TLSYamuxConnector{TLSConfig: tlsConfig},
-		Observe:       options.Observe,
+		TransportTLS: tlsConfig,
+		Observe:      options.Observe,
 	}
 	result = publisher.Run(ctx, publication)
 	if ctx.Err() != nil && failure.Only(result, context.Canceled) {

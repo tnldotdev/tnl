@@ -14,6 +14,7 @@ import (
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 )
@@ -25,6 +26,7 @@ type splitRelayFixture struct {
 }
 
 type splitPublishFixture struct {
+	relayTransport           *muxsession.QUICTransport
 	processContext           func(string) context.Context
 	owner                    *runtimeTopology
 	databaseURL              string
@@ -176,6 +178,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		relayRoots = pebble.roots
 	}
 	f := &splitPublishFixture{
+		relayTransport: transporttest.QUICTransport(t),
 		processContext: options.processContext,
 		owner:          owner, databaseURL: databaseURL, inspect: inspect, pebble: pebble,
 		roots:         &tls.Config{RootCAs: relayRoots, MinVersion: tls.VersionTLS13},
@@ -312,7 +315,7 @@ func (f *splitPublishFixture) contextFor(role string) context.Context {
 func (f *splitPublishFixture) connectors() (muxsession.Connector, muxsession.Connector) {
 	quicAddresses := map[string]string{f.relayA.config.RelayAddress: f.relayA.config.RelayUDPListen, f.relayB.config.RelayAddress: f.relayB.config.RelayUDPListen}
 	tcpAddresses := map[string]string{f.relayA.config.RelayAddress: f.relayA.config.RelayTCPListen, f.relayB.config.RelayAddress: f.relayB.config.RelayTCPListen}
-	return publicURLIntegrationConnector(quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots}), publicURLIntegrationConnector(tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
+	return publicURLIntegrationConnector(quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots, Dialer: f.relayTransport}), publicURLIntegrationConnector(tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
 }
 
 func (f *splitPublishFixture) startPublisher(t *testing.T, target string, quicConnector, tcpConnector muxsession.Connector) *integrationPublisher {

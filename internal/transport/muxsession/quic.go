@@ -41,7 +41,8 @@ type QUICDialer interface {
 	DialQUIC(context.Context, net.Addr, *tls.Config, *quic.Config) (*quic.Conn, error)
 }
 
-// QUICConnector establishes QUIC multiplexed sessions.
+// QUICConnector establishes QUIC multiplexed sessions through a required borrowed
+// dialer. it never opens a UDP socket or closes the owner's transport.
 type QUICConnector struct {
 	TLSConfig *tls.Config
 	Config    QUICConfig
@@ -53,6 +54,9 @@ func (c QUICConnector) Connect(ctx context.Context, endpoint Endpoint) (Session,
 }
 
 func connectQUIC(ctx context.Context, endpoint Endpoint, roots *tls.Config, transport QUICConfig, dialer QUICDialer, alpn string) (Session, error) {
+	if dialer == nil {
+		return nil, errors.New("muxsession: QUIC requires an owner-supplied dialer")
+	}
 	if endpoint.Address == "" || endpoint.ServerName == "" {
 		return nil, errors.New("muxsession: QUIC endpoint requires address and server name")
 	}
@@ -64,12 +68,7 @@ func connectQUIC(ctx context.Context, endpoint Endpoint, roots *tls.Config, tran
 	if config.KeepAlivePeriod == 0 {
 		config.KeepAlivePeriod = defaultQUICKeepAlivePeriod
 	}
-	var connection *quic.Conn
-	if dialer == nil {
-		connection, err = quic.DialAddr(ctx, endpoint.Address, tlsConfig, config)
-	} else {
-		connection, err = dialSharedQUIC(ctx, dialer, endpoint.Address, tlsConfig, config, net.DefaultResolver.LookupNetIP)
-	}
+	connection, err := dialSharedQUIC(ctx, dialer, endpoint.Address, tlsConfig, config, net.DefaultResolver.LookupNetIP)
 	if err != nil {
 		return nil, fmt.Errorf("muxsession: dial QUIC: %w", err)
 	}

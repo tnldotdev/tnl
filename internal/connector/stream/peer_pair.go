@@ -9,7 +9,6 @@ import (
 	"errors"
 	"time"
 
-	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorsubject"
@@ -291,7 +290,7 @@ func dialConnectorLeg(ctx, lifetime context.Context, config Config, signer Signe
 	}
 	quicConnector, tcpConnector := config.RelayQUIC, config.RelayTCP
 	if quicConnector == nil {
-		quicConnector = muxsession.QUICConnector{TLSConfig: roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}
+		return nil, ErrServiceConnection
 	}
 	if tcpConnector == nil {
 		tcpConnector = muxsession.TLSYamuxConnector{TLSConfig: roots}

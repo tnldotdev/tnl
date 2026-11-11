@@ -81,7 +81,17 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		config.Identity.Kind != authorityv1.Service || *config.Identity.ServiceId != config.ServiceID {
 		return ErrPrivateStream
 	}
-	connectOptions, err := config.connectionOptions()
+	var dialer muxsession.QUICDialer
+	var udpErr error
+	if config.RelayQUIC == nil {
+		var transport *muxsession.QUICTransport
+		transport, udpErr = muxsession.ListenQUICTransport("udp", ":0")
+		if udpErr == nil {
+			dialer = transport
+			defer func() { result = errors.Join(result, transport.Close()) }()
+		}
+	}
+	connectOptions, err := config.connectionOptions(dialer, udpErr)
 	if err != nil {
 		return err
 	}
@@ -430,7 +440,7 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 // compose relay trust once for the run, independently of target and visitor TLS.
 // supplied connectors must preserve certificate verification for the assigned
 // server name even when they redirect the dial address to a local fixture.
-func (config RunConfig) connectionOptions() (ConnectOptions, error) {
+func (config RunConfig) connectionOptions(dialer muxsession.QUICDialer, udpErr error) (ConnectOptions, error) {
 	roots := config.TransportTLS
 	if roots == nil {
 		roots = &tls.Config{MinVersion: tls.VersionTLS13}
@@ -443,7 +453,11 @@ func (config RunConfig) connectionOptions() (ConnectOptions, error) {
 	}
 	options := ConnectOptions{QUIC: config.RelayQUIC, TCP: config.RelayTCP}
 	if options.QUIC == nil {
-		options.QUIC = muxsession.QUICConnector{TLSConfig: roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}
+		if udpErr != nil {
+			options.QUIC = muxsession.ConnectorFunc(func(context.Context, muxsession.Endpoint) (muxsession.Session, error) { return nil, udpErr })
+		} else {
+			options.QUIC = muxsession.QUICConnector{TLSConfig: roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: dialer}
+		}
 	}
 	if options.TCP == nil {
 		options.TCP = muxsession.TLSYamuxConnector{TLSConfig: roots}

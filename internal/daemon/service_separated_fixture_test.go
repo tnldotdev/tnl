@@ -28,6 +28,7 @@ import (
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
 
@@ -42,6 +43,7 @@ type serviceRuntimeIdentity struct {
 }
 
 type privateSeparatedFixture struct {
+	relayTransport              *muxsession.QUICTransport
 	publicControlAddress        string
 	publicHTTP                  *http.Client
 	databaseURL                 string
@@ -233,7 +235,7 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &privateSeparatedFixture{publicControlAddress: publicControlAddress, publicHTTP: &http.Client{Transport: publicTransport, Timeout: 10 * time.Second}, databaseURL: databaseURL, inspect: inspect, roots: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}, controlConfig: config, serviceHTTP: serviceHTTP,
+	f := &privateSeparatedFixture{relayTransport: transporttest.QUICTransport(t), publicControlAddress: publicControlAddress, publicHTTP: &http.Client{Transport: publicTransport, Timeout: 10 * time.Second}, databaseURL: databaseURL, inspect: inspect, roots: &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}, controlConfig: config, serviceHTTP: serviceHTTP,
 		database: database, certificateAuthority: ca,
 		identity: serviceRuntimeIdentity{teamID: identity.PersonalTeamId, state: profile, routes: authenticated.Control, authority: authenticated.Authority}, tcpAddresses: make(map[string]string), quicAddresses: make(map[string]string)}
 	f.defaultTiming = defaults
@@ -317,7 +319,7 @@ func (f *privateSeparatedFixture) connectors() (muxsession.Connector, muxsession
 			return connector.Connect(ctx, endpoint)
 		})
 	}
-	return redirect(f.quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}), redirect(f.tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
+	return redirect(f.quicAddresses, muxsession.QUICConnector{TLSConfig: f.roots, Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: f.relayTransport}), redirect(f.tcpAddresses, muxsession.TLSYamuxConnector{TLSConfig: f.roots})
 }
 
 func privateDisabledConnector() muxsession.Connector {

@@ -27,6 +27,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -130,7 +131,7 @@ func connectorInnerPairWithConfig(t *testing.T, ctx context.Context, verificatio
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-	client, err := (muxsession.QUICConnector{TLSConfig: trust, Config: muxsession.QUICConfig{Config: config}}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: trust.ServerName})
+	client, err := (muxsession.QUICConnector{TLSConfig: trust, Config: muxsession.QUICConfig{Config: config}, Dialer: transporttest.QUICTransport(t)}).Connect(ctx, muxsession.Endpoint{Address: listener.Addr().String(), ServerName: trust.ServerName})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -222,12 +222,10 @@ func TestSharedQUICDualStackResolutionUsesBorrowedIPv4Socket(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer listener.Close()
-			packet, err := net.ListenPacket("udp4", "127.0.0.1:0")
+			transport, err := ListenQUICTransport("udp4", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer packet.Close()
-			transport := &quic.Transport{Conn: packet}
 			defer transport.Close()
 			trust, err := transportTLSConfig(clientTLS, "relay.test", false)
 			if err != nil {
@@ -238,7 +236,7 @@ func TestSharedQUICDualStackResolutionUsesBorrowedIPv4Socket(t *testing.T) {
 				addresses[0], addresses[1] = addresses[1], addresses[0]
 			}
 			_, port, _ := net.SplitHostPort(listener.Addr().String())
-			connection, err := dialSharedQUIC(ctx, borrowedTestQUICDialer{transport}, net.JoinHostPort("relay.test", port), trust, quicConnectorConfig(nil), func(context.Context, string, string) ([]netip.Addr, error) {
+			connection, err := dialSharedQUIC(ctx, transport, net.JoinHostPort("relay.test", port), trust, quicConnectorConfig(nil), func(context.Context, string, string) ([]netip.Addr, error) {
 				return addresses, nil
 			})
 			if err != nil {

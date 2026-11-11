@@ -83,7 +83,7 @@ func testQUICSourcePinRejectsMigratedFramesBeforeDispatch(t *testing.T, mode str
 	defer nonQUIC.Close()
 	dial := func() (Session, Session) {
 		t.Helper()
-		client, err := (QUICConnector{TLSConfig: clientTLS, Config: QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}).Connect(ctx, Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
+		client, err := (QUICConnector{TLSConfig: clientTLS, Config: QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: testQUICTransport(t)}).Connect(ctx, Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -13,12 +13,6 @@ import (
 	quic "github.com/quic-go/quic-go"
 )
 
-type borrowedTestQUICDialer struct{ transport *quic.Transport }
-
-func (d borrowedTestQUICDialer) DialQUIC(ctx context.Context, addr net.Addr, trust *tls.Config, config *quic.Config) (*quic.Conn, error) {
-	return d.transport.Dial(ctx, addr, trust, config)
-}
-
 type inspectingQUICDialer struct {
 	t      *testing.T
 	roots  *tls.Config
@@ -78,16 +72,10 @@ func TestNonQUICChildCloseAndDeadlinesLeaveSharedQUICAlive(t *testing.T) {
 			if _, _, err := duplicate.ReadFrom(make([]byte, 1)); !errors.Is(err, net.ErrClosed) {
 				t.Fatal("listener allowed a competing non-QUIC reader", err)
 			}
-			packet, err := net.ListenPacket("udp4", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer packet.Close()
-			transport := &quic.Transport{Conn: packet}
-			defer transport.Close()
-			clientPackets := NonQUICPacketConn(ctx, transport, packet.LocalAddr())
+			transport := testQUICTransport(t)
+			clientPackets := transport.NonQUICPackets(ctx)
 			defer clientPackets.Close()
-			client, err := (QUICConnector{TLSConfig: clientTLS, Dialer: borrowedTestQUICDialer{transport}}).Connect(ctx, Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
+			client, err := (QUICConnector{TLSConfig: clientTLS, Dialer: transport}).Connect(ctx, Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -142,7 +130,7 @@ func TestNonQUICChildCloseAndDeadlinesLeaveSharedQUICAlive(t *testing.T) {
 				}
 			}
 			assertRoundTrip(t, client, server, "after both packet children close")
-			if got := client.(AcceptedPeer).LocalAddr().String(); got != packet.LocalAddr().String() {
+			if got := client.(AcceptedPeer).LocalAddr().String(); got != transport.LocalAddr().String() {
 				t.Fatal("borrowed dialer did not use the existing physical socket", got)
 			}
 		})

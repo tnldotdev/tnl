@@ -14,7 +14,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -146,7 +145,6 @@ func (p publisherServices) config(target string, allowedIPPrefixes []string, lim
 		AllowedIPPrefixes: allowedIPPrefixes,
 		Ephemeral:         p.ephemeral,
 		State:             p.state,
-		QUICConnector:     muxsession.QUICConnector{TLSConfig: relayTransportTLS},
-		TCPConnector:      muxsession.TLSYamuxConnector{TLSConfig: relayTransportTLS},
+		TransportTLS:      relayTransportTLS,
 	}
 }

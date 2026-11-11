@@ -16,6 +16,7 @@ import (
 
 	yamux "github.com/libp2p/go-yamux/v5"
 	quic "github.com/quic-go/quic-go"
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/streamcopy"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -58,7 +59,7 @@ func realTunnelPair(t *testing.T, transport string) (*Session, *Session) {
 		closeListener = func() { _ = listener.Close() }
 		address = listener.Addr().String()
 		accept = func() (muxsession.Session, error) { return listener.Accept(ctx) }
-		connector = muxsession.QUICConnector{TLSConfig: clientTLS}
+		connector = muxsession.QUICConnector{TLSConfig: clientTLS, Dialer: transporttest.QUICTransport(t)}
 	} else {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {

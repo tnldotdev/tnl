@@ -13,6 +13,7 @@ import (
 
 	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -22,7 +23,8 @@ import (
 func TestPrivateConnectOptionsKeepRelayTrustSeparate(t *testing.T) {
 	_, roots := privateTransportTLS(t)
 	roots.MinVersion = tls.VersionTLS12
-	options, err := (RunConfig{TransportTLS: roots}).connectionOptions()
+	dialer := transporttest.QUICTransport(t)
+	options, err := (RunConfig{TransportTLS: roots}).connectionOptions(dialer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,10 +32,10 @@ func TestPrivateConnectOptionsKeepRelayTrustSeparate(t *testing.T) {
 	tcp := options.TCP.(muxsession.TLSYamuxConnector)
 	if udp.TLSConfig == roots || udp.TLSConfig != tcp.TLSConfig || udp.TLSConfig.RootCAs != roots.RootCAs ||
 		udp.TLSConfig.MinVersion < tls.VersionTLS13 || roots.MinVersion != tls.VersionTLS12 ||
-		udp.TLSConfig.InsecureSkipVerify || !udp.Config.Config.EnableDatagrams || options.PreferTCP {
+		udp.TLSConfig.InsecureSkipVerify || !udp.Config.Config.EnableDatagrams || options.PreferTCP || udp.Dialer != dialer {
 		t.Fatal("relay composition changed trust, mutated caller TLS, or disabled peer datagrams")
 	}
-	defaults, err := (RunConfig{}).connectionOptions()
+	defaults, err := (RunConfig{}).connectionOptions(dialer, nil)
 	if err != nil || defaults.QUIC.(muxsession.QUICConnector).TLSConfig.RootCAs != nil ||
 		defaults.TCP.(muxsession.TLSYamuxConnector).TLSConfig.MinVersion < tls.VersionTLS13 {
 		t.Fatal("default relay connectors did not retain system roots and TLS 1.3", err)
@@ -111,6 +113,32 @@ func TestPrivateConnectSlotPreferenceAndFallback(t *testing.T) {
 				awaitPrivateSlot(t, done)
 			}
 		})
+	}
+}
+
+func TestPrivateConnectSlotUsesTCPWhenOwnerCannotOpenUDP(t *testing.T) {
+	_, bound, _, _ := privateFixture(t, "127.0.0.1:1")
+	relay := newPrivateSlotRelay(t, bound, true, nil, nil)
+	udpErr := errors.New("owner cannot open UDP socket")
+	options, err := (RunConfig{TransportTLS: relay.roots}).connectionOptions(nil, udpErr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session, err := options.QUIC.Connect(t.Context(), muxsession.Endpoint{}); session != nil || !errors.Is(err, udpErr) {
+		t.Fatal("UDP failure was replaced with another transport", err)
+	}
+	tcp := options.TCP
+	options.TCP = muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
+		endpoint.Address = relay.address
+		return tcp.Connect(ctx, endpoint)
+	})
+	claimed, err := bound.ConnectSlot(t.Context(), 0, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = claimed.Close() })
+	if claimed.Transport() != tunnel.TransportTLSTCP || relay.hellos[0].Load() != 0 || relay.hellos[1].Load() != 1 {
+		t.Fatal("UDP setup failure did not use only the TLS/TCP relay")
 	}
 }
 
@@ -362,7 +390,7 @@ func (r *privateSlotRelay) assertRejectedQUICClosed(t *testing.T) {
 // normal TLS verification stay intact, as in the real topology fixtures.
 func (r *privateSlotRelay) options(t *testing.T, roots *tls.Config) ConnectOptions {
 	t.Helper()
-	options, err := (RunConfig{TransportTLS: roots}).connectionOptions()
+	options, err := (RunConfig{TransportTLS: roots}).connectionOptions(transporttest.QUICTransport(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

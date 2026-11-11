@@ -57,7 +57,7 @@ func TestQUICHeldAndFreshStreamsWithPacketLoss(t *testing.T) {
 		}
 		accepted <- connection
 	}()
-	client, err := (QUICConnector{TLSConfig: clientTLS}).Connect(ctx, Endpoint{
+	client, err := (QUICConnector{TLSConfig: clientTLS, Dialer: testQUICTransport(t)}).Connect(ctx, Endpoint{
 		Address: packet.LocalAddr().String(), ServerName: "relay.test",
 	})
 	if err != nil {
@@ -302,7 +302,7 @@ func testQUICListenerSocketMode(t *testing.T, config QUICConfig, reserved bool) 
 			<-ctx.Done()
 		}
 	}()
-	client, err := (QUICConnector{TLSConfig: clientTLS, Config: QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}).Connect(ctx, Endpoint{
+	client, err := (QUICConnector{TLSConfig: clientTLS, Config: QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: testQUICTransport(t)}).Connect(ctx, Endpoint{
 		Address: address, ServerName: "relay.test",
 	})
 	if err != nil {
@@ -567,7 +567,7 @@ func newQUICPairWithConfig(t *testing.T, serverConfig, clientConfig *quic.Config
 			<-ctx.Done()
 		}
 	}()
-	client, err := (QUICConnector{TLSConfig: clientTLS, Config: QUICConfig{Config: clientConfig}}).Connect(ctx, Endpoint{
+	client, err := (QUICConnector{TLSConfig: clientTLS, Config: QUICConfig{Config: clientConfig}, Dialer: testQUICTransport(t)}).Connect(ctx, Endpoint{
 		Address: listener.Addr().String(), ServerName: "relay.test",
 	})
 	if err != nil {

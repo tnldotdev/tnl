@@ -25,6 +25,7 @@ import (
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -129,7 +130,7 @@ func runSeparatedConnectPublishers(t *testing.T, ctx context.Context, count, sha
 		if err != nil {
 			t.Fatal(err)
 		}
-		var quicConnector muxsession.Connector = muxsession.QUICConnector{TLSConfig: separatedRelayTLS(t), Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}}
+		var quicConnector muxsession.Connector = muxsession.QUICConnector{TLSConfig: separatedRelayTLS(t), Config: muxsession.QUICConfig{Config: &quic.Config{EnableDatagrams: true}}, Dialer: transporttest.QUICTransport(t)}
 		var tcp muxsession.Connector = muxsession.TLSYamuxConnector{TLSConfig: separatedRelayTLS(t)}
 		transport := "quic"
 		if index%2 == 0 {

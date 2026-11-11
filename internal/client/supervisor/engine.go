@@ -24,7 +24,6 @@ import (
 	publisherruntime "github.com/tnldotdev/tnl/internal/publisher/runtime"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	targetplan "github.com/tnldotdev/tnl/internal/publisher/target"
-	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -374,8 +373,7 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 	}
 	cfg.PublisherIdentityID = native.PublisherIdentityID()
 	transportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
-	cfg.QUICConnector = muxsession.QUICConnector{TLSConfig: transportTLS}
-	cfg.TCPConnector = muxsession.TLSYamuxConnector{TLSConfig: transportTLS}
+	cfg.TransportTLS = transportTLS
 	var mu sync.Mutex
 	ready := false
 	cfg.Observe = func(event publisher.Event) error {
