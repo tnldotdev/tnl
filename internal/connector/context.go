@@ -205,7 +205,7 @@ func connectionManifest(options ContextOptions) (projectConfiguration, connector
 	for _, s := range services {
 		configuration.Services[s] = config.Service{Protocol: new(m.Services[s])}
 	}
-	scope := connectorruntime.Context{Schema: 1, Directory: directory, ConfigDigest: hex.EncodeToString(digest[:]), Server: m.Server, Audience: m.Server, TeamID: m.Team, ProjectKey: m.ProjectKey, SourceID: m.SourceFingerprint, WorktreeKey: "deployment", ProjectLabel: m.ProjectLabel, Workload: options.Workload, Services: services}
+	scope := connectorruntime.Context{PublisherGroupID: m.PublisherGroupID, Schema: 1, Directory: directory, ConfigDigest: hex.EncodeToString(digest[:]), Server: m.Server, Audience: m.Server, TeamID: m.Team, ProjectKey: m.ProjectKey, SourceID: m.SourceFingerprint, WorktreeKey: "deployment", ProjectLabel: m.ProjectLabel, Workload: options.Workload, Services: services}
 	return projectConfiguration{Project: clientproject.Project{Root: directory, Config: configuration}}, scope, scope.Validate()
 }
 

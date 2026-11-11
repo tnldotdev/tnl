@@ -17,6 +17,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/naming"
+	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"golang.org/x/sys/unix"
 )
 
@@ -41,6 +42,7 @@ type Workload struct {
 	Acquisition        Acquisition `json:"acquisition"`
 }
 type Manifest struct {
+	PublisherGroupID  string              `json:"publisher_group_id,omitempty"`
 	Schema            int                 `json:"schema"`
 	Server            string              `json:"server"`
 	Team              string              `json:"team"`
@@ -84,6 +86,9 @@ func Generate(c config.TNL, source clientproject.SourceIdentity) ([]byte, error)
 }
 
 func (m Manifest) Validate() error {
+	if m.PublisherGroupID != "" && !opaqueid.Valid(m.PublisherGroupID, "pgrp_") {
+		return ErrInvalid
+	}
 	server, err := clientstate.CanonicalServer(m.Server)
 	if err != nil || server != m.Server || !config.WorkloadHTTPS(m.Server) || m.Schema != 1 || !config.ExactWorkloadValue(m.Team) || !config.ExactWorkloadValue(m.ProjectKey) || !fingerprint.MatchString(m.SourceFingerprint) || !naming.ValidAuthorityLabel(m.ProjectLabel) || len(m.Workloads) == 0 || len(m.Workloads) > 32 || len(m.Services) > 128 {
 		return ErrInvalid
@@ -106,6 +111,9 @@ func (m Manifest) Validate() error {
 		}
 		if !slices.Contains([]string{"github", "vercel", "fly", "oidc", "google", "kubernetes", "gitlab"}, w.Provider) {
 			return ErrInvalid
+		}
+		if w.Acquisition.Method == "callback" && m.PublisherGroupID != "" && w.Acquisition.Audience == m.Server && w.Acquisition.TokenFile == "" && w.Acquisition.TokenEnv == "" {
+			continue
 		}
 		if a := w.Acquisition; a.Method == "token-file" || a.Method == "token-env" {
 			if w.Provider != "vercel" && !config.ExactWorkloadValue(a.Audience) {

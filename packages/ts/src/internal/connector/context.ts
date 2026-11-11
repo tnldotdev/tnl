@@ -24,6 +24,7 @@ export interface NativeScope {
   ): Promise<unknown>;
   workload(name: string, request: WorkloadRequest): Promise<unknown>;
   entry?: { readonly file: string; readonly ipc: Promise<OwnerIPC> };
+  cleanup?: { stop(): Promise<void>; onExit(): void };
   selected?: { readonly file: string; readonly expiresAt: number };
 }
 

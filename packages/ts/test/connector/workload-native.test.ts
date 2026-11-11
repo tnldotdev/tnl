@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { readFile } from "node:fs/promises";
+import type { TnlGroupConnection } from "../../src/internal/connector/group_client.js";
+import type { SelectionOptions } from "../../src/internal/connector/workload/contract.js";
 
 const transport = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("undici/index.js", async (original) => ({
@@ -9,11 +12,14 @@ vi.mock("undici/index.js", async (original) => ({
 const fixture = vi.hoisted(() => ({
   assertion: "first",
   owners: new Map<string, string>(),
+  manifests: new Map<string, string>(),
+  registries: new Map<string, string>(),
   calls: [] as { args: string[]; input: unknown }[],
   denied: new Set<string>(),
   dead: new Set<string>(),
   recoveries: 0,
   ipc: [] as { file: string; name: string; assertion: string | undefined }[],
+  selections: [] as SelectionOptions[],
   proofs: new Map<string, Set<string>>(),
   approvals: new Set<string>(),
   prepared: new Set<string>(),
@@ -32,12 +38,23 @@ vi.mock("../../src/internal/connector/connection_ipc.js", async () => {
   const { createHash } = await import("node:crypto");
   return {
     ownerIPC: async (file: string) => ({
-      async prepare(name: string, assertion?: string, selection?: object) {
-        if (selection !== undefined)
+      async prepare(name: string, assertion?: string, selection?: SelectionOptions) {
+        if (selection !== undefined) {
+          fixture.selections.push(selection);
           return response(
-            ["--no-telemetry", "runtime", "connections", "sdk-prepare", "--selected-service", name],
-            { assertion },
+            [
+              "--no-telemetry",
+              "runtime",
+              "connections",
+              "sdk-prepare",
+              "--selected-service",
+              name,
+              "--registry",
+              fixture.registries.get(file) ?? "",
+            ],
+            { ...selection, assertion },
           );
+        }
         fixture.ipc.push({ file, name, assertion });
         const binding = assertion === undefined ? undefined : fixture.binding(assertion);
         if (fixture.dead.has(file) || binding === undefined || fixture.owners.get(file) !== binding)
@@ -71,7 +88,8 @@ vi.mock("../../src/internal/connector/connection_ipc.js", async () => {
     }),
   };
 });
-vi.mock("../../src/internal/connector/workload/provider.js", () => ({
+vi.mock("../../src/internal/connector/workload/provider.js", async (original) => ({
+  ...(await original<typeof import("../../src/internal/connector/workload/provider.js")>()),
   usesWorkload: () => true,
   selectWorkload: async () => ({
     sdk_workload: { name: "job", callback: true, runtime: {} },
@@ -112,10 +130,14 @@ vi.mock("node:child_process", () => ({
 
 function response(args: string[], input: unknown): unknown {
   const operation = args[3];
-  const body = input as { assertion?: string };
+  const body = input as { assertion?: string; manifest?: string };
   if (operation === "context") return { schema: 1, config_digest: "c".repeat(64) };
   const binding = body?.assertion === undefined ? undefined : fixture.binding(body.assertion);
   if (operation === "sdk-prepare") {
+    const manifest = args.includes("--workload-manifest")
+      ? (args[args.indexOf("--workload-manifest") + 1] ?? "")
+      : (body?.manifest ?? "");
+    const registry = args[args.indexOf("--registry") + 1] ?? "";
     if (
       args.includes("--recover-handle") &&
       !fixture.dead.has(args[args.indexOf("--recover-handle") + 1] ?? "")
@@ -127,13 +149,19 @@ function response(args: string[], input: unknown): unknown {
       fixture.approvals.add(body?.assertion ?? "");
     }
     let file = [...fixture.owners].find(
-      ([file, owner]) => owner === binding && !fixture.dead.has(file),
+      ([file, owner]) =>
+        owner === binding &&
+        !fixture.dead.has(file) &&
+        fixture.manifests.get(file) === manifest &&
+        fixture.registries.get(file) === registry,
     )?.[0];
     if (file === undefined) {
       const started = response(["--no-telemetry", "runtime", "connections", "start"], input) as {
         connection_handle: string;
       };
       file = started.connection_handle;
+      fixture.manifests.set(file, manifest);
+      fixture.registries.set(file, registry);
     }
     const name = args[args.indexOf("--selected-service") + 1] ?? "";
     fixture.ipc.push({ file, name, assertion: body?.assertion });
@@ -223,6 +251,12 @@ function response(args: string[], input: unknown): unknown {
     };
   }
   if (operation === "stop") return { schema: 1, state: "stopped" };
+  if (operation === "sdk-stop") {
+    const registry = args[args.indexOf("--registry") + 1];
+    for (const [file, selected] of fixture.registries)
+      if (selected === registry) fixture.dead.add(file);
+    return { schema: 1, state: "stopped" };
+  }
   throw new Error("unexpected native operation");
 }
 
@@ -265,11 +299,14 @@ beforeEach(() => {
   vi.stubGlobal("__tnlConnectorContextV2", undefined);
   fixture.assertion = "first";
   fixture.owners.clear();
+  fixture.manifests.clear();
+  fixture.registries.clear();
   fixture.calls.length = 0;
   fixture.denied.clear();
   fixture.dead.clear();
   fixture.recoveries = 0;
   fixture.ipc.length = 0;
+  fixture.selections.length = 0;
   fixture.proofs.clear();
   fixture.approvals.clear();
   fixture.prepared.clear();
@@ -381,4 +418,199 @@ test("cold and warm helper/control budgets are explicit; rotation revalidates be
   expect(fixture.calls.map((c) => c.args[3])).toEqual(["sdk-prepare"]);
   expect(fixture.control.attach).toBe(1);
   expect(fixture.control.identity).toBe(3);
+});
+
+function groupConnection(character: string): TnlGroupConnection {
+  return {
+    schema: 1,
+    server: "https://control.example",
+    team_id: `tm_${"a".repeat(22)}`,
+    project_key: "tractors",
+    source_fingerprint: "a".repeat(64),
+    project_label: "tractors",
+    group_id: `pgrp_${character.repeat(22)}`,
+    group_name: `tractor-${character}`,
+    services: { api: "http", raw: "tcp" },
+    workloads: {
+      monitor: { provider: "oidc", services: ["api", "raw"], max_duration_seconds: 3600 },
+    },
+  };
+}
+
+test("group clients isolate concurrent owners, callbacks, manifests and cleanup without changing global selection", async () => {
+  const { groupClient } = await import("../../src/internal/connector/connection.js");
+  let assertion = "first";
+  const firstToken = vi.fn(async () => assertion);
+  const otherToken = vi.fn(async () => "first");
+  const first = groupClient({
+    connection: groupConnection("a"),
+    workload: { name: "monitor", token: firstToken },
+  });
+  const other = groupClient({
+    connection: groupConnection("b"),
+    workload: { name: "monitor", token: otherToken },
+  });
+  try {
+    const [a, b] = await Promise.all([first.connect("raw"), other.connect("raw")]);
+    expect([a, b]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ port: 12345 }),
+        expect.objectContaining({ port: 12346 }),
+      ]),
+    );
+    const otherPort = "port" in b ? b.port : undefined;
+    expect(otherPort).toBeTypeOf("number");
+    const starts = fixture.calls.filter((call) => call.args[3] === "sdk-prepare");
+    expect(starts).toHaveLength(2);
+    const manifests = await Promise.all(
+      starts.map(async (call) => {
+        const filename = call.args[call.args.indexOf("--workload-manifest") + 1];
+        if (filename === undefined) throw new Error("missing scoped manifest");
+        const source = await readFile(filename, "utf8");
+        expect(source).not.toContain('"first"');
+        return JSON.parse(source) as unknown;
+      }),
+    );
+    expect(manifests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ publisher_group_id: groupConnection("a").group_id }),
+        expect.objectContaining({ publisher_group_id: groupConnection("b").group_id }),
+      ]),
+    );
+    assertion = "rotated";
+    await first.connect("raw");
+    expect(fixture.owners.size).toBe(2);
+    expect(fixture.ipc.at(-1)?.assertion).toBe("rotated");
+    expect(fixture.selections.at(-1)).toMatchObject({
+      workload: "monitor",
+      manifest: expect.any(String),
+    });
+    await first.close();
+    expect(() => first.connect("raw")).toThrow(
+      expect.objectContaining({ code: "sdk.connection_unavailable" }),
+    );
+    await expect(Promise.resolve(other.connect("raw"))).resolves.toHaveProperty("port", otherPort);
+    expect(fixture.calls.filter((call) => call.args[3] === "sdk-stop")).toHaveLength(1);
+    expect(otherToken).toHaveBeenCalledTimes(2);
+    expect(() => other.connect("db")).toThrow(
+      expect.objectContaining({ code: "sdk.workload_denied" }),
+    );
+  } finally {
+    await Promise.all([first.close(), other.close()]);
+  }
+});
+
+test.each(["google", "kubernetes", "gitlab"] as const)(
+  "group descriptors retain %s and optional hard session limits",
+  async (provider) => {
+    const { groupClient } = await import("../../src/internal/connector/connection.js");
+    for (const max_duration_seconds of [0, 86400]) {
+      const connection = groupConnection("a");
+      const client = groupClient({
+        connection: {
+          ...connection,
+          workloads: { monitor: { provider, services: ["api"], max_duration_seconds } },
+        },
+        workload: { name: "monitor", token: async () => "first" },
+      });
+      await client.close();
+    }
+  },
+);
+
+function groupConnectionWithServices(count: number): TnlGroupConnection {
+  return {
+    ...groupConnection("a"),
+    services: {
+      raw: "tcp",
+      ...Object.fromEntries(
+        Array.from({ length: count - 1 }, (_, index) => [`service-${index}`, "tcp" as const]),
+      ),
+    },
+    workloads: { monitor: { provider: "oidc", services: ["raw"], max_duration_seconds: 0 } },
+  };
+}
+
+test.each([33, 128])(
+  "group descriptors with %i services prepare a one-service workload",
+  async (count) => {
+    const { groupClient } = await import("../../src/internal/connector/connection.js");
+    const connection = groupConnectionWithServices(count);
+    const client = groupClient({
+      connection,
+      workload: { name: "monitor", token: async () => "first" },
+    });
+    try {
+      await expect(Promise.resolve(client.connect("raw"))).resolves.toHaveProperty("port", 12345);
+      const start = fixture.calls.find((call) => call.args[3] === "sdk-prepare");
+      if (start === undefined) throw new Error("missing scoped preparation");
+      const filename = start.args[start.args.indexOf("--workload-manifest") + 1];
+      if (filename === undefined) throw new Error("missing scoped manifest");
+      const manifest: unknown = JSON.parse(await readFile(filename, "utf8"));
+      expect(manifest).toMatchObject({
+        services: connection.services,
+        workloads: { monitor: { services: ["raw"] } },
+      });
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+test("group descriptor capacity and workload selection capacity are independent", async () => {
+  const { groupClient } = await import("../../src/internal/connector/connection.js");
+  const connection = groupConnectionWithServices(128);
+  const token = vi.fn(async () => "first");
+  const selected = Object.keys(connection.services);
+  const client = groupClient({
+    connection: {
+      ...connection,
+      workloads: {
+        monitor: { provider: "oidc", services: selected.slice(0, 32), max_duration_seconds: 0 },
+      },
+    },
+    workload: { name: "monitor", token },
+  });
+  await client.close();
+  expect(() =>
+    groupClient({
+      connection: {
+        ...connection,
+        workloads: {
+          monitor: { provider: "oidc", services: selected.slice(0, 33), max_duration_seconds: 0 },
+        },
+      },
+      workload: { name: "monitor", token },
+    }),
+  ).toThrow(expect.objectContaining({ code: "sdk.configuration_invalid" }));
+  expect(() =>
+    groupClient({
+      connection: groupConnectionWithServices(129),
+      workload: { name: "monitor", token },
+    }),
+  ).toThrow(expect.objectContaining({ code: "sdk.configuration_invalid" }));
+  expect(token).not.toHaveBeenCalled();
+  expect(fixture.calls).toHaveLength(0);
+});
+
+test("invalid group descriptors and missing workload credentials fail before native startup", async () => {
+  const { groupClient } = await import("../../src/internal/connector/connection.js");
+  expect(() =>
+    groupClient({
+      connection: { ...groupConnection("a"), group_id: "tractor-a" },
+      workload: { name: "monitor", token: async () => "first" },
+    }),
+  ).toThrow(expect.objectContaining({ code: "sdk.configuration_invalid" }));
+  const client = groupClient({
+    connection: groupConnection("a"),
+    workload: { name: "monitor", token: async () => "" },
+  });
+  try {
+    await expect(Promise.resolve(client.connect("raw"))).rejects.toMatchObject({
+      code: "sdk.workload_assertion_unavailable",
+    });
+    expect(fixture.calls).toHaveLength(0);
+  } finally {
+    await client.close();
+  }
 });

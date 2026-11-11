@@ -34,18 +34,19 @@ var (
 // Context is nonsecret. the action requests an OIDC assertion for Audience only
 // after checking this version and the selected project/policy/service scope.
 type Context struct {
-	Schema       int      `json:"schema"`
-	Directory    string   `json:"directory"`
-	ConfigDigest string   `json:"config_digest"`
-	Server       string   `json:"server"`
-	Audience     string   `json:"audience"`
-	TeamID       string   `json:"team_id"`
-	ProjectKey   string   `json:"project_key"`
-	SourceID     string   `json:"source_id"`
-	WorktreeKey  string   `json:"worktree_key"`
-	ProjectLabel string   `json:"project_label"`
-	Workload     string   `json:"workload,omitempty"`
-	Services     []string `json:"services"`
+	PublisherGroupID string   `json:"publisher_group_id,omitempty"`
+	Schema           int      `json:"schema"`
+	Directory        string   `json:"directory"`
+	ConfigDigest     string   `json:"config_digest"`
+	Server           string   `json:"server"`
+	Audience         string   `json:"audience"`
+	TeamID           string   `json:"team_id"`
+	ProjectKey       string   `json:"project_key"`
+	SourceID         string   `json:"source_id"`
+	WorktreeKey      string   `json:"worktree_key"`
+	ProjectLabel     string   `json:"project_label"`
+	Workload         string   `json:"workload,omitempty"`
+	Services         []string `json:"services"`
 }
 
 type StartRequest struct {
@@ -315,6 +316,9 @@ func ReadJSON(reader io.Reader, destination any) error {
 }
 
 func (c Context) Validate() error {
+	if c.PublisherGroupID != "" && !opaqueid.Valid(c.PublisherGroupID, "pgrp_") {
+		return ErrInvalid
+	}
 	if c.Schema != Schema || !filepath.IsAbs(c.Directory) || len(c.Directory) > 4096 || len(c.ConfigDigest) != 64 ||
 		c.Server == "" || c.Audience != c.Server || c.ProjectKey == "" || c.SourceID == "" || c.WorktreeKey == "" ||
 		len(c.Services) == 0 || len(c.Services) > 32 {

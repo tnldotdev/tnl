@@ -29,6 +29,21 @@ import { resolveNativeBinary } from "../native/launcher.js";
 import { launchEnvironment, operation, operationSync, independent } from "../tracing.js";
 import type { ProjectRuntime } from "../project/runtime.js";
 import { isServiceName } from "../values.js";
+export { groupClient } from "./group_client.js";
+
+export interface ConnectionScope {
+  readonly key: string;
+  readonly natives: Set<NativeScope>;
+  readonly fetches: Map<string, ReturnType<typeof managedFetch>>;
+  readonly pending: Set<Promise<unknown>>;
+  closed: boolean;
+  selection(): Promise<{
+    name: string;
+    directory: string;
+    filename: string;
+  }>;
+  assertion(): Promise<string>;
+}
 
 type Settings = TnlConnectionRegistry[keyof TnlConnectionRegistry];
 type Prepared = ReturnType<typeof parsePrepared>;
@@ -148,9 +163,8 @@ function readArgs(file: string, name: string): string[] {
   return ["read", "--handle", file, "--service", name];
 }
 
-function nativeScope(key: string): Promise<NativeScope> {
+function nativeScope(key: string, directory = process.cwd()): Promise<NativeScope> {
   const binary = resolveNativeBinary();
-  const directory = process.cwd();
   const nativeKey = JSON.stringify([key, binary]);
   let loading = scopes.get(nativeKey);
   if (loading === undefined) {
@@ -181,11 +195,17 @@ function nativeScope(key: string): Promise<NativeScope> {
           "--parent-pid",
           String(process.pid),
         ]);
-        if (scope.entry !== undefined) (await scope.entry.ipc).close();
+        if (scope.entry !== undefined)
+          await scope.entry.ipc.then(
+            (ipc) => ipc.close(),
+            () => {},
+          );
       });
-      process.once("beforeExit", () => {
+      const onExit = () => {
         void cleanup().catch(() => {});
-      });
+      };
+      scope.cleanup = { stop: cleanup, onExit };
+      process.once("beforeExit", onExit);
       let selected = selectedScopes.get(key);
       if (selected === undefined) {
         selected = new Map();
@@ -199,25 +219,41 @@ function nativeScope(key: string): Promise<NativeScope> {
   return loading;
 }
 
-function prepare(name: string, externalFile?: string): Promise<Prepared> {
-  return operation("sdk.connect", () => prepareUntraced(name, externalFile));
+function prepare(name: string, externalFile?: string, scope?: ConnectionScope): Promise<Prepared> {
+  if (scope?.closed) return Promise.reject(new TnlError("sdk.connection_unavailable"));
+  const result = operation("sdk.connect", () => prepareUntraced(name, externalFile, scope));
+  scope?.pending.add(result);
+  void result.finally(() => scope?.pending.delete(result)).catch(() => {});
+  return result;
 }
 
-async function prepareUntraced(name: string, externalFile: string | undefined): Promise<Prepared> {
+async function prepareUntraced(
+  name: string,
+  externalFile: string | undefined,
+  group?: ConnectionScope,
+): Promise<Prepared> {
   const requestedAt = new Date().toISOString();
-  const base = contextKey();
+  const base = group?.key ?? contextKey();
   if (externalFile !== undefined) {
     readArgs(externalFile, name);
     return parsePrepared(await prepareExternal(externalFile, name), name, externalFile);
   }
-  const workload = usesWorkload(base);
-  const scope = await nativeScope(base);
+  const workload = group !== undefined || usesWorkload(base);
+  const selected = group === undefined ? undefined : await group.selection();
+  const scope = await nativeScope(base, selected?.directory);
+  group?.natives.add(scope);
   const selectionOptions: SelectionOptions = {
-    ...(workload ? await selectWorkload((request) => scope.workload(name, request), base) : {}),
+    ...(group !== undefined && selected !== undefined
+      ? { workload: selected.name, manifest: selected.filename, assertion: await group.assertion() }
+      : workload
+        ? await selectWorkload((request) => scope.workload(name, request), base)
+        : {}),
     requested_at: requestedAt,
   };
   const assertion = selectionOptions.assertion;
   const startArgs = ["--directory", scope.directory];
+  if (selected !== undefined)
+    startArgs.push("--workload", selected.name, "--workload-manifest", selected.filename);
   const args = [
     "sdk-prepare",
     ...startArgs,
@@ -230,7 +266,12 @@ async function prepareUntraced(name: string, externalFile: string | undefined): 
     "--selected-service",
     name,
   ];
-  const { requested_at: _requestedAt, ...privateInput } = selectionOptions;
+  const {
+    requested_at: _requestedAt,
+    workload: _workload,
+    manifest: _manifest,
+    ...privateInput
+  } = selectionOptions;
   const input = { schema: 1, ...privateInput };
   // native sources must acquire each request's assertion before owner startup
   // can be coalesced. only an already acquired callback assertion shares a wait.
@@ -369,13 +410,13 @@ function parsePrepared(value: unknown, name: string, file: string) {
 export function managedFetch(
   url: `https://${string}`,
   current: (signal?: AbortSignal) => Promise<ConnectionSnapshot>,
-): TnlFetch {
+): TnlFetch & { close(): Promise<void> } {
   let active = 0;
   let pool: Pool | undefined;
   let dispatcher: Dispatcher | undefined;
   let poolKey: string | undefined;
   const retired = new Set<Pool>();
-  return async (input, init) => {
+  const fetch: TnlFetch = async (input, init) => {
     const running = [...retired, ...(pool === undefined ? [] : [pool])].reduce(
       (sum, p) => sum + p.stats.running + p.stats.pending,
       0,
@@ -522,6 +563,13 @@ export function managedFetch(
       active--;
     }
   };
+  return Object.assign(fetch, {
+    async close() {
+      await Promise.all(
+        [...retired, ...(pool === undefined ? [] : [pool])].map((entry) => entry.destroy()),
+      );
+    },
+  });
 }
 
 function responseIdentity(response: Response, url: string, type: string): Response {
@@ -534,28 +582,36 @@ function responseIdentity(response: Response, url: string, type: string): Respon
   return response;
 }
 
-function settings(name: string, snapshot: ConnectionSnapshot, externalFile?: string): Settings {
+function settings(
+  name: string,
+  snapshot: ConnectionSnapshot,
+  externalFile?: string,
+  scope?: ConnectionScope,
+): Settings {
   switch (snapshot.protocol) {
     case "tcp":
       return Object.freeze({ host: snapshot.host, port: snapshot.port });
     case "http": {
       const key = JSON.stringify([
-        contextKey(),
+        scope?.key ?? contextKey(),
         externalFile === undefined ? resolveNativeBinary() : undefined,
         name,
         snapshot.url,
         externalFile,
       ]);
-      let fetch = fetches.get(key);
+      let fetch = scope === undefined ? fetches.get(key) : scope.fetches.get(key);
       if (fetch === undefined) {
-        if (fetches.size >= 32) throw new TnlError("sdk.connection_unavailable");
-        fetch = managedFetch(snapshot.url, async (signal) => {
+        const cache = scope?.fetches ?? fetches;
+        if (cache.size >= 32) throw new TnlError("sdk.connection_unavailable");
+        const managed = managedFetch(snapshot.url, async (signal) => {
           signal?.throwIfAborted();
-          const current = await waitForPreparation(prepare(name, externalFile), signal);
+          const current = await waitForPreparation(prepare(name, externalFile, scope), signal);
           signal?.throwIfAborted();
           return current.snapshot;
         });
-        fetches.set(key, fetch);
+        if (scope === undefined) fetches.set(key, managed);
+        else scope.fetches.set(key, managed);
+        fetch = managed;
       }
       return Object.freeze({
         url: snapshot.url,
@@ -603,12 +659,13 @@ async function waitForPreparation<T>(operation: Promise<T>, signal?: AbortSignal
 export function connectionHandle(
   name: string,
   updateProject: (project: ProjectRuntime) => void,
+  scope?: ConnectionScope,
 ): TnlConnectionHandle<Settings> {
   if (!isServiceName(name)) throw new TnlError("sdk.configuration_invalid");
-  const externalFile = process.env.TNL_CONNECTION_HANDLE;
+  const externalFile = scope === undefined ? process.env.TNL_CONNECTION_HANDLE : undefined;
   const result = (prepared: Prepared) => {
     updateProject(prepared.project);
-    return settings(name, prepared.snapshot, externalFile);
+    return settings(name, prepared.snapshot, externalFile, scope);
   };
   return awaitableConnection(
     () => {
@@ -623,10 +680,10 @@ export function connectionHandle(
       }
       // a module-shared handle must not select the last request's identity.
       // await yields plain settings; sync workload settings need an explicit file.
-      if (usesWorkload()) throw new TnlError("sdk.connection_unprepared");
+      if (scope !== undefined || usesWorkload()) throw new TnlError("sdk.connection_unprepared");
       return result(readPrepared(name));
     },
-    async () => result(await prepare(name, externalFile)),
+    async () => result(await prepare(name, externalFile, scope)),
   );
 }
 
@@ -646,4 +703,25 @@ export function connectionClient<Client>(
       connection: settings(name, prepared.snapshot, externalFile),
     };
   }, options);
+}
+
+export async function closeConnectionScope(scope: ConnectionScope): Promise<void> {
+  scope.closed = true;
+  await Promise.allSettled(scope.pending);
+  const results = await Promise.allSettled(
+    [...scope.natives].map(async (native) => {
+      if (native.cleanup === undefined) throw new TnlError("sdk.connection_unavailable");
+      await native.cleanup.stop();
+      process.off("beforeExit", native.cleanup.onExit);
+    }),
+  );
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed?.status === "rejected") throw failed.reason;
+  for (const fetch of scope.fetches.values()) await fetch.close();
+  scope.fetches.clear();
+  selectedScopes.delete(scope.key);
+  for (const native of scope.natives) {
+    scopes.delete(JSON.stringify([scope.key, native.binary]));
+  }
+  scope.natives.clear();
 }

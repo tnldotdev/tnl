@@ -11,6 +11,12 @@ import type { PrepareOptions, PreparedService } from "./internal/publisher/app.j
 import type { AdHocTunnel, OpenOptions } from "./internal/publisher/open.js";
 import type { LocalHTTPServer } from "./internal/publisher/register.js";
 import type { FetchHandler } from "./internal/publisher/fetch_types.js";
+import type { TnlGroupClientOptions } from "./internal/connector/group_client.js";
+export type {
+  TnlGroupClientOptions,
+  TnlGroupClient,
+  TnlGroupConnection,
+} from "./internal/connector/group_client.js";
 import type {
   TnlConnection,
   TnlConnectionHandle,
@@ -22,6 +28,7 @@ import type {
   TnlConnectionRegistry,
   TnlClientFactory,
   TnlClientOptions,
+  TnlGroupClientForConfig,
 } from "./project.js";
 export type * from "./project.js";
 export type { PrepareOptions, PreparedService } from "./internal/publisher/app.js";
@@ -63,6 +70,7 @@ export type TnlRuntime = Readonly<
         name: Name,
         options: TnlClientOptions<TnlConnection<Config, Name>, Client>,
       ): TnlClientFactory<Client>;
+      client(options: TnlGroupClientOptions): TnlGroupClientForConfig<Config>;
     }
 >;
 
@@ -123,11 +131,13 @@ export const tnl = Object.freeze({
     });
   },
   client<Client>(
-    name: string,
-    options: TnlClientOptions<TnlConnectionRegistry[keyof TnlConnectionRegistry], Client>,
+    name: string | TnlGroupClientOptions,
+    options?: TnlClientOptions<TnlConnectionRegistry[keyof TnlConnectionRegistry], Client>,
   ) {
     if (typeof process === "undefined" || typeof process.versions?.node !== "string")
       throw new TnlError("sdk.connection_server_only");
+    if (typeof name !== "string") return loadConnection().groupClient(name);
+    if (options === undefined) throw new TnlError("sdk.configuration_invalid");
     const { connectionClient } = loadConnection();
     return connectionClient(name, options, (project) => {
       runtime =

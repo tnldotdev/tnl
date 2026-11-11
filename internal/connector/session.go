@@ -50,10 +50,17 @@ type projectConfiguration struct{ clientproject.Project }
 // a lost exchange response must retry the same assertion and in-memory key.
 // a replacement owner/key cannot take over an already committed execution.
 func exchangeConnectionWorkload(ctx context.Context, client *workload.Client, scope connectorruntime.Context, assertion string) (authorityv1.WorkloadSession, error) {
+	services := scope.Services
+	if scope.PublisherGroupID != "" {
+		services = make([]string, len(scope.Services))
+		for i, name := range scope.Services {
+			services[i] = scope.PublisherGroupID + "/" + name
+		}
+	}
 	var session authorityv1.WorkloadSession
 	var err error
 	for attempt := range 3 {
-		session, err = client.Exchange(ctx, scope.TeamID, scope.ProjectKey, scope.SourceID, scope.Workload, assertion, scope.Services)
+		session, err = client.Exchange(ctx, scope.TeamID, scope.ProjectKey, scope.SourceID, scope.Workload, assertion, services)
 		if err == nil {
 			return session, nil
 		}

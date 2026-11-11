@@ -140,6 +140,21 @@ test("client factories infer ordinary clients and exact protocol callback settin
   tnl.client("missing", { create: () => ({}), close: () => {} });
 });
 
+test("explicit group clients retain configured service protocol types", async () => {
+  const connection = {} as import("@tnldotdev/tnl").TnlGroupConnection;
+  const group = tnl.client({
+    connection,
+    workload: { name: "monitor", token: async () => "assertion" },
+  });
+  const api = await group.connect("api");
+  expectTypeOf(api.fetch("/health")).toEqualTypeOf<Promise<Response>>();
+  const db = await group.connect("db");
+  expectTypeOf(db.port).toEqualTypeOf<number>();
+  // @ts-expect-error an explicit group does not introduce unknown service keys.
+  group.connect("missing");
+  await group.close();
+});
+
 type Union = TnlProjectFromConfig<{
   services: { choice: { protocol: "postgres" } | { protocol: "mysql" } };
 }>;

@@ -110,7 +110,7 @@ export async function selectWorkload(
   };
 }
 
-function boundedAssertion(raw: unknown): string {
+export function boundedAssertion(raw: unknown): string {
   if (typeof raw !== "string") throw new TnlError("sdk.workload_assertion_unavailable");
   const token = raw.trim();
   if (!token || Buffer.byteLength(token) > 32768 || token.includes("\0") || /\s/.test(token))

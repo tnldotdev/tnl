@@ -3,6 +3,7 @@ package connector
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,5 +53,43 @@ func TestWorkloadManifestWithoutGitOrRuntimeConfig(t *testing.T) {
 	}
 	if _, err = workloadmanifest.Read(path); err == nil {
 		t.Fatal("manifest accepted an assertion field")
+	}
+}
+
+func TestConnectionGroupManifestIsExplicitAndIsolated(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := workloadmanifest.Manifest{Schema: 1, Server: "https://control.example", Team: "acme", ProjectKey: "tractors", SourceFingerprint: strings.Repeat("a", 64), ProjectLabel: "tractors", Services: map[string]string{"diagnostics": "http"}, Workloads: map[string]workloadmanifest.Workload{"monitor": {Provider: "fly", Services: []string{"diagnostics"}, MaxDurationSeconds: 3600, Acquisition: workloadmanifest.Acquisition{Method: "callback", Audience: "https://control.example"}}}}
+	for index := range 127 {
+		manifest.Services[fmt.Sprintf("service-%d", index)] = "tcp"
+	}
+	var digest string
+	for _, character := range []string{"a", "b"} {
+		manifest.PublisherGroupID = "pgrp_" + strings.Repeat(character, 22)
+		data, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(root, character+".json")
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		project, scope, err := connectionProject(t.Context(), ContextOptions{Directory: root, Manifest: path, Workload: "monitor"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if scope.PublisherGroupID != manifest.PublisherGroupID || scope.ConfigDigest == digest {
+			t.Fatal("group scope crossed owners")
+		}
+		if len(project.Config.Services) != 1 || len(scope.Services) != 1 || scope.Services[0] != "diagnostics" {
+			t.Fatal("descriptor inventory widened the workload selection")
+		}
+		digest = scope.ConfigDigest
+	}
+	manifest.PublisherGroupID = ""
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("non-group manifest accepted another provider's callback acquisition")
 	}
 }

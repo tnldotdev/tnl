@@ -18,6 +18,8 @@ export interface WorkloadRequest {
 
 export interface SelectionOptions {
   requested_at?: string;
+  workload?: string;
+  manifest?: string;
   assertion?: string;
   sdk_workload?: WorkloadRequest;
   sdk_workload_policy?: string;

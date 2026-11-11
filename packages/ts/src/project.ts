@@ -116,6 +116,14 @@ export type TnlConnection<Config, Name extends TnlServiceNames<Config>> = Config
     ? TnlConnectionRegistry[Protocol<NonNullable<Services<Config>[Name]>>]
     : never
   : never;
+
+export interface TnlGroupClientForConfig<Config> {
+  connect<Name extends TnlServiceNames<Config>>(
+    name: Name,
+  ): TnlConnectionHandle<TnlConnection<Config, Name>>;
+  close(): Promise<void>;
+  [Symbol.asyncDispose](): Promise<void>;
+}
 type Origins<Values> = {
   readonly [Name in keyof Values]: DeepReadonly<
     | ({ hostname: string; url: `https://${string}` } & Pick<
