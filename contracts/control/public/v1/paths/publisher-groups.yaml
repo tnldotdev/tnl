@@ -1,4 +1,55 @@
 paths:
+  /v1/projects/{project_key}/publisher-groups/{group_name}:
+    parameters:
+      - { name: project_key, in: path, required: true, schema: { type: string } }
+      - { name: group_name, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: createPublisherGroup
+      security: [{ bearerAuth: [] }]
+      description: Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/CreatePublisherGroupRequest" }
+      responses:
+        "200":
+          description: Concrete group connection metadata, without credentials or targets
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupConnection" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+    delete:
+      operationId: removePublisherGroup
+      security: [{ bearerAuth: [] }]
+      description: Retire a template-created group and its services, publisher identities and enrollments. Directly declared groups remain owned by apply.
+      parameters:
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+        - {
+            name: expected_revision,
+            in: query,
+            required: true,
+            schema: { type: integer, format: int64, minimum: 1 },
+          }
+      responses:
+        "204": { description: Group retired }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+  /v1/projects/{project_key}/publisher-groups/{group_name}/connection:
+    get:
+      operationId: getPublisherGroupConnection
+      security: [{ bearerAuth: [] }]
+      description: Read nonsecret group connection context as a team manager. The descriptor is a selector, never an access credential.
+      parameters:
+        - { name: project_key, in: path, required: true, schema: { type: string } }
+        - { name: group_name, in: path, required: true, schema: { type: string } }
+        - { $ref: "../openapi.yaml#/components/parameters/TeamIDQuery" }
+      responses:
+        "200":
+          description: Current group connection metadata
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/PublisherGroupConnection" }
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
   /v1/projects/{project_key}/publisher-groups/{group_name}/namespace/rename:
     post:
       operationId: renamePublisherNamespace

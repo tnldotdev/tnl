@@ -12,6 +12,18 @@ import (
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
+func TestPublisherTemplateDeclarationPreservesTemplate(t *testing.T) {
+	group, target := "tractor", config.Target("http://localhost:9080")
+	project := clientproject.Project{Config: config.TNL{PublisherGroups: map[string]config.PublisherGroup{group: {Template: true}}, Services: config.Services{"diagnostics": {PublisherGroup: &group, Target: &config.ServiceTarget{Type: "address", Address: &target}}}}}
+	declaration, err := Declaration(t.Context(), project, appliedTestContext(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if declaration.PublisherGroups[group].Template == nil || !*declaration.PublisherGroups[group].Template {
+		t.Fatal("template marker lost before apply")
+	}
+}
+
 func appliedTestContext() team.Context {
 	return team.NewContext(authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1"}, authorityv1.Membership{Id: "membership_1", TeamId: "team_1", ManagedLabel: "member", MemberSlug: "member"}, []authorityv1.Domain{{Id: "domain_1", CanonicalDomain: "tnl.dev", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady}}, "")
 }

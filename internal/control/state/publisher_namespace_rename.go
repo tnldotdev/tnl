@@ -81,6 +81,9 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 	if err != nil {
 		return result, err
 	}
+	if _, declared := c.PublisherGroups[name]; !declared {
+		return result, ErrProjectManaged
+	}
 	if strings.SplitN(namespace, ".", 2)[0] == r.NamespaceLabel {
 		return result, ErrProjectConfigurationInvalid
 	}

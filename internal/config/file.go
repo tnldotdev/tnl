@@ -188,6 +188,15 @@ func ValidateTNL(config TNL) error {
 		return errors.New("publishers may contain at most 32 entries")
 	}
 	for name, group := range config.PublisherGroups {
+		if group.Template {
+			found := false
+			for _, service := range config.Services {
+				found = found || PublisherGroupName(service) == name
+			}
+			if !found {
+				return fmt.Errorf("publisher_groups.%s: a template requires at least one service", name)
+			}
+		}
 		if name == "local" || !naming.ValidServiceName(name) {
 			return fmt.Errorf("publisher group %q must be a lowercase DNS label other than reserved local", name)
 		}

@@ -384,6 +384,12 @@ func applyProjectCommandContext(command string, project projectConfiguration, fl
 		}
 	}
 	switch command {
+	case "publisher create <group>":
+		apply(&flags.Publisher.Create.remoteFlags, true)
+	case "publisher connection <group>":
+		apply(&flags.Publisher.Connection.remoteFlags, true)
+	case "publisher remove <group>":
+		apply(&flags.Publisher.Remove.remoteFlags, true)
 	case "apply":
 		apply(&flags.Apply.remoteFlags, true)
 	case "audit list":

@@ -12,6 +12,10 @@ import (
 )
 
 func TestSchemaInventoryAndCloudSelectorBounds(t *testing.T) {
+	groups := schemaForType(reflect.TypeOf(map[string]config.PublisherGroup{}))
+	if template, ok := groups.AdditionalProperties.Properties.Get("template"); !ok || template.Type != "boolean" || template.Default != false {
+		t.Fatal("publisher template metadata", template)
+	}
 	ports, ok := tnldSchema().Properties.Get("service_port_ranges")
 	if !ok || ports.MinItems == nil || *ports.MinItems != 1 || ports.MaxItems == nil || *ports.MaxItems != tcpport.MaxInventoryDeclarations || !reflect.DeepEqual(ports.Default, []string{"20000-20015"}) {
 		t.Fatal("inventory metadata", ports)

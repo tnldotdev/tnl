@@ -91,7 +91,7 @@ func TestIntegrationCLIConnectSSHStdio(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var service controlv1.Service
 			workflowWait(t, 30*time.Second, func() bool {
-				service, err = connector.Select(t.Context(), session.Authenticated().Control, project.Project, name, session.Identity().PersonalTeamId)
+				service, err = connector.Select(t.Context(), session.Authenticated().Control, project.Project, name, session.Identity().PersonalTeamId, "")
 				if err != nil {
 					return false
 				}

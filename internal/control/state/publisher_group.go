@@ -390,6 +390,11 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 	if err != nil {
 		return result, err
 	}
+	groups, err := q.ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: m.TeamID, ProjectKey: m.ProjectKey})
+	if err != nil {
+		return result, err
+	}
+	c = publisherTemplateConfiguration(c, groups, "")
 	result = PublisherGroupAssignments{Member: m, Revision: row.Revision, ConfigurationHash: row.ConfigurationHash, Services: []PublisherGroupServiceAssignment{}}
 	result.CertificateStatePlans = []CertificatePlan{}
 	checkpoints, err := q.ListPublisherCertificateCheckpoints(ctx, m.PublisherIdentityID)
@@ -421,7 +426,7 @@ func (d *Database) GetPublisherGroupAssignments(ctx context.Context, token strin
 			}
 			return result, publisherLookupError(err, ErrPublisherGroup)
 		}
-		a := PublisherGroupServiceAssignment{Service: s.Service, ServiceID: s.PublicURLID.String, Kind: "public_url", GrantID: grant, Configuration: c.Services[s.Service]}
+		a := PublisherGroupServiceAssignment{Service: appliedServiceName(s.Service), ServiceID: s.PublicURLID.String, Kind: "public_url", GrantID: grant, Configuration: c.Services[s.Service]}
 		if s.ServiceID.Valid {
 			a.ServiceID, a.Kind = s.ServiceID.String, "service"
 			if err = tx.QueryRow(ctx, `SELECT trust_revision FROM control.services WHERE id=$1 AND enabled AND deleted_at IS NULL`, a.ServiceID).Scan(&a.TrustRevision); err != nil {

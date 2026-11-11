@@ -31,6 +31,7 @@ var (
 )
 
 type ProjectPublisherGroup struct {
+	Template    bool   `json:"template,omitempty"`
 	Description string `json:"description,omitempty"`
 	DomainID    string `json:"domain_id,omitempty"`
 	Public      bool   `json:"public,omitempty"`
@@ -96,6 +97,8 @@ type ProjectWebhook struct {
 	SourceIPs []string `json:"source_ips,omitempty"`
 }
 type ApplyProjectConfigurationRequest struct {
+	CreateGroup                                    *PublisherGroupCreation
+	RemoveGroup                                    string
 	TeamID, ProjectKey, SourceFingerprint, ActorID string
 	ProjectLabel                                   string
 	ExpectedRevision                               int64
@@ -116,6 +119,7 @@ type AppliedProjectService struct {
 	Public          bool   `json:"public,omitempty"`
 }
 type AppliedPublisherGroup struct {
+	Template   string   `json:"template,omitempty"`
 	GroupNames []string `json:"group_names"`
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
@@ -124,6 +128,7 @@ type AppliedPublisherGroup struct {
 	Public     bool     `json:"public"`
 }
 type AppliedProjectConfiguration struct {
+	ProjectLabel      string                       `json:"-"`
 	TeamID            string                       `json:"team_id"`
 	ProjectKey        string                       `json:"project_key"`
 	SourceFingerprint string                       `json:"source_fingerprint"`
@@ -167,6 +172,15 @@ func NormalizeProjectConfiguration(input ProjectConfiguration) (ProjectConfigura
 	for name, g := range c.PublisherGroups {
 		if name == "local" || !serviceName.MatchString(name) || len(g.Description) > 1024 || strings.ContainsAny(g.Description, "\x00\r") {
 			return c, "", ErrProjectConfigurationInvalid
+		}
+		if g.Template {
+			found := false
+			for _, s := range c.Services {
+				found = found || s.PublisherGroup == name
+			}
+			if !found {
+				return c, "", ErrProjectConfigurationInvalid
+			}
 		}
 	}
 	for key, s := range c.Services {
@@ -258,7 +272,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if !validProjectDNSLabel(r.ProjectLabel) {
 		return result, ErrProjectConfigurationInvalid
 	}
-	c, err = resolveManagedGroupDomains(ctx, tx, r.TeamID, r.ProjectKey, c)
+	c, err = d.resolveManagedGroupDomains(ctx, tx, r.TeamID, r.ProjectKey, c)
 	if err != nil {
 		return result, err
 	}
@@ -305,7 +319,11 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if row.SourceFingerprint != r.SourceFingerprint {
 		return result, ErrProjectSourceConflict
 	}
-	if row.ConfigurationHash == hash {
+	created, err := createTemplateGroup(ctx, tx, r, c)
+	if err != nil {
+		return result, err
+	}
+	if row.ConfigurationHash == hash && !created && r.RemoveGroup == "" {
 		if r.ExpectedRevision > row.Revision {
 			return result, ErrProjectConfigurationStale
 		}
@@ -330,6 +348,26 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err != nil {
 		return result, err
 	}
+	if err = validatePublisherTemplates(c, groups, r.RemoveGroup); err != nil {
+		return result, err
+	}
+	if r.RemoveGroup != "" {
+		found := false
+		for _, group := range groups {
+			if group.Name == r.RemoveGroup {
+				if group.TemplateName == "" {
+					return result, ErrProjectManaged
+				}
+				found = true
+			}
+		}
+		if !found {
+			return result, pgx.ErrNoRows
+		}
+	}
+	declaration := c
+	c = publisherTemplateConfiguration(c, groups, r.RemoveGroup)
+	old = publisherTemplateConfiguration(old, groups, "")
 	groupIDs := map[string]string{}
 	changedGroups := map[string]bool{}
 	for _, g := range groups {
@@ -459,10 +497,10 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err = recordAppliedGroupConfiguration(ctx, tx, existing, newServices, changedGroups, r.ActorID, next, r.Now); err != nil {
 		return result, err
 	}
-	if err = reconcileWorkloadPolicies(ctx, tx, r, c); err != nil {
+	if err = reconcileWorkloadPolicies(ctx, tx, r, declaration); err != nil {
 		return result, err
 	}
-	data, _ := json.Marshal(c)
+	data, _ := json.Marshal(declaration)
 	sealed, err := d.storageKey.Seal(appliedProjectContext(r.TeamID, r.ProjectKey), data)
 	if err != nil {
 		return result, err
@@ -472,7 +510,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		return result, err
 	}
 	row.Revision, row.ConfigurationHash = next, hash
-	result, err = d.appliedProjectStatus(ctx, tx, row, c)
+	result, err = d.appliedProjectStatus(ctx, tx, row, declaration)
 	if err != nil {
 		return result, err
 	}
@@ -539,13 +577,18 @@ func (d *Database) GetProjectConfiguration(ctx context.Context, team, key, actor
 }
 
 func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlAppliedProject, c ProjectConfiguration) (AppliedProjectConfiguration, error) {
-	result := AppliedProjectConfiguration{TeamID: row.TeamID, ProjectKey: row.ProjectKey, SourceFingerprint: row.SourceFingerprint, Revision: row.Revision, ConfigurationHash: row.ConfigurationHash, Configuration: c, Services: []AppliedProjectService{}, Members: []PublisherGroupMemberStatus{}, Groups: []AppliedPublisherGroup{}}
+	result := AppliedProjectConfiguration{ProjectLabel: row.ProjectLabel, TeamID: row.TeamID, ProjectKey: row.ProjectKey, SourceFingerprint: row.SourceFingerprint, Revision: row.Revision, ConfigurationHash: row.ConfigurationHash, Configuration: c, Services: []AppliedProjectService{}, Members: []PublisherGroupMemberStatus{}, Groups: []AppliedPublisherGroup{}}
+	groups, err := controlstatedb.New(tx).ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: row.TeamID, ProjectKey: row.ProjectKey})
+	if err != nil {
+		return result, err
+	}
+	c = publisherTemplateConfiguration(c, groups, "")
 	rows, err := controlstatedb.New(tx).ListAppliedProjectServices(ctx, controlstatedb.ListAppliedProjectServicesParams{TeamID: row.TeamID, ProjectKey: row.ProjectKey})
 	if err != nil {
 		return result, err
 	}
 	for _, s := range rows {
-		v := AppliedProjectService{Service: s.Service, PublisherGroup: c.Services[s.Service].PublisherGroup, Kind: "local", DesiredRevision: s.DesiredRevision}
+		v := AppliedProjectService{Service: appliedServiceName(s.Service), PublisherGroup: c.Services[s.Service].PublisherGroup, Kind: "local", DesiredRevision: s.DesiredRevision}
 		if s.ServiceID.Valid {
 			v.Kind, v.ServiceID = "service", s.ServiceID.String
 			if err = tx.QueryRow(ctx, `SELECT trust_revision,certificate_hostname,COALESCE(service_port,0),public FROM control.services WHERE id=$1`, v.ServiceID).Scan(&v.TrustRevision, &v.Hostname, &v.Port, &v.Public); err != nil {
@@ -560,13 +603,12 @@ func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row cont
 	if err != nil {
 		return result, err
 	}
-	groups, err := controlstatedb.New(tx).ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: row.TeamID, ProjectKey: row.ProjectKey})
 	for _, group := range groups {
 		var names []string
 		if err := tx.QueryRow(ctx, `SELECT array_agg(name ORDER BY name) FROM control.publisher_group_names WHERE group_id=$1`, group.ID).Scan(&names); err != nil {
 			return result, err
 		}
-		result.Groups = append(result.Groups, AppliedPublisherGroup{ID: group.ID, Name: group.Name, GroupNames: names, Namespace: group.Namespace, DomainID: group.DomainID.String, Public: group.Public})
+		result.Groups = append(result.Groups, AppliedPublisherGroup{Template: group.TemplateName, ID: group.ID, Name: group.Name, GroupNames: names, Namespace: group.Namespace, DomainID: group.DomainID.String, Public: group.Public})
 	}
 	return result, err
 }

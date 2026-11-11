@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"time"
 
@@ -27,14 +28,15 @@ const (
 )
 
 type statusCommand struct {
-	Output        statusOutputMode     `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
-	Scope         string               `name:"scope" enum:"local,server,both" default:"both" help:"Read local snapshots, fresh server state, or both (default)."`
-	ServerURL     string               `name:"server" env:"TNL_SERVER" help:"Control URL to read; independent of --scope."`
-	AccessToken   string               `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token for server status; defaults to saved session."`
-	StateDir      string               `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
-	All           bool                 `name:"all" help:"Show tunnels from every local project."`
-	Project       string               `kong:"-"`
-	Configuration projectConfiguration `kong:"-"`
+	PublisherGroup string               `name:"publisher-group" help:"Show one concrete group's services and publishers; requires --scope=server."`
+	Output         statusOutputMode     `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
+	Scope          string               `name:"scope" enum:"local,server,both" default:"both" help:"Read local snapshots, fresh server state, or both (default)."`
+	ServerURL      string               `name:"server" env:"TNL_SERVER" help:"Control URL to read; independent of --scope."`
+	AccessToken    string               `name:"access-token" env:"TNL_ACCESS_TOKEN" help:"Access token for server status; defaults to saved session."`
+	StateDir       string               `name:"state-dir" env:"TNL_STATE_DIR" type:"path" help:"Client state directory."`
+	All            bool                 `name:"all" help:"Show tunnels from every local project."`
+	Project        string               `kong:"-"`
+	Configuration  projectConfiguration `kong:"-"`
 }
 
 type statusLocal struct {
@@ -79,6 +81,9 @@ type statusResult struct {
 func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error {
 	if flags.Scope == "" {
 		flags.Scope = "both"
+	}
+	if flags.PublisherGroup != "" && (flags.Scope != "server" || flags.All) {
+		return publisherCLIError("--publisher-group requires --scope=server in one project")
 	}
 	root, err := clientStateRoot(flags.StateDir)
 	if err != nil {
@@ -224,6 +229,15 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 			if configuration.Found() {
 				readAppliedStatus(ctx, state, selected, flags.AccessToken, configuration, projects[index].Server)
 			}
+			if flags.PublisherGroup != "" {
+				applied := projects[index].Server.Applied
+				if applied == nil {
+					return publisherCLIError("publisher group status is unavailable; check the project, team, and server sign-in")
+				}
+				if err := selectAppliedPublisherGroup(applied, flags.PublisherGroup); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	result := statusResult{SchemaVersion: 1, Scope: flags.Scope, Projects: projects}
@@ -276,6 +290,22 @@ func runStatus(ctx context.Context, flags statusCommand, output io.Writer) error
 		}
 	}
 	return writeHumanFrame(output, "tnl status", countState(len(projects), "project", "projects"), "", blocks...)
+}
+
+func selectAppliedPublisherGroup(applied *controlv1.AppliedProjectConfiguration, selector string) error {
+	if applied.Groups == nil {
+		return publisherCLIError("concrete publisher group not found in this project")
+	}
+	for _, group := range *applied.Groups {
+		if group.Id != selector && !slices.Contains(group.GroupNames, selector) {
+			continue
+		}
+		applied.Groups = &[]controlv1.AppliedPublisherGroup{group}
+		applied.Services = slices.DeleteFunc(applied.Services, func(service controlv1.AppliedProjectService) bool { return service.PublisherGroup != group.Name })
+		applied.Members = slices.DeleteFunc(applied.Members, func(member controlv1.PublisherGroupMemberStatus) bool { return member.GroupId != group.Id })
+		return nil
+	}
+	return publisherCLIError("concrete publisher group not found in this project")
 }
 
 func readAppliedStatus(ctx context.Context, state *clientstate.Database, server, token string, project projectConfiguration, result *statusServer) {

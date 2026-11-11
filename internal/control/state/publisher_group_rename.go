@@ -32,14 +32,17 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}
-	var id, current string
-	err = tx.QueryRow(ctx, `SELECT g.id,g.name FROM control.project_publisher_groups g JOIN control.publisher_group_names alias ON alias.group_id=g.id WHERE alias.team_id=$1 AND alias.project_key=$2 AND alias.name=$3 AND g.deleted_at IS NULL FOR UPDATE OF g`, team, project, old).Scan(&id, &current)
+	var id, current, template string
+	err = tx.QueryRow(ctx, `SELECT g.id,g.name,g.template_name FROM control.project_publisher_groups g JOIN control.publisher_group_names alias ON alias.group_id=g.id WHERE alias.team_id=$1 AND alias.project_key=$2 AND alias.name=$3 AND g.deleted_at IS NULL FOR UPDATE OF g`, team, project, old).Scan(&id, &current, &template)
 	if err != nil {
 		return result, publisherLookupError(err, ErrPublisherGroup)
 	}
 	c, err := d.openAppliedProject(row)
 	if err != nil {
 		return result, err
+	}
+	if template != "" {
+		return result, ErrProjectManaged
 	}
 	if current == name {
 		result, err = d.appliedProjectStatus(ctx, tx, row, c)

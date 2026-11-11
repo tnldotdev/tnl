@@ -1,4 +1,53 @@
 schemas:
+  CreatePublisherGroupRequest:
+    type: object
+    additionalProperties: false
+    required: [team_id, from, expected_revision]
+    properties:
+      team_id: { type: string }
+      from: { type: string }
+      expected_revision: { type: integer, format: int64, minimum: 1 }
+  PublisherGroupConnection:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        schema,
+        server,
+        team_id,
+        project_key,
+        source_fingerprint,
+        project_label,
+        group_id,
+        group_name,
+        services,
+        workloads,
+      ]
+    properties:
+      schema: { type: integer, enum: [1] }
+      server: { type: string, format: uri }
+      team_id: { type: string }
+      project_key: { type: string }
+      source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+      project_label: { type: string }
+      group_id: { type: string, pattern: "^pgrp_[A-Za-z0-9]{22}$" }
+      group_name: { type: string }
+      services:
+        type: object
+        maxProperties: 128
+        additionalProperties: { $ref: "../openapi.yaml#/components/schemas/ServiceProtocol" }
+      workloads:
+        type: object
+        additionalProperties:
+          { $ref: "../openapi.yaml#/components/schemas/PublisherGroupConnectionWorkload" }
+  PublisherGroupConnectionWorkload:
+    type: object
+    additionalProperties: false
+    required: [provider, services, max_duration_seconds]
+    properties:
+      provider: { $ref: "../openapi.yaml#/components/schemas/WorkloadProvider" }
+      services: { type: array, items: { type: string }, maxItems: 32 }
+      max_duration_seconds: { type: integer, minimum: 0, maximum: 9223372036 }
   RenamePublisherNamespaceRequest:
     type: object
     additionalProperties: false

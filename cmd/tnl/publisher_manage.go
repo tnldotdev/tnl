@@ -20,7 +20,10 @@ import (
 )
 
 type publisherCommand struct {
-	Namespace struct {
+	Create     publisherCreateCommand `cmd:"" help:"Create an independent publisher group following an applied template."`
+	Connection publisherGroupCommand  `cmd:"" help:"Read nonsecret connection context for a concrete publisher group."`
+	Remove     publisherGroupCommand  `cmd:"" help:"Retire a template-created group and revoke its publishers and services."`
+	Namespace  struct {
 		Rename publisherNamespaceRenameCommand `cmd:"" help:"Change managed DNS hostnames and certificate scope, retaining service IDs and ports."`
 	} `cmd:"" help:"Manage a group's DNS namespace separately from its configuration selector."`
 	Rename    publisherGroupRenameCommand `cmd:"" help:"Rename a group selector while preserving its endpoints and publisher identities."`

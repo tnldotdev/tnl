@@ -9,6 +9,10 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 servers:
   - url: https://control.example.com
 paths:
+  /v1/projects/{project_key}/publisher-groups/{group_name}:
+    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}"
+  /v1/projects/{project_key}/publisher-groups/{group_name}/connection:
+    $ref: "./paths/publisher-groups.yaml#/paths/~1v1~1projects~1{project_key}~1publisher-groups~1{group_name}~1connection"
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs:
     $ref: "./paths/service-runs.yaml#/paths/~1v1~1services~1{service_id}~1runs~1{service_run_id}~1connector-peer-pairs"
   /v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery:
@@ -416,6 +420,12 @@ components:
       $ref: "./schemas/projects.yaml#/schemas/AppliedProjectConfiguration"
     AppliedPublisherGroup:
       $ref: "./schemas/projects.yaml#/schemas/AppliedPublisherGroup"
+    CreatePublisherGroupRequest:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/CreatePublisherGroupRequest"
+    PublisherGroupConnection:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupConnection"
+    PublisherGroupConnectionWorkload:
+      $ref: "./schemas/publisher-groups.yaml#/schemas/PublisherGroupConnectionWorkload"
     AppliedProjectService:
       $ref: "./schemas/projects.yaml#/schemas/AppliedProjectService"
     CreatePublisherGroupEnrollmentRequest:

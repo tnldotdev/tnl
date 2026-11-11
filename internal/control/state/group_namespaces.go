@@ -13,10 +13,21 @@ import (
 
 // domain defaults are captured once. changing the team's default cannot rename
 // an existing endpoint or move certificate authority to another domain.
-func resolveManagedGroupDomains(ctx context.Context, tx pgx.Tx, team, project string, c ProjectConfiguration) (ProjectConfiguration, error) {
+func (d *Database) resolveManagedGroupDomains(ctx context.Context, tx pgx.Tx, team, project string, c ProjectConfiguration) (ProjectConfiguration, error) {
 	q := controlstatedb.New(tx)
+	previous := ProjectConfiguration{}
+	row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: team, ProjectKey: project})
+	if err == nil {
+		previous, err = d.openAppliedProject(row)
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return c, err
+	}
 	for _, name := range sortedProjectKeys(c.PublisherGroups) {
 		group := c.PublisherGroups[name]
+		if group.DomainID == "" && group.Template {
+			group.DomainID = previous.PublisherGroups[name].DomainID
+		}
 		if group.DomainID == "" {
 			if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT domain_id FROM control.project_publisher_groups WHERE team_id=$1 AND project_key=$2 AND name=$3 AND deleted_at IS NULL),default_domain_id) FROM control.teams WHERE id=$1 AND deleted_at IS NULL`, team, project, name).Scan(&group.DomainID); err != nil {
 				return c, publisherLookupError(err, ErrProjectConfigurationInvalid)

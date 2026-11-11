@@ -10,6 +10,7 @@ import (
 )
 
 type GetProjectServiceRequest struct {
+	PublisherGroup                                             string
 	TeamID, ProjectKey, SourceFingerprint, Service, IdentityID string
 	Now                                                        time.Time
 }
@@ -28,7 +29,9 @@ func (d *Database) GetProjectService(ctx context.Context, r GetProjectServiceReq
 	var id string
 	err = tx.QueryRow(ctx, `SELECT service.service_id FROM control.applied_project_services service JOIN control.applied_projects project USING(team_id,project_key)
 	    JOIN control.project_publisher_groups publisher_group ON publisher_group.id=service.group_id AND publisher_group.deleted_at IS NULL
-	    WHERE project.team_id=$1 AND project.project_key=$2 AND project.source_fingerprint=$3 AND service.service=$4 AND service.service_id IS NOT NULL`, r.TeamID, r.ProjectKey, r.SourceFingerprint, r.Service).Scan(&id)
+	    WHERE project.team_id=$1 AND project.project_key=$2 AND project.source_fingerprint=$3 AND service.service_id IS NOT NULL
+	    AND service.service=CASE WHEN publisher_group.template_name='' THEN $4 ELSE publisher_group.id||'/'||$4 END
+	    AND (($5='' AND publisher_group.template_name='') OR publisher_group.id=$5 OR EXISTS(SELECT 1 FROM control.publisher_group_names alias WHERE alias.group_id=publisher_group.id AND alias.name=$5))`, r.TeamID, r.ProjectKey, r.SourceFingerprint, r.Service, r.PublisherGroup).Scan(&id)
 	if err != nil {
 		return result, publisherLookupError(err, ErrServiceAccess)
 	}

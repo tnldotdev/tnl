@@ -64,7 +64,7 @@ func (d *Database) visitorKubernetesAuth(ctx context.Context, q *controlstatedb.
 	if err != nil {
 		return nil, err
 	}
-	s, ok := c.Services[row.Service]
+	s, ok := c.Services[appliedServiceName(row.Service)]
 	if !ok {
 		return nil, ErrServiceAccess
 	}

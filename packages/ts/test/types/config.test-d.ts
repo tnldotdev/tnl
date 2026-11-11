@@ -21,6 +21,17 @@ export const grouped = defineConfig({
   },
 });
 test("publisher groups select named assignments and reject deployment settings", () => {
+  // @ts-expect-error publisher groups reject retired deployment settings.
+  defineConfig({ publisherGroups: { tractor: { template: true, aws: {} } } });
+  defineConfig({
+    publisherGroups: { tractor: { template: true } },
+    services: {
+      diagnostics: {
+        publisherGroup: "tractor",
+        target: { type: "address", address: "http://127.0.0.1:9080" },
+      },
+    },
+  });
   assertType<TnlConfig>(grouped);
   defineConfig({
     publisherGroups: { cloud: {} },

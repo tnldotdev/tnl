@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
+	"slices"
 	"strconv"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -80,11 +82,17 @@ func runApply(ctx context.Context, flags applyCommand, project projectConfigurat
 	if flags.Output == statusOutputJSON {
 		return json.NewEncoder(output).Encode(applied)
 	}
-	return writeHumanFrame(output, "tnl apply", "applied", "start remote publishers with tnl publisher serve --group NAME", appliedProjectBlocks(applied)...)
+	return writeHumanFrame(output, "tnl apply", "applied", "inspect publisher rollout with tnl status --scope=server", appliedProjectBlocks(applied)...)
 }
 
 func appliedProjectBlocks(applied controlv1.AppliedProjectConfiguration) []clioutput.Block {
 	blocks := []clioutput.Block{clioutput.Fields(clioutput.Field{Label: "project key", Value: applied.ProjectKey}, clioutput.Field{Label: "desired revision", Value: strconv.FormatInt(applied.Revision, 10)})}
+	for _, name := range slices.Sorted(maps.Keys(applied.Configuration.PublisherGroups)) {
+		group := applied.Configuration.PublisherGroups[name]
+		if group.Template != nil && *group.Template {
+			blocks = append(blocks, clioutput.Section(name, clioutput.Fields(clioutput.Field{Label: "kind", Value: "publisher group template"})))
+		}
+	}
 	for _, service := range applied.Services {
 		id := ""
 		if service.ServiceId != nil {

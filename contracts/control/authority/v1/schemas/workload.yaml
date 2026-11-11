@@ -52,7 +52,12 @@ schemas:
       signature:
         { type: string, description: Unpadded base64url signature of the workload exchange digest }
       services:
-        { type: array, minItems: 1, maxItems: 32, uniqueItems: true, items: { type: string } }
+        type: array
+        minItems: 1
+        maxItems: 32
+        uniqueItems: true
+        description: Approved service keys. A template service requires the immutable concrete group ID followed by / and the service key. The signature covers these exact selectors. A session cannot contain duplicate logical service keys or widen its captured service IDs.
+        items: { type: string }
   WorkloadRenewal:
     type: object
     additionalProperties: false

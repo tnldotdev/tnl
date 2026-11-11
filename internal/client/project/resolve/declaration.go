@@ -27,7 +27,7 @@ func Declaration(ctx context.Context, project clientproject.Project, current tea
 		return declaration, err
 	}
 	for name, group := range project.Config.PublisherGroups {
-		entry := controlv1.ProjectPublisherGroup{Description: group.Description, Public: &group.Public}
+		entry := controlv1.ProjectPublisherGroup{Description: group.Description, Public: &group.Public, Template: &group.Template}
 		if group.Domain != nil {
 			domain, err := current.ReadyDomain(*group.Domain)
 			if err != nil {

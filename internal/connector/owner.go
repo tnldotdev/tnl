@@ -252,7 +252,7 @@ func (b *connectorConnectionBackend) Start(ctx context.Context) (meta.PublicMeta
 		}
 		b.teamID = membership.TeamId
 		for _, name := range b.scope.Services {
-			service, err := Select(ctx, session.authenticated.Control, b.project.Project, name, membership.TeamId)
+			service, err := Select(ctx, session.authenticated.Control, b.project.Project, name, membership.TeamId, "")
 			if err != nil {
 				continue // one service's denial does not prevent another service's preparation.
 			}
@@ -403,7 +403,7 @@ func (b *connectorConnectionBackend) refreshService(ctx context.Context, name st
 		service = current
 	} else if b.human != nil {
 		var err error
-		service, err = Select(ctx, b.human.authenticated.Control, b.project.Project, name, b.teamID)
+		service, err = Select(ctx, b.human.authenticated.Control, b.project.Project, name, b.teamID, "")
 		if err != nil {
 			return service, err
 		}

@@ -312,7 +312,7 @@ func TestIntegrationCLIApplyGroupServeConnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	localService, err := connector.Select(t.Context(), control, project.Project, internal, team)
+	localService, err := connector.Select(t.Context(), control, project.Project, internal, team, "")
 	if err != nil {
 		t.Fatal(err)
 	}

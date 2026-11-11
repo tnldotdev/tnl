@@ -19,6 +19,8 @@ type ProjectConfigurationStore interface {
 
 func projectConfigurationProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	switch {
+	case errors.Is(err, controlstate.ErrPublisherTemplateInUse):
+		writeProblem(w, 409, controlv1.Conflict, "publisher template has dependent groups; remove them before removing or converting the template")
 	case errors.Is(err, controlstate.ErrWorkloadBinding):
 		writeProblem(w, 400, controlv1.InvalidRequest, "GitHub workload policy requires verified repository and owner IDs; apply from a trusted operator with repository metadata access")
 	case errors.Is(err, controlstate.ErrProjectConfigurationInvalid):
@@ -27,6 +29,8 @@ func projectConfigurationProblem(ctx context.Context, w http.ResponseWriter, ope
 		writeProblem(w, 409, controlv1.Conflict, "project configuration changed; read the current revision and apply again")
 	case errors.Is(err, controlstate.ErrProjectSourceConflict):
 		writeProblem(w, 409, controlv1.Conflict, "project label belongs to another source; select a different project label")
+	case errors.Is(err, controlstate.ErrProjectManaged):
+		writeProblem(w, 409, controlv1.Conflict, "this resource is managed by project configuration; change its declaration and apply again")
 	case errors.Is(err, controlstate.ErrServicePortsExhausted):
 		writeProblem(w, 503, controlv1.PlacementUnavailable, "ingress pool has no available service port; ask the operator to extend its service port inventory")
 	case errors.Is(err, controlstate.ErrServiceConflict), errors.Is(err, controlstate.ErrPublicURLConflict):

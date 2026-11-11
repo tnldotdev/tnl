@@ -36,6 +36,7 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 	localSource := project.LocalPublicationIdentity()
 	for _, test := range []struct {
 		name, team, want string
+		publisherGroup   string
 		status           int
 		omitID, corrupt  bool
 		noConfig         bool
@@ -44,6 +45,9 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 		{name: "orders", team: "team_one", want: "svc_bound"},
 		{name: alias, team: "team_one", want: "svc_bound"},
 		{name: "remote", team: "team_one", want: "svc_remote"},
+		{name: "remote", team: "team_one", publisherGroup: "tractor-042", want: "svc_remote"},
+		{name: "remote", team: "team_one", publisherGroup: "tractor-042", status: 404, wantReason: failure.ServerResourceNotFound},
+		{name: "remote", publisherGroup: "tractor-042", noConfig: true, wantReason: failure.InvalidTunnelFlags},
 		{name: group, team: "team_one", want: "svc_remote"},
 		{name: "remote", team: "team_one", status: 404, wantReason: failure.ServerResourceNotFound},
 		{name: "svc_bound", want: "svc_bound"},
@@ -64,7 +68,11 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 				switch r.URL.Path {
 				case "/v1/projects/" + source.Key + "/services/remote":
 					remoteLookup++
-					if r.URL.Query().Get("source_fingerprint") != source.Fingerprint || r.URL.Query().Get("team_id") != test.team || len(r.URL.Query()) != 2 {
+					parameters := 2
+					if test.publisherGroup != "" {
+						parameters++
+					}
+					if r.URL.Query().Get("source_fingerprint") != source.Fingerprint || r.URL.Query().Get("team_id") != test.team || r.URL.Query().Get("publisher_group") != test.publisherGroup || len(r.URL.Query()) != parameters {
 						t.Errorf("applied lookup scope = %s", r.URL)
 					}
 					if test.status != 0 {
@@ -115,7 +123,7 @@ func TestConnectConfiguredPrivateSelectionUsesExactVisitorBinding(t *testing.T) 
 			if test.noConfig {
 				selectedProject = projectConfiguration{}
 			}
-			service, err := Select(t.Context(), control, selectedProject.Project, test.name, test.team)
+			service, err := Select(t.Context(), control, selectedProject.Project, test.name, test.team, test.publisherGroup)
 			if test.wantReason != "" {
 				if reason, ok := failure.ReasonOf(err); !ok || reason != test.wantReason {
 					t.Fatalf("selection error = %v, want %s", err, test.wantReason)

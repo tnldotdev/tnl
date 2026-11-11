@@ -49,6 +49,7 @@ type TNL struct {
 type Services map[string]Service
 
 type PublisherGroup struct {
+	Template    bool    `json:"template,omitempty" yaml:"template,omitempty" jsonschema_description:"Register a reusable definition without allocating a publisher group. Explicitly created groups follow this definition on every apply."`
 	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
 	Domain      *string `json:"domain,omitempty" yaml:"domain,omitempty" jsonschema_description:"Ready team domain; defaults to the team's default domain when the namespace is first allocated."`
 	Public      bool    `json:"public,omitempty" yaml:"public,omitempty" jsonschema_description:"Enable direct ingress access. Omitted or false uses loopback DNS and requires tnl connect. Native TLS and visitor authorization apply in either mode."`

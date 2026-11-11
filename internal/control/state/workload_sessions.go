@@ -9,6 +9,7 @@ import (
 	"errors"
 	"math"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -99,6 +100,15 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 	if !found || project.SourceFingerprint != r.SourceFingerprint || !p.matches(c) || c.Validate(clock.current()) != nil {
 		return result, ErrWorkloadDenied
 	}
+	groups, err := q.ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
+	if err != nil {
+		return result, err
+	}
+	configuration = publisherTemplateConfiguration(configuration, groups, "")
+	groupsByID := make(map[string]controlstatedb.ControlProjectPublisherGroup, len(groups))
+	for _, group := range groups {
+		groupsByID[group.ID] = group
+	}
 	services := slices.Clone(r.Services)
 	if services == nil {
 		services = slices.Clone(p.Services)
@@ -107,10 +117,22 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 		return result, ErrWorkloadDenied
 	}
 	slices.Sort(services)
-	for i, s := range services {
-		if !slices.Contains(p.Services, s) || i > 0 && services[i-1] == s {
+	bindings := make(map[string]string, len(services))
+	logical := map[string]bool{}
+	for _, s := range services {
+		binding := s
+		if groupID, name, qualified := strings.Cut(s, "/"); qualified {
+			if group, found := groupsByID[groupID]; found && group.TemplateName == "" && configuration.Services[name].PublisherGroup == group.Name {
+				binding = name
+			}
+		}
+		_, realized := configuration.Services[binding]
+		name := appliedServiceName(s)
+		if !realized || logical[name] || !slices.Contains(p.Services, name) {
 			return result, ErrWorkloadDenied
 		}
+		logical[name] = true
+		bindings[s] = binding
 	}
 	requested := slices.Clone(r.Services)
 	slices.Sort(requested)
@@ -158,7 +180,7 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 			return result, err
 		}
 		for _, s := range services {
-			tag, err := tx.Exec(ctx, `INSERT INTO control.workload_session_services(workload_session_id,service_id,service) SELECT $1,applied.service_id,applied.service FROM control.applied_project_services applied JOIN control.services service ON service.id=applied.service_id WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=$4 AND service.enabled AND service.deleted_at IS NULL`, id, r.TeamID, r.ProjectKey, s)
+			tag, err := tx.Exec(ctx, `INSERT INTO control.workload_session_services(workload_session_id,service_id,service) SELECT $1,applied.service_id,$5 FROM control.applied_project_services applied JOIN control.services service ON service.id=applied.service_id WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=$4 AND service.enabled AND service.deleted_at IS NULL`, id, r.TeamID, r.ProjectKey, bindings[s], appliedServiceName(s))
 			if err != nil {
 				return result, err
 			}

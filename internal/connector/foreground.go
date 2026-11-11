@@ -21,6 +21,7 @@ import (
 
 type StartOptions struct {
 	SessionOptions
+	PublisherGroup                                                 string
 	Team                                                           string
 	Name, Listen, Protocol                                         string
 	Kubeconfig, Namespace, KubeUserConfig, KubeUser, KubeTokenFile string
@@ -256,7 +257,7 @@ func selectSessionConnectService(ctx context.Context, session *Session, project 
 		}
 		team = membership.TeamId
 	}
-	return Select(ctx, session.authenticated.Control, project.Project, name, team)
+	return Select(ctx, session.authenticated.Control, project.Project, name, team, flags.PublisherGroup)
 }
 
 type connectorLifecycle struct {

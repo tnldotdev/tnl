@@ -9,6 +9,25 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+func (c *Client) CreatePublisherGroup(ctx context.Context, project, name string, body controlv1.CreatePublisherGroupRequest) (controlv1.PublisherGroupConnection, error) {
+	return requestWithAccess[controlv1.PublisherGroupConnection](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.CreatePublisherGroup(ctx, project, name, body, editors...)
+	})
+}
+
+func (c *Client) GetPublisherGroupConnection(ctx context.Context, team, project, name string) (controlv1.PublisherGroupConnection, error) {
+	return requestWithAccess[controlv1.PublisherGroupConnection](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.GetPublisherGroupConnection(ctx, project, name, &controlv1.GetPublisherGroupConnectionParams{TeamId: team}, editors...)
+	})
+}
+
+func (c *Client) RemovePublisherGroup(ctx context.Context, team, project, name string, revision int64) error {
+	_, err := requestWithAccess[struct{}](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
+		return c.api.RemovePublisherGroup(ctx, project, name, &controlv1.RemovePublisherGroupParams{TeamId: team, ExpectedRevision: revision}, editors...)
+	})
+	return err
+}
+
 func (c *Client) GetProjectService(ctx context.Context, project, service string, params controlv1.GetProjectServiceParams) (controlv1.Service, error) {
 	return requestWithAccess[controlv1.Service](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.GetProjectService(ctx, project, service, &params, editors...)

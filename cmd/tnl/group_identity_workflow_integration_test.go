@@ -320,7 +320,7 @@ func TestIntegrationCLIGroupIdentitySurvivesTaskStateDeletion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			selected, err := connector.Select(t.Context(), control, project.Project, "api", team)
+			selected, err := connector.Select(t.Context(), control, project.Project, "api", team, "")
 			if err != nil {
 				t.Fatal(err)
 			}

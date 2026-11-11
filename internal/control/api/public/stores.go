@@ -59,6 +59,8 @@ type GuestStore interface {
 
 type GroupStore interface {
 	PublisherGroupStore
+	CreatePublisherGroup(context.Context, string, string, string, string, string, int64, bool, time.Time) (controlstate.AppliedProjectConfiguration, error)
+	RemovePublisherGroup(context.Context, string, string, string, string, int64, bool, time.Time) (controlstate.AppliedProjectConfiguration, error)
 	RenamePublisherNamespace(context.Context, controlstate.RenamePublisherNamespaceRequest) (controlstate.AppliedProjectConfiguration, error)
 	RenamePublisherGroup(context.Context, string, string, string, string, string, int64, time.Time) (controlstate.AppliedProjectConfiguration, error)
 }

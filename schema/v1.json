@@ -229,6 +229,11 @@
         "publisher_groups": {
           "additionalProperties": {
             "properties": {
+              "template": {
+                "type": "boolean",
+                "description": "Register a reusable definition without allocating a publisher group. Explicitly created groups follow this definition on every apply.",
+                "default": false
+              },
               "description": {
                 "type": "string",
                 "maxLength": 1024

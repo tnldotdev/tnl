@@ -704,6 +704,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runPublisherEnroll(ctx, flags.Publisher.Enroll, stdout, stderr)
 	case "publisher current":
 		return runPublisherCurrent(ctx, flags.Publisher.Current, stdout)
+	case "publisher create <group>":
+		return runPublisherTemplate(ctx, flags.Publisher.Create.publisherGroupCommand, project, "create", flags.Publisher.Create.From, stdout, stderr)
+	case "publisher connection <group>":
+		return runPublisherTemplate(ctx, flags.Publisher.Connection, project, "connection", "", stdout, stderr)
+	case "publisher remove <group>":
+		return runPublisherTemplate(ctx, flags.Publisher.Remove, project, "remove", "", stdout, stderr)
 	case "publisher setup":
 		return runPublisherSetup(ctx, flags.Publisher.Setup, stdout, stderr)
 	case "publisher serve":

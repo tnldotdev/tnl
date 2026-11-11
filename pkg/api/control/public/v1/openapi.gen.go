@@ -876,6 +876,21 @@ func (e PublisherGrantKind) Valid() bool {
 	}
 }
 
+// Defines values for PublisherGroupConnectionSchema.
+const (
+	N1 PublisherGroupConnectionSchema = 1
+)
+
+// Valid indicates whether the value is a known member of the PublisherGroupConnectionSchema enum.
+func (e PublisherGroupConnectionSchema) Valid() bool {
+	switch e {
+	case N1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PublisherGroupServiceAssignmentServiceKind.
 const (
 	PublisherGroupServiceAssignmentServiceKindPublicUrl PublisherGroupServiceAssignmentServiceKind = "public_url"
@@ -1829,6 +1844,9 @@ type AppliedPublisherGroup struct {
 	Name       string   `json:"name"`
 	Namespace  string   `json:"namespace"`
 	Public     bool     `json:"public"`
+
+	// Template Source template followed by this concrete group.
+	Template *string `json:"template,omitempty"`
 }
 
 // ApplyProjectConfigurationRequest defines model for ApplyProjectConfigurationRequest.
@@ -2333,6 +2351,13 @@ type CreatePublisherGroupEnrollmentRequest struct {
 	TeamId     string `json:"team_id"`
 }
 
+// CreatePublisherGroupRequest defines model for CreatePublisherGroupRequest.
+type CreatePublisherGroupRequest struct {
+	ExpectedRevision int64  `json:"expected_revision"`
+	From             string `json:"from"`
+	TeamId           string `json:"team_id"`
+}
+
 // CreateServiceCertificateIssuanceRequest defines model for CreateServiceCertificateIssuanceRequest.
 type CreateServiceCertificateIssuanceRequest struct {
 	Csr       []byte `json:"csr"`
@@ -2796,6 +2821,7 @@ type ProjectPublisherGroup struct {
 	Description *string `json:"description,omitempty"`
 	DomainId    *string `json:"domain_id,omitempty"`
 	Public      *bool   `json:"public,omitempty"`
+	Template    *bool   `json:"template,omitempty"`
 }
 
 // ProjectServiceAccess defines model for ProjectServiceAccess.
@@ -3139,6 +3165,30 @@ type PublisherGroupAssignments struct {
 	Member                PublisherGroupMember              `json:"member"`
 	Revision              int64                             `json:"revision"`
 	Services              []PublisherGroupServiceAssignment `json:"services"`
+}
+
+// PublisherGroupConnection defines model for PublisherGroupConnection.
+type PublisherGroupConnection struct {
+	GroupId           string                                      `json:"group_id"`
+	GroupName         string                                      `json:"group_name"`
+	ProjectKey        string                                      `json:"project_key"`
+	ProjectLabel      string                                      `json:"project_label"`
+	Schema            PublisherGroupConnectionSchema              `json:"schema"`
+	Server            string                                      `json:"server"`
+	Services          map[string]ServiceProtocol                  `json:"services"`
+	SourceFingerprint string                                      `json:"source_fingerprint"`
+	TeamId            string                                      `json:"team_id"`
+	Workloads         map[string]PublisherGroupConnectionWorkload `json:"workloads"`
+}
+
+// PublisherGroupConnectionSchema defines model for PublisherGroupConnection.Schema.
+type PublisherGroupConnectionSchema int
+
+// PublisherGroupConnectionWorkload defines model for PublisherGroupConnectionWorkload.
+type PublisherGroupConnectionWorkload struct {
+	MaxDurationSeconds int              `json:"max_duration_seconds"`
+	Provider           WorkloadProvider `json:"provider"`
+	Services           []string         `json:"services"`
 }
 
 // PublisherGroupEnrollment defines model for PublisherGroupEnrollment.
@@ -4269,6 +4319,17 @@ type GetProjectPublicMetadataParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
 }
 
+// RemovePublisherGroupParams defines parameters for RemovePublisherGroup.
+type RemovePublisherGroupParams struct {
+	TeamId           TeamIDQuery `form:"team_id" json:"team_id"`
+	ExpectedRevision int64       `form:"expected_revision" json:"expected_revision"`
+}
+
+// GetPublisherGroupConnectionParams defines parameters for GetPublisherGroupConnection.
+type GetPublisherGroupConnectionParams struct {
+	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
+}
+
 // RevokePublisherGroupMemberParams defines parameters for RevokePublisherGroupMember.
 type RevokePublisherGroupMemberParams struct {
 	TeamId TeamIDQuery `form:"team_id" json:"team_id"`
@@ -4276,8 +4337,10 @@ type RevokePublisherGroupMemberParams struct {
 
 // GetProjectServiceParams defines parameters for GetProjectService.
 type GetProjectServiceParams struct {
-	TeamId            TeamID `form:"team_id" json:"team_id"`
-	SourceFingerprint string `form:"source_fingerprint" json:"source_fingerprint"`
+	// PublisherGroup Exact group ID or current/historical selector within this project; never a visitor grant.
+	PublisherGroup    *string `form:"publisher_group,omitempty" json:"publisher_group,omitempty"`
+	TeamId            TeamID  `form:"team_id" json:"team_id"`
+	SourceFingerprint string  `form:"source_fingerprint" json:"source_fingerprint"`
 }
 
 // ListPublicURLsParams defines parameters for ListPublicURLs.
@@ -4482,6 +4545,9 @@ type ApplyProjectConfigurationJSONRequestBody = ApplyProjectConfigurationRequest
 
 // RealizeLocalProjectServiceJSONRequestBody defines body for RealizeLocalProjectService for application/json ContentType.
 type RealizeLocalProjectServiceJSONRequestBody = RealizeLocalProjectServiceRequest
+
+// CreatePublisherGroupJSONRequestBody defines body for CreatePublisherGroup for application/json ContentType.
+type CreatePublisherGroupJSONRequestBody = CreatePublisherGroupRequest
 
 // CreatePublisherGroupEnrollmentJSONRequestBody defines body for CreatePublisherGroupEnrollment for application/json ContentType.
 type CreatePublisherGroupEnrollmentJSONRequestBody = CreatePublisherGroupEnrollmentRequest
@@ -5040,6 +5106,28 @@ type ClientInterface interface {
 	//
 	// Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
 	GetProjectPublicMetadata(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemovePublisherGroup performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name} (the `RemovePublisherGroup` operationId) request.
+	//
+	// Retire a template-created group and its services, publisher identities and enrollments. Directly declared groups remain owned by apply.
+	RemovePublisherGroup(ctx context.Context, projectKey string, groupName string, params *RemovePublisherGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublisherGroupWithBody performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
+	CreatePublisherGroupWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreatePublisherGroup performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
+	CreatePublisherGroup(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPublisherGroupConnection performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/connection (the `GetPublisherGroupConnection` operationId) request.
+	//
+	// Read nonsecret group connection context as a team manager. The descriptor is a selector, never an access credential.
+	GetPublisherGroupConnection(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupConnectionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreatePublisherGroupEnrollmentWithBody performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request,
 	// with any type of body and a specified content type.
@@ -6582,6 +6670,68 @@ func (c *Client) RealizeLocalProjectService(ctx context.Context, projectKey stri
 // Browser-safe project source and public service IDs/hostnames, including exact local worktree realizations before or after first apply. Returns only public services the caller may visit, or all public services for a project manager. A service key may appear more than once for separate worktree URLs. Never returns configuration, targets, trust, grants, or publisher data.
 func (c *Client) GetProjectPublicMetadata(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetProjectPublicMetadataRequest(c.Server, projectKey, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RemovePublisherGroup performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name} (the `RemovePublisherGroup` operationId) request.
+//
+// Retire a template-created group and its services, publisher identities and enrollments. Directly declared groups remain owned by apply.
+func (c *Client) RemovePublisherGroup(ctx context.Context, projectKey string, groupName string, params *RemovePublisherGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemovePublisherGroupRequest(c.Server, projectKey, groupName, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublisherGroupWithBody performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request,
+// with any type of body and a specified content type.
+//
+// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
+func (c *Client) CreatePublisherGroupWithBody(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublisherGroupRequestWithBody(c.Server, projectKey, groupName, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreatePublisherGroup performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
+func (c *Client) CreatePublisherGroup(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreatePublisherGroupRequest(c.Server, projectKey, groupName, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPublisherGroupConnection performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/connection (the `GetPublisherGroupConnection` operationId) request.
+//
+// Read nonsecret group connection context as a team manager. The descriptor is a selector, never an access credential.
+func (c *Client) GetPublisherGroupConnection(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupConnectionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPublisherGroupConnectionRequest(c.Server, projectKey, groupName, params)
 	if err != nil {
 		return nil, err
 	}
@@ -10666,6 +10816,196 @@ func NewGetProjectPublicMetadataRequest(server string, projectKey string, params
 	return req, nil
 }
 
+// NewRemovePublisherGroupRequest constructs an http.Request for the RemovePublisherGroup method
+func NewRemovePublisherGroupRequest(server string, projectKey string, groupName string, params *RemovePublisherGroupParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "expected_revision", params.ExpectedRevision, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreatePublisherGroupRequest calls the generic CreatePublisherGroup builder with application/json body
+func NewCreatePublisherGroupRequest(server string, projectKey string, groupName string, body CreatePublisherGroupJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreatePublisherGroupRequestWithBody(server, projectKey, groupName, "application/json", bodyReader)
+}
+
+// NewCreatePublisherGroupRequestWithBody constructs an http.Request for the CreatePublisherGroup method, with any body, and a specified content type
+func NewCreatePublisherGroupRequestWithBody(server string, projectKey string, groupName string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetPublisherGroupConnectionRequest constructs an http.Request for the GetPublisherGroupConnection method
+func NewGetPublisherGroupConnectionRequest(server string, projectKey string, groupName string, params *GetPublisherGroupConnectionParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "project_key", projectKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "group_name", groupName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/publisher-groups/%s/connection", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCreatePublisherGroupEnrollmentRequest calls the generic CreatePublisherGroupEnrollment builder with application/json body
 func NewCreatePublisherGroupEnrollmentRequest(server string, projectKey string, groupName string, body CreatePublisherGroupEnrollmentJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -10940,6 +11280,18 @@ func NewGetProjectServiceRequest(server string, projectKey string, service Servi
 		// styled parameters, preserving literal commas as delimiters
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
+
+		if params.PublisherGroup != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "publisher_group", *params.PublisherGroup, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
 
 		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "team_id", params.TeamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 			return nil, err
@@ -16067,6 +16419,34 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	GetProjectPublicMetadataWithResponse(ctx context.Context, projectKey string, params *GetProjectPublicMetadataParams, reqEditors ...RequestEditorFn) (*GetProjectPublicMetadataResponse, error)
 
+	// RemovePublisherGroupWithResponse performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name} (the `RemovePublisherGroup` operationId) request.
+	//
+	// Retire a template-created group and its services, publisher identities and enrollments. Directly declared groups remain owned by apply.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RemovePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, params *RemovePublisherGroupParams, reqEditors ...RequestEditorFn) (*RemovePublisherGroupResponse, error)
+
+	// CreatePublisherGroupWithBodyWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreatePublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherGroupResponse, error)
+
+	// CreatePublisherGroupWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
+	CreatePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGroupResponse, error)
+
+	// GetPublisherGroupConnectionWithResponse performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/connection (the `GetPublisherGroupConnection` operationId) request.
+	//
+	// Read nonsecret group connection context as a team manager. The descriptor is a selector, never an access credential.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	GetPublisherGroupConnectionWithResponse(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupConnectionParams, reqEditors ...RequestEditorFn) (*GetPublisherGroupConnectionResponse, error)
+
 	// CreatePublisherGroupEnrollmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -18598,6 +18978,143 @@ func (r GetProjectPublicMetadataResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetProjectPublicMetadataResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RemovePublisherGroupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RemovePublisherGroupResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RemovePublisherGroupResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RemovePublisherGroupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemovePublisherGroupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RemovePublisherGroupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreatePublisherGroupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherGroupConnection
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreatePublisherGroupResponse) GetJSON200() *PublisherGroupConnection {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreatePublisherGroupResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreatePublisherGroupResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreatePublisherGroupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreatePublisherGroupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreatePublisherGroupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPublisherGroupConnectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherGroupConnection
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPublisherGroupConnectionResponse) GetJSON200() *PublisherGroupConnection {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPublisherGroupConnectionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPublisherGroupConnectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPublisherGroupConnectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPublisherGroupConnectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPublisherGroupConnectionResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -24005,6 +24522,58 @@ func (c *ClientWithResponses) GetProjectPublicMetadataWithResponse(ctx context.C
 	return ParseGetProjectPublicMetadataResponse(rsp)
 }
 
+// RemovePublisherGroupWithResponse performs a DELETE /v1/projects/{project_key}/publisher-groups/{group_name} (the `RemovePublisherGroup` operationId) request.
+//
+// Retire a template-created group and its services, publisher identities and enrollments. Directly declared groups remain owned by apply.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RemovePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, params *RemovePublisherGroupParams, reqEditors ...RequestEditorFn) (*RemovePublisherGroupResponse, error) {
+	rsp, err := c.RemovePublisherGroup(ctx, projectKey, groupName, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemovePublisherGroupResponse(rsp)
+}
+
+// CreatePublisherGroupWithBodyWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request,
+// with any type of body and a specified content type.
+//
+// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreatePublisherGroupWithBodyWithResponse(ctx context.Context, projectKey string, groupName string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreatePublisherGroupResponse, error) {
+	rsp, err := c.CreatePublisherGroupWithBody(ctx, projectKey, groupName, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublisherGroupResponse(rsp)
+}
+
+// CreatePublisherGroupWithResponse performs a PUT /v1/projects/{project_key}/publisher-groups/{group_name} (the `CreatePublisherGroup` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Create a concrete team-owned group following an applied template. Same name and template return the existing group; names cannot be adopted from another template or reused after retirement. Creation allocates distinct services but grants no new visitor authority to existing workload sessions.
+func (c *ClientWithResponses) CreatePublisherGroupWithResponse(ctx context.Context, projectKey string, groupName string, body CreatePublisherGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*CreatePublisherGroupResponse, error) {
+	rsp, err := c.CreatePublisherGroup(ctx, projectKey, groupName, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreatePublisherGroupResponse(rsp)
+}
+
+// GetPublisherGroupConnectionWithResponse performs a GET /v1/projects/{project_key}/publisher-groups/{group_name}/connection (the `GetPublisherGroupConnection` operationId) request.
+//
+// Read nonsecret group connection context as a team manager. The descriptor is a selector, never an access credential.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) GetPublisherGroupConnectionWithResponse(ctx context.Context, projectKey string, groupName string, params *GetPublisherGroupConnectionParams, reqEditors ...RequestEditorFn) (*GetPublisherGroupConnectionResponse, error) {
+	rsp, err := c.GetPublisherGroupConnection(ctx, projectKey, groupName, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPublisherGroupConnectionResponse(rsp)
+}
+
 // CreatePublisherGroupEnrollmentWithBodyWithResponse performs a POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments (the `CreatePublisherGroupEnrollment` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -27070,6 +27639,101 @@ func ParseGetProjectPublicMetadataResponse(rsp *http.Response) (*GetProjectPubli
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ProjectPublicMetadata
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRemovePublisherGroupResponse parses an HTTP response from a RemovePublisherGroupWithResponse call
+func ParseRemovePublisherGroupResponse(rsp *http.Response) (*RemovePublisherGroupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemovePublisherGroupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreatePublisherGroupResponse parses an HTTP response from a CreatePublisherGroupWithResponse call
+func ParseCreatePublisherGroupResponse(rsp *http.Response) (*CreatePublisherGroupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreatePublisherGroupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherGroupConnection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPublisherGroupConnectionResponse parses an HTTP response from a GetPublisherGroupConnectionWithResponse call
+func ParseGetPublisherGroupConnectionResponse(rsp *http.Response) (*GetPublisherGroupConnectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPublisherGroupConnectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherGroupConnection
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -30572,6 +31236,15 @@ type ServerInterface interface {
 	// (GET /v1/projects/{project_key}/public-metadata)
 	GetProjectPublicMetadata(w http.ResponseWriter, r *http.Request, projectKey string, params GetProjectPublicMetadataParams)
 
+	// (DELETE /v1/projects/{project_key}/publisher-groups/{group_name})
+	RemovePublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, params RemovePublisherGroupParams)
+
+	// (PUT /v1/projects/{project_key}/publisher-groups/{group_name})
+	CreatePublisherGroup(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
+
+	// (GET /v1/projects/{project_key}/publisher-groups/{group_name}/connection)
+	GetPublisherGroupConnection(w http.ResponseWriter, r *http.Request, projectKey string, groupName string, params GetPublisherGroupConnectionParams)
+
 	// (POST /v1/projects/{project_key}/publisher-groups/{group_name}/enrollments)
 	CreatePublisherGroupEnrollment(w http.ResponseWriter, r *http.Request, projectKey string, groupName string)
 
@@ -31949,6 +32622,156 @@ func (siw *ServerInterfaceWrapper) GetProjectPublicMetadata(w http.ResponseWrite
 	handler.ServeHTTP(w, r)
 }
 
+// RemovePublisherGroup operation middleware
+func (siw *ServerInterfaceWrapper) RemovePublisherGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "group_name" -------------
+	var groupName string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RemovePublisherGroupParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "expected_revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "expected_revision", r.URL.Query(), &params.ExpectedRevision, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "expected_revision"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "expected_revision", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemovePublisherGroup(w, r, projectKey, groupName, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreatePublisherGroup operation middleware
+func (siw *ServerInterfaceWrapper) CreatePublisherGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "group_name" -------------
+	var groupName string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreatePublisherGroup(w, r, projectKey, groupName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPublisherGroupConnection operation middleware
+func (siw *ServerInterfaceWrapper) GetPublisherGroupConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "project_key" -------------
+	var projectKey string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project_key", r.PathValue("project_key"), &projectKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_key", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "group_name" -------------
+	var groupName string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "group_name", r.PathValue("group_name"), &groupName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_name", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPublisherGroupConnectionParams
+
+	// ------------- Required query parameter "team_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "team_id", r.URL.Query(), &params.TeamId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "team_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPublisherGroupConnection(w, r, projectKey, groupName, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreatePublisherGroupEnrollment operation middleware
 func (siw *ServerInterfaceWrapper) CreatePublisherGroupEnrollment(w http.ResponseWriter, r *http.Request) {
 
@@ -32140,6 +32963,19 @@ func (siw *ServerInterfaceWrapper) GetProjectService(w http.ResponseWriter, r *h
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetProjectServiceParams
+
+	// ------------- Optional query parameter "publisher_group" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "publisher_group", r.URL.Query(), &params.PublisherGroup, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "publisher_group"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "publisher_group", Err: err})
+		}
+		return
+	}
 
 	// ------------- Required query parameter "team_id" -------------
 
@@ -35576,6 +36412,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}", wrapper.RemovePublisherGroup)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}", wrapper.CreatePublisherGroup)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/projects/{project_key}/publisher-groups/{group_name}/connection", wrapper.GetPublisherGroupConnection)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs", wrapper.ListConnectorPeerPairs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/delivery", wrapper.DeliverConnectorPeerPair)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/services/{service_id}/runs/{service_run_id}/connector-peer-pairs/{pair_id}/prepared", wrapper.ConfirmConnectorPeerPairPrepared)

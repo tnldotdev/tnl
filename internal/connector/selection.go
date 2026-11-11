@@ -22,10 +22,20 @@ type ServiceReader interface {
 }
 
 // Select resolves the visitor's exact local/applied binding before inventory.
-func Select(ctx context.Context, control ServiceReader, project clientproject.Project, name, team string) (controlv1.Service, error) {
+func Select(ctx context.Context, control ServiceReader, project clientproject.Project, name, team, publisherGroup string) (controlv1.Service, error) {
 	key, err := ConfiguredService(project, name)
 	if err != nil {
 		return controlv1.Service{}, err
+	}
+	if publisherGroup != "" {
+		if key == "" {
+			return controlv1.Service{}, publisherCLIError("--publisher-group requires a configured service in this applied project")
+		}
+		source, err := project.SourceIdentity(ctx)
+		if err != nil {
+			return controlv1.Service{}, err
+		}
+		return control.GetProjectService(ctx, source.Key, key, controlv1.GetProjectServiceParams{TeamId: team, SourceFingerprint: source.Fingerprint, PublisherGroup: &publisherGroup})
 	}
 	localID := ""
 	if key != "" {

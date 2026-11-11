@@ -1021,8 +1021,10 @@ type WorkloadExchange struct {
 	ProjectKey string `json:"project_key"`
 
 	// PublicKey Unpadded base64url Ed25519 public key
-	PublicKey string    `json:"public_key"`
-	Services  *[]string `json:"services,omitempty"`
+	PublicKey string `json:"public_key"`
+
+	// Services Approved service keys. A template service requires the immutable concrete group ID followed by / and the service key. The signature covers these exact selectors. A session cannot contain duplicate logical service keys or widen its captured service IDs.
+	Services *[]string `json:"services,omitempty"`
 
 	// Signature Unpadded base64url signature of the workload exchange digest
 	Signature         string `json:"signature"`

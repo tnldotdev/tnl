@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-publisher-templates')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-publisher-templates');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -2035,6 +2035,7 @@ CREATE TABLE control.applied_projects (
 );
 ALTER TABLE control.workload_sessions ADD FOREIGN KEY(team_id,project_key) REFERENCES control.applied_projects(team_id,project_key);
 CREATE TABLE control.project_publisher_groups (
+	 template_name text NOT NULL DEFAULT '' CHECK (template_name = '' OR template_name ~ '^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$'),
     ownership text NOT NULL DEFAULT 'team' CHECK (ownership='team'),
     id text PRIMARY KEY,
     team_id text NOT NULL,

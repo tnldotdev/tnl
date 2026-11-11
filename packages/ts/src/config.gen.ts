@@ -1504,6 +1504,10 @@ export interface TnlConfig {
   publisherGroups?: {
     [k: string]:
       | {
+          /**
+           * Register a reusable definition without allocating a publisher group. Explicitly created groups follow this definition on every apply.
+           */
+          template?: boolean;
           description?: string;
           domain?: string;
           public?: boolean;

@@ -88,6 +88,7 @@ schemas:
     type: object
     additionalProperties: false
     properties:
+      template: { type: boolean, default: false }
       description: { type: string, maxLength: 1024 }
       domain_id: { type: string }
       public: { type: boolean, default: false }
@@ -332,6 +333,7 @@ schemas:
     type: object
     required: [id, name, group_names, namespace, domain_id, public]
     properties:
+      template: { type: string, description: Source template followed by this concrete group. }
       id: { type: string }
       name: { type: string }
       group_names:

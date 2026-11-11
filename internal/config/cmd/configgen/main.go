@@ -149,6 +149,7 @@ func schemaForType(valueType reflect.Type) *jsonschema.Schema {
 		return result
 	case reflect.TypeOf(map[string]config.PublisherGroup{}):
 		properties := jsonschema.NewProperties()
+		properties.Set("template", &jsonschema.Schema{Type: "boolean", Default: false, Description: "Register a reusable definition without allocating a publisher group. Explicitly created groups follow this definition on every apply."})
 		properties.Set("description", &jsonschema.Schema{Type: "string", MaxLength: integerPointer(1024)})
 		properties.Set("domain", &jsonschema.Schema{Type: "string", MinLength: integerPointer(1), MaxLength: integerPointer(253)})
 		properties.Set("public", &jsonschema.Schema{Type: "boolean", Default: false})

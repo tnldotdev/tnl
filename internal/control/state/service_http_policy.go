@@ -44,7 +44,7 @@ func (d *Database) serviceHTTPSettings(ctx context.Context, q *controlstatedb.Qu
 	if err != nil {
 		return nil, err
 	}
-	s, ok := c.Services[row.Service]
+	s, ok := c.Services[appliedServiceName(row.Service)]
 	if !ok {
 		return nil, ErrServiceAccess
 	}

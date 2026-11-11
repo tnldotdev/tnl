@@ -93,7 +93,9 @@ type TargetReferences<Config> = {
       ? never
       : {
           [
-            Key in keyof Config[Field][Name] as Key extends "description" | "domain" | "public"
+            Key in keyof Config[Field][Name] as Key extends keyof NonNullable<
+              NonNullable<TnlConfig["publisherGroups"]>[string]
+            >
               ? never
               : Key
           ]: never;

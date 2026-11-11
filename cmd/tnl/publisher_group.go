@@ -82,9 +82,6 @@ func runPublisherGroupEnrollment(ctx context.Context, flags publisherEnrollComma
 			return err
 		}
 		key = source.Key
-		if _, ok := project.Config.PublisherGroups[flags.Group]; !ok {
-			return publisherCLIError("publisher group is not configured in this project")
-		}
 	}
 	session, err := openTeamSession(ctx, flags.selection(), "tnl publisher enroll", diagnostics)
 	if err != nil {
