@@ -171,7 +171,7 @@ func TestPeerBindingStagesBothPathsAndPreservesOwner(t *testing.T) {
 func TestPeerBindingDuplicateStagePreservesExactEvidence(t *testing.T) {
 	binding := testBinding(18)
 	e := &Endpoint{ctx: t.Context(), binding: binding, bindingPending: true, bindingEpoch: 7, config: Config{PathTimeout: time.Minute}}
-	for index := range e.paths {
+	for index := range pathCount {
 		slot := NewCarrierSlot()
 		e.paths[index] = &path{carrier: slot, revision: slot.Generation(), alive: true, ack: time.Now(), proof: BindingPathProof{ConnectionSlot: index, ProbeNonce: "retained nonce", ReplyFrame: "retained reply"}}
 	}

@@ -28,15 +28,20 @@ type BindingPathProof = tunnelv1.ConnectorPeerPairPathProof
 
 // SuspendBinding cuts packet input and output without closing inner QUIC or
 // changing the revision high-water mark. only a newer staged revision can resume.
+// this is an in-memory fence; the delivery owner removes direct outside its lock.
 func (e *Endpoint) SuspendBinding() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.bindingActive = false
 	e.bindingPending = false
 	e.bindingEpoch++
+	if p := e.paths[Direct]; p != nil {
+		p.resetHealthLocked()
+	}
+	e.chooseLocked()
 }
 
-// StageBinding fences both paths before retiring their registrations. duplicates
+// StageBinding fences all delivery before retiring registrations. duplicates
 // do not reset evidence or extend any deadline. callers register new carriers
 // only after this returns, then install them through InstallBindingCarrier.
 func (e *Endpoint) StageBinding(binding BindingRevision) error {
@@ -55,7 +60,7 @@ func (e *Endpoint) StageBinding(binding BindingRevision) error {
 		}
 		return ErrConfiguration
 	}
-	for _, p := range e.paths {
+	for _, p := range e.paths[:relayPathCount] {
 		if _, ok := p.carrier.(*CarrierSlot); !ok {
 			e.mu.Unlock()
 			return ErrConfiguration
@@ -65,10 +70,17 @@ func (e *Endpoint) StageBinding(binding BindingRevision) error {
 	e.bindingPending = true
 	e.bindingEpoch++
 	for _, p := range e.paths {
-		p.alive, p.challenge, p.proof = false, [16]byte{}, BindingPathProof{}
+		if p != nil {
+			p.resetHealthLocked()
+		}
 	}
+	e.chooseLocked()
 	e.mu.Unlock()
-	for _, p := range e.paths {
+	if e.config.Direct != nil {
+		// a closed optional slot is already fenced; relay rebinding still works.
+		_ = e.config.Direct.Install(nil)
+	}
+	for _, p := range e.paths[:relayPathCount] {
 		if err := p.carrier.(*CarrierSlot).Install(nil); err != nil {
 			return err
 		}
@@ -115,7 +127,7 @@ func (e *Endpoint) bindingProofsLocked(binding BindingRevision) ([pathCount]Bind
 		return proofs, false
 	}
 	now := time.Now()
-	for index, p := range e.paths {
+	for index, p := range e.paths[:relayPathCount] {
 		p.refreshRevisionLocked()
 		if p.failed || !p.alive || now.Sub(p.ack) > e.config.PathTimeout || p.proof.ReplyFrame == "" {
 			return [pathCount]BindingPathProof{}, false

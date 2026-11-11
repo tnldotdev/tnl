@@ -18,8 +18,12 @@ import (
 const (
 	RelayA = iota
 	RelayB
-	pathCount
-	packetQueue = 64
+	Direct
+
+	relayPathCount    = 2
+	pathCount         = relayPathCount
+	deliveryPathCount = 3
+	packetQueue       = 64
 	// a fixed ring bounds incomplete fragments independently of sender input.
 	reassemblySlots = 64
 )
@@ -31,6 +35,8 @@ type Config struct {
 	Key   [32]byte
 	Role  uint8
 	Paths [pathCount]Carrier
+	// direct is optional delivery, never evidence of relay authorization.
+	Direct *CarrierSlot
 	// Binding is the initial active revision. zero defaults to revision one for
 	// fixed-carrier users; rebind-capable owners supply the control revision.
 	Binding BindingRevision
@@ -70,6 +76,7 @@ type queuedFrame struct {
 	revision carrierRevision
 	data     []byte
 	epoch    uint64
+	kind     tunnelv1.PeerPacketKind
 }
 
 type queuedPacket struct {
@@ -77,6 +84,7 @@ type queuedPacket struct {
 	revision carrierRevision
 	endpoint *Endpoint
 	epoch    uint64
+	direct   bool
 }
 
 // caller-buffer copy is the input commit. replacement either follows this
@@ -88,6 +96,9 @@ func (p queuedPacket) copyTo(b []byte) (int, bool) {
 		if p.endpoint.ctx != nil && p.endpoint.ctx.Err() != nil || !p.endpoint.bindingActive || p.endpoint.bindingEpoch != p.epoch {
 			return 0, false
 		}
+		if p.direct && !p.endpoint.directHealthyLocked(time.Now()) {
+			return 0, false
+		}
 	}
 	return p.revision.copyTo(b, p.data)
 }
@@ -96,12 +107,17 @@ func (p *path) refreshRevisionLocked() {
 	if slot, ok := p.carrier.(*CarrierSlot); ok {
 		if next := slot.Generation(); next != p.revision {
 			p.revision = next
-			p.alive = false
-			p.ack = time.Time{}
-			p.challenge = [16]byte{}
-			p.proof = BindingPathProof{}
+			p.resetHealthLocked()
 		}
 	}
+}
+
+func (p *path) resetHealthLocked() {
+	p.alive = false
+	p.ack, p.sent = time.Time{}, time.Time{}
+	p.challenge, p.nonce = [16]byte{}, [16]byte{}
+	p.proof = BindingPathProof{}
+	p.stats.RTT = 0
 }
 
 func (p *path) close() error {
@@ -128,7 +144,7 @@ type Endpoint struct {
 	bindingEpoch   uint64
 	bindingActive  bool
 	bindingPending bool
-	paths          [pathCount]*path
+	paths          [deliveryPathCount]*path
 	active         int
 	seq            atomic.Uint64
 	input          chan queuedPacket
@@ -181,6 +197,9 @@ func New(parent context.Context, config Config) (*Endpoint, error) {
 		p := &path{carrier: carrier, queue: make(chan queuedFrame, packetQueue)}
 		e.paths[index] = p
 	}
+	if config.Direct != nil {
+		e.paths[Direct] = &path{carrier: config.Direct, queue: make(chan queuedFrame, packetQueue)}
+	}
 	for index, p := range e.paths {
 		if p == nil {
 			continue
@@ -208,6 +227,7 @@ func (e *Endpoint) RemoteAddr() net.Addr {
 func (e *Endpoint) ActivePath() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.chooseLocked()
 	return e.active
 }
 
@@ -216,8 +236,11 @@ func (e *Endpoint) ActivePath() int {
 func (e *Endpoint) PathHealthy(index int) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if index < 0 || index >= pathCount || e.paths[index] == nil || e.ctx.Err() != nil {
+	if index < 0 || index >= deliveryPathCount || e.paths[index] == nil || e.ctx.Err() != nil {
 		return false
+	}
+	if index == Direct {
+		return e.directHealthyLocked(time.Now())
 	}
 	p := e.paths[index]
 	p.refreshRevisionLocked()
@@ -227,7 +250,7 @@ func (e *Endpoint) PathHealthy(index int) bool {
 func (e *Endpoint) Stats(index int) PathStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if index < 0 || index >= pathCount || e.paths[index] == nil {
+	if index < 0 || index >= deliveryPathCount || e.paths[index] == nil {
 		return PathStats{}
 	}
 	return e.paths[index].stats
@@ -275,9 +298,6 @@ func (e *Endpoint) WriteTo(b []byte, addr net.Addr) (int, error) {
 		e.mu.Unlock()
 		return len(b), nil
 	}
-	for _, p := range e.paths {
-		p.refreshRevisionLocked()
-	}
 	e.chooseLocked()
 	index := e.active
 	revision := e.paths[index].revision
@@ -311,12 +331,12 @@ func (e *Endpoint) enqueue(index int, packet tunnelv1.PeerPacket, revision carri
 		return
 	}
 	p.refreshRevisionLocked()
-	if p.revision != revision {
+	if p.revision != revision || index == Direct && (!e.bindingActive || packet.Kind == tunnelv1.PeerData && !e.directHealthyLocked(time.Now())) {
 		p.stats.DroppedFrames++
 		return
 	}
 	select {
-	case p.queue <- queuedFrame{revision: revision, data: frame, epoch: e.bindingEpoch}:
+	case p.queue <- queuedFrame{revision: revision, data: frame, epoch: e.bindingEpoch, kind: packet.Kind}:
 		p.stats.PeakQueuedFrames = max(p.stats.PeakQueuedFrames, len(p.queue))
 	default:
 		p.stats.DroppedFrames++
@@ -332,7 +352,7 @@ func (e *Endpoint) sendLoop(index int, p *path) {
 			ctx, cancel := context.WithTimeout(e.ctx, e.config.PathTimeout)
 			var err error
 			e.mu.Lock()
-			if frame.epoch != e.bindingEpoch {
+			if frame.epoch != e.bindingEpoch || index == Direct && (!e.bindingActive || frame.kind == tunnelv1.PeerData && !e.directHealthyLocked(time.Now())) {
 				e.mu.Unlock()
 				cancel()
 				continue
@@ -381,8 +401,18 @@ func (e *Endpoint) fail(index int) {
 }
 
 func (e *Endpoint) chooseLocked() {
+	now := time.Now()
+	if e.directHealthyLocked(now) {
+		e.active = Direct
+		return
+	}
 	for _, index := range []int{RelayA, RelayB} {
-		if p := e.paths[index]; p != nil && p.alive && !p.failed {
+		p := e.paths[index]
+		if p == nil {
+			continue
+		}
+		p.refreshRevisionLocked()
+		if p.alive && !p.failed && now.Sub(p.ack) <= e.config.PathTimeout {
 			e.active = index
 			return
 		}
@@ -396,7 +426,10 @@ func (e *Endpoint) chooseLocked() {
 		}
 	}
 	// without an eligible relay, retain only the last index for observation.
-	// enqueue still drops failed carriers.
+	// direct is never a speculative fallback; enqueue drops failed relays.
+	if e.active == Direct {
+		e.active = RelayA
+	}
 }
 
 func (e *Endpoint) probeLoop() {
@@ -410,6 +443,10 @@ func (e *Endpoint) probeLoop() {
 			}
 			e.mu.Lock()
 			p.refreshRevisionLocked()
+			if index == Direct && !e.bindingActive {
+				e.mu.Unlock()
+				continue
+			}
 			if now.Sub(p.ack) > e.config.PathTimeout {
 				p.alive = false
 			}
@@ -421,7 +458,7 @@ func (e *Endpoint) probeLoop() {
 					continue
 				}
 				p.challenge = p.nonce
-				if e.binding.valid() {
+				if index < relayPathCount && e.binding.valid() {
 					p.challenge, _ = tunnelv1.ConnectorPeerBindingProbe(e.binding.PairID, e.binding.OperationID, e.binding.Generation, e.binding.Challenge, e.config.Role, uint8(index), p.nonce[:])
 				}
 				p.sent = now
@@ -473,11 +510,15 @@ func (e *Endpoint) receiveLoop(index int, p *path) {
 		case tunnelv1.PeerProbeReply:
 			e.mu.Lock()
 			p.refreshRevisionLocked()
-			if packet.BindingGeneration == uint64(e.binding.Generation) && !p.failed && p.revision == revision && p.challenge != [16]byte{} && hmac.Equal(p.challenge[:], packet.Payload) {
-				p.ack, p.alive = time.Now(), true
+			now := time.Now()
+			fresh := index != Direct || e.bindingActive && now.Sub(p.sent) <= e.config.PathTimeout
+			if fresh && packet.BindingGeneration == uint64(e.binding.Generation) && !p.failed && p.revision == revision && p.challenge != [16]byte{} && hmac.Equal(p.challenge[:], packet.Payload) {
+				p.ack, p.alive = now, true
 				p.stats.RTT = p.ack.Sub(p.sent)
 				p.challenge = [16]byte{}
-				p.proof = bindingProof(index, p.nonce, frame)
+				if index < relayPathCount {
+					p.proof = bindingProof(index, p.nonce, frame)
+				}
 				e.chooseLocked()
 			}
 			e.mu.Unlock()
@@ -501,6 +542,9 @@ func (e *Endpoint) assemble(p *path, packet tunnelv1.PeerPacket, revision carrie
 	if e.ctx != nil {
 		p.refreshRevisionLocked()
 		if !e.bindingActive || packet.BindingGeneration != uint64(e.binding.Generation) || p.revision != revision {
+			return
+		}
+		if p == e.paths[Direct] && !e.directHealthyLocked(time.Now()) {
 			return
 		}
 	}
@@ -531,7 +575,7 @@ func (e *Endpoint) assemble(p *path, packet tunnelv1.PeerPacket, revision carrie
 	p.complete[slot] = packet.Sequence
 	b := append([]byte(nil), f.data[:f.total]...)
 	select {
-	case e.input <- queuedPacket{data: b, revision: revision, endpoint: e, epoch: e.bindingEpoch}:
+	case e.input <- queuedPacket{data: b, revision: revision, endpoint: e, epoch: e.bindingEpoch, direct: p == e.paths[Direct]}:
 	default:
 		p.stats.DroppedFrames++
 	}
