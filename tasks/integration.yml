@@ -15,6 +15,11 @@ tasks:
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/control/state ./cmd/tnl -run='{{.RUN}}' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
+  application-publications:
+    desc: Check application publication acceptance, real native visitor TLS, and joined temporary-resource cleanup with local signed fixtures
+    cmds:
+      - go test -race -v ./internal/publisher/local -run='^TestApplicationPublication(RealNativeTrafficAndCleanup|WorkerCleanupRetry.*|WorkerFailureBeforeTransportCleansAllocation)$' -count=1 -timeout=2m
+
   default:
     desc: Run PostgreSQL-backed integration boundaries
     cmds:

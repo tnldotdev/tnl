@@ -1,0 +1,24 @@
+paths:
+  /v1/publications:
+    post:
+      operationId: publishApplication
+      description: Invocation capability only. Select an exact saved HTTP public URL or allocate a temporary public URL in an exact authorized namespace, then accept its bound target registration. Does not wait for a certificate, relay, or application probe. Repeating the same public request facts and invocation refreshes auth for the same identity and exact grant and renews the same registration without allocating again. Unregister uses the returned registration; status and events use the same scoped capability. An allocation uses restricted access unless anonymous access is explicitly requested and authorized.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../openapi.yaml#/components/schemas/ApplicationPublication" }
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "200":
+          description: Resource selected and listener registration accepted, not traffic-ready
+          content:
+            application/json:
+              schema: { $ref: "../openapi.yaml#/components/schemas/AcceptedPublication" }
+  /v1/capability:
+    delete:
+      operationId: releaseInvocationCapability
+      description: Release an invocation capability after unregister has drained and joined its publication. Does not stop another capability or registration. A live or incompletely cleaned registration prevents release.
+      responses:
+        default: { $ref: "../openapi.yaml#/components/responses/Problem" }
+        "204": { description: Released }

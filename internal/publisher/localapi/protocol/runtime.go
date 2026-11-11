@@ -17,6 +17,10 @@ const MaxBytes = 64 << 10
 
 var ownerPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
+var ErrApplicationAuthInvalid = errors.New("application publication authentication is invalid")
+var ErrApplicationDenied = errors.New("application publication is outside the current grant")
+var ErrApplicationUnavailable = errors.New("application publication authority is unavailable")
+
 func ValidOwner(owner string) bool { return ownerPattern.MatchString(owner) }
 
 type Framework = api.PrepareFramework
@@ -41,6 +45,15 @@ type Assignment struct {
 }
 
 type Registration = api.Registration
+type ApplicationPublication = api.ApplicationPublication
+type ApplicationPublicationAccessMode = api.ApplicationPublicationAccessMode
+
+// AcceptedPublication embeds the sole wire shape. Reused is a native-only
+// acknowledgment fact: losing a renewal reply must not stop an accepted worker.
+type AcceptedPublication struct {
+	api.AcceptedPublication
+	Reused bool `json:"-"`
+}
 
 type Problem = api.Problem
 

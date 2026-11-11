@@ -118,6 +118,38 @@ func TestAutomaticReadinessStopsAfterSuccessAndOnlyRearmsForNewRun(t *testing.T)
 	expectNoAutomaticGET(t, gets)
 }
 
+func TestApplicationTrafficReadinessDoesNotProbeWithoutExplicitCheck(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		w, ready, _ := automaticWorkers(t, time.Second)
+		configure := w.Configure
+		w.Configure = func(ctx context.Context, service Service) (Configuration, error) {
+			configuration, err := configure(ctx, service)
+			configuration.SkipAutomaticReadiness = true
+			return configuration, err
+		}
+		var probes atomic.Int32
+		w.HTTPTransport = trip(func(*http.Request) (*http.Response, error) {
+			probes.Add(1)
+			return automaticResponse(200), nil
+		})
+		_, id := registerAutomaticWorker(t, w, ready)
+		synctest.Wait()
+		service := w.Manager.Snapshot().Services[0]
+		if !service.Routable || service.Ready || probes.Load() != 0 {
+			t.Fatal("traffic readiness probed the application")
+		}
+		if _, err := w.Check(t.Context(), []string{"web"}); err != nil {
+			t.Fatal(err)
+		}
+		if probes.Load() != 1 || !w.Manager.Snapshot().Services[0].Ready {
+			t.Fatal("explicit application probe was not independent")
+		}
+		if err := w.Manager.Unregister(id, "owner"); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func TestAutomaticReadinessBudgetCancelsProbeWithoutStoppingPublication(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const budget = 250 * time.Millisecond

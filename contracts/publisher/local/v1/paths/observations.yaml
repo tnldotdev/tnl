@@ -13,7 +13,7 @@ paths:
   /v1/events:
     get:
       operationId: events
-      description: Owner only. Exclusively resume the native project journal, including direct and named publications. Expired cursors return 410.
+      description: Exclusively resume the native project journal. Owner sees all events; invocation sees only its service and publication, with cursor-only events for unrelated changes. App capabilities cannot read events. Expired cursors return 410. Status routable is the traffic-ready observation; ready is a separate application probe result.
       parameters:
         - name: after
           in: query

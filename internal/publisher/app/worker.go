@@ -24,6 +24,8 @@ type Configuration struct {
 	SharedRoot       string
 	IntegrationScope clientstate.IntegrationScope
 	TargetBinding    *target.TargetBinding
+	// application handles wait for traffic readiness without probing the app.
+	SkipAutomaticReadiness bool
 	// cleanup owns resources allocated before the worker starts, including when
 	// target capture or local tunnel creation fails. it runs after drain/join.
 	Cleanup func() error
@@ -262,7 +264,7 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 			if err := observe(event.PublishRunNumber, true); err != nil {
 				return err
 			}
-			if w.AutomaticReadiness && event.PublishRunNumber > lastReadinessRun {
+			if w.AutomaticReadiness && !configuration.SkipAutomaticReadiness && event.PublishRunNumber > lastReadinessRun {
 				stopReadiness()
 				lastReadinessRun = event.PublishRunNumber
 				stopReadiness = w.startReadiness(ctx, service, event.PublishRunNumber)

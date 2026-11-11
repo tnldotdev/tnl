@@ -21,6 +21,39 @@ import (
 	externalRef0 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
+// Defines values for ApplicationPublicationAccessMode.
+const (
+	ApplicationPublicationAccessModeAnonymous  ApplicationPublicationAccessMode = "anonymous"
+	ApplicationPublicationAccessModeRestricted ApplicationPublicationAccessMode = "restricted"
+)
+
+// Valid indicates whether the value is a known member of the ApplicationPublicationAccessMode enum.
+func (e ApplicationPublicationAccessMode) Valid() bool {
+	switch e {
+	case ApplicationPublicationAccessModeAnonymous:
+		return true
+	case ApplicationPublicationAccessModeRestricted:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ApplicationPublicationVersion.
+const (
+	ApplicationPublicationVersionN1 ApplicationPublicationVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the ApplicationPublicationVersion enum.
+func (e ApplicationPublicationVersion) Valid() bool {
+	switch e {
+	case ApplicationPublicationVersionN1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AssignmentVersion.
 const (
 	AssignmentVersionN1 AssignmentVersion = 1
@@ -92,16 +125,16 @@ func (e EndpointVersion) Valid() bool {
 
 // Defines values for InvocationAccessMode.
 const (
-	Anonymous  InvocationAccessMode = "anonymous"
-	Restricted InvocationAccessMode = "restricted"
+	InvocationAccessModeAnonymous  InvocationAccessMode = "anonymous"
+	InvocationAccessModeRestricted InvocationAccessMode = "restricted"
 )
 
 // Valid indicates whether the value is a known member of the InvocationAccessMode enum.
 func (e InvocationAccessMode) Valid() bool {
 	switch e {
-	case Anonymous:
+	case InvocationAccessModeAnonymous:
 		return true
-	case Restricted:
+	case InvocationAccessModeRestricted:
 		return true
 	default:
 		return false
@@ -245,6 +278,41 @@ func (e SnapshotSchemaVersion) Valid() bool {
 		return false
 	}
 }
+
+// AcceptedPublication defines model for AcceptedPublication.
+type AcceptedPublication struct {
+	Hostname     string       `json:"hostname"`
+	PublicUrl    string       `json:"public_url"`
+	PublicUrlId  string       `json:"public_url_id"`
+	Registration Registration `json:"registration"`
+}
+
+// ApplicationPublication Exactly one of resource_id and allocate is required. The bound target is independent of resource selection. Auth is an explicit private IPC handoff and must never be persisted in observations or logs.
+type ApplicationPublication struct {
+	AccessMode *ApplicationPublicationAccessMode `json:"access_mode,omitempty"`
+	Allocate   *struct {
+		Namespace string `json:"namespace"`
+	} `json:"allocate,omitempty"`
+
+	// Auth Identity-source proof interpreted only by the application publication authority. No environment, saved login, or publisher-file fallback is permitted.
+	Auth               json.RawMessage                          `json:"auth"`
+	InvocationId       string                                   `json:"invocation_id"`
+	Ip                 *[]string                                `json:"ip,omitempty"`
+	Limits             *externalRef0.PublisherApplicationLimits `json:"limits,omitempty"`
+	Owner              string                                   `json:"owner"`
+	Pid                int                                      `json:"pid"`
+	RequirePostQuantum *bool                                    `json:"require_post_quantum,omitempty"`
+	ResourceId         *string                                  `json:"resource_id,omitempty"`
+	ServerUrl          string                                   `json:"server_url"`
+	Target             string                                   `json:"target"`
+	Version            ApplicationPublicationVersion            `json:"version"`
+}
+
+// ApplicationPublicationAccessMode defines model for ApplicationPublication.AccessMode.
+type ApplicationPublicationAccessMode string
+
+// ApplicationPublicationVersion defines model for ApplicationPublication.Version.
+type ApplicationPublicationVersion int
 
 // Assignment defines model for Assignment.
 type Assignment struct {
@@ -470,6 +538,9 @@ type AcquireLeaseJSONRequestBody = Lease
 // PrepareJSONRequestBody defines body for Prepare for application/json ContentType.
 type PrepareJSONRequestBody = Prepare
 
+// PublishApplicationJSONRequestBody defines body for PublishApplication for application/json ContentType.
+type PublishApplicationJSONRequestBody = ApplicationPublication
+
 // RegisterJSONRequestBody defines body for Register for application/json ContentType.
 type RegisterJSONRequestBody = Registration
 
@@ -577,6 +648,11 @@ type ClientInterface interface {
 	// Owner only. Issue an app capability for one service or an invocation capability for one invocation ID.
 	IssueCapability(ctx context.Context, body IssueCapabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReleaseInvocationCapability performs a DELETE /v1/capability (the `ReleaseInvocationCapability` operationId) request.
+	//
+	// Release an invocation capability after unregister has drained and joined its publication. Does not stop another capability or registration. A live or incompletely cleaned registration prevents release.
+	ReleaseInvocationCapability(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CheckWithBody performs a POST /v1/check (the `Check` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -591,7 +667,7 @@ type ClientInterface interface {
 
 	// Events performs a GET /v1/events (the `Events` operationId) request.
 	//
-	// Owner only. Exclusively resume the native project journal, including direct and named publications. Expired cursors return 410.
+	// Exclusively resume the native project journal. Owner sees all events; invocation sees only its service and publication, with cursor-only events for unrelated changes. App capabilities cannot read events. Expired cursors return 410. Status routable is the traffic-ready observation; ready is a separate application probe result.
 	Events(ctx context.Context, params *EventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Health performs a GET /v1/health (the `Health` operationId) request.
@@ -620,6 +696,18 @@ type ClientInterface interface {
 	//
 	// App capability only; service must equal the capability service. Idempotent for the live owner and PID.
 	Prepare(ctx context.Context, body PrepareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PublishApplicationWithBody performs a POST /v1/publications (the `PublishApplication` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Invocation capability only. Select an exact saved HTTP public URL or allocate a temporary public URL in an exact authorized namespace, then accept its bound target registration. Does not wait for a certificate, relay, or application probe. Repeating the same public request facts and invocation refreshes auth for the same identity and exact grant and renews the same registration without allocating again. Unregister uses the returned registration; status and events use the same scoped capability. An allocation uses restricted access unless anonymous access is explicitly requested and authorized.
+	PublishApplicationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PublishApplication performs a POST /v1/publications (the `PublishApplication` operationId) request.
+	// Takes a body of the `application/json` content type.
+	//
+	// Invocation capability only. Select an exact saved HTTP public URL or allocate a temporary public URL in an exact authorized namespace, then accept its bound target registration. Does not wait for a certificate, relay, or application probe. Repeating the same public request facts and invocation refreshes auth for the same identity and exact grant and renews the same registration without allocating again. Unregister uses the returned registration; status and events use the same scoped capability. An allocation uses restricted access unless anonymous access is explicitly requested and authorized.
+	PublishApplication(ctx context.Context, body PublishApplicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegisterWithBody performs a POST /v1/register (the `Register` operationId) request,
 	// with any type of body and a specified content type.
@@ -727,6 +815,21 @@ func (c *Client) IssueCapability(ctx context.Context, body IssueCapabilityJSONRe
 	return c.Client.Do(req)
 }
 
+// ReleaseInvocationCapability performs a DELETE /v1/capability (the `ReleaseInvocationCapability` operationId) request.
+//
+// Release an invocation capability after unregister has drained and joined its publication. Does not stop another capability or registration. A live or incompletely cleaned registration prevents release.
+func (c *Client) ReleaseInvocationCapability(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReleaseInvocationCapabilityRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CheckWithBody performs a POST /v1/check (the `Check` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -761,7 +864,7 @@ func (c *Client) Check(ctx context.Context, body CheckJSONRequestBody, reqEditor
 
 // Events performs a GET /v1/events (the `Events` operationId) request.
 //
-// Owner only. Exclusively resume the native project journal, including direct and named publications. Expired cursors return 410.
+// Exclusively resume the native project journal. Owner sees all events; invocation sees only its service and publication, with cursor-only events for unrelated changes. App capabilities cannot read events. Expired cursors return 410. Status routable is the traffic-ready observation; ready is a separate application probe result.
 func (c *Client) Events(ctx context.Context, params *EventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEventsRequest(c.Server, params)
 	if err != nil {
@@ -841,6 +944,38 @@ func (c *Client) PrepareWithBody(ctx context.Context, contentType string, body i
 // App capability only; service must equal the capability service. Idempotent for the live owner and PID.
 func (c *Client) Prepare(ctx context.Context, body PrepareJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPrepareRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PublishApplicationWithBody performs a POST /v1/publications (the `PublishApplication` operationId) request,
+// with any type of body and a specified content type.
+//
+// Invocation capability only. Select an exact saved HTTP public URL or allocate a temporary public URL in an exact authorized namespace, then accept its bound target registration. Does not wait for a certificate, relay, or application probe. Repeating the same public request facts and invocation refreshes auth for the same identity and exact grant and renews the same registration without allocating again. Unregister uses the returned registration; status and events use the same scoped capability. An allocation uses restricted access unless anonymous access is explicitly requested and authorized.
+func (c *Client) PublishApplicationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPublishApplicationRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PublishApplication performs a POST /v1/publications (the `PublishApplication` operationId) request.
+// Takes a body of the `application/json` content type.
+//
+// Invocation capability only. Select an exact saved HTTP public URL or allocate a temporary public URL in an exact authorized namespace, then accept its bound target registration. Does not wait for a certificate, relay, or application probe. Repeating the same public request facts and invocation refreshes auth for the same identity and exact grant and renews the same registration without allocating again. Unregister uses the returned registration; status and events use the same scoped capability. An allocation uses restricted access unless anonymous access is explicitly requested and authorized.
+func (c *Client) PublishApplication(ctx context.Context, body PublishApplicationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPublishApplicationRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1038,6 +1173,33 @@ func NewIssueCapabilityRequestWithBody(server string, contentType string, body i
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReleaseInvocationCapabilityRequest constructs an http.Request for the ReleaseInvocationCapability method
+func NewReleaseInvocationCapabilityRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/capability")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -1247,6 +1409,46 @@ func NewPrepareRequestWithBody(server string, contentType string, body io.Reader
 	}
 
 	operationPath := fmt.Sprintf("/v1/prepare")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPublishApplicationRequest calls the generic PublishApplication builder with application/json body
+func NewPublishApplicationRequest(server string, body PublishApplicationJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPublishApplicationRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPublishApplicationRequestWithBody constructs an http.Request for the PublishApplication method, with any body, and a specified content type
+func NewPublishApplicationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publications")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1485,6 +1687,13 @@ type ClientWithResponsesInterface interface {
 	// Owner only. Issue an app capability for one service or an invocation capability for one invocation ID.
 	IssueCapabilityWithResponse(ctx context.Context, body IssueCapabilityJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueCapabilityResponse, error)
 
+	// ReleaseInvocationCapabilityWithResponse performs a DELETE /v1/capability (the `ReleaseInvocationCapability` operationId) request.
+	//
+	// Release an invocation capability after unregister has drained and joined its publication. Does not stop another capability or registration. A live or incompletely cleaned registration prevents release.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ReleaseInvocationCapabilityWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReleaseInvocationCapabilityResponse, error)
+
 	// CheckWithBodyWithResponse performs a POST /v1/check (the `Check` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -1501,7 +1710,7 @@ type ClientWithResponsesInterface interface {
 
 	// EventsWithResponse performs a GET /v1/events (the `Events` operationId) request.
 	//
-	// Owner only. Exclusively resume the native project journal, including direct and named publications. Expired cursors return 410.
+	// Exclusively resume the native project journal. Owner sees all events; invocation sees only its service and publication, with cursor-only events for unrelated changes. App capabilities cannot read events. Expired cursors return 410. Status routable is the traffic-ready observation; ready is a separate application probe result.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	EventsWithResponse(ctx context.Context, params *EventsParams, reqEditors ...RequestEditorFn) (*EventsResponse, error)
@@ -1538,6 +1747,20 @@ type ClientWithResponsesInterface interface {
 	//
 	// App capability only; service must equal the capability service. Idempotent for the live owner and PID.
 	PrepareWithResponse(ctx context.Context, body PrepareJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareResponse, error)
+
+	// PublishApplicationWithBodyWithResponse performs a POST /v1/publications (the `PublishApplication` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Invocation capability only. Select an exact saved HTTP public URL or allocate a temporary public URL in an exact authorized namespace, then accept its bound target registration. Does not wait for a certificate, relay, or application probe. Repeating the same public request facts and invocation refreshes auth for the same identity and exact grant and renews the same registration without allocating again. Unregister uses the returned registration; status and events use the same scoped capability. An allocation uses restricted access unless anonymous access is explicitly requested and authorized.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	PublishApplicationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PublishApplicationResponse, error)
+
+	// PublishApplicationWithResponse performs a POST /v1/publications (the `PublishApplication` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Invocation capability only. Select an exact saved HTTP public URL or allocate a temporary public URL in an exact authorized namespace, then accept its bound target registration. Does not wait for a certificate, relay, or application probe. Repeating the same public request facts and invocation refreshes auth for the same identity and exact grant and renews the same registration without allocating again. Unregister uses the returned registration; status and events use the same scoped capability. An allocation uses restricted access unless anonymous access is explicitly requested and authorized.
+	PublishApplicationWithResponse(ctx context.Context, body PublishApplicationJSONRequestBody, reqEditors ...RequestEditorFn) (*PublishApplicationResponse, error)
 
 	// RegisterWithBodyWithResponse performs a POST /v1/register (the `Register` operationId) request,
 	// with any type of body and a specified content type.
@@ -1679,6 +1902,47 @@ func (r IssueCapabilityResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r IssueCapabilityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReleaseInvocationCapabilityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r ReleaseInvocationCapabilityResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReleaseInvocationCapabilityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReleaseInvocationCapabilityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReleaseInvocationCapabilityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReleaseInvocationCapabilityResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1918,6 +2182,54 @@ func (r PrepareResponse) ContentType() string {
 	return ""
 }
 
+type PublishApplicationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AcceptedPublication
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PublishApplicationResponse) GetJSON200() *AcceptedPublication {
+	return r.JSON200
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r PublishApplicationResponse) GetJSONDefault() *Problem {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PublishApplicationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PublishApplicationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PublishApplicationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PublishApplicationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type RegisterResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2141,6 +2453,19 @@ func (c *ClientWithResponses) IssueCapabilityWithResponse(ctx context.Context, b
 	return ParseIssueCapabilityResponse(rsp)
 }
 
+// ReleaseInvocationCapabilityWithResponse performs a DELETE /v1/capability (the `ReleaseInvocationCapability` operationId) request.
+//
+// Release an invocation capability after unregister has drained and joined its publication. Does not stop another capability or registration. A live or incompletely cleaned registration prevents release.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ReleaseInvocationCapabilityWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReleaseInvocationCapabilityResponse, error) {
+	rsp, err := c.ReleaseInvocationCapability(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReleaseInvocationCapabilityResponse(rsp)
+}
+
 // CheckWithBodyWithResponse performs a POST /v1/check (the `Check` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -2169,7 +2494,7 @@ func (c *ClientWithResponses) CheckWithResponse(ctx context.Context, body CheckJ
 
 // EventsWithResponse performs a GET /v1/events (the `Events` operationId) request.
 //
-// Owner only. Exclusively resume the native project journal, including direct and named publications. Expired cursors return 410.
+// Exclusively resume the native project journal. Owner sees all events; invocation sees only its service and publication, with cursor-only events for unrelated changes. App capabilities cannot read events. Expired cursors return 410. Status routable is the traffic-ready observation; ready is a separate application probe result.
 //
 // Returns a wrapper object for the known response body format(s).
 func (c *ClientWithResponses) EventsWithResponse(ctx context.Context, params *EventsParams, reqEditors ...RequestEditorFn) (*EventsResponse, error) {
@@ -2241,6 +2566,32 @@ func (c *ClientWithResponses) PrepareWithResponse(ctx context.Context, body Prep
 		return nil, err
 	}
 	return ParsePrepareResponse(rsp)
+}
+
+// PublishApplicationWithBodyWithResponse performs a POST /v1/publications (the `PublishApplication` operationId) request,
+// with any type of body and a specified content type.
+//
+// Invocation capability only. Select an exact saved HTTP public URL or allocate a temporary public URL in an exact authorized namespace, then accept its bound target registration. Does not wait for a certificate, relay, or application probe. Repeating the same public request facts and invocation refreshes auth for the same identity and exact grant and renews the same registration without allocating again. Unregister uses the returned registration; status and events use the same scoped capability. An allocation uses restricted access unless anonymous access is explicitly requested and authorized.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) PublishApplicationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PublishApplicationResponse, error) {
+	rsp, err := c.PublishApplicationWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePublishApplicationResponse(rsp)
+}
+
+// PublishApplicationWithResponse performs a POST /v1/publications (the `PublishApplication` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Invocation capability only. Select an exact saved HTTP public URL or allocate a temporary public URL in an exact authorized namespace, then accept its bound target registration. Does not wait for a certificate, relay, or application probe. Repeating the same public request facts and invocation refreshes auth for the same identity and exact grant and renews the same registration without allocating again. Unregister uses the returned registration; status and events use the same scoped capability. An allocation uses restricted access unless anonymous access is explicitly requested and authorized.
+func (c *ClientWithResponses) PublishApplicationWithResponse(ctx context.Context, body PublishApplicationJSONRequestBody, reqEditors ...RequestEditorFn) (*PublishApplicationResponse, error) {
+	rsp, err := c.PublishApplication(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePublishApplicationResponse(rsp)
 }
 
 // RegisterWithBodyWithResponse performs a POST /v1/register (the `Register` operationId) request,
@@ -2387,6 +2738,35 @@ func ParseIssueCapabilityResponse(rsp *http.Response) (*IssueCapabilityResponse,
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReleaseInvocationCapabilityResponse parses an HTTP response from a ReleaseInvocationCapabilityWithResponse call
+func ParseReleaseInvocationCapabilityResponse(rsp *http.Response) (*ReleaseInvocationCapabilityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReleaseInvocationCapabilityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -2561,6 +2941,39 @@ func ParsePrepareResponse(rsp *http.Response) (*PrepareResponse, error) {
 	return response, nil
 }
 
+// ParsePublishApplicationResponse parses an HTTP response from a PublishApplicationWithResponse call
+func ParsePublishApplicationResponse(rsp *http.Response) (*PublishApplicationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PublishApplicationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AcceptedPublication
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRegisterResponse parses an HTTP response from a RegisterWithResponse call
 func ParseRegisterResponse(rsp *http.Response) (*RegisterResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2690,6 +3103,9 @@ type ServerInterface interface {
 	// (POST /v1/capabilities)
 	IssueCapability(w http.ResponseWriter, r *http.Request)
 
+	// (DELETE /v1/capability)
+	ReleaseInvocationCapability(w http.ResponseWriter, r *http.Request)
+
 	// (POST /v1/check)
 	Check(w http.ResponseWriter, r *http.Request)
 
@@ -2704,6 +3120,9 @@ type ServerInterface interface {
 
 	// (POST /v1/prepare)
 	Prepare(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/publications)
+	PublishApplication(w http.ResponseWriter, r *http.Request)
 
 	// (POST /v1/register)
 	Register(w http.ResponseWriter, r *http.Request)
@@ -2746,6 +3165,20 @@ func (siw *ServerInterfaceWrapper) IssueCapability(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.IssueCapability(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReleaseInvocationCapability operation middleware
+func (siw *ServerInterfaceWrapper) ReleaseInvocationCapability(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReleaseInvocationCapability(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2854,6 +3287,20 @@ func (siw *ServerInterfaceWrapper) Prepare(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.Prepare(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PublishApplication operation middleware
+func (siw *ServerInterfaceWrapper) PublishApplication(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PublishApplication(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3050,6 +3497,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/check", wrapper.Check)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/leases", wrapper.AcquireLease)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/ad-hoc/register", wrapper.RegisterInvocation)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publications", wrapper.PublishApplication)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/capability", wrapper.ReleaseInvocationCapability)
 
 	return m
 }

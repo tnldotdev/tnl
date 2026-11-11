@@ -18,6 +18,8 @@ const EventRetention = clientstate.RuntimeEventRetention
 var ErrCursorExpired = clientstate.ErrRuntimeCursorExpired
 var ErrOwnerConflict = errors.New("another live app owns this service")
 var ErrRegistrationStale = errors.New("app registration is stale")
+var ErrCleanupFailed = errors.New("publication cleanup is incomplete")
+var ErrPublicationFailed = errors.New("publication stopped with a failure")
 
 // Service uses Name as its registration key: a configured service name or an
 // invocation ID. an invocation key is never a configured tunnel service name.

@@ -105,3 +105,32 @@ func TestCapabilitiesReuseSelectorsAtExactLimit(t *testing.T) {
 		t.Fatal("full store did not reuse an independent descriptor", err)
 	}
 }
+
+func TestReleasedInvocationCapabilitiesDoNotAccumulateOrRevokeSiblings(t *testing.T) {
+	c, err := NewCapabilities("http://127.0.0.1:12345")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := "web"
+	sibling, err := c.Issue(CapabilityRequest{Scope: "app", Service: &service})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 520 {
+		id, _ := opaqueid.New(opaqueid.InvocationPrefix)
+		endpoint, err := c.Issue(CapabilityRequest{Scope: "invocation", InvocationId: &id})
+		if err != nil {
+			t.Fatal("closed handle exhausted capabilities", err)
+		}
+		c.Release(endpoint)
+		c.Release(endpoint)
+		if _, found := c.grants[sha256.Sum256([]byte(endpoint.Capability))]; found {
+			t.Fatal("released capability retained")
+		}
+	}
+	c.Release(sibling)
+	c.Release(c.Owner())
+	if len(c.grants) != 2 {
+		t.Fatalf("release changed owner or app grants: %d", len(c.grants))
+	}
+}

@@ -218,6 +218,17 @@ func NewCapabilities(address string) (*Capabilities, error) {
 
 func (c *Capabilities) Owner() Endpoint { return c.owner.endpoint() }
 
+// Release removes only the authenticated invocation grant after its owner has
+// joined cleanup. a long-lived publisher need not retain closed SDK handles.
+func (c *Capabilities) Release(endpoint Endpoint) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := sha256.Sum256([]byte(endpoint.Capability))
+	if grant, found := c.grants[key]; found && grant.scope == "invocation" && grant.invocationID == optional(endpoint.InvocationId) {
+		delete(c.grants, key)
+	}
+}
+
 func (c *Capabilities) Issue(request CapabilityRequest) (Endpoint, error) {
 	secret, err := Random(32)
 	if err != nil {
@@ -335,6 +346,10 @@ func callEndpoint(ctx context.Context, e Endpoint, method, path string, input, o
 		return ErrUnauthorized
 	}
 	if response.StatusCode == 403 {
+		var problem Problem
+		if json.NewDecoder(io.LimitReader(response.Body, MaxBytes)).Decode(&problem) == nil && problem.Code == "runtime.credential_denied" {
+			return &ResponseError{Status: response.StatusCode, Code: problem.Code}
+		}
 		return ErrForbidden
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {

@@ -1,0 +1,38 @@
+schemas:
+  ApplicationPublication:
+    type: object
+    additionalProperties: false
+    required: [version, invocation_id, owner, pid, target, server_url, auth]
+    description: Exactly one of resource_id and allocate is required. The bound target is independent of resource selection. Auth is an explicit private IPC handoff and must never be persisted in observations or logs.
+    properties:
+      version: { type: integer, enum: [1] }
+      invocation_id: { type: string, maxLength: 128 }
+      owner: { type: string, pattern: "^[a-f0-9]{32}$" }
+      pid: { type: integer, minimum: 1 }
+      target: { type: string, maxLength: 4096 }
+      server_url: { type: string, maxLength: 4096 }
+      auth:
+        type: object
+        x-go-type: json.RawMessage
+        description: Identity-source proof interpreted only by the application publication authority. No environment, saved login, or publisher-file fallback is permitted.
+      resource_id: { type: string, maxLength: 128 }
+      allocate:
+        type: object
+        additionalProperties: false
+        required: [namespace]
+        properties:
+          namespace: { type: string, maxLength: 253 }
+      access_mode: { type: string, enum: [restricted, anonymous] }
+      require_post_quantum: { type: boolean }
+      ip: { type: array, maxItems: 32, items: { type: string, maxLength: 64 } }
+      limits:
+        $ref: "../../../../control/public/v1/openapi.yaml#/components/schemas/PublisherApplicationLimits"
+  AcceptedPublication:
+    type: object
+    additionalProperties: false
+    required: [registration, public_url_id, hostname, public_url]
+    properties:
+      registration: { $ref: "../openapi.yaml#/components/schemas/Registration" }
+      public_url_id: { type: string, maxLength: 128 }
+      hostname: { type: string, maxLength: 253 }
+      public_url: { type: string, maxLength: 4096 }

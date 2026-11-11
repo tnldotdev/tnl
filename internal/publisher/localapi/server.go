@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
@@ -30,6 +29,7 @@ type Server struct {
 	RegisterContext     func(context.Context, publisherprotocol.Registration) error
 	Acquire             func(context.Context, publisherprotocol.Lease) (publisherprotocol.Registration, error)
 	Invocation          func(context.Context, publisherprotocol.Invocation) (publisherprotocol.Registration, error)
+	PublishApplication  func(context.Context, publisherprotocol.ApplicationPublication) (publisherprotocol.AcceptedPublication, error)
 	Check               func(context.Context, []string) (publisherapp.Snapshot, error)
 	AppService          func(string) bool
 	ConfigurationDigest func() (string, error)
@@ -193,28 +193,53 @@ func (s *Server) Handler() http.Handler {
 			w.WriteHeader(204)
 		})
 	}
-	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		snapshot := s.Manager.Snapshot()
+	mux.HandleFunc("POST /v1/publications", func(w http.ResponseWriter, r *http.Request) {
 		grant := publisherprotocol.Grant(r)
-		if grant.Scope != "owner" {
-			name := ""
-			if grant.Service != nil {
-				name = *grant.Service
-			} else if grant.InvocationId != nil {
-				name = *grant.InvocationId
-			}
-			snapshot.Services = slices.DeleteFunc(snapshot.Services, func(service publisherapp.Service) bool { return service.Name != name })
-			snapshot.Publications = slices.DeleteFunc(slices.Clone(snapshot.Publications), func(publication clientstate.TunnelInfo) bool {
-				if grant.Scope == "invocation" {
-					return !slices.ContainsFunc(snapshot.Services, func(service publisherapp.Service) bool { return service.TunnelID == publication.ID })
-				}
-				return publication.Service != name
-			})
+		if grant.Scope != "invocation" || grant.InvocationId == nil || s.PublishApplication == nil {
+			Problem(w, publisherprotocol.ErrForbidden)
+			return
 		}
+		var request publisherprotocol.ApplicationPublication
+		if err := publisherprotocol.Decode(w, r, &request); err != nil {
+			Problem(w, err)
+			return
+		}
+		defer clear(request.Auth)
+		if request.InvocationId != *grant.InvocationId {
+			Problem(w, publisherprotocol.ErrForbidden)
+			return
+		}
+		accepted, err := s.PublishApplication(r.Context(), request)
+		if err != nil {
+			Problem(w, err)
+			return
+		}
+		if err := publisherprotocol.Write(w, 200, accepted); (err != nil || r.Context().Err() != nil) && !accepted.Reused {
+			_ = s.Manager.UnregisterTarget(accepted.Registration.RegistrationID, accepted.Registration.Owner, accepted.Registration.Target)
+		}
+	})
+	mux.HandleFunc("DELETE /v1/capability", func(w http.ResponseWriter, r *http.Request) {
+		grant := publisherprotocol.Grant(r)
+		if grant.Scope != "invocation" || grant.InvocationId == nil {
+			Problem(w, publisherprotocol.ErrForbidden)
+			return
+		}
+		for _, service := range s.Manager.Snapshot().Services {
+			if service.Name == *grant.InvocationId && service.RegistrationID != "" {
+				Problem(w, publisherapp.ErrOwnerConflict)
+				return
+			}
+		}
+		s.Capabilities.Release(grant)
+		w.WriteHeader(204)
+	})
+	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
+		snapshot := scopedSnapshot(s.Manager.Snapshot(), publisherprotocol.Grant(r))
 		publisherprotocol.Write(w, 200, snapshot)
 	})
 	mux.HandleFunc("GET /v1/events", func(w http.ResponseWriter, r *http.Request) {
-		if publisherprotocol.Grant(r).Scope != "owner" {
+		grant := publisherprotocol.Grant(r)
+		if grant.Scope != "owner" && grant.Scope != "invocation" {
 			Problem(w, publisherprotocol.ErrForbidden)
 			return
 		}
@@ -227,6 +252,10 @@ func (s *Server) Handler() http.Handler {
 		if err != nil {
 			Problem(w, err)
 			return
+		}
+		if grant.Scope == "invocation" {
+			current := scopedSnapshot(s.Manager.Snapshot(), grant)
+			events = scopedEvents(events, grant, current)
 		}
 		publisherprotocol.Write(w, 200, events)
 	})
@@ -262,6 +291,16 @@ func Problem(w http.ResponseWriter, err error) {
 	status, code, message := 400, "runtime.request_invalid", "local publisher request is invalid"
 	reason, _ := failure.ReasonOf(err)
 	switch {
+	case errors.Is(err, publisherapp.ErrCleanupFailed):
+		status, code, message = 503, "runtime.cleanup_failed", "retry unregister to finish publication cleanup"
+	case errors.Is(err, publisherapp.ErrPublicationFailed):
+		status, code, message = 503, "runtime.publication_failed", "publication stopped with a failure; read scoped status or events"
+	case errors.Is(err, publisherprotocol.ErrApplicationAuthInvalid):
+		status, code, message = 400, "runtime.credential_invalid", "check the application identity source"
+	case errors.Is(err, publisherprotocol.ErrApplicationDenied):
+		status, code, message = 403, "runtime.credential_denied", "select a current grant for this exact resource or namespace"
+	case errors.Is(err, publisherprotocol.ErrApplicationUnavailable):
+		status, code, message = 503, "runtime.credential_unavailable", "application publication authority is temporarily unavailable"
 	case reason == failure.AppConfigurationConflict:
 		definition, _ := failure.DefinitionFor(failure.AppConfigurationConflict)
 		status, code, message = 409, string(failure.AppConfigurationConflict), definition.Message

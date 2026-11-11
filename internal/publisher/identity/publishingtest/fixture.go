@@ -308,6 +308,10 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		publicURL.Ephemeral, publicURL.ServiceProtocol = true, controlv1.Http
+		publicURL.AccessMode = controlv1.Restricted
+		if b.AccessMode != nil {
+			publicURL.AccessMode = *b.AccessMode
+		}
 		f.mu.Lock()
 		f.routes[publicURL.Id] = publicURL
 		f.mu.Unlock()

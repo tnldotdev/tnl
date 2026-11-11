@@ -29,6 +29,8 @@ type registration struct {
 	expires time.Time
 	cancel  context.CancelFunc
 	done    chan struct{}
+	cleanup func() error
+	result  error
 }
 
 type Manager struct {
@@ -45,6 +47,7 @@ type Manager struct {
 	closed        bool
 	closeOnce     sync.Once
 	writeErr      error
+	closeErr      error
 }
 
 func New(ctx context.Context, project string, database *clientstate.Database, services []Service, run Run) (*Manager, error) {
@@ -361,6 +364,12 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 			}
 			return m.publishedLocked(id, run, routable)
 		})
+		// the registration owns this obligation, not Workers.Run. keep its
+		// retryable result separate from the publication's terminal result.
+		var cleanupErr error
+		if reg.cleanup != nil {
+			cleanupErr = reg.cleanup()
+		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		current := m.serviceLocked(copy.Name)
@@ -369,14 +378,21 @@ func (m *Manager) RegisterContext(scheduling context.Context, id, owner, target,
 		}
 		current.endPublication()
 		reg.cancel = nil
-		if err != nil && ctx.Err() == nil {
-			current.Failure = "runtime.publication_failed"
-			if reason, _, ok := failure.Describe(err); ok {
-				current.Failure = string(reason)
-			}
+		// a canceled worker may race its own fenced observation. a pure stale
+		// registration is expected then, but joined cleanup failures are not.
+		if ctx.Err() != nil && failure.Only(err, ErrRegistrationStale) {
+			err = ctx.Err()
+		}
+		reg.result = err
+		if reason := publicationFailure(err); reason != "" {
+			current.Failure = reason
 			m.emitLocked("service.failed", current)
 		} else if ctx.Err() == nil {
 			m.emitLocked("service.stopped", current)
+		}
+		if cleanupErr != nil {
+			current.Failure = "runtime.cleanup_failed"
+			m.emitLocked("service.failed", current)
 		}
 	}()
 	return nil
@@ -543,6 +559,16 @@ func (m *Manager) AddService(service Service) error {
 		m.emitLocked("service.configured", nil)
 		return m.writeErr
 	}
+	// keep only a bounded tail of inactive invocation observations. configured
+	// services and live registrations are never evicted by SDK churn.
+	if len(m.snapshot.Services) >= 256 {
+		m.snapshot.Services = slices.DeleteFunc(m.snapshot.Services, func(previous Service) bool {
+			return opaqueid.Valid(previous.Name, opaqueid.InvocationPrefix) && m.registrations[previous.Name] == nil
+		})
+	}
+	if len(m.snapshot.Services) >= 256 {
+		return errors.New("local publisher service capacity reached")
+	}
 	m.snapshot.Services = append(m.snapshot.Services, service)
 	slices.SortFunc(m.snapshot.Services, func(a, b Service) int { return strings.Compare(a.Name, b.Name) })
 	m.emitLocked("service.configured", nil)
@@ -570,7 +596,7 @@ func (m *Manager) UnregisterTarget(id, owner, target string) error {
 	m.op.Lock()
 	defer m.op.Unlock()
 	m.mu.Lock()
-	service, reg := m.findLocked(id, owner)
+	service, reg := m.registrationLocked(id, owner)
 	if reg == nil || service.Registered && service.Target != target {
 		m.mu.Unlock()
 		return ErrRegistrationStale
@@ -579,19 +605,37 @@ func (m *Manager) UnregisterTarget(id, owner, target string) error {
 	return m.unregister(id, owner)
 }
 
-func (m *Manager) unregister(id, owner string) error {
+// SetCleanup transfers a retryable pre-registration obligation to this exact
+// registration. worker exit and explicit close may both call it; the obligation
+// itself must serialize attempts and cache only successful cleanup.
+func (m *Manager) SetCleanup(id, owner string, cleanup func() error) error {
+	m.op.Lock()
+	defer m.op.Unlock()
 	m.mu.Lock()
-	var service *Service
-	var reg *registration
+	defer m.mu.Unlock()
+	_, reg := m.findLocked(id, owner)
+	if reg == nil || reg.done != nil || reg.cleanup != nil {
+		return ErrRegistrationStale
+	}
+	reg.cleanup = cleanup
+	return nil
+}
+
+func (m *Manager) registrationLocked(id, owner string) (*Service, *registration) {
 	for index := range m.snapshot.Services {
-		candidate := &m.snapshot.Services[index]
-		if candidate.RegistrationID == id {
-			if current := m.registrations[candidate.Name]; current != nil && current.owner == owner {
-				service, reg = candidate, current
+		service := &m.snapshot.Services[index]
+		if service.RegistrationID == id {
+			if reg := m.registrations[service.Name]; reg != nil && reg.owner == owner {
+				return service, reg
 			}
-			break
 		}
 	}
+	return nil, nil
+}
+
+func (m *Manager) unregister(id, owner string) error {
+	m.mu.Lock()
+	service, reg := m.registrationLocked(id, owner)
 	if reg == nil {
 		m.mu.Unlock()
 		return ErrRegistrationStale
@@ -607,15 +651,40 @@ func (m *Manager) unregister(id, owner string) error {
 	if done != nil {
 		<-done
 	}
+	if reg.cleanup != nil {
+		if err := reg.cleanup(); err != nil {
+			m.mu.Lock()
+			service.Failure = "runtime.cleanup_failed"
+			m.emitLocked("service.failed", service)
+			writeErr := m.writeErr
+			m.mu.Unlock()
+			return errors.Join(ErrCleanupFailed, reg.result, err, writeErr)
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.registrations, service.Name)
+	service.Failure = publicationFailure(reg.result)
 	service.releaseRegistration()
 	if len(m.registrations) == 0 {
 		m.idleSince = time.Now()
 	}
 	m.emitLocked("service.stopped", service)
-	return m.writeErr
+	var operationErr error
+	if reg.result != nil && !failure.Only(reg.result, context.Canceled) {
+		operationErr = errors.Join(ErrPublicationFailed, reg.result)
+	}
+	return errors.Join(operationErr, m.writeErr)
+}
+
+func publicationFailure(err error) string {
+	if err == nil || failure.Only(err, context.Canceled) {
+		return ""
+	}
+	if reason, _, ok := failure.Describe(err); ok {
+		return string(reason)
+	}
+	return "runtime.publication_failed"
 }
 
 // TargetChanged invalidates only the current registration's current run. worker
@@ -656,6 +725,14 @@ func (m *Manager) Close() {
 	m.closeOnce.Do(m.close)
 }
 
+// CloseError joins owned workers and retains operation and cleanup failures.
+func (m *Manager) CloseError() error {
+	m.Close()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.closeErr
+}
+
 func (m *Manager) close() {
 	m.mu.Lock()
 	if m.closed {
@@ -670,9 +747,14 @@ func (m *Manager) close() {
 	}
 	m.mu.Unlock()
 	for _, entry := range entries {
-		_ = m.Unregister(entry.id, entry.owner)
+		if err := m.Unregister(entry.id, entry.owner); err != nil {
+			m.mu.Lock()
+			m.closeErr = errors.Join(m.closeErr, err)
+			m.mu.Unlock()
+		}
 	}
 	m.mu.Lock()
 	m.emitLocked("runtime.stopped", nil)
+	m.closeErr = errors.Join(m.closeErr, m.writeErr)
 	m.mu.Unlock()
 }

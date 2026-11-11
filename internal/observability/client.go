@@ -181,7 +181,7 @@ func localOperation(path string) operationName {
 	switch path {
 	case "/v1/health":
 		return "native.app.health"
-	case "/v1/capabilities":
+	case "/v1/capabilities", "/v1/capability":
 		return "native.app.capability"
 	case "/v1/prepare":
 		return "native.app.prepare"
@@ -189,7 +189,7 @@ func localOperation(path string) operationName {
 		return "native.app.register"
 	case "/v1/leases":
 		return "native.app.acquire"
-	case "/v1/ad-hoc/register":
+	case "/v1/ad-hoc/register", "/v1/publications":
 		return "native.app.open"
 	case "/v1/renew":
 		return "native.app.renew"

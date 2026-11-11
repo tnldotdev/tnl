@@ -3,6 +3,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -30,11 +31,12 @@ import (
 )
 
 type Options struct {
-	Directory         string
-	StateDir          string
-	Snapshot          io.Reader
-	TargetResolver    target.TargetResolver
-	AttachPublication func(context.Context, publisherapp.Service, *publisher.Config) error
+	Directory            string
+	StateDir             string
+	Snapshot             io.Reader
+	TargetResolver       target.TargetResolver
+	AttachPublication    func(context.Context, publisherapp.Service, *publisher.Config) error
+	ApplicationAuthority invocation.ApplicationAuthority
 }
 
 func ResolveProject(ctx context.Context, options Options) (clientproject.Project, string, error) {
@@ -200,23 +202,27 @@ func Endpoint(ctx context.Context, options Options, service, invocationID string
 }
 
 type appPreparation struct {
-	configuration publisherapp.Configuration
-	project       clientproject.Project
-	framework     publisherprotocol.Framework
-	assignment    publisherprotocol.Assignment
-	invocation    *publisherprotocol.Invocation
+	configuration          publisherapp.Configuration
+	project                clientproject.Project
+	framework              publisherprotocol.Framework
+	assignment             publisherprotocol.Assignment
+	invocation             *publisherprotocol.Invocation
+	applicationFingerprint [32]byte
+	application            *publisherprotocol.AcceptedPublication
+	refreshApplicationAuth func(context.Context, json.RawMessage) error
 }
 
 type appRuntime struct {
-	manager        *publisherapp.Manager
-	workers        *publisherapp.Workers
-	capabilities   *publisherprotocol.Capabilities
-	project        clientproject.Project
-	state          *clientstate.Database
-	TargetResolver target.TargetResolver
-	mu             sync.Mutex
-	preparing      map[string]*appPreparationGate
-	prepared       map[string]appPreparation
+	manager              *publisherapp.Manager
+	workers              *publisherapp.Workers
+	capabilities         *publisherprotocol.Capabilities
+	project              clientproject.Project
+	state                *clientstate.Database
+	TargetResolver       target.TargetResolver
+	ApplicationAuthority invocation.ApplicationAuthority
+	mu                   sync.Mutex
+	preparing            map[string]*appPreparationGate
+	prepared             map[string]appPreparation
 	// visitor and admission integration is attached before worker fencing wraps
 	// callbacks. this applies equally to SDK, named CLI and invocation workers.
 	AttachPublication func(context.Context, publisherapp.Service, *publisher.Config) error
@@ -291,7 +297,7 @@ func Serve(ctx context.Context, options Options) (result error) {
 		return err
 	}
 	defer state.Close()
-	a := &appRuntime{project: project, state: state, capabilities: capabilities, prepared: map[string]appPreparation{}, TargetResolver: options.TargetResolver, AttachPublication: options.AttachPublication}
+	a := &appRuntime{project: project, state: state, capabilities: capabilities, prepared: map[string]appPreparation{}, TargetResolver: options.TargetResolver, AttachPublication: options.AttachPublication, ApplicationAuthority: options.ApplicationAuthority}
 	a.workers = &publisherapp.Workers{Database: state, Configure: a.workerConfiguration, AutomaticReadiness: true}
 	a.manager, err = publisherapp.New(observability.Independent(ctx), project.Root, state, publisherapp.ConfiguredServices(project), a.workers.Run)
 	if err != nil {
@@ -301,8 +307,9 @@ func Serve(ctx context.Context, options Options) (result error) {
 	a.manager.Alive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
 	defer func() {
 		_, finish := observability.ClientOperation(observability.Independent(context.WithoutCancel(ctx)), "native.app.shutdown")
-		a.manager.Close()
-		finish(nil)
+		closeErr := a.manager.CloseError()
+		result = errors.Join(result, closeErr)
+		finish(closeErr)
 	}()
 	// unregister joins the publication after draining its visitor streams.
 	requestBase := observability.Independent(ctx)
@@ -348,7 +355,7 @@ func Serve(ctx context.Context, options Options) (result error) {
 }
 
 func (a *appRuntime) handler() http.Handler {
-	return (&localapi.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, RegisterContext: a.register, Acquire: a.acquire, Invocation: a.invocation, Check: a.workers.Check, ConfigurationDigest: func() (string, error) {
+	return (&localapi.Server{Capabilities: a.capabilities, Manager: a.manager, Database: a.state, Project: a.project.Root, Prepare: a.prepare, RegisterContext: a.register, Acquire: a.acquire, Invocation: a.invocation, PublishApplication: a.publishApplication, Check: a.workers.Check, ConfigurationDigest: func() (string, error) {
 		_, digest, err := a.project.Snapshot()
 		return digest, err
 	}, AppService: func(name string) bool {
