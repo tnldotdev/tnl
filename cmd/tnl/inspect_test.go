@@ -55,9 +55,12 @@ func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 	if err := run(t.Context(), []string{"inspect", "list", "--output=json"}, &stdout, &stderr, factory); err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 2 || events[0].Command != telemetryInspect || events[0].Action != "list" ||
-		events[1].Event != telemetryCommandCompleted || events[1].Action != "list" {
+	if len(events) != 1 {
 		t.Fatalf("list telemetry = %+v", events)
+	}
+	listed, _ := events[0].AsCommandEvent()
+	if listed.Payload.Command != "inspect" || listed.Payload.Action == nil || *listed.Payload.Action != "list" || listed.Payload.Outcome != "succeeded" {
+		t.Fatalf("list telemetry = %+v", listed)
 	}
 	var list struct {
 		SchemaVersion int                `json:"schema_version"`
@@ -71,8 +74,12 @@ func TestInspectCommandsScopeTypedJSONToCurrentProject(t *testing.T) {
 	if err := run(t.Context(), []string{"inspect", "show", "1", "--output=json"}, &stdout, &stderr, factory); err == nil {
 		t.Fatal("unknown inspection was found")
 	}
-	if len(events) != 2 || events[0].Action != "show" || events[1].Event != telemetryCommandFailed {
+	if len(events) != 1 {
 		t.Fatalf("show telemetry = %+v", events)
+	}
+	shown, _ := events[0].AsCommandEvent()
+	if shown.Payload.Action == nil || *shown.Payload.Action != "show" || shown.Payload.Outcome != "failed" {
+		t.Fatalf("show telemetry = %+v", shown)
 	}
 	if err := run(t.Context(), []string{"requests", "list"}, &stdout, &stderr, factory); err == nil {
 		t.Fatal("retired requests command is still accepted")

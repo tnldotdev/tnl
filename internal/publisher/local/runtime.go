@@ -18,6 +18,7 @@ import (
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -200,11 +201,12 @@ func Endpoint(ctx context.Context, options Options, service, invocationID string
 }
 
 type appPreparation struct {
-	configuration publisherapp.Configuration
-	project       clientproject.Project
-	framework     publisherprotocol.Framework
-	assignment    publisherprotocol.Assignment
-	invocation    *publisherprotocol.Invocation
+	telemetryDisabled bool
+	configuration     publisherapp.Configuration
+	project           clientproject.Project
+	framework         publisherprotocol.Framework
+	assignment        publisherprotocol.Assignment
+	invocation        *publisherprotocol.Invocation
 }
 
 type appRuntime struct {
@@ -398,7 +400,11 @@ func (a *appRuntime) prepare(ctx context.Context, request publisherprotocol.Prep
 	}
 	assignment := publisherprotocol.Assignment{Version: 1, RegistrationID: id, Service: name, Hostname: selected.Hostname, PublicURL: selected.URL, Project: metadata.Public(true)}
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{project: a.project, framework: request.Framework, assignment: assignment}
+	if previous, found := a.prepared[id]; found && previous.telemetryDisabled != request.TelemetryDisabled {
+		a.mu.Unlock()
+		return publisherprotocol.Assignment{}, publisherapp.ErrOwnerConflict
+	}
+	a.prepared[id] = appPreparation{project: a.project, framework: request.Framework, assignment: assignment, telemetryDisabled: request.TelemetryDisabled}
 	a.mu.Unlock()
 	return assignment, nil
 }
@@ -436,7 +442,11 @@ func (a *appRuntime) acquire(ctx context.Context, request publisherprotocol.Leas
 		return publisherprotocol.Registration{}, failure.Wrap("reserve named service", failure.ClientStateUnavailable, err)
 	}
 	a.mu.Lock()
-	a.prepared[id] = appPreparation{project: a.project}
+	if previous, found := a.prepared[id]; found && previous.telemetryDisabled != request.TelemetryDisabled {
+		a.mu.Unlock()
+		return publisherprotocol.Registration{}, publisherapp.ErrOwnerConflict
+	}
+	a.prepared[id] = appPreparation{project: a.project, telemetryDisabled: request.TelemetryDisabled}
 	a.mu.Unlock()
 	registration := publisherprotocol.Registration{Version: 1, RegistrationID: id, Owner: request.Owner, Target: string(*resolved.Target)}
 	if err := a.manager.RegisterContext(ctx, id, request.Owner, registration.Target, ""); err != nil {
@@ -446,13 +456,15 @@ func (a *appRuntime) acquire(ctx context.Context, request publisherprotocol.Leas
 	return registration, nil
 }
 
-func (a *appRuntime) workerConfiguration(ctx context.Context, service publisherapp.Service) (publisherapp.Configuration, error) {
+func (a *appRuntime) workerConfiguration(ctx context.Context, service publisherapp.Service) (configuration publisherapp.Configuration, result error) {
 	a.mu.Lock()
 	preparation, found := a.prepared[service.RegistrationID]
 	a.mu.Unlock()
 	if !found {
 		return publisherapp.Configuration{}, publisherapp.ErrRegistrationStale
 	}
+	ctx = clienttelemetry.WithDisabled(ctx, preparation.telemetryDisabled)
+	defer func() { configuration.TelemetryDisabled = preparation.telemetryDisabled }()
 	if definition, configured := preparation.project.Config.Services[service.Name]; configured && !config.IsPublicService(definition) {
 		return a.operations(preparation.project).ServiceConfiguration(ctx, service)
 	}

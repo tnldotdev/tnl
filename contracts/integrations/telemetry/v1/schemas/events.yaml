@@ -1,0 +1,203 @@
+schemas:
+  EventID: { type: string, pattern: "^tev_[A-Za-z0-9]{22}$" }
+  Client:
+    type: object
+    additionalProperties: false
+    required: [version, os, arch, ci]
+    properties:
+      version: { type: string, minLength: 1, maxLength: 64 }
+      os: { type: string, enum: [darwin, linux, windows, other] }
+      arch: { type: string, enum: [amd64, arm64, other] }
+      ci: { type: boolean }
+  Batch:
+    type: object
+    additionalProperties: false
+    required: [schema_version, installation_id, client, events]
+    properties:
+      schema_version: { type: integer, enum: [1] }
+      installation_id: { type: string, pattern: "^inst_[A-Za-z0-9]{22}$" }
+      client: { $ref: "#/schemas/Client" }
+      events:
+        type: array
+        minItems: 1
+        maxItems: 25
+        items: { $ref: "#/schemas/Event" }
+  Event:
+    oneOf:
+      - { $ref: "#/schemas/CommandEvent" }
+      - { $ref: "#/schemas/ReadyEvent" }
+      - { $ref: "#/schemas/DemoEvent" }
+      - { $ref: "#/schemas/IntegrationEvent" }
+      - { $ref: "#/schemas/TransportEvent" }
+    discriminator:
+      propertyName: name
+      mapping:
+        command.outcome: "#/components/schemas/CommandEvent"
+        tunnel.ready: "#/components/schemas/ReadyEvent"
+        demo.first_ping: "#/components/schemas/DemoEvent"
+        integration.outcome: "#/components/schemas/IntegrationEvent"
+        transport.report: "#/components/schemas/TransportEvent"
+  CommandEvent:
+    type: object
+    additionalProperties: false
+    required: [event_id, event_version, name, payload]
+    properties:
+      event_id: { $ref: "#/schemas/EventID" }
+      event_version: { type: integer, enum: [1] }
+      name: { type: string, enum: [command.outcome] }
+      payload: { $ref: "#/schemas/CommandOutcome" }
+  ReadyEvent:
+    type: object
+    additionalProperties: false
+    required: [event_id, event_version, name, payload]
+    properties:
+      event_id: { $ref: "#/schemas/EventID" }
+      event_version: { type: integer, enum: [1] }
+      name: { type: string, enum: [tunnel.ready] }
+      payload: { $ref: "#/schemas/PublicationReady" }
+  DemoEvent:
+    type: object
+    additionalProperties: false
+    required: [event_id, event_version, name, payload]
+    properties:
+      event_id: { $ref: "#/schemas/EventID" }
+      event_version: { type: integer, enum: [1] }
+      name: { type: string, enum: [demo.first_ping] }
+      payload: { type: object, additionalProperties: false }
+  IntegrationEvent:
+    type: object
+    additionalProperties: false
+    required: [event_id, event_version, name, payload]
+    properties:
+      event_id: { $ref: "#/schemas/EventID" }
+      event_version: { type: integer, enum: [1] }
+      name: { type: string, enum: [integration.outcome] }
+      payload: { $ref: "#/schemas/IntegrationOutcome" }
+  TransportEvent:
+    type: object
+    additionalProperties: false
+    required: [event_id, event_version, name, payload]
+    properties:
+      event_id: { $ref: "#/schemas/EventID" }
+      event_version: { type: integer, enum: [1] }
+      name: { type: string, enum: [transport.report] }
+      payload: { $ref: "#/schemas/TransportReport" }
+  CommandOutcome:
+    type: object
+    additionalProperties: false
+    required: [command, outcome]
+    properties:
+      command:
+        type: string
+        enum:
+          [
+            init,
+            login,
+            logout,
+            publish,
+            status,
+            watch,
+            wait,
+            connect,
+            inspect,
+            alias,
+            webhook,
+            config,
+            team,
+            domain,
+            url,
+            share,
+            feedback,
+            publisher,
+            apply,
+            admin,
+            other,
+          ]
+      action:
+        type: string
+        enum:
+          [
+            list,
+            show,
+            inspect,
+            create,
+            update,
+            delete,
+            get,
+            set,
+            add,
+            remove,
+            use,
+            release,
+            revoke,
+            current,
+            members,
+            join,
+            leave,
+            accept,
+            path,
+            check,
+            generate,
+            set-role,
+            reply,
+            resolve,
+            reopen,
+            watch,
+            status,
+            drain,
+            allow,
+            block,
+            start,
+            stop,
+            install,
+            uninstall,
+            other,
+          ]
+      outcome: { $ref: "#/schemas/Outcome" }
+      failure_stage:
+        { type: string, enum: [setup, command, authentication, local_service, public_url] }
+      diagnostic_code: { type: string, pattern: "^TNL_[A-Z_]{1,64}$" }
+  PublicationReady:
+    type: object
+    additionalProperties: false
+    required: [server_kind, publish_mode]
+    properties:
+      server_kind: { type: string, enum: [hosted, self_hosted] }
+      publish_mode: { type: string, enum: [app, demo] }
+      framework: { type: string, enum: [vite, next, other] }
+  IntegrationOutcome:
+    type: object
+    additionalProperties: false
+    required: [kind, outcome]
+    properties:
+      kind: { type: string, enum: [oauth, webhook] }
+      outcome: { type: string, enum: [ready, redirected, reached_receiver] }
+      delivery: { type: string, enum: [fanout, selected] }
+  TransportReport:
+    type: object
+    additionalProperties: false
+    required: [role, measurements]
+    properties:
+      role: { type: string, enum: [publisher, connector] }
+      measurements:
+        type: array
+        minItems: 1
+        maxItems: 144
+        items: { $ref: "#/schemas/Measurement" }
+  Measurement:
+    type: object
+    additionalProperties: false
+    required: [operation, path, outcome, count]
+    properties:
+      operation: { $ref: "#/schemas/Operation" }
+      path: { $ref: "#/schemas/Path" }
+      outcome: { $ref: "#/schemas/Outcome" }
+      duration:
+        $ref: "#/schemas/Duration"
+        x-go-type-skip-optional-pointer: true
+        description: Measured setup or recovery duration. Omitted for fallback counts.
+      count: { type: integer, format: int64, minimum: 1, maximum: 1000000000 }
+  Operation: { type: string, enum: [relay_connect, direct_connect, fallback, recovery] }
+  Path: { type: string, enum: [quic, tls_tcp, direct_udp] }
+  Outcome: { type: string, enum: [succeeded, failed, canceled] }
+  Duration: { type: string, enum: [lt_1s, lt_10s, lt_1m, longer] }

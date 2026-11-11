@@ -8,6 +8,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -17,6 +18,8 @@ import (
 )
 
 func Run(ctx context.Context, config Config) (result error) {
+	config.telemetry = clienttelemetry.BeginScope(ctx, "publisher", false)
+	defer config.telemetry.Close()
 	if config.Control == nil {
 		return errors.New("publisher: control client is required")
 	}

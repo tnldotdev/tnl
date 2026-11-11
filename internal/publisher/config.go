@@ -8,6 +8,7 @@ import (
 	"time"
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
@@ -58,6 +59,7 @@ type VisitorAccessManagementClient interface {
 }
 
 type Config struct {
+	telemetry                    *clienttelemetry.Scope
 	RequirePostQuantum           *bool
 	PublisherIdentityID          string
 	Control                      PublicURLControlClient

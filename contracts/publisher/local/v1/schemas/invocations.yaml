@@ -14,6 +14,7 @@ schemas:
     required: [service, owner, pid, configuration_digest]
     properties:
       service: { type: string, maxLength: 63 }
+      telemetry_disabled: { type: boolean, x-go-type-skip-optional-pointer: true }
       owner: { type: string, pattern: "^[a-f0-9]{32}$" }
       pid: { type: integer, minimum: 1 }
       configuration_digest:
@@ -27,6 +28,7 @@ schemas:
     properties:
       version: { type: integer, enum: [1] }
       invocation_id: { type: string, maxLength: 128 }
+      telemetry_disabled: { type: boolean, x-go-type-skip-optional-pointer: true }
       owner: { type: string, pattern: "^[a-f0-9]{32}$" }
       pid: { type: integer, minimum: 1 }
       target: { type: string, maxLength: 4096 }

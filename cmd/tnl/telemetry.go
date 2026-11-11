@@ -1,161 +1,97 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"net/http"
 	"os"
-	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/tnldotdev/tnl/internal/buildinfo"
-	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
-	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
+	api "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
-const (
-	telemetryReceiverURL    = "https://tnl.dev/api/telemetry"
-	telemetryRequestTimeout = 500 * time.Millisecond
-)
-
+type telemetryPayload = api.Event
+type telemetryReporter = clienttelemetry.Reporter
+type telemetryTrackedCommand = api.CommandOutcomeCommand
+type telemetryCommandAction = api.CommandOutcomeAction
+type telemetryFailureStage = api.CommandOutcomeFailureStage
+type telemetryServerKind = api.PublicationReadyServerKind
+type telemetryFrameworkName = api.PublicationReadyFramework
+type telemetryPublishMode = api.PublicationReadyPublishMode
+type telemetryWebhookDelivery = api.IntegrationOutcomeDelivery
 type telemetryEventName string
-
-const (
-	telemetryCommandStarted    telemetryEventName = "command_started"
-	telemetryCommandCompleted  telemetryEventName = "command_completed"
-	telemetryCommandFailed     telemetryEventName = "command_failed"
-	telemetryPublishRunStarted telemetryEventName = "publish_run_started"
-	telemetryDemoPingReceived  telemetryEventName = "demo_ping_received"
-	telemetryOAuthReady        telemetryEventName = "oauth_callback_url_ready"
-	telemetryOAuthRedirected   telemetryEventName = "oauth_callback_redirected"
-	telemetryWebhookReady      telemetryEventName = "webhook_endpoint_ready"
-	telemetryWebhookReached    telemetryEventName = "webhook_delivery_reached_receiver"
-)
-
-type telemetryTrackedCommand string
-type telemetryCommandAction string
-
-const (
-	telemetryInit    telemetryTrackedCommand = "init"
-	telemetryLogin   telemetryTrackedCommand = "login"
-	telemetryPublish telemetryTrackedCommand = "publish"
-	telemetryInspect telemetryTrackedCommand = "inspect"
-)
-
-type telemetryFailureStage string
-
-const (
-	telemetrySetupStage          telemetryFailureStage = "setup"
-	telemetryCommandStage        telemetryFailureStage = "command"
-	telemetryAuthenticationStage telemetryFailureStage = "authentication"
-	telemetryLocalServiceStage   telemetryFailureStage = "local_service"
-	telemetryPublicURLStage      telemetryFailureStage = "public_url"
-)
-
-type telemetryServerKind string
-
-const (
-	telemetryHosted     telemetryServerKind = "hosted"
-	telemetrySelfHosted telemetryServerKind = "self_hosted"
-)
-
-type telemetryFrameworkName string
-
-const (
-	telemetryVite  telemetryFrameworkName = "vite"
-	telemetryNext  telemetryFrameworkName = "next"
-	telemetryOther telemetryFrameworkName = "other"
-)
-
-type telemetryPublishMode string
-type telemetryWebhookDelivery string
-
-const (
-	telemetryFanout   telemetryWebhookDelivery = "fanout"
-	telemetrySelected telemetryWebhookDelivery = "selected"
-)
-
-const (
-	telemetryPublishApp  telemetryPublishMode = "app"
-	telemetryPublishDemo telemetryPublishMode = "demo"
-)
-
-type telemetryPayload struct {
-	InstallationID string                   `json:"installation_id"`
-	InvocationID   string                   `json:"invocation_id"`
-	Event          telemetryEventName       `json:"event"`
-	Command        telemetryTrackedCommand  `json:"command"`
-	Action         telemetryCommandAction   `json:"action,omitempty"`
-	FailureStage   telemetryFailureStage    `json:"failure_stage,omitempty"`
-	DiagnosticCode diagnostic.Code          `json:"diagnostic_code,omitempty"`
-	ServerKind     telemetryServerKind      `json:"server_kind,omitempty"`
-	PublishMode    telemetryPublishMode     `json:"publish_mode,omitempty"`
-	Framework      telemetryFrameworkName   `json:"framework,omitempty"`
-	Delivery       telemetryWebhookDelivery `json:"delivery,omitempty"`
-	Version        string                   `json:"version"`
-	OS             string                   `json:"os"`
-	Arch           string                   `json:"arch"`
-	CI             bool                     `json:"ci"`
-}
-
-type telemetryReporter interface {
-	Report(telemetryPayload)
-	flushReady()
-}
-
 type telemetryReporterFactory func(string) telemetryReporter
+
+const (
+	telemetryInit                                       = api.CommandOutcomeCommandInit
+	telemetryLogin                                      = api.CommandOutcomeCommandLogin
+	telemetryPublish                                    = api.CommandOutcomeCommandPublish
+	telemetrySetupStage                                 = api.Setup
+	telemetryCommandStage                               = api.Command
+	telemetryAuthenticationStage                        = api.Authentication
+	telemetryLocalServiceStage                          = api.LocalService
+	telemetryPublicURLStage                             = api.PublicUrl
+	telemetryHosted                                     = api.Hosted
+	telemetrySelfHosted                                 = api.SelfHosted
+	telemetryVite                telemetryFrameworkName = "vite"
+	telemetryNext                telemetryFrameworkName = "next"
+	telemetryOther                                      = api.PublicationReadyFrameworkOther
+	telemetryPublishApp                                 = api.App
+	telemetryPublishDemo                                = api.Demo
+	telemetryFanout                                     = api.Fanout
+	telemetrySelected                                   = api.Selected
+	telemetryOAuthReady          telemetryEventName     = "oauth_callback_url_ready"
+	telemetryOAuthRedirected     telemetryEventName     = "oauth_callback_redirected"
+	telemetryWebhookReady        telemetryEventName     = "webhook_endpoint_ready"
+	telemetryWebhookReached      telemetryEventName     = "webhook_delivery_reached_receiver"
+)
 
 type telemetryInvocation struct {
 	reporter        telemetryReporter
-	id              string
-	ready           atomic.Bool
 	integrationOnce [4]atomic.Bool
 	modeMu          sync.RWMutex
 	mode            telemetryPublishMode
 	action          telemetryCommandAction
 }
 
-func newTelemetryInvocation(reporter telemetryReporter) (*telemetryInvocation, error) {
-	id, err := opaqueid.New(opaqueid.InvocationPrefix)
-	if err != nil {
-		return nil, err
-	}
-	return &telemetryInvocation{reporter: reporter, id: id}, nil
+func newTelemetryInvocation(reporter telemetryReporter) *telemetryInvocation {
+	return &telemetryInvocation{reporter: reporter}
 }
 
-func (i *telemetryInvocation) Report(payload telemetryPayload) {
-	var once *atomic.Bool
-	switch payload.Event {
-	case telemetryOAuthReady:
-		once = &i.integrationOnce[0]
-	case telemetryOAuthRedirected:
-		once = &i.integrationOnce[1]
-	case telemetryWebhookReady:
-		once = &i.integrationOnce[2]
-	case telemetryWebhookReached:
-		once = &i.integrationOnce[3]
-	}
-	if once != nil && !once.CompareAndSwap(false, true) {
-		return
-	}
-	payload.InvocationID = i.id
-	payload.Action = i.action
-	if payload.Command == telemetryPublish {
+func (i *telemetryInvocation) Report(event api.Event) {
+	name, _ := event.Discriminator()
+	switch name {
+	case "command.outcome":
+		command, _ := event.AsCommandEvent()
+		if i.action != "" {
+			command.Payload.Action = &i.action
+		}
+		_ = event.FromCommandEvent(command)
+	case "tunnel.ready":
+		ready, _ := event.AsReadyEvent()
 		i.modeMu.RLock()
-		payload.PublishMode = i.mode
+		if i.mode != "" {
+			ready.Payload.PublishMode = i.mode
+		}
 		i.modeMu.RUnlock()
+		_ = event.FromReadyEvent(ready)
+	case "integration.outcome":
+		integration, _ := event.AsIntegrationEvent()
+		index := 0
+		if integration.Payload.Kind == "webhook" {
+			index = 2
+		}
+		if integration.Payload.Outcome != api.Ready {
+			index++
+		}
+		if !i.integrationOnce[index].CompareAndSwap(false, true) {
+			return
+		}
 	}
-	if payload.Event == telemetryPublishRunStarted {
-		i.ready.Store(true)
-	}
-	i.reporter.Report(payload)
+	i.reporter.Report(event)
 }
 
 func (i *telemetryInvocation) SetPublishMode(mode telemetryPublishMode) {
@@ -163,200 +99,64 @@ func (i *telemetryInvocation) SetPublishMode(mode telemetryPublishMode) {
 	i.mode = mode
 	i.modeMu.Unlock()
 }
-
-func (i *telemetryInvocation) flushReady() {
-	i.reporter.flushReady()
+func (i *telemetryInvocation) Flush() { i.reporter.Flush() }
+func (i *telemetryInvocation) BeginScope(role api.TransportReportRole, disabled bool) *clienttelemetry.Scope {
+	return i.reporter.BeginScope(role, disabled)
 }
 
-func (i *telemetryInvocation) failed(command telemetryTrackedCommand, stage telemetryFailureStage, err error) {
-	if i.ready.Load() {
-		return
-	}
-	payload := newTelemetryBase(command)
-	payload.Event = telemetryCommandFailed
-	if code, ok := diagnostic.CodeOf(err); ok {
-		payload.DiagnosticCode = code
-		if stage != telemetrySetupStage {
-			switch code {
-			case diagnostic.AuthenticationTimeout, diagnostic.AuthenticationRequired:
-				stage = telemetryAuthenticationStage
-			case diagnostic.TargetUnavailable, diagnostic.TargetInvalid:
-				stage = telemetryLocalServiceStage
-			case diagnostic.PublicURLInvalid, diagnostic.PublicURLConflict, diagnostic.DNSSetupPending,
-				diagnostic.ProvisioningStalled:
-				stage = telemetryPublicURLStage
+func (i *telemetryInvocation) finished(command telemetryTrackedCommand, stage telemetryFailureStage, err error) {
+	payload := api.CommandOutcome{Command: command, Outcome: api.Succeeded}
+	if err != nil {
+		payload.Outcome = api.Failed
+		if code, ok := diagnostic.CodeOf(err); ok {
+			value := string(code)
+			payload.DiagnosticCode = &value
+			if stage != telemetrySetupStage {
+				switch code {
+				case diagnostic.AuthenticationTimeout, diagnostic.AuthenticationRequired:
+					stage = telemetryAuthenticationStage
+				case diagnostic.TargetUnavailable, diagnostic.TargetInvalid:
+					stage = telemetryLocalServiceStage
+				case diagnostic.PublicURLInvalid, diagnostic.PublicURLConflict, diagnostic.DNSSetupPending, diagnostic.ProvisioningStalled:
+					stage = telemetryPublicURLStage
+				}
 			}
 		}
-	}
-	payload.FailureStage = stage
-	i.Report(payload)
-}
-
-type asyncTelemetryReporter struct {
-	root   string
-	client *http.Client
-
-	idMu    sync.Mutex
-	id      string
-	wait    sync.WaitGroup
-	flushMu sync.Mutex
-}
-
-func newTelemetryReporter(root string) *asyncTelemetryReporter {
-	return &asyncTelemetryReporter{
-		root: root,
-		client: &http.Client{
-			Timeout: telemetryRequestTimeout,
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
-	}
-}
-
-func (r *asyncTelemetryReporter) Report(payload telemetryPayload) {
-	id, err := opaqueid.New(opaqueid.TelemetryEventPrefix)
-	if err != nil {
-		return
-	}
-	event := payload.wireEvent(telemetryEventID(id))
-	if event == nil {
-		return
-	}
-	encoded, err := json.Marshal(event)
-	if err != nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
-	state, err := clientstate.Open(ctx, r.root)
-	if err == nil {
-		err = state.QueueTelemetryEvent(ctx, id, encoded)
-		_ = state.Close()
-	}
-	cancel()
-	if err != nil {
-		return
-	}
-}
-
-func (r *asyncTelemetryReporter) flushReady() {
-	r.wait.Add(1)
-	go func() {
-		defer r.wait.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
-		defer cancel()
-		r.flush(ctx)
-	}()
-}
-
-func (r *asyncTelemetryReporter) flush(ctx context.Context) {
-	r.flushMu.Lock()
-	defer r.flushMu.Unlock()
-	state, err := clientstate.Open(ctx, r.root)
-	if err != nil {
-		return
-	}
-	defer state.Close()
-	if enabled, err := state.TelemetryEnabled(ctx); err != nil || !enabled {
-		return
-	}
-	_ = state.PruneTelemetryOutbox(ctx)
-	pending, err := state.PendingTelemetryEvents(ctx, 25)
-	if err != nil || len(pending) == 0 {
-		return
-	}
-	installationID, err := state.InstallationID(ctx)
-	if err != nil {
-		return
-	}
-	events := make([]json.RawMessage, 0, len(pending))
-	for _, item := range pending {
-		events = append(events, item.JSON)
-	}
-	body, err := json.Marshal(telemetryBatch{SchemaVersion: 1, InstallationID: installationID,
-		Client: telemetryClientMetadata{Version: buildinfo.Version, OS: runtime.GOOS, Arch: runtime.GOARCH, CI: os.Getenv("CI") != ""},
-		Events: events})
-	if err != nil {
-		return
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, telemetryReceiverURL, bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("User-Agent", "tnl")
-	response, err := r.client.Do(request)
-	if err == nil {
-		_ = response.Body.Close()
-		if response.StatusCode == http.StatusNoContent || response.StatusCode >= 400 && response.StatusCode < 500 && response.StatusCode != http.StatusTooManyRequests {
-			_ = state.DeleteTelemetryEvents(ctx, pending)
+		if code, _ := terminalResult(err); code == 0 {
+			payload.Outcome = api.Canceled
+			payload.DiagnosticCode = nil
+		} else {
+			payload.FailureStage = &stage
 		}
 	}
+	i.Report(clienttelemetry.Command(payload))
 }
 
-func (r *asyncTelemetryReporter) installationID(ctx context.Context) (string, error) {
-	r.idMu.Lock()
-	defer r.idMu.Unlock()
-	if r.id != "" {
-		return r.id, nil
+func newTelemetryReady(_ telemetryTrackedCommand, kind telemetryServerKind, framework telemetryFrameworkName) api.Event {
+	payload := api.PublicationReady{ServerKind: kind, PublishMode: api.App}
+	if framework != "" {
+		payload.Framework = &framework
 	}
-	state, err := clientstate.Open(ctx, r.root)
-	if err != nil {
-		return "", err
+	return clienttelemetry.Ready(payload)
+}
+
+func newTelemetryDemoPing() api.Event { return clienttelemetry.Demo() }
+
+func newIntegrationTelemetry(name telemetryEventName, delivery telemetryWebhookDelivery) api.Event {
+	payload := api.IntegrationOutcome{Kind: "oauth", Outcome: api.Ready}
+	switch name {
+	case telemetryOAuthReady:
+	case telemetryOAuthRedirected:
+		payload.Outcome = api.Redirected
+	case telemetryWebhookReady, telemetryWebhookReached:
+		payload.Kind, payload.Delivery = "webhook", &delivery
+		if name == telemetryWebhookReached {
+			payload.Outcome = api.ReachedReceiver
+		}
+	default:
+		return api.Event{}
 	}
-	defer state.Close()
-	r.id, err = state.InstallationID(ctx)
-	return r.id, err
-}
-
-func (r *asyncTelemetryReporter) Wait(ctx context.Context) {
-	done := make(chan struct{})
-	go func() {
-		r.wait.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-ctx.Done():
-	}
-}
-
-func newTelemetryBase(command telemetryTrackedCommand) telemetryPayload {
-	return telemetryPayload{
-		Command: command,
-		Version: buildinfo.Version, OS: runtime.GOOS, Arch: runtime.GOARCH, CI: os.Getenv("CI") != "",
-	}
-}
-
-func newTelemetryStarted(command telemetryTrackedCommand) telemetryPayload {
-	payload := newTelemetryBase(command)
-	payload.Event = telemetryCommandStarted
-	return payload
-}
-
-func newTelemetryCompleted(command telemetryTrackedCommand) telemetryPayload {
-	payload := newTelemetryBase(command)
-	payload.Event = telemetryCommandCompleted
-	return payload
-}
-
-func newTelemetryReady(command telemetryTrackedCommand, kind telemetryServerKind, framework telemetryFrameworkName) telemetryPayload {
-	payload := newTelemetryBase(command)
-	payload.Event = telemetryPublishRunStarted
-	payload.ServerKind = kind
-	payload.Framework = framework
-	return payload
-}
-
-func newTelemetryDemoPing() telemetryPayload {
-	payload := newTelemetryBase(telemetryPublish)
-	payload.Event = telemetryDemoPingReceived
-	payload.PublishMode = telemetryPublishDemo
-	return payload
-}
-
-func newIntegrationTelemetry(name telemetryEventName, delivery telemetryWebhookDelivery) telemetryPayload {
-	return telemetryPayload{Event: name, Delivery: delivery}
+	return clienttelemetry.Integration(payload)
 }
 
 func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, telemetryCommandAction, bool) {
@@ -366,18 +166,21 @@ func selectedTelemetryCommand(parsed *kong.Context) (telemetryTrackedCommand, te
 			command = append(command, element.Command.Name)
 		}
 	}
-	if len(command) == 0 || command[0] == "telemetry" || command[0] == "version" {
+	if len(command) == 0 {
 		return "", "", false
 	}
-	if len(command) == 1 {
-		switch command[0] {
-		case "init", "login", "logout", "publish", "status":
-			return telemetryTrackedCommand(command[0]), "", true
-		default:
-			return "", "", false
+	name := telemetryTrackedCommand(command[0])
+	if !name.Valid() {
+		return "", "", false
+	}
+	var action telemetryCommandAction
+	if len(command) > 1 {
+		action = telemetryCommandAction(command[len(command)-1])
+		if !action.Valid() {
+			action = api.CommandOutcomeActionOther
 		}
 	}
-	return telemetryTrackedCommand(strings.Join(command[:len(command)-1], " ")), telemetryCommandAction(command[len(command)-1]), true
+	return name, action, true
 }
 
 func commandStateRoot(parsed *kong.Context) (string, error) {
@@ -405,18 +208,13 @@ func hasEnvironment(environments []string, name string) bool {
 	return false
 }
 
-func withTelemetryObserver(
-	reporter telemetryReporter,
-	command telemetryTrackedCommand, serverURL string,
-	framework func() string,
-	observe func(publisher.Event) error,
-) func(publisher.Event) error {
+func withTelemetryObserver(reporter telemetryReporter, command telemetryTrackedCommand, serverURL string, framework func() string, observe func(publisher.Event) error) func(publisher.Event) error {
 	if reporter == nil {
 		return observe
 	}
-	serverKind := telemetrySelfHosted
+	kind := telemetrySelfHosted
 	if serverURL == defaultServerURL {
-		serverKind = telemetryHosted
+		kind = telemetryHosted
 	}
 	var ready sync.Once
 	return func(event publisher.Event) error {
@@ -431,8 +229,8 @@ func withTelemetryObserver(
 				if framework != nil {
 					name = telemetryFramework(framework())
 				}
-				reporter.Report(newTelemetryReady(command, serverKind, name))
-				reporter.flushReady()
+				reporter.Report(newTelemetryReady(command, kind, name))
+				reporter.Flush()
 			})
 		}
 		return nil
@@ -450,4 +248,10 @@ func telemetryFramework(framework string) telemetryFrameworkName {
 	default:
 		return telemetryOther
 	}
+}
+
+func closeTelemetry(c *clienttelemetry.Collector) {
+	ctx, stop := context.WithTimeout(context.Background(), clienttelemetry.RequestTimeout)
+	defer stop()
+	c.Close(ctx)
 }

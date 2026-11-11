@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"time"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -26,6 +28,7 @@ import (
 )
 
 func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation) (result error) {
+	ctx = clienttelemetry.WithDisabled(ctx, flags.TelemetryDisabled)
 	protocol := controlv1.Http
 	project := projectConfiguration{Project: flags.Project, targetResolver: flags.Resolver}
 	var err error

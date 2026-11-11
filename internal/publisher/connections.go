@@ -7,17 +7,20 @@ import (
 	"sync"
 	"time"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	telemetryv1 "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
 const publisherConnectionCount = 2
 
 type publisherConnectionManagerConfig struct {
+	Telemetry      *clienttelemetry.Scope
 	QUICConnector  muxsession.Connector
 	TCPConnector   muxsession.Connector
 	FallbackDelay  time.Duration
@@ -48,6 +51,8 @@ type publisherConnectionManager struct {
 	fallbackOnce sync.Once
 	draining     bool
 	closed       bool
+	recovering   [2]time.Time
+	recoveryPath [2]telemetryv1.Path
 }
 
 func newPublisherConnectionManager(
@@ -81,6 +86,12 @@ func newPublisherConnectionManager(
 		}, SessionEnded: func(_ uint8, session tunnel.SlotSession, err error) {
 			connection := session.(*publicPublisherSlot)
 			if err != nil && connection.ctx.Err() == nil {
+				m.mu.Lock()
+				if !m.closed && m.recovering[connection.ref.ConnectionSlot].IsZero() {
+					m.recovering[connection.ref.ConnectionSlot] = time.Now()
+					m.recoveryPath[connection.ref.ConnectionSlot] = clienttelemetry.Path(connection.transport)
+				}
+				m.mu.Unlock()
 				config.Report(fmt.Errorf("publisher: publisher connection %s closed: %w", connection.ref.PublisherConnectionID, err))
 			}
 		},
@@ -179,6 +190,12 @@ func (m *publisherConnectionManager) Close() error {
 		return m.paths.Close()
 	}
 	m.closed = true
+	for slot, started := range m.recovering {
+		if !started.IsZero() {
+			m.config.Telemetry.Record(telemetryv1.Recovery, m.recoveryPath[slot], telemetryv1.Canceled, time.Since(started))
+			m.recovering[slot] = time.Time{}
+		}
+	}
 	m.mu.Unlock()
 	return m.paths.Close()
 }
@@ -217,10 +234,10 @@ func (m *publisherConnectionManager) connect(
 	}
 	quic := tunnel.Candidate{Connector: m.config.QUICConnector, Endpoint: muxsession.Endpoint{
 		Address: assignment.RelayAddress, ServerName: assignment.TlsServerName,
-	}, Transport: tunnel.TransportQUIC}
+	}, Transport: tunnel.TransportQUIC, Observe: m.config.Telemetry.RelayAttempt}
 	tcp := tunnel.Candidate{Connector: m.config.TCPConnector, Endpoint: muxsession.Endpoint{
 		Address: assignment.RelayAddress, ServerName: assignment.TlsServerName,
-	}, Transport: tunnel.TransportTLSTCP}
+	}, Transport: tunnel.TransportTLSTCP, Observe: m.config.Telemetry.RelayAttempt}
 	if preferTCP {
 		quic, tcp = tcp, quic
 	}
@@ -241,9 +258,16 @@ func (m *publisherConnectionManager) connect(
 	m.mu.Lock()
 	current := !m.draining && !m.closed && ctx.Err() == nil && m.assignments[slot] == managed
 	if current && transport == tunnel.TransportTLSTCP {
+		if !preferTCP {
+			m.config.Telemetry.Record(telemetryv1.Fallback, telemetryv1.TlsTcp, telemetryv1.Succeeded, 0)
+		}
 		// publish fallback before Slots can expose readiness, and only while
 		// the heartbeat's immutable assignment snapshot remains current.
 		m.fallbackOnce.Do(func() { close(m.fallback) })
+	}
+	if current && !m.recovering[slot].IsZero() {
+		m.config.Telemetry.Record(telemetryv1.Recovery, clienttelemetry.Path(transport), telemetryv1.Succeeded, time.Since(m.recovering[slot]))
+		m.recovering[slot] = time.Time{}
 	}
 	m.mu.Unlock()
 	if !current {

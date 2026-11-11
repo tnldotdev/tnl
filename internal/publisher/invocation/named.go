@@ -7,6 +7,7 @@ import (
 	"time"
 
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	publisherapp "github.com/tnldotdev/tnl/internal/publisher/app"
@@ -48,7 +49,7 @@ func PublishNamed(ctx context.Context, project clientproject.Project, name, stat
 	}
 	lease := &localapi.LeaseClient{Resolve: func(ctx context.Context) (publisherprotocol.Endpoint, error) {
 		return resolveOwner(ctx, project, root)
-	}, Request: publisherprotocol.Lease{Service: name, Owner: ownerID, Pid: os.Getpid(), ConfigurationDigest: digest}}
+	}, Request: publisherprotocol.Lease{Service: name, Owner: ownerID, Pid: os.Getpid(), ConfigurationDigest: digest, TelemetryDisabled: clienttelemetry.Disabled(ctx)}}
 	defer func() {
 		cleanup, cancel := context.WithTimeout(observability.Independent(context.WithoutCancel(ctx)), 10*time.Second)
 		defer cancel()

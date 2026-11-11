@@ -11,6 +11,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def isolated_provider_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """provider tests select their own context instead of inheriting the runner."""
+    monkeypatch.setenv("TNL_NO_TELEMETRY", "1")
     for name in (
         "TNL_CONNECTION_HANDLE",
         "TNL_WORKLOAD",

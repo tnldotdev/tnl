@@ -34,14 +34,15 @@ type publishCommand struct {
 	Output                  publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
 	Demo                    bool              `name:"demo" help:"Publish a built-in local demo; no service or target needed."`
 
-	serverFromConfig bool
-	selectedTeam     string
-	projectRoot      string
-	demoNameFromCLI  bool
-	Service          string `kong:"-"`
-	project          projectConfiguration
-	service          bool
-	namedOverrides   bool
+	serverFromConfig  bool
+	selectedTeam      string
+	projectRoot       string
+	demoNameFromCLI   bool
+	Service           string `kong:"-"`
+	TelemetryDisabled bool   `kong:"-"`
+	project           projectConfiguration
+	service           bool
+	namedOverrides    bool
 }
 
 func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Writer, telemetry telemetryReporter) (result error) {
@@ -143,7 +144,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 }
 
 func publicOptions(flags publishCommand) invocation.PublicOptions {
-	return invocation.PublicOptions{RequirePostQuantum: flags.RequirePostQuantum, Target: flags.Target, TargetCAFile: flags.TargetCAFile, TargetTLSName: flags.TargetTLSName, ProjectRoot: flags.projectRoot, Project: flags.project.Project, Service: flags.Service, StateDir: flags.StateDir, ServerURL: flags.ServerURL, AccessToken: flags.AccessToken, PublicURL: flags.PublicURL, Name: flags.Name, Domain: flags.Domain, Team: flags.Team, SelectedTeam: flags.selectedTeam, Ephemeral: flags.Ephemeral, Demo: flags.Demo, Anonymous: flags.Anonymous, IP: flags.IP, Access: flags.access, Limits: flags.limits(), InspectionMode: flags.InspectionMode, Inspection: flags.inspection, Resolver: runtimeTargetResolver}
+	return invocation.PublicOptions{TelemetryDisabled: flags.TelemetryDisabled, RequirePostQuantum: flags.RequirePostQuantum, Target: flags.Target, TargetCAFile: flags.TargetCAFile, TargetTLSName: flags.TargetTLSName, ProjectRoot: flags.projectRoot, Project: flags.project.Project, Service: flags.Service, StateDir: flags.StateDir, ServerURL: flags.ServerURL, AccessToken: flags.AccessToken, PublicURL: flags.PublicURL, Name: flags.Name, Domain: flags.Domain, Team: flags.Team, SelectedTeam: flags.selectedTeam, Ephemeral: flags.Ephemeral, Demo: flags.Demo, Anonymous: flags.Anonymous, IP: flags.IP, Access: flags.access, Limits: flags.limits(), InspectionMode: flags.InspectionMode, Inspection: flags.inspection, Resolver: runtimeTargetResolver}
 }
 
 func publisherAuthentication(stderr io.Writer) func(context.Context, *clientstate.Database, string, string) (*auth.Client, error) {

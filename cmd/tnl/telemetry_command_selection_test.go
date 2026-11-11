@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+	api "github.com/tnldotdev/tnl/pkg/api/integrations/telemetry/v1"
 )
 
 func TestTelemetryCommandsUseOnlyParsedCommandNodes(t *testing.T) {
@@ -16,7 +18,7 @@ func TestTelemetryCommandsUseOnlyParsedCommandNodes(t *testing.T) {
 		tracked bool
 	}{
 		{[]string{"publish"}, telemetryPublish, "", true},
-		{[]string{"team", "invite", "revoke", "ivt_secret"}, "team invite", "revoke", true},
+		{[]string{"team", "invite", "revoke", "ivt_secret"}, "team", "revoke", true},
 		{[]string{"feedback", "inspect", "fb_secret"}, "feedback", "inspect", true},
 		{[]string{"version"}, "", "", false},
 		{[]string{"telemetry", "on"}, "", "", false},
@@ -38,14 +40,13 @@ func TestTelemetryCommandsUseOnlyParsedCommandNodes(t *testing.T) {
 }
 
 func TestTelemetryCommandWireExcludesArguments(t *testing.T) {
-	payload := newTelemetryStarted("team invite")
-	payload.Action = "revoke"
-	payload.InvocationID = "ivk_0123456789abcdefghijkl"
-	encoded, err := json.Marshal(payload.wireEvent("tev_0123456789abcdefghijkl"))
+	action := api.CommandOutcomeActionRevoke
+	payload := clienttelemetry.Command(api.CommandOutcome{Command: "team", Action: &action, Outcome: api.Succeeded})
+	encoded, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(encoded, []byte(`"command":"team invite"`)) ||
+	if !bytes.Contains(encoded, []byte(`"command":"team"`)) ||
 		!bytes.Contains(encoded, []byte(`"action":"revoke"`)) || bytes.Contains(encoded, []byte("ivt_secret")) {
 		t.Fatalf("command telemetry = %s", encoded)
 	}

@@ -73,6 +73,7 @@ func (r *Registry) ReplaceGroups(ctx context.Context, inputs []GroupInstall) err
 			return ErrJobExists
 		}
 		seen[owner], replicas[replica] = true, true
+		r.captureTelemetry(ctx, &job)
 		job.Enabled, job.Revision, job.Status = true, 1, Status{State: JobStarting}
 		jobs = append(jobs, job)
 	}
@@ -172,6 +173,7 @@ func (r *Registry) InstallGroup(ctx context.Context, job Job, member controlv1.P
 	if err := validateJob(&job); err != nil {
 		return err
 	}
+	r.captureTelemetry(ctx, &job)
 	return r.update(ctx, func(jobs *[]Job) error {
 		for i, existing := range *jobs {
 			if existing.ID != job.ID {

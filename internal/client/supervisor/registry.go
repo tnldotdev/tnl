@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/filelock"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/httpjson"
@@ -62,6 +63,7 @@ const (
 )
 
 type Job struct {
+	TelemetryDisabled   bool                            `json:"telemetry_disabled,omitempty"`
 	GroupMember         *controlv1.PublisherGroupMember `json:"group_member,omitempty"`
 	GroupInstance       string                          `json:"group_instance,omitempty"`
 	IdentityDir         string                          `json:"identity_dir,omitempty"`
@@ -234,6 +236,7 @@ func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.Pu
 	if !matches(job, identity) || len(private) != ed25519.PrivateKeySize || !bytes.Equal(ed25519.NewKeyFromSeed(private[:32]), private) {
 		return ErrScope
 	}
+	r.captureTelemetry(ctx, &job)
 	return r.update(ctx, func(jobs *[]Job) error {
 		for i, existing := range *jobs {
 			if existing.ID == job.ID {
@@ -284,6 +287,12 @@ func (r *Registry) Install(ctx context.Context, job Job, identity authorityv1.Pu
 		*jobs = append(*jobs, job)
 		return nil
 	})
+}
+
+// capture the installer's opt-out; a later service process must not undo it.
+func (r *Registry) captureTelemetry(ctx context.Context, job *Job) {
+	enabled, err := r.database.TelemetryEnabled(ctx)
+	job.TelemetryDisabled = job.TelemetryDisabled || clienttelemetry.Disabled(ctx) || err != nil || !enabled
 }
 
 // JobKey keeps the resource kind in the key, so a future service ID
@@ -614,6 +623,7 @@ func (r *Registry) InstallConnector(ctx context.Context, job Job) error {
 	if err := validateJob(&job); err != nil {
 		return err
 	}
+	r.captureTelemetry(ctx, &job)
 	return r.update(ctx, func(jobs *[]Job) error {
 		for i, existing := range *jobs {
 			if existing.ID == job.ID {

@@ -15,6 +15,8 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/filelock"
+	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
@@ -58,7 +60,8 @@ func Clients(job Job) (PublisherClients, publisheridentity.EnrollmentAuthority, 
 }
 
 type Engine struct {
-	Registry *Registry
+	CollectTelemetry bool
+	Registry         *Registry
 	// UserJobs lets the user-login supervisor host another job kind with its
 	// own registry and credentials. the system publisher service leaves it empty.
 	UserJobs []UserJobRunner
@@ -92,6 +95,17 @@ type worker struct {
 func (e Engine) Serve(ctx context.Context) error {
 	if e.Registry == nil {
 		return ErrUnsafeState
+	}
+	if e.CollectTelemetry && !clienttelemetry.Disabled(ctx) {
+		collector, err := clienttelemetry.New(context.WithoutCancel(ctx), clienttelemetry.Config{Root: e.Registry.root, Protection: clientstate.ProtectionFile})
+		if err == nil {
+			ctx = clienttelemetry.WithReporter(ctx, collector)
+			defer func() {
+				finish, stop := context.WithTimeout(context.Background(), clienttelemetry.RequestTimeout)
+				defer stop()
+				collector.Close(finish)
+			}()
+		}
 	}
 	if e.Clients == nil {
 		e.Clients = Clients
@@ -215,6 +229,7 @@ func (e Engine) Serve(ctx context.Context) error {
 }
 
 func (e Engine) run(ctx context.Context, job Job) {
+	ctx = clienttelemetry.WithDisabled(ctx, job.TelemetryDisabled)
 	var runtime *publisherruntime.Owner
 	defer func() {
 		if runtime != nil {

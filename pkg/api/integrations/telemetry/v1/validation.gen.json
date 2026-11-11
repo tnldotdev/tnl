@@ -1,0 +1,411 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "native client telemetry",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/telemetry": {
+      "post": {
+        "operationId": "receiveTelemetry",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Batch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "accepted"
+          },
+          "400": {
+            "description": "invalid batch"
+          },
+          "429": {
+            "description": "retry later"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Batch": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schema_version", "installation_id", "client", "events"],
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "enum": [1]
+          },
+          "installation_id": {
+            "type": "string",
+            "pattern": "^inst_[A-Za-z0-9]{22}$"
+          },
+          "client": {
+            "$ref": "#/components/schemas/Client"
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 25,
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            }
+          }
+        }
+      },
+      "Client": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version", "os", "arch", "ci"],
+        "properties": {
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "os": {
+            "type": "string",
+            "enum": ["darwin", "linux", "windows", "other"]
+          },
+          "arch": {
+            "type": "string",
+            "enum": ["amd64", "arm64", "other"]
+          },
+          "ci": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Event": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/CommandEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ReadyEvent"
+          },
+          {
+            "$ref": "#/components/schemas/DemoEvent"
+          },
+          {
+            "$ref": "#/components/schemas/IntegrationEvent"
+          },
+          {
+            "$ref": "#/components/schemas/TransportEvent"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "name",
+          "mapping": {
+            "command.outcome": "#/components/schemas/CommandEvent",
+            "tunnel.ready": "#/components/schemas/ReadyEvent",
+            "demo.first_ping": "#/components/schemas/DemoEvent",
+            "integration.outcome": "#/components/schemas/IntegrationEvent",
+            "transport.report": "#/components/schemas/TransportEvent"
+          }
+        }
+      },
+      "CommandEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_id", "event_version", "name", "payload"],
+        "properties": {
+          "event_id": {
+            "$ref": "#/components/schemas/EventID"
+          },
+          "event_version": {
+            "type": "integer",
+            "enum": [1]
+          },
+          "name": {
+            "type": "string",
+            "enum": ["command.outcome"]
+          },
+          "payload": {
+            "$ref": "#/components/schemas/CommandOutcome"
+          }
+        }
+      },
+      "ReadyEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_id", "event_version", "name", "payload"],
+        "properties": {
+          "event_id": {
+            "$ref": "#/components/schemas/EventID"
+          },
+          "event_version": {
+            "type": "integer",
+            "enum": [1]
+          },
+          "name": {
+            "type": "string",
+            "enum": ["tunnel.ready"]
+          },
+          "payload": {
+            "$ref": "#/components/schemas/PublicationReady"
+          }
+        }
+      },
+      "DemoEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_id", "event_version", "name", "payload"],
+        "properties": {
+          "event_id": {
+            "$ref": "#/components/schemas/EventID"
+          },
+          "event_version": {
+            "type": "integer",
+            "enum": [1]
+          },
+          "name": {
+            "type": "string",
+            "enum": ["demo.first_ping"]
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        }
+      },
+      "IntegrationEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_id", "event_version", "name", "payload"],
+        "properties": {
+          "event_id": {
+            "$ref": "#/components/schemas/EventID"
+          },
+          "event_version": {
+            "type": "integer",
+            "enum": [1]
+          },
+          "name": {
+            "type": "string",
+            "enum": ["integration.outcome"]
+          },
+          "payload": {
+            "$ref": "#/components/schemas/IntegrationOutcome"
+          }
+        }
+      },
+      "TransportEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_id", "event_version", "name", "payload"],
+        "properties": {
+          "event_id": {
+            "$ref": "#/components/schemas/EventID"
+          },
+          "event_version": {
+            "type": "integer",
+            "enum": [1]
+          },
+          "name": {
+            "type": "string",
+            "enum": ["transport.report"]
+          },
+          "payload": {
+            "$ref": "#/components/schemas/TransportReport"
+          }
+        }
+      },
+      "CommandOutcome": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "outcome"],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": [
+              "init",
+              "login",
+              "logout",
+              "publish",
+              "status",
+              "watch",
+              "wait",
+              "connect",
+              "inspect",
+              "alias",
+              "webhook",
+              "config",
+              "team",
+              "domain",
+              "url",
+              "share",
+              "feedback",
+              "publisher",
+              "apply",
+              "admin",
+              "other"
+            ]
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "list",
+              "show",
+              "inspect",
+              "create",
+              "update",
+              "delete",
+              "get",
+              "set",
+              "add",
+              "remove",
+              "use",
+              "release",
+              "revoke",
+              "current",
+              "members",
+              "join",
+              "leave",
+              "accept",
+              "path",
+              "check",
+              "generate",
+              "set-role",
+              "reply",
+              "resolve",
+              "reopen",
+              "watch",
+              "status",
+              "drain",
+              "allow",
+              "block",
+              "start",
+              "stop",
+              "install",
+              "uninstall",
+              "other"
+            ]
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "failure_stage": {
+            "type": "string",
+            "enum": ["setup", "command", "authentication", "local_service", "public_url"]
+          },
+          "diagnostic_code": {
+            "type": "string",
+            "pattern": "^TNL_[A-Z_]{1,64}$"
+          }
+        }
+      },
+      "PublicationReady": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["server_kind", "publish_mode"],
+        "properties": {
+          "server_kind": {
+            "type": "string",
+            "enum": ["hosted", "self_hosted"]
+          },
+          "publish_mode": {
+            "type": "string",
+            "enum": ["app", "demo"]
+          },
+          "framework": {
+            "type": "string",
+            "enum": ["vite", "next", "other"]
+          }
+        }
+      },
+      "IntegrationOutcome": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "outcome"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["oauth", "webhook"]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": ["ready", "redirected", "reached_receiver"]
+          },
+          "delivery": {
+            "type": "string",
+            "enum": ["fanout", "selected"]
+          }
+        }
+      },
+      "TransportReport": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "measurements"],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["publisher", "connector"]
+          },
+          "measurements": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 144,
+            "items": {
+              "$ref": "#/components/schemas/Measurement"
+            }
+          }
+        }
+      },
+      "Measurement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operation", "path", "outcome", "count"],
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/Operation"
+          },
+          "path": {
+            "$ref": "#/components/schemas/Path"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "duration": {
+            "x-go-type-skip-optional-pointer": true,
+            "description": "Measured setup or recovery duration. Omitted for fallback counts.",
+            "$ref": "#/components/schemas/Duration"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 1000000000
+          }
+        }
+      },
+      "Operation": {
+        "type": "string",
+        "enum": ["relay_connect", "direct_connect", "fallback", "recovery"]
+      },
+      "Path": {
+        "type": "string",
+        "enum": ["quic", "tls_tcp", "direct_udp"]
+      },
+      "Outcome": {
+        "type": "string",
+        "enum": ["succeeded", "failed", "canceled"]
+      },
+      "Duration": {
+        "type": "string",
+        "enum": ["lt_1s", "lt_10s", "lt_1m", "longer"]
+      },
+      "EventID": {
+        "type": "string",
+        "pattern": "^tev_[A-Za-z0-9]{22}$"
+      }
+    }
+  }
+}

@@ -257,7 +257,7 @@ func runServiceServeWithUserJobs(ctx context.Context, flags serviceServeCommand,
 		return err
 	}
 	defer registry.Close()
-	engine := supervisor.Engine{Registry: registry, UserJobs: runners}
+	engine := supervisor.Engine{Registry: registry, UserJobs: runners, CollectTelemetry: true}
 	if options.User {
 		engine.Connect = runInstalledConnector
 		engine.Group = func(ctx context.Context, job supervisor.Job, observe func(int64, bool) error) error {

@@ -164,7 +164,7 @@ func TestPublishedWrappingKeySurvivesFailedDatabaseInitialization(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if database, err := initializeClientSQLite(t.Context(), DatabasePath(root), ProtectionFile, failedProtector{}); err == nil {
+	if database, err := initializeClientSQLite(t.Context(), DatabasePath(root), ProtectionFile, failedProtector{}, false); err == nil {
 		database.Close()
 		t.Fatal("failed database initialization succeeded")
 	}

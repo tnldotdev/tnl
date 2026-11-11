@@ -1,0 +1,11 @@
+post:
+  operationId: receiveTelemetry
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema: { $ref: ../openapi.yaml#/components/schemas/Batch }
+  responses:
+    "204": { description: accepted }
+    "400": { description: invalid batch }
+    "429": { description: retry later }

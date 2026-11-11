@@ -8,6 +8,8 @@ import (
 	"slices"
 	"time"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
@@ -47,6 +49,7 @@ var _ publisher.PublicURLControlClient = (*publisheridentity.Native)(nil)
 
 // runEnrolledPublish uses only its scoped identity for URL and run operations.
 func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection EnrolledSelection, output *Presentation, input io.Reader) (result error) {
+	ctx = clienttelemetry.WithDisabled(ctx, flags.TelemetryDisabled)
 	project := projectConfiguration{Project: flags.Project, targetResolver: flags.Resolver}
 	selected := 0
 	for _, value := range []string{selection.EnrollmentKey, selection.PublisherIdentityID, selection.PublisherCredentialFile} {

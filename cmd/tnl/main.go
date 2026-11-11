@@ -19,6 +19,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/client/detached"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
 	"github.com/tnldotdev/tnl/internal/clioutput"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -150,18 +151,18 @@ func main() {
 	signal.Notify(received, os.Interrupt, syscall.SIGTERM)
 	ctx, stop := processSignalContext(context.Background(), received, func() { signal.Stop(received) })
 	defer stop()
-	var telemetry *asyncTelemetryReporter
+	var telemetry *clienttelemetry.Collector
 	launchCtx := observability.ExtractLaunch(ctx, os.Getenv(observability.LaunchTraceparent))
 	_ = os.Unsetenv(observability.LaunchTraceparent)
 	err := run(context.WithValue(launchCtx, nativeProcessKey{}, true), os.Args[1:], os.Stdout, os.Stderr, func(root string) telemetryReporter {
-		telemetry = newTelemetryReporter(root)
+		telemetry, _ = clienttelemetry.New(context.WithoutCancel(launchCtx), clienttelemetry.Config{Root: root})
+		if telemetry == nil {
+			return nil
+		}
 		return telemetry
 	})
 	if telemetry != nil {
-		waitCtx, cancel := context.WithTimeout(context.Background(), telemetryRequestTimeout)
-		telemetry.Wait(waitCtx)
-		telemetry.flush(waitCtx)
-		cancel()
+		closeTelemetry(telemetry)
 	}
 	stop() // command observation and the final telemetry flush have already joined.
 	if err != nil {
@@ -534,13 +535,25 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		collectTelemetry = false
 	}
 	var telemetry *telemetryInvocation
-	if !flags.NoTelemetry && collectTelemetry &&
+	flags.Publish.TelemetryDisabled = flags.NoTelemetry
+	if flags.Publish.Install {
+		root, err := commandStateRoot(parsed)
+		if err != nil {
+			flags.Publish.TelemetryDisabled = true
+		} else if enabled, err := clientstate.TelemetryEnabledAt(ctx, root); err != nil || !enabled {
+			flags.Publish.TelemetryDisabled = true
+		}
+	}
+	ctx = clienttelemetry.WithDisabled(ctx, flags.NoTelemetry)
+	runtimeTelemetry := parsedCommand == "runtime serve" || strings.HasPrefix(parsedCommand, "runtime connections")
+	if !flags.NoTelemetry && (collectTelemetry || runtimeTelemetry) &&
 		len(reporterFactories) != 0 && reporterFactories[0] != nil {
 		if root, stateErr := commandStateRoot(parsed); stateErr == nil {
-			if enabled, preferenceErr := clientstate.TelemetryEnabledAt(ctx, root); preferenceErr == nil && enabled {
+			if enabled, preferenceErr := clientstate.TelemetryEnabledAt(ctx, root); preferenceErr == nil && (enabled || runtimeTelemetry || telemetryCommand == telemetryPublish) {
 				if reporter := reporterFactories[0](root); reporter != nil {
-					if invocation, idErr := newTelemetryInvocation(reporter); idErr == nil {
-						telemetry = invocation
+					ctx = clienttelemetry.WithReporter(ctx, reporter)
+					if collectTelemetry {
+						telemetry = newTelemetryInvocation(reporter)
 						telemetry.action = telemetryAction
 						if telemetryCommand == telemetryPublish {
 							mode := telemetryPublishApp
@@ -556,13 +569,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 	}
 	failureStage := telemetrySetupStage
 	if telemetry != nil {
-		telemetry.Report(newTelemetryStarted(telemetryCommand))
 		defer func() {
-			if result != nil {
-				telemetry.failed(telemetryCommand, failureStage, classifyCommandError(result))
-			} else if telemetryCommand != telemetryPublish && !(telemetryCommand == "feedback" && telemetryAction == "watch") {
-				telemetry.Report(newTelemetryCompleted(telemetryCommand))
+			outcome := result
+			if outcome == nil && ctx.Err() != nil {
+				outcome = context.Cause(ctx)
 			}
+			telemetry.finished(telemetryCommand, failureStage, classifyCommandError(outcome))
 		}()
 	}
 	var project projectConfiguration

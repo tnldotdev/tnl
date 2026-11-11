@@ -16,6 +16,7 @@ import (
 
 // PublicOptions contains selected publication inputs, independent of CLI flags.
 type PublicOptions struct {
+	TelemetryDisabled  bool
 	RequirePostQuantum *bool
 	Target             string
 	TargetCAFile       string

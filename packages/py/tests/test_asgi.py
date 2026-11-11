@@ -161,8 +161,10 @@ def test_default_selection_omits_credentials_and_explicit_file_is_sent_only_to_n
             tnl.handler(endpoint),
             publisher_credential_file="/private/publisher.json",
             require_post_quantum=True,
+            telemetry=False,
         ) as tunnel:
             assert tunnel._payload["require_post_quantum"] is True
+            assert tunnel._payload["telemetry_disabled"] is True
             assert tunnel._payload["publisher_credential_file"] == "/private/publisher.json"
             assert "publisher_identity_id" not in tunnel._payload
             assert "/private/publisher.json" not in repr(tunnel)

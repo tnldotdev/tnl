@@ -18,6 +18,7 @@ export const contracts = {
   relayv1: "contracts/control/private/relay/v1/openapi.yaml",
   publisherv1: "contracts/publisher/browser/v1/openapi.yaml",
   localpublisherv1: "contracts/publisher/local/v1/openapi.yaml",
+  telemetryv1: "contracts/integrations/telemetry/v1/openapi.yaml",
 } as const;
 
 export const packagePaths: Record<keyof typeof contracts, string> = {
@@ -27,6 +28,7 @@ export const packagePaths: Record<keyof typeof contracts, string> = {
   relayv1: "control/private/relay/v1",
   publisherv1: "publisher/browser/v1",
   localpublisherv1: "publisher/local/v1",
+  telemetryv1: "integrations/telemetry/v1",
 };
 
 const objectSchema = z.record(z.string(), z.unknown());

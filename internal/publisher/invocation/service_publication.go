@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
+
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	"github.com/tnldotdev/tnl/internal/client/supervisor"
@@ -40,6 +42,7 @@ func SigningIdentity(ctx context.Context, profile *clientstate.Store, id string)
 // private publication never reserves a hostname or asks for a visitor certificate.
 // only the person's session creates saved state; runs use the exact signed grant.
 func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePresentation) (result error) {
+	ctx = clienttelemetry.WithDisabled(ctx, flags.TelemetryDisabled)
 	project := projectConfiguration{Project: flags.Project, targetResolver: flags.Resolver}
 	protocol, err := privatePublishProtocol(flags.Protocol)
 	if err != nil {
@@ -321,7 +324,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 	if err := publisheridentity.MatchServiceDeclaration(approved, string(protocol), trust); err != nil {
 		return failure.Wrap("match service declaration", failure.ServerConflict, errors.Join(err, errors.New("saved service protocol or TLS trust differs from the local declaration")))
 	}
-	job := supervisor.Job{Kind: supervisor.KindService, ID: supervisor.ServiceJobKey(server, *identity.ServiceId), Name: name, Server: server,
+	job := supervisor.Job{TelemetryDisabled: flags.TelemetryDisabled, Kind: supervisor.KindService, ID: supervisor.ServiceJobKey(server, *identity.ServiceId), Name: name, Server: server,
 		ServiceID: *identity.ServiceId, PublisherIdentityID: identity.ClientId, GrantID: identity.GrantId, Target: target, Protocol: config.ProtocolName(protocol), Trust: trust, ServerCAPEM: serverCAPEM,
 		TrustRevision: approved.TrustRevision, PublisherPool: approved.PublisherPool}
 	job.Limits = flags.Limits
