@@ -231,7 +231,7 @@ func startConnectorDirectPublisher(t *testing.T, f *privateSeparatedFixture, ser
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, f.identity.routes, f.identity.authority, enrollment.EnrollmentKey)
+	native, identity, err := publisheridentity.EnrollNative(t.Context(), f.identity.state, publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.authority, enrollment.EnrollmentKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func startConnectorDirectRuntime(t *testing.T, f *privateSeparatedFixture, targe
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "connector-direct", key)
+	service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "connector-direct", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
 	if err != nil {
 		t.Fatal(err)
 	}

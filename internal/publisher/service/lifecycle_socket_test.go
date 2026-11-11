@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 )
 
 type lifecycleDrainingSlot struct {
@@ -15,6 +16,8 @@ type lifecycleDrainingSlot struct {
 	draining chan<- struct{}
 	release  <-chan struct{}
 }
+
+func (s *lifecycleDrainingSlot) Transport() tunnel.Transport { return tunnel.TransportQUIC }
 
 func (s *lifecycleDrainingSlot) Serve(ctx context.Context) error {
 	select {
