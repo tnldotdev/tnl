@@ -65,9 +65,7 @@ jobs:
         include:
           - suite: cli:identity
             shard: 1/1
-          - suite: publisher-groups
-            shard: 1/1
-          - suite: management
+          - suite: sshd
             shard: 1/1
           - suite: tcp-clients
             shard: 1/1
@@ -87,7 +85,7 @@ jobs:
           pnpm: true
 
       - name: Install OpenSSH fixture
-        if: matrix.suite == 'cli:shard' || matrix.suite == 'management'
+        if: matrix.suite == 'cli:shard' || matrix.suite == 'sshd'
         timeout-minutes: 3
         run: |
           sudo sed --in-place --regexp-extended \
@@ -155,9 +153,6 @@ jobs:
 
       - name: Check Ubuntu and Compose publisher installation
         run: task go:test:integration:publisher-install
-
-      - name: Check exact certificate recovery and durable publisher replacement
-        run: task go:test:integration:publisher-recovery go:test:integration:publisher-replacement
 
   dns:
     name: DNS integration

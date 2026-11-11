@@ -20,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/authorization"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
+	"github.com/tnldotdev/tnl/internal/serviceapi"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"golang.org/x/oauth2"
 )
@@ -132,7 +133,7 @@ func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.
 		writeControlStateProblem(response, "start browser sign-in", err)
 		return
 	}
-	http.SetCookie(response, &http.Cookie{Name: browserLoginCookieName, Value: base64.RawURLEncoding.EncodeToString(binding), Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: now.Add(5 * time.Minute)})
+	http.SetCookie(response, serviceapi.ControlCookie(h.config.ControlURL, http.Cookie{Name: browserLoginCookieName, Value: base64.RawURLEncoding.EncodeToString(binding), Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: now.Add(5 * time.Minute)}))
 	authorization, err := h.browserOIDC.AuthorizationURL(request.Context(), state, nonce, verifier)
 	if intent != nil {
 		authorization, err = h.browserOIDC.CompanyAuthorizationURL(request.Context(), state, nonce, verifier, intent.ID, intent.BindingToken)
@@ -159,7 +160,7 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 		return
 	}
 	now := time.Now()
-	bindingCookie, err := request.Cookie(browserLoginCookieName)
+	bindingCookie, err := request.Cookie(serviceapi.ControlCookieName(h.config.ControlURL, browserLoginCookieName))
 	if err != nil {
 		writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "browser sign-in expired")
 		return
@@ -178,7 +179,7 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 		}
 		return
 	}
-	http.SetCookie(response, &http.Cookie{Name: browserLoginCookieName, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	http.SetCookie(response, serviceapi.ControlCookie(h.config.ControlURL, http.Cookie{Name: browserLoginCookieName, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1}))
 	identity, err := h.browserOIDC.Redeem(request.Context(), params.Code, attempt.Nonce, attempt.Verifier)
 	if errors.Is(err, oidc.ErrUnavailable) {
 		writeUnavailableProblem(response, "verify browser identity", "identity provider is unavailable", failure.ServerIdentityProviderUnavailable, err)

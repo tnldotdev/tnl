@@ -76,6 +76,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 		modifyResponse, observe = config.Feedback.modifyResponse, config.Feedback.observe
 	}
 	var handler http.Handler
+	var proxy *publisherproxy.Proxy
 	if config.Handler != nil {
 		handler = config.Handler
 	} else {
@@ -96,10 +97,11 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				return config.ResolveTarget(request.Context())
 			}
 		}
-		handler, err = publisherproxy.New(proxyConfig)
+		proxy, err = publisherproxy.New(proxyConfig)
 		if err != nil {
 			return nil, err
 		}
+		handler = proxy
 	}
 	queue := newRouteListener()
 	shareSlots := make(chan struct{}, 16)
@@ -113,6 +115,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 	base = observability.WithPublisherRecovery(base)
 	life, cancelLife := context.WithCancel(context.WithoutCancel(base))
 	route := &PublicURLServer{
+		proxy:            proxy,
 		hostname:         hostname,
 		policy:           config.VisitorPolicy,
 		visitorSourceKey: config.VisitorSourceKey,

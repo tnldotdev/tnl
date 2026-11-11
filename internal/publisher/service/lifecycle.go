@@ -333,9 +333,9 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 		if result == nil && ctx.Err() != nil {
 			finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			defer cancel()
-			_ = paths.Drain(finish)
+			result = errors.Join(result, paths.Drain(finish))
 		} else {
-			_ = paths.Close()
+			result = errors.Join(result, paths.Close())
 		}
 	}()
 	for slot := range uint8(2) {

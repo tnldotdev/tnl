@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/tnldotdev/tnl/internal/httpclient"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 const GitHubIssuer = "https://token.actions.githubusercontent.com"
@@ -51,12 +51,10 @@ type GitHubWorkloadVerifier struct {
 // the canonical control origin is the audience. issuer and key URL are fixed;
 // local tests inject an HTTP transport, never a runtime issuer override.
 func NewGitHubWorkloadVerifier(controlOrigin string, client *http.Client) (*GitHubWorkloadVerifier, error) {
-	u, err := url.Parse(controlOrigin)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
-		return nil, errors.New("workload audience requires a canonical HTTPS control origin")
+	audience, err := naming.CanonicalControlURL(controlOrigin)
+	if err != nil {
+		return nil, err
 	}
-	audience := "https://" + strings.ToLower(u.Host)
-	audience = strings.TrimSuffix(audience, ":443")
 	c := httpclient.NoRedirects(client)
 	if c.Timeout <= 0 || c.Timeout > 10*time.Second {
 		c.Timeout = 10 * time.Second

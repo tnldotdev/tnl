@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -138,9 +137,9 @@ func TestControllerStalledRoutingUpdates(t *testing.T) {
 				}
 				candidates := make([]PublicURL, 0, len(entries))
 				for _, entry := range entries {
-					backends := []ingressbackend.Backend{before}
+					backends := []Backend{before}
 					if entry.PolicyRevision > 1 {
-						backends = []ingressbackend.Backend{firstAttempt, after}
+						backends = []Backend{firstAttempt, after}
 					}
 					candidates = append(candidates, PublicURL{ID: entry.PublicUrlId, PublishRunID: entry.PublishRunId, PublishRunNumber: uint64(entry.PublishRunNumber), Backends: backends, AllowAll: true, AttestSource: testBackendSourceProof})
 				}

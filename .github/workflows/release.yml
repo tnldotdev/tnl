@@ -32,7 +32,8 @@ jobs:
       - name: Set up tools
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] pinned actionlint does not support $/ syntax
         with:
-          tools: node
+          tools: node pnpm
+          pnpm: true
 
       - name: Verify release tag and commit
         id: release
@@ -40,7 +41,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
-          version="$(node scripts/release/release-version.ts "$TAG")"
+          version="$(node --input-type=module -e '
+            import {valid} from "semver";
+            const tag = process.env.TAG;
+            const version = tag?.startsWith("v") ? tag.slice(1) : "";
+            if (!version || valid(version) !== version || tag.length > 128) throw new Error("invalid release tag");
+            process.stdout.write(version);
+          ')"
           tag_sha="$(git rev-parse "refs/tags/$TAG^{tag}")"
           verification="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_sha" --jq '[.verification.verified, .object.sha] | @tsv')"
           test "$verification" = "$(printf 'true\t%s' "$GITHUB_SHA")"
@@ -246,7 +253,7 @@ jobs:
         env:
           NPM_CONFIG_PROVENANCE: ${{ github.event.repository.visibility == 'public' }}
           VERSION: ${{ needs.validate.outputs.version }}
-        run: node scripts/release/publish-tnl-packages.ts "$RUNNER_TEMP/tnl-npm-packages" "$VERSION"
+        run: node scripts/release/publish-npm-packages.ts "$RUNNER_TEMP/tnl-npm-packages" "$VERSION"
 
   python:
     name: Publish Python ASGI wheels

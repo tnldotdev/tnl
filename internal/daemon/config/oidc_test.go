@@ -25,3 +25,22 @@ func TestOIDCRequiredAndExplicitIdentitySeeds(t *testing.T) {
 		}
 	}
 }
+
+func TestHTTPIdentityProviderRequiresLocalStandalone(t *testing.T) {
+	local := Config{Role: RoleStandalone, ControlURL: "http://localhost:8445", OIDCIssuer: "http://localhost:8444", OIDCClientID: "local"}
+	if err := local.validateOIDC(); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*Config){
+		func(c *Config) { c.Role = RoleControl },
+		func(c *Config) { c.ControlURL = "https://control.example" },
+		func(c *Config) { c.OIDCIssuer = "http://identity:8444" },
+		func(c *Config) { c.OIDCIssuer = "http://identity.127.0.0.1.nip.io:8444" },
+	} {
+		invalid := local
+		mutate(&invalid)
+		if invalid.validateOIDC() == nil {
+			t.Fatal("nonlocal HTTP OIDC accepted")
+		}
+	}
+}

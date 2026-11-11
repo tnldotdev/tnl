@@ -9,8 +9,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
-func (c Config) OIDCEnabled() bool { return c.OIDCIssuer != "" }
-
 func (c Config) EffectiveOIDCScopes() []string {
 	if len(c.OIDCScopes) == 0 {
 		return []string{"openid"}
@@ -28,9 +26,12 @@ func (c Config) validateOIDC() (retErr error) {
 		return errors.New("OIDC configuration is incomplete")
 	}
 	issuer, err := url.Parse(c.OIDCIssuer)
-	if err != nil || issuer.Scheme != "https" || issuer.Host == "" || issuer.User != nil ||
+	if err != nil || issuer.Scheme != "https" && !naming.IsLoopbackHTTP(c.OIDCIssuer) || issuer.Host == "" || issuer.User != nil ||
 		issuer.RawQuery != "" || issuer.Fragment != "" {
-		return errors.New("OIDC issuer must be an HTTPS URL without credentials, query, or fragment")
+		return errors.New("OIDC issuer must be HTTPS or loopback HTTP without credentials, query, or fragment")
+	}
+	if issuer.Scheme == "http" && (c.Role != RoleStandalone || !naming.IsLoopbackHTTP(c.ControlURL)) {
+		return errors.New("HTTP OIDC requires standalone with loopback HTTP control")
 	}
 	if strings.TrimSpace(c.OIDCClientID) != c.OIDCClientID || c.OIDCClientID == "" || len(c.OIDCClientID) > 128 {
 		return errors.New("OIDC client ID is invalid")

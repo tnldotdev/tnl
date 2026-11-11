@@ -19,7 +19,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"github.com/zalando/go-keyring"
 )
 
 type selectedTeamAPI struct {
@@ -299,7 +298,6 @@ func TestTeamSessionOpenAndLifetime(t *testing.T) {
 }
 
 func TestTeamSessionRejectsGuestBeforeAuthentication(t *testing.T) {
-	keyring.MockInit()
 	root := filepath.Join(t.TempDir(), "state")
 	db, err := clientstate.Open(t.Context(), root)
 	if err != nil {

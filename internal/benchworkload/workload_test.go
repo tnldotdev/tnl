@@ -14,6 +14,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
@@ -365,11 +366,11 @@ func TestPublisherStartupBoundsAndUnexpectedExit(t *testing.T) {
 
 func TestCancellationDoesNotHideJoinedCloseFailure(t *testing.T) {
 	for _, err := range []error{errors.New("close failed"), context.DeadlineExceeded, errors.Join(context.Canceled, errors.New("close failed"))} {
-		if CancellationOnly(err) {
+		if failure.Only(err, context.Canceled) {
 			t.Fatalf("hidden failure: %v", err)
 		}
 	}
-	if !CancellationOnly(errors.Join(context.Canceled, context.Canceled)) {
+	if !failure.Only(errors.Join(context.Canceled, context.Canceled), context.Canceled) {
 		t.Fatal("pure cancellation failed")
 	}
 }

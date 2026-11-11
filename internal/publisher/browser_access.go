@@ -14,6 +14,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	"github.com/tnldotdev/tnl/internal/httpjson"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
@@ -41,7 +42,8 @@ type browserAccess struct {
 }
 
 func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token credentials.PublishRunToken) *browserAccess {
-	if !strings.HasPrefix(config.ControlURL, "https://") || setup.PublicUrl.ServiceProtocol != controlv1.Http {
+	controlURL, err := naming.CanonicalControlURL(config.ControlURL)
+	if err != nil || setup.PublicUrl.ServiceProtocol != controlv1.Http {
 		return nil
 	}
 	var candidate any = config.Control
@@ -54,7 +56,7 @@ func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token c
 	}
 	return &browserAccess{subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: setup.PublicUrl.Id}, client: client, previewID: config.PreviewID, publicURLID: setup.PublicUrl.Id,
 		runID: setup.PublishRun.Id, version: uint64(setup.PublishRun.PublishRunNumber), token: token,
-		controlURL: config.ControlURL}
+		controlURL: controlURL}
 }
 
 func browserCookie(response http.ResponseWriter, secret string, expires time.Time) {

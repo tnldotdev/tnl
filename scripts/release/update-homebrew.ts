@@ -38,7 +38,7 @@ const values: Record<string, string> = {
   LINUX_AMD64: checksum("linux", "amd64"),
 };
 const template = await readFile(
-  path.resolve(import.meta.dirname, "../package/homebrew/tnl.rb.template"),
+  path.resolve(import.meta.dirname, "../package/tnl.rb.template"),
   "utf8",
 );
 const formula = template.replace(/\{\{([A-Z0-9_]+)\}\}/g, (_, key: string) => {

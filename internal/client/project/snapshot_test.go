@@ -2,6 +2,7 @@ package project
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -60,12 +61,20 @@ func TestSnapshotPreservesEvaluatedInspection(t *testing.T) {
 			if err != nil || !bytes.Equal(encoded, again) || digest != restoredDigest {
 				t.Fatalf("evaluated snapshot changed: %v", err)
 			}
-			static, err := restored.StaticMap()
+			data, err := json.Marshal(restored.Declared)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := static["inspection"].(map[string]any)["max_bytes"]; got != "64MiB" {
-				t.Fatalf("static byte-size contract changed: %v", got)
+			var declaration struct {
+				Inspection struct {
+					MaxBytes string `json:"max_bytes"`
+				} `json:"inspection"`
+			}
+			if err := json.Unmarshal(data, &declaration); err != nil {
+				t.Fatal(err)
+			}
+			if got := declaration.Inspection.MaxBytes; got != "64MiB" {
+				t.Fatalf("declared byte-size contract changed: %v", got)
 			}
 		})
 	}

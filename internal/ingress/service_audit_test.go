@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/ingress/clienthello"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 )
@@ -16,7 +15,7 @@ func (f auditSinkFunc) Observe(o serviceaudit.Observation) bool { return f(o) }
 
 func TestNetworkPolicyDenialAuditedAtIngress(t *testing.T) {
 	var events []serviceaudit.Observation
-	route := PublicURL{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_0123456789ABCDEFGHIJKL", PublishRunNumber: 1, Backends: []ingressbackend.Backend{&singleBackend{}}, AttestSource: testBackendSourceProof}
+	route := PublicURL{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_0123456789ABCDEFGHIJKL", PublishRunNumber: 1, Backends: []Backend{&singleBackend{}}, AttestSource: testBackendSourceProof}
 	s, _ := startIngress(t, Config{Lookup: func(string) ([]PublicURL, LookupReason) { return []PublicURL{route}, LookupCurrent }, AuditSink: auditSinkFunc(func(o serviceaudit.Observation) bool { events = append(events, o); return true })})
 	if err := s.forward(nil, netip.MustParseAddrPort("192.0.2.8:1234"), netip.MustParseAddrPort("203.0.113.1:443"), clienthello.ClientHello{ServerName: "private.example"}); err != nil {
 		t.Fatal(err)

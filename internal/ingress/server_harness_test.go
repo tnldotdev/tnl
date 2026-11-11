@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -136,7 +135,7 @@ func exchangePing(t *testing.T, c *tls.Conn) {
 	_ = c.Close()
 }
 
-func publicURLConfig(backends ...ingressbackend.Backend) Config {
+func publicURLConfig(backends ...Backend) Config {
 	return Config{Lookup: func(host string) ([]PublicURL, LookupReason) {
 		if host != "route.example" {
 			return nil, LookupNotFound

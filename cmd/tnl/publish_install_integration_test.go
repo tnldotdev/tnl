@@ -381,17 +381,15 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", "--force", image).Run() })
 	project := "tnl-install-" + fmt.Sprint(time.Now().UnixNano())
 	override := filepath.Join(t.TempDir(), "compose.yaml")
-	// this local source-built fixture has no published registry digest. only its
-	// explicit test override omits deployment-image validation; the reference
-	// always passes its required immutable TNL_IMAGE to the native publisher.
-	if err := os.WriteFile(override, []byte("services:\n  publisher:\n    network_mode: container:"+*publisherInstallNetwork+"\n    environment:\n      TNL_IMAGE: \"\"\n"), 0o600); err != nil {
+	// the fixture shares the disposable server's network namespace.
+	if err := os.WriteFile(override, []byte("services:\n  publisher:\n    network_mode: container:"+*publisherInstallNetwork+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	secret := enrollment()
 	consumedSecret := secret
 	environmentFile := filepath.Join(t.TempDir(), ".env")
 	composeCommand := func(ctx context.Context, extra ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "docker", append([]string{"compose", "--env-file", environmentFile, "--project-name", project, "--file", "../../deploy/publisher/compose/compose.yaml", "--file", override}, extra...)...)
+		return exec.CommandContext(ctx, "docker", append([]string{"compose", "--env-file", environmentFile, "--project-name", project, "--file", "../../tests/integration/fixtures/publisher-install/compose.yaml", "--file", override}, extra...)...)
 	}
 	compose := func(allowFailure bool, extra ...string) string {
 		t.Helper()

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 )
 
@@ -25,6 +26,25 @@ func (c Config) Validate() error {
 }
 
 func (c Config) Handler(next http.Handler) (http.Handler, error) {
+	canonical, canonicalErr := naming.CanonicalControlURL(c.Origin)
+	if canonicalErr == nil && canonical == c.Origin && naming.IsLoopbackHTTP(c.Origin) {
+		origin, _ := url.Parse(c.Origin)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Host != origin.Host {
+				serviceapi.WriteProblem(w, http.StatusBadRequest, "invalid_request", "local control host is invalid")
+				return
+			}
+			request := r.Clone(r.Context())
+			request.URL.Scheme, request.URL.Host = origin.Scheme, origin.Host
+			for name := range request.Header {
+				lower := strings.ToLower(name)
+				if lower == "forwarded" || lower == "x-real-ip" || strings.HasPrefix(lower, "x-forwarded-") || strings.HasPrefix(lower, "fly-") {
+					request.Header.Del(name)
+				}
+			}
+			next.ServeHTTP(w, request)
+		}), nil
+	}
 	origin, err := url.Parse(c.Origin)
 	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
 		return nil, errors.New("control proxy requires a canonical external HTTPS origin")

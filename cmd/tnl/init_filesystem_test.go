@@ -43,13 +43,16 @@ func TestInitStaticProjectNeedsNoPackageManifestOrOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"tnl.yml", ".tnl/generated/project.d.ts", ".tnl/generated/manifest.json"} {
+	for _, name := range []string{"tnl.yml", ".tnl/generated/project.d.ts"} {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(root, "package.json")); !os.IsNotExist(err) {
 		t.Fatal("non-JavaScript init created package.json")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".tnl/generated/manifest.json")); !os.IsNotExist(err) {
+		t.Fatal("init created a retired artifact ownership manifest")
 	}
 }
 

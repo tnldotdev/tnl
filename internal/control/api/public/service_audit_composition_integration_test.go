@@ -24,7 +24,6 @@ import (
 	controlingress "github.com/tnldotdev/tnl/internal/control/api/private/ingress"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/ingress"
-	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/testutil/managedcert"
@@ -255,7 +254,7 @@ func exerciseServiceAuditQueueComposition(t *testing.T, d *controlstate.Database
 			if host != publicHostname {
 				return nil, ingress.LookupNotFound
 			}
-			return []ingress.PublicURL{{ID: publicID, PublishRunID: publicRun, PublishRunNumber: 1, AllowAll: true, AccessMode: "anonymous", Backends: []ingressbackend.Backend{target},
+			return []ingress.PublicURL{{ID: publicID, PublishRunID: publicRun, PublishRunNumber: 1, AllowAll: true, AccessMode: "anonymous", Backends: []ingress.Backend{target},
 				AttestSource: func(string, netip.AddrPort, netip.AddrPort) (string, error) { return "audit-fixture-source-proof", nil },
 			}}, ingress.LookupCurrent
 		}})

@@ -6,8 +6,11 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -69,17 +72,11 @@ func (d *Database) AllocatePublisherPublicURL(ctx context.Context, p PublisherId
 	if err != nil {
 		return PublicURL{}, err
 	}
-	team, err := d.pool.Query(ctx, `SELECT policy_revision FROM control.teams WHERE id=$1 AND deleted_at IS NULL`, p.Scope.TeamID)
-	if err != nil {
-		return PublicURL{}, err
-	}
 	var revision int64
-	if !team.Next() {
-		team.Close()
+	err = d.pool.QueryRow(ctx, `SELECT policy_revision FROM control.teams WHERE id=$1 AND deleted_at IS NULL`, p.Scope.TeamID).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return PublicURL{}, ErrPublisherIdentity
 	}
-	err = team.Scan(&revision)
-	team.Close()
 	if err != nil {
 		return PublicURL{}, err
 	}

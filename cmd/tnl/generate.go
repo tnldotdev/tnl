@@ -21,13 +21,12 @@ func runGenerate(ctx context.Context, flags cli, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	manifest, err := meta.Generate(ctx, project, flags.Generate.OutputDir, flags.Generate.Check)
-	if err != nil {
+	if err := meta.Generate(ctx, project, flags.Generate.OutputDir, flags.Generate.Check); err != nil {
 		return err
 	}
 	state := "generated"
 	if flags.Generate.Check {
 		state = "current"
 	}
-	return writeHumanFrame(output, "tnl generate", state, "commit generated artifacts with project configuration", clioutput.Fields(clioutput.Field{Label: "publisher_groups", Value: strconv.Itoa(len(manifest.PublisherGroups))}, clioutput.Field{Label: "output", Value: flags.Generate.OutputDir}))
+	return writeHumanFrame(output, "tnl generate", state, "commit generated artifacts with project configuration", clioutput.Fields(clioutput.Field{Label: "services", Value: strconv.Itoa(len(project.Config.Services))}, clioutput.Field{Label: "output", Value: flags.Generate.OutputDir}))
 }

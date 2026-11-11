@@ -1,6 +1,6 @@
 module github.com/tnldotdev/tnl
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/alecthomas/kong v1.16.1
@@ -10,7 +10,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/eks v1.104.2
 	github.com/aws/aws-sdk-go-v2/service/rds v1.130.3
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.70.3
-	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.50.4
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.3
 	github.com/aws/smithy-go v1.28.5
 	github.com/coreos/go-oidc/v3 v3.21.0

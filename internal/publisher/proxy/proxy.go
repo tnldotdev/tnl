@@ -112,12 +112,6 @@ func WaitForTarget(ctx context.Context, target string) error {
 	return waitForTarget(ctx, target, Preflight)
 }
 
-func WaitForTargetWithOptions(ctx context.Context, target string, options TargetOptions) error {
-	return waitForTarget(ctx, target, func(ctx context.Context, target string) error {
-		return PreflightWithOptions(ctx, target, options)
-	})
-}
-
 func waitForTarget(ctx context.Context, target string, preflight func(context.Context, string) error) error {
 	canonicalTarget, err := targetsyntax.NormalizeTarget(target)
 	if err != nil {
@@ -166,8 +160,52 @@ type Config struct {
 	OnTargetFailure func()
 }
 
+// Proxy owns the target connection pools for one publication. the publisher
+// stops serving and joins requests before closing these pools.
+type Proxy struct {
+	handler    http.Handler
+	mu         sync.Mutex
+	transports map[*http.Transport]struct{}
+	closed     bool
+}
+
+func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	p.mu.Lock()
+	closed := p.closed
+	p.mu.Unlock()
+	if closed {
+		diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+		return
+	}
+	p.handler.ServeHTTP(w, r)
+}
+
+func (p *Proxy) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.closed = true
+	for transport := range p.transports {
+		transport.CloseIdleConnections()
+	}
+	clear(p.transports)
+	return nil
+}
+
+type targetProxy struct {
+	*httputil.ReverseProxy
+	transport *http.Transport
+}
+
+func (p *Proxy) retire(target *targetProxy) {
+	p.mu.Lock()
+	delete(p.transports, target.transport)
+	p.mu.Unlock()
+	// active requests finish normally; their connections close on becoming idle.
+	target.transport.CloseIdleConnections()
+}
+
 // New forwards requests already admitted by the publisher.
-func New(config Config) (http.Handler, error) {
+func New(config Config) (*Proxy, error) {
 	if config.MaxConnsPerHost < 0 {
 		return nil, errors.New("localproxy: transport connection limit cannot be negative")
 	}
@@ -178,7 +216,8 @@ func New(config Config) (http.Handler, error) {
 	if err != nil || canonical != config.Hostname {
 		return nil, diagnostic.Wrap(diagnostic.PublicURLInvalid, errors.New("localproxy: hostname must be canonical"))
 	}
-	base, err := newReverseProxy(config.Target, config.MaxConnsPerHost, config.Hooks, config.TargetOptions, config.OnTargetFailure)
+	owner := &Proxy{transports: make(map[*http.Transport]struct{})}
+	base, err := owner.newReverseProxy(config.Target, config.MaxConnsPerHost, config.Hooks, config.TargetOptions, config.OnTargetFailure)
 	if err != nil {
 		return nil, err
 	}
@@ -199,19 +238,26 @@ func New(config Config) (http.Handler, error) {
 			}
 			mu.Lock()
 			if currentAddress != canonical || currentIdentity != identity {
-				selected, err := newReverseProxy(canonical, config.MaxConnsPerHost, config.Hooks, config.TargetOptions, config.OnTargetFailure)
+				selected, err := owner.newReverseProxy(canonical, config.MaxConnsPerHost, config.Hooks, config.TargetOptions, config.OnTargetFailure)
 				if err != nil {
 					mu.Unlock()
 					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
 					return
 				}
-				if transport, ok := base.Transport.(interface{ CloseIdleConnections() }); ok {
-					transport.CloseIdleConnections()
-				}
+				owner.retire(base)
 				base, currentAddress, currentIdentity = selected, canonical, identity
 			}
 			selected := base
 			mu.Unlock()
+			defer func() {
+				mu.Lock()
+				defer mu.Unlock()
+				// a captured request can start after replacement closed the old pool.
+				// close it again when that last use returns its connection.
+				if selected != base {
+					selected.transport.CloseIdleConnections()
+				}
+			}()
 			selected.ServeHTTP(w, r)
 		})
 	}
@@ -229,36 +275,40 @@ func New(config Config) (http.Handler, error) {
 		var proxy http.Handler
 		if mount.ResolveTarget != nil {
 			var mu sync.Mutex
-			var current string
-			var upstream *httputil.ReverseProxy
+			var current, currentIdentity string
+			var upstream *targetProxy
 			proxy = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				target := mount.ResolveTarget()
-				if target == "" {
+				target, identity, err := mount.ResolveTarget(r.Context())
+				if err != nil || target == "" || identity == "" {
 					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
 					return
 				}
 				mu.Lock()
-				if current != target {
-					if upstream != nil {
-						if transport, ok := upstream.Transport.(interface{ CloseIdleConnections() }); ok {
-							transport.CloseIdleConnections()
-						}
-					}
-					var err error
-					upstream, err = newReverseProxy(target, config.MaxConnsPerHost, config.Hooks, mount.Options, config.OnTargetFailure)
+				if current != target || currentIdentity != identity {
+					selected, err := owner.newReverseProxy(target, config.MaxConnsPerHost, config.Hooks, mount.Options, config.OnTargetFailure)
 					if err != nil {
 						mu.Unlock()
 						diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
 						return
 					}
-					current = target
+					if upstream != nil {
+						owner.retire(upstream)
+					}
+					upstream, current, currentIdentity = selected, target, identity
 				}
 				selected := upstream
 				mu.Unlock()
+				defer func() {
+					mu.Lock()
+					defer mu.Unlock()
+					if selected != upstream {
+						selected.transport.CloseIdleConnections()
+					}
+				}()
 				selected.ServeHTTP(w, r)
 			})
 		} else {
-			proxy, err = newReverseProxy(mount.Target, config.MaxConnsPerHost, config.Hooks, mount.Options, config.OnTargetFailure)
+			proxy, err = owner.newReverseProxy(mount.Target, config.MaxConnsPerHost, config.Hooks, mount.Options, config.OnTargetFailure)
 			if err != nil {
 				return nil, fmt.Errorf("localproxy: mount %q: %w", mount.Prefix, err)
 			}
@@ -271,7 +321,7 @@ func New(config Config) (http.Handler, error) {
 		}
 		return strings.Compare(left.Prefix, right.Prefix)
 	})
-	return httpstream.Requests(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	owner.handler = httpstream.Requests(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if code := ValidateRequest(request, config.Hostname); code != "" {
 			diagnostic.WriteHTTP(response, request, code)
 			return
@@ -301,10 +351,11 @@ func New(config Config) (http.Handler, error) {
 			return
 		}
 		baseHandler.ServeHTTP(response, request)
-	}), httpstream.RequestBodyTimeout), nil
+	}), httpstream.RequestBodyTimeout)
+	return owner, nil
 }
 
-func newReverseProxy(target string, maxConnsPerHost int, hooks ResponseHooks, options TargetOptions, onTargetFailure func()) (*httputil.ReverseProxy, error) {
+func (p *Proxy) newReverseProxy(target string, maxConnsPerHost int, hooks ResponseHooks, options TargetOptions, onTargetFailure func()) (*targetProxy, error) {
 	canonicalTarget, err := targetsyntax.NormalizeTarget(target)
 	if err != nil {
 		return nil, err
@@ -399,7 +450,14 @@ func newReverseProxy(target string, maxConnsPerHost int, hooks ResponseHooks, op
 			return nil
 		},
 	}
-	return proxy, nil
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		transport.CloseIdleConnections()
+		return nil, net.ErrClosed
+	}
+	p.transports[transport] = struct{}{}
+	return &targetProxy{ReverseProxy: proxy, transport: transport}, nil
 }
 
 // ValidateRequest binds a visitor HTTP request to its public URL hostname and SNI.

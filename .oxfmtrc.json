@@ -1,10 +1,7 @@
 {
   "ignorePatterns": [
     "connect/dist/**",
-    "api/observability/v1/vocabulary.json",
-    "internal/publisher/toolbar/toolbar.js",
-    "deploy/publisher/fargate/fargate.yaml",
-    "deploy/publisher/fargate/fargate.parameters.example.json",
-    "deploy/publisher/fargate/fargate.manifest.example.json"
+    "contracts/observability/v1/vocabulary.json",
+    "internal/publisher/toolbar/toolbar.js"
   ]
 }

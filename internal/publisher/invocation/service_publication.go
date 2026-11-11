@@ -39,7 +39,7 @@ func SigningIdentity(ctx context.Context, profile *clientstate.Store, id string)
 
 // private publication never reserves a hostname or asks for a visitor certificate.
 // only the person's session creates saved state; runs use the exact signed grant.
-func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePresentation) error {
+func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePresentation) (result error) {
 	project := projectConfiguration{Project: flags.Project, targetResolver: flags.Resolver}
 	protocol, err := privatePublishProtocol(flags.Protocol)
 	if err != nil {
@@ -355,7 +355,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		if err != nil {
 			return err
 		}
-		defer stopRuntime()
+		defer func() { result = errors.Join(result, stopRuntime()) }()
 	}
 	err = targetplan.PublishPrivate(ctx, job.TargetPlan(), publisherservice.RunConfig{Control: native, State: profile, Access: native.Access, Identity: identity, ServiceID: job.ServiceID, Target: target, Metadata: publisheridentity.ServiceMetadata(approved), StreamCapacity: int32(job.Limits.Concurrency),
 		Ready: func() error {
@@ -364,8 +364,8 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 			}
 			return emit("ready")
 		}})
-	if err != nil && !errors.Is(err, context.Canceled) {
-		return failure.Wrap("publish service", failure.TunnelUnavailable, err)
+	if err != nil && !(context.Cause(ctx) == context.Canceled && failure.Only(err, context.Canceled)) {
+		return failure.Wrap("publish service", failure.TunnelUnavailable, errors.Join(err, context.Cause(ctx)))
 	}
 	return emit("stopped")
 }

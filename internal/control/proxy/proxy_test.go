@@ -62,3 +62,37 @@ func TestTrustedHTTPSMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalHTTPDoesNotRequireOrTrustProxyHeaders(t *testing.T) {
+	called := 0
+	handler, err := (Config{Origin: "http://localhost:8445"}).Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called++
+		if r.URL.Scheme != "http" || r.URL.Host != "localhost:8445" || r.RemoteAddr != "127.0.0.1:1234" || r.Header.Get("X-Forwarded-For") != "" {
+			t.Fatalf("local request trusted forwarded input: %+v", r)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"localhost:8445", "attacker.example", "localhost:8446"} {
+		r := httptest.NewRequest(http.MethodGet, "http://localhost:8445/v1/ready", nil)
+		r.Host, r.RemoteAddr = host, "127.0.0.1:1234"
+		r.Header.Set("X-Forwarded-For", "203.0.113.1")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		expected := http.StatusBadRequest
+		if host == "localhost:8445" {
+			expected = http.StatusNoContent
+		}
+		if w.Code != expected {
+			t.Fatalf("host %s: %d", host, w.Code)
+		}
+	}
+	if called != 1 {
+		t.Fatal("host mismatch reached local control")
+	}
+	if err := (Config{Origin: "http://control.example"}).Validate(); err == nil {
+		t.Fatal("remote plaintext origin accepted")
+	}
+}

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"strings"
 )
 
@@ -9,9 +10,9 @@ type Mount struct {
 	Prefix      string
 	Target      string
 	StripPrefix bool
-	// resolveTarget returns the currently registered app target at admission.
-	// an empty value rejects new requests while the mounted app is stopped.
-	ResolveTarget func() string
+	// resolveTarget captures the address and identity at request admission.
+	// existing streams finish against their captured target.
+	ResolveTarget func(context.Context) (address, identity string, err error)
 	Options       TargetOptions
 }
 

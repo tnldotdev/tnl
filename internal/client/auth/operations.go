@@ -108,7 +108,7 @@ func StartLogin(ctx context.Context, config Config) (clientstate.AuthOperation, 
 	}
 	approval, parseErr := url.Parse(challenge.ApprovalUrl)
 	controlURL, _ := url.Parse(resolved.serverEndpoint)
-	if parseErr != nil || approval.Scheme != "https" || approval.Host != controlURL.Host || approval.User != nil || approval.Fragment != "" || approval.Path != "/v1/auth/device/approve" || len(challenge.PollingCredential) != 43 || len(challenge.UserCode) != 13 || !challenge.ExpiresAt.After(time.Now()) || challenge.ExpiresAt.After(time.Now().Add(11*time.Minute)) || challenge.IntervalSeconds < 1 || challenge.IntervalSeconds > 30 {
+	if parseErr != nil || approval.Scheme != controlURL.Scheme || approval.Host != controlURL.Host || approval.User != nil || approval.Fragment != "" || approval.Path != "/v1/auth/device/approve" || len(challenge.PollingCredential) != 43 || len(challenge.UserCode) != 13 || !challenge.ExpiresAt.After(time.Now()) || challenge.ExpiresAt.After(time.Now().Add(11*time.Minute)) || challenge.IntervalSeconds < 1 || challenge.IntervalSeconds > 30 {
 		return op, finishOperation(ctx, store, &op, clientstate.AuthRecoveryRequired, errors.New("invalid control device challenge"))
 	}
 	p.PollingCredential = challenge.PollingCredential

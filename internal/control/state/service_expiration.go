@@ -38,12 +38,12 @@ func (d *Database) ExpireServiceRuns(ctx context.Context, now time.Time) (count 
 	}
 	rows.Close()
 	for _, c := range candidates {
-		closed, err := func() (bool, error) {
+		closed, err := func() (_ bool, retErr error) {
 			tx, err := d.pool.Begin(ctx)
 			if err != nil {
 				return false, err
 			}
-			defer tx.Rollback(ctx)
+			defer rollback(ctx, tx, "expire service run", &retErr)()
 			q := controlstatedb.New(tx)
 			service, err := q.LockService(ctx, c.service)
 			if errors.Is(err, pgx.ErrNoRows) {

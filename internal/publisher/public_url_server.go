@@ -75,6 +75,7 @@ type PublicURLServer struct {
 	certificateExpired chan struct{}
 	queue              *publicURLListener
 	http               *http.Server
+	proxy              *publisherproxy.Proxy
 	bodyTimeout        time.Duration
 	mu                 sync.Mutex
 	started            bool
@@ -198,6 +199,9 @@ func (r *PublicURLServer) Close() error {
 			_ = stream.Close()
 		}
 		r.handlers.Wait()
+		if r.proxy != nil {
+			result = errors.Join(result, r.proxy.Close())
+		}
 		if drainDone != nil {
 			<-drainDone
 		}

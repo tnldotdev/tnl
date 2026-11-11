@@ -39,10 +39,10 @@ named local publishers so they all use the new configuration.
   authentication, and loopback-only requests; browser `Origin` headers are rejected.
 - [local/runtime.go](../local/runtime.go) owns process startup and shutdown.
   [app/manager.go](../app/manager.go) owns registrations and their leases.
-- [The OpenAPI contract](../../../api/publisher/local/v1/openapi.yaml) defines
+- [The OpenAPI contract](../../../contracts/publisher/local/v1/openapi.yaml) defines
   request and response fields. Edit it rather than the generated Go types, then
   regenerate from the repository root:
 
 ```sh
-mise exec -- go generate ./pkg/api/publisher/local/v1
+mise exec -- task generate
 ```

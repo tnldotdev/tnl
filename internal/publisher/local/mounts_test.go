@@ -75,7 +75,10 @@ func TestAppWorkflowStaticMountPreservesTargetAndTLSName(t *testing.T) {
 	mount := mounts[0]
 	resolved := mount.Target
 	if mount.ResolveTarget != nil {
-		resolved = mount.ResolveTarget()
+		resolved, _, err = mount.ResolveTarget(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	if resolved != target {
 		t.Fatalf("static target was replaced by app registration lookup: %q", resolved)

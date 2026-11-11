@@ -27,7 +27,6 @@ const (
 	maxDiagnosticByte = 16 << 10
 )
 
-//go:generate node ../../../scripts/generate/projectconfig-loader.ts
 //go:embed loader.mjs
 var loaderSource string
 

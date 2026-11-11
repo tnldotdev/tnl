@@ -82,15 +82,6 @@ func ReadSnapshotFrom(ctx context.Context, database *clientstate.Database, proje
 	return decodeSnapshot(snapshot)
 }
 
-func ListSnapshots(state string) ([]Snapshot, error) {
-	database, err := clientstate.Open(context.Background(), state)
-	if err != nil {
-		return nil, err
-	}
-	defer database.Close()
-	return ListSnapshotsFrom(context.Background(), database)
-}
-
 func ListSnapshotsFrom(ctx context.Context, database *clientstate.Database) ([]Snapshot, error) {
 	native, err := database.ListRuntimeSnapshots(ctx)
 	if err != nil {

@@ -83,7 +83,7 @@ type conformanceCase struct {
 }
 
 func TestHostnameConformance(t *testing.T) {
-	contents, err := os.ReadFile("../../api/fixtures/hostname/v1.json")
+	contents, err := os.ReadFile("../../contracts/fixtures/hostname/v1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestHostnameConformance(t *testing.T) {
 }
 
 func FuzzCanonicalize(f *testing.F) {
-	contents, err := os.ReadFile("../../api/fixtures/hostname/v1.json")
+	contents, err := os.ReadFile("../../contracts/fixtures/hostname/v1.json")
 	if err != nil {
 		f.Fatal(err)
 	}

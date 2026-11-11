@@ -185,26 +185,30 @@ func (d *Database) ExpireVisitorIPs(ctx context.Context, now time.Time) (int, er
 		return 0, err
 	}
 	for i, id := range urls {
-		tx, err := d.pool.Begin(ctx)
-		if err != nil {
-			return i, err
-		}
-		q := controlstatedb.New(tx)
-		_, err = lockVisitorURL(ctx, q, id)
-		if errors.Is(err, ErrPreviewAccess) {
-			err = q.ExpireVisitorIPGrants(ctx, controlstatedb.ExpireVisitorIPGrantsParams{PublicURLID: id, Now: timestamptz(now)})
-		} else if err == nil {
-			err = d.refreshVisitorIPPolicy(ctx, q, id, now, true)
-		}
-		if err != nil {
-			_ = tx.Rollback(ctx)
-			return i, err
-		}
-		if err = tx.Commit(ctx); err != nil {
+		if err := d.expireVisitorIP(ctx, id, now); err != nil {
 			return i, err
 		}
 	}
 	return len(urls), nil
+}
+
+func (d *Database) expireVisitorIP(ctx context.Context, id string, now time.Time) (retErr error) {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer rollback(ctx, tx, "expire visitor IP grants", &retErr)()
+	q := controlstatedb.New(tx)
+	_, err = lockVisitorURL(ctx, q, id)
+	if errors.Is(err, ErrPreviewAccess) {
+		err = q.ExpireVisitorIPGrants(ctx, controlstatedb.ExpireVisitorIPGrantsParams{PublicURLID: id, Now: timestamptz(now)})
+	} else if err == nil {
+		err = d.refreshVisitorIPPolicy(ctx, q, id, now, true)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (d *Database) ExpireVisitorPermissions(ctx context.Context, now time.Time) error {
@@ -268,9 +272,6 @@ func (d *Database) visitorIPAllowed(ctx context.Context, q *controlstatedb.Queri
 			}
 		}
 		return latest != nil, latest, nil
-	}
-	if url.IpPolicy == "allow_all" {
-		return true, nil, nil
 	}
 	if len(url.AllowedIpPolicyCiphertext) == 0 && len(url.AllowedIpHashes) != 0 {
 		var entries []ippolicy.Entry

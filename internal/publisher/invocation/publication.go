@@ -249,9 +249,9 @@ func PublishHTTP(ctx context.Context, flags PublicOptions, output *Presentation)
 	}
 	err = publisher.Run(ctx, publisherConfig)
 	if cause := context.Cause(ctx); cause != nil {
-		return cause
+		return errors.Join(err, cause)
 	}
-	if err != nil && !(ctx.Err() != nil && errors.Is(err, context.Canceled)) {
+	if err != nil {
 		return err
 	}
 	return output.stopped()

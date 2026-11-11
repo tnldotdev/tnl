@@ -300,10 +300,10 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 	if err != nil {
 		return err
 	}
-	defer stopRuntime()
+	defer func() { result = errors.Join(result, stopRuntime()) }()
 	if err := publisher.Run(ctx, cfg); err != nil {
 		if cause := context.Cause(ctx); cause != nil {
-			return cause
+			return errors.Join(err, cause)
 		}
 		return err
 	}

@@ -197,7 +197,7 @@ func TestFeedbackBrowserAuthorComesFromSessionFactNotVisitorToken(t *testing.T) 
 func TestFeedbackPublisherContractKeepsSourceAndScopeOutOfBrowserInput(t *testing.T) {
 	load := func(name string, value any) {
 		t.Helper()
-		contents, err := os.ReadFile("../../api/fixtures/publisher/v1/" + name + ".json")
+		contents, err := os.ReadFile("../../contracts/fixtures/publisher/v1/" + name + ".json")
 		if err != nil {
 			t.Fatal(err)
 		}

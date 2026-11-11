@@ -1,4 +1,4 @@
-// generated from api/publisher/browser/v1/openapi.yaml; do not edit.
+// generated from contracts/publisher/browser/v1/openapi.yaml; do not edit.
 
 import { z } from "zod";
 

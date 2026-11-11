@@ -28,15 +28,6 @@ const (
 	TargetDiscoveryMetadata               Reason = "TNL_CLIENT_TARGET_DISCOVERY_METADATA"
 	TargetDiscoveryChanged                Reason = "TNL_CLIENT_TARGET_DISCOVERY_CHANGED"
 	TargetDiscoveryStale                  Reason = "TNL_CLIENT_TARGET_DISCOVERY_STALE"
-	AWSBootstrapInvalid                   Reason = "TNL_CLIENT_AWS_BOOTSTRAP_INVALID"
-	AWSBootstrapScope                     Reason = "TNL_CLIENT_AWS_BOOTSTRAP_SCOPE"
-	AWSBootstrapStateLost                 Reason = "TNL_CLIENT_AWS_BOOTSTRAP_STATE_LOST"
-	AWSBootstrapSecretConflict            Reason = "TNL_CLIENT_AWS_BOOTSTRAP_SECRET_CONFLICT"
-	AWSBootstrapVersionConflict           Reason = "TNL_CLIENT_AWS_BOOTSTRAP_VERSION_CONFLICT"
-	AWSBootstrapDenied                    Reason = "TNL_CLIENT_AWS_BOOTSTRAP_DENIED"
-	AWSBootstrapAuthentication            Reason = "TNL_CLIENT_AWS_BOOTSTRAP_AUTHENTICATION"
-	AWSBootstrapThrottled                 Reason = "TNL_CLIENT_AWS_BOOTSTRAP_THROTTLED"
-	AWSBootstrapUnavailable               Reason = "TNL_CLIENT_AWS_BOOTSTRAP_UNAVAILABLE"
 	InvalidControlURL                     Reason = "TNL_CLIENT_INVALID_CONTROL_URL"
 	InvalidControlPort                    Reason = "TNL_CLIENT_INVALID_CONTROL_PORT"
 	InvalidAuthorityURL                   Reason = "TNL_CLIENT_INVALID_AUTHORITY_URL"
@@ -108,9 +99,9 @@ const (
 	ProjectConfigInvalid                  Reason = "TNL_CLIENT_PROJECT_CONFIG_INVALID"
 	WorkloadRepositoryMetadataUnavailable Reason = "TNL_CLIENT_WORKLOAD_REPOSITORY_METADATA_UNAVAILABLE"
 	ObservabilityConfigInvalid            Reason = "TNL_CLIENT_OBSERVABILITY_CONFIG_INVALID"
-	PublisherDeploymentInvalid            Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_INVALID"
+	ProjectArtifactsInvalid               Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_INVALID"
 	PublisherDeploymentMetadataInvalid    Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_METADATA_INVALID"
-	PublisherDeploymentWriteFailed        Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_WRITE_FAILED"
+	ProjectArtifactsWriteFailed           Reason = "TNL_CLIENT_PUBLISHER_DEPLOYMENT_WRITE_FAILED"
 	AliasOwned                            Reason = "TNL_CLIENT_ALIAS_OWNED"
 	AliasReceiverUnready                  Reason = "TNL_CLIENT_ALIAS_RECEIVER_UNREADY"
 	AliasNotSelected                      Reason = "TNL_CLIENT_ALIAS_NOT_SELECTED"
@@ -215,16 +206,7 @@ var definitions = map[Reason]Definition{
 	ConnectionExpired:                  {Class: Unavailable, Message: "the connector session has expired", Action: "prepare connections again within the authorized execution window", Retry: RetryAfterChange},
 	ConnectionRequestInvalid:           {Class: Invalid, Message: "the connector connection request is invalid", Action: "check the connection schema, project configuration, and selected services", Retry: RetryAfterChange},
 	ConnectionUnavailable:              {Class: Unavailable, Message: "the connector owner could not prepare or maintain every selected service", Action: "check service availability and prepare connections again", Retry: RetryLater},
-	PublisherDeploymentMetadataInvalid: {Class: Invalid, Message: "publisher deployment metadata is incomplete or invalid", Action: "supply all TNL_DEPLOYMENT_* metadata fields from the generated deployment and use the provisioned instance", Retry: RetryAfterChange},
-	AWSBootstrapInvalid:                {Class: Invalid, Message: "publisher deployment input is invalid or stale", Action: "check the customer deployment file and run tnl generate for the current project", Retry: RetryAfterChange},
-	AWSBootstrapScope:                  {Class: Conflict, Message: "publisher deployment scope does not match the current project, team, or AWS account", Action: "check the applied project, selected company, AWS profile, account and region", Retry: RetryAfterChange},
-	AWSBootstrapStateLost:              {Class: Conflict, Message: "publisher bootstrap state or its protected key is missing", Action: "restore the original client state before retrying this deployment; do not enroll replacement keys", Retry: RetryAfterChange},
-	AWSBootstrapSecretConflict:         {Class: Conflict, Message: "the identity secret name or container belongs to another operation", Action: "check the exact secret ARN and deployment binding; select a new deployment only for a new replica identity", Retry: RetryAfterChange},
-	AWSBootstrapVersionConflict:        {Class: Conflict, Message: "the pinned secret version does not match this publisher identity", Action: "restore the original secret version and protected client state; do not overwrite another identity", Retry: RetryAfterChange},
-	AWSBootstrapDenied:                 {Class: Forbidden, Message: "AWS denied the publisher bootstrap operation", Action: "check Secrets Manager and KMS permissions for the selected credentials", Retry: RetryAfterChange},
-	AWSBootstrapAuthentication:         {Class: Unauthenticated, Message: "AWS credentials are missing, expired, or rejected", Action: "renew the selected AWS credentials and retry bootstrap", Retry: RetryAfterChange},
-	AWSBootstrapThrottled:              {Class: Unavailable, Message: "AWS throttled publisher bootstrap", Action: "wait before retrying the same deployment", Retry: RetryLater},
-	AWSBootstrapUnavailable:            {Class: Unavailable, Message: "AWS publisher bootstrap could not complete its request", Action: "check network access and AWS service availability, then retry the same deployment", Retry: RetryLater},
+	PublisherDeploymentMetadataInvalid: {Class: Invalid, Message: "publisher deployment metadata is incomplete or invalid", Action: "supply all TNL_DEPLOYMENT_* metadata fields and use the provisioned instance", Retry: RetryAfterChange},
 	TargetDiscoveryInvalid:             {Class: Invalid, Message: "cloud target selector or protocol is invalid", Action: "check the assigned target declaration", Retry: RetryAfterChange},
 	TargetDiscoveryDenied:              {Class: Forbidden, Message: "cloud target discovery was denied", Action: "allow the selected resource's Describe action on the publisher role", Retry: RetryAfterChange},
 	TargetDiscoveryAuthentication:      {Class: Unauthenticated, Message: "cloud target credentials are unavailable or rejected", Action: "check the publisher's AWS credential chain", Retry: RetryAfterChange},
@@ -514,13 +496,13 @@ var definitions = map[Reason]Definition{
 		Class: Invalid, Message: "operational observability configuration is invalid",
 		Action: "correct the named OTEL setting or remove optional export configuration", Retry: RetryAfterChange,
 	},
-	PublisherDeploymentInvalid: {
-		Class: Invalid, Message: "publisher deployment artifacts are missing, stale, or unsafe",
+	ProjectArtifactsInvalid: {
+		Class: Invalid, Message: "generated project files are missing, stale, or unsafe",
 		Action: "run tnl generate with the same --output-dir; use regular files and directories without symlinks", Retry: RetryAfterChange,
 	},
-	PublisherDeploymentWriteFailed: {
-		Class: Invalid, Message: "tnl could not write publisher deployment artifacts",
-		Action: "check output directory permissions and symlinks; move custom files that conflict with generated paths, then run tnl generate", Retry: RetryAfterChange,
+	ProjectArtifactsWriteFailed: {
+		Class: Invalid, Message: "tnl could not write generated project files",
+		Action: "check output directory permissions and symlinks, then run tnl generate; keep handwritten files outside the generated directory", Retry: RetryAfterChange,
 	},
 	AliasOwned: {
 		Class: Conflict, Message: "another live worktree owns this alias",

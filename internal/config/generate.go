@@ -1,5 +1,0 @@
-package config
-
-//go:generate go run ./cmd/configgen
-//go:generate node ../../scripts/generate/config-types.ts
-//go:generate pnpm --dir ../.. exec oxfmt --write schema/v1.json internal/client/project/keys.gen.json packages/ts/src/config.gen.ts

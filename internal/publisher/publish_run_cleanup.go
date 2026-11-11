@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/failure"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -37,7 +38,7 @@ func (s *publishRunCleanup) finish(result error) error {
 		heartbeatErr := <-s.heartbeatDone
 		select {
 		case <-s.route.admission.completed:
-			if errors.Is(heartbeatErr, context.Canceled) {
+			if failure.Only(heartbeatErr, context.Canceled) {
 				heartbeatErr = nil
 			}
 		default:
@@ -45,12 +46,12 @@ func (s *publishRunCleanup) finish(result error) error {
 		result = errors.Join(result, heartbeatErr)
 		if s.parentCtx.Err() == nil {
 			cause := context.Cause(s.sessionCtx)
-			if cause != nil && !errors.Is(cause, context.Canceled) {
-				result = cause
+			if cause != nil && !failure.Only(cause, context.Canceled) {
+				result = errors.Join(result, cause)
 			}
 		}
 	}
-	s.connections.Close()
+	result = errors.Join(result, s.connections.Close())
 	<-s.expirationDone
 	return result
 }
@@ -66,7 +67,7 @@ func parentCanceledSession(parent, session context.Context) bool {
 }
 
 func (s *publishRunCleanup) drain(result error) error {
-	if errors.Is(result, context.Canceled) || errors.Is(result, context.DeadlineExceeded) {
+	if failure.Only(result, context.Canceled) || failure.Only(result, context.DeadlineExceeded) {
 		result = nil
 	}
 	s.route.stopAdmissions()
@@ -74,7 +75,7 @@ func (s *publishRunCleanup) drain(result error) error {
 		Type: EventDraining, PublicURLID: s.setup.PublicUrl.Id,
 		Hostname: s.setup.PublicUrl.CanonicalHostname, PublishRunNumber: s.version,
 	}))
-	drainCtx, cancelDrain := context.WithTimeout(context.Background(), s.config.DrainTime)
+	drainCtx, cancelDrain := context.WithTimeout(context.WithoutCancel(s.parentCtx), s.config.DrainTime)
 	connectionDrainErr := s.connections.Drain(drainCtx)
 	publicURLDrainErr := s.route.Drain(drainCtx)
 	cancelDrain()

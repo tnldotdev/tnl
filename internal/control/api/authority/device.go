@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
+	"github.com/tnldotdev/tnl/internal/serviceapi"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	"golang.org/x/oauth2"
 )
@@ -201,12 +202,12 @@ func (h *handler) BeginDeviceBrowser(w http.ResponseWriter, r *http.Request, _ a
 		h.deviceError(w, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: deviceCookie, Value: bindingText, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 600})
+	http.SetCookie(w, serviceapi.ControlCookie(h.config.ControlURL, http.Cookie{Name: deviceCookie, Value: bindingText, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 600}))
 	http.Redirect(w, r, authorization, http.StatusFound)
 }
 
-func deviceBinding(r *http.Request) ([]byte, error) {
-	cookie, err := r.Cookie(deviceCookie)
+func (h *handler) deviceBinding(r *http.Request) ([]byte, error) {
+	cookie, err := r.Cookie(serviceapi.ControlCookieName(h.config.ControlURL, deviceCookie))
 	if err != nil {
 		return nil, controlstate.ErrDeviceLogin
 	}
@@ -225,7 +226,7 @@ func (h *handler) CompleteDeviceBrowser(w http.ResponseWriter, r *http.Request, 
 	if !h.deviceAvailable(w) {
 		return
 	}
-	binding, err := deviceBinding(r)
+	binding, err := h.deviceBinding(r)
 	if err != nil {
 		h.deviceError(w, err)
 		return
@@ -276,7 +277,7 @@ func (h *handler) ApproveDeviceBrowser(w http.ResponseWriter, r *http.Request) {
 	if !h.deviceAvailable(w) {
 		return
 	}
-	binding, err := deviceBinding(r)
+	binding, err := h.deviceBinding(r)
 	if err != nil {
 		h.deviceError(w, err)
 		return
@@ -296,7 +297,7 @@ func (h *handler) ApproveDeviceBrowser(w http.ResponseWriter, r *http.Request) {
 		h.deviceError(w, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: deviceCookie, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	http.SetCookie(w, serviceapi.ControlCookie(h.config.ControlURL, http.Cookie{Name: deviceCookie, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1}))
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte("login approved. return to your terminal.\n"))
 }

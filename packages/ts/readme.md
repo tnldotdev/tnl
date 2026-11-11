@@ -68,7 +68,7 @@ By default, visitors need a current sign-in, share link, or token.
 ## connect to a service
 
 Declare your service in project configuration and start its publisher, then sign
-in with an identity that can visit it. The [AWS publisher guide](https://github.com/tnldotdev/tnl/blob/main/deploy/publisher/fargate/readme.md)
+in with an identity that can visit it. The [AWS publisher guide](https://tnl.dev/docs/aws-publishers)
 shows one way to run a publisher beside your database. For a PostgreSQL service
 named `database`:
 

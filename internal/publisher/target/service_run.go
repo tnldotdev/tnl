@@ -2,9 +2,11 @@ package target
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/failure"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 )
@@ -103,10 +105,16 @@ func PublishPrivate(ctx context.Context, plan TargetPlan, config publisherservic
 		close()
 		<-done
 		if ctx.Err() != nil {
-			return nil
+			if context.Cause(ctx) == context.Canceled && (err == nil || failure.Only(err, context.Canceled)) {
+				return nil
+			}
+			return errors.Join(err, context.Cause(ctx))
 		}
 		select {
 		case <-changed:
+			if err != nil && !failure.Only(err, context.Canceled) {
+				return err
+			}
 			continue
 		default:
 			return err

@@ -26,7 +26,7 @@ func TestWaitDoesNotTreatOldSnapshotAsFreshOwnerCheck(t *testing.T) {
 		} `json:"services"`
 	}
 	if decodeErr := json.Unmarshal(output.Bytes(), &result); decodeErr != nil {
-		t.Fatal(decodeErr)
+		t.Fatalf("decode wait result: %v; command error: %v; output: %q", decodeErr, err, output.String())
 	}
 	if result.State != "timed out" || result.CheckedBy != "local publisher process unavailable" || len(result.Services) != 1 || result.Services[0].Ready {
 		t.Fatalf("wait=%s", output.String())

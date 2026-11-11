@@ -1,12 +1,8 @@
 package meta
 
 import (
-	"bytes"
-	"crypto/rand"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -117,7 +113,7 @@ func PythonFacade(configuration config.TNL, configPath string) (map[string][]byt
 		source.WriteString(text)
 	}
 	return map[string][]byte{
-		"pyproject.toml": []byte(pythonGenerated + `[build-system]
+		"python/pyproject.toml": []byte(pythonGenerated + `[build-system]
 requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
@@ -130,115 +126,7 @@ dependencies = ["tnldotdev-tnl"]
 [tool.hatch.build.targets.wheel]
 packages = ["tnl_project"]
 `),
-		"tnl_project/__init__.py": []byte(source.String()),
-		"tnl_project/py.typed":    []byte{},
+		"python/tnl_project/__init__.py": []byte(source.String()),
+		"python/tnl_project/py.typed":    []byte{},
 	}, nil
-}
-
-// WritePythonFacade checks or atomically writes this separately owned local
-// Python package. every opened directory is pinned and symlinks are rejected.
-func WritePythonFacade(directory string, files map[string][]byte, check bool) error {
-	absolute, err := filepath.Abs(filepath.Join(directory, PythonDirectoryName))
-	if err != nil {
-		return err
-	}
-	root, err := os.OpenRoot(filepath.VolumeName(absolute) + string(filepath.Separator))
-	if err != nil {
-		return err
-	}
-	defer func() { root.Close() }()
-	for _, part := range strings.Split(strings.TrimPrefix(absolute, filepath.VolumeName(absolute)+string(filepath.Separator)), string(filepath.Separator)) {
-		if !check {
-			if err := root.Mkdir(part, 0755); err != nil && !errors.Is(err, os.ErrExist) {
-				return err
-			}
-		}
-		next, err := pythonChild(root, part)
-		if err != nil {
-			return err
-		}
-		root.Close()
-		root = next
-	}
-	if !check {
-		if err := root.Mkdir("tnl_project", 0755); err != nil && !errors.Is(err, os.ErrExist) {
-			return err
-		}
-	}
-	module, err := pythonChild(root, "tnl_project")
-	if err != nil {
-		return err
-	}
-	defer module.Close()
-	for name, content := range files {
-		parent, base := root, name
-		if strings.HasPrefix(name, "tnl_project/") {
-			parent, base = module, strings.TrimPrefix(name, "tnl_project/")
-		}
-		if strings.ContainsAny(base, "/\\") || base == "" || base == "." || base == ".." {
-			return errors.New("invalid Python facade artifact path")
-		}
-		var previous []byte
-		info, statErr := parent.Lstat(base)
-		if statErr == nil {
-			if !info.Mode().IsRegular() || info.Size() > MaxFileBytes {
-				return errors.New("python facade artifacts must be bounded regular files")
-			}
-			file, err := parent.Open(base)
-			if err != nil {
-				return err
-			}
-			previous, err = io.ReadAll(io.LimitReader(file, MaxFileBytes+1))
-			file.Close()
-			if err != nil || len(previous) > MaxFileBytes {
-				return errors.New("cannot read Python facade artifact")
-			}
-		} else if !errors.Is(statErr, os.ErrNotExist) || check {
-			return statErr
-		}
-		if bytes.Equal(previous, content) && statErr == nil {
-			continue
-		}
-		if check {
-			return fmt.Errorf("generated Python artifact %s is stale; run tnl generate", name)
-		}
-		if statErr == nil && !bytes.HasPrefix(previous, []byte(pythonGenerated)) {
-			return errors.New("python facade output is not generated; move it before generating")
-		}
-		temporary := ".tnl-" + rand.Text()
-		file, err := parent.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
-		if err != nil {
-			return err
-		}
-		_, writeErr := file.Write(content)
-		err = errors.Join(writeErr, file.Sync(), file.Close())
-		if err == nil {
-			err = parent.Rename(temporary, base)
-		}
-		_ = parent.Remove(temporary)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func pythonChild(root *os.Root, name string) (*os.Root, error) {
-	info, err := root.Lstat(name)
-	if err != nil {
-		return nil, err
-	}
-	if !info.IsDir() {
-		return nil, errors.New("python facade directories must not be symlinks")
-	}
-	child, err := root.OpenRoot(name)
-	if err != nil {
-		return nil, err
-	}
-	opened, err := child.Stat(".")
-	if err != nil || !os.SameFile(info, opened) {
-		child.Close()
-		return nil, errors.New("python facade directory changed while opening it")
-	}
-	return child, nil
 }

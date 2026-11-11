@@ -97,13 +97,6 @@ type Observer func(Summary)
 
 const MaxCount = 1_000_000_000
 
-func SQLStateOrEmpty(value string) string {
-	if ValidSQLState(value) {
-		return value
-	}
-	return ""
-}
-
 // HTTPResult classifies an HTTP response without hiding its exact status.
 func HTTPResult(status int) Result {
 	if status >= 400 {

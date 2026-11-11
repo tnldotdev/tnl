@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -44,6 +45,95 @@ func (s *browserAccessStub) CheckBrowserAccess(_ context.Context, _ string, _ ui
 
 func (*browserAccessStub) RevokeBrowserAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error {
 	return nil
+}
+
+func TestBrowserAccessForRunControlOrigins(t *testing.T) {
+	for _, test := range []struct {
+		origin string
+		want   string
+	}{
+		{"https://control.example.test", "https://control.example.test"},
+		{"https://CONTROL.example.test:443/", "https://control.example.test"},
+		{"http://localhost:8445", "http://localhost:8445"},
+		{"http://LOCALHOST:8445/", "http://localhost:8445"},
+		{"http://127.0.0.1:8445", "http://127.0.0.1:8445"},
+		{"http://[::1]:8445", "http://[::1]:8445"},
+		{"http://control.example.test", ""},
+		{"http://192.168.1.1:8445", ""},
+		{"http://0.0.0.0:8445", ""},
+		{"http://localhost.example.test:8445", ""},
+		{"http://127.0.0.1.example.test:8445", ""},
+		{"http://user@localhost:8445", ""},
+		{"http://localhost:8445/path", ""},
+		{"http://localhost:8445?query", ""},
+		{"http://localhost:8445#fragment", ""},
+		{"http://localhost:65536", ""},
+		{"https://user@control.example.test", ""},
+		{"https://control.example.test/path", ""},
+		{"", ""},
+	} {
+		t.Run(test.origin, func(t *testing.T) {
+			client := &clientcontrol.Client{}
+			config := Config{ControlURL: test.origin, VisitorControl: client, PreviewID: "pv_0123456789abcdefghijkl"}
+			setup := controlv1.PublishRunSetup{
+				PublicUrl:  controlv1.PublicURL{Id: certificateTestPublicURLID, ServiceProtocol: controlv1.Http},
+				PublishRun: controlv1.PublishRun{Id: "pr_0123456789abcdefghijkl", PublishRunNumber: 1},
+			}
+			access := browserAccessForRun(config, setup, "fixture-run-token")
+			if test.want == "" {
+				if access != nil {
+					t.Fatal("invalid control origin enabled browser access")
+				}
+				return
+			}
+			if access == nil {
+				t.Fatal("valid control origin disabled browser access")
+			}
+			if access.controlURL != test.want || access.client != client || access.publicURLID != setup.PublicUrl.Id ||
+				access.previewID != config.PreviewID || access.runID != setup.PublishRun.Id || access.version != 1 || access.token != "fixture-run-token" {
+				t.Fatal("browser access lost its control origin or publish run binding")
+			}
+			navigation := httptest.NewRequest(http.MethodGet, "https://web.example.test/settings?tab=profile", nil)
+			navigation.Header.Set("Sec-Fetch-Mode", "navigate")
+			navigation.Header.Set("Sec-Fetch-Dest", "document")
+			redirect := httptest.NewRecorder()
+			if !access.redirectRestricted(redirect, navigation, true) || redirect.Code != http.StatusSeeOther {
+				t.Fatal("restricted browser navigation did not start sign-in")
+			}
+			login := httptest.NewRequest(http.MethodGet, redirect.Header().Get("Location"), nil)
+			response := httptest.NewRecorder()
+			if !access.handle(response, login) || response.Code != http.StatusSeeOther {
+				t.Fatal("browser sign-in did not redirect to control")
+			}
+			location, err := url.Parse(response.Header().Get("Location"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			query := location.Query()
+			location.RawQuery = ""
+			if location.String() != test.want+"/v1/browser/login" || query.Get("preview_id") != config.PreviewID ||
+				query.Get("public_url_id") != setup.PublicUrl.Id || query.Get("return_path") != "/settings?tab=profile" {
+				t.Fatalf("browser sign-in redirect = %q", response.Header().Get("Location"))
+			}
+			cookies := response.Result().Cookies()
+			if len(cookies) != 1 || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].Domain != "" {
+				t.Fatal("browser sign-in weakened the visitor cookie")
+			}
+		})
+	}
+}
+
+func TestBrowserAccessForRunRequiresHTTPAndClient(t *testing.T) {
+	setup := controlv1.PublishRunSetup{PublicUrl: controlv1.PublicURL{ServiceProtocol: controlv1.Http}}
+	config := Config{ControlURL: "http://localhost:8445"}
+	if browserAccessForRun(config, setup, "fixture-run-token") != nil {
+		t.Fatal("browser access enabled without a browser-capable control client")
+	}
+	config.VisitorControl = &clientcontrol.Client{}
+	setup.PublicUrl.ServiceProtocol = controlv1.PublicURLServiceProtocol("tcp")
+	if browserAccessForRun(config, setup, "fixture-run-token") != nil {
+		t.Fatal("browser access enabled for a TCP public URL")
+	}
 }
 
 func TestBrowserTeamAccessIsAdditiveAndKeepsCookiesOutOfTheLocalService(t *testing.T) {

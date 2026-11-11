@@ -9,7 +9,7 @@ import (
 )
 
 func TestProjectMetadataConformance(t *testing.T) {
-	data, err := os.ReadFile("../../../../api/fixtures/project-metadata-v1.json")
+	data, err := os.ReadFile("../../../../contracts/fixtures/project-metadata-v1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
