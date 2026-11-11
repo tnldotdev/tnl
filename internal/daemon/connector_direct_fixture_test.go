@@ -206,7 +206,9 @@ func connectorDirectSockets(t *testing.T, f *privateSeparatedFixture, source *at
 			}
 			packet.relays[address] = true
 		}
-		socket, err := peer.ListenSocketPacket(t.Context(), packet)
+		// testing cancels t.Context before cleanup starts. this fixture owns the
+		// sockets until both native owners have drained and joined their work.
+		socket, err := peer.ListenSocketPacket(context.WithoutCancel(t.Context()), packet)
 		if err != nil {
 			_ = physical.Close()
 			t.Fatal(err)
@@ -369,9 +371,14 @@ func connectorDirectOnly(t *testing.T, packets [2]*connectorDirectPacketConn, ex
 		}
 	}()
 	exchange()
-	for side, packet := range packets {
-		if packet.directDataSent.Load() <= sent[side] || packet.directDataRead.Load() <= read[side] {
-			t.Fatalf("side %d did not carry retained application traffic over direct UDP", side)
+	// the receiver can finish its application read before the sender returns
+	// from the physical WriteTo and records its counter. join that observation.
+	privateWait(t, time.Second, func(context.Context) (bool, error) {
+		for side, packet := range packets {
+			if packet.directDataSent.Load() <= sent[side] || packet.directDataRead.Load() <= read[side] {
+				return false, nil
+			}
 		}
-	}
+		return true, nil
+	})
 }
