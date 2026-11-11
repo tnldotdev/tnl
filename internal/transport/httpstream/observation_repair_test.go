@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	dto "github.com/prometheus/client_model/go"
 	"github.com/tnldotdev/tnl/internal/observability"
 	publisherproxy "github.com/tnldotdev/tnl/internal/publisher/proxy"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -71,7 +72,11 @@ func observedProxyAddress(t *testing.T, kind, backend string, m *observability.M
 	return listener.Addr().String(), nil
 }
 
-func observedMetric(t *testing.T, m *observability.Metrics, name string, labels map[string]string) float64 {
+type metricGatherer interface {
+	Gather() ([]*dto.MetricFamily, error)
+}
+
+func observedMetric(t *testing.T, m metricGatherer, name string, labels map[string]string) float64 {
 	t.Helper()
 	families, err := m.Gather()
 	if err != nil {
@@ -106,21 +111,61 @@ func observedMetric(t *testing.T, m *observability.Metrics, name string, labels 
 	return value
 }
 
-func awaitHTTPCompletion(t *testing.T, m *observability.Metrics, status, outcome string) {
+func awaitHTTPCompletion(t *testing.T, m metricGatherer, status, outcome string) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	timeout := time.NewTimer(time.Second)
+	defer timeout.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
 	labels := map[string]string{"http_response_status_code": status, "tnl_outcome": outcome, "tnl_response_origin": "local_service"}
 	for {
-		if observedMetric(t, m, "tnl_publisher_http_request_duration_seconds", labels) == 1 {
-			break
+		// the handler records its duration before a separate defer releases the
+		// active count. seeing completion alone does not join that final update.
+		completed := observedMetric(t, m, "tnl_publisher_http_request_duration_seconds", labels)
+		active := observedMetric(t, m, "tnl_publisher_http_requests_active", nil)
+		if completed == 1 && active == 0 {
+			return
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("HTTP completion has wrong outcome", status, outcome)
+		select {
+		case <-timeout.C:
+			if completed != 1 {
+				t.Fatal("HTTP completion has wrong outcome", status, outcome, "count", completed)
+			}
+			t.Fatal("HTTP active count leaked", active)
+		case <-t.Context().Done():
+			t.Fatal("HTTP completion interrupted", context.Cause(t.Context()))
+		case <-ticker.C:
 		}
-		time.Sleep(time.Millisecond)
 	}
-	if observedMetric(t, m, "tnl_publisher_http_requests_active", nil) != 0 {
-		t.Fatal("HTTP active count leaked")
+}
+
+type laggedHTTPCompletion struct{ scrapes int }
+
+func (m *laggedHTTPCompletion) Gather() ([]*dto.MetricFamily, error) {
+	m.scrapes++
+	// completion and active count are separate updates. keep the handler active
+	// through the first two scrapes so a completion-only wait cannot pass.
+	active := float64(1)
+	if m.scrapes > 2 {
+		active = 0
+	}
+	durationName, activeName := "tnl_publisher_http_request_duration_seconds", "tnl_publisher_http_requests_active"
+	count := uint64(1)
+	labels := make([]*dto.LabelPair, 0, 3)
+	for key, value := range map[string]string{"http_response_status_code": "101", "tnl_outcome": "error", "tnl_response_origin": "local_service"} {
+		labels = append(labels, &dto.LabelPair{Name: &key, Value: &value})
+	}
+	return []*dto.MetricFamily{
+		{Name: &durationName, Metric: []*dto.Metric{{Label: labels, Histogram: &dto.Histogram{SampleCount: &count}}}},
+		{Name: &activeName, Metric: []*dto.Metric{{Gauge: &dto.Gauge{Value: &active}}}},
+	}, nil
+}
+
+func TestHTTPCompletionWaitsForActiveCountAfterDuration(t *testing.T) {
+	m := new(laggedHTTPCompletion)
+	awaitHTTPCompletion(t, m, "101", "error")
+	if m.scrapes <= 2 {
+		t.Fatal("HTTP completion returned before the active count settled")
 	}
 }
 
