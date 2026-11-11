@@ -17,6 +17,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -447,7 +448,7 @@ func (g *Publishers) Stop(ctx context.Context, indexes []int) (ShutdownResult, e
 				stopCtx, cancel := context.WithTimeout(ctx, g.config.StopTimeout)
 				select {
 				case <-process.done:
-					if !CancellationOnly(process.err) {
+					if process.err != nil && !failure.Only(process.err, context.Canceled) {
 						errorsByPublicURL[i] = fmt.Errorf("stop publisher %d: %w", process.index, process.err)
 					}
 				case <-stopCtx.Done():
@@ -497,27 +498,4 @@ type disabledConnector struct{}
 
 func (disabledConnector) Connect(context.Context, muxsession.Endpoint) (muxsession.Session, error) {
 	return nil, errors.New("transport disabled by workload")
-}
-
-// errors.Is alone would hide a close failure joined with cancellation.
-func CancellationOnly(err error) bool {
-	if err == nil || err == context.Canceled {
-		return true
-	}
-	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		children := joined.Unwrap()
-		if len(children) == 0 {
-			return false
-		}
-		for _, child := range children {
-			if !CancellationOnly(child) {
-				return false
-			}
-		}
-		return true
-	}
-	if wrapped := errors.Unwrap(err); wrapped != nil {
-		return CancellationOnly(wrapped)
-	}
-	return false
 }

@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -52,6 +51,7 @@ type Forwarder struct {
 	closed    bool
 	closeDone chan struct{}
 	closeErr  error
+	workers   sync.WaitGroup
 	promote   func(context.Context, tunnelv1.AdmissionHeader) tunnelv1.AdmissionResult
 }
 
@@ -87,14 +87,14 @@ func newForwarderContext(owner context.Context, connector relayConnector) *Forwa
 // Backends preserves control's publisher-connection order. every returned
 // backend is bound to the publish run number, assignment, and concrete relay lease
 // represented by entry.
-func (f *Forwarder) Backends(entry ingressv1.IngressRoutingTableEntry) ([]ingressbackend.Backend, error) {
+func (f *Forwarder) Backends(entry ingressv1.IngressRoutingTableEntry) ([]Backend, error) {
 	if f == nil || f.connector == nil {
 		return nil, errors.New("ingress: forwarding connector is required")
 	}
 	if entry.PublishRunNumber <= 0 {
 		return nil, errors.New("ingress: forwarding publish run number is invalid")
 	}
-	backends := make([]ingressbackend.Backend, 0, len(entry.PublisherConnections))
+	backends := make([]Backend, 0, len(entry.PublisherConnections))
 	for _, connection := range entry.PublisherConnections {
 		if connection.ConnectionSlot < 0 || connection.ConnectionSlot > 1 ||
 			connection.ConnectionAssignmentRevision <= 0 || connection.RelayLeaseRevision <= 0 ||
@@ -132,7 +132,7 @@ func (f *Forwarder) PublicURL(entry ingressv1.IngressRoutingTableEntry) (PublicU
 	if err != nil {
 		return PublicURL{}, err
 	}
-	backends := make([]ingressbackend.Backend, 0, len(all))
+	backends := make([]Backend, 0, len(all))
 	assignments := make([]tunnelv1.AdmissionHeader, 0, len(all))
 	for index, backend := range all {
 		assignments = append(assignments, backend.(forwardingBackend).header.Admission())
@@ -231,7 +231,9 @@ func (f *Forwarder) Close() error {
 	clear(f.sessions)
 	f.mu.Unlock()
 	result := closeRelaySessions(entries)
+	f.workers.Wait()
 	f.mu.Lock()
+	result = errors.Join(result, f.closeErr)
 	f.closeErr = result
 	close(done)
 	f.mu.Unlock()
@@ -368,9 +370,14 @@ func (f *Forwarder) session(ctx context.Context, target relayTarget) (*tunnel.Se
 			connectCtx, cancel := context.WithTimeout(f.context, relaySessionSetupTimeout)
 			entry = &relaySession{ready: make(chan struct{}), cancel: cancel}
 			f.sessions[key] = entry
+			f.workers.Add(1)
 			created = true
 			f.mu.Unlock()
-			_ = closeRelaySessions(obsolete)
+			if err := closeRelaySessions(obsolete); err != nil {
+				f.mu.Lock()
+				f.closeErr = errors.Join(f.closeErr, err)
+				f.mu.Unlock()
+			}
 			go f.connect(connectCtx, key, target, entry)
 		} else {
 			f.mu.Unlock()
@@ -394,6 +401,7 @@ func (f *Forwarder) session(ctx context.Context, target relayTarget) (*tunnel.Se
 }
 
 func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target relayTarget, entry *relaySession) {
+	defer f.workers.Done()
 	ctx, finish := observability.Start(ctx, "ingress.relay_connect")
 	started := time.Now()
 	transport, err := f.connector.Connect(ctx, target)
@@ -426,11 +434,14 @@ func (f *Forwarder) connect(ctx context.Context, key relaySessionKey, target rel
 
 	if err != nil {
 		if session != nil {
-			_ = session.Close()
+			cleanupErr := session.Close()
+			f.mu.Lock()
+			f.closeErr = errors.Join(f.closeErr, cleanupErr)
+			f.mu.Unlock()
 		}
 		return
 	}
-	go f.removeWhenDone(key, entry, session)
+	f.removeWhenDone(key, entry, session)
 }
 
 func (f *Forwarder) currentSession(key relaySessionKey, session *tunnel.Session) bool {

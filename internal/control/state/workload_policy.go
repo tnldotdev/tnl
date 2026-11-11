@@ -271,7 +271,7 @@ func (p ProjectWorkload) validateTrust() error {
 }
 
 // policy lookup returns only the selected trust policy; JWT input cannot choose endpoints.
-func (d *Database) WorkloadPolicy(ctx context.Context, team, project, name, source string) (ProjectWorkload, error) {
+func (d *Database) WorkloadPolicy(ctx context.Context, team, project, name, source string) (_ ProjectWorkload, retErr error) {
 	team, err := d.workloadTeam(ctx, team)
 	if err != nil {
 		return ProjectWorkload{}, err
@@ -280,7 +280,7 @@ func (d *Database) WorkloadPolicy(ctx context.Context, team, project, name, sour
 	if err != nil {
 		return ProjectWorkload{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer rollback(ctx, tx, "read workload policy", &retErr)()
 	row, err := controlstatedb.New(tx).LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: team, ProjectKey: project})
 	if err != nil {
 		return ProjectWorkload{}, publisherLookupError(err, ErrWorkloadDenied)

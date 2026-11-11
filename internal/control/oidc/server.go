@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"golang.org/x/oauth2"
 )
 
@@ -34,7 +35,7 @@ func NewServer(c ServerConfig) (*Server, error) {
 		return nil, err
 	}
 	u, err := url.Parse(c.RedirectURL)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !validScopes(c.Scopes) || len(c.ClientSecret) > 4096 {
+	if err != nil || u.Scheme != "https" && !naming.IsLoopbackHTTP(c.RedirectURL) || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !validScopes(c.Scopes) || len(c.ClientSecret) > 4096 {
 		return nil, errors.New("oidcauth: invalid server client configuration")
 	}
 	return &Server{verifier: v.(*providerVerifier), secret: c.ClientSecret, scopes: append([]string(nil), c.Scopes...), redirect: c.RedirectURL}, nil
@@ -47,8 +48,7 @@ func (s *Server) oauth(ctx context.Context) (*oauth2.Config, error) {
 	}
 	e := p.Endpoint()
 	for _, raw := range []string{e.AuthURL, e.TokenURL} {
-		u, err := url.Parse(raw)
-		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" {
+		if !validProviderEndpoint(raw, s.verifier.issuer) {
 			return nil, ErrUnavailable
 		}
 	}
@@ -71,6 +71,20 @@ func (s *Server) oauth(ctx context.Context) (*oauth2.Config, error) {
 		}
 	}
 	return &oauth2.Config{ClientID: s.verifier.clientID, ClientSecret: s.secret, Endpoint: e, RedirectURL: s.redirect, Scopes: s.scopes}, nil
+}
+
+// local providers must keep every endpoint on the configured loopback origin.
+// production providers may advertise other HTTPS origins, but never plain HTTP.
+func validProviderEndpoint(raw, issuer string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" {
+		return false
+	}
+	if naming.IsLoopbackHTTP(issuer) {
+		origin, _ := url.Parse(issuer)
+		return u.Scheme == origin.Scheme && u.Host == origin.Host
+	}
+	return u.Scheme == "https"
 }
 
 func (s *Server) AuthorizationURL(ctx context.Context, state, nonce, verifier string) (string, error) {

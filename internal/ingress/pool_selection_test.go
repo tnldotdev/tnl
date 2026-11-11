@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"testing"
 
-	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
 )
@@ -14,8 +13,8 @@ func TestPublisherPoolReservesHealthyCapacityForEachNewConnection(t *testing.T) 
 	limits := trafficlimits.Default()
 	limits.Connections = 1
 	runs := []PublicURL{
-		{ID: "saved", PublishRunID: "publisher-a", Traffic: &limits, Backends: []ingressbackend.Backend{&singleBackend{}}},
-		{ID: "saved", PublishRunID: "publisher-b", Traffic: &limits, Backends: []ingressbackend.Backend{&singleBackend{}}},
+		{ID: "saved", PublishRunID: "publisher-a", Traffic: &limits, Backends: []Backend{&singleBackend{}}},
+		{ID: "saved", PublishRunID: "publisher-b", Traffic: &limits, Backends: []Backend{&singleBackend{}}},
 	}
 	first, releaseFirst, reason := server.selectPoolRun(runs)
 	if reason != LookupCurrent {
@@ -47,8 +46,8 @@ func TestIngressPublisherPoolForwardsHealthySiblingsAndRejectsFullPool(t *testin
 	limits := trafficlimits.Default()
 	limits.Connections = 1
 	runs := []PublicURL{
-		{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_0123456789ABCDEFGHIJKL", PublishRunNumber: 1, Traffic: &limits, AllowAll: true, AttestSource: testBackendSourceProof, Backends: []ingressbackend.Backend{first}},
-		{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_1123456789ABCDEFGHIJKL", PublishRunNumber: 2, Traffic: &limits, AllowAll: true, AttestSource: testBackendSourceProof, Backends: []ingressbackend.Backend{second}},
+		{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_0123456789ABCDEFGHIJKL", PublishRunNumber: 1, Traffic: &limits, AllowAll: true, AttestSource: testBackendSourceProof, Backends: []Backend{first}},
+		{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_1123456789ABCDEFGHIJKL", PublishRunNumber: 2, Traffic: &limits, AllowAll: true, AttestSource: testBackendSourceProof, Backends: []Backend{second}},
 		// an unavailable sibling must not hide either healthy run.
 		{ID: "url_0123456789ABCDEFGHIJKL", PublishRunID: "pr_2123456789ABCDEFGHIJKL", PublishRunNumber: 3},
 	}

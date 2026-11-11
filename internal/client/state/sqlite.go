@@ -14,6 +14,24 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// openReadOnlySQLite reads existing client state without creating or migrating it.
+func openReadOnlySQLite(ctx context.Context, path string) (*sql.DB, error) {
+	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
+	query := u.Query()
+	query.Set("mode", "ro")
+	query.Add("_pragma", "busy_timeout(5000)")
+	u.RawQuery = query.Encode()
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.PingContext(ctx); err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+	return db, nil
+}
+
 // openClientSQLite configures every connection, including replacements after
 // cancellation. only a fresh database applies the single baseline.
 func openClientSQLite(ctx context.Context, path string, fresh bool) (_ *sql.DB, retErr error) {

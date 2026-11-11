@@ -82,7 +82,6 @@
     "zod": "4.6.6"
   },
   "devDependencies": {
-    "@hono/node-server": "2.1.4",
     "@types/bun": "1.4.2",
     "hono": "4.13.13",
     "next": "16.4.3",

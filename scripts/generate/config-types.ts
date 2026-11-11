@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { compile } from "json-schema-to-typescript";
 import * as z from "zod";
-import { parseJSON, parseValue } from "../package/validation.ts";
+import { parseJSON, parseValue } from "../validation.ts";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const schemaObject = z.record(z.string(), z.unknown());

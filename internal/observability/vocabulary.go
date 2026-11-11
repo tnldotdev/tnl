@@ -1,7 +1,5 @@
 package observability
 
-//go:generate go run ./cmd/vocabulary ../../api/observability/v1/vocabulary.json
-
 import "errors"
 
 // DimensionPolicy describes where a declared attribute may be exported.

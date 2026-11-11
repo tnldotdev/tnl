@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/tnldotdev/tnl/internal/client/state/clientstatedb"
-	tnlsqlite "github.com/tnldotdev/tnl/internal/client/state/sqlite"
 )
 
 // TelemetryEnabled returns the saved preference for this client state.
@@ -61,7 +60,7 @@ func TelemetryEnabledAt(ctx context.Context, root string) (bool, error) {
 
 func readTelemetryPreference(ctx context.Context, path string) (bool, error) {
 	// read the telemetry value without opening writable state or migrating it.
-	db, err := tnlsqlite.OpenReadOnly(ctx, path)
+	db, err := openReadOnlySQLite(ctx, path)
 	if err != nil {
 		return false, fmt.Errorf("clientstate: open telemetry preference: %w", err)
 	}

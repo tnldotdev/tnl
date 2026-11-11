@@ -1507,12 +1507,7 @@ export interface TnlConfig {
           description?: string;
           domain?: string;
           public?: boolean;
-          /**
-           * Generate an AWS Fargate group stack; supply infrastructure settings as deployment parameters.
-           */
-          aws?: {
-            replicas?: number;
-          };
+          aws?: never;
         }
       | undefined;
   };

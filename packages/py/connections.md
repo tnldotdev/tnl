@@ -2,7 +2,7 @@
 
 Use `tnl.connect` from your project directory to reach a declared service.
 Start the service's publisher and run `tnl auth login` with an identity that can
-visit it. See the [AWS publisher guide](https://github.com/tnldotdev/tnl/blob/main/deploy/publisher/fargate/readme.md)
+visit it. See the [AWS publisher guide](https://tnl.dev/docs/aws-publishers)
 for one way to run a publisher beside your database. The SDK uses the native tnl
 binary included in its platform wheel.
 

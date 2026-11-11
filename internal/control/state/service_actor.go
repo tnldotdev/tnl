@@ -136,7 +136,8 @@ func (d *Database) beginServiceAccess(ctx context.Context, options pgx.TxOptions
 	}
 	if _, signed := serviceActor(ctx); signed {
 		if err = controlstatedb.New(tx).LockIdentityBootstrap(ctx); err != nil {
-			return nil, errors.Join(err, tx.Rollback(ctx))
+			rollback(ctx, tx, "begin service access", &err)()
+			return nil, err
 		}
 	}
 	return tx, nil

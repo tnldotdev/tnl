@@ -330,9 +330,9 @@ releases contain `tnl` and `tnld`. Put
 operational procedures and current capability limits in
 [self-hosting](https://tnl.dev/docs/self-hosting).
 
-- The six HTTP OpenAPI contracts under `api/{control,publisher}` generate one Go package per contract under the matching `pkg/api` serving-owner path. Edit their `paths/` and `schemas/` fragments and generator configuration, then regenerate. The local publisher contract is native app/CLI registration; the browser contract also generates validators in `internal/publisher/browserapi`. Reference control schemas for identical wire shapes. Shared components, if needed, contain only byte-identical referenced schemas and generate no Go package.
+- The six HTTP OpenAPI contracts under `contracts/{control,publisher}` generate one Go package per contract under the matching `pkg/api` serving-owner path. Edit their `paths/` and `schemas/` fragments and generator configuration, then regenerate. The local publisher contract is native app/CLI registration; the browser contract also generates validators in `internal/publisher/browserapi`. Reference control schemas for identical wire shapes. Shared components, if needed, contain only byte-identical referenced schemas and generate no Go package.
 - `pkg/protocol/tunnelv1` is handwritten and is the sole tunnel protocol source of truth. Do not add standalone tunnel JSON Schemas or schema-parity tests; use golden JSON and framed-wire fixtures, invalid fixtures, bounds tests, fuzzing, and shared transport behavior tests.
-- PostgreSQL sources are `internal/control/state/{migrations,queries,sqlc.yaml}`; their committed output is `internal/control/state/controlstatedb`. SQLite sources are `internal/client/state/{migrations,queries,sqlc.yaml}`; their output is `internal/client/state/clientstatedb`. Edit sources and generator configuration, not generated Go files. `task generate` orders Go API generation, browser validators, then the remaining Go directives; `task format` formats the resulting tree.
+- PostgreSQL sources are `internal/control/state/{migrations,queries,sqlc.yaml}`; their committed output is `internal/control/state/controlstatedb`. SQLite sources are `internal/client/state/{migrations,queries,sqlc.yaml}`; their output is `internal/client/state/clientstatedb`. Edit sources and generator configuration, not generated Go files. `task generate` is the single ordered entrypoint for committed generation, starting with Go APIs and browser validators; `task format` formats the resulting tree.
 - `tnld migrate` is the only migration path and accepts only `TNLD_DATABASE_DIRECT_URL`. Serving control and standalone processes accept only pooled `TNLD_DATABASE_URL` and require the exact schema version and baseline identity. The new baseline requires a fresh PostgreSQL database and a coordinated stop/start of all server roles. Client state starts fresh in `v1.db`; do not import older SQLite or publisher credentials.
 
 ## place implementation with its owner
@@ -396,6 +396,15 @@ Process owners such as `publisher/local`, connector owner operations, and
 `daemon` own startup, supervision, bounded drain, cancellation, and joins. A
 presentation callback does not transfer that lifetime to a command.
 
+Cancellation is not proof of successful cleanup. Join owned workers before
+returning, and preserve independent operation and cleanup failures when they race
+with cancellation. `errors.Is(err, context.Canceled)` also matches joined errors
+that contain real failures.
+
+Require deadlines, endpoint facts, transport identities, and requested
+capabilities at their owning boundary. Carry validated facts explicitly rather
+than reconstructing them from defaults or optional runtime interface assertions.
+
 Keep one authority for each wire shape and validated domain value. Reuse the
 defining source or a genuinely identical shared wire schema; do not copy models,
 policy checks, or lifecycle engines to avoid an import. Move the implementation
@@ -423,6 +432,7 @@ owner and retain its Task selector, tier, fixtures, and execution evidence.
 
 - Routine tests cover deterministic invariants without external infrastructure.
 - Integration tests use the smallest real setup needed to verify a boundary.
+- Initialize fixture synchronization before starting workers. Keep reserved sockets open through handoff, and synchronize readiness through observable events rather than sleeps.
 - Runtime tests use one separated local topology and default to small smoke workloads.
 - Large load and fault sweeps are explicit opt-in runs.
 - Local load tests share publisher, visitor, and measurement implementations.

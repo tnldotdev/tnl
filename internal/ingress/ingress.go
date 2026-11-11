@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/ingress/clienthello"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -41,7 +40,7 @@ type PublicURL struct {
 	RecoveryEpisodeID uint64
 	HashedIPPolicy    *ippolicy.Policy
 	AllowAll          bool
-	Backends          []ingressbackend.Backend
+	Backends          []Backend
 	PublishRunID      string
 	ServiceProtocol   string
 	AccessMode        string

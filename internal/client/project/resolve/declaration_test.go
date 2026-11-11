@@ -1,7 +1,6 @@
 package resolve
 
 import (
-	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -12,36 +11,6 @@ import (
 	"github.com/tnldotdev/tnl/internal/config"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
-
-func TestProjectDeclarationIgnoresPublisherInfrastructure(t *testing.T) {
-	group, target := "production", config.Target("http://internal.example:8080")
-	project := clientproject.Project{Config: config.TNL{
-		PublisherGroups: map[string]config.PublisherGroup{group: {}},
-		Services:        config.Services{"api": {PublisherGroup: &group, Target: &config.ServiceTarget{Type: "address", Address: &target}}},
-	}}
-	var original []byte
-	for _, count := range []int{0, 1, 2, config.MaxPublisherReplicas} {
-		entry := config.PublisherGroup{}
-		if count != 0 {
-			entry.AWS = &config.PublisherGroupAWS{Replicas: &count}
-		}
-		project.Config.PublisherGroups[group] = entry
-		declaration, err := Declaration(t.Context(), project, appliedTestContext(), nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		encoded, err := json.Marshal(declaration)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if original == nil {
-			original = encoded
-		}
-		if !bytes.Equal(original, encoded) {
-			t.Fatal("AWS capacity changed the control declaration and would change its assignment hash")
-		}
-	}
-}
 
 func appliedTestContext() team.Context {
 	return team.NewContext(authorityv1.Team{Id: "team_1", DefaultDomainId: "domain_1"}, authorityv1.Membership{Id: "membership_1", TeamId: "team_1", ManagedLabel: "member", MemberSlug: "member"}, []authorityv1.Domain{{Id: "domain_1", CanonicalDomain: "tnl.dev", Kind: authorityv1.Managed, State: authorityv1.DomainStateReady}}, "")

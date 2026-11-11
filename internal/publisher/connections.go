@@ -172,15 +172,15 @@ func (m *publisherConnectionManager) Drain(ctx context.Context) error {
 	return m.paths.StopAdmissions(ctx)
 }
 
-func (m *publisherConnectionManager) Close() {
+func (m *publisherConnectionManager) Close() error {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return
+		return m.paths.Close()
 	}
 	m.closed = true
 	m.mu.Unlock()
-	_ = m.paths.Close()
+	return m.paths.Close()
 }
 
 // connect adapts the public claim handshake to the role-neutral slot worker.

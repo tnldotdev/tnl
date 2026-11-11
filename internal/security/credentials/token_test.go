@@ -115,7 +115,7 @@ func TestTokenExchangeFixturesUseCanonicalCredentials(t *testing.T) {
 		AccessToken  AccessToken  `json:"access_token"`
 		RefreshToken RefreshToken `json:"refresh_token"`
 	}
-	readJSONFixture(t, "../../../api/fixtures/authority/v1/token-exchange-response.json", &response)
+	readJSONFixture(t, "../../../contracts/fixtures/authority/v1/token-exchange-response.json", &response)
 	if _, _, err := ParseAccessToken(response.AccessToken); err != nil {
 		t.Fatalf("access fixture: %v", err)
 	}

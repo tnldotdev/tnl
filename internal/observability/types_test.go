@@ -47,7 +47,7 @@ func TestAttributeTypeBoundaryRejectsMisuse(t *testing.T) {
 }
 
 func TestTypedCatalogGenerationMatchesCommittedContract(t *testing.T) {
-	want, err := os.ReadFile("../../api/observability/v1/vocabulary.json")
+	want, err := os.ReadFile("../../contracts/observability/v1/vocabulary.json")
 	if err != nil {
 		t.Fatal(err)
 	}

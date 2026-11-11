@@ -9,7 +9,7 @@ import (
 
 // startDeployedPublisher belongs to the foreground publication, after preflight.
 // installed jobs and named groups own this boundary in their runtime loops.
-func startDeployedPublisher(ctx context.Context, n *publisheridentity.Native, server string) (func(), error) {
+func startDeployedPublisher(ctx context.Context, n *publisheridentity.Native, server string) (func() error, error) {
 	runtime, err := n.RemoteRuntime(server)
 	if err != nil {
 		return nil, err
@@ -18,9 +18,9 @@ func startDeployedPublisher(ctx context.Context, n *publisheridentity.Native, se
 		return nil, err
 	}
 	n.WithRuntime(runtime)
-	return func() {
-		finish, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	return func() error {
+		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		_ = runtime.Stop(finish)
+		return runtime.Stop(finish)
 	}, nil
 }

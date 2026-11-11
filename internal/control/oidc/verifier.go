@@ -15,6 +15,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/tnldotdev/tnl/internal/httpclient"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 var (
@@ -76,9 +77,9 @@ type providerVerifier struct {
 // NewVerifier validates configuration without contacting the provider.
 func NewVerifier(config VerifierConfig) (Verifier, error) {
 	issuer, err := url.Parse(config.Issuer)
-	if err != nil || issuer.Scheme != "https" || issuer.Host == "" || issuer.User != nil ||
+	if err != nil || issuer.Scheme != "https" && !naming.IsLoopbackHTTP(config.Issuer) || issuer.Host == "" || issuer.User != nil ||
 		issuer.RawQuery != "" || issuer.Fragment != "" {
-		return nil, errors.New("oidcauth: issuer must be an HTTPS URL without credentials, query, or fragment")
+		return nil, errors.New("oidcauth: issuer must be HTTPS or loopback HTTP without credentials, query, or fragment")
 	}
 	if !validClaim(config.ClientID, 128) {
 		return nil, errors.New("oidcauth: client ID is invalid")

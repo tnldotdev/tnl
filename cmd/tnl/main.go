@@ -36,7 +36,6 @@ type cli struct {
 	Apply       applyCommand     `cmd:"" help:"Reconcile this project's declared services and publisher groups with control." group:"manage"`
 	Generate    generateCommand  `cmd:"" help:"Generate portable project types and declared publisher infrastructure offline." group:"manage"`
 	Check       struct{}         `cmd:"" help:"Validate project configuration and show its selected path." group:"manage"`
-	Bootstrap   bootstrapCommand `cmd:"" help:"Prepare durable publisher identity secrets and parameter bindings for a customer deployment." group:"manage"`
 	Audit       auditCommand     `cmd:"" help:"Read team service audit history." group:"manage"`
 	Runtime     runtimeCommand   `cmd:"" hidden:""`
 	Wait        waitCommand      `cmd:"" help:"Wait for fresh public readiness checks of configured services." group:"start"`
@@ -652,8 +651,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		return runInit(ctx, flags.Init, stdout, stderr)
 	case "apply":
 		return runApply(ctx, flags.Apply, project, stdout, stderr)
-	case "bootstrap <publisher-group>":
-		return runBootstrap(ctx, flags.Bootstrap, project, stdout, stderr)
 	case "audit list":
 		return runAuditList(ctx, flags.Audit.List, stdout, stderr)
 	case "telemetry on":

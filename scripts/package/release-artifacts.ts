@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import * as z from "zod";
-import { assertReleaseVersion } from "../release/release-version.ts";
-import { parseJSON } from "./validation.ts";
+import { valid } from "semver";
+import { parseJSON } from "../validation.ts";
 
 export const root = path.resolve(import.meta.dirname, "../..");
 export const legalFiles = ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.txt"] as const;
@@ -14,7 +14,7 @@ export async function releaseArtifacts(expectedVersion?: string) {
     z.object({ version: z.string(), commit: z.string().regex(/^[a-f0-9]{40}$/) }),
     "GoReleaser metadata",
   );
-  assertReleaseVersion(metadata.version);
+  assert.equal(valid(metadata.version), metadata.version, "invalid release version");
   if (expectedVersion !== undefined) assert.equal(metadata.version, expectedVersion);
   const artifacts = parseJSON(
     await readFile(path.join(root, "dist/artifacts.json"), "utf8"),

@@ -1,6 +1,6 @@
 // Package controlclient calls the tnl control API.
 //
-// responses cannot exceed 64 KiB. a successful response other than HTTP 204
+// responses normally cannot exceed 1 MiB. a successful response other than HTTP 204
 // must contain one non-null JSON value that matches the generated schema. most
 // requests time out after 20 seconds; certificate requests time out after 150
 // seconds. requests do not follow redirects. network and read failures wrap

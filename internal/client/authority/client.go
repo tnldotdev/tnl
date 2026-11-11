@@ -211,6 +211,14 @@ func request[T any](ctx context.Context, client *Client, call authorityRequest) 
 
 func requestWithToken[T any](ctx context.Context, client *Client, token string, call authorityRequest) (T, error) {
 	var zero T
+	payload, err := requestPayload(ctx, client, token, call)
+	if err != nil || len(payload) == 0 {
+		return zero, err
+	}
+	return decodeResponse[T](payload)
+}
+
+func requestPayload(ctx context.Context, client *Client, token string, call authorityRequest) ([]byte, error) {
 	requestCtx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
 	response, err := call(requestCtx, func(_ context.Context, request *http.Request) error {
@@ -220,45 +228,48 @@ func requestWithToken[T any](ctx context.Context, client *Client, token string, 
 		return nil
 	})
 	if err != nil {
-		return zero, unavailableError(ctx, err)
+		return nil, unavailableError(ctx, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusTooManyRequests || response.StatusCode == http.StatusServiceUnavailable {
-		return zero, responseError(response.StatusCode, response.Header, nil)
+		return nil, responseError(response.StatusCode, response.Header, nil)
 	}
 	payload, err := httpjson.ReadAll(response.Body, maxResponseBytes)
 	if errors.Is(err, httpjson.ErrTooLarge) {
-		return zero, failure.Wrap("read authority response", failure.ServerResponseInvalid, errors.New("authorityclient: response exceeds limit"))
+		return nil, failure.Wrap("read authority response", failure.ServerResponseInvalid, errors.New("authorityclient: response exceeds limit"))
 	}
 	if err != nil {
-		return zero, unavailableError(ctx, err)
+		return nil, unavailableError(ctx, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return zero, responseError(response.StatusCode, response.Header, payload)
+		return nil, responseError(response.StatusCode, response.Header, payload)
 	}
 	if response.StatusCode == http.StatusNoContent && len(payload) == 0 {
-		return zero, nil
+		return nil, nil
 	}
 	if len(payload) == 0 {
-		return zero, failure.Wrap("read authority response", failure.ServerResponseInvalid, errors.New("authorityclient: successful response has an empty body"))
+		return nil, failure.Wrap("read authority response", failure.ServerResponseInvalid, errors.New("authorityclient: successful response has an empty body"))
 	}
 	if bytes.Equal(bytes.TrimSpace(payload), []byte("null")) {
-		return zero, failure.Wrap("read authority response", failure.ServerResponseInvalid, errors.New("authorityclient: successful response has a null body"))
+		return nil, failure.Wrap("read authority response", failure.ServerResponseInvalid, errors.New("authorityclient: successful response has a null body"))
+	}
+	return payload, nil
+}
+
+func decodeResponse[T any](payload []byte) (T, error) {
+	var zero T
+	if len(payload) == 0 {
+		return zero, failure.Wrap("read authority response", failure.ServerResponseInvalid, errors.New("authorityclient: successful response has an empty body"))
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.UseNumber()
 	var result T
-	err = httpjson.Decode(decoder, &result)
+	err := httpjson.Decode(decoder, &result)
 	if errors.Is(err, httpjson.ErrTrailingContent) {
 		return zero, failure.Wrap("decode authority response", failure.ServerResponseInvalid, errors.New("authorityclient: response contains trailing JSON"))
 	}
 	if err != nil {
 		return zero, failure.Wrap("decode authority response", failure.ServerResponseInvalid, err)
-	}
-	if session, ok := any(result).(authorityv1.WorkloadSession); ok {
-		if err := validateWorkloadSessionWire(payload, session); err != nil {
-			return zero, failure.Wrap("decode workload session", failure.ServerResponseInvalid, err)
-		}
 	}
 	return result, nil
 }

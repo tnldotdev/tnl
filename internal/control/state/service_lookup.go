@@ -12,7 +12,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func (d *Database) ListServices(ctx context.Context, teamID, actorID, after string) ([]ServiceRecord, string, error) {
+func (d *Database) ListServices(ctx context.Context, teamID, actorID, after string) (_ []ServiceRecord, _ string, retErr error) {
 	if after != "" && !opaqueid.Valid(after, opaqueid.ServicePrefix) {
 		return nil, "", ErrServiceAccess
 	}
@@ -20,7 +20,7 @@ func (d *Database) ListServices(ctx context.Context, teamID, actorID, after stri
 	if err != nil {
 		return nil, "", err
 	}
-	defer tx.Rollback(ctx)
+	defer rollback(ctx, tx, "list services", &retErr)()
 	if err = serviceManager(ctx, tx, teamID, actorID); err != nil {
 		return nil, "", err
 	}

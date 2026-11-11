@@ -27,10 +27,10 @@ tasks:
     cmds:
       - docker compose --file development/local/compose.yaml up --build --detach
       - curl --noproxy '*' --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert development/local/pebble.minica.crt --output .local/certs/pebble-root.pem https://127.0.0.1:15000/roots/0
-      - curl --noproxy '*' --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error --cacert .local/certs/local-root.pem https://control.127.0.0.1.nip.io:8445/v1/ready
+      - curl --noproxy '*' --retry 30 --retry-all-errors --retry-delay 1 --fail --silent --show-error http://localhost:8445/v1/ready
 
   trust:
-    desc: Trust the local control and Pebble issuance roots on macOS
+    desc: Trust the local relay and Pebble issuance roots on macOS
     preconditions:
       - sh: test -s .local/certs/local-root.pem
         msg: Run task local:up first
@@ -49,7 +49,7 @@ tasks:
         done
 
   untrust:
-    desc: Remove the local control and Pebble issuance roots from the macOS keychain
+    desc: Remove the local relay and Pebble issuance roots from the macOS keychain
     cmds:
       - |
         set -eu
@@ -68,7 +68,7 @@ tasks:
     desc: Authenticate the isolated local client through local OIDC browser approval
     cmds:
       - |
-        TNL_SERVER=https://control.127.0.0.1.nip.io:8445 TNL_STATE_DIR=.local/client-state \
+        TNL_SERVER=http://localhost:8445 TNL_STATE_DIR=.local/client-state \
           go run ./cmd/tnl auth login --team local --open
 
   tnl:
@@ -76,7 +76,7 @@ tasks:
     requires:
       vars: [CLI_ARGS]
     cmds:
-      - TNL_SERVER=https://control.127.0.0.1.nip.io:8445 TNL_STATE_DIR=.local/client-state go run ./cmd/tnl {{.CLI_ARGS}}
+      - TNL_SERVER=http://localhost:8445 TNL_STATE_DIR=.local/client-state go run ./cmd/tnl {{.CLI_ARGS}}
 
   down:
     desc: Stop the local services without removing state

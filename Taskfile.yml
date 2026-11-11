@@ -32,9 +32,6 @@ includes:
     taskfile: ./tasks/packaging.yml
     dir: "{{.ROOT_DIR}}"
     flatten: true
-  deploy:
-    taskfile: ./tasks/deployment.yml
-    dir: "{{.ROOT_DIR}}"
 
 tasks:
   dev:

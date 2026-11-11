@@ -109,16 +109,16 @@ async def use_clients() -> None:
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := WritePythonFacade(root, files, true); !os.IsNotExist(err) {
+			if err := writeArtifacts(root, files, true); !os.IsNotExist(err) {
 				t.Fatal("read-only check accepted absent output", err)
 			}
 			if _, err := os.Stat(filepath.Join(root, "python")); !os.IsNotExist(err) {
 				t.Fatal("check created output")
 			}
-			if err := WritePythonFacade(root, files, false); err != nil {
+			if err := writeArtifacts(root, files, false); err != nil {
 				t.Fatal(err)
 			}
-			if err := WritePythonFacade(root, files, true); err != nil {
+			if err := writeArtifacts(root, files, true); err != nil {
 				t.Fatal(err)
 			}
 			if scenario == "factory" {
@@ -134,14 +134,14 @@ async def use_clients() -> None:
 			command.Dir = repository
 			command.Env = append(os.Environ(), "MYPYPATH="+filepath.Join(root, "python")+string(os.PathListSeparator)+filepath.Join(repository, "packages/py/src"))
 			if output, err := command.CombinedOutput(); err != nil {
-				t.Fatalf("generated facade typecheck: %v\n%s\n%s", err, output, files["tnl_project/__init__.py"])
+				t.Fatalf("generated facade typecheck: %v\n%s\n%s", err, output, files["python/tnl_project/__init__.py"])
 			}
 		})
 	}
 }
 
-func TestPythonFacadeRejectsSymlinksAndPreservesUnownedFiles(t *testing.T) {
-	for _, scenario := range []string{"ancestor", "module", "file", "unowned"} {
+func TestPythonFacadeRejectsSymlinks(t *testing.T) {
+	for _, scenario := range []string{"ancestor", "module", "file"} {
 		t.Run(scenario, func(t *testing.T) {
 			root, _ := filepath.EvalSymlinks(t.TempDir())
 			outside := t.TempDir()
@@ -161,17 +161,13 @@ func TestPythonFacadeRejectsSymlinksAndPreservesUnownedFiles(t *testing.T) {
 					if err := os.Mkdir(filepath.Join(root, "python/tnl_project"), 0755); err != nil {
 						t.Fatal(err)
 					}
-					if scenario == "file" {
-						err = os.Symlink(filepath.Join(outside, "untouched"), filepath.Join(root, "python/tnl_project/__init__.py"))
-					} else {
-						err = os.WriteFile(filepath.Join(root, "python/tnl_project/__init__.py"), []byte("# user code\n"), 0600)
-					}
+					err = os.Symlink(filepath.Join(outside, "untouched"), filepath.Join(root, "python/tnl_project/__init__.py"))
 				}
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := WritePythonFacade(root, files, false); err == nil {
+			if err := writeArtifacts(root, files, false); err == nil {
 				t.Fatal("unsafe output was accepted")
 			}
 			if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
@@ -196,7 +192,7 @@ func TestPythonFacadeContainsNamesAndProtocolsOnly(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(string(files["tnl_project/__init__.py"]), `Literal["database"]`) {
+	if !strings.Contains(string(files["python/tnl_project/__init__.py"]), `Literal["database"]`) {
 		t.Fatal("static service literal missing")
 	}
 }

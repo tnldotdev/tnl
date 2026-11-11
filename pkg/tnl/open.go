@@ -70,22 +70,23 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		_ = state.Close()
-		return nil, fmt.Errorf("listen for local HTTP requests: %w", err)
+		return nil, errors.Join(fmt.Errorf("listen for local HTTP requests: %w", err), state.Close())
 	}
 	invocationID, err := opaqueid.New(opaqueid.InvocationPrefix)
 	if err != nil {
-		_ = listener.Close()
-		_ = state.Close()
-		return nil, err
+		return nil, errors.Join(err, listener.Close(), state.Close())
 	}
 	local := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
 	runCtx, cancel := context.WithCancel(ctx)
 	tunnel := &Tunnel{cancel: cancel, done: make(chan struct{})}
-	serveError := make(chan error, 1)
+	serveDone := make(chan error, 1)
 	go func() {
-		if err := local.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serveError <- err
+		err := local.Serve(listener)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		serveDone <- err
+		if err != nil {
 			cancel()
 		}
 	}()
@@ -112,14 +113,9 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 				return nil
 			},
 		})
-		shutdownCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
-		shutdownErr := local.Shutdown(shutdownCtx)
+		shutdownCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		shutdownErr := shutdownHTTP(shutdownCtx, local, serveDone)
 		stop()
-		select {
-		case serveErr := <-serveError:
-			result = errors.Join(result, serveErr)
-		default:
-		}
 		result = errors.Join(result, shutdownErr, state.Close())
 		tunnel.mu.Lock()
 		tunnel.err = result
@@ -129,8 +125,7 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 	select {
 	case event := <-ready:
 		if ctx.Err() != nil {
-			_ = tunnel.Close()
-			return nil, context.Cause(ctx)
+			return nil, errors.Join(context.Cause(ctx), tunnel.Close())
 		}
 		tunnel.mu.Lock()
 		valid := event.PublicURLID == tunnel.id && event.PublicURL == tunnel.url && event.PublishRunNumber > 0
@@ -138,20 +133,28 @@ func Open(ctx context.Context, handler http.Handler, options Options) (*Tunnel, 
 		if valid {
 			return tunnel, nil
 		}
-		tunnel.Close()
-		return nil, errors.New("ready publish run does not match the ad-hoc allocation")
+		return nil, errors.Join(errors.New("ready publish run does not match the ad-hoc allocation"), tunnel.Close())
 	case <-tunnel.done:
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, errors.Join(context.Cause(ctx), tunnel.Wait())
 		}
 		if err := tunnel.Wait(); err != nil {
 			return nil, err
 		}
 		return nil, errors.New("ad-hoc publication stopped before it was ready")
 	case <-ctx.Done():
-		tunnel.Close()
-		return nil, ctx.Err()
+		return nil, errors.Join(context.Cause(ctx), tunnel.Close())
 	}
+}
+
+// shutdownHTTP bounds graceful shutdown, closes remaining connections on timeout,
+// and joins the serving loop before the tunnel releases its other resources.
+func shutdownHTTP(ctx context.Context, server *http.Server, served <-chan error) error {
+	err := server.Shutdown(ctx)
+	if err != nil {
+		err = errors.Join(err, server.Close())
+	}
+	return errors.Join(err, <-served)
 }
 
 func (t *Tunnel) URL() string {

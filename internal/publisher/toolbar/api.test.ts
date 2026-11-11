@@ -10,7 +10,7 @@ import {
 function fixture(name: string): unknown {
   return JSON.parse(
     readFileSync(
-      new URL(`../../../api/fixtures/publisher/v1/${name}.json`, import.meta.url),
+      new URL(`../../../contracts/fixtures/publisher/v1/${name}.json`, import.meta.url),
       "utf8",
     ),
   );

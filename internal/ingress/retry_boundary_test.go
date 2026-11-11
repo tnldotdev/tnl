@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 )
 
@@ -92,7 +91,7 @@ func TestIngressRotatedRelayDoesNotRetryCommittedByte(t *testing.T) {
 
 type waitingBackend struct{ entered chan struct{} }
 
-type contextBackend struct{ ingressbackend.Backend }
+type contextBackend struct{ Backend }
 
 func (b contextBackend) Start(ctx context.Context, id string, pending bool, proxy, initial []byte) (net.Conn, error) {
 	if err := ctx.Err(); err != nil {
@@ -112,7 +111,7 @@ func (b waitingBackend) Start(ctx context.Context, _ string, _ bool, _, _ []byte
 func TestIngressStalledAttemptLeavesFallbackBudget(t *testing.T) {
 	for _, stage := range []string{"open", "proxy_write", "hello_write"} {
 		t.Run(stage, func(t *testing.T) {
-			var first ingressbackend.Backend = waitingBackend{}
+			var first Backend = waitingBackend{}
 			if stage != "open" {
 				a, b := net.Pipe()
 				ownIngressConn(t, a)

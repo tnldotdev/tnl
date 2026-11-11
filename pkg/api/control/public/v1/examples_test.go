@@ -14,12 +14,12 @@ func TestExamplesMatchGeneratedModels(t *testing.T) {
 		path  string
 		model any
 	}{
-		{name: "discovery", path: "../../../../../api/fixtures/control/v1/discovery.json", model: &ControlDiscovery{}},
-		{name: "health", path: "../../../../../api/fixtures/control/v1/health.json", model: &HealthResponse{}},
-		{name: "client IP", path: "../../../../../api/fixtures/control/v1/client-ip.json", model: &ClientIPResponse{}},
-		{name: "readiness", path: "../../../../../api/fixtures/control/v1/readiness.json", model: &ReadinessResponse{}},
-		{name: "not ready", path: "../../../../../api/fixtures/control/v1/not-ready.json", model: &ReadinessResponse{}},
-		{name: "problem", path: "../../../../../api/fixtures/control/v1/problem.json", model: &Problem{}},
+		{name: "discovery", path: "../../../../../contracts/fixtures/control/v1/discovery.json", model: &ControlDiscovery{}},
+		{name: "health", path: "../../../../../contracts/fixtures/control/v1/health.json", model: &HealthResponse{}},
+		{name: "client IP", path: "../../../../../contracts/fixtures/control/v1/client-ip.json", model: &ClientIPResponse{}},
+		{name: "readiness", path: "../../../../../contracts/fixtures/control/v1/readiness.json", model: &ReadinessResponse{}},
+		{name: "not ready", path: "../../../../../contracts/fixtures/control/v1/not-ready.json", model: &ReadinessResponse{}},
+		{name: "problem", path: "../../../../../contracts/fixtures/control/v1/problem.json", model: &Problem{}},
 	}
 
 	for _, test := range tests {

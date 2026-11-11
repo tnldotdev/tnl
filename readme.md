@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" width="100" alt="tnl" />
+  <img src=".github/logo.svg" width="100" alt="tnl" />
 </p>
 <p align="center">
   easy tunnels for dev and prod
@@ -10,7 +10,7 @@
 </p>
 <br/>
 
-`tnl` helps you connect to local and/or private services through end-to-end encrypted tunnels. It's like if Tailscale and Cloudflare Tunnel had a baby. And that baby had a great devex.
+`tnl` helps you connect to local and/or private services through end-to-end encrypted tunnels. It's like if Tailscale and Cloudflare Tunnel had a baby. And that baby came with a great devex.
 
 ## `tnl` where?
 

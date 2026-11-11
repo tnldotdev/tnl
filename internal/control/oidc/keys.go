@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"slices"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -109,9 +108,8 @@ func providerKeySet(ctx context.Context, provider *oidc.Provider) (oidc.KeySet, 
 	if err := provider.Claims(&metadata); err != nil {
 		return nil, &keyFetchError{err}
 	}
-	uri, err := url.Parse(metadata.URI)
-	if err != nil || uri.Scheme != "https" || uri.Host == "" || uri.User != nil || uri.Fragment != "" {
-		return nil, &keyFetchError{errors.Join(err, errors.New("signing key URL is invalid"))}
+	if !validProviderEndpoint(metadata.URI, providerIssuer(provider)) {
+		return nil, &keyFetchError{errors.New("signing key URL is invalid")}
 	}
 	client := *http.DefaultClient
 	if configured, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok {

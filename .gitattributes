@@ -1,2 +1,3 @@
 internal/publisher/toolbar/toolbar.js linguist-generated=true
 internal/publisher/browserapi/model.gen.ts linguist-generated=true
+connect/dist/** linguist-generated=true

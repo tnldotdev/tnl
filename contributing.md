@@ -64,7 +64,7 @@ mise exec -- task generate
 mise exec -- task format
 ```
 
-OpenAPI sources live in `api/`. SQL sources live beside each state package's
+OpenAPI sources live in `contracts/`. SQL sources live beside each state package's
 `sqlc.yaml`. [Generation tasks](tasks/generate.yml) list the generated paths.
 The tunnel protocol in `pkg/protocol/tunnelv1` is handwritten.
 
@@ -78,7 +78,7 @@ publisher, and connector binaries. Databases from previous baselines are rejecte
 A publisher restart does not restore its application sockets.
 
 tnl-owned formats also start at version 1: project metadata, tunnel snapshots,
-inspection JSON, and publisher deployment templates. Regenerate project metadata
+inspection JSON, and workload metadata. Regenerate project metadata
 with matching native and SDK versions when replacing an earlier build.
 
 `task format-check` checks without editing. `task generate-check` regenerates

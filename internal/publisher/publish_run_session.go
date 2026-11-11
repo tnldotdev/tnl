@@ -239,7 +239,7 @@ func runSession(
 	if err != nil {
 		return err
 	}
-	defer route.Close()
+	defer func() { result = errors.Join(result, route.Close()) }()
 	if err := route.Start(); err != nil {
 		return err
 	}

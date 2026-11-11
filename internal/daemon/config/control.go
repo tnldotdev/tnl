@@ -63,11 +63,15 @@ func (c Config) validateControl() error {
 		return err
 	}
 	if c.ControlURL != "" {
-		if err := validateHTTPSOrigin(c.ControlURL, "control URL"); err != nil {
-			return err
+		canonical, err := naming.CanonicalControlURL(c.ControlURL)
+		if err != nil || canonical != c.ControlURL {
+			return errors.New("control URL must be a canonical HTTPS or loopback HTTP origin")
+		}
+		if naming.IsLoopbackHTTP(c.ControlURL) && c.Role != RoleStandalone {
+			return errors.New("loopback HTTP control requires standalone")
 		}
 		origin, _ := url.Parse(c.ControlURL)
-		if origin.Hostname() != c.ServerHostname() {
+		if origin.Scheme == "https" && origin.Hostname() != c.ServerHostname() {
 			return errors.New("control URL hostname must match the server control hostname")
 		}
 	}

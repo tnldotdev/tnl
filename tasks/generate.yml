@@ -14,24 +14,28 @@ vars:
     packages/ts/src/config.gen.ts
     schema/v1.json
     scripts/install.sh
-    deploy/publisher/fargate/fargate.yaml
-    deploy/publisher/fargate/fargate.parameters.example.json
-    deploy/publisher/fargate/fargate.manifest.example.json
-    deploy/publisher/fargate/fargate.storage-policy.json
-    api/observability/v1/vocabulary.json
+    contracts/observability/v1/vocabulary.json
 
 tasks:
   generate:
-    aliases: [go:generate]
     desc: Regenerate all committed artifacts
     cmds:
       # generate API models and browser validators before compiling Go generators.
-      - node scripts/generate/openapi.ts
-      - node scripts/generate/publisher-model.ts
-      - go generate -skip 'scripts/generate/(openapi|publisher-model)\.ts' ./...
+      - node scripts/generate/api-contracts.ts
+      - node scripts/generate/browser-api-schemas.ts
+      - sqlc generate -f internal/client/state/sqlc.yaml
+      - sqlc generate -f internal/control/state/sqlc.yaml
+      - go run ./scripts/installer/generate.go -root .
+      - go run ./internal/config/cmd/configgen
+      - node scripts/generate/config-types.ts
+      - pnpm exec oxfmt --write schema/v1.json internal/client/project/keys.gen.json packages/ts/src/config.gen.ts
+      - node scripts/generate/project-config-loader.ts
+      - node scripts/generate/diagnostic-codes.ts
+      - go -C internal/failure run ./cmd/cataloggen
+      - go run ./internal/observability/cmd/vocabulary contracts/observability/v1/vocabulary.json
+      - node scripts/generate/feedback-toolbar.ts
 
   generate-check:
-    aliases: [go:generate-check]
     desc: Check generated files for drift
     cmds:
       - task: generate

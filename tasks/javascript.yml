@@ -1,25 +1,6 @@
 version: "3"
 
 tasks:
-  test:client-factories:
-    dir: "{{.ROOT_DIR}}"
-    desc: Check ordinary client caching, exact native bindings and joined driver cleanup
-    deps: [":js:build"]
-    cmds:
-      - pnpm exec vitest run packages/ts/test/connector/client-factory.test.ts packages/ts/test/connector/awaitable-connection.test.ts
-
-  test:ipc-boundaries:
-    desc: Check local SDK descriptor, HTTP, and process boundaries
-    deps: [":js:build"]
-    cmds:
-      - pnpm exec vitest run packages/ts/test/publisher/app-runtime.test.ts packages/ts/test/connector/connection-ipc.test.ts
-
-  test:client-tracing:
-    desc: Check SDK and framework tracing, connector carriers and lifecycle cleanup
-    deps: [":js:build"]
-    cmds:
-      - pnpm exec vitest run packages/ts/test/native/tracing.test.ts packages/ts/test/publisher/app-runtime.test.ts packages/ts/test/connector/connection.test.ts packages/ts/test/connector/connection-fetch.test.ts packages/ts/test/connector/connection-owner-recovery.test.ts packages/ts/test/publisher/adhoc-open.test.ts packages/ts/test/publisher/adhoc-fetch.test.ts packages/ts/test/frameworks/vite.test.ts packages/ts/test/frameworks/next.test.ts
-
   format:
     cmds:
       - pnpm format
@@ -39,22 +20,6 @@ tasks:
   test:
     cmds:
       - pnpm test
-
-  test:connections:
-    desc: Check connector connection snapshots, verified workload owner selection, streaming fetch and provider acquisition
-    deps: [":js:build"]
-    cmds:
-      - pnpm exec vitest run packages/ts/test/connector/connection.test.ts packages/ts/test/connector/connection-environment.test.ts packages/ts/test/connector/awaitable-connection.test.ts packages/ts/test/connector/connection-fetch.test.ts packages/ts/test/connector/connection-ipc.test.ts packages/ts/test/connector/connection-installed.test.ts packages/ts/test/connector/connection-owner-recovery.test.ts packages/ts/test/connector/workload-native.test.ts packages/ts/test/connector/workload-provider.test.ts packages/ts/test/project/service-metadata.test.ts
-      - task: :go:test:focused
-        vars:
-          PACKAGES: ./internal/connector/workload ./internal/client/project/workloadmanifest ./internal/connector
-          RUN: "Test(AssertionSource|FlyMachineToken|GitHubAssertion|Session.*(Validation|Decoder)|Selection|Manifest|ConnectionSDK.*Workload)"
-
-  test:frameworks:
-    desc: Check app preparation and real Node, Bun, Vite and Next framework lifetimes
-    deps: [":js:build"]
-    cmds:
-      - pnpm exec vitest run packages/ts/test/publisher/app-runtime.test.ts packages/ts/test/native/bun.test.ts packages/ts/test/frameworks/vite.test.ts packages/ts/test/frameworks/next.test.ts packages/ts/test/project/runtime.test.ts
 
   test:coverage:
     desc: Produce a diagnostic TypeScript coverage report
@@ -78,8 +43,3 @@ tasks:
       - pnpm test:run
       - task: :js:lint
       - task: :js:format-check
-
-  test:packaging:
-    desc: Check manifest-driven npm exports and Python wheel metadata
-    cmds:
-      - pnpm exec vitest run scripts/package/npm-artifacts.test.ts scripts/package/python-version.test.ts scripts/package/python-wheels.test.ts

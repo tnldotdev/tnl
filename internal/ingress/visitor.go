@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/ingress/clienthello"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
@@ -38,7 +37,7 @@ func (s *Server) forward(public net.Conn, source, destination netip.AddrPort, he
 	ctx, finishConnection := observability.Start(owner, "ingress.visitor_connection")
 	defer func() { finishConnection(retErr) }()
 	var route PublicURL
-	var backends []ingressbackend.Backend
+	var backends []Backend
 	var ok bool
 	visitorOutcome := observability.VisitorLookupMissing
 	visitorStarted := time.Now()
@@ -300,7 +299,7 @@ func (s *Server) selectPoolRun(candidates []PublicURL) (PublicURL, func(), Looku
 
 // openVisitorStream retries only before a visitor byte reaches a relay. the
 // backend owns failed openings; the caller owns each successful connection.
-func (s *Server) openVisitorStream(ctx context.Context, backends []ingressbackend.Backend, visitorID string, kind connectionKind, header, prefix []byte) (result committedVisitorStream, retErr error) {
+func (s *Server) openVisitorStream(ctx context.Context, backends []Backend, visitorID string, kind connectionKind, header, prefix []byte) (result committedVisitorStream, retErr error) {
 	ctx, finish := observability.Start(ctx, "ingress.open_visitor_stream")
 	observability.Visitor(ctx, visitorID)
 	defer func() { finish(retErr) }()
@@ -367,7 +366,7 @@ func (s *Server) copyVisitor(public, upstream net.Conn, remainder io.Reader, rou
 	return err
 }
 
-func (s *Server) observeRelayAttempt(backend ingressbackend.Backend, outcome observability.RelayAttemptOutcome) {
+func (s *Server) observeRelayAttempt(backend Backend, outcome observability.RelayAttemptOutcome) {
 	if s.config.Metrics == nil {
 		return
 	}

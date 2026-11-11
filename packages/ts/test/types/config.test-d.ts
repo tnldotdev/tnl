@@ -9,7 +9,7 @@ import {
 import { assert, assertType, expectTypeOf, test } from "vitest";
 
 export const grouped = defineConfig({
-  publisherGroups: { cloud: { description: "database publisher", aws: { replicas: 2 } } },
+  publisherGroups: { cloud: { description: "database publisher" } },
   services: {
     db: {
       publisherGroup: "cloud",
@@ -39,31 +39,18 @@ test("publisher groups select named assignments and reject deployment settings",
   const infrastructureGroup = {
     publisherGroups: { cloud: { description: "db", type: "self-hosted" } },
   } as const;
-  // @ts-expect-error provider selection uses the aws key, including inferred values.
+  // @ts-expect-error infrastructure settings do not belong in project configuration.
   defineConfig(infrastructureGroup);
   const detailedAWSGroup = {
     publisherGroups: { production: { aws: { replicas: 2, vpcId: "vpc-12345678" } } },
   } as const;
-  // @ts-expect-error inferred AWS objects also reject deploy-time settings.
+  // @ts-expect-error inferred AWS deployment settings are rejected too.
   defineConfig(detailedAWSGroup);
-  defineConfig({ publisherGroups: { production: { aws: {} } } });
   defineConfig({
     publisherGroups: {
       production: {
-        aws: {
-          // @ts-expect-error capacity must be numeric.
-          replicas: "2",
-        },
-      },
-    },
-  });
-  defineConfig({
-    publisherGroups: {
-      production: {
-        aws: {
-          // @ts-expect-error detailed infrastructure settings belong in deploy-time parameters.
-          vpcId: "vpc-12345678",
-        },
+        // @ts-expect-error deployment configuration is not part of a publisher group.
+        aws: {},
       },
     },
   });
@@ -606,7 +593,7 @@ test("configuration enforces service ownership and references for literals and f
   }) satisfies TnlConfig;
 
   defineConfig({
-    publisherGroups: { production: { aws: { replicas: 2 } } },
+    publisherGroups: { production: {} },
     services: {
       cluster: {
         publisherGroup: "production",

@@ -36,11 +36,14 @@ func ProjectMounts(project clientproject.Project, service string, appTarget func
 		if local.Target != nil {
 			target = string(*local.Target)
 		}
-		var resolve func() string
+		var resolve func(context.Context) (string, string, error)
 		switch config.TargetType(definition) {
 		case "app":
 			if appTarget != nil {
-				resolve = func() string { return appTarget(mount.Service) }
+				resolve = func(context.Context) (string, string, error) {
+					target := appTarget(mount.Service)
+					return target, target, nil
+				}
 			}
 		case "address":
 			resolved, err := project.ResolvePublish(mount.Service, "")
@@ -52,14 +55,11 @@ func ProjectMounts(project clientproject.Project, service string, appTarget func
 			binding := &targetbinding.TargetBinding{Resolve: func(ctx context.Context) (targetbinding.TargetSnapshot, error) {
 				return targetbinding.ResolveTargetSnapshot(ctx, project, mount.Service, resolver)
 			}}
-			resolve = func() string {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			resolve = func(ctx context.Context) (string, string, error) {
+				ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				defer cancel()
 				selected, err := binding.Capture(ctx)
-				if err != nil {
-					return ""
-				}
-				return selected.Address
+				return selected.Address, selected.Identity, err
 			}
 		}
 		if target == "" && resolve == nil {

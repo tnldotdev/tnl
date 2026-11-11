@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/publisher/deployment"
 )
 
 func generationGit(t *testing.T, directory string, args ...string) []byte {
@@ -75,7 +75,7 @@ func TestGenerateOfflineAcrossWorktreesAndReadOnlyCheck(t *testing.T) {
 	t.Setenv("TNL_STATE_DIR", state)
 	t.Setenv("TNL_ACCESS_TOKEN", "do-not-serialize-session")
 	t.Setenv("TNL_SERVER", "https://do-not-contact.invalid")
-	configSource := `export default { publisherGroups: { production: { aws: { replicas: 2 } } } };`
+	configSource := `export default { publisherGroups: { production: {} } };`
 	var expected map[string][]byte
 	for _, directory := range []string{first, second} {
 		if err := os.WriteFile(filepath.Join(directory, "tnl.config.ts"), []byte(configSource), 0644); err != nil {
@@ -93,7 +93,7 @@ func TestGenerateOfflineAcrossWorktreesAndReadOnlyCheck(t *testing.T) {
 			t.Fatal("check accepted missing artifacts")
 		} else {
 			reason, _ := failure.ReasonOf(err)
-			if reason != failure.PublisherDeploymentInvalid || !errors.Is(err, fs.ErrNotExist) {
+			if reason != failure.ProjectArtifactsInvalid || !errors.Is(err, fs.ErrNotExist) {
 				t.Fatal("generation error lost classification or cause", err)
 			}
 			var rendered bytes.Buffer
@@ -115,13 +115,9 @@ func TestGenerateOfflineAcrossWorktreesAndReadOnlyCheck(t *testing.T) {
 		if after := generationSnapshot(t, directory); !reflect.DeepEqual(before, after) {
 			t.Fatal("check changed tracked/generated files")
 		}
-		manifest, err := deployment.Read(filepath.Join(directory, deployment.DefaultOutputDir))
-		if err != nil {
-			t.Fatal(err)
-		}
 		files := map[string][]byte{}
-		for _, name := range []string{"manifest.json", "project.d.ts", "python/pyproject.toml", "python/tnl_project/__init__.py", "python/tnl_project/py.typed", manifest.DocumentationPath, manifest.PublisherGroups[0].TemplatePath, manifest.PublisherGroups[0].ParametersExamplePath, manifest.PublisherGroups[0].StoragePolicyPath} {
-			data, err := os.ReadFile(filepath.Join(directory, deployment.DefaultOutputDir, name))
+		for _, name := range []string{"project.d.ts", "python/pyproject.toml", "python/tnl_project/__init__.py", "python/tnl_project/py.typed"} {
+			data, err := os.ReadFile(filepath.Join(directory, meta.GeneratedDirectoryName, name))
 			if err != nil {
 				t.Fatal(err)
 			}

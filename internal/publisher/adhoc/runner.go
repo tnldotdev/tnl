@@ -13,6 +13,7 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
+	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	targetsyntax "github.com/tnldotdev/tnl/internal/policy/target"
 	"github.com/tnldotdev/tnl/internal/publisher"
@@ -99,7 +100,7 @@ func Run(ctx context.Context, options Options) (result error) {
 		return err
 	}
 	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		if err := native.DeletePublicURL(cleanupCtx, publicURL.Id); err != nil && !errors.Is(err, clientcontrol.ErrNotFound) {
 			result = errors.Join(result, fmt.Errorf("remove ad-hoc public URL: %w", err))
@@ -137,8 +138,11 @@ func Run(ctx context.Context, options Options) (result error) {
 		Observe:       options.Observe,
 	}
 	result = publisher.Run(ctx, publication)
-	if ctx.Err() != nil && errors.Is(result, context.Canceled) {
-		result = nil
+	if ctx.Err() != nil && failure.Only(result, context.Canceled) {
+		result = context.Cause(ctx)
+		if result == context.Canceled {
+			result = nil
+		}
 	}
 	return result
 }

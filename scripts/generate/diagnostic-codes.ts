@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import * as z from "zod";
-import { parseJSON } from "../package/validation.ts";
+import { parseJSON } from "../validation.ts";
 
 const root = resolve(import.meta.dirname, "../..");
 const catalog = parseJSON(

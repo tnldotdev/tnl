@@ -199,6 +199,7 @@ jobs:
             go:github.com/sqlc-dev/sqlc/cmd/sqlc
             go:golang.org/x/tools/cmd/goimports
             go:golang.org/x/vuln/cmd/govulncheck
+            go:honnef.co/go/tools/cmd/staticcheck
           go-cache: build
           go-cache-save: true
           pnpm: true
@@ -207,7 +208,7 @@ jobs:
         run: task go:format-check
 
       - name: Check generated files
-        run: task go:generate-check
+        run: task generate-check
 
       - name: Run static analysis
         run: task go:lint
@@ -361,19 +362,14 @@ jobs:
         env:
           TNL_ENV_FILE: .env.example
         run: |
-          for directory in deploy/server/standalone deploy/server/split; do
+          for directory in deploy/self-hosting/standalone deploy/self-hosting/split; do
             docker compose --env-file "$directory/.env.example" --file "$directory/compose.yaml" config --format json |
               jq -e '
                 .services as $services |
-                [$services | to_entries[] | select(.key != "control-proxy") | .value] as $daemons |
+                [$services[]] as $daemons |
                 $services.migrate.command == ["migrate"] and
                 ($daemons | length > 0 and all(.entrypoint == ["/usr/local/bin/tnld"])) and
-                ($services["control-proxy"] |
-                  .image == "docker.io/library/caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d" and
-                  .entrypoint == null and
-                  any(.volumes[];
-                    .type == "bind" and (.source | test("/deploy/server/(standalone|split)/Caddyfile$")) and
-                    .target == "/etc/caddy/Caddyfile" and .read_only == true))
+                ($services | has("control-proxy") | not)
               ' > /dev/null
           done
           docker compose --file development/local/compose.yaml config --format json |

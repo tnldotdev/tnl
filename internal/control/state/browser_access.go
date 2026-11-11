@@ -160,7 +160,7 @@ func (d *Database) ConsumeBrowserLogin(ctx context.Context, state string, browse
 		ReturnPath:   row.ReturnPath, Nonce: row.Nonce, Verifier: private.Verifier, CompanyIntent: private.CompanyIntent}, nil
 }
 
-func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLoginAttempt, session BrowserAccessSession, now time.Time) (BrowserHandoff, error) {
+func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLoginAttempt, session BrowserAccessSession, now time.Time) (_ BrowserHandoff, retErr error) {
 	if attempt.Subject.Kind == visitorscope.Service {
 		return d.issueServiceBrowserHandoff(ctx, attempt, session, now)
 	}
@@ -193,7 +193,7 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	if err != nil {
 		return BrowserHandoff{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer rollback(ctx, tx, "issue browser handoff", &retErr)()
 	queries := controlstatedb.New(tx)
 	if err := queries.InsertBrowserAccessSession(ctx, controlstatedb.InsertBrowserAccessSessionParams{
 		TokenDigest: cookieDigest, PreviewID: nullableText(attempt.PreviewID), PublicURLID: attempt.PublicURLID,
@@ -250,7 +250,13 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	}
 	if initialRunID != "" && attempt.PublishRunID != "" {
 		selected, err := queries.GetPublishRun(ctx, attempt.PublishRunID)
-		if err != nil || selected.PublicURLID != attempt.PublicURLID || selected.State != "ready" || selected.ClosedAt.Valid || !selected.PublisherExpiresAt.Time.After(now) {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return BrowserHandoff{}, ErrPreviewAccess
+		}
+		if err != nil {
+			return BrowserHandoff{}, err
+		}
+		if selected.PublicURLID != attempt.PublicURLID || selected.State != "ready" || selected.ClosedAt.Valid || !selected.PublisherExpiresAt.Time.After(now) {
 			return BrowserHandoff{}, ErrPreviewAccess
 		}
 		initialRunID = attempt.PublishRunID
@@ -268,7 +274,7 @@ func (d *Database) IssueBrowserHandoff(ctx context.Context, attempt BrowserLogin
 	return BrowserHandoff{Token: firstToken, PublicURLID: attempt.PublicURLID, ReturnPath: attempt.ReturnPath, Origin: "https://" + publicURL.CanonicalHostname}, nil
 }
 
-func (d *Database) RedeemBrowserHandoff(ctx context.Context, auth PublishRunAuthentication, token string, now time.Time) (string, string, string, bool, time.Time, error) {
+func (d *Database) RedeemBrowserHandoff(ctx context.Context, auth PublishRunAuthentication, token string, now time.Time) (_ string, _ string, _ string, _ bool, _ time.Time, retErr error) {
 	digest, err := browserDigest(token)
 	if err != nil {
 		return "", "", "", false, time.Time{}, err
@@ -277,7 +283,7 @@ func (d *Database) RedeemBrowserHandoff(ctx context.Context, auth PublishRunAuth
 	if err != nil {
 		return "", "", "", false, time.Time{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer rollback(ctx, tx, "redeem browser handoff", &retErr)()
 	queries := controlstatedb.New(tx)
 	publicURL, err := lockVisitorURL(ctx, queries, auth.PublicURLID)
 	if err != nil {

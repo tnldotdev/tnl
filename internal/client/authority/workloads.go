@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/tnldotdev/tnl/internal/failure"
+
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 )
 
@@ -29,6 +31,21 @@ func validateWorkloadSessionWire(payload []byte, session authorityv1.WorkloadSes
 	return nil
 }
 
+func (c *Client) requestWorkloadSession(ctx context.Context, credential string, call authorityRequest) (authorityv1.WorkloadSession, error) {
+	payload, err := requestPayload(ctx, c, credential, call)
+	if err != nil {
+		return authorityv1.WorkloadSession{}, err
+	}
+	session, err := decodeResponse[authorityv1.WorkloadSession](payload)
+	if err != nil {
+		return authorityv1.WorkloadSession{}, err
+	}
+	if err := validateWorkloadSessionWire(payload, session); err != nil {
+		return authorityv1.WorkloadSession{}, failure.Wrap("decode workload session", failure.ServerResponseInvalid, err)
+	}
+	return session, nil
+}
+
 func (c *Client) IdentifyWorkload(ctx context.Context, body authorityv1.WorkloadIdentityRequest) (authorityv1.WorkloadIdentity, error) {
 	return requestWithToken[authorityv1.WorkloadIdentity](ctx, c, "", func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.IdentifyWorkload(ctx, body, editors...)
@@ -36,18 +53,18 @@ func (c *Client) IdentifyWorkload(ctx context.Context, body authorityv1.Workload
 }
 
 func (c *Client) AttachWorkloadAssertion(ctx context.Context, id, credential string, body authorityv1.WorkloadAssertion) (authorityv1.WorkloadSession, error) {
-	return requestWithToken[authorityv1.WorkloadSession](ctx, c, credential, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+	return c.requestWorkloadSession(ctx, credential, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.AttachWorkloadAssertion(ctx, id, body, editors...)
 	})
 }
 
 func (c *Client) ExchangeWorkload(ctx context.Context, body authorityv1.WorkloadExchange) (authorityv1.WorkloadSession, error) {
-	return requestWithToken[authorityv1.WorkloadSession](ctx, c, "", func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+	return c.requestWorkloadSession(ctx, "", func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.ExchangeWorkload(ctx, body, editors...)
 	})
 }
 func (c *Client) RenewWorkloadSession(ctx context.Context, id, credential string, body authorityv1.WorkloadRenewal) (authorityv1.WorkloadSession, error) {
-	return requestWithToken[authorityv1.WorkloadSession](ctx, c, credential, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
+	return c.requestWorkloadSession(ctx, credential, func(ctx context.Context, editors ...authorityv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.RenewWorkloadSession(ctx, id, body, editors...)
 	})
 }

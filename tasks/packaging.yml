@@ -8,20 +8,6 @@ tasks:
       - task: release:npm-package
       - task: py:build
 
-  release:check:plan:
-    desc: Preview three functional checks against an explicit server
-    requires:
-      vars: [SERVER, TEAM, STATE_DIR, TNL_BINARY, VERSION]
-    cmds:
-      - node scripts/release/release-check.ts plan --server "{{.SERVER}}" --team "{{.TEAM}}" --state-dir "{{.STATE_DIR}}" --tnl-binary "{{.TNL_BINARY}}" --version "{{.VERSION}}" --custom-domain "{{.CUSTOM_DOMAIN}}"
-
-  release:check:run:
-    desc: Publish test-owned public URLs on an explicit server
-    requires:
-      vars: [SERVER, TEAM, STATE_DIR, TNL_BINARY, VERSION]
-    cmds:
-      - node scripts/release/release-check.ts run --server "{{.SERVER}}" --team "{{.TEAM}}" --state-dir "{{.STATE_DIR}}" --tnl-binary "{{.TNL_BINARY}}" --version "{{.VERSION}}" --custom-domain "{{.CUSTOM_DOMAIN}}"
-
   installer:test:
     desc: Test the shell installer without accessing GitHub or client state
     cmds:
@@ -40,5 +26,5 @@ tasks:
         msg: Run task release:snapshot before packaging npm release artifacts
     cmds:
       - task: js:build
-      - node scripts/package/pack-tnl.ts "{{default "dist/npm" .OUTPUT}}" {{.VERSION}}
-      - node scripts/package/verify-tnl-install.ts "{{default "dist/npm" .OUTPUT}}"
+      - node scripts/package/pack-npm-packages.ts "{{default "dist/npm" .OUTPUT}}" {{.VERSION}}
+      - node scripts/package/verify-npm-packages.ts "{{default "dist/npm" .OUTPUT}}"

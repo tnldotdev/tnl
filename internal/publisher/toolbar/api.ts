@@ -17,7 +17,7 @@ import {
   type ThreadPage,
 } from "./model.ts";
 
-/** same-origin publisher API; wire contract: api/publisher/browser/v1/openapi.yaml. */
+/** same-origin publisher API; wire contract: contracts/publisher/browser/v1/openapi.yaml. */
 export interface FeedbackAPI {
   /** hostname-scoped summaries; path omission selects all pages, cursor is a feedback ID. */
   list(

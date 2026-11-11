@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	ingressbackend "github.com/tnldotdev/tnl/internal/ingress/backend"
 	"github.com/tnldotdev/tnl/internal/policy/ippolicy"
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
@@ -335,7 +334,7 @@ func mustOnlyBackend(
 	t *testing.T,
 	forwarder *Forwarder,
 	entry ingressv1.IngressRoutingTableEntry,
-) ingressbackend.Backend {
+) Backend {
 	t.Helper()
 	backends, err := forwarder.Backends(entry)
 	if err != nil {
