@@ -52,10 +52,8 @@ type connectivityCarrier struct {
 	consent   *connectivityConsent
 }
 
-func (c connectivityCarrier) DirectConsent() bool { return c.consent == nil || c.consent.valid() }
-
 func (c connectivityCarrier) Send(ctx context.Context, frame []byte) error {
-	if !c.DirectConsent() || c.sendAdmit != nil && !c.sendAdmit(frame) {
+	if !c.consent.valid() || c.sendAdmit != nil && !c.sendAdmit(frame) {
 		return nil
 	}
 	packet, err := c.binding.seal(frame)
@@ -71,7 +69,7 @@ func (c connectivityCarrier) Receive(ctx context.Context) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if frame, ok := c.binding.open(packet); ok && c.DirectConsent() && (c.admit == nil || c.admit(frame)) {
+		if frame, ok := c.binding.open(packet); ok && c.consent.valid() && (c.admit == nil || c.admit(frame)) {
 			return frame, nil
 		}
 	}

@@ -20,6 +20,9 @@ type connectivityConsent struct {
 }
 
 func (c *connectivityConsent) valid() bool {
+	if c == nil {
+		return false
+	}
 	until := c.until.Load()
 	if c.lost.Load() || until == nil {
 		return false

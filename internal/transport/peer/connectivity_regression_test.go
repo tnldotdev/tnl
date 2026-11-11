@@ -223,7 +223,7 @@ func TestConnectorConnectivityRegressionConsentDeadlineFencesWithoutWatcher(t *t
 	carrier := connectivityCarrier{Carrier: local, binding: binding, consent: consent}
 	slot := NewCarrierSlot()
 	defer slot.Close()
-	if err := slot.Install(carrier); err != nil {
+	if err := slot.install(carrier, consent.valid); err != nil {
 		t.Fatal(err)
 	}
 	endpoint := &Endpoint{ctx: t.Context(), config: Config{Direct: slot, PathTimeout: time.Minute}, bindingActive: true}
@@ -233,7 +233,7 @@ func TestConnectorConnectivityRegressionConsentDeadlineFencesWithoutWatcher(t *t
 	endpoint.paths[Direct] = &path{carrier: slot, revision: slot.Generation(), alive: true, ack: time.Now()}
 	until := time.Now().Add(200 * time.Millisecond)
 	consent.until.Store(&until)
-	if !carrier.DirectConsent() || endpoint.ActivePath() != Direct {
+	if !consent.valid() || endpoint.ActivePath() != Direct {
 		t.Fatal("fresh consent and packet proof did not permit direct delivery")
 	}
 	timer := time.NewTimer(time.Until(until))
@@ -244,7 +244,7 @@ func TestConnectorConnectivityRegressionConsentDeadlineFencesWithoutWatcher(t *t
 	if consent.lost.Load() || consent.until.Load() != &until {
 		t.Fatal("consent evidence changed without a worker")
 	}
-	if carrier.DirectConsent() || endpoint.ActivePath() == Direct || endpoint.PathHealthy(Direct) {
+	if consent.valid() || endpoint.ActivePath() == Direct || endpoint.PathHealthy(Direct) {
 		t.Fatal("expired consent remained eligible until a watcher ran")
 	}
 	if err := carrier.Send(t.Context(), []byte("expired consent")); err != nil || len(remote.in) != 0 {
@@ -268,7 +268,7 @@ func TestConnectorConnectivityRegressionConsentDeadlineFencesWithoutWatcher(t *t
 	}
 	late := time.Now().Add(time.Minute)
 	consent.until.Store(&late)
-	if carrier.DirectConsent() || endpoint.ActivePath() == Direct {
+	if consent.valid() || endpoint.ActivePath() == Direct {
 		t.Fatal("a late response revived expired consent on the old attempt")
 	}
 }

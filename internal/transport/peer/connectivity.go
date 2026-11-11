@@ -331,10 +331,10 @@ func (c *Connectivity) runAttempt(ctx context.Context, binding ConnectivityBindi
 		_ = direct.Close()
 		return &ConnectivityError{Code: tunnelv1.Unavailable, Cause: errors.New("direct UDP consent was not proved")}
 	}
-	if err := c.packets.InstallDirect(binding.Revision, connectivityCarrier{Carrier: ICECarrier{Conn: direct}, binding: key, admit: c.admitFrame, sendAdmit: c.admitOutboundFrame, consent: consent}); err != nil {
+	if err := c.packets.InstallDirect(binding.Revision, connectivityCarrier{Carrier: ICECarrier{Conn: direct}, binding: key, admit: c.admitFrame, sendAdmit: c.admitOutboundFrame, consent: consent}, consent.valid); err != nil {
 		return err
 	}
-	defer func() { _ = c.packets.InstallDirect(binding.Revision, nil) }()
+	defer func() { _ = c.packets.InstallDirect(binding.Revision, nil, nil) }()
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	lastHealthy := time.Now()

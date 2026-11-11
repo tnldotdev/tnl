@@ -356,7 +356,7 @@ func TestConnectorConnectivityConsentAndAuthorityFenceBeforeWorkerCleanup(t *tes
 	carrier := connectivityCarrier{Carrier: local, consent: consent, sendAdmit: func([]byte) bool { return false }}
 	slot := NewCarrierSlot()
 	defer slot.Close()
-	if err := slot.Install(carrier); err != nil {
+	if err := slot.install(carrier, consent.valid); err != nil {
 		t.Fatal(err)
 	}
 	e := &Endpoint{ctx: t.Context(), config: Config{Direct: slot, PathTimeout: time.Minute}, bindingActive: true}
