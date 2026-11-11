@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, realpath } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { connect as connectTCP } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -712,7 +712,11 @@ export async function closeConnectionScope(scope: ConnectionScope): Promise<void
     [...scope.natives].map(async (native) => {
       if (native.cleanup === undefined) throw new TnlError("sdk.connection_unavailable");
       await native.cleanup.stop();
+      await rm(native.registry, { recursive: true, force: true });
       process.off("beforeExit", native.cleanup.onExit);
+      selectedScopes.get(scope.key)?.delete(native.binary);
+      scopes.delete(JSON.stringify([scope.key, native.binary]));
+      scope.natives.delete(native);
     }),
   );
   const failed = results.find((result) => result.status === "rejected");
@@ -720,8 +724,4 @@ export async function closeConnectionScope(scope: ConnectionScope): Promise<void
   for (const fetch of scope.fetches.values()) await fetch.close();
   scope.fetches.clear();
   selectedScopes.delete(scope.key);
-  for (const native of scope.natives) {
-    scopes.delete(JSON.stringify([scope.key, native.binary]));
-  }
-  scope.natives.clear();
 }

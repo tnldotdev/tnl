@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { readFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import type { TnlGroupConnection } from "../../src/internal/connector/group_client.js";
 import type { SelectionOptions } from "../../src/internal/connector/workload/contract.js";
 
@@ -17,6 +17,7 @@ const fixture = vi.hoisted(() => ({
   calls: [] as { args: string[]; input: unknown }[],
   denied: new Set<string>(),
   dead: new Set<string>(),
+  stopFailures: new Set<string>(),
   recoveries: 0,
   ipc: [] as { file: string; name: string; assertion: string | undefined }[],
   selections: [] as SelectionOptions[],
@@ -253,6 +254,8 @@ function response(args: string[], input: unknown): unknown {
   if (operation === "stop") return { schema: 1, state: "stopped" };
   if (operation === "sdk-stop") {
     const registry = args[args.indexOf("--registry") + 1];
+    if (registry !== undefined && fixture.stopFailures.has(registry))
+      throw new Error("owner cleanup unavailable");
     for (const [file, selected] of fixture.registries)
       if (selected === registry) fixture.dead.add(file);
     return { schema: 1, state: "stopped" };
@@ -304,6 +307,7 @@ beforeEach(() => {
   fixture.calls.length = 0;
   fixture.denied.clear();
   fixture.dead.clear();
+  fixture.stopFailures.clear();
   fixture.recoveries = 0;
   fixture.ipc.length = 0;
   fixture.selections.length = 0;
@@ -497,6 +501,39 @@ test("group clients isolate concurrent owners, callbacks, manifests and cleanup 
     );
   } finally {
     await Promise.all([first.close(), other.close()]);
+  }
+});
+
+test("closing repeated group clients removes registry files only after native cleanup succeeds", async () => {
+  const { groupClient } = await import("../../src/internal/connector/connection.js");
+  for (let index = 0; index < 3; index++) {
+    const client = groupClient({
+      connection: groupConnection("a"),
+      workload: { name: "monitor", token: async () => "first" },
+    });
+    try {
+      await client.connect("raw");
+      const start = fixture.calls.findLast((call) => call.args[3] === "sdk-prepare");
+      if (start === undefined) throw new Error("missing scoped preparation");
+      const registry = start.args[start.args.indexOf("--registry") + 1];
+      const manifest = start.args[start.args.indexOf("--workload-manifest") + 1];
+      if (registry === undefined || manifest === undefined)
+        throw new Error("missing scoped directories");
+      await writeFile(`${registry}/registry.json`, "registry", { mode: 0o600 });
+      await writeFile(`${registry}/owner.lock`, "lock", { mode: 0o600 });
+      fixture.stopFailures.add(registry);
+      await expect(client.close()).rejects.toMatchObject({ code: "sdk.connection_unavailable" });
+      await expect(readFile(`${registry}/registry.json`, "utf8")).resolves.toBe("registry");
+      await expect(stat(manifest)).resolves.toBeDefined();
+      fixture.stopFailures.delete(registry);
+      await client.close();
+      await expect(stat(registry)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(manifest)).rejects.toMatchObject({ code: "ENOENT" });
+      await client.close();
+    } finally {
+      fixture.stopFailures.clear();
+      await client.close();
+    }
   }
 });
 
