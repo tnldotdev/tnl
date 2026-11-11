@@ -40,3 +40,41 @@ func TestNonQUICFloodDoesNotAllocateQUICSourcesAndJoinsShutdown(t *testing.T) {
 		}
 	})
 }
+
+func TestNonQUICReaderRacingShutdownDoesNotBlockQueueDrain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		serverTLS, _ := testTLSConfigs(t)
+		for range 128 {
+			packet := &scriptedQUICSocket{packets: make(chan sourceQUICPacket), done: make(chan struct{})}
+			listener, err := ListenQUICPacket(packet, serverTLS, QUICConfig{PinnedRemoteIPLimit: 3})
+			if err != nil {
+				t.Fatal(err)
+			}
+			child := listener.NonQUICPackets(t.Context())
+			s := listener.sources
+			s.nonQUICQueue <- sourceQUICPacket{data: []byte("discovery"), address: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9}}
+			read := make(chan struct{})
+			go func() { defer close(read); _, _, _ = child.ReadFrom(make([]byte, 32)) }()
+			closed := make(chan error, 1)
+			go func() { closed <- listener.Close() }()
+			synctest.Wait()
+			select {
+			case err := <-closed:
+				if err != nil {
+					t.Fatal(err)
+				}
+			default:
+				t.Fatal("listener close blocked behind its discovery reader")
+			}
+			select {
+			case <-read:
+			default:
+				t.Fatal("discovery reader did not finish on listener close")
+			}
+			if len(s.nonQUICQueue) != 0 {
+				t.Fatal("shutdown retained discovery buffers")
+			}
+			_ = child.Close()
+		}
+	})
+}

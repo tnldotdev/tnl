@@ -321,12 +321,18 @@ func (s *sourceQUICListener) close() error {
 		}
 		s.wait.Wait()
 		s.mu.Lock()
+		defer s.mu.Unlock()
 		s.sources = nil
 		s.pending = 0
-		for len(s.nonQUICQueue) > 0 {
-			<-s.nonQUICQueue
+		// a borrowed discovery reader can still consume a queued packet after
+		// cancellation. never block behind a competing receive during cleanup.
+		for {
+			select {
+			case <-s.nonQUICQueue:
+			default:
+				return
+			}
 		}
-		s.mu.Unlock()
 	})
 	return s.err
 }
