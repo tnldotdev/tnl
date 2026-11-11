@@ -37,12 +37,16 @@ func lockAppliedProjectPublications(ctx context.Context, tx pgx.Tx, team, projec
 }
 
 func (d *Database) createAppliedService(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key, scope string, s ProjectServiceConfiguration) (string, error) {
+	return d.createAppliedServiceForIssuer(ctx, tx, q, r, key, scope, s, publisherIssuer{IdentityID: r.ActorID})
+}
+
+func (d *Database) createAppliedServiceForIssuer(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, r ApplyProjectConfigurationRequest, key, scope string, s ProjectServiceConfiguration, issuer publisherIssuer) (string, error) {
 	id, err := opaqueid.New(opaqueid.ServicePrefix)
 	if err != nil {
 		return "", err
 	}
 	digest := sha256.Sum256([]byte(r.TeamID + "\x00" + r.ProjectKey + "\x00" + key))
-	_, err = q.InsertService(ctx, controlstatedb.InsertServiceParams{ID: id, TeamID: r.TeamID, Name: s.Name, NameScope: scope, CreatedByIdentityID: r.ActorID, IdempotencyKey: "applied/" + id, RequestDigest: digest[:], Now: timestamptz(r.Now)})
+	_, err = q.InsertService(ctx, controlstatedb.InsertServiceParams{ID: id, TeamID: r.TeamID, Name: s.Name, NameScope: scope, CreatedByIdentityID: nullableText(issuer.IdentityID), CreatedByMachineID: nullableText(issuer.MachineID), ProvisioningGrantID: nullableText(issuer.ProvisioningGrantID), IdempotencyKey: "applied/" + id, RequestDigest: digest[:], Now: timestamptz(r.Now)})
 	if err != nil {
 		return "", projectConstraintError(err)
 	}
@@ -58,11 +62,15 @@ func (d *Database) createAppliedService(ctx context.Context, tx pgx.Tx, q *contr
 	if err != nil {
 		return "", err
 	}
+	// provisioning creates publication resources, never personal visitor access.
+	if issuer.MachineID != "" {
+		return id, nil
+	}
 	grant, err := opaqueid.New(opaqueid.ServiceGrantPrefix)
 	if err != nil {
 		return "", err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,service_id,team_id,kind,identity_id,auto_owner,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'identity',$4,true,$4,$5,$6,$7)`, grant, id, r.TeamID, r.ActorID, "applied-owner/"+id, digest[:], r.Now)
+	_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,service_id,team_id,kind,identity_id,auto_owner,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'identity',$4,true,$4,$5,$6,$7)`, grant, id, r.TeamID, issuer.IdentityID, "applied-owner/"+id, digest[:], r.Now)
 	return id, err
 }
 
@@ -296,12 +304,12 @@ func (d *Database) retireProjectResource(ctx context.Context, tx pgx.Tx, q *cont
 	return nil
 }
 
-func (d *Database) reconcileAppliedVisitorGrant(ctx context.Context, tx pgx.Tx, s controlstatedb.ControlAppliedProjectService, actor string, enabled bool, now time.Time) error {
+func (d *Database) reconcileAppliedVisitorGrant(ctx context.Context, tx pgx.Tx, s controlstatedb.ControlAppliedProjectService, actor publisherIssuer, enabled bool, now time.Time) error {
 	var grant string
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(visitor_grant_id,'') FROM control.applied_project_services WHERE team_id=$1 AND project_key=$2 AND service=$3`, s.TeamID, s.ProjectKey, s.Service).Scan(&grant); err != nil {
 		return err
 	}
-	grant, err := reconcileProjectVisitorGrant(ctx, tx, s, actor, grant, enabled, now)
+	grant, err := reconcileProjectVisitorGrantForIssuer(ctx, tx, s, actor, grant, enabled, now)
 	if err != nil {
 		return err
 	}
@@ -310,6 +318,10 @@ func (d *Database) reconcileAppliedVisitorGrant(ctx context.Context, tx pgx.Tx, 
 }
 
 func reconcileProjectVisitorGrant(ctx context.Context, tx pgx.Tx, s controlstatedb.ControlAppliedProjectService, actor, grant string, enabled bool, now time.Time) (string, error) {
+	return reconcileProjectVisitorGrantForIssuer(ctx, tx, s, publisherIssuer{IdentityID: actor}, grant, enabled, now)
+}
+
+func reconcileProjectVisitorGrantForIssuer(ctx context.Context, tx pgx.Tx, s controlstatedb.ControlAppliedProjectService, actor publisherIssuer, grant string, enabled bool, now time.Time) (string, error) {
 	if grant != "" {
 		if enabled {
 			return grant, nil
@@ -336,9 +348,9 @@ func reconcileProjectVisitorGrant(ctx context.Context, tx pgx.Tx, s controlstate
 	}
 	digest := sha256.Sum256([]byte("applied-team/" + id))
 	if s.ServiceID.Valid {
-		_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,service_id,team_id,kind,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'team',$4,$1,$5,$6)`, id, s.ServiceID.String, s.TeamID, actor, digest[:], now)
+		_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,service_id,team_id,kind,created_by_identity_id,created_by_machine_id,provisioning_grant_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'team',$4,$5,$6,$1,$7,$8)`, id, s.ServiceID.String, s.TeamID, nullableText(actor.IdentityID), nullableText(actor.MachineID), nullableText(actor.ProvisioningGrantID), digest[:], now)
 	} else {
-		_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,public_url_id,team_id,kind,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'team',$4,$1,$5,$6)`, id, s.PublicURLID.String, s.TeamID, actor, digest[:], now)
+		_, err = tx.Exec(ctx, `INSERT INTO control.visitor_grants(id,public_url_id,team_id,kind,created_by_identity_id,idempotency_key,request_digest,created_at) VALUES($1,$2,$3,'team',$4,$1,$5,$6)`, id, s.PublicURLID.String, s.TeamID, actor.IdentityID, digest[:], now)
 	}
 	if err != nil {
 		return "", err
@@ -346,7 +358,7 @@ func reconcileProjectVisitorGrant(ctx context.Context, tx pgx.Tx, s controlstate
 	return id, nil
 }
 
-func (d *Database) reconcileAppliedPublisherGrants(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, s controlstatedb.ControlAppliedProjectService, actor string, now time.Time) error {
+func (d *Database) reconcileAppliedPublisherGrants(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, s controlstatedb.ControlAppliedProjectService, actor publisherIssuer, now time.Time) error {
 	rows, err := tx.Query(ctx, `SELECT m.publisher_identity_id FROM control.publisher_group_members m JOIN control.publisher_identities p ON p.id=m.publisher_identity_id WHERE m.group_id=$1 AND p.revoked_at IS NULL ORDER BY p.id`, s.GroupID)
 	if err != nil {
 		return err
@@ -373,7 +385,7 @@ func (d *Database) reconcileAppliedPublisherGrants(ctx context.Context, tx pgx.T
 	return nil
 }
 
-func (d *Database) ensureGroupServiceGrant(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, publisher string, s controlstatedb.ControlAppliedProjectService, actor string, now time.Time) error {
+func (d *Database) ensureGroupServiceGrant(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries, publisher string, s controlstatedb.ControlAppliedProjectService, actor publisherIssuer, now time.Time) error {
 	var existing string
 	err := tx.QueryRow(ctx, `SELECT assignment.grant_id FROM control.publisher_group_service_grants assignment WHERE assignment.publisher_identity_id=$1 AND assignment.team_id=$2 AND assignment.project_key=$3 AND assignment.service=$4`, publisher, s.TeamID, s.ProjectKey, s.Service).Scan(&existing)
 	if err == nil {
@@ -383,7 +395,7 @@ func (d *Database) ensureGroupServiceGrant(ctx context.Context, tx pgx.Tx, q *co
 		return err
 	}
 	scope := publisherScopeForAppliedService(s)
-	g, err := insertPublisherGrant(ctx, q, publisher, actor, scope, nil, now)
+	g, err := insertPublisherGrantForIssuer(ctx, q, publisher, actor, scope, nil, now)
 	if err != nil {
 		return err
 	}

@@ -99,7 +99,7 @@ const createVisitorGrant = `-- name: CreateVisitorGrant :one
 INSERT INTO control.visitor_grants(id, public_url_id, team_id, kind, identity_id, created_by_identity_id,
     idempotency_key, request_digest, created_at, expires_at)
 VALUES ($1, $2, $3, $4, $9, $5, $6, $7, $8, $10)
-ON CONFLICT (resource_kind,created_by_identity_id,kind,idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING id, public_url_id, service_id, resource_kind, resource_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at
+ON CONFLICT (resource_kind,created_by_identity_id,kind,idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING id, public_url_id, service_id, resource_kind, resource_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, created_by_machine_id, provisioning_grant_id, idempotency_key, request_digest, created_at, expires_at, revoked_at
 `
 
 type CreateVisitorGrantParams struct {
@@ -107,7 +107,7 @@ type CreateVisitorGrantParams struct {
 	PublicURLID         pgtype.Text
 	TeamID              string
 	Kind                string
-	CreatedByIdentityID string
+	CreatedByIdentityID pgtype.Text
 	IdempotencyKey      string
 	RequestDigest       []byte
 	CreatedAt           pgtype.Timestamptz
@@ -141,6 +141,8 @@ func (q *Queries) CreateVisitorGrant(ctx context.Context, arg CreateVisitorGrant
 		&i.AutoOwner,
 		&i.InvitationID,
 		&i.CreatedByIdentityID,
+		&i.CreatedByMachineID,
+		&i.ProvisioningGrantID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CreatedAt,
@@ -268,7 +270,7 @@ func (q *Queries) ExpiringVisitorIPURLs(ctx context.Context, expiresAt pgtype.Ti
 }
 
 const getVisitorGrant = `-- name: GetVisitorGrant :one
-SELECT id, public_url_id, service_id, resource_kind, resource_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE id = $1
+SELECT id, public_url_id, service_id, resource_kind, resource_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, created_by_machine_id, provisioning_grant_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE id = $1
 `
 
 func (q *Queries) GetVisitorGrant(ctx context.Context, id string) (ControlVisitorGrant, error) {
@@ -286,6 +288,8 @@ func (q *Queries) GetVisitorGrant(ctx context.Context, id string) (ControlVisito
 		&i.AutoOwner,
 		&i.InvitationID,
 		&i.CreatedByIdentityID,
+		&i.CreatedByMachineID,
+		&i.ProvisioningGrantID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.CreatedAt,
@@ -358,7 +362,7 @@ func (q *Queries) HasVisitorIPSet(ctx context.Context, publicUrlID string) (bool
 }
 
 const listVisitorGrants = `-- name: ListVisitorGrants :many
-SELECT id, public_url_id, service_id, resource_kind, resource_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE public_url_id = $1 ORDER BY id
+SELECT id, public_url_id, service_id, resource_kind, resource_id, team_id, kind, identity_id, auto_owner, invitation_id, created_by_identity_id, created_by_machine_id, provisioning_grant_id, idempotency_key, request_digest, created_at, expires_at, revoked_at FROM control.visitor_grants WHERE public_url_id = $1 ORDER BY id
 `
 
 func (q *Queries) ListVisitorGrants(ctx context.Context, publicUrlID pgtype.Text) ([]ControlVisitorGrant, error) {
@@ -382,6 +386,8 @@ func (q *Queries) ListVisitorGrants(ctx context.Context, publicUrlID pgtype.Text
 			&i.AutoOwner,
 			&i.InvitationID,
 			&i.CreatedByIdentityID,
+			&i.CreatedByMachineID,
+			&i.ProvisioningGrantID,
 			&i.IdempotencyKey,
 			&i.RequestDigest,
 			&i.CreatedAt,

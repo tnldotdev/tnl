@@ -19,6 +19,8 @@ type ProjectConfigurationStore interface {
 
 func projectConfigurationProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	switch {
+	case errors.Is(err, controlstate.ErrMachineDenied):
+		writeProblem(w, 403, controlv1.Forbidden, "current machine permission does not authorize this publisher group operation")
 	case errors.Is(err, controlstate.ErrPublisherGroupRetired):
 		writeProblem(w, 409, controlv1.Conflict, "publisher group was retired; its creation key cannot be reused")
 	case errors.Is(err, controlstate.ErrPublisherTemplateInUse):

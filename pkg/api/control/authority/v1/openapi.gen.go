@@ -259,6 +259,39 @@ func (e InvitationState) Valid() bool {
 	}
 }
 
+// Defines values for MachineIdentityProofKind.
+const (
+	MachineIdentityProofKindOidc       MachineIdentityProofKind = "oidc"
+	MachineIdentityProofKindSigningKey MachineIdentityProofKind = "signing_key"
+)
+
+// Valid indicates whether the value is a known member of the MachineIdentityProofKind enum.
+func (e MachineIdentityProofKind) Valid() bool {
+	switch e {
+	case MachineIdentityProofKindOidc:
+		return true
+	case MachineIdentityProofKindSigningKey:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MachineTrustProvider.
+const (
+	MachineTrustProviderOidc MachineTrustProvider = "oidc"
+)
+
+// Valid indicates whether the value is a known member of the MachineTrustProvider enum.
+func (e MachineTrustProvider) Valid() bool {
+	switch e {
+	case MachineTrustProviderOidc:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProblemCode.
 const (
 	Conflict              ProblemCode = "conflict"
@@ -313,6 +346,51 @@ func (e ProblemCode) Valid() bool {
 	case Unavailable:
 		return true
 	case VerifiedEmailRequired:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProvisioningOperation.
+const (
+	ProvisioningCreate       ProvisioningOperation = "create"
+	ProvisioningEnroll       ProvisioningOperation = "enroll"
+	ProvisioningRead         ProvisioningOperation = "read"
+	ProvisioningRetire       ProvisioningOperation = "retire"
+	ProvisioningRevokeMember ProvisioningOperation = "revoke_member"
+	ProvisioningUpdate       ProvisioningOperation = "update"
+)
+
+// Valid indicates whether the value is a known member of the ProvisioningOperation enum.
+func (e ProvisioningOperation) Valid() bool {
+	switch e {
+	case ProvisioningCreate:
+		return true
+	case ProvisioningEnroll:
+		return true
+	case ProvisioningRead:
+		return true
+	case ProvisioningRetire:
+		return true
+	case ProvisioningRevokeMember:
+		return true
+	case ProvisioningUpdate:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ProvisioningSessionTokenType.
+const (
+	ProvisioningSessionTokenTypeBearer ProvisioningSessionTokenType = "Bearer"
+)
+
+// Valid indicates whether the value is a known member of the ProvisioningSessionTokenType enum.
+func (e ProvisioningSessionTokenType) Valid() bool {
+	switch e {
+	case ProvisioningSessionTokenTypeBearer:
 		return true
 	default:
 		return false
@@ -390,13 +468,31 @@ func (e PublisherTokenRequestGrantType) Valid() bool {
 
 // Defines values for PublisherTokenResponseTokenType.
 const (
-	Bearer PublisherTokenResponseTokenType = "Bearer"
+	PublisherTokenResponseTokenTypeBearer PublisherTokenResponseTokenType = "Bearer"
 )
 
 // Valid indicates whether the value is a known member of the PublisherTokenResponseTokenType enum.
 func (e PublisherTokenResponseTokenType) Valid() bool {
 	switch e {
-	case Bearer:
+	case PublisherTokenResponseTokenTypeBearer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RegisterMachineRequestProofKind.
+const (
+	RegisterMachineRequestProofKindOidc       RegisterMachineRequestProofKind = "oidc"
+	RegisterMachineRequestProofKindSigningKey RegisterMachineRequestProofKind = "signing_key"
+)
+
+// Valid indicates whether the value is a known member of the RegisterMachineRequestProofKind enum.
+func (e RegisterMachineRequestProofKind) Valid() bool {
+	switch e {
+	case RegisterMachineRequestProofKindOidc:
+		return true
+	case RegisterMachineRequestProofKindSigningKey:
 		return true
 	default:
 		return false
@@ -795,6 +891,57 @@ type InvitationSecret struct {
 // InvitationState defines model for InvitationState.
 type InvitationState string
 
+// MachineIdentity defines model for MachineIdentity.
+type MachineIdentity struct {
+	Id        string                   `json:"id"`
+	Name      string                   `json:"name"`
+	ProofKind MachineIdentityProofKind `json:"proof_kind"`
+	Revision  int64                    `json:"revision"`
+	TeamId    string                   `json:"team_id"`
+	Trust     *MachineTrust            `json:"trust,omitempty"`
+}
+
+// MachineIdentityProofKind defines model for MachineIdentity.ProofKind.
+type MachineIdentityProofKind string
+
+// MachineKey defines model for MachineKey.
+type MachineKey struct {
+	KeyId     string `json:"key_id"`
+	PublicKey string `json:"public_key"`
+}
+
+// MachinePermissionResult defines model for MachinePermissionResult.
+type MachinePermissionResult struct {
+	Id string `json:"id"`
+}
+
+// MachineTrust defines model for MachineTrust.
+type MachineTrust struct {
+	Audience string               `json:"audience"`
+	Claims   map[string]string    `json:"claims"`
+	Issuer   string               `json:"issuer"`
+	JwksUrl  string               `json:"jwks_url"`
+	Provider MachineTrustProvider `json:"provider"`
+}
+
+// MachineTrustProvider defines model for MachineTrust.Provider.
+type MachineTrustProvider string
+
+// MachineWorkloadExchange defines model for MachineWorkloadExchange.
+type MachineWorkloadExchange struct {
+	Exchange  WorkloadExchange `json:"exchange"`
+	GroupId   string           `json:"group_id"`
+	MachineId string           `json:"machine_id"`
+}
+
+// MachineWorkloadPermissionRequest defines model for MachineWorkloadPermissionRequest.
+type MachineWorkloadPermissionRequest struct {
+	ExpiresAt  time.Time `json:"expires_at"`
+	ProjectKey string    `json:"project_key"`
+	Templates  []string  `json:"templates"`
+	Workload   string    `json:"workload"`
+}
+
 // Membership defines model for Membership.
 type Membership struct {
 	Active                *bool        `json:"active,omitempty"`
@@ -841,6 +988,51 @@ type Problem struct {
 // ProblemCode defines model for Problem.Code.
 type ProblemCode string
 
+// ProvisioningExchange defines model for ProvisioningExchange.
+type ProvisioningExchange struct {
+	// Assertion Current OIDC assertions may be reused across exchanges; each exchange verifies current trust and grant. Registered-key JWTs require a fresh jti, exact exchange audience and machineproof.Provisioning grant_id scope for this grant and operation.
+	Assertion string                `json:"assertion"`
+	GrantId   string                `json:"grant_id"`
+	MachineId string                `json:"machine_id"`
+	Operation ProvisioningOperation `json:"operation"`
+}
+
+// ProvisioningGrantRequest defines model for ProvisioningGrantRequest.
+type ProvisioningGrantRequest struct {
+	EnrollmentBudget     int                     `json:"enrollment_budget"`
+	ExpiresAt            time.Time               `json:"expires_at"`
+	MaxEnrollmentMembers int                     `json:"max_enrollment_members"`
+	MaxEnrollmentSeconds int                     `json:"max_enrollment_seconds"`
+	Operations           []ProvisioningOperation `json:"operations"`
+	ProjectKey           string                  `json:"project_key"`
+	Templates            []string                `json:"templates"`
+}
+
+// ProvisioningOperation defines model for ProvisioningOperation.
+type ProvisioningOperation string
+
+// ProvisioningSession defines model for ProvisioningSession.
+type ProvisioningSession struct {
+	// AccessToken Opaque provisioning-only token. Not a human session or visitor credential.
+	AccessToken string `json:"access_token"`
+
+	// ExpiresAt Capped at five minutes and at proof and grant expiry.
+	ExpiresAt  time.Time             `json:"expires_at"`
+	GrantId    string                `json:"grant_id"`
+	Operation  ProvisioningOperation `json:"operation"`
+	ProjectKey string                `json:"project_key"`
+
+	// ProjectRevision Current applied project revision
+	ProjectRevision   int64                        `json:"project_revision"`
+	SourceFingerprint string                       `json:"source_fingerprint"`
+	TeamId            string                       `json:"team_id"`
+	Templates         []string                     `json:"templates"`
+	TokenType         ProvisioningSessionTokenType `json:"token_type"`
+}
+
+// ProvisioningSessionTokenType defines model for ProvisioningSession.TokenType.
+type ProvisioningSessionTokenType string
+
 // PublicURLID defines model for PublicURLID.
 type PublicURLID = ResourceID
 
@@ -862,6 +1054,14 @@ type PublisherEnrollmentResult struct {
 
 // PublisherEnrollmentResultKind defines model for PublisherEnrollmentResult.Kind.
 type PublisherEnrollmentResultKind string
+
+// PublisherGroupWorkloadResolution defines model for PublisherGroupWorkloadResolution.
+type PublisherGroupWorkloadResolution struct {
+	Connection externalRef0.PublisherGroupConnection `json:"connection"`
+
+	// PublisherGroup Authoritative configuration definition key; the concrete group's template name
+	PublisherGroup string `json:"publisher_group"`
+}
 
 // PublisherTokenRequest defines model for PublisherTokenRequest.
 type PublisherTokenRequest struct {
@@ -900,6 +1100,29 @@ type RedeemPublisherEnrollmentRequest struct {
 // RefreshControlSessionRequest defines model for RefreshControlSessionRequest.
 type RefreshControlSessionRequest struct {
 	RefreshToken string `json:"refresh_token"`
+}
+
+// RegisterMachineRequest defines model for RegisterMachineRequest.
+type RegisterMachineRequest struct {
+	KeyId     *string                         `json:"key_id,omitempty"`
+	Name      string                          `json:"name"`
+	ProofKind RegisterMachineRequestProofKind `json:"proof_kind"`
+
+	// PublicKey Unpadded base64url Ed25519 public key.
+	PublicKey *string       `json:"public_key,omitempty"`
+	Trust     *MachineTrust `json:"trust,omitempty"`
+}
+
+// RegisterMachineRequestProofKind defines model for RegisterMachineRequest.ProofKind.
+type RegisterMachineRequestProofKind string
+
+// ResolvePublisherGroupWorkload defines model for ResolvePublisherGroupWorkload.
+type ResolvePublisherGroupWorkload struct {
+	Assertion string `json:"assertion"`
+
+	// MachineId Required for a registered signing-key proof. Its separate workload permission must currently approve this template and workload.
+	MachineId *string `json:"machine_id,omitempty"`
+	Workload  string  `json:"workload"`
 }
 
 // ResourceID defines model for ResourceID.
@@ -1385,8 +1608,20 @@ type RecoverCompanyOwnerJSONRequestBody RecoverCompanyOwnerJSONBody
 // AcceptInvitationJSONRequestBody defines body for AcceptInvitation for application/json ContentType.
 type AcceptInvitationJSONRequestBody = AcceptInvitationRequest
 
+// ExchangeMachineWorkloadJSONRequestBody defines body for ExchangeMachineWorkload for application/json ContentType.
+type ExchangeMachineWorkloadJSONRequestBody = MachineWorkloadExchange
+
+// AttachMachineWorkloadAssertionJSONRequestBody defines body for AttachMachineWorkloadAssertion for application/json ContentType.
+type AttachMachineWorkloadAssertionJSONRequestBody = WorkloadAssertion
+
+// ExchangeProvisioningJSONRequestBody defines body for ExchangeProvisioning for application/json ContentType.
+type ExchangeProvisioningJSONRequestBody = ProvisioningExchange
+
 // RedeemPublisherEnrollmentJSONRequestBody defines body for RedeemPublisherEnrollment for application/json ContentType.
 type RedeemPublisherEnrollmentJSONRequestBody = RedeemPublisherEnrollmentRequest
+
+// ResolvePublisherGroupWorkloadJSONRequestBody defines body for ResolvePublisherGroupWorkload for application/json ContentType.
+type ResolvePublisherGroupWorkloadJSONRequestBody = ResolvePublisherGroupWorkload
 
 // RotatePublisherKeyJSONRequestBody defines body for RotatePublisherKey for application/json ContentType.
 type RotatePublisherKeyJSONRequestBody = RotatePublisherKeyRequest
@@ -1450,6 +1685,18 @@ type SetTeamFeedbackPolicyJSONRequestBody = TeamFeedbackPolicy
 
 // CreateTeamInvitationJSONRequestBody defines body for CreateTeamInvitation for application/json ContentType.
 type CreateTeamInvitationJSONRequestBody = CreateInvitationRequest
+
+// RegisterMachineIdentityJSONRequestBody defines body for RegisterMachineIdentity for application/json ContentType.
+type RegisterMachineIdentityJSONRequestBody = RegisterMachineRequest
+
+// RotateMachineIdentityKeyJSONRequestBody defines body for RotateMachineIdentityKey for application/json ContentType.
+type RotateMachineIdentityKeyJSONRequestBody = MachineKey
+
+// CreateProvisioningGrantJSONRequestBody defines body for CreateProvisioningGrant for application/json ContentType.
+type CreateProvisioningGrantJSONRequestBody = ProvisioningGrantRequest
+
+// CreateMachineWorkloadPermissionJSONRequestBody defines body for CreateMachineWorkloadPermission for application/json ContentType.
+type CreateMachineWorkloadPermissionJSONRequestBody = MachineWorkloadPermissionRequest
 
 // SetMembershipRoleJSONRequestBody defines body for SetMembershipRole for application/json ContentType.
 type SetMembershipRoleJSONRequestBody = SetMembershipRoleRequest
@@ -1690,6 +1937,30 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ExchangeMachineWorkloadWithBody performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request,
+	// with any type of body and a specified content type.
+	ExchangeMachineWorkloadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangeMachineWorkload performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request.
+	// Takes a body of the `application/json` content type.
+	ExchangeMachineWorkload(ctx context.Context, body ExchangeMachineWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AttachMachineWorkloadAssertionWithBody performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request,
+	// with any type of body and a specified content type.
+	AttachMachineWorkloadAssertionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AttachMachineWorkloadAssertion performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request.
+	// Takes a body of the `application/json` content type.
+	AttachMachineWorkloadAssertion(ctx context.Context, sessionId string, body AttachMachineWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangeProvisioningWithBody performs a POST /v1/provisioning-sessions/exchange (the `ExchangeProvisioning` operationId) request,
+	// with any type of body and a specified content type.
+	ExchangeProvisioningWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangeProvisioning performs a POST /v1/provisioning-sessions/exchange (the `ExchangeProvisioning` operationId) request.
+	// Takes a body of the `application/json` content type.
+	ExchangeProvisioning(ctx context.Context, body ExchangeProvisioningJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RedeemPublisherEnrollmentWithBody performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request,
 	// with any type of body and a specified content type.
 	RedeemPublisherEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1697,6 +1968,14 @@ type ClientInterface interface {
 	// RedeemPublisherEnrollment performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request.
 	// Takes a body of the `application/json` content type.
 	RedeemPublisherEnrollment(ctx context.Context, body RedeemPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResolvePublisherGroupWorkloadWithBody performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request,
+	// with any type of body and a specified content type.
+	ResolvePublisherGroupWorkloadWithBody(ctx context.Context, groupId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResolvePublisherGroupWorkload performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request.
+	// Takes a body of the `application/json` content type.
+	ResolvePublisherGroupWorkload(ctx context.Context, groupId string, body ResolvePublisherGroupWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RotatePublisherKeyWithBody performs a POST /v1/publisher-keys/rotate (the `RotatePublisherKey` operationId) request,
 	// with any type of body and a specified content type.
@@ -2010,6 +2289,44 @@ type ClientInterface interface {
 	// Corresponds with DELETE /v1/teams/{team_id}/invitations/{invitation_id} (the `RevokeTeamInvitation` operationId).
 	RevokeTeamInvitation(ctx context.Context, teamId TeamID, invitationId InvitationID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RegisterMachineIdentityWithBody performs a POST /v1/teams/{team_id}/machine-identities (the `RegisterMachineIdentity` operationId) request,
+	// with any type of body and a specified content type.
+	RegisterMachineIdentityWithBody(ctx context.Context, teamId TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterMachineIdentity performs a POST /v1/teams/{team_id}/machine-identities (the `RegisterMachineIdentity` operationId) request.
+	// Takes a body of the `application/json` content type.
+	RegisterMachineIdentity(ctx context.Context, teamId TeamID, body RegisterMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeMachineIdentity performs a DELETE /v1/teams/{team_id}/machine-identities/{machine_id} (the `RevokeMachineIdentity` operationId) request.
+	RevokeMachineIdentity(ctx context.Context, teamId TeamID, machineId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotateMachineIdentityKeyWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/keys (the `RotateMachineIdentityKey` operationId) request,
+	// with any type of body and a specified content type.
+	RotateMachineIdentityKeyWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotateMachineIdentityKey performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/keys (the `RotateMachineIdentityKey` operationId) request.
+	// Takes a body of the `application/json` content type.
+	RotateMachineIdentityKey(ctx context.Context, teamId TeamID, machineId string, body RotateMachineIdentityKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateProvisioningGrantWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/provisioning-grants (the `CreateProvisioningGrant` operationId) request,
+	// with any type of body and a specified content type.
+	CreateProvisioningGrantWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateProvisioningGrant performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/provisioning-grants (the `CreateProvisioningGrant` operationId) request.
+	// Takes a body of the `application/json` content type.
+	CreateProvisioningGrant(ctx context.Context, teamId TeamID, machineId string, body CreateProvisioningGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateMachineWorkloadPermissionWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request,
+	// with any type of body and a specified content type.
+	CreateMachineWorkloadPermissionWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateMachineWorkloadPermission performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request.
+	// Takes a body of the `application/json` content type.
+	CreateMachineWorkloadPermission(ctx context.Context, teamId TeamID, machineId string, body CreateMachineWorkloadPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeMachineWorkloadPermission performs a DELETE /v1/teams/{team_id}/machine-workload-permissions/{permission_id} (the `RevokeMachineWorkloadPermission` operationId) request.
+	RevokeMachineWorkloadPermission(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListTeamMemberships List team memberships
 	//
 	// Corresponds with GET /v1/teams/{team_id}/memberships (the `ListTeamMemberships` operationId).
@@ -2033,6 +2350,9 @@ type ClientInterface interface {
 	//
 	// Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 	SetMembershipRole(ctx context.Context, teamId TeamID, membershipId MembershipID, body SetMembershipRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeProvisioningGrant performs a DELETE /v1/teams/{team_id}/provisioning-grants/{grant_id} (the `RevokeProvisioningGrant` operationId) request.
+	RevokeProvisioningGrant(ctx context.Context, teamId TeamID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExchangeWorkloadWithBody performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request,
 	// with any type of body and a specified content type.
@@ -2480,6 +2800,90 @@ func (c *Client) AcceptInvitation(ctx context.Context, body AcceptInvitationJSON
 	return c.Client.Do(req)
 }
 
+// ExchangeMachineWorkloadWithBody performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) ExchangeMachineWorkloadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeMachineWorkloadRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangeMachineWorkload performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) ExchangeMachineWorkload(ctx context.Context, body ExchangeMachineWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeMachineWorkloadRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AttachMachineWorkloadAssertionWithBody performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) AttachMachineWorkloadAssertionWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAttachMachineWorkloadAssertionRequestWithBody(c.Server, sessionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AttachMachineWorkloadAssertion performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) AttachMachineWorkloadAssertion(ctx context.Context, sessionId string, body AttachMachineWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAttachMachineWorkloadAssertionRequest(c.Server, sessionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangeProvisioningWithBody performs a POST /v1/provisioning-sessions/exchange (the `ExchangeProvisioning` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) ExchangeProvisioningWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeProvisioningRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangeProvisioning performs a POST /v1/provisioning-sessions/exchange (the `ExchangeProvisioning` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) ExchangeProvisioning(ctx context.Context, body ExchangeProvisioningJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeProvisioningRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RedeemPublisherEnrollmentWithBody performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request,
 // with any type of body and a specified content type.
 func (c *Client) RedeemPublisherEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2498,6 +2902,34 @@ func (c *Client) RedeemPublisherEnrollmentWithBody(ctx context.Context, contentT
 // Takes a body of the `application/json` content type.
 func (c *Client) RedeemPublisherEnrollment(ctx context.Context, body RedeemPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRedeemPublisherEnrollmentRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResolvePublisherGroupWorkloadWithBody performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) ResolvePublisherGroupWorkloadWithBody(ctx context.Context, groupId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResolvePublisherGroupWorkloadRequestWithBody(c.Server, groupId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResolvePublisherGroupWorkload performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) ResolvePublisherGroupWorkload(ctx context.Context, groupId string, body ResolvePublisherGroupWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResolvePublisherGroupWorkloadRequest(c.Server, groupId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3420,6 +3852,144 @@ func (c *Client) RevokeTeamInvitation(ctx context.Context, teamId TeamID, invita
 	return c.Client.Do(req)
 }
 
+// RegisterMachineIdentityWithBody performs a POST /v1/teams/{team_id}/machine-identities (the `RegisterMachineIdentity` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) RegisterMachineIdentityWithBody(ctx context.Context, teamId TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterMachineIdentityRequestWithBody(c.Server, teamId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterMachineIdentity performs a POST /v1/teams/{team_id}/machine-identities (the `RegisterMachineIdentity` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) RegisterMachineIdentity(ctx context.Context, teamId TeamID, body RegisterMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterMachineIdentityRequest(c.Server, teamId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeMachineIdentity performs a DELETE /v1/teams/{team_id}/machine-identities/{machine_id} (the `RevokeMachineIdentity` operationId) request.
+func (c *Client) RevokeMachineIdentity(ctx context.Context, teamId TeamID, machineId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeMachineIdentityRequest(c.Server, teamId, machineId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotateMachineIdentityKeyWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/keys (the `RotateMachineIdentityKey` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) RotateMachineIdentityKeyWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotateMachineIdentityKeyRequestWithBody(c.Server, teamId, machineId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotateMachineIdentityKey performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/keys (the `RotateMachineIdentityKey` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) RotateMachineIdentityKey(ctx context.Context, teamId TeamID, machineId string, body RotateMachineIdentityKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotateMachineIdentityKeyRequest(c.Server, teamId, machineId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateProvisioningGrantWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/provisioning-grants (the `CreateProvisioningGrant` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) CreateProvisioningGrantWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateProvisioningGrantRequestWithBody(c.Server, teamId, machineId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateProvisioningGrant performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/provisioning-grants (the `CreateProvisioningGrant` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) CreateProvisioningGrant(ctx context.Context, teamId TeamID, machineId string, body CreateProvisioningGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateProvisioningGrantRequest(c.Server, teamId, machineId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateMachineWorkloadPermissionWithBody performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) CreateMachineWorkloadPermissionWithBody(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateMachineWorkloadPermissionRequestWithBody(c.Server, teamId, machineId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateMachineWorkloadPermission performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) CreateMachineWorkloadPermission(ctx context.Context, teamId TeamID, machineId string, body CreateMachineWorkloadPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateMachineWorkloadPermissionRequest(c.Server, teamId, machineId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeMachineWorkloadPermission performs a DELETE /v1/teams/{team_id}/machine-workload-permissions/{permission_id} (the `RevokeMachineWorkloadPermission` operationId) request.
+func (c *Client) RevokeMachineWorkloadPermission(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeMachineWorkloadPermissionRequest(c.Server, teamId, permissionId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListTeamMemberships List team memberships
 //
 // Corresponds with GET /v1/teams/{team_id}/memberships (the `ListTeamMemberships` operationId).
@@ -3474,6 +4044,19 @@ func (c *Client) SetMembershipRoleWithBody(ctx context.Context, teamId TeamID, m
 // Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 func (c *Client) SetMembershipRole(ctx context.Context, teamId TeamID, membershipId MembershipID, body SetMembershipRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetMembershipRoleRequest(c.Server, teamId, membershipId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeProvisioningGrant performs a DELETE /v1/teams/{team_id}/provisioning-grants/{grant_id} (the `RevokeProvisioningGrant` operationId) request.
+func (c *Client) RevokeProvisioningGrant(ctx context.Context, teamId TeamID, grantId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeProvisioningGrantRequest(c.Server, teamId, grantId)
 	if err != nil {
 		return nil, err
 	}
@@ -4234,6 +4817,133 @@ func NewAcceptInvitationRequestWithBody(server string, contentType string, body 
 	return req, nil
 }
 
+// NewExchangeMachineWorkloadRequest calls the generic ExchangeMachineWorkload builder with application/json body
+func NewExchangeMachineWorkloadRequest(server string, body ExchangeMachineWorkloadJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExchangeMachineWorkloadRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewExchangeMachineWorkloadRequestWithBody constructs an http.Request for the ExchangeMachineWorkload method, with any body, and a specified content type
+func NewExchangeMachineWorkloadRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/machine-workload-sessions/exchange")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAttachMachineWorkloadAssertionRequest calls the generic AttachMachineWorkloadAssertion builder with application/json body
+func NewAttachMachineWorkloadAssertionRequest(server string, sessionId string, body AttachMachineWorkloadAssertionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAttachMachineWorkloadAssertionRequestWithBody(server, sessionId, "application/json", bodyReader)
+}
+
+// NewAttachMachineWorkloadAssertionRequestWithBody constructs an http.Request for the AttachMachineWorkloadAssertion method, with any body, and a specified content type
+func NewAttachMachineWorkloadAssertionRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/machine-workload-sessions/%s/assertions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewExchangeProvisioningRequest calls the generic ExchangeProvisioning builder with application/json body
+func NewExchangeProvisioningRequest(server string, body ExchangeProvisioningJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExchangeProvisioningRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewExchangeProvisioningRequestWithBody constructs an http.Request for the ExchangeProvisioning method, with any body, and a specified content type
+func NewExchangeProvisioningRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/provisioning-sessions/exchange")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewRedeemPublisherEnrollmentRequest calls the generic RedeemPublisherEnrollment builder with application/json body
 func NewRedeemPublisherEnrollmentRequest(server string, body RedeemPublisherEnrollmentJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -4255,6 +4965,53 @@ func NewRedeemPublisherEnrollmentRequestWithBody(server string, contentType stri
 	}
 
 	operationPath := fmt.Sprintf("/v1/publisher-enrollments/redeem")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewResolvePublisherGroupWorkloadRequest calls the generic ResolvePublisherGroupWorkload builder with application/json body
+func NewResolvePublisherGroupWorkloadRequest(server string, groupId string, body ResolvePublisherGroupWorkloadJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewResolvePublisherGroupWorkloadRequestWithBody(server, groupId, "application/json", bodyReader)
+}
+
+// NewResolvePublisherGroupWorkloadRequestWithBody constructs an http.Request for the ResolvePublisherGroupWorkload method, with any body, and a specified content type
+func NewResolvePublisherGroupWorkloadRequestWithBody(server string, groupId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "group_id", groupId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/publisher-groups/%s/resolve", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -6329,6 +7086,297 @@ func NewRevokeTeamInvitationRequest(server string, teamId TeamID, invitationId I
 	return req, nil
 }
 
+// NewRegisterMachineIdentityRequest calls the generic RegisterMachineIdentity builder with application/json body
+func NewRegisterMachineIdentityRequest(server string, teamId TeamID, body RegisterMachineIdentityJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterMachineIdentityRequestWithBody(server, teamId, "application/json", bodyReader)
+}
+
+// NewRegisterMachineIdentityRequestWithBody constructs an http.Request for the RegisterMachineIdentity method, with any body, and a specified content type
+func NewRegisterMachineIdentityRequestWithBody(server string, teamId TeamID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/machine-identities", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeMachineIdentityRequest constructs an http.Request for the RevokeMachineIdentity method
+func NewRevokeMachineIdentityRequest(server string, teamId TeamID, machineId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "machine_id", machineId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/machine-identities/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRotateMachineIdentityKeyRequest calls the generic RotateMachineIdentityKey builder with application/json body
+func NewRotateMachineIdentityKeyRequest(server string, teamId TeamID, machineId string, body RotateMachineIdentityKeyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRotateMachineIdentityKeyRequestWithBody(server, teamId, machineId, "application/json", bodyReader)
+}
+
+// NewRotateMachineIdentityKeyRequestWithBody constructs an http.Request for the RotateMachineIdentityKey method, with any body, and a specified content type
+func NewRotateMachineIdentityKeyRequestWithBody(server string, teamId TeamID, machineId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "machine_id", machineId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/machine-identities/%s/keys", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCreateProvisioningGrantRequest calls the generic CreateProvisioningGrant builder with application/json body
+func NewCreateProvisioningGrantRequest(server string, teamId TeamID, machineId string, body CreateProvisioningGrantJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateProvisioningGrantRequestWithBody(server, teamId, machineId, "application/json", bodyReader)
+}
+
+// NewCreateProvisioningGrantRequestWithBody constructs an http.Request for the CreateProvisioningGrant method, with any body, and a specified content type
+func NewCreateProvisioningGrantRequestWithBody(server string, teamId TeamID, machineId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "machine_id", machineId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/machine-identities/%s/provisioning-grants", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCreateMachineWorkloadPermissionRequest calls the generic CreateMachineWorkloadPermission builder with application/json body
+func NewCreateMachineWorkloadPermissionRequest(server string, teamId TeamID, machineId string, body CreateMachineWorkloadPermissionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateMachineWorkloadPermissionRequestWithBody(server, teamId, machineId, "application/json", bodyReader)
+}
+
+// NewCreateMachineWorkloadPermissionRequestWithBody constructs an http.Request for the CreateMachineWorkloadPermission method, with any body, and a specified content type
+func NewCreateMachineWorkloadPermissionRequestWithBody(server string, teamId TeamID, machineId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "machine_id", machineId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/machine-identities/%s/workload-permissions", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeMachineWorkloadPermissionRequest constructs an http.Request for the RevokeMachineWorkloadPermission method
+func NewRevokeMachineWorkloadPermissionRequest(server string, teamId TeamID, permissionId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "permission_id", permissionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/machine-workload-permissions/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListTeamMembershipsRequest constructs an http.Request for the ListTeamMemberships method
 func NewListTeamMembershipsRequest(server string, teamId TeamID) (*http.Request, error) {
 	var err error
@@ -6454,6 +7502,47 @@ func NewSetMembershipRoleRequestWithBody(server string, teamId TeamID, membershi
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeProvisioningGrantRequest constructs an http.Request for the RevokeProvisioningGrant method
+func NewRevokeProvisioningGrantRequest(server string, teamId TeamID, grantId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "team_id", teamId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "grant_id", grantId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/teams/%s/provisioning-grants/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -6876,6 +7965,36 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitationWithResponse(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptInvitationResponse, error)
 
+	// ExchangeMachineWorkloadWithBodyWithResponse performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ExchangeMachineWorkloadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeMachineWorkloadResponse, error)
+
+	// ExchangeMachineWorkloadWithResponse performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	ExchangeMachineWorkloadWithResponse(ctx context.Context, body ExchangeMachineWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeMachineWorkloadResponse, error)
+
+	// AttachMachineWorkloadAssertionWithBodyWithResponse performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	AttachMachineWorkloadAssertionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachMachineWorkloadAssertionResponse, error)
+
+	// AttachMachineWorkloadAssertionWithResponse performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	AttachMachineWorkloadAssertionWithResponse(ctx context.Context, sessionId string, body AttachMachineWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachMachineWorkloadAssertionResponse, error)
+
+	// ExchangeProvisioningWithBodyWithResponse performs a POST /v1/provisioning-sessions/exchange (the `ExchangeProvisioning` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ExchangeProvisioningWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeProvisioningResponse, error)
+
+	// ExchangeProvisioningWithResponse performs a POST /v1/provisioning-sessions/exchange (the `ExchangeProvisioning` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	ExchangeProvisioningWithResponse(ctx context.Context, body ExchangeProvisioningJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeProvisioningResponse, error)
+
 	// RedeemPublisherEnrollmentWithBodyWithResponse performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -6885,6 +8004,16 @@ type ClientWithResponsesInterface interface {
 	// RedeemPublisherEnrollmentWithResponse performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	RedeemPublisherEnrollmentWithResponse(ctx context.Context, body RedeemPublisherEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemPublisherEnrollmentResponse, error)
+
+	// ResolvePublisherGroupWorkloadWithBodyWithResponse performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	ResolvePublisherGroupWorkloadWithBodyWithResponse(ctx context.Context, groupId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResolvePublisherGroupWorkloadResponse, error)
+
+	// ResolvePublisherGroupWorkloadWithResponse performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	ResolvePublisherGroupWorkloadWithResponse(ctx context.Context, groupId string, body ResolvePublisherGroupWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ResolvePublisherGroupWorkloadResponse, error)
 
 	// RotatePublisherKeyWithBodyWithResponse performs a POST /v1/publisher-keys/rotate (the `RotatePublisherKey` operationId) request,
 	// with any type of body and a specified content type.
@@ -7258,6 +8387,56 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /v1/teams/{team_id}/invitations/{invitation_id} (the `RevokeTeamInvitation` operationId).
 	RevokeTeamInvitationWithResponse(ctx context.Context, teamId TeamID, invitationId InvitationID, reqEditors ...RequestEditorFn) (*RevokeTeamInvitationResponse, error)
 
+	// RegisterMachineIdentityWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities (the `RegisterMachineIdentity` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RegisterMachineIdentityWithBodyWithResponse(ctx context.Context, teamId TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterMachineIdentityResponse, error)
+
+	// RegisterMachineIdentityWithResponse performs a POST /v1/teams/{team_id}/machine-identities (the `RegisterMachineIdentity` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	RegisterMachineIdentityWithResponse(ctx context.Context, teamId TeamID, body RegisterMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterMachineIdentityResponse, error)
+
+	// RevokeMachineIdentityWithResponse performs a DELETE /v1/teams/{team_id}/machine-identities/{machine_id} (the `RevokeMachineIdentity` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokeMachineIdentityWithResponse(ctx context.Context, teamId TeamID, machineId string, reqEditors ...RequestEditorFn) (*RevokeMachineIdentityResponse, error)
+
+	// RotateMachineIdentityKeyWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/keys (the `RotateMachineIdentityKey` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RotateMachineIdentityKeyWithBodyWithResponse(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RotateMachineIdentityKeyResponse, error)
+
+	// RotateMachineIdentityKeyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/keys (the `RotateMachineIdentityKey` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	RotateMachineIdentityKeyWithResponse(ctx context.Context, teamId TeamID, machineId string, body RotateMachineIdentityKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*RotateMachineIdentityKeyResponse, error)
+
+	// CreateProvisioningGrantWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/provisioning-grants (the `CreateProvisioningGrant` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateProvisioningGrantWithBodyWithResponse(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateProvisioningGrantResponse, error)
+
+	// CreateProvisioningGrantWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/provisioning-grants (the `CreateProvisioningGrant` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	CreateProvisioningGrantWithResponse(ctx context.Context, teamId TeamID, machineId string, body CreateProvisioningGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateProvisioningGrantResponse, error)
+
+	// CreateMachineWorkloadPermissionWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CreateMachineWorkloadPermissionWithBodyWithResponse(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMachineWorkloadPermissionResponse, error)
+
+	// CreateMachineWorkloadPermissionWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	CreateMachineWorkloadPermissionWithResponse(ctx context.Context, teamId TeamID, machineId string, body CreateMachineWorkloadPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMachineWorkloadPermissionResponse, error)
+
+	// RevokeMachineWorkloadPermissionWithResponse performs a DELETE /v1/teams/{team_id}/machine-workload-permissions/{permission_id} (the `RevokeMachineWorkloadPermission` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokeMachineWorkloadPermissionWithResponse(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*RevokeMachineWorkloadPermissionResponse, error)
+
 	// ListTeamMembershipsWithResponse List team memberships
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -7285,6 +8464,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PATCH /v1/teams/{team_id}/memberships/{membership_id} (the `SetMembershipRole` operationId).
 	SetMembershipRoleWithResponse(ctx context.Context, teamId TeamID, membershipId MembershipID, body SetMembershipRoleJSONRequestBody, reqEditors ...RequestEditorFn) (*SetMembershipRoleResponse, error)
+
+	// RevokeProvisioningGrantWithResponse performs a DELETE /v1/teams/{team_id}/provisioning-grants/{grant_id} (the `RevokeProvisioningGrant` operationId) request.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	RevokeProvisioningGrantWithResponse(ctx context.Context, teamId TeamID, grantId string, reqEditors ...RequestEditorFn) (*RevokeProvisioningGrantResponse, error)
 
 	// ExchangeWorkloadWithBodyWithResponse performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request,
 	// with any type of body and a specified content type.
@@ -8028,6 +9212,150 @@ func (r AcceptInvitationResponse) ContentType() string {
 	return ""
 }
 
+type ExchangeMachineWorkloadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WorkloadSession
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExchangeMachineWorkloadResponse) GetJSON200() *WorkloadSession {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ExchangeMachineWorkloadResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExchangeMachineWorkloadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExchangeMachineWorkloadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExchangeMachineWorkloadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExchangeMachineWorkloadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AttachMachineWorkloadAssertionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WorkloadSession
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AttachMachineWorkloadAssertionResponse) GetJSON200() *WorkloadSession {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AttachMachineWorkloadAssertionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AttachMachineWorkloadAssertionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AttachMachineWorkloadAssertionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AttachMachineWorkloadAssertionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AttachMachineWorkloadAssertionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExchangeProvisioningResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ProvisioningSession
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExchangeProvisioningResponse) GetJSON200() *ProvisioningSession {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ExchangeProvisioningResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExchangeProvisioningResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExchangeProvisioningResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExchangeProvisioningResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExchangeProvisioningResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type RedeemPublisherEnrollmentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -8070,6 +9398,54 @@ func (r RedeemPublisherEnrollmentResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RedeemPublisherEnrollmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResolvePublisherGroupWorkloadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PublisherGroupWorkloadResolution
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResolvePublisherGroupWorkloadResponse) GetJSON200() *PublisherGroupWorkloadResolution {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ResolvePublisherGroupWorkloadResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ResolvePublisherGroupWorkloadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResolvePublisherGroupWorkloadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResolvePublisherGroupWorkloadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResolvePublisherGroupWorkloadResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -9885,6 +11261,273 @@ func (r RevokeTeamInvitationResponse) ContentType() string {
 	return ""
 }
 
+type RegisterMachineIdentityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *MachineIdentity
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r RegisterMachineIdentityResponse) GetJSON201() *MachineIdentity {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegisterMachineIdentityResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterMachineIdentityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterMachineIdentityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterMachineIdentityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterMachineIdentityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeMachineIdentityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeMachineIdentityResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeMachineIdentityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeMachineIdentityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeMachineIdentityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeMachineIdentityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RotateMachineIdentityKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RotateMachineIdentityKeyResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RotateMachineIdentityKeyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RotateMachineIdentityKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RotateMachineIdentityKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RotateMachineIdentityKeyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateProvisioningGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *MachinePermissionResult
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateProvisioningGrantResponse) GetJSON201() *MachinePermissionResult {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateProvisioningGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateProvisioningGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateProvisioningGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateProvisioningGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateProvisioningGrantResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateMachineWorkloadPermissionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *MachinePermissionResult
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateMachineWorkloadPermissionResponse) GetJSON201() *MachinePermissionResult {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateMachineWorkloadPermissionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateMachineWorkloadPermissionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateMachineWorkloadPermissionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateMachineWorkloadPermissionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateMachineWorkloadPermissionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeMachineWorkloadPermissionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeMachineWorkloadPermissionResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeMachineWorkloadPermissionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeMachineWorkloadPermissionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeMachineWorkloadPermissionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeMachineWorkloadPermissionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListTeamMembershipsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -10016,6 +11659,47 @@ func (r SetMembershipRoleResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SetMembershipRoleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeProvisioningGrantResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationproblemJSONDefault *Problem
+}
+
+// GetApplicationproblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RevokeProvisioningGrantResponse) GetApplicationproblemJSONDefault() *Problem {
+	return r.ApplicationproblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeProvisioningGrantResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeProvisioningGrantResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeProvisioningGrantResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeProvisioningGrantResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -10577,6 +12261,72 @@ func (c *ClientWithResponses) AcceptInvitationWithResponse(ctx context.Context, 
 	return ParseAcceptInvitationResponse(rsp)
 }
 
+// ExchangeMachineWorkloadWithBodyWithResponse performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ExchangeMachineWorkloadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeMachineWorkloadResponse, error) {
+	rsp, err := c.ExchangeMachineWorkloadWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangeMachineWorkloadResponse(rsp)
+}
+
+// ExchangeMachineWorkloadWithResponse performs a POST /v1/machine-workload-sessions/exchange (the `ExchangeMachineWorkload` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ExchangeMachineWorkloadWithResponse(ctx context.Context, body ExchangeMachineWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeMachineWorkloadResponse, error) {
+	rsp, err := c.ExchangeMachineWorkload(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangeMachineWorkloadResponse(rsp)
+}
+
+// AttachMachineWorkloadAssertionWithBodyWithResponse performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AttachMachineWorkloadAssertionWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AttachMachineWorkloadAssertionResponse, error) {
+	rsp, err := c.AttachMachineWorkloadAssertionWithBody(ctx, sessionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAttachMachineWorkloadAssertionResponse(rsp)
+}
+
+// AttachMachineWorkloadAssertionWithResponse performs a POST /v1/machine-workload-sessions/{session_id}/assertions (the `AttachMachineWorkloadAssertion` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) AttachMachineWorkloadAssertionWithResponse(ctx context.Context, sessionId string, body AttachMachineWorkloadAssertionJSONRequestBody, reqEditors ...RequestEditorFn) (*AttachMachineWorkloadAssertionResponse, error) {
+	rsp, err := c.AttachMachineWorkloadAssertion(ctx, sessionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAttachMachineWorkloadAssertionResponse(rsp)
+}
+
+// ExchangeProvisioningWithBodyWithResponse performs a POST /v1/provisioning-sessions/exchange (the `ExchangeProvisioning` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ExchangeProvisioningWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeProvisioningResponse, error) {
+	rsp, err := c.ExchangeProvisioningWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangeProvisioningResponse(rsp)
+}
+
+// ExchangeProvisioningWithResponse performs a POST /v1/provisioning-sessions/exchange (the `ExchangeProvisioning` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ExchangeProvisioningWithResponse(ctx context.Context, body ExchangeProvisioningJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeProvisioningResponse, error) {
+	rsp, err := c.ExchangeProvisioning(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangeProvisioningResponse(rsp)
+}
+
 // RedeemPublisherEnrollmentWithBodyWithResponse performs a POST /v1/publisher-enrollments/redeem (the `RedeemPublisherEnrollment` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -10597,6 +12347,28 @@ func (c *ClientWithResponses) RedeemPublisherEnrollmentWithResponse(ctx context.
 		return nil, err
 	}
 	return ParseRedeemPublisherEnrollmentResponse(rsp)
+}
+
+// ResolvePublisherGroupWorkloadWithBodyWithResponse performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ResolvePublisherGroupWorkloadWithBodyWithResponse(ctx context.Context, groupId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResolvePublisherGroupWorkloadResponse, error) {
+	rsp, err := c.ResolvePublisherGroupWorkloadWithBody(ctx, groupId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResolvePublisherGroupWorkloadResponse(rsp)
+}
+
+// ResolvePublisherGroupWorkloadWithResponse performs a POST /v1/publisher-groups/{group_id}/resolve (the `ResolvePublisherGroupWorkload` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) ResolvePublisherGroupWorkloadWithResponse(ctx context.Context, groupId string, body ResolvePublisherGroupWorkloadJSONRequestBody, reqEditors ...RequestEditorFn) (*ResolvePublisherGroupWorkloadResponse, error) {
+	rsp, err := c.ResolvePublisherGroupWorkload(ctx, groupId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResolvePublisherGroupWorkloadResponse(rsp)
 }
 
 // RotatePublisherKeyWithBodyWithResponse performs a POST /v1/publisher-keys/rotate (the `RotatePublisherKey` operationId) request,
@@ -11331,6 +13103,116 @@ func (c *ClientWithResponses) RevokeTeamInvitationWithResponse(ctx context.Conte
 	return ParseRevokeTeamInvitationResponse(rsp)
 }
 
+// RegisterMachineIdentityWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities (the `RegisterMachineIdentity` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RegisterMachineIdentityWithBodyWithResponse(ctx context.Context, teamId TeamID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterMachineIdentityResponse, error) {
+	rsp, err := c.RegisterMachineIdentityWithBody(ctx, teamId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterMachineIdentityResponse(rsp)
+}
+
+// RegisterMachineIdentityWithResponse performs a POST /v1/teams/{team_id}/machine-identities (the `RegisterMachineIdentity` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RegisterMachineIdentityWithResponse(ctx context.Context, teamId TeamID, body RegisterMachineIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterMachineIdentityResponse, error) {
+	rsp, err := c.RegisterMachineIdentity(ctx, teamId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterMachineIdentityResponse(rsp)
+}
+
+// RevokeMachineIdentityWithResponse performs a DELETE /v1/teams/{team_id}/machine-identities/{machine_id} (the `RevokeMachineIdentity` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokeMachineIdentityWithResponse(ctx context.Context, teamId TeamID, machineId string, reqEditors ...RequestEditorFn) (*RevokeMachineIdentityResponse, error) {
+	rsp, err := c.RevokeMachineIdentity(ctx, teamId, machineId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeMachineIdentityResponse(rsp)
+}
+
+// RotateMachineIdentityKeyWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/keys (the `RotateMachineIdentityKey` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RotateMachineIdentityKeyWithBodyWithResponse(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RotateMachineIdentityKeyResponse, error) {
+	rsp, err := c.RotateMachineIdentityKeyWithBody(ctx, teamId, machineId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotateMachineIdentityKeyResponse(rsp)
+}
+
+// RotateMachineIdentityKeyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/keys (the `RotateMachineIdentityKey` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RotateMachineIdentityKeyWithResponse(ctx context.Context, teamId TeamID, machineId string, body RotateMachineIdentityKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*RotateMachineIdentityKeyResponse, error) {
+	rsp, err := c.RotateMachineIdentityKey(ctx, teamId, machineId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotateMachineIdentityKeyResponse(rsp)
+}
+
+// CreateProvisioningGrantWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/provisioning-grants (the `CreateProvisioningGrant` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateProvisioningGrantWithBodyWithResponse(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateProvisioningGrantResponse, error) {
+	rsp, err := c.CreateProvisioningGrantWithBody(ctx, teamId, machineId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateProvisioningGrantResponse(rsp)
+}
+
+// CreateProvisioningGrantWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/provisioning-grants (the `CreateProvisioningGrant` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateProvisioningGrantWithResponse(ctx context.Context, teamId TeamID, machineId string, body CreateProvisioningGrantJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateProvisioningGrantResponse, error) {
+	rsp, err := c.CreateProvisioningGrant(ctx, teamId, machineId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateProvisioningGrantResponse(rsp)
+}
+
+// CreateMachineWorkloadPermissionWithBodyWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateMachineWorkloadPermissionWithBodyWithResponse(ctx context.Context, teamId TeamID, machineId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMachineWorkloadPermissionResponse, error) {
+	rsp, err := c.CreateMachineWorkloadPermissionWithBody(ctx, teamId, machineId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateMachineWorkloadPermissionResponse(rsp)
+}
+
+// CreateMachineWorkloadPermissionWithResponse performs a POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions (the `CreateMachineWorkloadPermission` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CreateMachineWorkloadPermissionWithResponse(ctx context.Context, teamId TeamID, machineId string, body CreateMachineWorkloadPermissionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMachineWorkloadPermissionResponse, error) {
+	rsp, err := c.CreateMachineWorkloadPermission(ctx, teamId, machineId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateMachineWorkloadPermissionResponse(rsp)
+}
+
+// RevokeMachineWorkloadPermissionWithResponse performs a DELETE /v1/teams/{team_id}/machine-workload-permissions/{permission_id} (the `RevokeMachineWorkloadPermission` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokeMachineWorkloadPermissionWithResponse(ctx context.Context, teamId TeamID, permissionId string, reqEditors ...RequestEditorFn) (*RevokeMachineWorkloadPermissionResponse, error) {
+	rsp, err := c.RevokeMachineWorkloadPermission(ctx, teamId, permissionId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeMachineWorkloadPermissionResponse(rsp)
+}
+
 // ListTeamMembershipsWithResponse List team memberships
 //
 // Returns a wrapper object for the known response body format(s).
@@ -11381,6 +13263,17 @@ func (c *ClientWithResponses) SetMembershipRoleWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseSetMembershipRoleResponse(rsp)
+}
+
+// RevokeProvisioningGrantWithResponse performs a DELETE /v1/teams/{team_id}/provisioning-grants/{grant_id} (the `RevokeProvisioningGrant` operationId) request.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) RevokeProvisioningGrantWithResponse(ctx context.Context, teamId TeamID, grantId string, reqEditors ...RequestEditorFn) (*RevokeProvisioningGrantResponse, error) {
+	rsp, err := c.RevokeProvisioningGrant(ctx, teamId, grantId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeProvisioningGrantResponse(rsp)
 }
 
 // ExchangeWorkloadWithBodyWithResponse performs a POST /v1/workload-sessions/exchange (the `ExchangeWorkload` operationId) request,
@@ -11978,6 +13871,105 @@ func ParseAcceptInvitationResponse(rsp *http.Response) (*AcceptInvitationRespons
 	return response, nil
 }
 
+// ParseExchangeMachineWorkloadResponse parses an HTTP response from a ExchangeMachineWorkloadWithResponse call
+func ParseExchangeMachineWorkloadResponse(rsp *http.Response) (*ExchangeMachineWorkloadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExchangeMachineWorkloadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WorkloadSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAttachMachineWorkloadAssertionResponse parses an HTTP response from a AttachMachineWorkloadAssertionWithResponse call
+func ParseAttachMachineWorkloadAssertionResponse(rsp *http.Response) (*AttachMachineWorkloadAssertionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AttachMachineWorkloadAssertionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WorkloadSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExchangeProvisioningResponse parses an HTTP response from a ExchangeProvisioningWithResponse call
+func ParseExchangeProvisioningResponse(rsp *http.Response) (*ExchangeProvisioningResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExchangeProvisioningResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ProvisioningSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRedeemPublisherEnrollmentResponse parses an HTTP response from a RedeemPublisherEnrollmentWithResponse call
 func ParseRedeemPublisherEnrollmentResponse(rsp *http.Response) (*RedeemPublisherEnrollmentResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -11994,6 +13986,39 @@ func ParseRedeemPublisherEnrollmentResponse(rsp *http.Response) (*RedeemPublishe
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest PublisherEnrollmentResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResolvePublisherGroupWorkloadResponse parses an HTTP response from a ResolvePublisherGroupWorkloadWithResponse call
+func ParseResolvePublisherGroupWorkloadResponse(rsp *http.Response) (*ResolvePublisherGroupWorkloadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResolvePublisherGroupWorkloadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PublisherGroupWorkloadResolution
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -13274,6 +15299,192 @@ func ParseRevokeTeamInvitationResponse(rsp *http.Response) (*RevokeTeamInvitatio
 	return response, nil
 }
 
+// ParseRegisterMachineIdentityResponse parses an HTTP response from a RegisterMachineIdentityWithResponse call
+func ParseRegisterMachineIdentityResponse(rsp *http.Response) (*RegisterMachineIdentityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterMachineIdentityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest MachineIdentity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeMachineIdentityResponse parses an HTTP response from a RevokeMachineIdentityWithResponse call
+func ParseRevokeMachineIdentityResponse(rsp *http.Response) (*RevokeMachineIdentityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeMachineIdentityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRotateMachineIdentityKeyResponse parses an HTTP response from a RotateMachineIdentityKeyWithResponse call
+func ParseRotateMachineIdentityKeyResponse(rsp *http.Response) (*RotateMachineIdentityKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RotateMachineIdentityKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateProvisioningGrantResponse parses an HTTP response from a CreateProvisioningGrantWithResponse call
+func ParseCreateProvisioningGrantResponse(rsp *http.Response) (*CreateProvisioningGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateProvisioningGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest MachinePermissionResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateMachineWorkloadPermissionResponse parses an HTTP response from a CreateMachineWorkloadPermissionWithResponse call
+func ParseCreateMachineWorkloadPermissionResponse(rsp *http.Response) (*CreateMachineWorkloadPermissionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateMachineWorkloadPermissionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest MachinePermissionResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeMachineWorkloadPermissionResponse parses an HTTP response from a RevokeMachineWorkloadPermissionWithResponse call
+func ParseRevokeMachineWorkloadPermissionResponse(rsp *http.Response) (*RevokeMachineWorkloadPermissionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeMachineWorkloadPermissionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListTeamMembershipsResponse parses an HTTP response from a ListTeamMembershipsWithResponse call
 func ParseListTeamMembershipsResponse(rsp *http.Response) (*ListTeamMembershipsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -13356,6 +15567,35 @@ func ParseSetMembershipRoleResponse(rsp *http.Response) (*SetMembershipRoleRespo
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeProvisioningGrantResponse parses an HTTP response from a RevokeProvisioningGrantWithResponse call
+func ParseRevokeProvisioningGrantResponse(rsp *http.Response) (*RevokeProvisioningGrantResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeProvisioningGrantResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Problem
@@ -13578,8 +15818,20 @@ type ServerInterface interface {
 	// (POST /v1/invitations/accept)
 	AcceptInvitation(w http.ResponseWriter, r *http.Request)
 
+	// (POST /v1/machine-workload-sessions/exchange)
+	ExchangeMachineWorkload(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/machine-workload-sessions/{session_id}/assertions)
+	AttachMachineWorkloadAssertion(w http.ResponseWriter, r *http.Request, sessionId string)
+
+	// (POST /v1/provisioning-sessions/exchange)
+	ExchangeProvisioning(w http.ResponseWriter, r *http.Request)
+
 	// (POST /v1/publisher-enrollments/redeem)
 	RedeemPublisherEnrollment(w http.ResponseWriter, r *http.Request)
+
+	// (POST /v1/publisher-groups/{group_id}/resolve)
+	ResolvePublisherGroupWorkload(w http.ResponseWriter, r *http.Request, groupId string)
 
 	// (POST /v1/publisher-keys/rotate)
 	RotatePublisherKey(w http.ResponseWriter, r *http.Request)
@@ -13697,6 +15949,24 @@ type ServerInterface interface {
 	// RevokeTeamInvitation Revoke one pending invitation
 	// (DELETE /v1/teams/{team_id}/invitations/{invitation_id})
 	RevokeTeamInvitation(w http.ResponseWriter, r *http.Request, teamId TeamID, invitationId InvitationID)
+
+	// (POST /v1/teams/{team_id}/machine-identities)
+	RegisterMachineIdentity(w http.ResponseWriter, r *http.Request, teamId TeamID)
+
+	// (DELETE /v1/teams/{team_id}/machine-identities/{machine_id})
+	RevokeMachineIdentity(w http.ResponseWriter, r *http.Request, teamId TeamID, machineId string)
+
+	// (POST /v1/teams/{team_id}/machine-identities/{machine_id}/keys)
+	RotateMachineIdentityKey(w http.ResponseWriter, r *http.Request, teamId TeamID, machineId string)
+
+	// (POST /v1/teams/{team_id}/machine-identities/{machine_id}/provisioning-grants)
+	CreateProvisioningGrant(w http.ResponseWriter, r *http.Request, teamId TeamID, machineId string)
+
+	// (POST /v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions)
+	CreateMachineWorkloadPermission(w http.ResponseWriter, r *http.Request, teamId TeamID, machineId string)
+
+	// (DELETE /v1/teams/{team_id}/machine-workload-permissions/{permission_id})
+	RevokeMachineWorkloadPermission(w http.ResponseWriter, r *http.Request, teamId TeamID, permissionId string)
 	// ListTeamMemberships List team memberships
 	// (GET /v1/teams/{team_id}/memberships)
 	ListTeamMemberships(w http.ResponseWriter, r *http.Request, teamId TeamID)
@@ -13706,6 +15976,9 @@ type ServerInterface interface {
 	// SetMembershipRole Change one membership's team role
 	// (PATCH /v1/teams/{team_id}/memberships/{membership_id})
 	SetMembershipRole(w http.ResponseWriter, r *http.Request, teamId TeamID, membershipId MembershipID)
+
+	// (DELETE /v1/teams/{team_id}/provisioning-grants/{grant_id})
+	RevokeProvisioningGrant(w http.ResponseWriter, r *http.Request, teamId TeamID, grantId string)
 
 	// (POST /v1/workload-sessions/exchange)
 	ExchangeWorkload(w http.ResponseWriter, r *http.Request)
@@ -14018,11 +16291,91 @@ func (siw *ServerInterfaceWrapper) AcceptInvitation(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// ExchangeMachineWorkload operation middleware
+func (siw *ServerInterfaceWrapper) ExchangeMachineWorkload(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExchangeMachineWorkload(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AttachMachineWorkloadAssertion operation middleware
+func (siw *ServerInterfaceWrapper) AttachMachineWorkloadAssertion(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AttachMachineWorkloadAssertion(w, r, sessionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExchangeProvisioning operation middleware
+func (siw *ServerInterfaceWrapper) ExchangeProvisioning(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExchangeProvisioning(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RedeemPublisherEnrollment operation middleware
 func (siw *ServerInterfaceWrapper) RedeemPublisherEnrollment(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RedeemPublisherEnrollment(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResolvePublisherGroupWorkload operation middleware
+func (siw *ServerInterfaceWrapper) ResolvePublisherGroupWorkload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "group_id" -------------
+	var groupId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "group_id", r.PathValue("group_id"), &groupId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResolvePublisherGroupWorkload(w, r, groupId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -15821,6 +18174,207 @@ func (siw *ServerInterfaceWrapper) RevokeTeamInvitation(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// RegisterMachineIdentity operation middleware
+func (siw *ServerInterfaceWrapper) RegisterMachineIdentity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegisterMachineIdentity(w, r, teamId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeMachineIdentity operation middleware
+func (siw *ServerInterfaceWrapper) RevokeMachineIdentity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "machine_id" -------------
+	var machineId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "machine_id", r.PathValue("machine_id"), &machineId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "machine_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeMachineIdentity(w, r, teamId, machineId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RotateMachineIdentityKey operation middleware
+func (siw *ServerInterfaceWrapper) RotateMachineIdentityKey(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "machine_id" -------------
+	var machineId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "machine_id", r.PathValue("machine_id"), &machineId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "machine_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RotateMachineIdentityKey(w, r, teamId, machineId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateProvisioningGrant operation middleware
+func (siw *ServerInterfaceWrapper) CreateProvisioningGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "machine_id" -------------
+	var machineId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "machine_id", r.PathValue("machine_id"), &machineId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "machine_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateProvisioningGrant(w, r, teamId, machineId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateMachineWorkloadPermission operation middleware
+func (siw *ServerInterfaceWrapper) CreateMachineWorkloadPermission(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "machine_id" -------------
+	var machineId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "machine_id", r.PathValue("machine_id"), &machineId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "machine_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateMachineWorkloadPermission(w, r, teamId, machineId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeMachineWorkloadPermission operation middleware
+func (siw *ServerInterfaceWrapper) RevokeMachineWorkloadPermission(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "permission_id" -------------
+	var permissionId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "permission_id", r.PathValue("permission_id"), &permissionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "permission_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeMachineWorkloadPermission(w, r, teamId, permissionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListTeamMemberships operation middleware
 func (siw *ServerInterfaceWrapper) ListTeamMemberships(w http.ResponseWriter, r *http.Request) {
 
@@ -15908,6 +18462,41 @@ func (siw *ServerInterfaceWrapper) SetMembershipRole(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SetMembershipRole(w, r, teamId, membershipId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RevokeProvisioningGrant operation middleware
+func (siw *ServerInterfaceWrapper) RevokeProvisioningGrant(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "team_id" -------------
+	var teamId TeamID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "team_id", r.PathValue("team_id"), &teamId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "team_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "grant_id" -------------
+	var grantId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "grant_id", r.PathValue("grant_id"), &grantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "grant_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeProvisioningGrant(w, r, teamId, grantId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -16143,6 +18732,17 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/machine-identities", wrapper.RegisterMachineIdentity)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/machine-identities/{machine_id}", wrapper.RevokeMachineIdentity)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/machine-identities/{machine_id}/keys", wrapper.RotateMachineIdentityKey)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/machine-identities/{machine_id}/provisioning-grants", wrapper.CreateProvisioningGrant)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/provisioning-grants/{grant_id}", wrapper.RevokeProvisioningGrant)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/teams/{team_id}/machine-identities/{machine_id}/workload-permissions", wrapper.CreateMachineWorkloadPermission)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/teams/{team_id}/machine-workload-permissions/{permission_id}", wrapper.RevokeMachineWorkloadPermission)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/provisioning-sessions/exchange", wrapper.ExchangeProvisioning)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/publisher-groups/{group_id}/resolve", wrapper.ResolvePublisherGroupWorkload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/machine-workload-sessions/exchange", wrapper.ExchangeMachineWorkload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/machine-workload-sessions/{session_id}/assertions", wrapper.AttachMachineWorkloadAssertion)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/teams/{team_id}/services", wrapper.ListWebsiteServices)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/services/{service_id}", wrapper.GetWebsiteService)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/service/services/{service_id}/grants", wrapper.ListWebsiteServiceGrants)

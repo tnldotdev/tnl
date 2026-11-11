@@ -54,7 +54,7 @@ func (h *handler) CreatePublisherGroup(w http.ResponseWriter, r *http.Request, p
 
 func (h *handler) RemovePublisherGroup(w http.ResponseWriter, r *http.Request, project, name string, params controlv1.RemovePublisherGroupParams) {
 	w.Header().Set("Cache-Control", "no-store")
-	actor, ok := h.projectManager(w, r, params.TeamId)
+	actor, ok := h.groupCaller(w, r, params.TeamId)
 	if !ok {
 		return
 	}
@@ -62,7 +62,7 @@ func (h *handler) RemovePublisherGroup(w http.ResponseWriter, r *http.Request, p
 		writeProblem(w, 503, controlv1.Unavailable, "publisher groups are unavailable")
 		return
 	}
-	_, err := h.dependencies.PublisherGroups.RemovePublisherGroup(r.Context(), params.TeamId, project, name, actor, params.ExpectedRevision, h.config.DNSAutomation, time.Now())
+	err := h.dependencies.PublisherGroups.RetireBoundPublisherGroup(r.Context(), controlstate.GroupBindingMutationRequest{TeamID: params.TeamId, ProjectKey: project, Group: name, Caller: actor, ExpectedRevision: params.ExpectedRevision, DNSAutomation: h.config.DNSAutomation, Now: time.Now()})
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "remove publisher group", err)
 		return

@@ -113,8 +113,12 @@ func (d *Database) createTemplateGroup(ctx context.Context, tx pgx.Tx, r ApplyPr
 		var previous []byte
 		var encodedProtocols []byte
 		var retired bool
-		err := tx.QueryRow(ctx, `SELECT creation.request_digest,creation.group_id,creation.binding_protocols,g.deleted_at IS NOT NULL FROM control.publisher_group_creations creation JOIN control.project_publisher_groups g ON g.id=creation.group_id WHERE creation.team_id=$1 AND creation.project_key=$2 AND creation.idempotency_key=$3`, r.TeamID, r.ProjectKey, creation.IdempotencyKey).Scan(&previous, &creation.ID, &encodedProtocols, &retired)
+		var actualTemplate string
+		err := tx.QueryRow(ctx, `SELECT creation.request_digest,creation.group_id,creation.binding_protocols,g.deleted_at IS NOT NULL,g.template_name FROM control.publisher_group_creations creation JOIN control.project_publisher_groups g ON g.id=creation.group_id WHERE creation.team_id=$1 AND creation.project_key=$2 AND creation.idempotency_key=$3 FOR UPDATE OF g`, r.TeamID, r.ProjectKey, creation.IdempotencyKey).Scan(&previous, &creation.ID, &encodedProtocols, &retired, &actualTemplate)
 		if err == nil {
+			if actualTemplate != creation.Template {
+				return false, false, ErrServiceConflict
+			}
 			protocols = nil
 			if err = json.Unmarshal(encodedProtocols, &protocols); err != nil {
 				return false, false, err
@@ -224,23 +228,10 @@ func (d *Database) RemovePublisherGroup(ctx context.Context, team, project, name
 }
 
 func (d *Database) mutateTemplateGroup(ctx context.Context, team, project, actor string, expected int64, dns bool, now time.Time, create *PublisherGroupCreation, remove string) (AppliedProjectConfiguration, error) {
-	current, err := d.GetProjectConfiguration(ctx, team, project, actor)
-	if err != nil {
-		return current, err
+	operation := ProvisioningRetire
+	if create != nil {
+		operation = ProvisioningCreate
 	}
-	if create == nil && current.Revision != expected {
-		return AppliedProjectConfiguration{}, ErrProjectConfigurationStale
-	}
-	if remove != "" {
-		resource, err := publisherGroupResource(current, remove)
-		if err != nil {
-			return AppliedProjectConfiguration{}, err
-		}
-		remove = resource.Name
-	}
-	return d.ApplyProjectConfiguration(ctx, ApplyProjectConfigurationRequest{
-		TeamID: team, ProjectKey: project, SourceFingerprint: current.SourceFingerprint,
-		ActorID: actor, ExpectedRevision: expected, Configuration: current.Configuration,
-		DNSAutomation: dns, Now: now, CreateGroup: create, RemoveGroup: remove,
-	})
+	result, _, err := d.mutateBoundPublisherGroup(ctx, GroupBindingMutationRequest{TeamID: team, ProjectKey: project, Group: remove, Caller: HumanGroupCaller(actor), ExpectedRevision: expected, DNSAutomation: dns, Now: now}, operation, create)
+	return result, err
 }

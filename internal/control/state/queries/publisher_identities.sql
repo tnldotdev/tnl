@@ -2,8 +2,8 @@
 SELECT * FROM control.publisher_identities WHERE id = sqlc.arg(id) FOR UPDATE;
 
 -- name: InsertPublisherIdentity :one
-INSERT INTO control.publisher_identities(id, team_id, name, kind, created_by_identity_id, guest_id, created_at, ownership, owner_membership_id)
-VALUES (sqlc.arg(id), sqlc.arg(team_id), sqlc.arg(name), sqlc.arg(kind), sqlc.arg(created_by_identity_id), sqlc.narg(guest_id), sqlc.arg(created_at), sqlc.arg(ownership), sqlc.narg(owner_membership_id)) RETURNING *;
+INSERT INTO control.publisher_identities(id, team_id, name, kind, created_by_identity_id, created_by_machine_id, provisioning_grant_id, guest_id, created_at, ownership, owner_membership_id)
+VALUES (sqlc.arg(id), sqlc.arg(team_id), sqlc.arg(name), sqlc.arg(kind), sqlc.narg(created_by_identity_id), sqlc.narg(created_by_machine_id),sqlc.narg(provisioning_grant_id),sqlc.narg(guest_id), sqlc.arg(created_at), sqlc.arg(ownership), sqlc.narg(owner_membership_id)) RETURNING *;
 
 -- name: InsertPublisherKey :exec
 INSERT INTO control.publisher_identity_keys(id, publisher_identity_id, public_key, revision, created_at)
@@ -16,8 +16,8 @@ SELECT * FROM control.publisher_identity_keys WHERE id = sqlc.arg(id) AND publis
 UPDATE control.publisher_identity_keys SET retired_at = sqlc.arg(now) WHERE id = sqlc.arg(id) AND retired_at IS NULL;
 
 -- name: InsertPublisherGrant :one
-INSERT INTO control.publisher_grants(id, publisher_identity_id, created_by_identity_id, kind, public_url_id, service_id, domain_id, namespace, membership_id, public_url_scope, created_at, expires_at)
-VALUES (sqlc.arg(id), sqlc.arg(publisher_identity_id), sqlc.arg(created_by_identity_id), sqlc.arg(kind), sqlc.narg(public_url_id), sqlc.narg(service_id), sqlc.narg(domain_id), sqlc.narg(namespace), sqlc.narg(membership_id), sqlc.narg(public_url_scope), sqlc.arg(created_at), sqlc.narg(expires_at)) RETURNING *;
+INSERT INTO control.publisher_grants(id, publisher_identity_id, created_by_identity_id,created_by_machine_id,provisioning_grant_id, kind, public_url_id, service_id, domain_id, namespace, membership_id, public_url_scope, created_at, expires_at)
+VALUES (sqlc.arg(id), sqlc.arg(publisher_identity_id), sqlc.narg(created_by_identity_id),sqlc.narg(created_by_machine_id),sqlc.narg(provisioning_grant_id), sqlc.arg(kind), sqlc.narg(public_url_id), sqlc.narg(service_id), sqlc.narg(domain_id), sqlc.narg(namespace), sqlc.narg(membership_id), sqlc.narg(public_url_scope), sqlc.arg(created_at), sqlc.narg(expires_at)) RETURNING *;
 
 -- name: GetPublisherGrant :one
 SELECT * FROM control.publisher_grants WHERE id = sqlc.arg(id) AND publisher_identity_id = sqlc.arg(publisher_identity_id) FOR SHARE;

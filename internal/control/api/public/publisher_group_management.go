@@ -3,11 +3,20 @@ package public
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func (h *handler) groupCaller(w http.ResponseWriter, r *http.Request, team string) (controlstate.GroupCaller, bool) {
+	if credential, ok := requestBearerToken(r); ok && strings.HasPrefix(credential, "mpc_") {
+		return controlstate.ProvisioningGroupCaller(credential), true
+	}
+	identity, ok := h.projectManager(w, r, team)
+	return controlstate.HumanGroupCaller(identity), ok
+}
 
 func (h *handler) createBoundPublisherGroup(w http.ResponseWriter, r *http.Request, project, selector string) (controlstate.PublisherGroupResource, bool) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -26,7 +35,7 @@ func (h *handler) createBoundPublisherGroup(w http.ResponseWriter, r *http.Reque
 	if selector != "" {
 		name = selector
 	}
-	actor, ok := h.projectManager(w, r, body.TeamId)
+	actor, ok := h.groupCaller(w, r, body.TeamId)
 	if !ok {
 		return controlstate.PublisherGroupResource{}, false
 	}
@@ -43,7 +52,7 @@ func (h *handler) createBoundPublisherGroup(w http.ResponseWriter, r *http.Reque
 			return controlstate.PublisherGroupResource{}, false
 		}
 	}
-	resource, err := h.dependencies.PublisherGroups.CreateBoundPublisherGroup(r.Context(), controlstate.CreateBoundPublisherGroupRequest{TeamID: body.TeamId, ProjectKey: project, ActorID: actor, ExpectedRevision: body.ExpectedRevision, DNSAutomation: h.config.DNSAutomation, Now: time.Now(), Creation: controlstate.PublisherGroupCreation{Name: name, Template: body.From, IdempotencyKey: key, Bindings: bindings}})
+	resource, err := h.dependencies.PublisherGroups.CreateBoundPublisherGroup(r.Context(), controlstate.CreateBoundPublisherGroupRequest{TeamID: body.TeamId, ProjectKey: project, Caller: actor, ExpectedRevision: body.ExpectedRevision, DNSAutomation: h.config.DNSAutomation, Now: time.Now(), Creation: controlstate.PublisherGroupCreation{Name: name, Template: body.From, IdempotencyKey: key, Bindings: bindings}})
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "create publisher group", err)
 		return resource, false
@@ -60,20 +69,20 @@ func (h *handler) CreateBoundPublisherGroup(w http.ResponseWriter, r *http.Reque
 
 func (h *handler) ListPublisherGroups(w http.ResponseWriter, r *http.Request, project string, params controlv1.ListPublisherGroupsParams) {
 	w.Header().Set("Cache-Control", "no-store")
-	actor, ok := h.projectManager(w, r, params.TeamId)
+	actor, ok := h.groupCaller(w, r, params.TeamId)
 	if !ok {
 		return
 	}
-	if h.dependencies.ProjectConfiguration == nil {
+	if h.dependencies.PublisherGroups == nil {
 		writeProblem(w, 503, controlv1.Unavailable, "project configuration is unavailable")
 		return
 	}
-	result, err := h.dependencies.ProjectConfiguration.GetProjectConfiguration(r.Context(), params.TeamId, project, actor)
+	result, err := h.dependencies.PublisherGroups.ListManagedPublisherGroups(r.Context(), params.TeamId, project, actor, time.Now())
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "list publisher groups", err)
 		return
 	}
-	writeJSON(w, 200, controlstate.PublisherGroupResources(result))
+	writeJSON(w, 200, result)
 }
 
 func (h *handler) GetPublisherGroup(w http.ResponseWriter, r *http.Request, project, id string, params controlv1.GetPublisherGroupParams) {
@@ -85,7 +94,7 @@ func (h *handler) GetPublisherGroup(w http.ResponseWriter, r *http.Request, proj
 
 func (h *handler) managedPublisherGroup(w http.ResponseWriter, r *http.Request, team, project, id string) (controlstate.PublisherGroupResource, bool) {
 	w.Header().Set("Cache-Control", "no-store")
-	actor, ok := h.projectManager(w, r, team)
+	actor, ok := h.groupCaller(w, r, team)
 	if !ok {
 		return controlstate.PublisherGroupResource{}, false
 	}
@@ -93,7 +102,7 @@ func (h *handler) managedPublisherGroup(w http.ResponseWriter, r *http.Request, 
 		writeProblem(w, 503, controlv1.Unavailable, "publisher groups are unavailable")
 		return controlstate.PublisherGroupResource{}, false
 	}
-	result, err := h.dependencies.PublisherGroups.GetManagedPublisherGroup(r.Context(), team, project, id, actor)
+	result, err := h.dependencies.PublisherGroups.GetManagedPublisherGroupForCaller(r.Context(), team, project, id, actor, time.Now())
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "get publisher group", err)
 		return result, false
@@ -115,7 +124,7 @@ func (h *handler) UpdatePublisherGroupBindings(w http.ResponseWriter, r *http.Re
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher group bindings")
 		return
 	}
-	actor, ok := h.projectManager(w, r, body.TeamId)
+	actor, ok := h.groupCaller(w, r, body.TeamId)
 	if !ok {
 		return
 	}
@@ -128,7 +137,7 @@ func (h *handler) UpdatePublisherGroupBindings(w http.ResponseWriter, r *http.Re
 		projectConfigurationProblem(r.Context(), w, "validate publisher group bindings", err)
 		return
 	}
-	result, err := h.dependencies.PublisherGroups.UpdatePublisherGroupBindings(r.Context(), body.TeamId, project, id, actor, body.ExpectedRevision, bindings, h.config.DNSAutomation, time.Now())
+	result, err := h.dependencies.PublisherGroups.UpdateBoundPublisherGroup(r.Context(), controlstate.GroupBindingMutationRequest{TeamID: body.TeamId, ProjectKey: project, Group: id, Caller: actor, ExpectedRevision: body.ExpectedRevision, Bindings: bindings, DNSAutomation: h.config.DNSAutomation, Now: time.Now()})
 	if err != nil {
 		projectConfigurationProblem(r.Context(), w, "update publisher group bindings", err)
 		return

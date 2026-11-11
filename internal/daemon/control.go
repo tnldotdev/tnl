@@ -101,7 +101,9 @@ func newPublicAPIHandler(
 	if err := database.ConfigureOIDCAdmissions(seedContext, cfg.OIDCIssuer, admissions, time.Now()); err != nil {
 		return nil, err
 	}
-	authorityRoutes, err = controlauthority.Register(mux, authorityAPIConfigFrom(cfg, httpClient), database)
+	authorityConfig := authorityAPIConfigFrom(cfg, httpClient)
+	authorityConfig.Machines = database
+	authorityRoutes, err = controlauthority.Register(mux, authorityConfig, database)
 	if err != nil {
 		return nil, err
 	}

@@ -22,6 +22,7 @@ type PublisherGroupResource struct {
 }
 
 type CreateBoundPublisherGroupRequest struct {
+	Caller                      GroupCaller
 	TeamID, ProjectKey, ActorID string
 	Creation                    PublisherGroupCreation
 	ExpectedRevision            int64
@@ -62,7 +63,14 @@ func publisherGroupResource(project AppliedProjectConfiguration, id string) (Pub
 
 func (d *Database) CreateBoundPublisherGroup(ctx context.Context, request CreateBoundPublisherGroupRequest) (PublisherGroupResource, error) {
 	creation := request.Creation
-	project, err := d.mutateTemplateGroup(ctx, request.TeamID, request.ProjectKey, request.ActorID, request.ExpectedRevision, request.DNSAutomation, request.Now, &creation, "")
+	caller := request.Caller
+	if request.ActorID != "" {
+		if caller != (GroupCaller{}) {
+			return PublisherGroupResource{}, ErrMachineDenied
+		}
+		caller = HumanGroupCaller(request.ActorID)
+	}
+	project, _, err := d.mutateBoundPublisherGroup(ctx, GroupBindingMutationRequest{TeamID: request.TeamID, ProjectKey: request.ProjectKey, Caller: caller, ExpectedRevision: request.ExpectedRevision, DNSAutomation: request.DNSAutomation, Now: request.Now}, ProvisioningCreate, &creation)
 	if err != nil {
 		return PublisherGroupResource{}, err
 	}
@@ -70,59 +78,11 @@ func (d *Database) CreateBoundPublisherGroup(ctx context.Context, request Create
 }
 
 func (d *Database) GetManagedPublisherGroup(ctx context.Context, team, project, id, actor string) (result PublisherGroupResource, retErr error) {
-	tx, err := d.pool.Begin(ctx)
-	if err != nil {
-		return result, err
-	}
-	defer rollback(ctx, tx, "get managed publisher group", &retErr)()
-	q := controlstatedb.New(tx)
-	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
-		return result, publisherLookupError(err, ErrServiceAccess)
-	}
-	if err = serviceManager(ctx, tx, team, actor); err != nil {
-		return result, err
-	}
-	row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: team, ProjectKey: project})
-	if err != nil {
-		return result, err
-	}
-	c, err := d.openAppliedProject(row)
-	if err != nil {
-		return result, err
-	}
-	status, err := d.appliedProjectStatus(ctx, tx, row, c)
-	if err != nil {
-		return result, err
-	}
-	if _, err = publisherGroupResource(status, id); err == pgx.ErrNoRows {
-		if err = d.appendRetiredPublisherGroup(ctx, tx, &status, id); err != nil {
-			return result, err
-		}
-	}
-	result, err = publisherGroupResource(status, id)
-	if err != nil {
-		return result, err
-	}
-	return result, tx.Commit(ctx)
+	return d.GetManagedPublisherGroupForCaller(ctx, team, project, id, HumanGroupCaller(actor), time.Now())
 }
 
 func (d *Database) UpdatePublisherGroupBindings(ctx context.Context, team, project, id, actor string, expected int64, bindings PublisherGroupBindings, dns bool, now time.Time) (PublisherGroupResource, error) {
-	current, err := d.GetProjectConfiguration(ctx, team, project, actor)
-	if err != nil {
-		return PublisherGroupResource{}, err
-	}
-	resource, err := publisherGroupResource(current, id)
-	if err != nil {
-		return PublisherGroupResource{}, err
-	}
-	if resource.From == "" {
-		return PublisherGroupResource{}, ErrProjectManaged
-	}
-	result, err := d.ApplyProjectConfiguration(ctx, ApplyProjectConfigurationRequest{TeamID: team, ProjectKey: project, SourceFingerprint: current.SourceFingerprint, ActorID: actor, ExpectedRevision: expected, Configuration: current.Configuration, GroupBindings: map[string]PublisherGroupBindings{resource.ID: bindings}, DNSAutomation: dns, Now: now})
-	if err != nil {
-		return PublisherGroupResource{}, err
-	}
-	return publisherGroupResource(result, resource.ID)
+	return d.UpdateBoundPublisherGroup(ctx, GroupBindingMutationRequest{TeamID: team, ProjectKey: project, Group: id, Caller: HumanGroupCaller(actor), ExpectedRevision: expected, Bindings: bindings, DNSAutomation: dns, Now: now})
 }
 
 func (d *Database) appendRetiredPublisherGroup(ctx context.Context, tx pgx.Tx, project *AppliedProjectConfiguration, id string) error {

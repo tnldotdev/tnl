@@ -631,6 +631,66 @@ type ControlLocalProjectService struct {
 	CreatedByIdentityID string
 }
 
+type ControlMachineIdentity struct {
+	ID        string
+	TeamID    string
+	Name      string
+	ProofKind string
+	Trust     []byte
+	Revision  int64
+	CreatedAt pgtype.Timestamptz
+	RevokedAt pgtype.Timestamptz
+}
+
+type ControlMachineIdentityKey struct {
+	MachineID string
+	KeyID     string
+	PublicKey []byte
+	RevokedAt pgtype.Timestamptz
+}
+
+type ControlMachineProofUse struct {
+	MachineID   string
+	ProofDigest []byte
+	ExpiresAt   pgtype.Timestamptz
+}
+
+type ControlMachineProvisioningGrant struct {
+	ID                   string
+	MachineID            string
+	TeamID               string
+	ProjectKey           string
+	Templates            []string
+	Operations           []string
+	MaxEnrollmentMembers int32
+	MaxEnrollmentSeconds int32
+	EnrollmentBudget     int32
+	EnrollmentUsed       int32
+	ExpiresAt            pgtype.Timestamptz
+	RevokedAt            pgtype.Timestamptz
+}
+
+type ControlMachineProvisioningSession struct {
+	CredentialDigest []byte
+	MachineID        string
+	GrantID          string
+	IdentityRevision int64
+	Operation        string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+}
+
+type ControlMachineWorkloadPermission struct {
+	ID         string
+	MachineID  string
+	TeamID     string
+	ProjectKey string
+	Workload   string
+	Templates  []string
+	ExpiresAt  pgtype.Timestamptz
+	RevokedAt  pgtype.Timestamptz
+}
+
 type ControlMaintenanceControl struct {
 	ID        int64
 	Operation string
@@ -905,7 +965,9 @@ type ControlPublisherEnrollment struct {
 type ControlPublisherGrant struct {
 	ID                  string
 	PublisherIdentityID string
-	CreatedByIdentityID string
+	CreatedByIdentityID pgtype.Text
+	CreatedByMachineID  pgtype.Text
+	ProvisioningGrantID pgtype.Text
 	Kind                string
 	PublicURLID         pgtype.Text
 	ServiceID           pgtype.Text
@@ -938,7 +1000,9 @@ type ControlPublisherGroupEnrollment struct {
 	GroupID             string
 	SecretDigest        []byte
 	MaxMembers          int32
-	CreatedByIdentityID string
+	CreatedByIdentityID pgtype.Text
+	CreatedByMachineID  pgtype.Text
+	ProvisioningGrantID pgtype.Text
 	ExpiresAt           pgtype.Timestamptz
 	RevokedAt           pgtype.Timestamptz
 }
@@ -982,7 +1046,9 @@ type ControlPublisherIdentity struct {
 	TeamID              string
 	Name                string
 	Kind                string
-	CreatedByIdentityID string
+	CreatedByIdentityID pgtype.Text
+	CreatedByMachineID  pgtype.Text
+	ProvisioningGrantID pgtype.Text
 	Ownership           string
 	OwnerMembershipID   pgtype.Text
 	GuestID             pgtype.Text
@@ -1187,7 +1253,9 @@ type ControlService struct {
 	ServicePort            pgtype.Int4
 	IngressPoolID          string
 	Public                 bool
-	CreatedByIdentityID    string
+	CreatedByIdentityID    pgtype.Text
+	CreatedByMachineID     pgtype.Text
+	ProvisioningGrantID    pgtype.Text
 	IdempotencyKey         string
 	RequestDigest          []byte
 	Enabled                bool
@@ -1198,23 +1266,25 @@ type ControlService struct {
 }
 
 type ControlServiceAuditEvent struct {
-	Cursor                int64
-	ID                    string
-	TeamID                string
-	ServiceID             string
-	ServiceKind           string
-	EventType             string
-	OccurredAt            pgtype.Timestamptz
-	ReceivedAt            pgtype.Timestamptz
-	ActorIdentityID       pgtype.Text
-	DeviceID              pgtype.Text
-	PublisherIdentityID   pgtype.Text
-	RunID                 pgtype.Text
-	VisitorConnectionID   pgtype.Text
-	SourceIp              *netip.Addr
-	Outcome               pgtype.Text
-	Reason                pgtype.Text
-	ConfigurationRevision pgtype.Int8
+	Cursor                   int64
+	ID                       string
+	TeamID                   string
+	ServiceID                string
+	ServiceKind              string
+	EventType                string
+	OccurredAt               pgtype.Timestamptz
+	ReceivedAt               pgtype.Timestamptz
+	ActorIdentityID          pgtype.Text
+	ActorMachineID           pgtype.Text
+	ActorProvisioningGrantID pgtype.Text
+	DeviceID                 pgtype.Text
+	PublisherIdentityID      pgtype.Text
+	RunID                    pgtype.Text
+	VisitorConnectionID      pgtype.Text
+	SourceIp                 *netip.Addr
+	Outcome                  pgtype.Text
+	Reason                   pgtype.Text
+	ConfigurationRevision    pgtype.Int8
 }
 
 type ControlServiceCertificateRequest struct {
@@ -1536,7 +1606,9 @@ type ControlVisitorGrant struct {
 	IdentityID          pgtype.Text
 	AutoOwner           bool
 	InvitationID        pgtype.Text
-	CreatedByIdentityID string
+	CreatedByIdentityID pgtype.Text
+	CreatedByMachineID  pgtype.Text
+	ProvisioningGrantID pgtype.Text
 	IdempotencyKey      string
 	RequestDigest       []byte
 	CreatedAt           pgtype.Timestamptz
@@ -1657,6 +1729,14 @@ type ControlWorkloadSession struct {
 	RevokedAt            pgtype.Timestamptz
 	RenewalSequence      int64
 	IdentityExpiresAt    pgtype.Timestamptz
+}
+
+type ControlWorkloadSessionMachine struct {
+	SessionID        string
+	MachineID        string
+	IdentityRevision int64
+	PermissionID     string
+	GroupID          string
 }
 
 type ControlWorkloadSessionService struct {

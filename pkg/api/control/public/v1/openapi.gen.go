@@ -3574,22 +3574,24 @@ type Service struct {
 
 // ServiceAuditEvent defines model for ServiceAuditEvent.
 type ServiceAuditEvent struct {
-	ActorIdentityId       *string                      `json:"actor_identity_id,omitempty"`
-	ConfigurationRevision *int64                       `json:"configuration_revision,omitempty"`
-	Cursor                string                       `json:"cursor"`
-	DeviceId              *string                      `json:"device_id,omitempty"`
-	EventType             string                       `json:"event_type"`
-	Id                    string                       `json:"id"`
-	OccurredAt            time.Time                    `json:"occurred_at"`
-	Outcome               *string                      `json:"outcome,omitempty"`
-	PublisherIdentityId   *string                      `json:"publisher_identity_id,omitempty"`
-	Reason                *string                      `json:"reason,omitempty"`
-	RunId                 *string                      `json:"run_id,omitempty"`
-	ServiceId             string                       `json:"service_id"`
-	ServiceKind           ServiceAuditEventServiceKind `json:"service_kind"`
-	SourceIp              *string                      `json:"source_ip,omitempty"`
-	TeamId                string                       `json:"team_id"`
-	VisitorConnectionId   *string                      `json:"visitor_connection_id,omitempty"`
+	ActorIdentityId          *string                      `json:"actor_identity_id,omitempty"`
+	ActorMachineId           *string                      `json:"actor_machine_id,omitempty"`
+	ActorProvisioningGrantId *string                      `json:"actor_provisioning_grant_id,omitempty"`
+	ConfigurationRevision    *int64                       `json:"configuration_revision,omitempty"`
+	Cursor                   string                       `json:"cursor"`
+	DeviceId                 *string                      `json:"device_id,omitempty"`
+	EventType                string                       `json:"event_type"`
+	Id                       string                       `json:"id"`
+	OccurredAt               time.Time                    `json:"occurred_at"`
+	Outcome                  *string                      `json:"outcome,omitempty"`
+	PublisherIdentityId      *string                      `json:"publisher_identity_id,omitempty"`
+	Reason                   *string                      `json:"reason,omitempty"`
+	RunId                    *string                      `json:"run_id,omitempty"`
+	ServiceId                string                       `json:"service_id"`
+	ServiceKind              ServiceAuditEventServiceKind `json:"service_kind"`
+	SourceIp                 *string                      `json:"source_ip,omitempty"`
+	TeamId                   string                       `json:"team_id"`
+	VisitorConnectionId      *string                      `json:"visitor_connection_id,omitempty"`
 }
 
 // ServiceAuditEventServiceKind defines model for ServiceAuditEvent.ServiceKind.

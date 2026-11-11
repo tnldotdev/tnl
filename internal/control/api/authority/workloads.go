@@ -99,7 +99,7 @@ func workloadProblem(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrWorkloadExpired):
 		writeProblem(w, 410, authorityv1.Forbidden, "workload session expired; a current assertion may authorize a new session for future connections")
-	case errors.Is(err, controlstate.ErrWorkloadDenied), errors.Is(err, oidc.ErrUnauthenticated):
+	case errors.Is(err, controlstate.ErrWorkloadDenied), errors.Is(err, controlstate.ErrMachineDenied), errors.Is(err, oidc.ErrUnauthenticated):
 		writeProblem(w, 403, authorityv1.Forbidden, "workload assertion or saved workload policy does not authorize this execution")
 	case errors.Is(err, controlstate.ErrWorkloadConflict):
 		writeProblem(w, 409, authorityv1.Conflict, "workload execution is already bound to another key or service scope; resume with the original ephemeral key")

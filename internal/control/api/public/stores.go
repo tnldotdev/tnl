@@ -59,6 +59,10 @@ type GuestStore interface {
 
 type GroupStore interface {
 	PublisherGroupStore
+	ListManagedPublisherGroups(context.Context, string, string, controlstate.GroupCaller, time.Time) ([]controlstate.PublisherGroupResource, error)
+	GetManagedPublisherGroupForCaller(context.Context, string, string, string, controlstate.GroupCaller, time.Time) (controlstate.PublisherGroupResource, error)
+	UpdateBoundPublisherGroup(context.Context, controlstate.GroupBindingMutationRequest) (controlstate.PublisherGroupResource, error)
+	RetireBoundPublisherGroup(context.Context, controlstate.GroupBindingMutationRequest) error
 	CreateBoundPublisherGroup(context.Context, controlstate.CreateBoundPublisherGroupRequest) (controlstate.PublisherGroupResource, error)
 	UpdatePublisherGroupBindings(context.Context, string, string, string, string, int64, controlstate.PublisherGroupBindings, bool, time.Time) (controlstate.PublisherGroupResource, error)
 	GetManagedPublisherGroup(context.Context, string, string, string, string) (controlstate.PublisherGroupResource, error)

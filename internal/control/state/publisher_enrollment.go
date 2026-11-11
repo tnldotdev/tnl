@@ -78,7 +78,11 @@ func (d *Database) IssuePublisherEnrollment(ctx context.Context, r CreatePublish
 }
 
 func insertPublisherGrant(ctx context.Context, q *controlstatedb.Queries, publisher, issuer string, resolved resolvedPublisherScope, expires *time.Time, now time.Time) (controlstatedb.ControlPublisherGrant, error) {
-	if resolved == nil {
+	return insertPublisherGrantForIssuer(ctx, q, publisher, publisherIssuer{IdentityID: issuer}, resolved, expires, now)
+}
+
+func insertPublisherGrantForIssuer(ctx context.Context, q *controlstatedb.Queries, publisher string, issuer publisherIssuer, resolved resolvedPublisherScope, expires *time.Time, now time.Time) (controlstatedb.ControlPublisherGrant, error) {
+	if resolved == nil || !issuer.valid() {
 		return controlstatedb.ControlPublisherGrant{}, ErrPublisherIdentity
 	}
 	s := resolved.publisherScope()
@@ -86,7 +90,7 @@ func insertPublisherGrant(ctx context.Context, q *controlstatedb.Queries, publis
 	if err != nil {
 		return controlstatedb.ControlPublisherGrant{}, err
 	}
-	grant, err := q.InsertPublisherGrant(ctx, controlstatedb.InsertPublisherGrantParams{ID: id, PublisherIdentityID: publisher, CreatedByIdentityID: issuer, Kind: s.Kind, PublicURLID: nullableText(s.PublicURLID), ServiceID: nullableText(s.ServiceID), DomainID: nullableText(s.DomainID), Namespace: nullableText(s.Namespace), MembershipID: nullableText(s.MembershipID), PublicURLScope: nullableText(string(s.PublicURLScope)), CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
+	grant, err := q.InsertPublisherGrant(ctx, controlstatedb.InsertPublisherGrantParams{ID: id, PublisherIdentityID: publisher, CreatedByIdentityID: nullableText(issuer.IdentityID), CreatedByMachineID: nullableText(issuer.MachineID), ProvisioningGrantID: nullableText(issuer.ProvisioningGrantID), Kind: s.Kind, PublicURLID: nullableText(s.PublicURLID), ServiceID: nullableText(s.ServiceID), DomainID: nullableText(s.DomainID), Namespace: nullableText(s.Namespace), MembershipID: nullableText(s.MembershipID), PublicURLScope: nullableText(string(s.PublicURLScope)), CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
 	var constraint *pgconn.PgError
 	if errors.As(err, &constraint) && constraint.Code == "23505" && (constraint.ConstraintName == "publisher_grants_active_url" || constraint.ConstraintName == "publisher_grants_active_namespace" || constraint.ConstraintName == "publisher_grants_active_service") {
 		return grant, ErrAuthorityConflict
@@ -95,7 +99,11 @@ func insertPublisherGrant(ctx context.Context, q *controlstatedb.Queries, publis
 }
 
 func insertPublisher(ctx context.Context, q *controlstatedb.Queries, resolved resolvedPublisherScope, name, kind, creator, guest, ownership, owner string, public ed25519.PublicKey, expires *time.Time, now time.Time) (PublisherIdentity, error) {
-	if resolved == nil {
+	return insertPublisherForIssuer(ctx, q, resolved, name, kind, publisherIssuer{IdentityID: creator}, guest, ownership, owner, public, expires, now)
+}
+
+func insertPublisherForIssuer(ctx context.Context, q *controlstatedb.Queries, resolved resolvedPublisherScope, name, kind string, issuer publisherIssuer, guest, ownership, owner string, public ed25519.PublicKey, expires *time.Time, now time.Time) (PublisherIdentity, error) {
+	if resolved == nil || !issuer.valid() {
 		return PublisherIdentity{}, ErrPublisherIdentity
 	}
 	s := resolved.publisherScope()
@@ -107,17 +115,17 @@ func insertPublisher(ctx context.Context, q *controlstatedb.Queries, resolved re
 	if err != nil {
 		return PublisherIdentity{}, err
 	}
-	if _, err := q.InsertPublisherIdentity(ctx, controlstatedb.InsertPublisherIdentityParams{ID: id, TeamID: s.TeamID, Name: name, Kind: kind, CreatedByIdentityID: creator, GuestID: nullableText(guest), CreatedAt: timestamptz(now), Ownership: ownership, OwnerMembershipID: nullableText(owner)}); err != nil {
+	if _, err := q.InsertPublisherIdentity(ctx, controlstatedb.InsertPublisherIdentityParams{ID: id, TeamID: s.TeamID, Name: name, Kind: kind, CreatedByIdentityID: nullableText(issuer.IdentityID), CreatedByMachineID: nullableText(issuer.MachineID), ProvisioningGrantID: nullableText(issuer.ProvisioningGrantID), GuestID: nullableText(guest), CreatedAt: timestamptz(now), Ownership: ownership, OwnerMembershipID: nullableText(owner)}); err != nil {
 		return PublisherIdentity{}, err
 	}
 	if err := q.InsertPublisherKey(ctx, controlstatedb.InsertPublisherKeyParams{ID: kid, PublisherIdentityID: id, PublicKey: public, Revision: 1, CreatedAt: timestamptz(now)}); err != nil {
 		return PublisherIdentity{}, err
 	}
-	g, err := insertPublisherGrant(ctx, q, id, creator, resolved, expires, now)
+	g, err := insertPublisherGrantForIssuer(ctx, q, id, issuer, resolved, expires, now)
 	if err != nil {
 		return PublisherIdentity{}, err
 	}
-	return PublisherIdentity{ID: id, KeyID: kid, GrantID: g.ID, CreatorID: creator, Kind: kind, GuestID: guest, Scope: s, Ownership: ownership, OwnerMembershipID: owner}, nil
+	return PublisherIdentity{ID: id, KeyID: kid, GrantID: g.ID, CreatorID: issuer.IdentityID, CreatorMachineID: issuer.MachineID, ProvisioningGrantID: issuer.ProvisioningGrantID, Kind: kind, GuestID: guest, Scope: s, Ownership: ownership, OwnerMembershipID: owner}, nil
 }
 
 func (d *Database) RedeemPublisherEnrollment(ctx context.Context, secret string, public ed25519.PublicKey, now time.Time) (result PublisherIdentity, retErr error) {

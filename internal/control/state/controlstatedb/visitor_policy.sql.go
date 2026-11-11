@@ -159,7 +159,7 @@ func (q *Queries) ReadVisitorPolicyRevision(ctx context.Context, arg ReadVisitor
 }
 
 const readVisitorPolicyService = `-- name: ReadVisitorPolicyService :one
-SELECT id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, trust_revision, visitor_revision, publisher_pool, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id=$1
+SELECT id, team_id, name, name_scope, placement_worktree_key, placement_worktree_label, protocol, tls_metadata, trust_revision, visitor_revision, publisher_pool, domain_id, certificate_hostname, certificate_scope, service_port, ingress_pool_id, public, created_by_identity_id, created_by_machine_id, provisioning_grant_id, idempotency_key, request_digest, enabled, next_run_number, created_at, updated_at, deleted_at FROM control.services WHERE id=$1
 `
 
 func (q *Queries) ReadVisitorPolicyService(ctx context.Context, id string) (ControlService, error) {
@@ -184,6 +184,8 @@ func (q *Queries) ReadVisitorPolicyService(ctx context.Context, id string) (Cont
 		&i.IngressPoolID,
 		&i.Public,
 		&i.CreatedByIdentityID,
+		&i.CreatedByMachineID,
+		&i.ProvisioningGrantID,
 		&i.IdempotencyKey,
 		&i.RequestDigest,
 		&i.Enabled,

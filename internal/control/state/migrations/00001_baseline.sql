@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-durable-visitor-credentials')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities-machine-group-bindings')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-durable-visitor-credentials');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities-machine-group-bindings');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -1536,7 +1536,12 @@ CREATE TABLE control.visitor_grants (
     identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
     auto_owner boolean NOT NULL DEFAULT false,
     invitation_id text UNIQUE,
-    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_machine_id text,
+    provisioning_grant_id text,
+    CHECK ((created_by_identity_id IS NOT NULL) <> (created_by_machine_id IS NOT NULL)),
+    CHECK ((created_by_machine_id IS NULL) = (provisioning_grant_id IS NULL)),
+    CHECK (created_by_machine_id IS NULL OR (kind='team' AND NOT auto_owner)),
     idempotency_key text NOT NULL, request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     created_at timestamptz NOT NULL, expires_at timestamptz, revoked_at timestamptz,
     CHECK ((kind = 'identity') = (identity_id IS NOT NULL)),
@@ -1586,7 +1591,11 @@ CREATE INDEX team_invitation_email_deliveries_pending ON control.team_invitation
 CREATE TABLE control.publisher_identities (
     id text PRIMARY KEY CHECK (id <> ''), team_id text NOT NULL CHECK (team_id <> ''), name text NOT NULL CHECK (name <> ''),
     kind text NOT NULL CHECK (kind IN ('installed', 'automation', 'run', 'guest')),
-    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_machine_id text,
+    provisioning_grant_id text,
+    CHECK ((created_by_identity_id IS NOT NULL) <> (created_by_machine_id IS NOT NULL)),
+    CHECK (provisioning_grant_id IS NULL OR created_by_machine_id IS NOT NULL),
     ownership text NOT NULL CHECK (ownership IN ('team', 'member', 'guest')),
     owner_membership_id text,
     guest_id text REFERENCES control.guest_trials(id) ON DELETE CASCADE,
@@ -1612,7 +1621,11 @@ $$;
 CREATE UNIQUE INDEX publisher_identity_keys_current ON control.publisher_identity_keys(publisher_identity_id) WHERE retired_at IS NULL;
 CREATE TABLE control.publisher_grants (
     id text PRIMARY KEY CHECK (id <> ''), publisher_identity_id text NOT NULL REFERENCES control.publisher_identities(id) ON DELETE CASCADE,
-    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_machine_id text,
+    provisioning_grant_id text,
+    CHECK ((created_by_identity_id IS NOT NULL) <> (created_by_machine_id IS NOT NULL)),
+    CHECK (provisioning_grant_id IS NULL OR created_by_machine_id IS NOT NULL),
     kind text NOT NULL CHECK (kind IN ('saved_public_url', 'namespace', 'service')),
     public_url_id text REFERENCES control.public_urls(id) ON DELETE CASCADE,
     service_id text,
@@ -1689,7 +1702,11 @@ CREATE TABLE control.services (
     service_port integer CHECK (service_port BETWEEN 1024 AND 65535),
     ingress_pool_id text NOT NULL DEFAULT 'ingress-a' REFERENCES control.ingress_pools(id) ON DELETE RESTRICT,
     public boolean NOT NULL DEFAULT false,
-    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_machine_id text,
+    provisioning_grant_id text,
+    CHECK ((created_by_identity_id IS NOT NULL) <> (created_by_machine_id IS NOT NULL)),
+    CHECK ((created_by_machine_id IS NULL) = (provisioning_grant_id IS NULL)),
     idempotency_key text NOT NULL CHECK (idempotency_key <> ''),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
     enabled boolean NOT NULL DEFAULT true,
@@ -2254,7 +2271,11 @@ CREATE TABLE control.publisher_group_enrollments (
     group_id text NOT NULL REFERENCES control.project_publisher_groups(id) ON DELETE RESTRICT,
     secret_digest bytea NOT NULL CHECK (octet_length(secret_digest)=32),
     max_members integer NOT NULL CHECK (max_members BETWEEN 1 AND 256),
-    created_by_identity_id text NOT NULL REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_identity_id text REFERENCES control.identities(id) ON DELETE RESTRICT,
+    created_by_machine_id text,
+    provisioning_grant_id text,
+    CHECK ((created_by_identity_id IS NOT NULL) <> (created_by_machine_id IS NOT NULL)),
+    CHECK ((created_by_machine_id IS NULL) = (provisioning_grant_id IS NULL)),
     expires_at timestamptz NOT NULL,
     revoked_at timestamptz
 );
@@ -2402,6 +2423,10 @@ CREATE TABLE control.service_audit_events (
     occurred_at timestamptz NOT NULL,
     received_at timestamptz NOT NULL DEFAULT now(),
     actor_identity_id text,
+    actor_machine_id text,
+    actor_provisioning_grant_id text,
+    CHECK (actor_identity_id IS NULL OR actor_machine_id IS NULL),
+    CHECK (actor_provisioning_grant_id IS NULL OR actor_machine_id IS NOT NULL),
     device_id text,
     publisher_identity_id text,
     run_id text,
@@ -2419,12 +2444,17 @@ CREATE INDEX service_audit_retention ON control.service_audit_events(received_at
 -- +goose StatementBegin
 CREATE FUNCTION control.append_service_audit(event_id text, team text, service text, kind text, operation text,
     happened timestamptz, actor_id text DEFAULT NULL, device text DEFAULT NULL, publisher text DEFAULT NULL,
-    run text DEFAULT NULL, revision bigint DEFAULT NULL) RETURNS void LANGUAGE plpgsql AS $$
+    run text DEFAULT NULL, revision bigint DEFAULT NULL, machine text DEFAULT NULL,
+    provisioning_grant text DEFAULT NULL) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
+    IF actor_id IS NULL AND machine IS NULL THEN
+        machine:=NULLIF(current_setting('tnl.audit_actor_machine',true),'');
+        provisioning_grant:=NULLIF(current_setting('tnl.audit_provisioning_grant',true),'');
+    END IF;
     PERFORM pg_advisory_xact_lock(hashtextextended('tnl:service-audit:'||team,0));
     INSERT INTO control.service_audit_events(id,team_id,service_id,service_kind,event_type,occurred_at,
-        actor_identity_id,device_id,publisher_identity_id,run_id,configuration_revision)
-    VALUES(event_id,team,service,kind,operation,happened,actor_id,device,publisher,run,revision)
+        actor_identity_id,device_id,publisher_identity_id,run_id,configuration_revision,actor_machine_id,actor_provisioning_grant_id)
+    VALUES(event_id,team,service,kind,operation,happened,actor_id,device,publisher,run,revision,machine,provisioning_grant)
     ON CONFLICT(id) DO NOTHING;
 END;
 $$;
@@ -2456,7 +2486,7 @@ CREATE TRIGGER normalize_service_admin_audit AFTER INSERT ON control.admin_audit
 -- including worker-driven closure. only these named columns are retained.
 -- +goose StatementBegin
 CREATE FUNCTION control.audit_publisher_service_grant() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE team text; service text; audit_kind text; operation text; actor_id text; happened timestamptz; grant_row record; service_row record;
+DECLARE team text; service text; audit_kind text; operation text; actor_id text; machine text; provisioning_grant text; happened timestamptz; grant_row record; service_row record;
 BEGIN
     IF TG_TABLE_NAME='publisher_identities' THEN
         IF NEW.revoked_at IS NULL OR OLD.revoked_at IS NOT NULL THEN RETURN NEW; END IF;
@@ -2478,7 +2508,7 @@ BEGIN
         END LOOP;
         RETURN NEW;
     END IF;
-    IF TG_OP='INSERT' THEN operation:='publisher.join'; happened:=NEW.created_at; actor_id:=NEW.created_by_identity_id;
+    IF TG_OP='INSERT' THEN operation:='publisher.join'; happened:=NEW.created_at; actor_id:=NEW.created_by_identity_id; machine:=NEW.created_by_machine_id; provisioning_grant:=NEW.provisioning_grant_id;
     ELSIF NEW.revoked_at IS NOT NULL AND OLD.revoked_at IS NULL THEN operation:='publisher.revoke'; happened:=NEW.revoked_at; actor_id:=NULLIF(current_setting('tnl.audit_actor',true),'');
     ELSE RETURN NEW; END IF;
     IF NEW.kind='service' THEN
@@ -2493,7 +2523,7 @@ BEGIN
         END LOOP;
         RETURN NEW;
     END IF;
-    PERFORM control.append_service_audit('sae_'||md5(operation||NEW.id)||md5(operation||NEW.id),team,service,audit_kind,operation,happened,actor_id,NULL,NEW.publisher_identity_id);
+    PERFORM control.append_service_audit('sae_'||md5(operation||NEW.id)||md5(operation||NEW.id),team,service,audit_kind,operation,happened,actor_id,NULL,NEW.publisher_identity_id,NULL,NULL,machine,provisioning_grant);
     RETURN NEW;
 END;
 $$;
@@ -2893,3 +2923,85 @@ CREATE TABLE control.relay_run_signing_keys (
 CREATE INDEX relay_run_signing_keys_superseded
     ON control.relay_run_signing_keys (superseded_at, relay_id, relay_run_id)
     WHERE superseded_at IS NOT NULL;
+
+-- machines are not people, memberships, publisher identities, or visitor grants.
+CREATE TABLE control.machine_identities (
+    id text PRIMARY KEY,
+    team_id text NOT NULL REFERENCES control.teams(id),
+    name text NOT NULL CHECK (length(name) BETWEEN 1 AND 128),
+    proof_kind text NOT NULL CHECK (proof_kind IN ('oidc','signing_key')),
+    trust jsonb NOT NULL,
+    revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
+    created_at timestamptz NOT NULL,
+    revoked_at timestamptz,
+    UNIQUE(id,team_id)
+);
+-- a subject cannot evade revocation by selecting a duplicate registration.
+CREATE UNIQUE INDEX machine_oidc_subject ON control.machine_identities(team_id,(trust->>'issuer'),(trust->>'audience'),(trust->'claims'->>'sub')) WHERE proof_kind='oidc';
+CREATE TABLE control.machine_identity_keys (
+    machine_id text NOT NULL REFERENCES control.machine_identities(id),
+    key_id text NOT NULL,
+    public_key bytea NOT NULL CHECK (octet_length(public_key)=32),
+    revoked_at timestamptz,
+    PRIMARY KEY(machine_id,key_id),
+    UNIQUE(machine_id,public_key)
+);
+CREATE TABLE control.machine_provisioning_grants (
+    id text PRIMARY KEY,
+    machine_id text NOT NULL,
+    team_id text NOT NULL,
+    project_key text NOT NULL,
+    templates text[] NOT NULL CHECK (cardinality(templates) BETWEEN 1 AND 32),
+    operations text[] NOT NULL CHECK (cardinality(operations) BETWEEN 1 AND 6),
+    max_enrollment_members integer NOT NULL CHECK (max_enrollment_members BETWEEN 0 AND 256),
+    max_enrollment_seconds integer NOT NULL CHECK (max_enrollment_seconds BETWEEN 0 AND 86400),
+    enrollment_budget integer NOT NULL CHECK (enrollment_budget BETWEEN 0 AND 65536),
+    enrollment_used integer NOT NULL DEFAULT 0 CHECK (enrollment_used BETWEEN 0 AND enrollment_budget),
+    expires_at timestamptz NOT NULL,
+    revoked_at timestamptz,
+    FOREIGN KEY(machine_id,team_id) REFERENCES control.machine_identities(id,team_id),
+    FOREIGN KEY(team_id,project_key) REFERENCES control.applied_projects(team_id,project_key)
+);
+CREATE TABLE control.machine_provisioning_sessions (
+    credential_digest bytea PRIMARY KEY CHECK (octet_length(credential_digest)=32),
+    machine_id text NOT NULL REFERENCES control.machine_identities(id),
+    grant_id text NOT NULL REFERENCES control.machine_provisioning_grants(id),
+    identity_revision bigint NOT NULL,
+    operation text NOT NULL,
+    created_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL CHECK (expires_at>created_at)
+);
+CREATE INDEX machine_provisioning_sessions_expiry ON control.machine_provisioning_sessions(expires_at,credential_digest);
+CREATE TABLE control.machine_proof_uses (
+    machine_id text NOT NULL REFERENCES control.machine_identities(id),
+    proof_digest bytea NOT NULL CHECK (octet_length(proof_digest)=32),
+    expires_at timestamptz NOT NULL,
+    PRIMARY KEY(machine_id,proof_digest)
+);
+CREATE INDEX machine_proof_uses_expiry ON control.machine_proof_uses(expires_at,machine_id,proof_digest);
+CREATE TABLE control.machine_workload_permissions (
+    id text PRIMARY KEY,
+    machine_id text NOT NULL,
+    team_id text NOT NULL,
+    project_key text NOT NULL,
+    workload text NOT NULL,
+    templates text[] NOT NULL CHECK (cardinality(templates) BETWEEN 1 AND 32),
+    expires_at timestamptz NOT NULL,
+    revoked_at timestamptz,
+    FOREIGN KEY(machine_id,team_id) REFERENCES control.machine_identities(id,team_id),
+    FOREIGN KEY(team_id,project_key) REFERENCES control.applied_projects(team_id,project_key)
+);
+CREATE TABLE control.workload_session_machines (
+    session_id text PRIMARY KEY REFERENCES control.workload_sessions(id) ON DELETE CASCADE,
+    machine_id text NOT NULL REFERENCES control.machine_identities(id),
+    identity_revision bigint NOT NULL,
+    permission_id text NOT NULL REFERENCES control.machine_workload_permissions(id),
+    group_id text NOT NULL REFERENCES control.project_publisher_groups(id)
+);
+ALTER TABLE control.publisher_identities ADD FOREIGN KEY(created_by_machine_id) REFERENCES control.machine_identities(id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
+ALTER TABLE control.publisher_grants ADD FOREIGN KEY(created_by_machine_id) REFERENCES control.machine_identities(id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
+ALTER TABLE control.services ADD FOREIGN KEY(created_by_machine_id,team_id) REFERENCES control.machine_identities(id,team_id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
+ALTER TABLE control.visitor_grants ADD FOREIGN KEY(created_by_machine_id,team_id) REFERENCES control.machine_identities(id,team_id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
+ALTER TABLE control.publisher_group_enrollments ADD FOREIGN KEY(created_by_machine_id) REFERENCES control.machine_identities(id), ADD FOREIGN KEY(provisioning_grant_id) REFERENCES control.machine_provisioning_grants(id);
+CREATE UNIQUE INDEX services_machine_idempotency ON control.services(created_by_machine_id,idempotency_key) WHERE created_by_machine_id IS NOT NULL;
+CREATE UNIQUE INDEX visitor_grants_machine_idempotency ON control.visitor_grants(resource_kind,created_by_machine_id,kind,idempotency_key) WHERE created_by_machine_id IS NOT NULL;

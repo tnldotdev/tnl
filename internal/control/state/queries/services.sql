@@ -1,6 +1,6 @@
 -- name: InsertService :one
-INSERT INTO control.services(id, team_id, name, name_scope, created_by_identity_id, idempotency_key, request_digest, created_at, updated_at)
-VALUES (sqlc.arg(id), sqlc.arg(team_id), sqlc.arg(name), sqlc.arg(name_scope), sqlc.arg(created_by_identity_id),
+INSERT INTO control.services(id, team_id, name, name_scope, created_by_identity_id, created_by_machine_id, provisioning_grant_id, idempotency_key, request_digest, created_at, updated_at)
+VALUES (sqlc.arg(id), sqlc.arg(team_id), sqlc.arg(name), sqlc.arg(name_scope), sqlc.narg(created_by_identity_id), sqlc.narg(created_by_machine_id), sqlc.narg(provisioning_grant_id),
     sqlc.arg(idempotency_key), sqlc.arg(request_digest), sqlc.arg(now), sqlc.arg(now)) RETURNING *;
 
 -- name: LockService :one
@@ -36,7 +36,7 @@ WHERE s.id = sqlc.arg(service_id) AND p.id = sqlc.arg(publisher_identity_id)
 INSERT INTO control.visitor_grants(id, service_id, team_id, kind, identity_id, invitation_id,
     created_by_identity_id, idempotency_key, request_digest, created_at, expires_at)
 VALUES (sqlc.arg(id), sqlc.arg(service_id), sqlc.arg(team_id), sqlc.arg(kind),
-    sqlc.narg(identity_id), sqlc.narg(invitation_id), sqlc.arg(created_by_identity_id), sqlc.arg(idempotency_key),
+    sqlc.narg(identity_id), sqlc.narg(invitation_id), sqlc.narg(created_by_identity_id), sqlc.arg(idempotency_key),
     sqlc.arg(request_digest), sqlc.arg(now), sqlc.narg(expires_at)) RETURNING *;
 
 -- name: RevokeServiceGrant :execrows

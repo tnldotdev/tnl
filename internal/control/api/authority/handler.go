@@ -15,6 +15,7 @@ import (
 
 // Config contains settings for the built-in authority API.
 type Config struct {
+	Machines             MachineStore
 	ControlURL           string
 	OIDCIssuer           string
 	OIDCClientID         string
@@ -64,6 +65,7 @@ type Store interface {
 }
 
 type handler struct {
+	machines  MachineStore
 	workloads *oidc.WorkloadVerifier
 	config    Config
 	store     Store
@@ -94,7 +96,7 @@ func (r routeRegistrar) HandleFunc(pattern string, handler func(http.ResponseWri
 
 // Register adds the built-in authority API routes to mux and returns their patterns.
 func Register(mux *http.ServeMux, cfg Config, store Store) (Routes, error) {
-	h := &handler{config: cfg, store: store}
+	h := &handler{config: cfg, store: store, machines: cfg.Machines}
 	if cfg.ControlURL != "" {
 		var err error
 		h.workloads, err = oidc.NewWorkloadVerifier(cfg.ControlURL, cfg.HTTPClient)

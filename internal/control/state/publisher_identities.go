@@ -59,10 +59,20 @@ func publisherScopeForAppliedService(s controlstatedb.ControlAppliedProjectServi
 }
 
 type PublisherIdentity struct {
+	CreatorMachineID, ProvisioningGrantID        string
 	ID, KeyID, GrantID, CreatorID, Kind, GuestID string
 	Ownership, OwnerMembershipID                 string
 	Scope                                        PublisherScope
 }
+
+// publisherIssuer records who actually performed an operation. a manager's
+// approval is not permission to attribute the machine's later work to a person.
+type publisherIssuer struct{ IdentityID, MachineID, ProvisioningGrantID string }
+
+func (i publisherIssuer) valid() bool {
+	return (i.IdentityID != "") != (i.MachineID != "") && (i.ProvisioningGrantID == "" || i.MachineID != "")
+}
+
 type PublisherEnrollment struct {
 	ID, Key string
 	Scope   PublisherScope

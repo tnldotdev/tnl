@@ -3,9 +3,9 @@ SELECT pg_advisory_xact_lock(hashtextextended('tnl:service-audit:' || sqlc.arg(t
 
 -- name: InsertServiceAuditEvent :execrows
 INSERT INTO control.service_audit_events(id,team_id,service_id,service_kind,event_type,occurred_at,received_at,
-    actor_identity_id,device_id,publisher_identity_id,run_id,visitor_connection_id,source_ip,outcome,reason,configuration_revision)
+    actor_identity_id,actor_machine_id,actor_provisioning_grant_id,device_id,publisher_identity_id,run_id,visitor_connection_id,source_ip,outcome,reason,configuration_revision)
 VALUES(sqlc.arg(id),sqlc.arg(team_id),sqlc.arg(service_id),sqlc.arg(service_kind),sqlc.arg(event_type),sqlc.arg(occurred_at),sqlc.arg(received_at),
-    sqlc.narg(actor_identity_id),sqlc.narg(device_id),sqlc.narg(publisher_identity_id),sqlc.narg(run_id),sqlc.narg(visitor_connection_id),sqlc.narg(source_ip),sqlc.narg(outcome),sqlc.narg(reason),sqlc.narg(configuration_revision))
+    sqlc.narg(actor_identity_id),sqlc.narg(actor_machine_id),sqlc.narg(actor_provisioning_grant_id),sqlc.narg(device_id),sqlc.narg(publisher_identity_id),sqlc.narg(run_id),sqlc.narg(visitor_connection_id),sqlc.narg(source_ip),sqlc.narg(outcome),sqlc.narg(reason),sqlc.narg(configuration_revision))
 ON CONFLICT(id) DO NOTHING;
 
 -- name: ListServiceAuditEvents :many

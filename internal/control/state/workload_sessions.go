@@ -54,6 +54,7 @@ type WorkloadGitHubExecution struct {
 }
 
 type ExchangeWorkloadRequest struct {
+	Machine                                                *MachineWorkloadProof
 	TeamID, ProjectKey, Workload, SourceFingerprint, Nonce string
 	Execution                                              oidc.WorkloadExecution
 	PublicKey                                              ed25519.PublicKey
@@ -71,7 +72,8 @@ func workloadCredentialContext(id string) string { return "workload-credential/"
 func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadRequest, now time.Time) (result WorkloadSession, retErr error) {
 	clock := newAuthorizationClock(now)
 	c := r.Execution
-	if c.Validate(now) != nil || !workloadproof.ValidNonce(r.Nonce) || !fingerprintPattern.MatchString(r.SourceFingerprint) || len(r.PublicKey) != 32 || len(r.Signature) != 64 || !ed25519.Verify(r.PublicKey, workloadproof.Exchange(r.TeamID, r.ProjectKey, r.Workload, r.SourceFingerprint, r.Nonce, c.AssertionDigest, r.Services), r.Signature) {
+	proofTeam := r.TeamID
+	if !workloadproof.ValidNonce(r.Nonce) || !fingerprintPattern.MatchString(r.SourceFingerprint) || len(r.PublicKey) != 32 || len(r.Signature) != 64 {
 		return result, ErrWorkloadDenied
 	}
 	team, err := d.workloadTeam(ctx, r.TeamID)
@@ -97,6 +99,34 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 		return result, err
 	}
 	p, found := configuration.Workloads[r.Workload]
+	var machineAuthority machineWorkloadAuthority
+	if r.Machine != nil {
+		var group controlstatedb.ControlProjectPublisherGroup
+		if err = tx.QueryRow(ctx, `SELECT id,team_id,project_key,name,template_name FROM control.project_publisher_groups WHERE id=$1 AND team_id=$2 AND project_key=$3 AND deleted_at IS NULL FOR UPDATE`, r.Machine.GroupID, r.TeamID, r.ProjectKey).Scan(&group.ID, &group.TeamID, &group.ProjectKey, &group.Name, &group.TemplateName); err != nil {
+			return result, publisherLookupError(err, ErrMachineDenied)
+		}
+		c, machineAuthority, err = d.verifyGroupMachine(ctx, tx, group, p, r.Workload, *r.Machine, "exchange", machineExchangePublicKey(r), r.Nonce, r.Services, clock.current())
+		if err != nil {
+			return result, err
+		}
+		// a registered permission is for this concrete group's services only.
+		if len(r.Services) == 0 {
+			return result, ErrMachineDenied
+		}
+		for _, service := range r.Services {
+			if !strings.HasPrefix(service, group.ID+"/") {
+				return result, ErrMachineDenied
+			}
+		}
+	} else {
+		c, machineAuthority, err = d.registeredMachineExchange(ctx, tx, r, p, c, clock.current())
+		if err != nil {
+			return result, err
+		}
+	}
+	if c.Validate(clock.current()) != nil || !ed25519.Verify(r.PublicKey, workloadproof.Exchange(proofTeam, r.ProjectKey, r.Workload, r.SourceFingerprint, r.Nonce, c.AssertionDigest, r.Services), r.Signature) {
+		return result, ErrWorkloadDenied
+	}
 	if !found || project.SourceFingerprint != r.SourceFingerprint || !p.matches(c) || c.Validate(clock.current()) != nil {
 		return result, ErrWorkloadDenied
 	}
@@ -182,6 +212,16 @@ func (d *Database) ExchangeWorkload(ctx context.Context, r ExchangeWorkloadReque
 		if err != nil {
 			return result, err
 		}
+		if machineAuthority.MachineID != "" {
+			if machineAuthority.Signed {
+				if err = consumeMachineProof(ctx, tx, machineAuthority.MachineID, machineAuthority.Digest, machineAuthority.ProofUntil); err != nil {
+					return result, err
+				}
+			}
+			if _, err = tx.Exec(ctx, `INSERT INTO control.workload_session_machines(session_id,machine_id,identity_revision,permission_id,group_id) VALUES($1,$2,$3,$4,$5)`, id, machineAuthority.MachineID, machineAuthority.Revision, machineAuthority.PermissionID, machineAuthority.GroupID); err != nil {
+				return result, err
+			}
+		}
 		for _, s := range services {
 			tag, err := tx.Exec(ctx, `INSERT INTO control.workload_session_services(workload_session_id,service_id,service) SELECT $1,applied.service_id,$5 FROM control.applied_project_services applied JOIN control.services service ON service.id=applied.service_id WHERE applied.team_id=$2 AND applied.project_key=$3 AND applied.service=$4 AND service.enabled AND service.deleted_at IS NULL`, id, r.TeamID, r.ProjectKey, bindings[s], appliedServiceName(s))
 			if err != nil {
@@ -227,6 +267,9 @@ func (d *Database) workloadSession(ctx context.Context, tx pgx.Tx, id string, no
 	row, err := q.GetWorkloadSession(ctx, id)
 	if err != nil {
 		return r, publisherLookupError(err, ErrWorkloadDenied)
+	}
+	if err = verifyMachineSession(ctx, tx, id, now); err != nil {
+		return r, err
 	}
 	r = WorkloadSession{ID: row.ID, TeamID: row.TeamID, ProjectKey: row.ProjectKey, Workload: row.WorkloadName, Provider: row.Provider, LeaseExpiresAt: row.LeaseExpiresAt.Time, RenewAfter: row.RenewedAt.Time.Add(WorkloadRenewAfter), RenewalSequence: row.RenewalSequence}
 	if row.ExpiresAt.Valid {
@@ -376,6 +419,9 @@ func VisitorSubjectAccess(ctx context.Context, tx pgx.Tx, service string, subjec
 			return time.Time{}, 0, ErrServiceAccess
 		}
 		return privateVisitorAccess(ctx, tx, service, subject.IdentityID, now)
+	}
+	if err := verifyMachineSession(ctx, tx, subject.WorkloadSessionID, now); err != nil {
+		return time.Time{}, 0, ErrServiceAccess
 	}
 	var until time.Time
 	var revision int64

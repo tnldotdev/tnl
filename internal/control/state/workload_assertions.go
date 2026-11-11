@@ -60,6 +60,14 @@ func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential s
 		return result, err
 	}
 	defer rollback(ctx, tx, "attach workload assertion", &retErr)()
+	result, err = d.attachWorkloadAssertion(ctx, tx, id, credential, c, signature, clock)
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit(ctx)
+}
+
+func (d *Database) attachWorkloadAssertion(ctx context.Context, tx pgx.Tx, id, credential string, c oidc.WorkloadExecution, signature []byte, clock authorizationClock) (result WorkloadSession, err error) {
 	row, err := controlstatedb.New(tx).GetWorkloadSession(ctx, id)
 	if err != nil {
 		return result, publisherLookupError(err, ErrWorkloadDenied)
@@ -76,6 +84,16 @@ func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential s
 	row, err = controlstatedb.New(tx).LockWorkloadSession(ctx, id)
 	if err != nil {
 		return result, err
+	}
+	if err = verifyMachineSession(ctx, tx, id, clock.current()); err != nil {
+		return result, err
+	}
+	var machineDeadline *time.Time
+	if err = tx.QueryRow(ctx, `SELECT min(p.expires_at) FROM control.workload_session_machines x JOIN control.machine_workload_permissions p ON p.id=x.permission_id WHERE x.session_id=$1`, id).Scan(&machineDeadline); err != nil {
+		return result, err
+	}
+	if machineDeadline != nil && c.ExpiresAt > machineDeadline.Unix() {
+		c.ExpiresAt = machineDeadline.Unix()
 	}
 	var previous oidc.WorkloadExecution
 	if err = json.Unmarshal(row.Claims, &previous); err != nil {
@@ -116,7 +134,7 @@ func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential s
 	if err != nil {
 		return result, err
 	}
-	return result, tx.Commit(ctx)
+	return result, nil
 }
 
 func consumeWorkloadAssertion(ctx context.Context, tx pgx.Tx, id string, c oidc.WorkloadExecution) error {

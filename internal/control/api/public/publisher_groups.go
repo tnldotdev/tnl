@@ -13,6 +13,8 @@ import (
 )
 
 type PublisherGroupStore interface {
+	RevokePublisherGroupMemberForCaller(context.Context, string, string, string, string, controlstate.GroupCaller, time.Time) error
+	IssuePublisherGroupEnrollmentForCaller(context.Context, string, string, string, controlstate.GroupCaller, int, time.Duration, time.Time) (controlstate.PublisherGroupEnrollment, error)
 	RevokePublisherGroupMember(context.Context, string, string, string, string, string, time.Time) error
 	IssuePublisherGroupEnrollment(context.Context, string, string, string, string, int, time.Duration, time.Time) (controlstate.PublisherGroupEnrollment, error)
 	RedeemPublisherGroupEnrollment(context.Context, string, ed25519.PublicKey, time.Time) (controlstate.PublisherGroupMember, error)
@@ -75,11 +77,11 @@ func (h *handler) RevokePublisherGroupMember(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	actor, ok := h.projectManager(w, r, params.TeamId)
+	actor, ok := h.groupCaller(w, r, params.TeamId)
 	if !ok {
 		return
 	}
-	if err := store.RevokePublisherGroupMember(r.Context(), params.TeamId, project, group, publisher, actor, time.Now()); err != nil {
+	if err := store.RevokePublisherGroupMemberForCaller(r.Context(), params.TeamId, project, group, publisher, actor, time.Now()); err != nil {
 		projectConfigurationProblem(r.Context(), w, "revoke publisher group member", err)
 		return
 	}
@@ -109,11 +111,11 @@ func (h *handler) CreatePublisherGroupEnrollment(w http.ResponseWriter, r *http.
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid publisher group enrollment")
 		return
 	}
-	actor, ok := h.projectManager(w, r, body.TeamId)
+	actor, ok := h.groupCaller(w, r, body.TeamId)
 	if !ok {
 		return
 	}
-	result, err := store.IssuePublisherGroupEnrollment(r.Context(), body.TeamId, project, group, actor, body.MaxMembers, time.Duration(body.ExpiresIn)*time.Second, time.Now())
+	result, err := store.IssuePublisherGroupEnrollmentForCaller(r.Context(), body.TeamId, project, group, actor, body.MaxMembers, time.Duration(body.ExpiresIn)*time.Second, time.Now())
 	if err != nil {
 		if errors.Is(err, controlstate.ErrPublisherGroup) {
 			writeProblem(w, 404, controlv1.NotFound, "publisher group not found")

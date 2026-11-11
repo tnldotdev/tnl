@@ -151,7 +151,7 @@ func (d *Database) AcceptServiceInvitation(ctx context.Context, identityID, secr
 	}
 	grant, err := q.InsertServiceGrant(ctx, controlstatedb.InsertServiceGrantParams{
 		ID: grantID, ServiceID: text(serviceID), TeamID: invitation.TeamID, Kind: "identity",
-		IdentityID: text(identityID), InvitationID: text(id), CreatedByIdentityID: invitation.CreatedByIdentityID,
+		IdentityID: text(identityID), InvitationID: text(id), CreatedByIdentityID: nullableText(invitation.CreatedByIdentityID),
 		IdempotencyKey: "invitation/" + id, RequestDigest: invitation.RequestDigest,
 		Now: timestamptz(now), ExpiresAt: invitation.ExpiresAt,
 	})

@@ -56,29 +56,31 @@ func (q *Queries) CleanupServiceManagementAudit(ctx context.Context, arg Cleanup
 
 const insertServiceAuditEvent = `-- name: InsertServiceAuditEvent :execrows
 INSERT INTO control.service_audit_events(id,team_id,service_id,service_kind,event_type,occurred_at,received_at,
-    actor_identity_id,device_id,publisher_identity_id,run_id,visitor_connection_id,source_ip,outcome,reason,configuration_revision)
+    actor_identity_id,actor_machine_id,actor_provisioning_grant_id,device_id,publisher_identity_id,run_id,visitor_connection_id,source_ip,outcome,reason,configuration_revision)
 VALUES($1,$2,$3,$4,$5,$6,$7,
-    $8,$9,$10,$11,$12,$13,$14,$15,$16)
+    $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 ON CONFLICT(id) DO NOTHING
 `
 
 type InsertServiceAuditEventParams struct {
-	ID                    string
-	TeamID                string
-	ServiceID             string
-	ServiceKind           string
-	EventType             string
-	OccurredAt            pgtype.Timestamptz
-	ReceivedAt            pgtype.Timestamptz
-	ActorIdentityID       pgtype.Text
-	DeviceID              pgtype.Text
-	PublisherIdentityID   pgtype.Text
-	RunID                 pgtype.Text
-	VisitorConnectionID   pgtype.Text
-	SourceIp              *netip.Addr
-	Outcome               pgtype.Text
-	Reason                pgtype.Text
-	ConfigurationRevision pgtype.Int8
+	ID                       string
+	TeamID                   string
+	ServiceID                string
+	ServiceKind              string
+	EventType                string
+	OccurredAt               pgtype.Timestamptz
+	ReceivedAt               pgtype.Timestamptz
+	ActorIdentityID          pgtype.Text
+	ActorMachineID           pgtype.Text
+	ActorProvisioningGrantID pgtype.Text
+	DeviceID                 pgtype.Text
+	PublisherIdentityID      pgtype.Text
+	RunID                    pgtype.Text
+	VisitorConnectionID      pgtype.Text
+	SourceIp                 *netip.Addr
+	Outcome                  pgtype.Text
+	Reason                   pgtype.Text
+	ConfigurationRevision    pgtype.Int8
 }
 
 func (q *Queries) InsertServiceAuditEvent(ctx context.Context, arg InsertServiceAuditEventParams) (int64, error) {
@@ -91,6 +93,8 @@ func (q *Queries) InsertServiceAuditEvent(ctx context.Context, arg InsertService
 		arg.OccurredAt,
 		arg.ReceivedAt,
 		arg.ActorIdentityID,
+		arg.ActorMachineID,
+		arg.ActorProvisioningGrantID,
 		arg.DeviceID,
 		arg.PublisherIdentityID,
 		arg.RunID,
@@ -107,7 +111,7 @@ func (q *Queries) InsertServiceAuditEvent(ctx context.Context, arg InsertService
 }
 
 const listServiceAuditEvents = `-- name: ListServiceAuditEvents :many
-SELECT cursor, id, team_id, service_id, service_kind, event_type, occurred_at, received_at, actor_identity_id, device_id, publisher_identity_id, run_id, visitor_connection_id, source_ip, outcome, reason, configuration_revision FROM control.service_audit_events
+SELECT cursor, id, team_id, service_id, service_kind, event_type, occurred_at, received_at, actor_identity_id, actor_machine_id, actor_provisioning_grant_id, device_id, publisher_identity_id, run_id, visitor_connection_id, source_ip, outcome, reason, configuration_revision FROM control.service_audit_events
 WHERE team_id=$1 AND cursor>$2
     AND received_at >= $3
     AND ($4::timestamptz IS NULL OR occurred_at>=$4)
@@ -150,6 +154,8 @@ func (q *Queries) ListServiceAuditEvents(ctx context.Context, arg ListServiceAud
 			&i.OccurredAt,
 			&i.ReceivedAt,
 			&i.ActorIdentityID,
+			&i.ActorMachineID,
+			&i.ActorProvisioningGrantID,
 			&i.DeviceID,
 			&i.PublisherIdentityID,
 			&i.RunID,

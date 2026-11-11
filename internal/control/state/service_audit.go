@@ -21,10 +21,14 @@ var ErrServiceAuditAccess = errors.New("service audit access denied")
 // SetServiceAuditActor binds database-normalized events to an authenticated
 // management actor for this transaction only. never call it with client claims.
 func SetServiceAuditActor(ctx context.Context, tx pgx.Tx, actor string) error {
-	if !serviceaudit.ValidReference(actor) {
+	return setServiceAuditIssuer(ctx, tx, publisherIssuer{IdentityID: actor})
+}
+
+func setServiceAuditIssuer(ctx context.Context, tx pgx.Tx, actor publisherIssuer) error {
+	if !actor.valid() || actor.IdentityID != "" && !serviceaudit.ValidReference(actor.IdentityID) || actor.MachineID != "" && !serviceaudit.ValidReference(actor.MachineID) || actor.ProvisioningGrantID != "" && !serviceaudit.ValidReference(actor.ProvisioningGrantID) {
 		return serviceaudit.ErrInvalid
 	}
-	_, err := tx.Exec(ctx, `SELECT set_config('tnl.audit_actor',$1,true)`, actor)
+	_, err := tx.Exec(ctx, `SELECT set_config('tnl.audit_actor',$1,true),set_config('tnl.audit_actor_machine',$2,true),set_config('tnl.audit_provisioning_grant',$3,true)`, actor.IdentityID, actor.MachineID, actor.ProvisioningGrantID)
 	return err
 }
 
@@ -48,6 +52,8 @@ func RecordServiceAudit(ctx context.Context, tx pgx.Tx, event serviceaudit.Event
 	if requestID == "" || len(requestID) > 256 || !serviceaudit.ValidReference(event.TeamID) ||
 		!serviceaudit.ValidReference(event.ServiceID) || event.ServiceKind != "public_url" && event.ServiceKind != "service" || event.OccurredAt.IsZero() ||
 		event.ActorIdentityID != "" && !serviceaudit.ValidReference(event.ActorIdentityID) ||
+		event.ActorMachineID != "" && (!serviceaudit.ValidReference(event.ActorMachineID) || event.ActorIdentityID != "") ||
+		event.ActorProvisioningGrantID != "" && (!serviceaudit.ValidReference(event.ActorProvisioningGrantID) || event.ActorMachineID == "") ||
 		event.DeviceID != "" && !opaqueid.Valid(event.DeviceID, "vdev_") ||
 		event.PublisherIdentityID != "" && !opaqueid.Valid(event.PublisherIdentityID, opaqueid.PublisherIdentityPrefix) ||
 		event.RunID != "" && !serviceaudit.ValidReference(event.RunID) ||
@@ -86,6 +92,15 @@ func RecordServiceAudit(ctx context.Context, tx pgx.Tx, event serviceaudit.Event
 	if event.RunID != "" {
 		var matches bool
 		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.publish_runs WHERE id=$1 AND public_url_id=$2 AND team_id=$3 UNION ALL SELECT 1 FROM control.service_runs WHERE id=$1 AND service_id=$2 AND team_id=$3)`, event.RunID, event.ServiceID, event.TeamID).Scan(&matches); err != nil {
+			return err
+		}
+		if !matches {
+			return ErrServiceAuditAccess
+		}
+	}
+	if event.ActorMachineID != "" {
+		var matches bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.machine_identities m WHERE m.id=$1 AND m.team_id=$2 AND ($3='' OR EXISTS(SELECT 1 FROM control.machine_provisioning_grants g WHERE g.id=$3 AND g.machine_id=m.id AND g.team_id=m.team_id)))`, event.ActorMachineID, event.TeamID, event.ActorProvisioningGrantID).Scan(&matches); err != nil {
 			return err
 		}
 		if !matches {
@@ -134,7 +149,7 @@ func insertServiceAuditCount(ctx context.Context, tx pgx.Tx, e serviceaudit.Even
 		}
 		ip = &addr
 	}
-	n, err := q.InsertServiceAuditEvent(ctx, controlstatedb.InsertServiceAuditEventParams{ID: e.ID, TeamID: e.TeamID, ServiceID: e.ServiceID, ServiceKind: e.ServiceKind, EventType: e.EventType, OccurredAt: timestamptz(e.OccurredAt), ReceivedAt: timestamptz(now), ActorIdentityID: nullableText(e.ActorIdentityID), DeviceID: nullableText(e.DeviceID), PublisherIdentityID: nullableText(e.PublisherIdentityID), RunID: nullableText(e.RunID), VisitorConnectionID: nullableText(e.VisitorConnectionID), SourceIp: ip, Outcome: nullableText(e.Outcome), Reason: nullableText(e.Reason), ConfigurationRevision: pgtype.Int8{Int64: e.ConfigurationRevision, Valid: e.ConfigurationRevision > 0}})
+	n, err := q.InsertServiceAuditEvent(ctx, controlstatedb.InsertServiceAuditEventParams{ID: e.ID, TeamID: e.TeamID, ServiceID: e.ServiceID, ServiceKind: e.ServiceKind, EventType: e.EventType, OccurredAt: timestamptz(e.OccurredAt), ReceivedAt: timestamptz(now), ActorIdentityID: nullableText(e.ActorIdentityID), ActorMachineID: nullableText(e.ActorMachineID), ActorProvisioningGrantID: nullableText(e.ActorProvisioningGrantID), DeviceID: nullableText(e.DeviceID), PublisherIdentityID: nullableText(e.PublisherIdentityID), RunID: nullableText(e.RunID), VisitorConnectionID: nullableText(e.VisitorConnectionID), SourceIp: ip, Outcome: nullableText(e.Outcome), Reason: nullableText(e.Reason), ConfigurationRevision: pgtype.Int8{Int64: e.ConfigurationRevision, Valid: e.ConfigurationRevision > 0}})
 	if err != nil || n != 0 {
 		return n, err
 	}
@@ -228,7 +243,7 @@ func (d *Database) ListServiceAudit(ctx context.Context, team, actor string, f S
 			page.NextCursor = page.Events[i-1].Cursor
 			break
 		}
-		e := serviceaudit.Event{ID: row.ID, Cursor: strconv.FormatInt(row.Cursor, 10), TeamID: row.TeamID, ServiceID: row.ServiceID, ServiceKind: row.ServiceKind, EventType: row.EventType, OccurredAt: row.OccurredAt.Time, ActorIdentityID: row.ActorIdentityID.String, DeviceID: row.DeviceID.String, PublisherIdentityID: row.PublisherIdentityID.String, RunID: row.RunID.String, VisitorConnectionID: row.VisitorConnectionID.String, Outcome: row.Outcome.String, Reason: row.Reason.String, ConfigurationRevision: row.ConfigurationRevision.Int64}
+		e := serviceaudit.Event{ID: row.ID, Cursor: strconv.FormatInt(row.Cursor, 10), TeamID: row.TeamID, ServiceID: row.ServiceID, ServiceKind: row.ServiceKind, EventType: row.EventType, OccurredAt: row.OccurredAt.Time, ActorIdentityID: row.ActorIdentityID.String, ActorMachineID: row.ActorMachineID.String, ActorProvisioningGrantID: row.ActorProvisioningGrantID.String, DeviceID: row.DeviceID.String, PublisherIdentityID: row.PublisherIdentityID.String, RunID: row.RunID.String, VisitorConnectionID: row.VisitorConnectionID.String, Outcome: row.Outcome.String, Reason: row.Reason.String, ConfigurationRevision: row.ConfigurationRevision.Int64}
 		if row.SourceIp != nil && row.SourceIp.IsValid() {
 			e.SourceIP = row.SourceIp.Unmap().String()
 		}

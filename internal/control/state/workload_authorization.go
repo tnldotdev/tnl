@@ -15,6 +15,14 @@ import (
 type authorizationClock struct{ entered, started time.Time }
 
 func newAuthorizationClock(now time.Time) authorizationClock {
+	// a real request timestamp already carries its monotonic entry clock. do
+	// not restart that clock after proof preparation: doing so subtracts the
+	// preparation time and can mistake a concurrent renewal for clock rollback.
+	// synthetic/database timestamps have no monotonic reading; keep their
+	// explicit epoch and measure only work performed after entering this call.
+	if now != now.Round(0) {
+		return authorizationClock{entered: now, started: now}
+	}
 	return authorizationClock{entered: now, started: time.Now()}
 }
 
@@ -55,6 +63,9 @@ func lockWorkloadCredential(ctx context.Context, tx pgx.Tx, credential string, c
 		return workloadAuthority{}, publisherLookupError(err, ErrWorkloadDenied)
 	}
 	source.CheckedAt = clock.current()
+	if err = verifyMachineSession(ctx, tx, source.ID, source.CheckedAt); err != nil {
+		return workloadAuthority{}, err
+	}
 	if revoked || source.CheckedAt.Before(created) || source.CheckedAt.Before(renewed) ||
 		!source.LeaseExpiresAt.After(source.CheckedAt) || !source.IdentityExpiresAt.After(source.CheckedAt) || source.ExpiresAt != nil && !source.ExpiresAt.After(source.CheckedAt) {
 		return workloadAuthority{}, ErrWorkloadDenied

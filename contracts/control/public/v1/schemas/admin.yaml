@@ -12,6 +12,8 @@ schemas:
       event_type: { type: string, maxLength: 64 }
       occurred_at: { type: string, format: date-time }
       actor_identity_id: { type: string }
+      actor_machine_id: { type: string }
+      actor_provisioning_grant_id: { type: string }
       device_id: { type: string }
       publisher_identity_id: { type: string }
       run_id: { type: string }

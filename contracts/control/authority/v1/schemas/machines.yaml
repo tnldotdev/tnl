@@ -1,0 +1,185 @@
+schemas:
+  MachineTrust:
+    type: object
+    additionalProperties: false
+    required: [provider, issuer, jwks_url, audience, claims]
+    properties:
+      provider: { type: string, enum: [oidc] }
+      issuer: { type: string, maxLength: 2048 }
+      jwks_url: { type: string, maxLength: 2048 }
+      audience: { type: string, maxLength: 1024 }
+      claims: { type: object, maxProperties: 32, additionalProperties: { type: string } }
+  RegisterMachineRequest:
+    type: object
+    additionalProperties: false
+    required: [name, proof_kind]
+    properties:
+      name: { type: string, minLength: 1, maxLength: 128 }
+      proof_kind: { type: string, enum: [oidc, signing_key] }
+      trust: { $ref: "../openapi.yaml#/components/schemas/MachineTrust" }
+      key_id: { type: string, maxLength: 128 }
+      public_key: { type: string, description: Unpadded base64url Ed25519 public key. }
+  MachineIdentity:
+    type: object
+    additionalProperties: false
+    required: [id, team_id, name, proof_kind, revision]
+    properties:
+      id: { type: string }
+      team_id: { type: string }
+      name: { type: string }
+      proof_kind: { type: string, enum: [oidc, signing_key] }
+      revision: { type: integer, format: int64 }
+      trust: { $ref: "../openapi.yaml#/components/schemas/MachineTrust" }
+  MachineKey:
+    type: object
+    additionalProperties: false
+    required: [key_id, public_key]
+    properties:
+      key_id: { type: string, minLength: 1, maxLength: 128 }
+      public_key: { type: string }
+  ProvisioningOperation:
+    type: string
+    enum: [create, read, update, enroll, revoke_member, retire]
+    x-enum-varnames:
+      [
+        ProvisioningCreate,
+        ProvisioningRead,
+        ProvisioningUpdate,
+        ProvisioningEnroll,
+        ProvisioningRevokeMember,
+        ProvisioningRetire,
+      ]
+  ProvisioningGrantRequest:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        project_key,
+        templates,
+        operations,
+        max_enrollment_members,
+        max_enrollment_seconds,
+        enrollment_budget,
+        expires_at,
+      ]
+    properties:
+      project_key: { type: string }
+      templates:
+        { type: array, minItems: 1, maxItems: 32, uniqueItems: true, items: { type: string } }
+      operations:
+        {
+          type: array,
+          minItems: 1,
+          maxItems: 6,
+          uniqueItems: true,
+          items: { $ref: "../openapi.yaml#/components/schemas/ProvisioningOperation" },
+        }
+      max_enrollment_members: { type: integer, minimum: 0, maximum: 256 }
+      max_enrollment_seconds: { type: integer, minimum: 0, maximum: 86400 }
+      enrollment_budget: { type: integer, minimum: 0, maximum: 65536 }
+      expires_at: { type: string, format: date-time }
+  MachinePermissionResult:
+    type: object
+    additionalProperties: false
+    required: [id]
+    properties:
+      id: { type: string }
+  MachineWorkloadPermissionRequest:
+    type: object
+    additionalProperties: false
+    required: [project_key, workload, templates, expires_at]
+    properties:
+      project_key: { type: string }
+      workload: { type: string, minLength: 1, maxLength: 32 }
+      templates:
+        { type: array, minItems: 1, maxItems: 32, uniqueItems: true, items: { type: string } }
+      expires_at: { type: string, format: date-time }
+  ProvisioningExchange:
+    type: object
+    additionalProperties: false
+    required: [machine_id, grant_id, operation, assertion]
+    properties:
+      machine_id: { type: string }
+      grant_id: { type: string }
+      operation: { $ref: "../openapi.yaml#/components/schemas/ProvisioningOperation" }
+      assertion:
+        type: string
+        minLength: 1
+        maxLength: 32768
+        description: Current OIDC assertions may be reused across exchanges; each exchange verifies current trust and grant. Registered-key JWTs require a fresh jti, exact exchange audience and machineproof.Provisioning grant_id scope for this grant and operation.
+  ProvisioningSession:
+    type: object
+    additionalProperties: false
+    required:
+      [
+        access_token,
+        token_type,
+        expires_at,
+        grant_id,
+        operation,
+        team_id,
+        project_key,
+        templates,
+        project_revision,
+        source_fingerprint,
+      ]
+    properties:
+      access_token:
+        {
+          type: string,
+          description: Opaque provisioning-only token. Not a human session or visitor credential.,
+        }
+      token_type: { type: string, enum: [Bearer] }
+      expires_at:
+        {
+          type: string,
+          format: date-time,
+          description: Capped at five minutes and at proof and grant expiry.,
+        }
+      grant_id: { type: string }
+      operation: { $ref: "../openapi.yaml#/components/schemas/ProvisioningOperation" }
+      team_id: { type: string }
+      project_key: { type: string }
+      templates: { type: array, minItems: 1, maxItems: 32, items: { type: string } }
+      project_revision:
+        {
+          type: integer,
+          format: int64,
+          minimum: 0,
+          description: Current applied project revision,
+          not permission to overwrite project configuration.,
+        }
+      source_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+  PublisherGroupWorkloadResolution:
+    type: object
+    additionalProperties: false
+    required: [connection, publisher_group]
+    properties:
+      connection:
+        { $ref: "../../../public/v1/openapi.yaml#/components/schemas/PublisherGroupConnection" }
+      publisher_group:
+        {
+          type: string,
+          description: Authoritative configuration definition key; the concrete group's template name,
+          or its declared group name. Not its mutable display name.,
+        }
+  ResolvePublisherGroupWorkload:
+    type: object
+    additionalProperties: false
+    required: [workload, assertion]
+    properties:
+      workload: { type: string, minLength: 1, maxLength: 32 }
+      assertion: { type: string, minLength: 1, maxLength: 32768 }
+      machine_id:
+        {
+          type: string,
+          description: Required for a registered signing-key proof. Its separate workload permission must currently approve this template and workload.,
+        }
+  MachineWorkloadExchange:
+    type: object
+    additionalProperties: false
+    required: [machine_id, group_id, exchange]
+    properties:
+      machine_id: { type: string }
+      group_id: { type: string }
+      exchange: { $ref: "../openapi.yaml#/components/schemas/WorkloadExchange" }

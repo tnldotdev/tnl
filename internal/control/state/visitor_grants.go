@@ -102,7 +102,7 @@ func (d *Database) createVisitorGrant(ctx context.Context, urlID, actorID, key, 
 	}{urlID, identityID, expires})
 	digest := sha256.Sum256(encoded)
 	row, err := q.CreateVisitorGrant(ctx, controlstatedb.CreateVisitorGrantParams{ID: id, PublicURLID: text(urlID), TeamID: url.TeamID,
-		Kind: kind, IdentityID: nullableText(identityID), CreatedByIdentityID: actorID, IdempotencyKey: key, RequestDigest: digest[:], CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
+		Kind: kind, IdentityID: nullableText(identityID), CreatedByIdentityID: nullableText(actorID), IdempotencyKey: key, RequestDigest: digest[:], CreatedAt: timestamptz(now), ExpiresAt: nullableTime(expires)})
 	if err != nil {
 		return result, err
 	}
@@ -287,7 +287,7 @@ func (d *Database) AcceptVisitorInvitation(ctx context.Context, identityID, secr
 		return result, err
 	}
 	grant, err := q.CreateVisitorGrant(ctx, controlstatedb.CreateVisitorGrantParams{ID: id, PublicURLID: text(url.ID), TeamID: url.TeamID, Kind: "identity", IdentityID: nullableText(identityID),
-		CreatedByIdentityID: row.CreatedByIdentityID, IdempotencyKey: "invitation/" + id, RequestDigest: row.RequestDigest, CreatedAt: timestamptz(now), ExpiresAt: row.ExpiresAt})
+		CreatedByIdentityID: nullableText(row.CreatedByIdentityID), IdempotencyKey: "invitation/" + id, RequestDigest: row.RequestDigest, CreatedAt: timestamptz(now), ExpiresAt: row.ExpiresAt})
 	if err != nil {
 		return result, err
 	}

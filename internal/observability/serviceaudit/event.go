@@ -22,22 +22,24 @@ var ErrInvalid = errors.New("invalid service audit event")
 // event fields deliberately exclude arbitrary metadata, request bodies, paths,
 // credentials, keys, target addresses and configuration snapshots.
 type Event struct {
-	ID                    string    `json:"id"`
-	Cursor                string    `json:"cursor"`
-	TeamID                string    `json:"team_id"`
-	ServiceID             string    `json:"service_id"`
-	ServiceKind           string    `json:"service_kind"`
-	EventType             string    `json:"event_type"`
-	OccurredAt            time.Time `json:"occurred_at"`
-	ActorIdentityID       string    `json:"actor_identity_id,omitempty"`
-	DeviceID              string    `json:"device_id,omitempty"`
-	PublisherIdentityID   string    `json:"publisher_identity_id,omitempty"`
-	RunID                 string    `json:"run_id,omitempty"`
-	VisitorConnectionID   string    `json:"visitor_connection_id,omitempty"`
-	SourceIP              string    `json:"source_ip,omitempty"`
-	Outcome               string    `json:"outcome,omitempty"`
-	Reason                string    `json:"reason,omitempty"`
-	ConfigurationRevision int64     `json:"configuration_revision,omitempty"`
+	ID                       string    `json:"id"`
+	Cursor                   string    `json:"cursor"`
+	TeamID                   string    `json:"team_id"`
+	ServiceID                string    `json:"service_id"`
+	ServiceKind              string    `json:"service_kind"`
+	EventType                string    `json:"event_type"`
+	OccurredAt               time.Time `json:"occurred_at"`
+	ActorIdentityID          string    `json:"actor_identity_id,omitempty"`
+	ActorMachineID           string    `json:"actor_machine_id,omitempty"`
+	ActorProvisioningGrantID string    `json:"actor_provisioning_grant_id,omitempty"`
+	DeviceID                 string    `json:"device_id,omitempty"`
+	PublisherIdentityID      string    `json:"publisher_identity_id,omitempty"`
+	RunID                    string    `json:"run_id,omitempty"`
+	VisitorConnectionID      string    `json:"visitor_connection_id,omitempty"`
+	SourceIP                 string    `json:"source_ip,omitempty"`
+	Outcome                  string    `json:"outcome,omitempty"`
+	Reason                   string    `json:"reason,omitempty"`
+	ConfigurationRevision    int64     `json:"configuration_revision,omitempty"`
 }
 
 // observation carries only component-known facts. control derives team and

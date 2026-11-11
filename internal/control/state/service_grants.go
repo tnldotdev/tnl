@@ -72,7 +72,7 @@ func (d *Database) CreateServiceGrant(ctx context.Context, serviceID, actorID, k
 	}
 	row, err := controlstatedb.New(tx).InsertServiceGrant(ctx, controlstatedb.InsertServiceGrantParams{
 		ID: id, ServiceID: text(serviceID), TeamID: service.TeamID, Kind: kind, IdentityID: nullableText(identityID),
-		CreatedByIdentityID: actorID, IdempotencyKey: key, RequestDigest: digest[:], Now: timestamptz(now), ExpiresAt: nullableTime(expires),
+		CreatedByIdentityID: nullableText(actorID), IdempotencyKey: key, RequestDigest: digest[:], Now: timestamptz(now), ExpiresAt: nullableTime(expires),
 	})
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {

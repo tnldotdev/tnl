@@ -187,6 +187,11 @@ func reconcileWorkloadPolicies(ctx context.Context, tx pgx.Tx, r ApplyProjectCon
 }
 
 func (p ProjectWorkload) matches(c oidc.WorkloadExecution) bool {
+	if c.RegisteredMachine != nil {
+		// permission and identity are rechecked by machine-linked admission. the
+		// policy digest additionally fences template policy changes at apply.
+		return p.Provider == "oidc" && c.Provider == "oidc" && c.TrustDigest == p.Trust.Digest()
+	}
 	if p.Provider != c.Provider {
 		return false
 	}

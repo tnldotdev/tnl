@@ -58,6 +58,10 @@ type Querier interface {
 	ClaimServiceEndpointDNSWork(ctx context.Context, arg ClaimServiceEndpointDNSWorkParams) (ControlServiceEndpoint, error)
 	CleanupBrowserAccess(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupExpiredConnectorPeerPairs(ctx context.Context, arg CleanupExpiredConnectorPeerPairsParams) (int64, error)
+	CleanupMachineProofUses(ctx context.Context, arg CleanupMachineProofUsesParams) (int64, error)
+	// expire credential and replay state independently. proof expiry is the full
+	// cryptographic validity bound, never a shorter grant or session deadline.
+	CleanupMachineProvisioningSessions(ctx context.Context, arg CleanupMachineProvisioningSessionsParams) (int64, error)
 	CleanupServiceAuditEvents(ctx context.Context, arg CleanupServiceAuditEventsParams) (int64, error)
 	CleanupServiceHTTPLogins(ctx context.Context, now pgtype.Timestamptz) error
 	CleanupServiceHTTPSessions(ctx context.Context, now pgtype.Timestamptz) error

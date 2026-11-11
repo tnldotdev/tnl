@@ -89,7 +89,7 @@ func (d *Database) RenamePublisherGroup(ctx context.Context, team, project, old,
 	if _, err = tx.Exec(ctx, `UPDATE control.applied_projects SET revision=revision+1,configuration_hash=$3,configuration_ciphertext=$4,storage_key_id=$5,updated_at=$6 WHERE team_id=$1 AND project_key=$2`, team, project, hash, sealed, d.storageKey.CurrentID(), now); err != nil {
 		return result, err
 	}
-	if err = recordPublisherGroupUpdate(ctx, tx, id, actor, "", "rename/"+old+"/"+name, now); err != nil {
+	if err = recordPublisherGroupUpdate(ctx, tx, id, publisherIssuer{IdentityID: actor}, "", "rename/"+old+"/"+name, now); err != nil {
 		return result, err
 	}
 	row.Revision++

@@ -167,7 +167,7 @@ func (d *Database) CreateServiceAt(ctx context.Context, teamID, actorID, name, k
 		return result, nil
 	}
 	_, err = controlstatedb.New(tx).InsertService(ctx, controlstatedb.InsertServiceParams{
-		ID: id, TeamID: teamID, Name: name, NameScope: "member/" + actorID + "/" + placement.WorktreeKey, CreatedByIdentityID: actorID,
+		ID: id, TeamID: teamID, Name: name, NameScope: "member/" + actorID + "/" + placement.WorktreeKey, CreatedByIdentityID: nullableText(actorID),
 		IdempotencyKey: key, RequestDigest: digest[:], Now: timestamptz(now),
 	})
 	var pgErr *pgconn.PgError

@@ -113,7 +113,7 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 		if err = d.ensureServiceEndpoint(ctx, tx, service.ServiceID.String, id, r.DNSAutomation, r.Now); err != nil {
 			return result, err
 		}
-		if err = d.reconcileAppliedPublisherGrants(ctx, tx, q, service, r.ActorID, r.Now); err != nil {
+		if err = d.reconcileAppliedPublisherGrants(ctx, tx, q, service, publisherIssuer{IdentityID: r.ActorID}, r.Now); err != nil {
 			return result, err
 		}
 	}
@@ -124,7 +124,7 @@ func (d *Database) RenamePublisherNamespace(ctx context.Context, r RenamePublish
 	if _, err = tx.Exec(ctx, `UPDATE control.applied_projects SET revision=$3,updated_at=$4 WHERE team_id=$1 AND project_key=$2`, r.TeamID, r.ProjectKey, row.Revision, r.Now); err != nil {
 		return result, err
 	}
-	if err = recordPublisherGroupUpdate(ctx, tx, id, r.ActorID, "", "namespace-rename/"+r.IdempotencyKey, r.Now); err != nil {
+	if err = recordPublisherGroupUpdate(ctx, tx, id, publisherIssuer{IdentityID: r.ActorID}, "", "namespace-rename/"+r.IdempotencyKey, r.Now); err != nil {
 		return result, err
 	}
 	result, err = d.appliedProjectStatus(ctx, tx, row, c)

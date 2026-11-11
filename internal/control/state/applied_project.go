@@ -274,6 +274,18 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err = serviceManager(ctx, tx, r.TeamID, r.ActorID); err != nil {
 		return result, err
 	}
+	result, err = d.applyProjectConfigurationTx(ctx, tx, r, c, authorizedProjectMutation{issuer: publisherIssuer{IdentityID: r.ActorID}})
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit(ctx)
+}
+
+func (d *Database) applyProjectConfigurationTx(ctx context.Context, tx pgx.Tx, r ApplyProjectConfigurationRequest, c ProjectConfiguration, authority authorizedProjectMutation) (result AppliedProjectConfiguration, err error) {
+	q := controlstatedb.New(tx)
+	if !authority.issuer.valid() {
+		return result, ErrServiceAccess
+	}
 	if err = checkLocalProjectSource(ctx, tx, r.TeamID, r.ProjectKey, r.SourceFingerprint); err != nil {
 		return result, err
 	}
@@ -287,7 +299,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err != nil {
 		return result, err
 	}
-	if err = SetServiceAuditActor(ctx, tx, r.ActorID); err != nil {
+	if err = setServiceAuditIssuer(ctx, tx, authority.issuer); err != nil {
 		return result, err
 	}
 	c, hash, err := NormalizeProjectConfiguration(c)
@@ -310,6 +322,9 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	}
 	row, err := q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
 	if errors.Is(err, pgx.ErrNoRows) {
+		if authority.issuer.MachineID != "" {
+			return result, ErrMachineDenied
+		}
 		if r.ExpectedRevision != 0 {
 			return result, ErrProjectConfigurationStale
 		}
@@ -334,6 +349,9 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err != nil {
 		return result, err
 	}
+	if r.CreateGroup != nil && authority.issuer.MachineID != "" {
+		authority.groupID = r.CreateGroup.ID
+	}
 	old, err := d.openAppliedProject(row)
 	if err != nil {
 		return result, err
@@ -343,7 +361,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		if err != nil {
 			return result, err
 		}
-		return result, tx.Commit(ctx)
+		return result, nil
 	}
 	next := row.Revision + 1
 	if err = lockAppliedProjectPublications(ctx, tx, r.TeamID, r.ProjectKey); err != nil {
@@ -360,9 +378,21 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err != nil {
 		return result, err
 	}
-	bindings, bindingsChanged, err := d.reconcilePublisherGroupBindings(ctx, tx, c, groups, oldBindings, r.GroupBindings, r.RemoveGroup)
+	bindingGroups := groups
+	if authority.issuer.MachineID != "" {
+		bindingGroups = slices.Clone(groups)
+		bindingGroups = slices.DeleteFunc(bindingGroups, func(g controlstatedb.ControlProjectPublisherGroup) bool { return !authority.permitsGroup(g.ID) })
+	}
+	bindings, bindingsChanged, err := d.reconcilePublisherGroupBindings(ctx, tx, c, bindingGroups, oldBindings, r.GroupBindings, r.RemoveGroup)
 	if err != nil {
 		return result, err
+	}
+	if authority.issuer.MachineID != "" {
+		for id, saved := range oldBindings {
+			if !authority.permitsGroup(id) {
+				bindings[id] = saved
+			}
+		}
 	}
 	if len(r.GroupBindings) != 0 && row.Revision != r.ExpectedRevision {
 		return result, ErrProjectConfigurationStale
@@ -375,7 +405,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		if err != nil {
 			return result, err
 		}
-		return result, tx.Commit(ctx)
+		return result, nil
 	}
 	if row.Revision != r.ExpectedRevision {
 		return result, ErrProjectConfigurationStale
@@ -410,6 +440,9 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	}
 	for _, name := range sortedProjectKeys(c.PublisherGroups) {
 		id := groupIDs[name]
+		if !authority.permitsGroup(id) {
+			continue
+		}
 		if id == "" {
 			id, err = opaqueid.New("pgrp_")
 			if err != nil {
@@ -440,6 +473,9 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		saved[s.Service] = s
 	}
 	for _, s := range existing {
+		if !authority.permitsGroup(s.GroupID.String) {
+			continue
+		}
 		declared, ok := c.Services[s.Service]
 		previous := old.Services[s.Service]
 		if !ok || !sameAppliedResource(previous, declared) {
@@ -472,6 +508,9 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	placed := map[string]bool{}
 	for _, key := range placementOrderedServices(c) {
 		s := c.Services[key]
+		if !authority.permitsGroup(groupIDs[s.PublisherGroup]) {
+			continue
+		}
 		if s.PublisherGroup != "local" && !placed[s.PublisherGroup] {
 			if err := ensurePublisherGroupIngressPool(ctx, tx, groupIDs[s.PublisherGroup], groupServiceCounts[s.PublisherGroup], retainedServices[s.PublisherGroup], poolIDs); err != nil {
 				return result, err
@@ -487,7 +526,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			}
 			// local resources are created by the normal per-worktree runtime.
 			if s.PublisherGroup != "local" {
-				id, e := d.createAppliedService(ctx, tx, q, r, key, entry.GroupID.String, s)
+				id, e := d.createAppliedServiceForIssuer(ctx, tx, q, r, key, entry.GroupID.String, s, authority.issuer)
 				if e != nil {
 					return result, e
 				}
@@ -509,7 +548,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 				return result, err
 			}
 		}
-		if err = d.reconcileAppliedVisitorGrant(ctx, tx, entry, r.ActorID, s.Access != nil && s.Access.Team, r.Now); err != nil {
+		if err = d.reconcileAppliedVisitorGrant(ctx, tx, entry, authority.issuer, s.Access != nil && s.Access.Team, r.Now); err != nil {
 			return result, err
 		}
 		if entry.ServiceID.Valid && entry.GroupID.Valid {
@@ -523,7 +562,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			}
 		}
 		if entry.GroupID.Valid {
-			if err = d.reconcileAppliedPublisherGrants(ctx, tx, q, entry, r.ActorID, r.Now); err != nil {
+			if err = d.reconcileAppliedPublisherGrants(ctx, tx, q, entry, authority.issuer, r.Now); err != nil {
 				return result, err
 			}
 		}
@@ -532,12 +571,15 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			if entry.ServiceID.Valid {
 				id, kind = entry.ServiceID.String, "service"
 			}
-			if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: r.TeamID, ServiceID: id, ServiceKind: kind, EventType: "apply", OccurredAt: r.Now, ActorIdentityID: r.ActorID, ConfigurationRevision: next}, fmt.Sprintf("%s/%d", r.ProjectKey, next)); err != nil {
+			if err = RecordServiceAudit(ctx, tx, serviceaudit.Event{TeamID: r.TeamID, ServiceID: id, ServiceKind: kind, EventType: "apply", OccurredAt: r.Now, ActorIdentityID: authority.issuer.IdentityID, ActorMachineID: authority.issuer.MachineID, ActorProvisioningGrantID: authority.issuer.ProvisioningGrantID, ConfigurationRevision: next}, fmt.Sprintf("%s/%d", r.ProjectKey, next)); err != nil {
 				return result, err
 			}
 		}
 	}
 	for _, name := range sortedProjectKeys(c.PublisherGroups) {
+		if !authority.permitsGroup(groupIDs[name]) {
+			continue
+		}
 		if !placed[name] {
 			if err := ensurePublisherGroupIngressPool(ctx, tx, groupIDs[name], 0, nil, poolIDs); err != nil {
 				return result, err
@@ -545,6 +587,9 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 		}
 	}
 	for _, g := range groups {
+		if !authority.permitsGroup(g.ID) {
+			continue
+		}
 		if _, ok := c.PublisherGroups[g.Name]; !ok {
 			changedGroups[g.ID] = true
 			if err = d.removePublisherGroup(ctx, tx, q, g.ID, r.Now); err != nil {
@@ -552,14 +597,16 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 			}
 		}
 	}
-	if err = d.reconcileProjectLocalRealizations(ctx, tx, q, r, old, c); err != nil {
-		return result, err
+	if authority.issuer.MachineID == "" {
+		if err = d.reconcileProjectLocalRealizations(ctx, tx, q, r, old, c); err != nil {
+			return result, err
+		}
 	}
 	newServices, err := q.ListAppliedProjectServices(ctx, controlstatedb.ListAppliedProjectServicesParams{TeamID: r.TeamID, ProjectKey: r.ProjectKey})
 	if err != nil {
 		return result, err
 	}
-	if err = recordAppliedGroupConfiguration(ctx, tx, existing, newServices, changedGroups, r.ActorID, next, r.Now); err != nil {
+	if err = recordAppliedGroupConfiguration(ctx, tx, existing, newServices, changedGroups, authority.issuer, next, r.Now); err != nil {
 		return result, err
 	}
 	if err = reconcileWorkloadPolicies(ctx, tx, r, declaration); err != nil {
@@ -579,7 +626,7 @@ func (d *Database) ApplyProjectConfiguration(ctx context.Context, r ApplyProject
 	if err != nil {
 		return result, err
 	}
-	return result, tx.Commit(ctx)
+	return result, nil
 }
 
 func sortedProjectKeys[V any](m map[string]V) []string {
@@ -642,10 +689,17 @@ func (d *Database) GetProjectConfiguration(ctx context.Context, team, key, actor
 }
 
 func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlAppliedProject, c ProjectConfiguration) (AppliedProjectConfiguration, error) {
+	return d.appliedProjectStatusForGroups(ctx, tx, row, c, nil)
+}
+
+func (d *Database) appliedProjectStatusForGroups(ctx context.Context, tx pgx.Tx, row controlstatedb.ControlAppliedProject, c ProjectConfiguration, allowed map[string]bool) (AppliedProjectConfiguration, error) {
 	result := AppliedProjectConfiguration{ProjectLabel: row.ProjectLabel, TeamID: row.TeamID, ProjectKey: row.ProjectKey, SourceFingerprint: row.SourceFingerprint, Revision: row.Revision, ConfigurationHash: row.ConfigurationHash, Configuration: c, Services: []AppliedProjectService{}, Members: []PublisherGroupMemberStatus{}, Groups: []AppliedPublisherGroup{}}
 	groups, err := controlstatedb.New(tx).ListProjectPublisherGroups(ctx, controlstatedb.ListProjectPublisherGroupsParams{TeamID: row.TeamID, ProjectKey: row.ProjectKey})
 	if err != nil {
 		return result, err
+	}
+	if allowed != nil {
+		groups = slices.DeleteFunc(groups, func(g controlstatedb.ControlProjectPublisherGroup) bool { return !allowed[g.ID] })
 	}
 	bindings, err := d.loadPublisherGroupBindings(ctx, tx, groups)
 	if err != nil {
@@ -660,6 +714,9 @@ func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row cont
 		return result, err
 	}
 	for _, s := range rows {
+		if allowed != nil && !allowed[s.GroupID.String] {
+			continue
+		}
 		v := AppliedProjectService{Service: appliedServiceName(s.Service), PublisherGroup: c.Services[s.Service].PublisherGroup, Kind: "local", DesiredRevision: s.DesiredRevision}
 		if s.ServiceID.Valid {
 			v.Kind, v.ServiceID = "service", s.ServiceID.String
@@ -674,6 +731,9 @@ func (d *Database) appliedProjectStatus(ctx context.Context, tx pgx.Tx, row cont
 	result.Members, err = listPublisherGroupMemberStatus(ctx, tx, row.TeamID, row.ProjectKey)
 	if err != nil {
 		return result, err
+	}
+	if allowed != nil {
+		result.Members = slices.DeleteFunc(result.Members, func(m PublisherGroupMemberStatus) bool { return !allowed[m.GroupID] })
 	}
 	for _, group := range groups {
 		var names []string

@@ -56,26 +56,42 @@ type KubernetesExecution struct {
 }
 
 type WorkloadExecution struct {
-	Provider        string               `json:"provider"`
-	Issuer          string               `json:"issuer"`
-	Subject         string               `json:"subject"`
-	Audience        string               `json:"audience"`
-	TrustDigest     string               `json:"trust_digest"`
-	IssuedAt        int64                `json:"iat"`
-	NotBefore       int64                `json:"nbf"`
-	ExpiresAt       int64                `json:"exp"`
-	GitHub          *GitHubExecution     `json:"github,omitempty"`
-	Vercel          *VercelExecution     `json:"vercel,omitempty"`
-	Fly             *FlyExecution        `json:"fly,omitempty"`
-	Kubernetes      *KubernetesExecution `json:"kubernetes,omitempty"`
-	GitLab          *GitLabExecution     `json:"gitlab,omitempty"`
-	Claims          map[string]string    `json:"claims,omitempty"`
-	AssertionDigest [32]byte             `json:"-"`
+	RegisteredMachine *RegisteredMachineExecution `json:"registered_machine,omitempty"`
+	Provider          string                      `json:"provider"`
+	Issuer            string                      `json:"issuer"`
+	Subject           string                      `json:"subject"`
+	Audience          string                      `json:"audience"`
+	TrustDigest       string                      `json:"trust_digest"`
+	IssuedAt          int64                       `json:"iat"`
+	NotBefore         int64                       `json:"nbf"`
+	ExpiresAt         int64                       `json:"exp"`
+	GitHub            *GitHubExecution            `json:"github,omitempty"`
+	Vercel            *VercelExecution            `json:"vercel,omitempty"`
+	Fly               *FlyExecution               `json:"fly,omitempty"`
+	Kubernetes        *KubernetesExecution        `json:"kubernetes,omitempty"`
+	GitLab            *GitLabExecution            `json:"gitlab,omitempty"`
+	Claims            map[string]string           `json:"claims,omitempty"`
+	AssertionDigest   [32]byte                    `json:"-"`
+}
+
+// registered machine executions are constructed only after checking the current
+// registered key and a separate workload permission, never from OIDC claims.
+type RegisteredMachineExecution struct {
+	ID           string `json:"id"`
+	KeyID        string `json:"key_id"`
+	PermissionID string `json:"permission_id"`
+	Revision     int64  `json:"revision"`
 }
 
 func (c WorkloadExecution) Validate(now time.Time) error {
 	if !validClaim(c.Subject, 1024) || !config.WorkloadHTTPS(c.Issuer) {
 		return ErrUnauthenticated
+	}
+	if m := c.RegisteredMachine; m != nil {
+		if c.Provider != "oidc" || c.Subject != m.ID || !validClaim(m.ID, 128) || !validClaim(m.KeyID, 128) || !validClaim(m.PermissionID, 128) || m.Revision < 1 || c.GitHub != nil || c.Fly != nil || c.Vercel != nil || c.Kubernetes != nil || c.GitLab != nil || len(c.Claims) != 0 || c.IssuedAt <= 0 || c.NotBefore != c.IssuedAt || c.ExpiresAt <= now.Unix() || c.ExpiresAt <= c.IssuedAt || c.ExpiresAt-c.IssuedAt > 60 || c.IssuedAt > now.Unix()+5 {
+			return ErrUnauthenticated
+		}
+		return nil
 	}
 	if c.Provider == "github" {
 		if c.GitHub == nil || c.Vercel != nil || c.Fly != nil || c.Kubernetes != nil || c.GitLab != nil || len(c.Claims) > 0 || c.Issuer != GitHubIssuer || c.Subject != c.GitHub.Subject {
@@ -143,6 +159,9 @@ func (c WorkloadExecution) Validate(now time.Time) error {
 }
 
 func (c WorkloadExecution) Matches(p WorkloadTrust) bool {
+	if c.RegisteredMachine != nil {
+		return false
+	}
 	if c.Provider != p.Provider || c.Issuer != p.Issuer || c.Audience != p.Audience || c.TrustDigest != p.Digest() {
 		return false
 	}
