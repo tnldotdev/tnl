@@ -38,7 +38,6 @@ import (
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
-	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
@@ -457,7 +456,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		t.Fatal(err)
 	}
 	relayTLS := &tls.Config{RootCAs: ca.roots, MinVersion: tls.VersionTLS13}
-	quic := redirectIntegrationConnector(relayUDPAddress, muxsession.QUICConnector{TLSConfig: relayTLS, Dialer: transporttest.QUICTransport(t)})
+	quic := redirectIntegrationConnector(relayUDPAddress, muxsession.QUICConnector{TLSConfig: relayTLS, Dialer: owner.quicTransport(t)})
 	tcp := redirectIntegrationConnector(publicAddress, muxsession.TLSYamuxConnector{TLSConfig: relayTLS})
 	hostname := "demo-1." + issued.Namespace
 	prefixes := []string{netip.PrefixFrom(address.Unmap(), address.Unmap().BitLen()).String()}

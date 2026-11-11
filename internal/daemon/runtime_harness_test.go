@@ -16,6 +16,7 @@ import (
 	"time"
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 )
 
 const testOIDCIssuer = "https://identity.fixture.test"
@@ -86,6 +87,22 @@ func (f *runtimeTopology) cleanupResource(t *testing.T, close func()) {
 	} else {
 		f.afterStop = append(f.afterStop, close)
 	}
+}
+
+// shared relay sockets outlive publisher drain, even when opened after the
+// topology's test cleanup was registered.
+func (f *runtimeTopology) quicTransport(t *testing.T) *muxsession.QUICTransport {
+	t.Helper()
+	transport, err := muxsession.ListenQUICTransport("udp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.cleanupResource(t, func() {
+		if err := transport.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return transport
 }
 
 func cleanupIntegrationHTTPServer(t *testing.T, server *httptest.Server, owner *runtimeTopology) {

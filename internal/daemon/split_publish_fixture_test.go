@@ -14,7 +14,6 @@ import (
 
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/publisher"
-	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 )
@@ -178,7 +177,7 @@ func newSplitPublishFixtureWithOptions(t *testing.T, hostnameLabel string, optio
 		relayRoots = pebble.roots
 	}
 	f := &splitPublishFixture{
-		relayTransport: transporttest.QUICTransport(t),
+		relayTransport: owner.quicTransport(t),
 		processContext: options.processContext,
 		owner:          owner, databaseURL: databaseURL, inspect: inspect, pebble: pebble,
 		roots:         &tls.Config{RootCAs: relayRoots, MinVersion: tls.VersionTLS13},
