@@ -44,7 +44,7 @@ type handler struct {
 }
 
 // NewHandler constructs the private ingress service.
-func NewHandler(config Config) (http.Handler, error) {
+func NewHandler(config Config) (*handler, error) {
 	if config.Store == nil || !config.ClusterSecrets.Valid() {
 		return nil, errors.New("ingressapi: store and cluster secrets are required")
 	}
@@ -64,11 +64,11 @@ func NewHandler(config Config) (http.Handler, error) {
 	ingressv1.HandlerWithOptions(generatedServer{handler: h}, ingressv1.StdHTTPServerOptions{
 		BaseRouter: h.mux,
 		ErrorHandlerFunc: func(response http.ResponseWriter, _ *http.Request, _ error) {
-			serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Ingress request parameters are invalid")
+			serviceapi.WriteProblem(response, http.StatusBadRequest, "invalid_request", "Ingress request parameters are invalid", "")
 		},
 	})
 	h.mux.HandleFunc("/", func(response http.ResponseWriter, _ *http.Request) {
-		serviceapi.WriteProblem(response, http.StatusNotFound, "not_found", "Ingress service endpoint not found")
+		serviceapi.WriteProblem(response, http.StatusNotFound, "not_found", "Ingress service endpoint not found", "")
 	})
 	return h, nil
 }

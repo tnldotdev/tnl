@@ -17,6 +17,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/control/certificates/acme"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 )
@@ -28,7 +29,7 @@ func TestIntegrationACMEAuthorizationDiscoveryAndReuse(t *testing.T) {
 			if err := controlstate.Migrate(t.Context(), databaseURL); err != nil {
 				t.Fatal(err)
 			}
-			database, err := controlstate.Open(t.Context(), databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+			database, err := controlstate.Open(t.Context(), databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 			if err != nil {
 				t.Fatal(err)
 			}

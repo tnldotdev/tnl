@@ -3,6 +3,8 @@ package state
 import (
 	"strings"
 	"testing"
+
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestIntegrationMigrationRejectsCompatibilityViewBaseline(t *testing.T) {
@@ -71,7 +73,7 @@ func TestIntegrationMigrationRejectsCompatibilityViewBaseline(t *testing.T) {
 		{"migrate", func() error { return Migrate(ctx, url) }},
 		{"readiness", func() error { return d.Readiness(ctx) }},
 		{"open", func() error {
-			opened, err := Open(ctx, url, testStorageKey, "")
+			opened, err := Open(ctx, url, testStorageKey, "", naming.ManagedURLModeGenerated)
 			if opened != nil {
 				opened.Close()
 			}

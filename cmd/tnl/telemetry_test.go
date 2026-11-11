@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -18,6 +19,19 @@ import (
 type telemetryReporterFunc func(telemetryPayload)
 
 func (f telemetryReporterFunc) Report(payload telemetryPayload) { f(payload) }
+
+func (telemetryReporterFunc) flushReady() {}
+
+type recordingTelemetryReporter struct {
+	payloads []telemetryPayload
+	flushes  int
+}
+
+func (r *recordingTelemetryReporter) Report(payload telemetryPayload) {
+	r.payloads = append(r.payloads, payload)
+}
+
+func (r *recordingTelemetryReporter) flushReady() { r.flushes++ }
 
 func TestTelemetryInstallationIDRetries(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
@@ -44,14 +58,9 @@ func TestTelemetryInstallationIDRetries(t *testing.T) {
 	}
 }
 
-func TestOptionalTelemetryReporterDoesNotWrapDisabledInvocation(t *testing.T) {
-	var disabled *telemetryInvocation
-	reporter := optionalTelemetryReporter([]telemetryReporter{disabled})
-	if reporter != nil {
-		t.Fatalf("disabled telemetry reporter = %#v", reporter)
-	}
+func TestDisabledTelemetryForwardsPublisherEvents(t *testing.T) {
 	observed := false
-	observer := withTelemetryObserver(reporter, telemetryPublish, defaultServerURL, nil, func(publisher.Event) error {
+	observer := withTelemetryObserver(nil, telemetryPublish, defaultServerURL, nil, func(publisher.Event) error {
 		observed = true
 		return nil
 	})
@@ -151,6 +160,44 @@ func TestTelemetryObserverReportsReadyOnce(t *testing.T) {
 	}
 	if reported {
 		t.Fatal("reported readiness after wrapped observer failed")
+	}
+}
+
+func TestTelemetryObserverRequiresReadyFlush(t *testing.T) {
+	for _, wrapped := range []bool{false, true} {
+		for _, rejected := range []bool{false, true} {
+			t.Run(fmt.Sprintf("invocation=%t/rejected=%t", wrapped, rejected), func(t *testing.T) {
+				recording := &recordingTelemetryReporter{}
+				var reporter telemetryReporter = recording
+				if wrapped {
+					invocation, err := newTelemetryInvocation(reporter)
+					if err != nil {
+						t.Fatal(err)
+					}
+					reporter = invocation
+				}
+				wantErr := errors.New("observer rejected readiness")
+				observe := withTelemetryObserver(reporter, telemetryPublish, defaultServerURL, nil, func(publisher.Event) error {
+					if rejected {
+						return wantErr
+					}
+					return nil
+				})
+				for range 2 {
+					err := observe(publisher.Event{Type: publisher.EventReady})
+					if rejected && !errors.Is(err, wantErr) || !rejected && err != nil {
+						t.Fatalf("ready error = %v", err)
+					}
+				}
+				want := 1
+				if rejected {
+					want = 0
+				}
+				if len(recording.payloads) != want || recording.flushes != want {
+					t.Fatalf("reports=%d flushes=%d, want %d each", len(recording.payloads), recording.flushes, want)
+				}
+			})
+		}
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlauthority "github.com/tnldotdev/tnl/internal/control/api/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -36,7 +37,7 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 	if err := controlstate.Migrate(ctx, url); err != nil {
 		t.Fatal(err)
 	}
-	database, err := controlstate.Open(ctx, url, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	database, err := controlstate.Open(ctx, url, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

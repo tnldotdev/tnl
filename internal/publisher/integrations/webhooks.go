@@ -160,13 +160,13 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 	response.Header().Set("Cache-Control", "no-store")
 	authority, err := naming.CanonicalizeAuthority(request.Host)
 	if err != nil || authority != h.hostname {
-		diagnostic.WriteHTTP(response, request, diagnostic.RequestMisdirected)
+		diagnostic.WriteHTTP(response, request, diagnostic.RequestMisdirected, "")
 		return
 	}
 	// authorize the exact escaped path before reading or retaining any body bytes.
 	endpoint, found := h.paths[request.URL.EscapedPath()]
 	if !found || request.URL.RawPath != "" || request.URL.Path != request.URL.EscapedPath() {
-		diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
+		diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied, "")
 		return
 	}
 	methods := endpoint.definition.Methods
@@ -174,16 +174,16 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		methods = []string{http.MethodPost}
 	}
 	if !slices.Contains(methods, request.Method) {
-		diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
+		diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied, "")
 		return
 	}
 	if endpoint.unavailable {
-		diagnostic.WriteHTTP(response, request, diagnostic.WebhookUnavailable)
+		diagnostic.WriteHTTP(response, request, diagnostic.WebhookUnavailable, "")
 		return
 	}
 	source, err := netip.ParseAddrPort(request.RemoteAddr)
 	if err != nil {
-		diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
+		diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied, "")
 		return
 	}
 	allowed := endpoint.any
@@ -191,7 +191,7 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		allowed = allowed || prefix.Contains(source.Addr().Unmap())
 	}
 	if !allowed {
-		diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied)
+		diagnostic.WriteHTTP(response, request, diagnostic.IPPolicyDenied, "")
 		return
 	}
 	var receivers []clientstate.TunnelInfo
@@ -210,17 +210,17 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		} else {
 			h.failure(endpoint.name, "local worktrees", "local state unavailable or selected receiver unready")
 		}
-		diagnostic.WriteHTTP(response, request, diagnostic.WebhookUnavailable)
+		diagnostic.WriteHTTP(response, request, diagnostic.WebhookUnavailable, "")
 		return
 	}
 	if len(receivers) == 0 || len(receivers) > maxWebhookReceivers {
 		h.failure(endpoint.name, "local worktrees", "no matching ready receivers")
-		diagnostic.WriteHTTP(response, request, diagnostic.WebhookUnavailable)
+		diagnostic.WriteHTTP(response, request, diagnostic.WebhookUnavailable, "")
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(response, request.Body, maxWebhookBody))
 	if err != nil {
-		diagnostic.WriteHTTP(response, request, diagnostic.RequestRejected)
+		diagnostic.WriteHTTP(response, request, diagnostic.RequestRejected, "")
 		return
 	}
 	if endpoint.definition.DeliveryMode() == "selected" {
@@ -229,7 +229,7 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 			if currentErr != nil {
 				h.failure(endpoint.name, receivers[0].ID, "local state unavailable")
 			}
-			diagnostic.WriteHTTP(response, request, diagnostic.WebhookUnavailable)
+			diagnostic.WriteHTTP(response, request, diagnostic.WebhookUnavailable, "")
 			return
 		}
 		result, err := deliverWebhook(request, receivers[0], body, true)
@@ -238,11 +238,11 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 		}
 		if err != nil && result.status == 0 {
 			h.failure(endpoint.name, receivers[0].ID, "local service unavailable")
-			diagnostic.WriteHTTP(response, request, diagnostic.WebhookDeliveryFailed)
+			diagnostic.WriteHTTP(response, request, diagnostic.WebhookDeliveryFailed, "")
 			return
 		}
 		if err != nil && result.body == nil {
-			diagnostic.WriteHTTP(response, request, diagnostic.WebhookDeliveryFailed)
+			diagnostic.WriteHTTP(response, request, diagnostic.WebhookDeliveryFailed, "")
 			return
 		}
 		writeWebhookResponse(response, result)
@@ -280,14 +280,14 @@ func (h *Webhooks) ServeHTTP(response http.ResponseWriter, request *http.Request
 	wg.Wait()
 	for _, err := range failures {
 		if err != nil {
-			diagnostic.WriteHTTP(response, request, diagnostic.WebhookDeliveryFailed)
+			diagnostic.WriteHTTP(response, request, diagnostic.WebhookDeliveryFailed, "")
 			return
 		}
 	}
 	if returnsWebhookResponse(request.Method) {
 		for _, result := range results[1:] {
 			if !reflect.DeepEqual(result, results[0]) {
-				diagnostic.WriteHTTP(response, request, diagnostic.WebhookDeliveryFailed)
+				diagnostic.WriteHTTP(response, request, diagnostic.WebhookDeliveryFailed, "")
 				return
 			}
 		}

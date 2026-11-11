@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestIntegrationDNSChallengeChangeReceiptSurvivesRestart(t *testing.T) {
@@ -11,7 +13,7 @@ func TestIntegrationDNSChallengeChangeReceiptSurvivesRestart(t *testing.T) {
 	if err := Migrate(t.Context(), databaseURL); err != nil {
 		t.Fatal(err)
 	}
-	first, err := Open(t.Context(), databaseURL, testStorageKey, "")
+	first, err := Open(t.Context(), databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +24,7 @@ func TestIntegrationDNSChallengeChangeReceiptSurvivesRestart(t *testing.T) {
 	}
 	first.Close()
 
-	restarted, err := Open(t.Context(), databaseURL, testStorageKey, "")
+	restarted, err := Open(t.Context(), databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestIntegrationMigrationRejectsPreRenewalWorkloadBaseline(t *testing.T) {
@@ -49,7 +50,7 @@ func TestIntegrationMigrationRejectsPreRenewalWorkloadBaseline(t *testing.T) {
 		{"migrate", func() error { return Migrate(ctx, url) }},
 		{"readiness", func() error { return d.Readiness(ctx) }},
 		{"open", func() error {
-			opened, err := Open(ctx, url, testStorageKey, "")
+			opened, err := Open(ctx, url, testStorageKey, "", naming.ManagedURLModeGenerated)
 			if opened != nil {
 				opened.Close()
 			}

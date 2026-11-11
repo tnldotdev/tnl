@@ -111,10 +111,10 @@ func CodeOf(err error) (Code, bool) {
 	return diagnosticErr.code, true
 }
 
-func HelpURL(code Code, caseID ...string) string {
+func HelpURL(code Code, caseID string) string {
 	result := helpOrigin + "/e/" + definitionFor(code).Slug
-	if len(caseID) > 0 && caseFor(code, caseID[0]) != nil {
-		result += "?case=" + caseID[0]
+	if caseFor(code, caseID) != nil {
+		result += "?case=" + caseID
 	}
 	return result
 }
@@ -203,14 +203,14 @@ func WriteWarning(output io.Writer, command string, code Code) error {
 	return err
 }
 
-func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code, caseID ...string) {
+func WriteHTTP(response http.ResponseWriter, request *http.Request, code Code, caseID string) {
 	status := definitionFor(code).HTTPStatus
 	if status < 400 || status > 599 {
 		panic("diagnostic: code is not an HTTP failure " + code)
 	}
 	variant := ""
-	if len(caseID) > 0 && caseFor(code, caseID[0]) != nil {
-		variant = caseID[0]
+	if caseFor(code, caseID) != nil {
+		variant = caseID
 	}
 	body := renderText("tnl", code, variant, definitionFor(code).Summary)
 	contentType := "text/plain; charset=utf-8"

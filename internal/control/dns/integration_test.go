@@ -20,6 +20,7 @@ import (
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/control/storagekey"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/testutil"
 )
@@ -113,7 +114,7 @@ func TestIntegrationHostedDNSChallengesWithoutBuiltinDomains(t *testing.T) {
 
 func TestIntegrationDNSChallengeSerialization(t *testing.T) {
 	database, sql, databaseURL := challengeDatabase(t)
-	otherDatabase, err := controlstate.Open(t.Context(), databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	otherDatabase, err := controlstate.Open(t.Context(), databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +254,7 @@ func challengeDatabase(t *testing.T) (*controlstate.Database, *pgx.Conn, string)
 	query := parsed.Query()
 	query.Set("pool_max_conns", "1")
 	parsed.RawQuery = query.Encode()
-	database, err := controlstate.Open(t.Context(), parsed.String(), "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	database, err := controlstate.Open(t.Context(), parsed.String(), "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -28,7 +28,7 @@ func TestIntegrationOAuthRoutesToOriginatingService(t *testing.T) {
 	quic, tcp := fixture.connectors()
 	oauth := fixture.identity.publisherConfig("", quic, tcp)
 	oauth.Purpose = controlv1.Oauth
-	oauth.Handler = integrations.OAuthHandler(state, server, oauthHost)
+	oauth.Handler = integrations.OAuthHandler(state, server, oauthHost, nil)
 	oauthPublisher := startOwnedIntegrationPublisher(t, fixture.owner, oauth, fixture.diagnostics)
 	oauthReady := waitForPublisherReady(t, oauthPublisher)
 	waitForReadyPublisherConnections(t, fixture.inspect, oauthReady.PublicURLID, oauthReady.PublishRunNumber, 2)

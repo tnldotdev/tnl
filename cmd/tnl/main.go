@@ -679,7 +679,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 		_, err := fmt.Fprintln(stdout, buildinfo.Line("tnl"))
 		return err
 	case "publish <service-or-target>":
-		return runPublish(ctx, flags.Publish, stdout, stderr, telemetry)
+		var reporter telemetryReporter
+		if telemetry != nil {
+			reporter = telemetry
+		}
+		return runPublish(ctx, flags.Publish, stdout, stderr, reporter)
 	case "connect available":
 		return runConnectAvailable(ctx, flags.Connect.Available, stdout, stderr)
 	case "connect start <name>":

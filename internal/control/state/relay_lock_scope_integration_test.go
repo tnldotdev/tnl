@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
@@ -180,7 +181,7 @@ func TestIntegrationRelayServiceMaintenanceSkipsQueuedWriter(t *testing.T) {
 					}
 				}
 				newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
-				rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey)
+				rotating, err := Open(t.Context(), databaseURL, newKey, testStorageKey, naming.ManagedURLModeGenerated)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -309,7 +310,7 @@ func relayServiceProgressWriter(t *testing.T, writer string, fixtures [5]publish
 			t.Fatal(err)
 		}
 		newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
-		rotating, err := Open(t.Context(), database.pool.Config().ConnConfig.ConnString(), newKey, testStorageKey)
+		rotating, err := Open(t.Context(), database.pool.Config().ConnConfig.ConnString(), newKey, testStorageKey, naming.ManagedURLModeGenerated)
 		if err != nil {
 			t.Fatal(err)
 		}

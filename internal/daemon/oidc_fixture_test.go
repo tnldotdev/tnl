@@ -6,12 +6,13 @@ import (
 
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 )
 
 func saveRuntimeOIDCSession(t *testing.T, state *clientstate.Database, origin, databaseURL, domain string) {
 	t.Helper()
-	d, err := controlstate.Open(t.Context(), databaseURL, testStorageKey, "")
+	d, err := controlstate.Open(t.Context(), databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

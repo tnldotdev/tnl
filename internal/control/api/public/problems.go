@@ -92,15 +92,13 @@ func notFound(response http.ResponseWriter, _ *http.Request) {
 }
 
 func writeProblem(response http.ResponseWriter, status int, code controlv1.ProblemCode, title string) string {
-	return failureproblem.Write(response, status, string(code), title, title)
+	return failureproblem.Write(response, status, string(code), title, title, "")
 }
 
 func writeUnavailableProblem(ctx context.Context, response http.ResponseWriter, operation failure.Operation, title string, reason failure.Reason, err error) {
 	requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, title)
 	operatorlog.ReportContext(ctx, operation, reason, requestID, err)
 }
-
-func newRequestID() string { return failureproblem.NewRequestID() }
 
 func writeJSON(response http.ResponseWriter, status int, value any) {
 	httpjson.Write(response, status, value)

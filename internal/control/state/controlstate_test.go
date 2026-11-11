@@ -9,7 +9,19 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
+
+func TestOpenRequiresValidManagedURLMode(t *testing.T) {
+	for _, mode := range []naming.ManagedURLMode{"", "invalid"} {
+		t.Run(string(mode), func(t *testing.T) {
+			database, err := Open(t.Context(), "", "", "", mode)
+			if database != nil || err == nil || err.Error() != "controlstate: invalid managed URL mode" {
+				t.Fatalf("Open with mode %q: database=%v err=%v", mode, database, err)
+			}
+		})
+	}
+}
 
 func TestCanonicalCertificateIdentifiers(t *testing.T) {
 	t.Parallel()

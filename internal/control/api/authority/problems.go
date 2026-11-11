@@ -52,7 +52,7 @@ func notFound(response http.ResponseWriter, _ *http.Request) {
 }
 
 func writeProblem(response http.ResponseWriter, status int, code authorityv1.ProblemCode, title string) string {
-	return failureproblem.Write(response, status, string(code), title, title)
+	return failureproblem.Write(response, status, string(code), title, title, "")
 }
 
 func writeJSON(response http.ResponseWriter, status int, value any) {

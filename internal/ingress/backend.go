@@ -7,6 +7,9 @@ import (
 
 // Backend opens one visitor stream through an assigned publisher connection.
 type Backend interface {
+	// ConnectionSlot identifies the assigned publisher connection (0 or 1).
+	ConnectionSlot() uint8
+
 	// Start sends the opening metadata and initial visitor prefix exactly once.
 	// it owns failed streams and returns nil on error. failures after any visitor
 	// byte must retain tunnel.OpeningError, including partial writes.

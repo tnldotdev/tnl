@@ -128,7 +128,7 @@ func TestOAuthObservationRejectsUnavailableOrReplacedRuns(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodGet, "https://"+testOAuthHost+"/api/auth/callback/github?code=opaque&state=one", nil)
 	response := httptest.NewRecorder()
-	OAuthHandler(state, testServer, testOAuthHost).ServeHTTP(response, request)
+	OAuthHandler(state, testServer, testOAuthHost, nil).ServeHTTP(response, request)
 	if response.Code != http.StatusGone {
 		t.Fatalf("old run got callback: %d", response.Code)
 	}
@@ -148,7 +148,7 @@ func TestOAuthObserverRejectsDuplicateStateAndIgnoresUnrelatedRedirects(t *testi
 	}
 	callback := httptest.NewRequest(http.MethodGet, "https://"+testOAuthHost+"/api/auth/callback/github?code=opaque&state=provider-without-response-type", nil)
 	response := httptest.NewRecorder()
-	OAuthHandler(state, testServer, testOAuthHost).ServeHTTP(response, callback)
+	OAuthHandler(state, testServer, testOAuthHost, nil).ServeHTTP(response, callback)
 	if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), "feature.example.test") {
 		t.Fatalf("provider callback was not routed: %d %q", response.Code, response.Header().Get("Location"))
 	}
@@ -181,7 +181,7 @@ func TestOAuthConcurrentConsumptionAndCrossServerAdmission(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodGet, "https://"+testOAuthHost+"/api/auth/callback/github?code=opaque&state=one", nil)
 	wrong := httptest.NewRecorder()
-	OAuthHandler(state, "https://other.example.test", testOAuthHost).ServeHTTP(wrong, request)
+	OAuthHandler(state, "https://other.example.test", testOAuthHost, nil).ServeHTTP(wrong, request)
 	if wrong.Code != http.StatusGone {
 		t.Fatalf("another server used the callback: %d", wrong.Code)
 	}
@@ -190,7 +190,7 @@ func TestOAuthConcurrentConsumptionAndCrossServerAdmission(t *testing.T) {
 	for range 2 {
 		wg.Go(func() {
 			response := httptest.NewRecorder()
-			OAuthHandler(state, testServer, testOAuthHost).ServeHTTP(response, request.Clone(t.Context()))
+			OAuthHandler(state, testServer, testOAuthHost, nil).ServeHTTP(response, request.Clone(t.Context()))
 			statuses <- response.Code
 		})
 	}
@@ -205,7 +205,7 @@ func TestOAuthFailuresDoNotExposeCallbackValues(t *testing.T) {
 	state, _ := callbackState(t)
 	request := httptest.NewRequest(http.MethodGet, "https://"+testOAuthHost+"/api/auth/callback/github?code=secret-code&state=secret-state", nil)
 	response := httptest.NewRecorder()
-	OAuthHandler(state, testServer, testOAuthHost).ServeHTTP(response, request)
+	OAuthHandler(state, testServer, testOAuthHost, nil).ServeHTTP(response, request)
 	if response.Header().Get("Tnl-Error-Code") != string(diagnostic.OAuthCallbackExpired) || strings.Contains(response.Body.String(), "secret-code") || strings.Contains(response.Body.String(), "secret-state") {
 		t.Fatalf("unexpected callback diagnostic: %d %q", response.Code, response.Header().Get("Tnl-Error-Code"))
 	}

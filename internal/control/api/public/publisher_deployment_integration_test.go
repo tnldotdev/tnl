@@ -13,6 +13,7 @@ import (
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/publisherprovenance"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -27,7 +28,7 @@ func TestIntegrationPublisherRuntimeDeployment(t *testing.T) {
 	if err := controlstate.Migrate(ctx, dsn); err != nil {
 		t.Fatal(err)
 	}
-	d, err := controlstate.Open(ctx, dsn, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	d, err := controlstate.Open(ctx, dsn, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

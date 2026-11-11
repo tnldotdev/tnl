@@ -45,13 +45,13 @@ func NewProblemError(status int, problemType, detail string) *ProblemError {
 func DecodeJSON(response http.ResponseWriter, request *http.Request, destination any) bool {
 	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
-		WriteProblem(response, http.StatusUnsupportedMediaType, "unsupported_media_type", "Content-Type must be application/json")
+		WriteProblem(response, http.StatusUnsupportedMediaType, "unsupported_media_type", "Content-Type must be application/json", "")
 		return false
 	}
 	request.Body = http.MaxBytesReader(response, request.Body, MaximumRequestBytes)
 	reader := bufio.NewReader(request.Body)
 	if !startsWithJSONObject(reader) {
-		WriteProblem(response, http.StatusBadRequest, "invalid_json", "Request body must be one JSON object matching the service schema")
+		WriteProblem(response, http.StatusBadRequest, "invalid_json", "Request body must be one JSON object matching the service schema", "")
 		return false
 	}
 	if err := httpjson.Decode(json.NewDecoder(reader), destination); err != nil {
@@ -89,11 +89,9 @@ func WriteJSON(response http.ResponseWriter, status int, value any) {
 	httpjson.Write(response, status, value)
 }
 
-func WriteProblem(response http.ResponseWriter, status int, problemType, detail string, caseID ...string) {
+func WriteProblem(response http.ResponseWriter, status int, problemType, detail, caseID string) {
 	problem := NewProblemError(status, problemType, detail)
-	if len(caseID) > 0 {
-		problem.CaseID = caseID[0]
-	}
+	problem.CaseID = caseID
 	WriteProblemError(response, problem)
 }
 
@@ -134,7 +132,7 @@ func WriteServiceError(
 		return true
 	}
 	report(err)
-	WriteProblem(response, http.StatusInternalServerError, "internal", detail)
+	WriteProblem(response, http.StatusInternalServerError, "internal", detail, "")
 	return true
 }
 

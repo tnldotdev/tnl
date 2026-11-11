@@ -148,17 +148,7 @@ func (v *providerVerifier) getProvider(ctx context.Context) (_ *oidc.Provider, r
 	return provider, nil
 }
 
-func verifyToken(ctx context.Context, provider *oidc.Provider, clientID, raw string, keySets ...oidc.KeySet) (Identity, error) {
-	var keySet oidc.KeySet
-	if len(keySets) != 0 {
-		keySet = keySets[0]
-	} else {
-		var err error
-		keySet, err = providerKeySet(ctx, provider)
-		if err != nil {
-			return Identity{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
-		}
-	}
+func verifyToken(ctx context.Context, provider *oidc.Provider, clientID, raw string, keySet oidc.KeySet) (Identity, error) {
 	observed := &observedKeySet{KeySet: keySet}
 	token, err := oidc.NewVerifier(providerIssuer(provider), observed, &oidc.Config{
 		ClientID: clientID, SupportedSigningAlgs: []string{"RS256"},

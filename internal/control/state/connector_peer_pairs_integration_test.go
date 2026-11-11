@@ -19,6 +19,7 @@ import (
 
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -89,7 +90,7 @@ func rotateConnectorPairStorage(t *testing.T, d *Database, pair ConnectorPeerPai
 	}
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{11}, 32))
 	databaseURL := d.pool.Config().ConnString()
-	rotating, err := Open(ctx, databaseURL, newKey, testStorageKey)
+	rotating, err := Open(ctx, databaseURL, newKey, testStorageKey, naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +132,7 @@ func rotateConnectorPairStorage(t *testing.T, d *Database, pair ConnectorPeerPai
 	}
 	rotating.Close()
 	d.Close()
-	reopened, err := Open(ctx, databaseURL, newKey, "")
+	reopened, err := Open(ctx, databaseURL, newKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

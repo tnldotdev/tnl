@@ -174,7 +174,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	closed := p.closed
 	p.mu.Unlock()
 	if closed {
-		diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+		diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
 		return
 	}
 	p.handler.ServeHTTP(w, r)
@@ -228,12 +228,12 @@ func New(config Config) (*Proxy, error) {
 		baseHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			address, identity, err := config.ResolveTarget(r)
 			if err != nil || address == "" || identity == "" {
-				diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+				diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
 				return
 			}
 			canonical, err := targetsyntax.NormalizeTarget(address)
 			if err != nil {
-				diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+				diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
 				return
 			}
 			mu.Lock()
@@ -241,7 +241,7 @@ func New(config Config) (*Proxy, error) {
 				selected, err := owner.newReverseProxy(canonical, config.MaxConnsPerHost, config.Hooks, config.TargetOptions, config.OnTargetFailure)
 				if err != nil {
 					mu.Unlock()
-					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
 					return
 				}
 				owner.retire(base)
@@ -280,7 +280,7 @@ func New(config Config) (*Proxy, error) {
 			proxy = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				target, identity, err := mount.ResolveTarget(r.Context())
 				if err != nil || target == "" || identity == "" {
-					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+					diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
 					return
 				}
 				mu.Lock()
@@ -288,7 +288,7 @@ func New(config Config) (*Proxy, error) {
 					selected, err := owner.newReverseProxy(target, config.MaxConnsPerHost, config.Hooks, mount.Options, config.OnTargetFailure)
 					if err != nil {
 						mu.Unlock()
-						diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable)
+						diagnostic.WriteHTTP(w, r, diagnostic.TargetUnavailable, "")
 						return
 					}
 					if upstream != nil {
@@ -323,7 +323,7 @@ func New(config Config) (*Proxy, error) {
 	})
 	owner.handler = httpstream.Requests(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if code := ValidateRequest(request, config.Hostname); code != "" {
-			diagnostic.WriteHTTP(response, request, code)
+			diagnostic.WriteHTTP(response, request, code, "")
 			return
 		}
 		escapedPath := request.URL.EscapedPath()
@@ -410,7 +410,7 @@ func (p *Proxy) newReverseProxy(target string, maxConnsPerHost int, hooks Respon
 		ErrorHandler: func(response http.ResponseWriter, request *http.Request, targetErr error) {
 			observability.PublisherHTTPError(request.Context(), targetErr)
 			if code, ok := diagnostic.CodeOf(targetErr); ok {
-				diagnostic.WriteHTTP(response, request, code)
+				diagnostic.WriteHTTP(response, request, code, "")
 				return
 			}
 			if hooks.ObserveStatus != nil {

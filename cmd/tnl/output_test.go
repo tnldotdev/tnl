@@ -217,7 +217,7 @@ func TestPublishOutputNDJSONIncludesDiagnosticFields(t *testing.T) {
 	if err := json.NewDecoder(&stdout).Decode(&event); err != nil {
 		t.Fatal(err)
 	}
-	if event.Code != string(diagnostic.TargetUnavailable) || event.HelpURL != diagnostic.HelpURL(diagnostic.TargetUnavailable) ||
+	if event.Code != string(diagnostic.TargetUnavailable) || event.HelpURL != diagnostic.HelpURL(diagnostic.TargetUnavailable, "") ||
 		event.Message != diagnostic.Summary(diagnostic.TargetUnavailable) {
 		t.Fatalf("event = %#v", event)
 	}
@@ -255,7 +255,7 @@ func TestPublishOutputNDJSONOwnsSuccessfulErrorEvent(t *testing.T) {
 
 func TestRunPublishNDJSONFailureHasSingleOwner(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	result := runPublish(t.Context(), publishCommand{Target: "https://example.com", Output: "ndjson"}, &stdout, &stderr)
+	result := runPublish(t.Context(), publishCommand{Target: "https://example.com", Output: "ndjson"}, &stdout, &stderr, nil)
 	if code, render := terminalResult(result); code != 1 || render != nil {
 		t.Fatalf("terminal result = %d, %v", code, render)
 	}
@@ -374,7 +374,7 @@ func TestPublishOutputProvisioningStalledWarning(t *testing.T) {
 	}
 	if starting.Type != "starting" || warning.Type != "warning" || warning.PublishRunNumber != 2 ||
 		warning.Code != string(diagnostic.ProvisioningStalled) ||
-		warning.HelpURL != diagnostic.HelpURL(diagnostic.ProvisioningStalled) ||
+		warning.HelpURL != diagnostic.HelpURL(diagnostic.ProvisioningStalled, "") ||
 		warning.Message != diagnostic.Summary(diagnostic.ProvisioningStalled) ||
 		warning.Retryable == nil || !*warning.Retryable {
 		t.Fatalf("events = %#v, %#v", starting, warning)
@@ -417,7 +417,7 @@ func TestPublishOutputHumanProvisioningWarningStopsAtReady(t *testing.T) {
 	}
 	got := stderr.String()
 	if strings.Count(got, string(diagnostic.ProvisioningStalled)) != 1 ||
-		!strings.Contains(got, diagnostic.HelpURL(diagnostic.ProvisioningStalled)) ||
+		!strings.Contains(got, diagnostic.HelpURL(diagnostic.ProvisioningStalled, "")) ||
 		strings.Count(got, "]-- provisioning stalled ") != 1 {
 		t.Fatalf("human warning output = %q", got)
 	}
@@ -627,7 +627,7 @@ func TestPublishNDJSONWireKeysAndOmissions(t *testing.T) {
 	for index, fields := range []map[string]any{
 		{"type": "starting", "target": "http://127.0.0.1:3000"},
 		{"type": "ready", "url": "https://demo.example", "publish_run_number": float64(7)},
-		{"type": "error", "message": diagnostic.Summary(diagnostic.TargetUnavailable), "reason": string(diagnostic.TargetUnavailable), "retryable": false, "code": string(diagnostic.TargetUnavailable), "help_url": diagnostic.HelpURL(diagnostic.TargetUnavailable)},
+		{"type": "error", "message": diagnostic.Summary(diagnostic.TargetUnavailable), "reason": string(diagnostic.TargetUnavailable), "retryable": false, "code": string(diagnostic.TargetUnavailable), "help_url": diagnostic.HelpURL(diagnostic.TargetUnavailable, "")},
 		{"type": "stopped", "reason": "canceled"},
 	} {
 		var wire map[string]any

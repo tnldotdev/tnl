@@ -7,6 +7,8 @@ import (
 	"net/netip"
 	"testing"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestIntegrationStorageKeyRotation(t *testing.T) {
@@ -82,7 +84,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 		before[store.table] = ciphertext
 	}
 	newKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
-	rotating, err := Open(ctx, databaseURL, newKey, testStorageKey)
+	rotating, err := Open(ctx, databaseURL, newKey, testStorageKey, naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +118,7 @@ func TestIntegrationStorageKeyRotation(t *testing.T) {
 
 	// removing the old key is the recovery guarantee. a dual-key read
 	// would succeed even if a store had been omitted from rotation entirely.
-	reopened, err := Open(ctx, databaseURL, newKey, "")
+	reopened, err := Open(ctx, databaseURL, newKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

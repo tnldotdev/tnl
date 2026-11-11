@@ -322,11 +322,8 @@ func (b forwardingBackend) Start(ctx context.Context, visitorConnectionID string
 	}
 }
 
-func (b forwardingBackend) connectionSlot() string {
-	if b.header.ConnectionSlot == 0 {
-		return "0"
-	}
-	return "1"
+func (b forwardingBackend) ConnectionSlot() uint8 {
+	return b.header.ConnectionSlot
 }
 
 type relayTarget struct {

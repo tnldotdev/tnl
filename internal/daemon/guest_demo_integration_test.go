@@ -33,6 +33,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/publisher/demo"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
@@ -133,7 +134,7 @@ func redeemIntegrationGuestShare(t *testing.T, client *http.Client, address stri
 
 func TestIntegrationGuestDemoIssuesAndAuthorizesOneRestrictedPublicURL(t *testing.T) {
 	databaseURL, _ := standaloneTestDatabase(t)
-	state, err := controlstate.Open(t.Context(), databaseURL, testStorageKey, "")
+	state, err := controlstate.Open(t.Context(), databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -807,7 +808,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		FROM control.public_urls WHERE id = $1`, ready.PublicURLID).Scan(&deleted); err != nil || !deleted {
 		t.Fatalf("stopped demo retained saved policy or digest: %t, %v", deleted, err)
 	}
-	privateState, err := controlstate.Open(t.Context(), databaseURL, testStorageKey, "")
+	privateState, err := controlstate.Open(t.Context(), databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

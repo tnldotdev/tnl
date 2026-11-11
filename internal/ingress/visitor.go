@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"strconv"
 	"sync"
 	"time"
 
@@ -370,10 +371,7 @@ func (s *Server) observeRelayAttempt(backend Backend, outcome observability.Rela
 	if s.config.Metrics == nil {
 		return
 	}
-	slot := "unknown"
-	if selected, ok := backend.(interface{ connectionSlot() string }); ok {
-		slot = selected.connectionSlot()
-	}
+	slot := strconv.Itoa(int(backend.ConnectionSlot()))
 	s.config.Metrics.ObserveRelayAttempt(slot, outcome)
 }
 

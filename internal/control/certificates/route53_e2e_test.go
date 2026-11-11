@@ -23,6 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/route53/types"
 	"github.com/tnldotdev/tnl/internal/control/dns"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/controltest"
 )
@@ -59,7 +60,7 @@ func TestIntegrationRoute53StagingACME(t *testing.T) {
 	if err := controlstate.Migrate(ctx, databaseURL); err != nil {
 		t.Fatal(err)
 	}
-	database, err := controlstate.Open(ctx, databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	database, err := controlstate.Open(ctx, databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

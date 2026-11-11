@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 )
 
@@ -132,7 +133,7 @@ func TestIntegrationGuestTrialCredentialAndOneCurrentPublicURL(t *testing.T) {
 
 func TestIntegrationGuestIssuanceSerializesOneNetwork(t *testing.T) {
 	database, databaseURL, now := newControlStateIntegrationDatabaseWithURL(t, "guest_issuance")
-	other, err := Open(t.Context(), databaseURL, testStorageKey, "")
+	other, err := Open(t.Context(), databaseURL, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import (
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
+	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
@@ -102,7 +103,7 @@ func (h *handler) DrainAdminRelay(response http.ResponseWriter, request *http.Re
 	lease, err := h.admin.BeginAdminRelayDrain(request.Context(), controlstate.RelayLeaseIdentity{
 		RelayID: string(relayID), RelayRunID: body.RelayRunId,
 		RelayLeaseRevision: uint64(body.RelayLeaseRevision),
-	}, principal.identityID, newRequestID(), now, body.Deadline.UTC())
+	}, principal.identityID, failureproblem.NewRequestID(), now, body.Deadline.UTC())
 	if err != nil {
 		h.writeAdminStateError(request.Context(), response, "drain admin relay", err)
 		return
@@ -150,7 +151,7 @@ func (h *handler) SetMaintenanceControl(
 	}
 	control, err := h.admin.SetMaintenanceControl(
 		request.Context(), controlstate.MaintenanceControlName(name), body.Allowed,
-		principal.identityID, newRequestID(), time.Now().UTC(),
+		principal.identityID, failureproblem.NewRequestID(), time.Now().UTC(),
 	)
 	if err != nil {
 		h.writeAdminStateError(request.Context(), response, "set maintenance control", err)

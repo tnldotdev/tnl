@@ -18,6 +18,7 @@ import (
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	controlpublic "github.com/tnldotdev/tnl/internal/control/api/public"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
+	"github.com/tnldotdev/tnl/internal/naming"
 	publishergroup "github.com/tnldotdev/tnl/internal/publisher/group"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -34,7 +35,7 @@ func TestIntegrationPublisherIdentitySurvivesTaskStateDeletion(t *testing.T) {
 	if err := controlstate.Migrate(ctx, url); err != nil {
 		t.Fatal(err)
 	}
-	database, err := controlstate.Open(ctx, url, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	database, err := controlstate.Open(ctx, url, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

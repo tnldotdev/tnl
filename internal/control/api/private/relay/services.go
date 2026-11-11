@@ -24,7 +24,7 @@ func privateRelayIdentity(id, run string, revision int64) controlstate.RelayLeas
 
 func privateRelayProblem(h *handler, w http.ResponseWriter, r *http.Request, err error) bool {
 	if errors.Is(err, controlstate.ErrServiceAccess) {
-		serviceapi.WriteProblem(w, 409, "stale_connection_assignment", "Private publisher connection is not current")
+		serviceapi.WriteProblem(w, 409, "stale_connection_assignment", "Private publisher connection is not current", "")
 		return true
 	}
 	return h.writeServiceError(w, r, err)
@@ -43,7 +43,7 @@ func (h *handler) claimServicePublisherConnection(w http.ResponseWriter, r *http
 	}
 	if !opaqueid.Valid(id, opaqueid.PublisherConnectionPrefix) || !opaqueid.Valid(body.ServiceId, opaqueid.ServicePrefix) ||
 		!opaqueid.Valid(body.ServiceRunId, opaqueid.ServiceRunPrefix) || body.RunNumber <= 0 || body.ConnectionAssignmentRevision <= 0 || body.RelayLeaseRevision <= 0 {
-		serviceapi.WriteProblem(w, 400, "invalid_request", "Private connection claim is invalid")
+		serviceapi.WriteProblem(w, 400, "invalid_request", "Private connection claim is invalid", "")
 		return
 	}
 	row, err := h.service.store.ClaimServicePublisherConnection(r.Context(), id, body.ServiceId, body.ServiceRunId,
@@ -70,7 +70,7 @@ func (h *handler) servicePublisherTransition(w http.ResponseWriter, r *http.Requ
 	}
 	if !opaqueid.Valid(id, opaqueid.PublisherConnectionPrefix) || !opaqueid.Valid(body.ServiceRunId, opaqueid.ServiceRunPrefix) ||
 		body.RunNumber <= 0 || body.ConnectionAssignmentRevision <= 0 || body.RelayLeaseRevision <= 0 {
-		serviceapi.WriteProblem(w, 400, "invalid_request", "Private connection transition is invalid")
+		serviceapi.WriteProblem(w, 400, "invalid_request", "Private connection transition is invalid", "")
 		return
 	}
 	store := h.service.store

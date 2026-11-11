@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
 )
@@ -90,7 +91,7 @@ func TestIntegrationVisitorSigningBootstrapWait(t *testing.T) {
 	for _, mode := range []string{"prepare", "repeatable-read-issue"} {
 		t.Run(mode, func(t *testing.T) {
 			d, url, now := newControlStateIntegrationDatabaseWithURL(t, "visitor_signing_bootstrap")
-			other, err := Open(t.Context(), url, testStorageKey, "")
+			other, err := Open(t.Context(), url, testStorageKey, "", naming.ManagedURLModeGenerated)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -149,7 +150,7 @@ func TestIntegrationVisitorSigningRotationWait(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				d, url, now := newControlStateIntegrationDatabaseWithURL(t, "visitor_signing_rotation_wait")
-				other, err := Open(t.Context(), url, testStorageKey, "")
+				other, err := Open(t.Context(), url, testStorageKey, "", naming.ManagedURLModeGenerated)
 				if err != nil {
 					t.Fatal(err)
 				}

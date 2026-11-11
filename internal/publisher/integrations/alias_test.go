@@ -124,7 +124,7 @@ func TestAliasOAuthReturnsToInitiatingOriginAndExpiresAcrossHandoff(t *testing.T
 			t.Fatal(err)
 		}
 	}
-	handler := OAuthHandler(f.state, testServer, testOAuthHost)
+	handler := OAuthHandler(f.state, testServer, testOAuthHost, nil)
 	request := httptest.NewRequest(http.MethodGet, "https://"+testOAuthHost+"/api/auth/callback/github?state=returns-to-alias&code=provider-code", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -166,7 +166,7 @@ func TestAliasFinalOAuthHopRejectsReplacementRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := httptest.NewRecorder()
-	OAuthHandler(f.state, testServer, testOAuthHost).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://"+testOAuthHost+"/api/auth/callback/github?state=between-hops&code=opaque", nil))
+	OAuthHandler(f.state, testServer, testOAuthHost, nil).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "https://"+testOAuthHost+"/api/auth/callback/github?state=between-hops&code=opaque", nil))
 	if response.Code != http.StatusSeeOther {
 		t.Fatal("stable callback did not redirect")
 	}

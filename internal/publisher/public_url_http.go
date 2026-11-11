@@ -138,7 +138,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 			Handler: observability.PublisherHTTP(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 				session, _ := request.Context().Value(visitorSessionKey{}).(*visitorSession)
 				if session == nil || !session.beginRequest() {
-					diagnostic.WriteHTTP(response, request, diagnostic.RequestRejected)
+					diagnostic.WriteHTTP(response, request, diagnostic.RequestRejected, "")
 					return
 				}
 				defer session.requests.Done()
@@ -193,7 +193,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}()
 				}
 				if code := publisherproxy.ValidateRequest(request, hostname); code != "" {
-					diagnostic.WriteHTTP(response, request, code)
+					diagnostic.WriteHTTP(response, request, code, "")
 					return
 				}
 				proof := config.ReadinessProof.consume(request, PublishRunIdentity{Hostname: hostname, PublicURLID: config.PublicURLID, PublishRunID: config.PublishRunID, Number: config.PublishRunNumber})
@@ -209,7 +209,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						if !ok {
 							code = diagnostic.ServerUnavailable
 						}
-						diagnostic.WriteHTTP(response, request, code)
+						diagnostic.WriteHTTP(response, request, code, "")
 						return
 					}
 				}
@@ -223,11 +223,11 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 						defer func() { <-shareSlots }()
 					default:
 						response.Header().Set("Retry-After", "1")
-						diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+						diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "")
 						return
 					}
 					if config.ShareAccess == nil {
-						diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)
+						diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied, "")
 						return
 					}
 					if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
@@ -235,7 +235,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}
 					redemption, err := config.ShareAccess.redeem(request.Context(), request.URL.EscapedPath())
 					if err != nil {
-						diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)
+						diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied, "")
 						return
 					}
 					if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
@@ -252,7 +252,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 							defer func() { <-shareSlots }()
 						default:
 							response.Header().Set("Retry-After", "1")
-							diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+							diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "")
 							return
 						}
 						if connection, ok := request.Context().Value(shareConnectionKey{}).(*tls.Conn); ok {
@@ -307,7 +307,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					if config.BrowserAccess.redirectRestricted(response, request, config.BrowserLoginAvailable) {
 						return
 					}
-					diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied)
+					diagnostic.WriteHTTP(response, request, diagnostic.VisitorAccessDenied, "")
 					return
 				}
 				auditOutcome, auditReason = "allowed", ""
@@ -324,14 +324,14 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					case probeSlots <- struct{}{}:
 						defer func() { <-probeSlots }()
 					default:
-						diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+						diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "")
 						return
 					}
 					probeCtx, cancel := context.WithTimeout(request.Context(), 5*time.Second)
 					defer cancel()
 					request = request.WithContext(probeCtx)
 					if err := session.admit(probeCtx, true); err != nil {
-						diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+						diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "")
 						return
 					}
 					handler.ServeHTTP(response, request)
@@ -349,10 +349,10 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 					}
 					switch status {
 					case http.StatusTooManyRequests:
-						diagnostic.WriteHTTP(response, request, diagnostic.RequestRateLimited)
+						diagnostic.WriteHTTP(response, request, diagnostic.RequestRateLimited, "")
 					case http.StatusServiceUnavailable:
 						if retryAfter == 0 {
-							diagnostic.WriteHTTP(response, request, diagnostic.RequestBudgetExhausted)
+							diagnostic.WriteHTTP(response, request, diagnostic.RequestBudgetExhausted, "")
 						} else {
 							diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "saturated")
 						}
@@ -362,7 +362,7 @@ func NewPublicURLServer(config PublicURLServerConfig) (*PublicURLServer, error) 
 				if err := session.admit(request.Context(), proof); err != nil {
 					auditOutcome, auditReason = "failed", "capacity"
 					admission.refund()
-					diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached)
+					diagnostic.WriteHTTP(response, request, diagnostic.RequestLimitReached, "")
 					return
 				}
 				if request.Context().Err() != nil {

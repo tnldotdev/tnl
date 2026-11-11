@@ -14,6 +14,7 @@ import (
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/development/oidc"
+	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/testutil/oidctest"
@@ -27,7 +28,7 @@ func TestIntegrationControlOwnedDeviceLogin(t *testing.T) {
 	if err := controlstate.Migrate(ctx, databaseURL); err != nil {
 		t.Fatal(err)
 	}
-	d, err := controlstate.Open(ctx, databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "")
+	d, err := controlstate.Open(ctx, databaseURL, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "", naming.ManagedURLModeGenerated)
 	if err != nil {
 		t.Fatal(err)
 	}

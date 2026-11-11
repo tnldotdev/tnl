@@ -11,7 +11,7 @@ import (
 type EventType string
 
 const (
-	EventPublicURLAssigned   EventType = "route" // preserve the existing internal event value.
+	EventPublicURLAssigned   EventType = "public_url_assigned"
 	EventProvisioning        EventType = "provisioning"
 	EventProvisioningStep    EventType = "provisioning_step"
 	EventProvisioningStalled EventType = "provisioning_stalled"

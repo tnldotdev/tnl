@@ -54,6 +54,8 @@ type auditCompositionTarget struct {
 	workers sync.WaitGroup
 }
 
+func (*auditCompositionTarget) ConnectionSlot() uint8 { return 0 }
+
 func (f *auditCompositionTarget) Start(ctx context.Context, _ string, _ bool, proxy, initial []byte) (result net.Conn, retErr error) {
 	connection := f.open(true)
 	deadline, _ := ctx.Deadline()

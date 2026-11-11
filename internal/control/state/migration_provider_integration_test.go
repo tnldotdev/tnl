@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestIntegrationMigrationRejectsPreGoogleProviderBaseline(t *testing.T) {
@@ -109,7 +110,7 @@ func testMigrationRejectsProviderBaseline(t *testing.T, previous string, provide
 				{"migrate", func() error { return Migrate(ctx, url) }},
 				{"readiness", func() error { return d.Readiness(ctx) }},
 				{"open", func() error {
-					opened, err := Open(ctx, url, testStorageKey, "")
+					opened, err := Open(ctx, url, testStorageKey, "", naming.ManagedURLModeGenerated)
 					if opened != nil {
 						opened.Close()
 					}

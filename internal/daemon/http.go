@@ -30,13 +30,6 @@ func matchedAPIPattern(request *http.Request, match func(*http.Request) string) 
 	return ""
 }
 
-func matchedPrivatePattern(handler http.Handler, request *http.Request) string {
-	if matcher, ok := handler.(interface{ MatchedPattern(*http.Request) string }); ok {
-		return matcher.MatchedPattern(request)
-	}
-	return ""
-}
-
 func controlHTTPServer(handler http.Handler, tlsConfig *tls.Config) *http.Server {
 	return &http.Server{
 		Handler: handler, TLSConfig: tlsConfig, ReadHeaderTimeout: 5 * time.Second,
