@@ -59,6 +59,9 @@ func (p *PeerSession) detachDeliveryUnderInstall(expected peerNetworkBinding) {
 	if p.packets != nil {
 		p.packets.SuspendBinding()
 	}
+	if p.connectivity != nil {
+		p.connectivity.Suspend()
+	}
 	paths := p.packetPaths
 	until := p.owner.until
 	close(p.changed)
@@ -106,6 +109,9 @@ func (p *PeerSession) stageBinding(binding PeerBinding) (result error) {
 		return ErrPrivateStream
 	}
 	p.highwater, p.pending, p.deliveryState = binding.generation, &binding, peerDeliveryStaging
+	if p.connectivity != nil {
+		p.connectivity.Suspend()
+	}
 	packets := p.packets
 	until := p.owner.until
 	close(p.changed)
@@ -181,12 +187,25 @@ func (p *PeerSession) activateBinding(binding PeerBinding) error {
 		}
 		return ErrPrivateStream
 	}
+	// a direct attempt can be joining native packet-admission callbacks while
+	// holding the endpoint installation lock. never wait for that lock under
+	// Bound.mu. installMu still serializes this role's binding operation.
+	b.mu.Unlock()
 	if err := p.packets.ActivateBinding(binding.revision()); err != nil {
-		b.mu.Unlock()
 		return err
+	}
+	b.mu.Lock()
+	if !p.currentLocked() || p.pending == nil || p.deliveryState != peerDeliveryPrepared || !p.pending.until.After(time.Now()) ||
+		!p.pending.peerNetworkBinding.sameOperation(binding.peerNetworkBinding) || b.packetSlots != p.deliverySlots || !b.peerRelaysCurrentLocked(binding) {
+		b.mu.Unlock()
+		p.packets.SuspendBinding()
+		return ErrPrivateStream
 	}
 	p.installedUntil = peerDeadline(p.pending.until, binding.until)
 	p.network, p.lease, p.pending, p.deliveryState = binding.peerNetworkBinding, binding.peerLease, nil, peerDeliveryActive
+	if p.connectivity != nil {
+		p.connectivity.SetBinding(binding.connectivityBinding())
+	}
 	p.observeOwnerLocked(binding.peerLease)
 	for a := range p.streams {
 		if a.admittedLocked() && !a.retiringLocked() {

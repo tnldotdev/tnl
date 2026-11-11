@@ -19,6 +19,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/security/targettrust"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/peer"
 	"github.com/tnldotdev/tnl/internal/transport/targettransport"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -56,10 +57,13 @@ type RunConfig struct {
 	TransportTLS      *tls.Config
 	RelayQUIC         muxsession.Connector
 	RelayTCP          muxsession.Connector
-	Metadata          controlv1.ServiceMetadata
-	StreamCapacity    int32
-	Healthy           func(context.Context) bool
-	ObserveReadiness  func(RunStatus)
+	Connectivity      peer.ConnectivityOptions
+	// PeerSocket is borrowed by qualification; the default service run owns one.
+	PeerSocket       *peer.Socket
+	Metadata         controlv1.ServiceMetadata
+	StreamCapacity   int32
+	Healthy          func(context.Context) bool
+	ObserveReadiness func(RunStatus)
 }
 
 // RunStatus separates current readiness from the one-time Ready notification.
@@ -238,6 +242,24 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	bound, err := prepared.Activate(setup)
 	if err != nil {
 		return err
+	}
+	bound.connectivityOptions = config.Connectivity
+	if !config.Connectivity.DisableDirect {
+		bound.peerSocket = config.PeerSocket
+		if bound.peerSocket == nil {
+			// UDP is an optimization; a blocked socket leaves relay TLS/TCP usable.
+			// relay slots retain admitted visitors through caller cancellation.
+			// the deferred close follows their bounded drain and joined cleanup.
+			bound.peerSocket, _ = peer.ListenSocket(context.WithoutCancel(ctx), "udp", ":0")
+			if bound.peerSocket != nil {
+				defer bound.peerSocket.Close()
+			}
+		}
+		if bound.peerSocket != nil && config.RelayQUIC == nil {
+			connector := connectOptions.QUIC.(muxsession.QUICConnector)
+			connector.Dialer = bound.peerSocket
+			connectOptions.QUIC = connector
+		}
 	}
 	// close and join visitors before flushing their final observations. the
 	// reporter outlives caller cancellation but retains a fixed shutdown budget.

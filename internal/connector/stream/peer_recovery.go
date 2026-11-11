@@ -96,6 +96,9 @@ func (p *connectorConnection) requestRecovery(next connectorRecoveryState) {
 	p.recoveryState = next
 	if next == connectorRebinding {
 		p.openings = nil
+		if p.connectivity != nil {
+			p.connectivity.Suspend()
+		}
 	}
 	until, stop := p.until, p.bindingCancel
 	active := make([]*PreparedConnector, 0, len(p.active))
@@ -526,6 +529,9 @@ func (p *connectorConnection) installActiveBinding(op *connectorRebindOperation,
 		}
 	}
 	p.rebind, p.recoveryState = nil, connectorBindingReady
+	if p.connectivity != nil {
+		p.connectivity.SetBinding(connectorConnectivityBinding(*active))
+	}
 	permission, bound := p.permission, earliestConnectorDeadline(p.until, p.run.ValidUntil, p.permission.ExpiresAt)
 	p.notifyLocked()
 	p.mu.Unlock()

@@ -82,8 +82,10 @@ func (p *Prepared) currentCertificate() (*tls.Certificate, error) {
 type Bound struct {
 	prepared *Prepared
 	*boundState
-	streamCapacity int
-	audit          serviceaudit.Sink
+	streamCapacity      int
+	audit               serviceaudit.Sink
+	peerSocket          *peer.Socket
+	connectivityOptions peer.ConnectivityOptions
 }
 
 type boundState struct {

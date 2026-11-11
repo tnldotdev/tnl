@@ -31,11 +31,11 @@ tasks:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='{{.RUN}}' -count=1 -timeout=20m -args -tnl-test-tier=integration
 
   runtime:shard:
-    desc: Run a runtime shard, excluding separately scheduled long lease and rebinding proofs
+    desc: Run a runtime shard, excluding separately scheduled lease, direct UDP, and rebinding proofs
     requires:
       vars: [SHARD]
     cmds:
-      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/daemon -run='^TestIntegration' -skip='^TestIntegration(WorkloadTransportLifecycle|PrivateDefaultLeaseCycles|ConnectorRebindingRetainsApplicationAndTarget|ConnectorSourceRebindingRetainsApplicationAndTarget|ConnectorRebindingRetainsPostgresTransaction)$' -count=1 -timeout=8m -args -tnl-test-tier=integration
+      - go -C tools/testharness run . --tnl-test-shard='{{.SHARD}}' postgres -- go test -race -v ./internal/daemon -run='^TestIntegration' -skip='^TestIntegration(ConnectorDirect|WorkloadTransportLifecycle$|PrivateDefaultLeaseCycles$|ConnectorRebindingRetainsApplicationAndTarget$|ConnectorSourceRebindingRetainsApplicationAndTarget$|ConnectorRebindingRetainsPostgresTransaction$)' -count=1 -timeout=8m -args -tnl-test-tier=integration
 
   runtime:leases:
     desc: Cross production private visitor lease cycles and outage deadlines on real sockets
@@ -46,6 +46,11 @@ tasks:
     desc: Cross workload renewal and fixed expiry on real QUIC and TLS/TCP paths
     cmds:
       - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationWorkloadTransportLifecycle$' -count=1 -timeout=8m -args -tnl-test-tier=integration
+
+  connector-direct:
+    desc: Check relay-first ICE upgrades, repeated direct fallback, and retained application sessions with disposable PostgreSQL
+    cmds:
+      - go -C tools/testharness run . postgres -- go test -race -v ./internal/daemon -run='^TestIntegrationConnectorDirect' -count=1 -timeout=5m -args -tnl-test-tier=integration
 
   connector-rebinding:
     desc: Check retained connector sessions and relay replacements with disposable PostgreSQL

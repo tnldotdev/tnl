@@ -107,7 +107,12 @@ func (p *PeerSession) serveRelayPackets(ctx context.Context) error {
 			return err
 		}
 	}
-	packets, err := peer.New(p.ctx, peer.Config{Key: binding.sessionKey, Role: 1, Binding: binding.revision(), Paths: [2]peer.Carrier{pathSlots[0], pathSlots[1]}})
+	var direct *peer.CarrierSlot
+	var connectivityDone chan error
+	if p.bound.peerSocket != nil {
+		direct = peer.NewCarrierSlot()
+	}
+	packets, err := peer.New(p.ctx, peer.Config{Key: binding.sessionKey, Role: 1, Binding: binding.revision(), Paths: [2]peer.Carrier{pathSlots[0], pathSlots[1]}, Direct: direct})
 	if err != nil {
 		closePeerCarriers(paths)
 		return err
@@ -144,7 +149,35 @@ func (p *PeerSession) serveRelayPackets(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return p.serveSession(session)
+	if p.bound.peerSocket != nil {
+		connectivity := peer.NewConnectivity(p.bound.peerSocket, connection, packets, false, p.bound.connectivityOptions, func(packet tunnelv1.PeerPacket) bool {
+			return p.bound.admitPeerPacket(p.identity.pairID, int64(packet.BindingGeneration), packet)
+		})
+		p.bound.mu.Lock()
+		p.connectivity = connectivity
+		if p.deliveryCurrentLocked() {
+			connectivity.SetBinding(p.bindingLocked().connectivityBinding())
+		}
+		p.bound.mu.Unlock()
+		connectivityDone = make(chan error, 1)
+		go func() {
+			err := connectivity.Serve(p.ctx)
+			if err != nil && p.ctx.Err() == nil {
+				p.stop()
+			}
+			connectivityDone <- err
+		}()
+	}
+	result := p.serveSession(session)
+	if connectivityDone != nil {
+		result = errors.Join(result, <-connectivityDone)
+	}
+	return result
+}
+
+func (b PeerBinding) connectivityBinding() peer.ConnectivityBinding {
+	return peer.ConnectivityBinding{Revision: b.revision(), DeliveryID: b.expected().DeliveryID,
+		RelayAddresses: [2]string{b.relays[0].RelayAddress, b.relays[1].RelayAddress}}
 }
 
 func (p *PeerSession) markReady(ctx context.Context) error {
