@@ -39,7 +39,7 @@ func PublishHostname(publicURL, name, selectedDomain string, current team.Contex
 		hostname = name + "." + namespace
 	}
 	if hostname == "" {
-		label, err := naming.GeneratedHostnameLabel()
+		label, err := naming.RandomHostnameLabel()
 		if err != nil {
 			return "", authorityv1.Domain{}, "", err
 		}

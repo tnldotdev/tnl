@@ -72,7 +72,7 @@ class NativeStub(NativeRuntime):
                     "routable": True,
                     "ready": False,
                     "readiness": {"path": "/"},
-                    "public_url": "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test",
+                    "public_url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test",
                     "publish_run_number": 1,
                 }
             ],
@@ -106,7 +106,7 @@ async def main() -> None:
             await send({"type": "websocket.close", "code": 1000})
 
     async with tnl.open(app) as tunnel:
-        assert tunnel.url == "https://eph-aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test"
+        assert tunnel.url == "https://aaaaaaaaaaaaaaaaaaaaaaaaaa.example.test"
         async with httpx.AsyncClient() as client:
             response = await client.get(native.target + "/")
             assert response.status_code == 200 and response.text == "one two"

@@ -7,6 +7,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -297,7 +299,10 @@ func (f *Fixture) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		protocol, ephemeral := controlv1.Http, true
-		publicURL, err := f.seed.CreatePublicURL(r.Context(), controlv1.CreatePublicURLRequest{RequirePostQuantum: b.RequirePostQuantum, TeamId: e.result.TeamId, DomainId: *e.result.DomainId, CanonicalHostname: "eph-" + strings.ToLower(strings.TrimPrefix(b.InvocationId, opaqueid.InvocationPrefix)) + "." + *e.result.Namespace, Target: b.Target, Purpose: controlv1.App, PublicUrlScope: controlv1.Member, Ephemeral: &ephemeral, ServiceProtocol: &protocol}, b.InvocationId)
+		// exact retries retain their hostname in this fixture.
+		digest := sha256.Sum256([]byte(b.InvocationId))
+		label := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(digest[:16]))
+		publicURL, err := f.seed.CreatePublicURL(r.Context(), controlv1.CreatePublicURLRequest{RequirePostQuantum: b.RequirePostQuantum, TeamId: e.result.TeamId, DomainId: *e.result.DomainId, CanonicalHostname: label + "." + *e.result.Namespace, Target: b.Target, Purpose: controlv1.App, PublicUrlScope: controlv1.Member, Ephemeral: &ephemeral, ServiceProtocol: &protocol}, b.InvocationId)
 		if err != nil {
 			w.WriteHeader(502)
 			return
