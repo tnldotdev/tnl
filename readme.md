@@ -16,7 +16,9 @@
 
 ### in dev
 
-`tnl` gives every Git worktree its own unique HTTPS URL. Traffic stays encrypted from the browser to your laptop. Here's how it looks:
+`tnl` gives every Git worktree its own unique HTTPS URL. Traffic stays encrypted from the browser to your laptop.
+
+For example, take a repo named `demo` with an `app` service. The main checkout and a `perf` worktree each get their own URL:
 
 ```text
                              your browser
@@ -40,7 +42,7 @@
 |                +-----------------+----------------+                 |
 |                v                                  v                 |
 |       tnl (main checkout)                tnl (perf worktree)        |
-|       app-shop.example.com            app-shop-perf.example.com     |
+|       app-demo.example.com            app-demo-perf.example.com     |
 |                |                                  |                 |
 |                v                                  v                 |
 |         localhost:5173                     localhost:5174           |
@@ -174,12 +176,12 @@ This would end up looking like:
 ```text
 your browser
 |
-+-- https://app-shop.example.com
++-- https://app-demo.example.com
 |          |
 |          v
 |   main checkout -> localhost:5173
 |
-+-- https://app-shop-perf.example.com
++-- https://app-demo-perf.example.com
            |
            v
     perf worktree -> localhost:5174
@@ -192,7 +194,7 @@ Vite and Next.js can choose another port when the preferred one is taken, and `t
 You can leave inline feedback in your app for your agent to review. Or, send someone on your team a link:
 
 ```bash
-pnpm exec tnl share link create app-shop.example.com \
+pnpm exec tnl share link create app-demo.example.com \
   --expires-in 7d
 ```
 
@@ -228,7 +230,7 @@ The OAuth and webhook URLs do not change when you work across multiple checkouts
 OAuth automatically returns the browser to the worktree that started login:
 
 ```text
-                   https://app-shop-perf.example.com
+                   https://app-demo-perf.example.com
                                    |
                                    | start login
                                    v
@@ -236,12 +238,12 @@ OAuth automatically returns the browser to the worktree that started login:
                                    |
                                    v
 +--[ oauth callback url ]---------------------------------------------+
-|             https://oauth-shop.example.com/auth/callback            |
+|             https://oauth-demo.example.com/auth/callback            |
 +---------------------------------------------------------------------+
                                    |
                                    | redirect browser
                                    v
-                   https://app-shop-perf.example.com
+                   https://app-demo-perf.example.com
 ```
 
 Or, for webhooks, the same event fans out to all running worktrees:
@@ -251,7 +253,7 @@ Or, for webhooks, the same event fans out to all running worktrees:
                                    |
                                    v
 +--[ webhook url ]----------------------------------------------------+
-|            https://hooks-shop.example.com/webhooks/stripe           |
+|            https://hooks-demo.example.com/webhooks/stripe           |
 +---------------------------------------------------------------------+
                                    |
                        +-----------+-----------+
@@ -313,7 +315,7 @@ export default defineConfig({
       services: ["orders"],
       github: {
         // your GitHub repo details
-        repository: "shop/storefront",
+        repository: "acme/demo",
         workflow: ".github/workflows/deploy.yml",
         ref: "refs/heads/main",
       },
