@@ -9,6 +9,7 @@ import (
 	ingresspool "github.com/tnldotdev/tnl/internal/ingress/pool"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/policy/trafficlimits"
+	"github.com/tnldotdev/tnl/internal/region"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 )
@@ -136,6 +137,7 @@ type Config struct {
 	PendingSourceBurst               int           `name:"pending-source-burst" env:"TNLD_PENDING_SOURCE_BURST" default:"6" help:"Pending visitor attempt burst per source."`
 
 	IngressID            string         `name:"ingress-id" env:"TNLD_INGRESS_ID" help:"Stable ingress process identity."`
+	Region               region.ID      `name:"region" env:"TNLD_REGION" default:"local" help:"Provider-qualified region, such as fly:sjc or aws:us-west-2; local makes no geographic claim."`
 	IngressPoolID        ingresspool.ID `name:"ingress-pool-id" env:"TNLD_INGRESS_POOL_ID" default:"ingress-a" help:"Ingress pool served by this ingress process."`
 	ServicePortRanges    []string       `name:"service-port-ranges" env:"TNLD_SERVICE_PORT_RANGES" default:"20000-20015" help:"Managed TCP ports exposed by this ingress pool: 1-128 non-overlapping declarations, at most 256 ports from 1024 to 65535. Direct ingress binds every port; proxied ingress requires destination metadata."`
 	RelayServiceID       string         `name:"relay-service-id" env:"TNLD_RELAY_SERVICE_ID" help:"Stable relay service identity for this relay process."`
@@ -171,6 +173,9 @@ func (c Config) Validate() (retErr error) {
 	}()
 	if !c.Role.RunsControl() && !c.Role.RunsIngress() && !c.Role.RunsRelay() {
 		return failure.Wrap("validate server role", failure.InvalidRole, errors.New("role must be standalone, control, ingress, or relay"))
+	}
+	if c.Region != "" && !c.Region.Valid() {
+		return region.ErrPreference
 	}
 	if c.RelayQUICProfile != "" && c.RelayQUICProfile != "standard" && c.RelayQUICProfile != "fly" {
 		return failure.WrapSetting("validate relay QUIC profile", failure.ServerConfigInvalid,
@@ -285,4 +290,12 @@ func (c Config) Validate() (retErr error) {
 		return errors.New("lease, routing-table, transport, or drain timing is invalid")
 	}
 	return nil
+}
+
+// ServingRegion supplies the explicit unlocated default for embedded callers.
+func (c Config) ServingRegion() region.ID {
+	if c.Region == "" {
+		return region.Local
+	}
+	return c.Region
 }

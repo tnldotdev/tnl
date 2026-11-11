@@ -96,7 +96,7 @@ func TestIntegrationPoolAndIngressCertificateHTTPReview(t *testing.T) {
 	}
 	for _, id := range []string{"ingress-a", "ingress-b"} {
 		run, _ := opaqueid.New(opaqueid.IngressRunPrefix)
-		body := ingressv1.IngressRegistration{IngressId: id, IngressRunId: run, IngressPoolId: "ingress-a", ServicePorts: []int{}, ProtocolVersion: 1, ConnectionCapacity: 8}
+		body := ingressv1.IngressRegistration{Region: "local", IngressId: id, IngressRunId: run, IngressPoolId: "ingress-a", ServicePorts: []int{}, ProtocolVersion: 1, ConnectionCapacity: 8}
 		if unauthorized, err := nodeAPI.RegisterIngressWithResponse(ctx, body); err != nil || unauthorized.StatusCode() != http.StatusUnauthorized {
 			t.Fatal("unauthenticated ingress registration", err)
 		}

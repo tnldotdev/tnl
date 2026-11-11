@@ -1,5 +1,6 @@
 -- name: RegisterIngress :one
 INSERT INTO control.ingress_leases (
+    region,
     ingress_id,
     ingress_run_id,
     ingress_lease_revision,
@@ -11,6 +12,7 @@ INSERT INTO control.ingress_leases (
     renewed_at,
     lease_expires_at
 ) VALUES (
+    sqlc.arg(region),
     sqlc.arg(ingress_id),
     sqlc.arg(ingress_run_id),
     COALESCE((SELECT max(ingress_lease_revision) FROM control.ingress_run_fences WHERE ingress_id = sqlc.arg(ingress_id)), 0) + 1,
@@ -23,6 +25,7 @@ INSERT INTO control.ingress_leases (
     sqlc.arg(lease_expires_at)
 )
 ON CONFLICT (ingress_id) DO UPDATE SET
+    region = EXCLUDED.region,
     ingress_run_id = EXCLUDED.ingress_run_id,
     ingress_lease_revision = CASE
         WHEN control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
@@ -73,6 +76,7 @@ ON CONFLICT (ingress_id) DO UPDATE SET
         ELSE EXCLUDED.lease_expires_at
     END
 WHERE (control.ingress_leases.ingress_run_id = EXCLUDED.ingress_run_id
+    AND control.ingress_leases.region=EXCLUDED.region
     AND control.ingress_leases.ingress_pool_id=EXCLUDED.ingress_pool_id
     AND control.ingress_leases.service_ports=EXCLUDED.service_ports)
    OR control.ingress_leases.lease_expires_at <= EXCLUDED.registered_at

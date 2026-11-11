@@ -191,6 +191,7 @@ func (h *handler) writeAdminStateError(ctx context.Context, response http.Respon
 
 func adminRelayLease(lease controlstate.RelayLease) controlv1.AdminRelayLease {
 	result := controlv1.AdminRelayLease{
+		Region:         string(lease.Region),
 		RelayServiceId: lease.RelayServiceID, RelayId: lease.RelayID, RelayRunId: lease.RelayRunID,
 		RelayLeaseRevision: int64(lease.RelayLeaseRevision), ProtocolVersion: int64(lease.ProtocolVersion),
 		RelayAddress: lease.RelayAddress, TlsServerName: lease.TLSServerName,

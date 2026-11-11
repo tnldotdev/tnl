@@ -91,6 +91,7 @@ func replenishPublishRunConnections(
 	if err != nil {
 		return result, fmt.Errorf("controlstate: replenish publish-run connections: %w", err)
 	}
+	rankRelayPlacements(availableServices, session.PreferredRegions)
 	leaseIdentities := make(map[relayProcessLeaseIdentity]struct{}, len(leases))
 	serviceConfigurations := make(map[string]relayServicePlacement, len(availableServices))
 	for _, service := range availableServices {
