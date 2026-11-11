@@ -41,6 +41,9 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 			<-callbackDone
 		}
 	}()
+	var serving sync.WaitGroup
+	// listener and upstream cleanup must unblock the connection before joining.
+	defer serving.Wait()
 	var mu sync.Mutex
 	dialed := false
 	closed := false
@@ -104,7 +107,30 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 		handler = wrap(handler)
 	}
 	handler = Requests(observability.PublisherHTTP(handler), RequestBodyTimeout)
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10,
+	// net/http forgets hijacked connections before their handlers return. both
+	// this flag and the handler's defer run on the single connection's worker.
+	hijacked := false
+	joined := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if hijacked {
+				serving.Done()
+			}
+		}()
+		handler.ServeHTTP(w, r)
+	})
+	server := &http.Server{Handler: joined, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10,
+		ConnState: func(_ net.Conn, state http.ConnState) {
+			switch state {
+			case http.StateNew:
+				// StateNew runs before Serve starts the connection worker, so no
+				// worker can be added after Serve returns and the join begins.
+				serving.Add(1)
+			case http.StateHijacked:
+				hijacked = true
+			case http.StateClosed:
+				serving.Done()
+			}
+		},
 		BaseContext: func(net.Listener) context.Context { return ctx }, ErrorLog: log.New(io.Discard, "", 0)}
 	defer server.Close()
 	err := server.Serve(listener)
