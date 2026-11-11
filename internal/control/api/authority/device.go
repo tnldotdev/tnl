@@ -37,18 +37,18 @@ type DeviceStore interface {
 	ApproveDeviceLogin(context.Context, string, []byte, string, time.Duration, time.Duration, time.Time) error
 }
 
-func (h *handler) deviceAvailable(w http.ResponseWriter) bool {
+func (h *handler) deviceAvailable(ctx context.Context, w http.ResponseWriter) bool {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self'; frame-ancestors 'none'")
-	if h.oidc == nil || h.devices == nil {
-		writeAuthenticationUnavailable(w, "device login", nil)
+	if h.oidc == nil || h.store == nil {
+		writeAuthenticationUnavailable(ctx, w, "device login", nil)
 		return false
 	}
 	return true
 }
 
-func (h *handler) deviceError(w http.ResponseWriter, err error) {
+func (h *handler) deviceError(ctx context.Context, w http.ResponseWriter, err error) {
 	if errors.Is(err, controlstate.ErrTeamNotFound) {
 		writeProblem(w, 404, authorityv1.NotFound, "team not found; use the exact team name")
 		return
@@ -63,14 +63,14 @@ func (h *handler) deviceError(w http.ResponseWriter, err error) {
 	}
 	if errors.Is(err, oidc.ErrUnavailable) {
 		requestID := writeProblem(w, http.StatusServiceUnavailable, authorityv1.Unavailable, "identity provider is unavailable; reopen the approval URL to retry")
-		operatorlog.ReportContext(observability.ResponseContext(w), "authenticate device browser", failure.ServerIdentityProviderUnavailable, requestID, err)
+		operatorlog.ReportContext(ctx, "authenticate device browser", failure.ServerIdentityProviderUnavailable, requestID, err)
 		return
 	}
-	writeAuthenticationUnavailable(w, "device login", err)
+	writeAuthenticationUnavailable(ctx, w, "device login", err)
 }
 
 func (h *handler) StartDeviceLogin(w http.ResponseWriter, r *http.Request) {
-	if !h.deviceAvailable(w) {
+	if !h.deviceAvailable(r.Context(), w) {
 		return
 	}
 	var body authorityv1.StartDeviceLoginRequest
@@ -85,16 +85,16 @@ func (h *handler) StartDeviceLogin(w http.ResponseWriter, r *http.Request) {
 	if body.RefreshToken != nil {
 		options.RefreshToken = *body.RefreshToken
 	}
-	l, credential, err := h.devices.CreateDeviceLogin(r.Context(), options, time.Now())
+	l, credential, err := h.store.CreateDeviceLogin(r.Context(), options, time.Now())
 	if err != nil {
-		h.deviceError(w, err)
+		h.deviceError(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, authorityv1.DeviceLoginChallenge{PollingCredential: credential, ApprovalUrl: h.config.ControlURL + "/v1/auth/device/approve?code=" + url.QueryEscape(l.UserCode), UserCode: l.UserCode, ExpiresAt: l.ExpiresAt, IntervalSeconds: 2})
 }
 
 func (h *handler) PollDeviceLogin(w http.ResponseWriter, r *http.Request) {
-	if !h.deviceAvailable(w) {
+	if !h.deviceAvailable(r.Context(), w) {
 		return
 	}
 	var body authorityv1.DeviceLoginCredential
@@ -102,9 +102,9 @@ func (h *handler) PollDeviceLogin(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, 400, authorityv1.InvalidRequest, "invalid polling credential")
 		return
 	}
-	l, err := h.devices.PollDeviceLogin(r.Context(), body.PollingCredential, time.Now())
+	l, err := h.store.PollDeviceLogin(r.Context(), body.PollingCredential, time.Now())
 	if err != nil {
-		h.deviceError(w, err)
+		h.deviceError(r.Context(), w, err)
 		return
 	}
 	result := authorityv1.DeviceLoginResult{Status: authorityv1.DeviceLoginResultStatus(l.Status)}
@@ -119,7 +119,7 @@ func (h *handler) PollDeviceLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) CancelDeviceLogin(w http.ResponseWriter, r *http.Request) {
-	if !h.deviceAvailable(w) {
+	if !h.deviceAvailable(r.Context(), w) {
 		return
 	}
 	var body authorityv1.DeviceLoginCredential
@@ -127,8 +127,8 @@ func (h *handler) CancelDeviceLogin(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, 400, authorityv1.InvalidRequest, "invalid polling credential")
 		return
 	}
-	if err := h.devices.CancelDeviceLogin(r.Context(), body.PollingCredential, time.Now()); err != nil {
-		h.deviceError(w, err)
+	if err := h.store.CancelDeviceLogin(r.Context(), body.PollingCredential, time.Now()); err != nil {
+		h.deviceError(r.Context(), w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -143,13 +143,13 @@ func deviceRandom() (string, error) {
 }
 
 func (h *handler) BeginDeviceBrowser(w http.ResponseWriter, r *http.Request, _ authorityv1.BeginDeviceBrowserParams) {
-	if !h.deviceAvailable(w) {
+	if !h.deviceAvailable(r.Context(), w) {
 		return
 	}
 	code := r.URL.Query().Get("code")
-	l, err := h.devices.ReadDeviceBrowser(r.Context(), code, time.Now())
+	l, err := h.store.ReadDeviceBrowser(r.Context(), code, time.Now())
 	if err != nil {
-		h.deviceError(w, err)
+		h.deviceError(r.Context(), w, err)
 		return
 	}
 	team := l.TeamID
@@ -159,32 +159,32 @@ func (h *handler) BeginDeviceBrowser(w http.ResponseWriter, r *http.Request, _ a
 			_ = teamSelectionPage.Execute(w, code)
 			return
 		}
-		team, err = h.devices.ResolveLoginTeam(r.Context(), r.URL.Query().Get("team"))
+		team, err = h.store.ResolveLoginTeam(r.Context(), r.URL.Query().Get("team"))
 		if err != nil {
-			h.deviceError(w, err)
+			h.deviceError(r.Context(), w, err)
 			return
 		}
 	}
 	state, err := deviceRandom()
 	if err != nil {
-		h.deviceError(w, err)
+		h.deviceError(r.Context(), w, err)
 		return
 	}
 	nonce, err := deviceRandom()
 	if err != nil {
-		h.deviceError(w, err)
+		h.deviceError(r.Context(), w, err)
 		return
 	}
 	bindingText, err := deviceRandom()
 	if err != nil {
-		h.deviceError(w, err)
+		h.deviceError(r.Context(), w, err)
 		return
 	}
 	verifier := oauth2.GenerateVerifier()
 	binding, _ := base64.RawURLEncoding.DecodeString(bindingText)
-	intent, err := h.devices.PrepareCompanyBrowser(r.Context(), team, h.config.OIDCIssuer, h.config.OIDCClientID, h.config.ControlURL+deviceCallbackPath, time.Now())
+	intent, err := h.store.PrepareCompanyBrowser(r.Context(), team, h.config.OIDCIssuer, h.config.OIDCClientID, h.config.ControlURL+deviceCallbackPath, time.Now())
 	if err != nil {
-		h.deviceError(w, err)
+		h.deviceError(r.Context(), w, err)
 		return
 	}
 	var authorization string
@@ -195,11 +195,11 @@ func (h *handler) BeginDeviceBrowser(w http.ResponseWriter, r *http.Request, _ a
 		authorization, err = h.oidc.AuthorizationURL(r.Context(), state, nonce, verifier)
 	}
 	if err != nil {
-		h.deviceError(w, err)
+		h.deviceError(r.Context(), w, err)
 		return
 	}
-	if err := h.devices.BeginDeviceBrowser(r.Context(), code, state, nonce, verifier, binding, team, intent, time.Now()); err != nil {
-		h.deviceError(w, err)
+	if err := h.store.BeginDeviceBrowser(r.Context(), code, state, nonce, verifier, binding, team, intent, time.Now()); err != nil {
+		h.deviceError(r.Context(), w, err)
 		return
 	}
 	http.SetCookie(w, serviceapi.ControlCookie(h.config.ControlURL, http.Cookie{Name: deviceCookie, Value: bindingText, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 600}))
@@ -223,50 +223,50 @@ var approvalPage = template.Must(template.New("approval").Parse(`<!doctype html>
 var teamSelectionPage = template.Must(template.New("team").Parse(`<!doctype html><html><head><title>tnl sign-in</title></head><body><h1>choose a team</h1><form method="get" action="/v1/auth/device/approve"><input type="hidden" name="code" value="{{.}}"><label>team name (leave empty for personal sign-in)<input name="team" maxlength="63"></label><button>continue</button></form></body></html>`))
 
 func (h *handler) CompleteDeviceBrowser(w http.ResponseWriter, r *http.Request, _ authorityv1.CompleteDeviceBrowserParams) {
-	if !h.deviceAvailable(w) {
+	if !h.deviceAvailable(r.Context(), w) {
 		return
 	}
 	binding, err := h.deviceBinding(r)
 	if err != nil {
-		h.deviceError(w, err)
+		h.deviceError(r.Context(), w, err)
 		return
 	}
 	if len(r.URL.RawQuery) > 8192 {
-		h.deviceError(w, controlstate.ErrDeviceLogin)
+		h.deviceError(r.Context(), w, controlstate.ErrDeviceLogin)
 		return
 	}
 	query, parseErr := url.ParseQuery(r.URL.RawQuery)
 	if parseErr != nil || len(query["state"]) != 1 || len(query["code"]) > 1 || len(query["error"]) > 1 || query.Get("code") != "" && query.Get("error") != "" || query.Get("iss") != "" && query.Get("iss") != h.config.OIDCIssuer {
-		h.deviceError(w, controlstate.ErrDeviceLogin)
+		h.deviceError(r.Context(), w, controlstate.ErrDeviceLogin)
 		return
 	}
-	l, err := h.devices.ConsumeDeviceBrowser(r.Context(), query.Get("state"), binding, time.Now())
+	l, err := h.store.ConsumeDeviceBrowser(r.Context(), query.Get("state"), binding, time.Now())
 	if err != nil {
-		h.deviceError(w, err)
+		h.deviceError(r.Context(), w, err)
 		return
 	}
 	if r.URL.Query().Get("error") == "access_denied" {
-		if err := h.devices.DenyDeviceBrowser(r.Context(), l.UserCode, binding, time.Now()); err != nil {
-			h.deviceError(w, err)
+		if err := h.store.DenyDeviceBrowser(r.Context(), l.UserCode, binding, time.Now()); err != nil {
+			h.deviceError(r.Context(), w, err)
 			return
 		}
-		h.deviceError(w, oidc.ErrUnauthenticated)
+		h.deviceError(r.Context(), w, oidc.ErrUnauthenticated)
 		return
 	}
 	identity, err := h.oidc.Redeem(r.Context(), r.URL.Query().Get("code"), l.Nonce, l.Verifier)
 	if err != nil {
 		if errors.Is(err, oidc.ErrUnauthenticated) {
-			if denyErr := h.devices.DenyDeviceBrowser(r.Context(), l.UserCode, binding, time.Now()); denyErr != nil {
-				h.deviceError(w, denyErr)
+			if denyErr := h.store.DenyDeviceBrowser(r.Context(), l.UserCode, binding, time.Now()); denyErr != nil {
+				h.deviceError(r.Context(), w, denyErr)
 				return
 			}
 		}
-		h.deviceError(w, err)
+		h.deviceError(r.Context(), w, err)
 		return
 	}
-	err = h.devices.VerifyDeviceBrowser(r.Context(), l.UserCode, binding, companyOIDCIdentity(identity), time.Now())
+	err = h.store.VerifyDeviceBrowser(r.Context(), l.UserCode, binding, companyOIDCIdentity(identity), time.Now())
 	if err != nil {
-		h.deviceError(w, err)
+		h.deviceError(r.Context(), w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -274,27 +274,27 @@ func (h *handler) CompleteDeviceBrowser(w http.ResponseWriter, r *http.Request, 
 }
 
 func (h *handler) ApproveDeviceBrowser(w http.ResponseWriter, r *http.Request) {
-	if !h.deviceAvailable(w) {
+	if !h.deviceAvailable(r.Context(), w) {
 		return
 	}
 	binding, err := h.deviceBinding(r)
 	if err != nil {
-		h.deviceError(w, err)
+		h.deviceError(r.Context(), w, err)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil || r.PostForm.Get("binding") != base64.RawURLEncoding.EncodeToString(binding) {
-		h.deviceError(w, controlstate.ErrDeviceLogin)
+		h.deviceError(r.Context(), w, controlstate.ErrDeviceLogin)
 		return
 	}
-	if err := h.devices.ApproveDeviceLogin(r.Context(), r.PostForm.Get("code"), binding, h.config.ManagedDomain, h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now()); err != nil {
+	if err := h.store.ApproveDeviceLogin(r.Context(), r.PostForm.Get("code"), binding, h.config.ManagedDomain, h.config.AccessTokenLifetime, h.config.RefreshTokenLifetime, time.Now()); err != nil {
 		if errors.Is(err, controlstate.ErrControlAuthentication) || errors.Is(err, controlstate.ErrOIDCAssertionReplay) {
-			if denyErr := h.devices.DenyDeviceBrowser(r.Context(), r.PostForm.Get("code"), binding, time.Now()); denyErr != nil {
-				h.deviceError(w, denyErr)
+			if denyErr := h.store.DenyDeviceBrowser(r.Context(), r.PostForm.Get("code"), binding, time.Now()); denyErr != nil {
+				h.deviceError(r.Context(), w, denyErr)
 				return
 			}
 		}
-		h.deviceError(w, err)
+		h.deviceError(r.Context(), w, err)
 		return
 	}
 	http.SetCookie(w, serviceapi.ControlCookie(h.config.ControlURL, http.Cookie{Name: deviceCookie, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1}))

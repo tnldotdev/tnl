@@ -102,7 +102,7 @@ func (h *handler) connectorPairSource(w http.ResponseWriter, r *http.Request, bo
 	return r.Context(), true
 }
 
-func connectorPairProblem(w http.ResponseWriter, err error) {
+func connectorPairProblem(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrServiceAccess), errors.Is(err, controlstate.ErrVisitorPermission), errors.Is(err, controlstate.ErrWorkloadDenied):
 		writeProblem(w, 403, controlv1.Forbidden, "connector peer pair source or run is no longer authorized")
@@ -111,7 +111,7 @@ func connectorPairProblem(w http.ResponseWriter, err error) {
 	case errors.Is(err, controlstate.ErrServiceConflict):
 		writeProblem(w, 409, controlv1.Conflict, "connector peer pair conflicts with the current delivery; inspect the retained owner")
 	default:
-		writeControlStateProblem(w, "authorize connector peer pair", err)
+		writeControlStateProblem(ctx, w, "authorize connector peer pair", err)
 	}
 }
 
@@ -143,7 +143,7 @@ func (h *handler) connectorPair(w http.ResponseWriter, r *http.Request, serviceI
 		result, err = store.RenewConnectorPeerPair(ctx, h.config.ControlURL, request, time.Now())
 	}
 	if err != nil {
-		connectorPairProblem(w, err)
+		connectorPairProblem(r.Context(), w, err)
 		return
 	}
 	if pairID != "" {
@@ -186,7 +186,7 @@ func (h *handler) ListConnectorPeerPairs(w http.ResponseWriter, r *http.Request,
 	}
 	page, err := store.ListConnectorPeerPairs(r.Context(), serviceID, runID, after, token, time.Now())
 	if err != nil {
-		serviceRunProblem(w, "list connector peer pairs", err)
+		serviceRunProblem(r.Context(), w, "list connector peer pairs", err)
 		return
 	}
 	result := controlv1.ConnectorPeerPairCandidates{Items: make([]controlv1.ConnectorPeerPairCandidate, 0, len(page.Items))}
@@ -206,7 +206,7 @@ func (h *handler) ListConnectorPeerPairs(w http.ResponseWriter, r *http.Request,
 func (h *handler) ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *http.Request, serviceID controlv1.ServiceID, runID controlv1.ServiceRunID, pairID string) {
 	w.Header().Set("Cache-Control", "no-store")
 	var body controlv1.ConnectorPeerPairPrepared
-	if decodeJSONLimited(w, r, &body, 4096) != nil || body.DeliveryGeneration < 1 || body.BindingExpiresAt.IsZero() {
+	if decodeJSONLimited(w, r, &body, 4096) != nil || !body.Phase.Valid() || body.DeliveryGeneration < 1 || body.BindingExpiresAt.IsZero() {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid connector peer preparation report")
 		return
 	}
@@ -236,7 +236,7 @@ func (h *handler) ConfirmConnectorPeerPairPrepared(w http.ResponseWriter, r *htt
 	}
 	err = store.ConfirmConnectorPeerPairPrepared(r.Context(), serviceID, runID, pairID, token, prepared, time.Now())
 	if err != nil {
-		serviceRunProblem(w, "confirm connector peer preparation", err)
+		serviceRunProblem(r.Context(), w, "confirm connector peer preparation", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -262,7 +262,7 @@ func (h *handler) DeliverConnectorPeerPair(w http.ResponseWriter, r *http.Reques
 	delivery, err := store.DeliverConnectorPeerPair(r.Context(), serviceID, runID, pairID, body.DeliveryGeneration, token, time.Now())
 	if err != nil {
 		// an absent claim, changed source, or revoked parent never discloses key material.
-		serviceRunProblem(w, "deliver connector peer pair", err)
+		serviceRunProblem(r.Context(), w, "deliver connector peer pair", err)
 		return
 	}
 	writeJSON(w, 200, controlv1.ConnectorPeerPairDelivery{

@@ -18,6 +18,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/serviceapi"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
@@ -168,7 +169,7 @@ func serviceRuntimeLifecycle(t *testing.T, standalone bool) {
 			f := newServiceRuntimeFixture(t, standalone, nil)
 			target := startPrivateEchoTarget(t)
 			key, _ := opaqueid.New(opaqueid.IdempotencyPrefix)
-			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "native-lifecycle", key)
+			service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "native-lifecycle", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -48,7 +48,7 @@ func (h *handler) SetPreviewTeamAccess(response http.ResponseWriter, request *ht
 				return
 			}
 			if err != nil {
-				writeControlStateProblem(response, "read team preview public URL", err)
+				writeControlStateProblem(request.Context(), response, "read team preview public URL", err)
 				return
 			}
 			if publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled {
@@ -83,7 +83,7 @@ func (h *handler) SetPreviewTeamAccess(response http.ResponseWriter, request *ht
 	}
 	updated, err := h.previewTeamAccess.SetPreviewTeamAccess(request.Context(), write, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "set preview team access", err)
+		writeControlStateProblem(request.Context(), response, "set preview team access", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, previewResponse(updated))

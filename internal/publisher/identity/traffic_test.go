@@ -13,14 +13,14 @@ import (
 )
 
 type trafficControlStub struct {
-	NativeControl
+	unusedControl
 	url, retry, token, proof string
 	selection                *trafficlimits.Selection
 }
 
 func TestNativeTrafficClonePreservesOptionalValues(t *testing.T) {
 	selection := &trafficlimits.Selection{Connections: new(48), Rate: new(3), RatePer: new("1m"), Burst: new(4), UploadBytes: new(int64(1 << 20)), DownloadBytes: new(int64(2 << 20)), TotalConnections: new(int64(0)), TotalUploadBytes: new(int64(7)), TotalDownloadBytes: new(int64(8))}
-	n := &Native{NativeControl: &trafficControlStub{}}
+	n := &Native{NativeControl: NativeControl{PublicURLControl: &trafficControlStub{}}}
 	selected, err := n.WithTraffic(selection)
 	if err != nil || !reflect.DeepEqual(selection, selected.traffic) {
 		t.Fatal("typed copy changed explicit traffic values", err)
@@ -53,7 +53,7 @@ func TestNativeTrafficSelectionKeepsSignedRunBoundary(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			control := &trafficControlStub{}
-			n := &Native{NativeControl: control, authority: &lostEnrollmentResponse{}, private: private, publicURL: controlv1.PublicURL{Id: "url"}}
+			n := &Native{NativeControl: NativeControl{PublicURLControl: control}, authority: &lostEnrollmentResponse{}, private: private, publicURL: controlv1.PublicURL{Id: "url"}}
 			selected, err := n.WithTraffic(test.selection)
 			if err != nil {
 				t.Fatal(err)
@@ -87,7 +87,7 @@ func TestNativeTrafficSelectionKeepsSignedRunBoundary(t *testing.T) {
 }
 
 func TestNativeTrafficSelectionsAreIndependent(t *testing.T) {
-	n := &Native{NativeControl: &unusedControl{}}
+	n := &Native{NativeControl: NativeControl{PublicURLControl: &unusedControl{}}}
 	selection := &trafficlimits.Selection{Connections: new(48)}
 	first, err := n.WithTraffic(selection)
 	if err != nil {

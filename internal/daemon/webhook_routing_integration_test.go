@@ -25,7 +25,7 @@ func TestIntegrationWebhookHandlerReloadsTargetlessPublicURL(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = state.Close() })
 	server, hostname := fixture.identity.controlOrigin, fixture.identity.hostname
-	group := "project\x00member.example"
+	group := clientstate.IntegrationScope{PrimaryProjectRoot: t.TempDir(), Namespace: "member.example"}
 	const body = "{\"event\":\"paid\"}\n"
 	observed := make(chan string, 2)
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -39,7 +39,7 @@ func TestIntegrationWebhookHandlerReloadsTargetlessPublicURL(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	cleanupIntegrationHTTPServer(t, target, fixture.owner)
-	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: server, Project: t.TempDir(), Service: "api", Target: target.URL, IntegrationGroup: group})
+	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: server, Project: t.TempDir(), Service: "api", Target: target.URL, IntegrationScope: group})
 	if err != nil {
 		t.Fatal(err)
 	}

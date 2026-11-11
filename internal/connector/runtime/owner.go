@@ -14,18 +14,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/client/project/meta"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability"
-	credentialv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 )
 
 // Serve owns private IPC and joins cleanup. process-owned adapters distinguish
 // their process lifetime from bounded session and per-service authorization.
-func Serve(ctx context.Context, scope Context, directory, executable string, backend Backend, output io.Writer) (result error) {
+func Serve(ctx context.Context, scope Context, directory, executable string, config OwnerConfig, output io.Writer) (result error) {
 	startup, finishStartup := observability.ClientOperation(ctx, "connector.connections.startup")
 	defer func() { finishStartup(result) }()
-	if scope.Validate() != nil || backend == nil {
+	backend := config.Backend
+	if scope.Validate() != nil || backend == nil || config.Persistent && config.OwnerAlive == nil {
 		return ErrInvalid
 	}
 	lifetime, cancel := context.WithCancel(observability.Independent(ctx))
@@ -54,12 +53,10 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 	if err != nil {
 		return err
 	}
-	deadlineProvider, renewable := backend.(interface {
-		AuthorizationDeadline() (time.Time, <-chan struct{})
-	})
+	renewable := config.AuthorizationDeadline != nil
 	var deadlineChanged <-chan struct{}
 	if renewable {
-		expires, deadlineChanged = deadlineProvider.AuthorizationDeadline()
+		expires, deadlineChanged = config.AuthorizationDeadline()
 	}
 	observed := time.Now()
 	if !expires.After(observed) || expires.After(observed.Add(12*time.Hour+time.Minute)) {
@@ -68,10 +65,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 	// attach the accepted horizon to this process's monotonic clock once. later
 	// updates shift it by the authority's delta, never a changed local wall clock.
 	localDeadline := observed.Add(expires.Sub(observed))
-	persistent := false
-	if provider, ok := backend.(interface{ Persistent() bool }); ok {
-		persistent = provider.Persistent()
-	}
+	persistent := config.Persistent
 	if persistent {
 		expires = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 		localDeadline = expires
@@ -103,12 +97,8 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 		_ = os.Remove(path)
 	}()
 	state := Status{Schema: Schema, State: "ready", PID: os.Getpid(), ExpiresAt: expires, ProjectRuntime: metadata, ConnectionHandle: path, Executable: executable}
-	if provider, ok := backend.(interface{ Kubeconfig() string }); ok {
-		state.Kubeconfig = provider.Kubeconfig()
-	}
-	var failed <-chan error
-	if provider, ok := backend.(interface{ Done() <-chan error }); ok {
-		failed = provider.Done()
+	if config.Kubernetes != nil {
+		state.Kubeconfig = config.Kubernetes.Kubeconfig()
 	}
 	var stateMu sync.Mutex
 	server := &http.Server{BaseContext: func(net.Listener) context.Context { return observability.Independent(lifetime) }, ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 4096}
@@ -143,14 +133,11 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 		}
 		switch operation {
 		case "sdk-workload":
-			provider, ok := backend.(interface {
-				SDKWorkload(context.Context, Request) (SDKWorkload, error)
-			})
-			if !ok {
+			if config.SDKWorkload == nil {
 				writeConnectionFailure(w, ErrInvalid)
 				return
 			}
-			selected, err := provider.SDKWorkload(r.Context(), request)
+			selected, err := config.SDKWorkload(r.Context(), request)
 			if err != nil {
 				reason, known := failure.ReasonOf(err)
 				if !known {
@@ -162,16 +149,13 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			}
 			_ = json.NewEncoder(w).Encode(selected)
 		case "sdk-prepare":
-			provider, ok := backend.(interface {
-				SDKPrepare(context.Context, Request) (SDKPrepared, error)
-			})
-			if !ok {
+			if config.SDKPrepare == nil {
 				writeConnectionFailure(w, ErrInvalid)
 				return
 			}
 			bounded, done := context.WithTimeout(r.Context(), 25*time.Second)
 			defer done()
-			prepared, err := provider.SDKPrepare(bounded, request)
+			prepared, err := config.SDKPrepare(bounded, request)
 			if err != nil {
 				reason, known := failure.ReasonOf(err)
 				if !known {
@@ -201,27 +185,18 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			}
 			_ = json.NewEncoder(w).Encode(prepared)
 		case "attach":
-			provider, ok := backend.(interface {
-				Attach(context.Context, string) error
-			})
-			if !ok {
-				w.WriteHeader(400)
-				_, _ = io.WriteString(w, `{"code":"connections.invalid"}`)
-				return
-			}
 			bounded, done := context.WithTimeout(r.Context(), 10*time.Second)
 			defer done()
-			if err := provider.Attach(bounded, request.Assertion); err != nil {
+			if err := backend.Attach(bounded, request.Assertion); err != nil {
 				w.WriteHeader(403)
 				_, _ = io.WriteString(w, `{"code":"connections.unauthorized"}`)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"schema": Schema, "state": "attached"})
 		case "status":
-			if provider, ok := backend.(interface {
-				ProjectRuntime() meta.PublicMetadata
-			}); ok {
-				current.ProjectRuntime = provider.ProjectRuntime()
+			current.ProjectRuntime = backend.ProjectRuntime()
+			if config.Kubernetes != nil {
+				current.Kubeconfig = config.Kubernetes.Kubeconfig()
 			}
 			_ = json.NewEncoder(w).Encode(current)
 		case "connect", "prepare", "prepared":
@@ -232,13 +207,9 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			var prepared Prepared
 			var err error
 			if operation == "prepared" {
-				var connection Connection
-				connection, err = backend.Prepared(request.Service)
-				if err == nil {
-					prepared, err = preparedSnapshot(backend, request, current.ProjectRuntime, connection)
-				}
+				prepared, err = backend.SnapshotFor(request.Service, request.Assertion)
 			} else {
-				prepared, err = PrepareSnapshot(bounded, backend, request, current.ProjectRuntime)
+				prepared, err = PrepareSnapshot(bounded, backend, request)
 			}
 			if err != nil {
 				writeConnectionFailure(w, err)
@@ -254,10 +225,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 				_ = json.NewEncoder(w).Encode(prepared.Connection)
 			}
 		case "kube-credential":
-			provider, ok := backend.(interface {
-				Credential(context.Context, string) (credentialv1.ExecCredential, error)
-			})
-			if !ok {
+			if config.Kubernetes == nil {
 				w.WriteHeader(503)
 				_, _ = io.WriteString(w, `{"code":"connections.unavailable"}`)
 				return
@@ -266,7 +234,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			defer done()
 			stop := context.AfterFunc(lifetime, done)
 			defer stop()
-			credential, err := provider.Credential(bounded, request.Service)
+			credential, err := config.Kubernetes.Credential(bounded, request.Service)
 			if err != nil {
 				w.WriteHeader(503)
 				_, _ = io.WriteString(w, `{"code":"connections.unavailable"}`)
@@ -331,13 +299,13 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			return nil
 		case <-serverDone:
 			return ErrUnavailable
-		case err := <-failed:
+		case err := <-config.Done:
 			return errors.Join(ErrUnavailable, err)
 		case <-deadline.C:
 			return ErrExpired
 		case <-deadlineChanged:
 			if !persistent {
-				next, _ := deadlineProvider.AuthorizationDeadline()
+				next, _ := config.AuthorizationDeadline()
 				if err := updateDeadline(next); err != nil {
 					return err
 				}
@@ -353,7 +321,7 @@ func Serve(ctx context.Context, scope Context, directory, executable string, bac
 			finish(err)
 			done()
 			if persistent {
-				if provider, ok := backend.(interface{ OwnerAlive() bool }); ok && !provider.OwnerAlive() {
+				if !config.OwnerAlive() {
 					return nil
 				}
 				continue

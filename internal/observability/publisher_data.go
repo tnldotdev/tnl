@@ -147,7 +147,7 @@ func PublisherAuthorization(ctx context.Context, allowed, admitted bool, err err
 		if err != nil {
 			finishError(span, err)
 		} else {
-			finishSpan(span, outcome.String())
+			finishSpan(span, semanticResult{outcome: outcome})
 		}
 		span.End()
 	}

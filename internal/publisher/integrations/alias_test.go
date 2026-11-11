@@ -15,10 +15,11 @@ import (
 )
 
 type aliasFixture struct {
-	state                *clientstate.Database
-	selection            clientstate.AliasSelection
-	main, linked         *clientstate.Tunnel
-	group, linkedProject string
+	state         *clientstate.Database
+	selection     clientstate.AliasSelection
+	main, linked  *clientstate.Tunnel
+	group         clientstate.IntegrationScope
+	linkedProject string
 }
 
 func newAliasFixture(t *testing.T) aliasFixture {
@@ -27,11 +28,11 @@ func newAliasFixture(t *testing.T) aliasFixture {
 	primary := filepath.Join(t.TempDir(), "main")
 	linked := filepath.Join(filepath.Dir(primary), "feature")
 	scope := clientstate.AliasScope{Server: testServer, ProjectKey: primary, TeamID: "team_fixture", MembershipID: "member_fixture", Namespace: "member.example.test", Name: "review"}
-	group := primary + "\x00" + scope.Namespace
+	group := clientstate.IntegrationScope{PrimaryProjectRoot: primary, Namespace: scope.Namespace}
 	f := aliasFixture{state: state, group: group, linkedProject: linked}
 	for index, project := range []string{primary, linked} {
 		tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish,
-			Server: testServer, Project: project, Service: "api", Target: "3000", IntegrationGroup: group})
+			Server: testServer, Project: project, Service: "api", Target: "3000", IntegrationScope: group})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -51,7 +52,7 @@ func newAliasFixture(t *testing.T) aliasFixture {
 			t.Fatal(err)
 		}
 		selection, err := state.RegisterAlias(t.Context(), clientstate.AliasRegistration{Scope: scope,
-			Hostname: "review." + scope.Namespace, Service: "api", TunnelID: tunnel.ID(), IntegrationGroup: group, Fingerprint: sha256.Sum256([]byte("review"))})
+			Hostname: "review." + scope.Namespace, Service: "api", TunnelID: tunnel.ID(), IntegrationScope: group, Fingerprint: sha256.Sum256([]byte("review"))})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -13,11 +13,7 @@ type serviceAuditCleanupStore interface {
 	CleanupServiceAudit(context.Context, time.Time, int) (int64, error)
 }
 
-func RunServiceAuditCleanup(ctx context.Context, store serviceAuditCleanupStore, observers ...*observability.Metrics) error {
-	var metrics *observability.Metrics
-	if len(observers) > 0 {
-		metrics = observers[0]
-	}
+func RunServiceAuditCleanup(ctx context.Context, store serviceAuditCleanupStore, metrics *observability.Metrics) error {
 	return runBatchCleanup(ctx, time.Minute, func(ctx context.Context, now time.Time) (int, error) {
 		count, err := store.CleanupServiceAudit(ctx, now, 1000)
 		metrics.ObserveCleanup("service_audit", int(count), false, err)

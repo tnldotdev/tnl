@@ -117,7 +117,7 @@ func TestOTLPHTTPSExportsSameInstrumentsAndRuntimeCompatibility(t *testing.T) {
 	}
 	defer m.Shutdown(context.Background())
 	ctx := WithMetrics(t.Context(), m)
-	m.ObserveOperation("CreatePublishRun", nil, 25*time.Millisecond)
+	m.ObserveOperationContext(t.Context(), OpCreatePublishRun, nil, 25*time.Millisecond)
 	spanCtx, finish := Start(ctx, "local.fixture")
 	OperationalFailure(spanCtx, "renew publisher lease", failure.Unexpected, "request-fixture", errors.New("secret log cause"))
 	finish(errors.New("secret error body"))

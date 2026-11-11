@@ -67,7 +67,7 @@ func TestRunHandlerBackedIntegrationSkipsTargetPreflightAndReloads(t *testing.T)
 		t.Run(string(purpose), func(t *testing.T) {
 			stop := errors.New("stop at publish run")
 			control := &publisherControlStub{allowed: []string{"lookup", "create", "create_session"}, publishRunErr: stop}
-			config := Config{Control: control, State: store, Hostname: "integration.example", TeamID: "team_1", DomainID: "domain_1", PublicURLScope: controlv1.Shared, Purpose: purpose,
+			config := Config{Control: control, Identity: control, Management: control, State: store, Hostname: "integration.example", TeamID: "team_1", DomainID: "domain_1", PublicURLScope: controlv1.Shared, Purpose: purpose,
 				Handler: http.NotFoundHandler(), InspectionMode: inspection.None, QUICConnector: muxsession.QUICConnector{}, TCPConnector: muxsession.TLSYamuxConnector{}}
 			for range 2 {
 				if err := Run(t.Context(), config); !errors.Is(err, stop) {
@@ -94,7 +94,7 @@ func TestTargetlessSavedPublicURLReconciliationKeepsLocalTargetOnPolicyChanges(t
 		t.Run(string(purpose), func(t *testing.T) {
 			current := []string{"192.0.2.1/32"}
 			control := &publisherControlStub{allowed: []string{"lookup", "update"}, routes: []controlv1.PublicURL{{Id: "public_url_1", TeamId: "team_1", DomainId: "domain_1", PublicUrlScope: controlv1.Shared, Purpose: purpose, CanonicalHostname: "app.example", LifecycleState: controlv1.Enabled, AllowedIpPrefixes: &current}}}
-			config := Config{Control: control, Hostname: "app.example", TeamID: "team_1", DomainID: "domain_1", PublicURLScope: controlv1.Shared, Purpose: purpose, PreserveSavedPublicURLTarget: true, Target: "http://127.0.0.1:3000"}
+			config := Config{Control: control, Management: control, Hostname: "app.example", TeamID: "team_1", DomainID: "domain_1", PublicURLScope: controlv1.Shared, Purpose: purpose, PreserveSavedPublicURLTarget: true, Target: "http://127.0.0.1:3000"}
 			if purpose == controlv1.Oauth || purpose == controlv1.Webhooks {
 				config.Target = ""
 			}

@@ -59,30 +59,31 @@ func (q *Queries) StatusIntegrationURLs(ctx context.Context) ([]StatusIntegratio
 }
 
 const statusWebhookDeclarations = `-- name: StatusWebhookDeclarations :many
-SELECT t.server_origin, t.integration_group, e.name, e.service, e.path, e.definition, e.fingerprint,
+SELECT t.server_origin, t.primary_project_root, t.integration_namespace, e.name, e.service, e.path, e.definition, e.fingerprint,
   t.id AS tunnel_id, t.project_root, t.service AS tunnel_service, t.hostname AS app_hostname, t.state,
   t.public_url_id, t.publish_run_number
 FROM webhook_declarations e JOIN local_tunnels t ON t.id = e.tunnel_id
 WHERE t.stopped_at IS NULL AND t.lease_expires_at > ?1
   AND t.state IN ('starting', 'provisioning', 'ready')
-ORDER BY t.server_origin, t.integration_group, e.name, t.id
+ORDER BY t.server_origin, t.primary_project_root, t.integration_namespace, e.name, t.id
 `
 
 type StatusWebhookDeclarationsRow struct {
-	ServerOrigin     string
-	IntegrationGroup string
-	Name             string
-	Service          string
-	Path             string
-	Definition       []byte
-	Fingerprint      []byte
-	TunnelID         string
-	ProjectRoot      string
-	TunnelService    sql.NullString
-	AppHostname      sql.NullString
-	State            string
-	PublicURLID      sql.NullString
-	PublishRunNumber sql.NullInt64
+	ServerOrigin         string
+	PrimaryProjectRoot   sql.NullString
+	IntegrationNamespace sql.NullString
+	Name                 string
+	Service              string
+	Path                 string
+	Definition           []byte
+	Fingerprint          []byte
+	TunnelID             string
+	ProjectRoot          string
+	TunnelService        sql.NullString
+	AppHostname          sql.NullString
+	State                string
+	PublicURLID          sql.NullString
+	PublishRunNumber     sql.NullInt64
 }
 
 func (q *Queries) StatusWebhookDeclarations(ctx context.Context, now int64) ([]StatusWebhookDeclarationsRow, error) {
@@ -96,7 +97,8 @@ func (q *Queries) StatusWebhookDeclarations(ctx context.Context, now int64) ([]S
 		var i StatusWebhookDeclarationsRow
 		if err := rows.Scan(
 			&i.ServerOrigin,
-			&i.IntegrationGroup,
+			&i.PrimaryProjectRoot,
+			&i.IntegrationNamespace,
 			&i.Name,
 			&i.Service,
 			&i.Path,
@@ -124,24 +126,25 @@ func (q *Queries) StatusWebhookDeclarations(ctx context.Context, now int64) ([]S
 }
 
 const statusWebhookOwners = `-- name: StatusWebhookOwners :many
-SELECT owner.server_origin, owner.integration_group, owner.name, t.id AS tunnel_id,
+SELECT owner.server_origin, owner.primary_project_root, owner.integration_namespace, owner.name, t.id AS tunnel_id,
   t.project_root, t.service, t.hostname AS app_hostname, t.state, t.public_url_id, t.publish_run_number
 FROM webhook_owners owner JOIN local_tunnels t ON t.id = owner.tunnel_id
 WHERE t.stopped_at IS NULL AND t.lease_expires_at > ?1
-ORDER BY owner.server_origin, owner.integration_group, owner.name
+ORDER BY owner.server_origin, owner.primary_project_root, owner.integration_namespace, owner.name
 `
 
 type StatusWebhookOwnersRow struct {
-	ServerOrigin     string
-	IntegrationGroup string
-	Name             string
-	TunnelID         string
-	ProjectRoot      string
-	Service          sql.NullString
-	AppHostname      sql.NullString
-	State            string
-	PublicURLID      sql.NullString
-	PublishRunNumber sql.NullInt64
+	ServerOrigin         string
+	PrimaryProjectRoot   string
+	IntegrationNamespace string
+	Name                 string
+	TunnelID             string
+	ProjectRoot          string
+	Service              sql.NullString
+	AppHostname          sql.NullString
+	State                string
+	PublicURLID          sql.NullString
+	PublishRunNumber     sql.NullInt64
 }
 
 func (q *Queries) StatusWebhookOwners(ctx context.Context, now int64) ([]StatusWebhookOwnersRow, error) {
@@ -155,7 +158,8 @@ func (q *Queries) StatusWebhookOwners(ctx context.Context, now int64) ([]StatusW
 		var i StatusWebhookOwnersRow
 		if err := rows.Scan(
 			&i.ServerOrigin,
-			&i.IntegrationGroup,
+			&i.PrimaryProjectRoot,
+			&i.IntegrationNamespace,
 			&i.Name,
 			&i.TunnelID,
 			&i.ProjectRoot,

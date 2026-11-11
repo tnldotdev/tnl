@@ -300,23 +300,23 @@ func TestPromotionWaiterCancellationDoesNotCancelSharedDecision(t *testing.T) {
 	t.Cleanup(ownTestVisitorSession(t, route, v))
 	firstCtx, cancel := context.WithCancel(t.Context())
 	first := make(chan error, 1)
-	go func() { first <- v.admit(firstCtx) }()
+	go func() { first <- v.admit(firstCtx, false) }()
 	awaitPublisherTest(t, started)
 	cancel()
 	if err := awaitPublisherTest(t, first); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 	second := make(chan error, 1)
-	go func() { second <- v.admit(t.Context()) }()
+	go func() { second <- v.admit(t.Context(), false) }()
 	close(release)
 	if err := awaitPublisherTest(t, second); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.admit(t.Context()); err != nil || calls.Load() != 1 {
+	if err := v.admit(t.Context(), false); err != nil || calls.Load() != 1 {
 		t.Fatalf("cached promotion=%v calls=%d", err, calls.Load())
 	}
 	cancelLife()
-	if err := v.admit(t.Context()); !errors.Is(err, context.Canceled) {
+	if err := v.admit(t.Context(), false); !errors.Is(err, context.Canceled) {
 		t.Fatal("closed connection reused cached promotion", err)
 	}
 }
@@ -443,13 +443,13 @@ func TestPromotionCloseCancelsAndJoinsSharedWork(t *testing.T) {
 	t.Cleanup(func() { _ = route.Close() })
 	t.Cleanup(ownTestVisitorSession(t, route, v))
 	result := make(chan error, 1)
-	go func() { result <- v.admit(t.Context()) }()
+	go func() { result <- v.admit(t.Context(), false) }()
 	awaitPublisherTest(t, started)
 	v.close()
 	if err := awaitPublisherTest(t, result); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if err := v.admit(t.Context()); !errors.Is(err, net.ErrClosed) {
+	if err := v.admit(t.Context(), false); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("closed admission=%v", err)
 	}
 }

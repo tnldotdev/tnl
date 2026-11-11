@@ -76,16 +76,28 @@ func TestConnectorPeerRebindGeneratedClientAndState(t *testing.T) {
 	}
 }
 
-func TestConnectorPeerAdditiveFieldsPreserveLegacyJSON(t *testing.T) {
-	for _, value := range []any{ConnectorPeerPair{}, ConnectorPeerPairDelivery{}, ConnectorPeerPairPrepared{}} {
+func TestConnectorPeerInitialBindingOmitsRebindFields(t *testing.T) {
+	for _, value := range []any{ConnectorPeerPair{}, ConnectorPeerPairDelivery{}, ConnectorPeerPairPrepared{Phase: ConnectorPeerPairPreparedInstalled}} {
 		wire, err := json.Marshal(value)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, name := range []string{"session_key", "binding_state", "binding_challenge", "operation_id", "path_proofs", "phase"} {
+		for _, name := range []string{"session_key", "binding_state", "binding_challenge", "operation_id", "path_proofs"} {
 			if bytes.Contains(wire, []byte(`"`+name+`"`)) {
-				t.Fatalf("empty additive field %s changed legacy output", name)
+				t.Fatalf("initial binding encoded absent field %s", name)
 			}
+		}
+	}
+}
+
+func TestConnectorPeerPreparationPhaseIsAlwaysEncoded(t *testing.T) {
+	for _, phase := range []ConnectorPeerPairPreparedPhase{"", ConnectorPeerPairPreparedInstalled, ConnectorPeerPairPreparedProved} {
+		wire, err := json.Marshal(ConnectorPeerPairPrepared{Phase: phase})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(wire, []byte(`"phase":"`+phase+`"`)) {
+			t.Fatalf("preparation report omitted phase %q", phase)
 		}
 	}
 }

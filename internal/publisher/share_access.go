@@ -20,13 +20,13 @@ import (
 
 const shareCookieName = "__Host-tnl-share"
 
-type shareAccessClient interface {
+type ShareAccessClient interface {
 	EnableShareAccess(context.Context, string, uint64, string, credentials.PublishRunToken) error
 	RedeemPublishRunShare(context.Context, string, controlv1.RedeemShareRequest, credentials.PublishRunToken) (controlv1.ShareRedemption, error)
 }
 
 type shareAccess struct {
-	client  shareAccessClient
+	client  ShareAccessClient
 	runID   string
 	version uint64
 	token   credentials.PublishRunToken

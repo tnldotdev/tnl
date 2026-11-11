@@ -30,14 +30,14 @@ type companyAccessStore interface {
 }
 
 func (h *handler) companyStore(w http.ResponseWriter) (companyAccessStore, bool) {
-	s, ok := h.store.(companyAccessStore)
-	if !ok {
+	if h.store == nil {
 		writeProblem(w, 503, authorityv1.Unavailable, "company authority is unavailable")
+		return nil, false
 	}
-	return s, ok
+	return h.store, true
 }
 
-func companyError(w http.ResponseWriter, operation string, err error) {
+func companyError(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	if errors.Is(err, controlstate.ErrControlIdentity) {
 		writeProblem(w, 404, authorityv1.NotFound, "OIDC account identity not found")
 		return
@@ -47,10 +47,10 @@ func companyError(w http.ResponseWriter, operation string, err error) {
 		return
 	}
 	if errors.Is(err, oidc.ErrUnavailable) {
-		writeAuthenticationUnavailable(w, operation, err)
+		writeAuthenticationUnavailable(ctx, w, operation, err)
 		return
 	}
-	writeControlStateProblem(w, operation, err)
+	writeControlStateProblem(ctx, w, operation, err)
 }
 
 func companyOIDCIdentity(i oidc.Identity) controlstate.OIDCIdentity {
@@ -78,7 +78,7 @@ func (h *handler) ReadCompanyConnections(w http.ResponseWriter, r *http.Request,
 	}
 	result, err := s.ReadCompanyConnections(r.Context(), controlstate.ControlPrincipal{}, team, time.Now())
 	if err != nil {
-		companyError(w, "read company connections", err)
+		companyError(r.Context(), w, "read company connections", err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -99,7 +99,7 @@ func (h *handler) BeginIdentityConnectionSetup(w http.ResponseWriter, r *http.Re
 	}
 	result, err := s.BeginIdentityConnectionSetup(r.Context(), controlstate.ControlPrincipal{}, request, time.Now())
 	if err != nil {
-		companyError(w, "begin company setup", err)
+		companyError(r.Context(), w, "begin company setup", err)
 		return
 	}
 	writeJSON(w, 201, result)
@@ -113,7 +113,7 @@ func (h *handler) ActivateIdentityConnection(w http.ResponseWriter, r *http.Requ
 	}
 	result, err := s.ActivateIdentityConnection(r.Context(), controlstate.ControlPrincipal{}, team, id, body.SetupToken, body.ExpectedRevision, controlstate.OIDCIdentity{}, time.Now(), body.ProvisioningToken)
 	if err != nil {
-		companyError(w, "activate company connection", err)
+		companyError(r.Context(), w, "activate company connection", err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -126,7 +126,7 @@ func (h *handler) DisconnectIdentityConnection(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := s.DisconnectIdentityConnection(r.Context(), controlstate.ControlPrincipal{}, team, id, body.ExpectedRevision, time.Now()); err != nil {
-		companyError(w, "disconnect company connection", err)
+		companyError(r.Context(), w, "disconnect company connection", err)
 		return
 	}
 	w.WriteHeader(204)
@@ -140,7 +140,7 @@ func (h *handler) RotateCompanyProvisioningToken(w http.ResponseWriter, r *http.
 	}
 	result, err := s.RotateCompanyProvisioningToken(r.Context(), controlstate.ControlPrincipal{}, team, id, body.ExpectedRevision, time.Now())
 	if err != nil {
-		companyError(w, "rotate company provisioning token", err)
+		companyError(r.Context(), w, "rotate company provisioning token", err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -161,12 +161,12 @@ func (h *handler) ProvisionCompanyEligibility(w http.ResponseWriter, r *http.Req
 	}
 	identity, err := s.ResolveCompanyEligibilityAccount(r.Context(), h.config.OIDCIssuer, body.AccountSubject, body.Eligible)
 	if err != nil {
-		companyError(w, "resolve company account", err)
+		companyError(r.Context(), w, "resolve company account", err)
 		return
 	}
 	err = s.ProvisionCompanyEligibility(r.Context(), params.XTnlProvisioningToken, controlstate.ProvisionCompanyEligibilityRequest{TeamID: body.TeamId, IdentityConnectionID: body.IdentityConnectionId, ConnectionRevision: body.ConnectionRevision, IdentityID: identity, Subject: body.Subject, Revision: body.Revision, Eligible: body.Eligible, ValidUntil: body.ValidUntil, MemberSlug: body.MemberSlug}, time.Now())
 	if err != nil {
-		companyError(w, "provision company eligibility", err)
+		companyError(r.Context(), w, "provision company eligibility", err)
 		return
 	}
 	w.WriteHeader(204)
@@ -179,7 +179,7 @@ func (h *handler) SetCompanyMembershipDecision(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := s.UpdateCompanyMembershipDecision(r.Context(), controlstate.ControlPrincipal{}, team, member, controlstate.CompanyMembershipDecision{Suspended: body.Suspended, PersonalAccountException: body.PersonalAccountException}, time.Now()); err != nil {
-		companyError(w, "company membership decision", err)
+		companyError(r.Context(), w, "company membership decision", err)
 		return
 	}
 	w.WriteHeader(204)
@@ -192,7 +192,7 @@ func (h *handler) SetCompanyInvitationException(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err := s.SetCompanyInvitationException(r.Context(), controlstate.ControlPrincipal{}, team, invitation, body.PersonalAccountException, time.Now()); err != nil {
-		companyError(w, "company invitation exception", err)
+		companyError(r.Context(), w, "company invitation exception", err)
 		return
 	}
 	w.WriteHeader(204)
@@ -209,7 +209,7 @@ func (h *handler) ListCompanyAdmissions(w http.ResponseWriter, r *http.Request, 
 	}
 	result, err := s.ListCompanyAdmissions(r.Context(), controlstate.ControlPrincipal{}, team, after, time.Now())
 	if err != nil {
-		companyError(w, "list company admissions", err)
+		companyError(r.Context(), w, "list company admissions", err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -222,7 +222,7 @@ func (h *handler) DecideCompanyAdmission(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if err := s.DecideCompanyAdmission(r.Context(), controlstate.ControlPrincipal{}, team, id, body.ConnectionRevision, string(body.Decision), time.Now()); err != nil {
-		companyError(w, "decide company admission", err)
+		companyError(r.Context(), w, "decide company admission", err)
 		return
 	}
 	w.WriteHeader(204)
@@ -244,7 +244,7 @@ func (h *handler) RequestCompanyAdmission(w http.ResponseWriter, r *http.Request
 	}
 	result, err := s.RequestCompanyAdmission(r.Context(), p, body.TeamId, body.IdentityConnectionId, body.ConnectionRevision, body.MemberSlug, time.Now())
 	if err != nil {
-		companyError(w, "request company admission", err)
+		companyError(r.Context(), w, "request company admission", err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -261,12 +261,12 @@ func (h *handler) CreateCompanyLoginIntent(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if h.config.OIDCVerifier == nil || h.config.OIDCClientID == "" || h.config.ControlURL == "" {
-		writeAuthenticationUnavailable(w, "create company login intent", nil)
+		writeAuthenticationUnavailable(r.Context(), w, "create company login intent", nil)
 		return
 	}
 	result, err := s.CreateCompanyLoginIntent(r.Context(), body.TeamId, h.config.OIDCIssuer, h.config.OIDCClientID, h.config.ControlURL+"/v1/auth/device/callback", time.Now())
 	if err != nil {
-		companyError(w, "create company login intent", err)
+		companyError(r.Context(), w, "create company login intent", err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -285,7 +285,7 @@ func (h *handler) ResolveCompanyLoginIntent(w http.ResponseWriter, r *http.Reque
 	}
 	result, err := s.ResolveCompanyLoginIntent(r.Context(), id, body.BindingToken, time.Now())
 	if err != nil {
-		companyError(w, "resolve company login intent", err)
+		companyError(r.Context(), w, "resolve company login intent", err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -307,7 +307,7 @@ func (h *handler) RecoverCompanyOwner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.RecoverCompanyOwner(r.Context(), p, body.TeamId, body.MembershipId, time.Now()); err != nil {
-		companyError(w, "recover company owner", err)
+		companyError(r.Context(), w, "recover company owner", err)
 		return
 	}
 	w.WriteHeader(204)

@@ -74,13 +74,13 @@ func (h *handler) IssueVisitorToken(w http.ResponseWriter, r *http.Request) {
 	}
 	if browser, ok := source.(controlstate.BrowserSessionTokenSource); ok {
 		if _, err := h.refreshBrowserSignIn(ctx, scope, browser.Secret); err != nil {
-			writeVisitorTokenProblem(w, err)
+			writeVisitorTokenProblem(r.Context(), w, err)
 			return
 		}
 	}
 	result, err := store.IssueVisitorToken(ctx, h.config.ControlURL, scope, source, time.Now())
 	if err != nil {
-		writeVisitorTokenProblem(w, err)
+		writeVisitorTokenProblem(r.Context(), w, err)
 		return
 	}
 	observability.AuthorizationDecision(ctx, "visitor_token.issue", true)
@@ -165,7 +165,7 @@ func parseVisitorTokenSource(raw json.RawMessage) (controlstate.VisitorTokenSour
 	}
 }
 
-func writeVisitorTokenProblem(w http.ResponseWriter, err error) {
+func writeVisitorTokenProblem(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrVisitorPermission), errors.Is(err, controlstate.ErrWorkloadDenied), errors.Is(err, controlstate.ErrPreviewAccess), errors.Is(err, controlstate.ErrServiceAccess):
 		writeProblem(w, 403, controlv1.Forbidden, "visitor access denied")
@@ -174,6 +174,6 @@ func writeVisitorTokenProblem(w http.ResponseWriter, err error) {
 	case errors.Is(err, clientauthority.ErrUnavailable):
 		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "browser sign-in refresh is unavailable; retry preparation")
 	default:
-		writeControlStateProblem(w, "issue visitor permission", err)
+		writeControlStateProblem(ctx, w, "issue visitor permission", err)
 	}
 }

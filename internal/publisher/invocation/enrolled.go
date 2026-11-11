@@ -95,7 +95,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 		if err != nil {
 			return err
 		}
-		native, identity, err = publisheridentity.EnrollNative(ctx, profile, control, authority, secret)
+		native, identity, err = publisheridentity.EnrollNative(ctx, profile, publisheridentity.NativeControl{PublicURLControl: control, Services: control, Runtime: control}, authority, secret)
 		if err != nil {
 			if flags.Enrolled && (errors.Is(err, clientauthority.ErrUnauthenticated) || errors.Is(err, clientauthority.ErrNotFound)) {
 				return failure.Wrap("enroll publication", failure.PublisherEnrollmentRequired, err)
@@ -103,7 +103,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 			return err
 		}
 	} else if selection.PublisherIdentityID != "" {
-		native, identity, err = publisheridentity.LoadNative(ctx, profile, control, authority, selection.PublisherIdentityID)
+		native, identity, err = publisheridentity.LoadNative(ctx, profile, publisheridentity.NativeControl{PublicURLControl: control, Services: control, Runtime: control}, authority, selection.PublisherIdentityID)
 		if err != nil {
 			return err
 		}
@@ -116,7 +116,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 		if err != nil {
 			return err
 		}
-		native, err = publisheridentity.LoadFile(selection.PublisherCredentialFile, server, control, authority)
+		native, err = publisheridentity.LoadFile(selection.PublisherCredentialFile, server, publisheridentity.NativeControl{PublicURLControl: control, Services: control, Runtime: control}, authority)
 		if err != nil {
 			return err
 		}
@@ -271,6 +271,7 @@ func PublishEnrolled(ctx context.Context, flags EnrolledOptions, selection Enrol
 		cfg.BrowserLoginAvailable = discovery.BrowserLoginAvailable != nil && *discovery.BrowserLoginAvailable
 	}
 	cfg.PublisherIdentityID = native.PublisherIdentityID()
+	configureNativePublication(&cfg, native, native)
 	if flags.RequirePostQuantum != nil && *flags.RequirePostQuantum != publicURL.RequirePostQuantum {
 		return failure.Wrap("select public HTTPS policy", failure.PublisherGrantMismatch, errors.New("public HTTPS requirement differs from the saved public URL; update it with a manager sign-in"))
 	}

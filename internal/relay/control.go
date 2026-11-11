@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
+
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
@@ -168,7 +170,7 @@ func (c *Controller) runOnce(ctx context.Context) error {
 }
 
 func (c *Controller) register(ctx context.Context) (retErr error) {
-	finish := startOperation(ctx, c.observer, "RelayRegister")
+	finish := startOperation(ctx, c.observer, observability.OpRelayRegister)
 	defer func() { finish(retErr) }()
 	lease, err := c.client.RegisterRelay(ctx, c.registration)
 	if err != nil {
@@ -178,7 +180,7 @@ func (c *Controller) register(ctx context.Context) (retErr error) {
 }
 
 func (c *Controller) renew(ctx context.Context) (retErr error) {
-	finish := startOperation(ctx, c.observer, "RelayRenewLease")
+	finish := startOperation(ctx, c.observer, observability.OpRelayRenewLease)
 	defer func() { finish(retErr) }()
 	lease := c.Lease()
 	connections, streams := c.load()
@@ -235,7 +237,7 @@ func (c *Controller) Lease() relayv1.RelayLease {
 }
 
 func (c *Controller) Drain(ctx context.Context, deadline time.Time) (retErr error) {
-	finish := startOperation(ctx, c.observer, "RelayBeginDrain")
+	finish := startOperation(ctx, c.observer, observability.OpRelayBeginDrain)
 	defer func() { finish(retErr) }()
 	lease := c.Lease()
 	if lease.RelayLeaseRevision <= 0 || !deadline.After(c.now()) {

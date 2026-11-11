@@ -369,6 +369,10 @@ func testDNSWork(now time.Time) controlstate.DNSAuthorityWork {
 }
 
 type dnsStoreStub struct {
+	serviceEndpointWork               controlstate.ServiceEndpointDNSWork
+	serviceEndpointSaved              controlstate.ServiceEndpointDNSWork
+	serviceEndpointClaims             int
+	serviceEndpointLocked             bool
 	work                              controlstate.DNSAuthorityWork
 	saved                             controlstate.DNSAuthorityWork
 	publicURLWork                     controlstate.DNSPublicURLWork
@@ -380,6 +384,31 @@ type dnsStoreStub struct {
 	getErr, saveErr, publicURLSaveErr error
 	saves, publicURLSaves             int
 	savedAt, publicURLSavedAt         time.Time
+}
+
+func (s *dnsStoreStub) ClaimServiceEndpointDNSWork(context.Context, string, time.Time, time.Duration) (controlstate.ServiceEndpointDNSWork, bool, error) {
+	s.serviceEndpointClaims++
+	work := s.serviceEndpointWork
+	s.serviceEndpointWork = controlstate.ServiceEndpointDNSWork{}
+	return work, work.Hostname != "", nil
+}
+
+func (s *dnsStoreStub) SaveServiceEndpointDNSWork(_ context.Context, work controlstate.ServiceEndpointDNSWork, _ time.Time) (controlstate.ServiceEndpointDNSWork, error) {
+	s.serviceEndpointSaved = work
+	return work, s.saveErr
+}
+
+func (s *dnsStoreStub) ValidateServiceEndpointDNSWork(context.Context, controlstate.ServiceEndpointDNSWork, time.Time) error {
+	if !s.serviceEndpointLocked {
+		return controlstate.ErrDNSPublicURLWorkStale
+	}
+	return nil
+}
+
+func (s *dnsStoreStub) WithDNSRecordLock(_ context.Context, _ string, run func() error) error {
+	s.serviceEndpointLocked = true
+	defer func() { s.serviceEndpointLocked = false }()
+	return run()
 }
 
 func (s *dnsStoreStub) GetIngressPool(_ context.Context, id string) (controlstate.IngressPool, error) {

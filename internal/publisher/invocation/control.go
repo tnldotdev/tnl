@@ -41,6 +41,14 @@ func nativePublicationControl(native *publisheridentity.Native, control *clientc
 	return publicationControl{PublicURLControlClient: native, publicationVisitors: control}
 }
 
+func configureNativePublication(cfg *publisher.Config, native *publisheridentity.Native, visitors publicationVisitors) {
+	cfg.Identity, cfg.Audit, cfg.VisitorControl = native, native, visitors
+	cfg.BrowserControl = visitors
+	cfg.Shares, cfg.Previews, cfg.FeedbackControl = visitors, visitors, visitors
+	// serving a signed grant never inherits management authority from a session.
+	cfg.Management, cfg.AccessManagement = nil, nil
+}
+
 // guestPublicationControl limits cleanup to the trial session's assigned URL.
 type guestPublicationControl struct {
 	publicationControl

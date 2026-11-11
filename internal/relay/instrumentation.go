@@ -3,13 +3,20 @@ package relay
 import (
 	"context"
 	"time"
+
+	"github.com/tnldotdev/tnl/internal/observability"
 )
 
 type OperationObserver interface {
-	ObserveOperation(operation string, err error, elapsed time.Duration)
+	ObserveOperationContext(context.Context, observability.ServerOperation, error, time.Duration)
 }
 
-func startOperation(ctx context.Context, observer OperationObserver, operation string) func(error) {
+type ForwardingObserver interface {
+	OperationObserver
+	ObserveRelayTransfer(string, int64, int64, error)
+}
+
+func startOperation(ctx context.Context, observer OperationObserver, operation observability.ServerOperation) func(error) {
 	if observer == nil {
 		return func(error) {}
 	}
@@ -18,6 +25,6 @@ func startOperation(ctx context.Context, observer OperationObserver, operation s
 		if err != nil && ctx.Err() != nil {
 			err = ctx.Err()
 		}
-		observer.ObserveOperation(operation, err, time.Since(started))
+		observer.ObserveOperationContext(ctx, operation, err, time.Since(started))
 	}
 }

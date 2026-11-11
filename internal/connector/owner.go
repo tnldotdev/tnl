@@ -561,6 +561,18 @@ func (b *connectorConnectionBackend) Persistent() bool {
 	return b.scope.Workload == "" || b.parentPID > 0
 }
 
+func (b *connectorConnectionBackend) ownerConfig() connectorruntime.OwnerConfig {
+	config := connectorruntime.OwnerConfig{
+		Backend: b, AuthorizationDeadline: b.AuthorizationDeadline,
+		Persistent: b.Persistent(), OwnerAlive: b.OwnerAlive,
+		Kubernetes: b,
+	}
+	if b.sdk != nil {
+		config.SDKWorkload, config.SDKPrepare = b.SDKWorkload, b.SDKPrepare
+	}
+	return config
+}
+
 func (b *connectorConnectionBackend) OwnerAlive() bool {
 	if b.parentPID <= 0 {
 		return true

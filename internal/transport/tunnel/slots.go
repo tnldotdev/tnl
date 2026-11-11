@@ -11,6 +11,8 @@ import (
 // ends or Close is called. a path never owns retries of application streams.
 type SlotSession interface {
 	Serve(context.Context) error
+	Transport() Transport
+	Drain(context.Context) error
 	Close() error
 }
 
@@ -106,9 +108,7 @@ func (s *Slots) Set(slot uint8, key string) error {
 		// control can replace an assignment before its QUIC failure reaches
 		// Serve. keep that replacement's transport preference in the slot.
 		if serving, ok := old.phase.(slotServing); ok {
-			if transport, ok := serving.session.(interface{ Transport() Transport }); ok {
-				s.preferTCP[slot] = transport.Transport() == TransportQUIC
-			}
+			s.preferTCP[slot] = serving.session.Transport() == TransportQUIC
 		}
 		old.cancel()
 	}
@@ -136,7 +136,7 @@ func (s *Slots) run(ctx context.Context, slot uint8, w *slotWorker) {
 			current := s.workers[slot] == w && s.phase == slotsAccepting && ctx.Err() == nil
 			if current {
 				w.phase = slotServing{session: session}
-				if transport, ok := session.(interface{ Transport() Transport }); ok && transport.Transport() == TransportTLSTCP {
+				if session.Transport() == TransportTLSTCP {
 					s.preferTCP[slot] = false
 				}
 				s.notifyLocked()
@@ -163,8 +163,8 @@ func (s *Slots) run(ctx context.Context, slot uint8, w *slotWorker) {
 				if !rotate {
 					if s.config.PreferTCPAfter != nil {
 						s.preferTCP[slot] = s.config.PreferTCPAfter(session, serveErr)
-					} else if transport, ok := session.(interface{ Transport() Transport }); ok {
-						s.preferTCP[slot] = transport.Transport() == TransportQUIC
+					} else {
+						s.preferTCP[slot] = session.Transport() == TransportQUIC
 					}
 				}
 				s.notifyLocked()
@@ -172,9 +172,7 @@ func (s *Slots) run(ctx context.Context, slot uint8, w *slotWorker) {
 			s.mu.Unlock()
 			if rotate {
 				s.group.Go(func() {
-					if drain, ok := session.(interface{ Drain(context.Context) error }); ok {
-						_ = drain.Drain(ctx)
-					}
+					_ = session.Drain(ctx)
 					closeOwned()
 				})
 			} else {
@@ -253,9 +251,9 @@ func (s *Slots) StopAdmissions(ctx context.Context) error {
 	var group sync.WaitGroup
 	var results [2]error
 	for slot, session := range sessions {
-		if drain, ok := session.(interface{ Drain(context.Context) error }); ok {
+		if session != nil {
 			group.Go(func() {
-				results[slot] = drain.Drain(ctx)
+				results[slot] = session.Drain(ctx)
 			})
 		}
 	}

@@ -8,7 +8,7 @@ SELECT hostname FROM integration_url_hostnames
 WHERE server_origin = sqlc.arg(server_origin) AND primary_project_root = sqlc.arg(project_key)
   AND namespace = sqlc.arg(namespace) AND purpose = sqlc.arg(purpose);
 
--- name: SetTunnelIntegrationGroup :execrows
+-- name: SetTunnelIntegrationScope :execrows
 UPDATE local_tunnels SET
     primary_project_root = sqlc.arg(primary_project_root),
     integration_namespace = sqlc.arg(integration_namespace)
@@ -27,7 +27,8 @@ SELECT t.server_origin, sqlc.arg(hostname), sqlc.arg(state_digest), t.id,
     t.public_url_id, t.publish_run_number, sqlc.arg(origin_hostname), sqlc.arg(public_url_id), sqlc.arg(publish_run_number)
 FROM local_tunnels t
 WHERE t.id = sqlc.arg(tunnel_id) AND t.server_origin = sqlc.arg(server_origin)
-  AND t.integration_group = sqlc.arg(integration_group) AND t.state = 'ready'
+  AND t.primary_project_root = sqlc.arg(primary_project_root)
+  AND t.integration_namespace = sqlc.arg(integration_namespace) AND t.state = 'ready'
   AND ((t.public_url_id = sqlc.arg(public_url_id) AND t.publish_run_number = sqlc.arg(publish_run_number)
         AND (sqlc.arg(origin_hostname) = '' OR sqlc.arg(origin_hostname) = t.hostname))
     OR EXISTS (SELECT 1 FROM alias_publish_runs r JOIN project_aliases a ON a.id = r.alias_id

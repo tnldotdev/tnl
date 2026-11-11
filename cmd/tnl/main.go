@@ -509,7 +509,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, reporterF
 			if flags.Publish.System || flags.Publish.ServiceName != "" || flags.Publish.SystemStateDir != "" || flags.Publish.ServerCAFile != "" {
 				return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
 			}
-			return detachPublish(ctx, args, flags.Publish.StateDir, stdout)
+			return detachPublish(ctx, args, flags.Publish.StateDir, stdout, "tnl publish")
 		}
 		if flags.Publish.DetachedChild != "" {
 			root, err := clientStateRoot(flags.Publish.StateDir)

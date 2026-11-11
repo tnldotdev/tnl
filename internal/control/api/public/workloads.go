@@ -32,7 +32,7 @@ func (h *handler) workloadVisitor(w http.ResponseWriter, r *http.Request) (Workl
 	}
 	return store, token, true
 }
-func workloadVisitorProblem(w http.ResponseWriter, err error) {
+func workloadVisitorProblem(ctx context.Context, w http.ResponseWriter, err error) {
 	if errors.Is(err, controlstate.ErrCertificateIssuanceInvalid) {
 		writeProblem(w, 400, controlv1.InvalidRequest, "invalid workload certificate signing request")
 		return
@@ -45,7 +45,7 @@ func workloadVisitorProblem(w http.ResponseWriter, err error) {
 		writeProblem(w, 409, controlv1.Conflict, "workload request key belongs to another service")
 		return
 	}
-	serviceVisitorError(w, "authorize workload visitor", err)
+	serviceVisitorError(ctx, w, "authorize workload visitor", err)
 }
 func (h *handler) ListWorkloadServices(w http.ResponseWriter, r *http.Request) {
 	store, token, ok := h.workloadVisitor(w, r)
@@ -54,7 +54,7 @@ func (h *handler) ListWorkloadServices(w http.ResponseWriter, r *http.Request) {
 	}
 	services, err := store.ListWorkloadServices(r.Context(), token, time.Now())
 	if err != nil {
-		workloadVisitorProblem(w, err)
+		workloadVisitorProblem(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, 200, struct {
@@ -68,7 +68,7 @@ func (h *handler) CheckWorkloadService(w http.ResponseWriter, r *http.Request, s
 	}
 	result, err := store.CheckWorkloadService(r.Context(), token, service, time.Now())
 	if err != nil {
-		workloadVisitorProblem(w, err)
+		workloadVisitorProblem(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -90,7 +90,7 @@ func (h *handler) SelectWorkloadServiceRun(w http.ResponseWriter, r *http.Reques
 	}
 	result, err := store.SelectWorkloadServiceRun(r.Context(), token, service, time.Now())
 	if err != nil {
-		workloadVisitorProblem(w, err)
+		workloadVisitorProblem(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, 200, privateSelectionResponse(result))
@@ -110,7 +110,7 @@ func (h *handler) IssueWorkloadServiceClientCertificate(w http.ResponseWriter, r
 	}
 	result, err := store.IssueWorkloadServiceClientCertificate(r.Context(), token, service, body.CSR, time.Now())
 	if err != nil {
-		workloadVisitorProblem(w, err)
+		workloadVisitorProblem(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, 200, result)

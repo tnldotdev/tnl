@@ -16,12 +16,12 @@ type managedCertificateStore interface {
 	MarkServiceCertificateInstalled(context.Context, string, string, string, string, int64, time.Time, time.Time) error
 }
 
-func writeManagedCertificateProblem(w http.ResponseWriter, operation string, err error) {
+func writeManagedCertificateProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	if errors.Is(err, controlstate.ErrServiceAccess) || errors.Is(err, controlstate.ErrServiceConflict) {
-		serviceVisitorError(w, operation, err)
+		serviceVisitorError(ctx, w, operation, err)
 		return
 	}
-	writeControlStateProblem(w, operation, err)
+	writeControlStateProblem(ctx, w, operation, err)
 }
 
 func managedCertificatePlan(plan controlstate.CertificatePlan) controlv1.CertificatePlan {
@@ -66,7 +66,7 @@ func (h *handler) CreateServiceCertificateIssuance(w http.ResponseWriter, r *htt
 	}
 	value, err := store.CreateServiceCertificateIssuance(r.Context(), service, run, token, h.config.ACMEDirectoryURL, r.Header.Get("Idempotency-Key"), body.RunNumber, body.Csr, time.Now())
 	if err != nil {
-		writeManagedCertificateProblem(w, "issue managed certificate", err)
+		writeManagedCertificateProblem(r.Context(), w, "issue managed certificate", err)
 		return
 	}
 	if value.NewOrder {
@@ -82,7 +82,7 @@ func (h *handler) GetServiceCertificateIssuance(w http.ResponseWriter, r *http.R
 	}
 	value, err := store.GetServiceCertificateIssuance(r.Context(), service, run, token, issuance, time.Now())
 	if err != nil {
-		writeManagedCertificateProblem(w, "read managed certificate", err)
+		writeManagedCertificateProblem(r.Context(), w, "read managed certificate", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, serviceCertificateResponse(value))
@@ -99,7 +99,7 @@ func (h *handler) MarkServiceCertificateInstalled(w http.ResponseWriter, r *http
 		return
 	}
 	if err := store.MarkServiceCertificateInstalled(r.Context(), service, run, token, body.IssuanceId, body.RunNumber, body.NotAfter, time.Now()); err != nil {
-		writeManagedCertificateProblem(w, "install managed certificate", err)
+		writeManagedCertificateProblem(r.Context(), w, "install managed certificate", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -48,7 +48,7 @@ func (h *handler) ListPublicURLs(response http.ResponseWriter, request *http.Req
 		page, err = h.store.ListAuthorizedPublicURLs(request.Context(), teamID, query.Get("cursor"))
 	}
 	if err != nil {
-		writeControlStateProblem(response, "list public URLs", err)
+		writeControlStateProblem(request.Context(), response, "list public URLs", err)
 		return
 	}
 	body := controlv1.PublicURLPage{PublicUrls: make([]controlv1.PublicURL, len(page.PublicURLs))}
@@ -170,7 +170,7 @@ func (h *handler) CreatePublicURL(response http.ResponseWriter, request *http.Re
 		Ephemeral:      ephemeral,
 	}, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "create public URL", err)
+		writeControlStateProblem(request.Context(), response, "create public URL", err)
 		return
 	}
 	writeJSON(response, http.StatusCreated, publicURLResponse(publicURL))
@@ -205,7 +205,7 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 	}
 	publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), string(publicURLID))
 	if err != nil {
-		writeControlStateProblem(response, "read public URL for update", err)
+		writeControlStateProblem(request.Context(), response, "read public URL for update", err)
 		return
 	}
 	if _, authorized := principal.teamIDs[publicURL.TeamID]; !authorized {
@@ -213,9 +213,6 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		return
 	}
 	storedProtocol := publicURL.ServiceProtocol
-	if storedProtocol == "" {
-		storedProtocol = controlstate.PublicURLServiceHTTP
-	}
 	if !storedProtocol.ValidCreateTarget(publicURL.Purpose, *body.Target, publicURL.Ephemeral) ||
 		*body.Target == "" && publicURL.Target != "" {
 		writeProblem(response, http.StatusBadRequest, controlv1.InvalidRequest, "invalid target")
@@ -239,7 +236,7 @@ func (h *handler) UpdatePublicURL(response http.ResponseWriter, request *http.Re
 		ExpectedMutationRevision: publicURL.MutationRevision,
 	}, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "update public URL", err)
+		writeControlStateProblem(request.Context(), response, "update public URL", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, publicURLResponse(updated))
@@ -252,7 +249,7 @@ func (h *handler) GetPublicURL(response http.ResponseWriter, request *http.Reque
 	}
 	publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), string(publicURLID))
 	if err != nil {
-		writeControlStateProblem(response, "get public URL", err)
+		writeControlStateProblem(request.Context(), response, "get public URL", err)
 		return
 	}
 	if _, authorized := principal.teamIDs[publicURL.TeamID]; !authorized {
@@ -273,7 +270,7 @@ func (h *handler) DeletePublicURL(response http.ResponseWriter, request *http.Re
 	}
 	publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), string(publicURLID))
 	if err != nil {
-		writeControlStateProblem(response, "read public URL for deletion", err)
+		writeControlStateProblem(request.Context(), response, "read public URL for deletion", err)
 		return
 	}
 	allowedIPPrefixes := make([]string, len(publicURL.AllowedIPPrefixes))
@@ -295,7 +292,7 @@ func (h *handler) DeletePublicURL(response http.ResponseWriter, request *http.Re
 		GuestID: decision.GuestID, PolicyRevision: decision.PolicyRevision,
 		ExpectedMutationRevision: publicURL.MutationRevision,
 	}, time.Now()); err != nil {
-		writeControlStateProblem(response, "delete public URL", err)
+		writeControlStateProblem(request.Context(), response, "delete public URL", err)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
@@ -307,7 +304,7 @@ func (h *handler) CreatePublishRun(
 	publicURLID controlv1.PublicURLID,
 	_ controlv1.CreatePublishRunParams,
 ) {
-	if !h.acceptingNewWork(response) {
+	if !h.acceptingNewWork(request.Context(), response) {
 		return
 	}
 	token, bearerOK := requestBearerToken(request)
@@ -323,7 +320,7 @@ func (h *handler) CreatePublishRun(
 	source := publisherRequestSource(request)
 	publisher, err := store.AuthenticatePublisherAccess(request.Context(), token, source, time.Now())
 	if err != nil {
-		publisherProblem(response, "authenticate publisher", err)
+		publisherProblem(request.Context(), response, "authenticate publisher", err)
 		return
 	}
 	mayStart, err := store.PublisherMayStartRun(request.Context(), publisher, publicURLID)
@@ -338,7 +335,7 @@ func (h *handler) CreatePublishRun(
 	}
 	publicURL, err := h.store.GetPublicURLForPublishRunAuthorization(request.Context(), string(publicURLID), idempotencyKey)
 	if err != nil {
-		writeControlStateProblem(response, "read public URL for publish run", err)
+		writeControlStateProblem(request.Context(), response, "read public URL for publish run", err)
 		return
 	}
 	allowedIPPrefixes := make([]string, len(publicURL.AllowedIPPrefixes))
@@ -347,7 +344,7 @@ func (h *handler) CreatePublishRun(
 	}
 	plan, err := store.PublisherRunPlan(request.Context(), publisher, publicURL, h.config.DNSAutomation)
 	if err != nil {
-		publisherProblem(response, "authorize publisher certificate", err)
+		publisherProblem(request.Context(), response, "authorize publisher certificate", err)
 		return
 	}
 	if plan.ChallengeMethod == certificateidentity.ChallengeDNS01 && !h.config.DNSAutomation {
@@ -377,12 +374,12 @@ func (h *handler) CreatePublishRun(
 		TrafficSelection: traffic, TrafficDefaults: h.config.TrafficDefaults, TrafficCeiling: h.config.TrafficCeiling,
 	}, time.Now(), publisherLeaseDuration, publisherConnectionCredentialDuration)
 	if err != nil {
-		publisherProblem(response, "create publish run", err)
+		publisherProblem(request.Context(), response, "create publish run", err)
 		return
 	}
 	publicURL, err = h.store.GetPublicURLForAuthorization(request.Context(), publicURL.ID)
 	if err != nil {
-		writeControlStateProblem(response, "read created publish run", err)
+		writeControlStateProblem(request.Context(), response, "read created publish run", err)
 		return
 	}
 	writeJSON(response, http.StatusCreated, publishRunSetupResponse(publicURL, setup, controlv1.CertificatePlan{
@@ -405,7 +402,7 @@ func (h *handler) HeartbeatPublishRun(response http.ResponseWriter, request *htt
 		request.Context(), authentication, time.Now(), publisherLeaseDuration, publisherConnectionCredentialDuration,
 	)
 	if err != nil {
-		writeControlStateProblem(response, "heartbeat publish run", err)
+		writeControlStateProblem(request.Context(), response, "heartbeat publish run", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, controlv1.PublishRunHeartbeat{
@@ -437,7 +434,7 @@ func (h *handler) MarkPublishRunCertificateInstalled(
 		request.Context(), authentication, body.IssuanceId, body.NotAfter, now,
 	)
 	if err != nil {
-		writeControlStateProblem(response, "mark public URL certificate installed", err)
+		writeControlStateProblem(request.Context(), response, "mark public URL certificate installed", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, publishRunLifecycleResponse(lifecycle))
@@ -474,7 +471,7 @@ func (h *handler) MarkPublishRunReady(response http.ResponseWriter, request *htt
 				authentication.PublishRunID, authentication.PublishRunNumber, notReady.Reason(), notReady.CertificateInstalled,
 				notReady.ReadyPublisherConnectionCount, time.Since(notReady.CreatedAt).Round(time.Second))
 		}
-		writeControlStateProblem(response, "mark publish run ready", err)
+		writeControlStateProblem(request.Context(), response, "mark publish run ready", err)
 		return
 	}
 	if age := time.Since(lifecycle.CreatedAt); age >= 30*time.Second {
@@ -493,7 +490,7 @@ func (h *handler) ClosePublishRun(response http.ResponseWriter, request *http.Re
 	if err := h.store.ClosePublishRun(
 		request.Context(), string(publishRunID), credentials.PublishRunToken(token), time.Now(),
 	); err != nil {
-		writeControlStateProblem(response, "close publish run", err)
+		writeControlStateProblem(request.Context(), response, "close publish run", err)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)

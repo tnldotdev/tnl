@@ -77,7 +77,7 @@ func InstallPublication(ctx context.Context, selected Publication, presentation 
 	if err != nil {
 		return err
 	}
-	credential, err := EnsurePublication(ctx, profile, selected.Control, control, authority, server, publicURL)
+	credential, err := EnsurePublication(ctx, profile, selected.Control, control.NativeControl, authority, server, publicURL)
 	if err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func Register(ctx context.Context, options supervisor.ServiceOptions, payload In
 	if err != nil {
 		return err
 	}
-	native, err := publisheridentity.NewNative(control, authority, identity, private)
+	native, err := publisheridentity.NewNative(control.NativeControl, authority, identity, private)
 	if err != nil {
 		return err
 	}

@@ -64,7 +64,7 @@ func TestTypedDimensionsRetainValuesAndRejectWrongInstrument(t *testing.T) {
 	m := New("standalone")
 	defer m.Shutdown(context.Background())
 	counter := newCounter(m.meter, "tnl_type_boundary_total", "Type boundary fixture.", ServiceProtocol, Transport, OutcomeKey, HTTPStatus, TLSResumed)
-	counter.With(ServiceProtocol.Dimension(ProtocolHTTP), Transport.Dimension(TransportQUIC), resultDimension("not_admitted"), HTTPStatus.Dimension(403), TLSResumed.Dimension(true)).Inc()
+	counter.With(ServiceProtocol.Dimension(ProtocolHTTP), Transport.Dimension(TransportQUIC), (semanticResult{Rejected, ReasonNotAdmitted}).dimension(), HTTPStatus.Dimension(403), TLSResumed.Dimension(true)).Inc()
 	text := metricsText(t, m)
 	for _, want := range []string{`tnl_service_protocol="http"`, `tnl_transport="quic"`, `tnl_outcome="rejected"`, `tnl_reason="not_admitted"`, `http_response_status_code="403"`, `tls_resumed="true"`} {
 		if !strings.Contains(text, want) {
@@ -107,8 +107,8 @@ func TestDynamicBoundariesRejectUnknownValuesBeforeNarrowing(t *testing.T) {
 	if operationID("plausible_secret_operation") != "operational_failure" {
 		t.Fatal("arbitrary log operation narrowed")
 	}
-	if _, ok := controlOperationName("plausible_secret_operation"); ok {
-		t.Fatal("arbitrary control operation narrowed")
+	if ServerOperation(255).String() != "" {
+		t.Fatal("unknown control operation narrowed")
 	}
 	if got := databaseFixtureOperations.Lookup("plausible_secret_query"); got.String() != "unknown" {
 		t.Fatal(got)

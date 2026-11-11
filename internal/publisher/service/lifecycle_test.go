@@ -163,6 +163,8 @@ type heldSlot struct{ stopped chan struct{} }
 
 func (s *heldSlot) Serve(ctx context.Context) error { <-ctx.Done(); return nil }
 func (s *heldSlot) Close() error                    { close(s.stopped); return nil }
+func (s *heldSlot) Transport() tunnel.Transport     { return tunnel.TransportQUIC }
+func (s *heldSlot) Drain(context.Context) error     { return nil }
 
 type transportedSlot struct {
 	*heldSlot
@@ -186,7 +188,7 @@ func lifecycleFixture(t *testing.T) (RunConfig, *lifecycleControl) {
 		PublisherConnections: []controlv1.ConnectionAssignment{bound.connections[0], bound.connections[1]},
 	}}
 	base := RunConfig{Control: f, Access: func(context.Context) (string, error) { return "scoped-publisher-token", nil },
-		Identity: identity, ServiceID: service, Target: "127.0.0.1:5432", HeartbeatInterval: 5 * time.Millisecond, Healthy: func(context.Context) bool { return true }}
+		Identity: identity, ServiceID: service, Metadata: controlv1.ServiceMetadata{Protocol: controlv1.ServiceProtocol("tcp")}, Target: "127.0.0.1:5432", HeartbeatInterval: 5 * time.Millisecond, Healthy: func(context.Context) bool { return true }}
 	database, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)

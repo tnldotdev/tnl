@@ -92,7 +92,7 @@ func TestIntegrationDatabaseSDKSmoke(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan error, 1)
 			go func() {
-				done <- connectorruntime.Serve(ctx, scope, directory, binary, backend, writer)
+				done <- connectorruntime.Serve(ctx, scope, directory, binary, connectorruntime.OwnerConfig{Backend: backend}, writer)
 				_ = writer.Close()
 			}()
 			defer func() {
@@ -131,6 +131,20 @@ type databaseSmokeBackend struct {
 
 func (b *databaseSmokeBackend) Start(context.Context) (meta.PublicMetadata, time.Time, error) {
 	return b.metadata, b.deadline, nil
+}
+func (*databaseSmokeBackend) UseAssertion(context.Context, string) error {
+	return connectorruntime.ErrInvalid
+}
+func (*databaseSmokeBackend) Attach(context.Context, string) error {
+	return connectorruntime.ErrInvalid
+}
+func (b *databaseSmokeBackend) ProjectRuntime() meta.PublicMetadata { return b.metadata }
+func (b *databaseSmokeBackend) SnapshotFor(name, assertion string) (connectorruntime.Prepared, error) {
+	if assertion != "" {
+		return connectorruntime.Prepared{}, connectorruntime.ErrInvalid
+	}
+	connection, err := b.Prepared(name)
+	return connectorruntime.Prepared{Schema: 1, ProjectRuntime: b.metadata, Connection: connection}, err
 }
 func (b *databaseSmokeBackend) Prepared(name string) (connectorruntime.Connection, error) {
 	return b.Connect(context.Background(), name)

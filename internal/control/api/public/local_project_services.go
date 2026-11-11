@@ -22,11 +22,11 @@ func (h *handler) GetLocalProjectService(w http.ResponseWriter, r *http.Request,
 	}
 	result, err := store.GetLocalProjectService(r.Context(), controlstate.GetLocalProjectServiceRequest{TeamID: params.TeamId, ProjectKey: project, Service: service, SourceFingerprint: params.SourceFingerprint, WorktreeKey: params.WorktreeKey, ActorID: principal.identityID, Now: time.Now()})
 	if errors.Is(err, controlstate.ErrProjectConfigurationInvalid) || errors.Is(err, controlstate.ErrProjectSourceConflict) {
-		projectConfigurationProblem(w, "get local project service", err)
+		projectConfigurationProblem(r.Context(), w, "get local project service", err)
 		return
 	}
 	if err != nil {
-		serviceVisitorError(w, "get local project service", err)
+		serviceVisitorError(r.Context(), w, "get local project service", err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -58,7 +58,7 @@ func (h *handler) RealizeLocalProjectService(w http.ResponseWriter, r *http.Requ
 	}
 	result, err := store.RealizeLocalProjectService(r.Context(), controlstate.RealizeLocalProjectServiceRequest{TeamID: body.TeamID, ProjectKey: project, SourceFingerprint: body.SourceFingerprint, Service: service, WorktreeKey: body.WorktreeKey, WorktreeLabel: body.WorktreeLabel, DomainID: body.DomainID, DNSAutomation: h.config.DNSAutomation, PublicURLID: body.PublicURLID, ActorID: actor, Configuration: *body.Configuration, Now: time.Now()})
 	if err != nil {
-		projectConfigurationProblem(w, "realize local project service", err)
+		projectConfigurationProblem(r.Context(), w, "realize local project service", err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -77,7 +77,7 @@ func (h *handler) GetProjectPublicMetadata(w http.ResponseWriter, r *http.Reques
 	}
 	result, err := store.GetProjectPublicMetadata(r.Context(), params.TeamId, project, principal.identityID, time.Now())
 	if err != nil {
-		writeControlStateProblem(w, "get project public metadata", err)
+		writeControlStateProblem(r.Context(), w, "get project public metadata", err)
 		return
 	}
 	writeJSON(w, 200, result)

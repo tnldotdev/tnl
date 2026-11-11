@@ -34,7 +34,7 @@ func (h *handler) RebindConnectorPeerPair(w http.ResponseWriter, r *http.Request
 	}
 	state, err := h.dependencies.ConnectorPeerPairs.RebindConnectorPeerPair(ctx, serviceID, pairID, controlstate.ConnectorPeerPairRebindRequest{Proof: proof, Source: sourceRequest.Source, Signature: signature}, time.Now())
 	if err != nil {
-		connectorPairProblem(w, err)
+		connectorPairProblem(r.Context(), w, err)
 		return
 	}
 	result := controlv1.ConnectorPeerPairRebindState{HighWaterGeneration: state.HighWaterGeneration, ReadyRelays: []controlv1.ConnectorPeerPairRelay{}}

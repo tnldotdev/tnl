@@ -113,7 +113,7 @@ func TestConnectorPeerRebindStrictHTTPAndSourceBoundary(t *testing.T) {
 func TestConnectorPeerRebindDenialPrecedesStale(t *testing.T) {
 	for _, err := range []error{controlstate.ErrServiceAccess, controlstate.ErrVisitorPermission, controlstate.ErrWorkloadDenied} {
 		response := httptest.NewRecorder()
-		connectorPairProblem(response, errors.Join(controlstate.ErrConnectorPeerBindingStale, err))
+		connectorPairProblem(t.Context(), response, errors.Join(controlstate.ErrConnectorPeerBindingStale, err))
 		if response.Code != http.StatusForbidden {
 			t.Fatal("denial became retryable", response.Code)
 		}

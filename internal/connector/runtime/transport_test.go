@@ -21,6 +21,10 @@ func (b *invalidTransportBackend) Connect(context.Context, string) (Connection, 
 func (b *invalidTransportBackend) Prepared(name string) (Connection, error) {
 	return b.Connect(context.Background(), name)
 }
+func (b *invalidTransportBackend) SnapshotFor(name, _ string) (Prepared, error) {
+	connection, err := b.Prepared(name)
+	return Prepared{Schema: Schema, ProjectRuntime: b.ProjectRuntime(), Connection: connection}, err
+}
 
 type invalidPreparedTransportBackend struct {
 	*fixtureBackend
@@ -55,7 +59,7 @@ func TestConnectionOwnerRejectsInvalidTransportOutput(t *testing.T) {
 						t.Error(err)
 					}
 				}()
-				go func() { done <- Serve(ctx, scope, directory, "/test/tnl", backend, writer) }()
+				go func() { done <- Serve(ctx, scope, directory, "/test/tnl", OwnerConfig{Backend: backend}, writer) }()
 				var status Status
 				if err := json.NewDecoder(reader).Decode(&status); err != nil {
 					t.Fatal(err)

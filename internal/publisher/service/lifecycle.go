@@ -77,7 +77,7 @@ func (RunConfig) GoString() string { return "private publisher configuration" }
 // Publish keeps the managed certificate lifecycle, two independently claimed
 // relay slots and current control heartbeat together. live bytes are never replayed.
 func Publish(ctx context.Context, config RunConfig) (result error) {
-	if config.Control == nil || config.Access == nil || config.Identity.ServiceId == nil ||
+	if config.Control == nil || config.Access == nil || !config.Metadata.Protocol.Valid() || config.Identity.ServiceId == nil ||
 		config.Identity.Kind != authorityv1.Service || *config.Identity.ServiceId != config.ServiceID {
 		return ErrPrivateStream
 	}
@@ -113,9 +113,6 @@ func Publish(ctx context.Context, config RunConfig) (result error) {
 	access, err := config.Access(ctx)
 	if err != nil || access == "" {
 		return errors.Join(ErrPrivateStream, err)
-	}
-	if config.Metadata.Protocol == "" {
-		config.Metadata.Protocol = controlv1.ServiceProtocol("tcp")
 	}
 	approved, err := config.Control.GetPublisherService(ctx, access)
 	if err != nil {

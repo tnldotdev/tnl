@@ -27,6 +27,9 @@ func TestServiceRunUsesSeparatePersonPublisherAndRunCredentials(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.TeamId != "team" || body.Name != "orders" {
 				t.Error("service name or team changed")
 			}
+			if body.Protocol == nil || *body.Protocol != controlv1.Tcp || body.PublisherPool == nil || *body.PublisherPool {
+				t.Error("service declaration was not explicit")
+			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(controlv1.Service{Id: "svc_service", TeamId: "team", Name: "orders"})
 		case "GET /v1/services":
@@ -79,7 +82,7 @@ func TestServiceRunUsesSeparatePersonPublisherAndRunCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := t.Context()
-	if _, err := client.CreateService(ctx, "team", "orders", "service-once"); err != nil {
+	if _, err := client.CreateService(ctx, "team", "orders", "service-once", controlv1.ServiceMetadata{Protocol: controlv1.Tcp}); err != nil {
 		t.Fatal(err)
 	}
 	if services, err := client.ListServices(ctx, "team"); err != nil || len(services) != 1 {

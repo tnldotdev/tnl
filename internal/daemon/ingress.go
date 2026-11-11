@@ -88,8 +88,14 @@ func (d *daemon) startIngress(ctx context.Context, settings ingressProcessSettin
 	return nil
 }
 
+type ingressRuntimeControl interface {
+	ingress.ControlClient
+	ingress.PublicServiceControl
+	ingressServiceObservationClient
+}
+
 type ingressRuntimeConfig struct {
-	client                  ingress.ControlClient
+	client                  ingressRuntimeControl
 	ingressID               string
 	listener                net.Listener
 	clusterSecret           string
@@ -144,11 +150,10 @@ func (d *daemon) startIngressRuntime(
 	runtimeConfig ingressRuntimeConfig,
 ) error {
 	runtime := &ingressRuntime{}
-	auditClient, ok := runtimeConfig.client.(ingressServiceObservationClient)
-	if !ok {
-		return errors.New("ingress service observation reporting is required")
+	if runtimeConfig.client == nil {
+		return errors.New("ingress runtime control client is required")
 	}
-	runtime.audit = &ingressServiceAudit{ctx: ctx, client: auditClient, metrics: metrics}
+	runtime.audit = &ingressServiceAudit{ctx: ctx, client: runtimeConfig.client, metrics: metrics}
 	owned := false
 	defer func() {
 		if !owned {
@@ -275,11 +280,7 @@ func (d *daemon) startIngressRuntime(
 		runtimeConfig.configure(&ingressConfig)
 	}
 	ingressConfig.AuditSink = runtime.audit
-	publicServiceControl, ok := runtimeConfig.client.(ingress.PublicServiceControl)
-	if !ok {
-		return errors.New("public service ingress control operations are required")
-	}
-	publicServicesConfig := ingress.PublicServicesConfig{IngressPoolID: string(settings.ingressPoolID), Control: publicServiceControl, Forwarder: forwarder, CurrentLease: controller.Lease, AuditSink: runtime.audit}
+	publicServicesConfig := ingress.PublicServicesConfig{IngressPoolID: string(settings.ingressPoolID), Control: runtimeConfig.client, Forwarder: forwarder, CurrentLease: controller.Lease, AuditSink: runtime.audit}
 	if runtimeConfig.configurePublicServices != nil {
 		runtimeConfig.configurePublicServices(&publicServicesConfig)
 	}
@@ -323,7 +324,7 @@ func (d *daemon) startIngressRuntime(
 	return nil
 }
 
-func newIngressControlClient(endpoint, clusterSecret string, base *http.Client, dialAddress string) (ingress.ControlClient, error) {
+func newIngressControlClient(endpoint, clusterSecret string, base *http.Client, dialAddress string) (ingressRuntimeControl, error) {
 	client, err := newServiceHTTPClient(base, clusterSecret, dialAddress)
 	if err != nil {
 		return nil, err

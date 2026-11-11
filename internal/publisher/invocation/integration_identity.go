@@ -65,5 +65,6 @@ func nativeIntegrationConfig(ctx context.Context, database *clientstate.Database
 	}
 	cfg.Control, cfg.PreserveSavedPublicURLTarget = nativePublicationControl(native, services.routes), true
 	cfg.PublisherIdentityID = native.PublisherIdentityID()
+	configureNativePublication(&cfg, native, services.routes)
 	return cfg, nil
 }

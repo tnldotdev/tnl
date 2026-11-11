@@ -10,13 +10,13 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type visitorPolicyClient interface {
+type VisitorPolicyClient interface {
 	ReadPublisherVisitorPolicy(context.Context, controlv1.PublisherVisitorPolicyRequest, string) (controlv1.VisitorPolicyUpdate, error)
 }
 
 type visitorPolicy struct {
 	lease     *visitorlease.Lease
-	client    visitorPolicyClient
+	client    VisitorPolicyClient
 	request   controlv1.PublisherVisitorPolicyRequest
 	token     string
 	sourceKey [32]byte
@@ -27,7 +27,7 @@ type visitorPolicy struct {
 
 // PrepareServiceVisitorPolicy retains the run's canonical background policy owner.
 // closing the owner joins refresh before retiring its guards.
-func PrepareServiceVisitorPolicy(ctx context.Context, client visitorPolicyClient, serviceID, runID string, number int64, token string) (*visitorlease.Lease, func(), error) {
+func PrepareServiceVisitorPolicy(ctx context.Context, client VisitorPolicyClient, serviceID, runID string, number int64, token string) (*visitorlease.Lease, func(), error) {
 	p, err := prepareVisitorPolicy(ctx, client, visitorscope.Scope{Kind: visitorscope.Service, ID: serviceID}, runID, number, token, nil)
 	if err != nil {
 		return nil, nil, err
@@ -35,7 +35,7 @@ func PrepareServiceVisitorPolicy(ctx context.Context, client visitorPolicyClient
 	return p.lease, p.Close, nil
 }
 
-func prepareVisitorPolicy(ctx context.Context, client visitorPolicyClient, scope visitorscope.Scope, run string, number int64, token string, report func(error)) (*visitorPolicy, error) {
+func prepareVisitorPolicy(ctx context.Context, client VisitorPolicyClient, scope visitorscope.Scope, run string, number int64, token string, report func(error)) (*visitorPolicy, error) {
 	if client == nil || run == "" || number < 1 || token == "" {
 		return nil, errors.New("visitor policy needs the current publisher run")
 	}

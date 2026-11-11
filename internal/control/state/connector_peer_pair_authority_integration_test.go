@@ -192,7 +192,7 @@ func TestIntegrationConnectorPeerPairCompanyDelivery(t *testing.T) {
 	if err != nil || got.Key != f.pair.Key || got.Subject != f.pair.Subject || got.DeliveryID != f.pair.DeliveryID || got.SourceIP != connectorPairCompanySource || got.ExpiresAt.After(f.pair.ExpiresAt) {
 		t.Fatal("publisher could not receive company binding without a human principal", err)
 	}
-	report := ConnectorPeerPairPrepared{DeliveryID: got.DeliveryID, DeliveryGeneration: got.DeliveryGeneration, BindingExpiresAt: got.ExpiresAt}
+	report := ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: got.DeliveryID, DeliveryGeneration: got.DeliveryGeneration, BindingExpiresAt: got.ExpiresAt}
 	if err := f.database.ConfirmConnectorPeerPairPrepared(t.Context(), f.pair.ServiceID, f.run.RunID, f.pair.ID, f.run.Token, report, f.now); err != nil {
 		t.Fatal("publisher could not report company binding installation", err)
 	}
@@ -252,7 +252,7 @@ func TestIntegrationConnectorPeerPairSavedParentFences(t *testing.T) {
 				if !errors.Is(err, ErrServiceAccess) || got.Key != "" {
 					t.Fatal("invalid saved parent borrowed caller authority for delivery", err)
 				}
-				report := ConnectorPeerPairPrepared{DeliveryID: f.pair.DeliveryID, DeliveryGeneration: f.pair.DeliveryGeneration, BindingExpiresAt: f.pair.ExpiresAt}
+				report := ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: f.pair.DeliveryID, DeliveryGeneration: f.pair.DeliveryGeneration, BindingExpiresAt: f.pair.ExpiresAt}
 				if err := d.ConfirmConnectorPeerPairPrepared(callCtx, f.pair.ServiceID, f.run.RunID, f.pair.ID, f.run.Token, report, at); !errors.Is(err, ErrServiceAccess) {
 					t.Fatal("invalid saved parent authorized a publisher report", err)
 				}
@@ -306,7 +306,7 @@ func TestIntegrationConnectorPeerPairSavedParentDeadlines(t *testing.T) {
 			if err != nil || !got.ExpiresAt.Equal(deadline) {
 				t.Fatal("publisher delivery outlived current saved authority", err)
 			}
-			report := ConnectorPeerPairPrepared{DeliveryID: f.pair.DeliveryID, DeliveryGeneration: f.pair.DeliveryGeneration, BindingExpiresAt: deadline.Add(time.Microsecond)}
+			report := ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: f.pair.DeliveryID, DeliveryGeneration: f.pair.DeliveryGeneration, BindingExpiresAt: deadline.Add(time.Microsecond)}
 			if err := d.ConfirmConnectorPeerPairPrepared(ctx, f.pair.ServiceID, f.run.RunID, f.pair.ID, f.run.Token, report, checkedNow()); !errors.Is(err, ErrServiceAccess) {
 				t.Fatal("publisher report widened the checked binding deadline", err)
 			}

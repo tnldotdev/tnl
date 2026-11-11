@@ -42,7 +42,7 @@ func TestSignedCloudAssignmentProductionCallbackAndTargetTLS(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer resolver.Close()
-			publication := supervisor.GroupPublisher{Member: *fixture.Job.GroupMember, Private: fixture.Key, State: fixture.Profile, Control: control, Authority: authority, Discovery: resolver}
+			publication := supervisor.GroupPublisher{Member: *fixture.Job.GroupMember, Private: fixture.Key, State: fixture.Profile, Control: control.NativeControl, Authority: authority, Discovery: resolver}
 			runtime := func(ctx context.Context, job supervisor.Job, observe func(int64, bool) error) error {
 				return (publishergroup.Runtime{Control: client, Member: *job.GroupMember, Private: fixture.Key, PollInterval: 5 * time.Millisecond, Observe: observe, Publish: publication.Publish}).Serve(ctx)
 			}
@@ -165,7 +165,7 @@ func TestCloudAssignmentRejectsSavedServiceDriftBeforeAWS(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer resolver.Close()
-			publication := supervisor.GroupPublisher{Member: *fixture.Job.GroupMember, Private: fixture.Key, State: fixture.Profile, Control: control, Authority: authority, Discovery: resolver}
+			publication := supervisor.GroupPublisher{Member: *fixture.Job.GroupMember, Private: fixture.Key, State: fixture.Profile, Control: control.NativeControl, Authority: authority, Discovery: resolver}
 			if err := publication.Publish(t.Context(), assignment, nil); err == nil {
 				t.Fatal("mismatched assignment was accepted")
 			}
@@ -195,7 +195,7 @@ func TestCloudAssignmentChangedDescriptorPreparesIndependentPin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resolver.Close()
-	publication := supervisor.GroupPublisher{Member: *fixture.Job.GroupMember, Private: fixture.Key, State: fixture.Profile, Control: control, Authority: authority, Discovery: resolver}
+	publication := supervisor.GroupPublisher{Member: *fixture.Job.GroupMember, Private: fixture.Key, State: fixture.Profile, Control: control.NativeControl, Authority: authority, Discovery: resolver}
 	for _, cluster := range []string{"production", "replacement"} {
 		assignment := fixture.Assignment()
 		assignment.Configuration.TargetDiscovery.Cluster = new(cluster)

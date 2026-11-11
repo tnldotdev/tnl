@@ -79,12 +79,12 @@ func (h *handler) CreateFeedbackReport(response http.ResponseWriter, request *ht
 	}
 	actor, err := feedbackReviewerActor(body.Access)
 	if err != nil {
-		writeControlStateProblem(response, "verify feedback reviewer", err)
+		writeControlStateProblem(request.Context(), response, "verify feedback reviewer", err)
 		return
 	}
 	actor, err = h.feedbackBrowserActor(request, auth, actor)
 	if err != nil {
-		writeFeedbackProblem(response, "verify signed-in reviewer", err)
+		writeFeedbackProblem(request.Context(), response, "verify signed-in reviewer", err)
 		return
 	}
 	anchor, err := json.Marshal(body.Anchor)
@@ -114,12 +114,12 @@ func (h *handler) CreateFeedbackReport(response http.ResponseWriter, request *ht
 		IdempotencyKey: request.Header.Get("Idempotency-Key"), Actor: actor,
 	}, time.Now())
 	if err != nil {
-		writeFeedbackProblem(response, "create feedback report", err)
+		writeFeedbackProblem(request.Context(), response, "create feedback report", err)
 		return
 	}
 	result, err := feedbackThreadResponse(thread)
 	if err != nil {
-		writeControlStateProblem(response, "encode feedback report", err)
+		writeControlStateProblem(request.Context(), response, "encode feedback report", err)
 		return
 	}
 	writeJSON(response, http.StatusCreated, result)
@@ -141,17 +141,17 @@ func (h *handler) ListPreviewPageFeedback(response http.ResponseWriter, request 
 	}
 	actor, err := feedbackReviewerActor(body.Access)
 	if err != nil {
-		writeControlStateProblem(response, "verify feedback reviewer", err)
+		writeControlStateProblem(request.Context(), response, "verify feedback reviewer", err)
 		return
 	}
 	actor, err = h.feedbackBrowserActor(request, auth, actor)
 	if err != nil {
-		writeFeedbackProblem(response, "verify signed-in reviewer", err)
+		writeFeedbackProblem(request.Context(), response, "verify signed-in reviewer", err)
 		return
 	}
 	_, publicURLID, err := h.feedback.ReviewerFeedbackScope(request.Context(), auth, body.PreviewId, actor, time.Now())
 	if err != nil {
-		writeFeedbackProblem(response, "read reviewer page", err)
+		writeFeedbackProblem(request.Context(), response, "read reviewer page", err)
 		return
 	}
 	cursor := ""
@@ -160,12 +160,12 @@ func (h *handler) ListPreviewPageFeedback(response http.ResponseWriter, request 
 	}
 	page, err := h.feedback.ListFeedbackForPublicURL(request.Context(), body.PreviewId, publicURLID, optionalFeedbackString(body.PagePath), optionalFeedbackString(body.State), cursor)
 	if err != nil {
-		writeControlStateProblem(response, "list page feedback", err)
+		writeControlStateProblem(request.Context(), response, "list page feedback", err)
 		return
 	}
 	result, err := feedbackThreadPageResponse(page)
 	if err != nil {
-		writeControlStateProblem(response, "encode page feedback", err)
+		writeControlStateProblem(request.Context(), response, "encode page feedback", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
@@ -194,12 +194,12 @@ func (h *handler) AppendReviewerFeedbackEvent(response http.ResponseWriter, requ
 	}
 	actor, err := feedbackReviewerActor(body.Access)
 	if err != nil {
-		writeControlStateProblem(response, "verify feedback reviewer", err)
+		writeControlStateProblem(request.Context(), response, "verify feedback reviewer", err)
 		return
 	}
 	actor, err = h.feedbackBrowserActor(request, auth, actor)
 	if err != nil {
-		writeFeedbackProblem(response, "verify signed-in reviewer", err)
+		writeFeedbackProblem(request.Context(), response, "verify signed-in reviewer", err)
 		return
 	}
 	thread, authorized := h.readReviewerFeedback(response, request, auth, feedbackID, actor)
@@ -214,12 +214,12 @@ func (h *handler) AppendReviewerFeedbackEvent(response http.ResponseWriter, requ
 	write.FeedbackID, write.IdempotencyKey, write.Actor = thread.ID, request.Header.Get("Idempotency-Key"), actor
 	event, err := h.feedback.AppendFeedback(request.Context(), write, time.Now())
 	if err != nil {
-		writeFeedbackProblem(response, "append reviewer feedback", err)
+		writeFeedbackProblem(request.Context(), response, "append reviewer feedback", err)
 		return
 	}
 	result, err := feedbackEventResponse(event)
 	if err != nil {
-		writeControlStateProblem(response, "encode reviewer feedback", err)
+		writeControlStateProblem(request.Context(), response, "encode reviewer feedback", err)
 		return
 	}
 	writeJSON(response, http.StatusCreated, result)
@@ -232,7 +232,7 @@ func (h *handler) GetReviewerFeedbackThread(response http.ResponseWriter, reques
 	}
 	result, err := feedbackThreadResponse(thread)
 	if err != nil {
-		writeControlStateProblem(response, "encode reviewer feedback thread", err)
+		writeControlStateProblem(request.Context(), response, "encode reviewer feedback thread", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
@@ -253,12 +253,12 @@ func (h *handler) ListReviewerFeedbackEvents(response http.ResponseWriter, reque
 	}
 	page, err := h.feedback.ListFeedbackEventsForThread(request.Context(), thread.ID, after)
 	if err != nil {
-		writeControlStateProblem(response, "list reviewer feedback events", err)
+		writeControlStateProblem(request.Context(), response, "list reviewer feedback events", err)
 		return
 	}
 	result, err := feedbackEventPageResponse(page)
 	if err != nil {
-		writeControlStateProblem(response, "encode reviewer feedback events", err)
+		writeControlStateProblem(request.Context(), response, "encode reviewer feedback events", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
@@ -280,12 +280,12 @@ func (h *handler) reviewerFeedbackRead(response http.ResponseWriter, request *ht
 	}
 	actor, err := feedbackReviewerActor(body.Access)
 	if err != nil {
-		writeControlStateProblem(response, "verify feedback reviewer", err)
+		writeControlStateProblem(request.Context(), response, "verify feedback reviewer", err)
 		return controlstate.FeedbackThread{}, body, false
 	}
 	actor, err = h.feedbackBrowserActor(request, auth, actor)
 	if err != nil {
-		writeFeedbackProblem(response, "verify signed-in reviewer", err)
+		writeFeedbackProblem(request.Context(), response, "verify signed-in reviewer", err)
 		return controlstate.FeedbackThread{}, body, false
 	}
 	thread, ok := h.readReviewerFeedback(response, request, auth, feedbackID, actor)
@@ -301,12 +301,12 @@ func (h *handler) reviewerFeedbackRead(response http.ResponseWriter, request *ht
 func (h *handler) readReviewerFeedback(response http.ResponseWriter, request *http.Request, auth controlstate.PublishRunAuthentication, id string, actor controlstate.FeedbackActor) (controlstate.FeedbackThread, bool) {
 	thread, err := h.feedback.GetFeedback(request.Context(), id)
 	if err != nil {
-		writeControlStateProblem(response, "read reviewer feedback", err)
+		writeControlStateProblem(request.Context(), response, "read reviewer feedback", err)
 		return controlstate.FeedbackThread{}, false
 	}
 	_, publicURLID, err := h.feedback.ReviewerFeedbackScope(request.Context(), auth, thread.PreviewID, actor, time.Now())
 	if err != nil {
-		writeFeedbackProblem(response, "verify reviewer feedback access", err)
+		writeFeedbackProblem(request.Context(), response, "verify reviewer feedback access", err)
 		return controlstate.FeedbackThread{}, false
 	}
 	if thread.PublicURLID != publicURLID || thread.PublicURLID != auth.PublicURLID {

@@ -33,7 +33,7 @@ func runWebhookChoice(ctx context.Context, flags webhookChoiceCommand, project p
 	var selected *clientstate.TunnelInfo
 	for i := range snapshot.Tunnels {
 		candidate := &snapshot.Tunnels[i]
-		if candidate.Server != server || candidate.Service != definition.Service || candidate.IntegrationGroup == "" || (use && candidate.State != clientstate.TunnelStateReady) || candidate.State == clientstate.TunnelStateStale {
+		if candidate.Server != server || candidate.Service != definition.Service || candidate.IntegrationScope.IsZero() || (use && candidate.State != clientstate.TunnelStateReady) || candidate.State == clientstate.TunnelStateStale {
 			continue
 		}
 		if selected != nil {
@@ -44,7 +44,7 @@ func runWebhookChoice(ctx context.Context, flags webhookChoiceCommand, project p
 	if selected == nil {
 		return failure.Wrap("select webhook receiver", failure.WebhookReceiverUnready, fmt.Errorf("start the %s service in this worktree before selecting webhook %s", definition.Service, flags.Endpoint))
 	}
-	hostname, err := state.WebhookHostname(ctx, server, selected.IntegrationGroup)
+	hostname, err := state.WebhookHostname(ctx, server, selected.IntegrationScope)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return failure.Wrap("read webhook URL", failure.WebhookReceiverUnready, err)
@@ -57,10 +57,10 @@ func runWebhookChoice(ctx context.Context, flags webhookChoiceCommand, project p
 	}
 	command, status := "tnl webhook use", "selected"
 	if use {
-		err = state.ClaimWebhookReceiver(ctx, server, selected.IntegrationGroup, flags.Endpoint, selected.ID, digest, force)
+		err = state.ClaimWebhookReceiver(ctx, server, selected.IntegrationScope, flags.Endpoint, selected.ID, digest, force)
 	} else {
 		command, status = "tnl webhook release", "released"
-		err = state.ReleaseWebhookReceiver(ctx, server, selected.IntegrationGroup, flags.Endpoint, selected.ID)
+		err = state.ReleaseWebhookReceiver(ctx, server, selected.IntegrationScope, flags.Endpoint, selected.ID)
 	}
 	if err != nil {
 		switch {

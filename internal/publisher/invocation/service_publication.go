@@ -259,12 +259,12 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		if err != nil {
 			return err
 		}
-		native, identity, err = publisheridentity.EnrollNative(ctx, profile, control, authority, secret)
+		native, identity, err = publisheridentity.EnrollNative(ctx, profile, control.NativeControl, authority, secret)
 		if err != nil {
 			return err
 		}
 	} else if flags.PublisherIdentityID != "" {
-		native, identity, err = publisheridentity.LoadNative(ctx, profile, control, authority, flags.PublisherIdentityID)
+		native, identity, err = publisheridentity.LoadNative(ctx, profile, control.NativeControl, authority, flags.PublisherIdentityID)
 		if err != nil {
 			return err
 		}
@@ -277,7 +277,7 @@ func PublishPrivate(ctx context.Context, flags ServiceOptions, output *ServicePr
 		if err != nil {
 			return err
 		}
-		native, err = publisheridentity.NewNative(control, authority, identity, signing)
+		native, err = publisheridentity.NewNative(control.NativeControl, authority, identity, signing)
 		if err != nil {
 			return err
 		}

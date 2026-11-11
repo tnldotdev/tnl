@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
 func (d *Database) ClosePublishRun(ctx context.Context, publishRunID string, token credentials.PublishRunToken, now time.Time) (retErr error) {
-	ctx, finish := d.observeOperation(ctx, "ClosePublishRun")
+	ctx, finish := d.observeOperation(ctx, observability.OpClosePublishRun)
 	defer func() { finish(retErr) }()
 	if !validStateText(publishRunID) {
 		return ErrPublishRunCredential

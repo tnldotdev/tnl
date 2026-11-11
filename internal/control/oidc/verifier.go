@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability"
+
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/tnldotdev/tnl/internal/httpclient"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -104,7 +106,7 @@ func NewVerifier(config VerifierConfig) (Verifier, error) {
 }
 
 func (v *providerVerifier) Verify(ctx context.Context, raw string) (_ Identity, retErr error) {
-	ctx, finish := observe(ctx, "oidc.verify")
+	ctx, finish := observe(ctx, observability.OpOIDCVerify)
 	defer func() { finish(retErr) }()
 	if raw == "" || len(raw) > 64<<10 || strings.TrimSpace(raw) != raw {
 		return Identity{}, ErrUnauthenticated
@@ -117,7 +119,7 @@ func (v *providerVerifier) Verify(ctx context.Context, raw string) (_ Identity, 
 }
 
 func (v *providerVerifier) getProvider(ctx context.Context) (_ *oidc.Provider, retErr error) {
-	ctx, finish := observe(ctx, "oidc.discovery")
+	ctx, finish := observe(ctx, observability.OpOIDCDiscovery)
 	defer func() { finish(retErr) }()
 	select {
 	case v.discovery <- struct{}{}:

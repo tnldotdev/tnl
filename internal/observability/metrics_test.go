@@ -11,6 +11,13 @@ import (
 	"time"
 )
 
+func observeTestAPIRequest(metrics *Metrics, surface, pattern string) {
+	method, route, _ := strings.Cut(pattern, " ")
+	mux := http.NewServeMux()
+	mux.HandleFunc(pattern, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	metrics.APIRequests(surface, mux).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(method, route, nil))
+}
+
 func TestProcessHandlerHealthAndReadiness(t *testing.T) {
 	ready := false
 	handler := ProcessHandler(New("ingress").Handler(), func() bool { return ready })
@@ -71,7 +78,7 @@ func TestPrivateCPUProfileIsBounded(t *testing.T) {
 func TestReadinessAndRelayMetricsKeepFixedLabels(t *testing.T) {
 	control := New("control")
 	control.ObservePublishRunReadiness("publish_run_secret", time.Millisecond, 45*time.Second)
-	control.ObserveCertificateWork("challenge_token_secret", "error_secret", time.Millisecond)
+	control.ObserveCertificateIterationContext(t.Context(), "public_url", "challenge_token_secret", "error_secret", time.Millisecond)
 	control.ObserveCertificateMilestone("public_url", "challenge_token_secret", time.Second)
 	control.ObserveCertificateMilestone("public_url", "ready", 30*time.Second)
 	control.ObserveCertificateMilestone("public_url", "cleanup", 45*time.Second)
@@ -111,7 +118,7 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	metrics.IncInspectionFailure("client_hello")
 	metrics.ObserveVisitor("policy_denied")
 	metrics.AddForwardedBytes("visitor_to_publisher", 1024)
-	metrics.ObserveAPIRequest("control", "POST /v1/public-urls", "success", 10*time.Millisecond)
+	metrics.observeAPIRequest("control", http.MethodPost, "/v1/public-urls", APIRequestSuccess, 10*time.Millisecond)
 	metrics.ObserveRoutingHistoryFloor(100)
 	metrics.ObserveRoutingHistoryFloor(50)
 	metrics.ObserveRoutingHistoryBatch(0, 0, true)
@@ -263,7 +270,7 @@ func TestMetricsExposeOnlyApplicableRoleFamilies(t *testing.T) {
 			metrics.IncCapacityRejection("test")
 			metrics.ObserveVisitor("policy_denied")
 			metrics.AddForwardedBytes("visitor_to_publisher", 1)
-			metrics.ObserveAPIRequest("control", "GET /test", "success", time.Millisecond)
+			observeTestAPIRequest(metrics, "control", "GET /test")
 			metrics.ObserveRoutingHistoryBatch(2, 1, false)
 			families, err := metrics.registry.Gather()
 			if err != nil {

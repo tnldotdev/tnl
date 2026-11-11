@@ -113,7 +113,7 @@ func TestIntegrationPrivatePublisherRecoversCommittedLostResponses(t *testing.T)
 		t.Fatal(err)
 	}
 	team := owner.Identity.Memberships[0].TeamID
-	service, err := client.CreateService(ctx, team, "database", "database")
+	service, err := client.CreateService(ctx, team, "database", "database", controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
 	if err != nil {
 		t.Fatal(err)
 	}

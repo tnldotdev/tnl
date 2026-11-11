@@ -25,7 +25,7 @@ func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
 		decision := &atomic.Int32{}
 		r = r.WithContext(context.WithValue(ctx, decisionKey{}, decision))
 		started := time.Now()
-		response := &controlResponseWriter{ResponseWriter: w, status: http.StatusOK, ctx: r.Context()}
+		response := &controlResponseWriter{ResponseWriter: w, status: http.StatusOK}
 		m.apiInFlight.With(Component.Dimension(surface)).Inc()
 		completed := false
 		defer func() {
@@ -64,7 +64,7 @@ func (m *Metrics) APIRequests(surface string, next http.Handler) http.Handler {
 			if completed || response.wroteHeader {
 				span.SetAttributes(HTTPStatus.Int(response.status))
 			}
-			finishSpan(span, string(outcome))
+			finishSpan(span, outcome.result())
 			span.End()
 			m.observeAPIRequest(surface, r.Method, route, outcome, time.Since(started))
 		}()
@@ -86,16 +86,15 @@ func DrainingRequest(ctx context.Context) {
 // AuthorizationDecision records the semantic result separately from HTTP status.
 // a valid HTTP 200 response may still deny access. operation is a compiled name.
 func AuthorizationDecision(ctx context.Context, operation operationName, allowed bool) {
-	result := "denied"
+	result := semanticResult{outcome: Denied}
 	if allowed {
-		result = "allowed"
+		result.outcome = Success
 	} else if denied, ok := ctx.Value(decisionKey{}).(*atomic.Int32); ok {
 		denied.Store(1)
 	}
-	outcome, _ := classifyResult(result)
-	trace.SpanFromContext(ctx).SetAttributes(OutcomeKey.Value(outcome))
+	trace.SpanFromContext(ctx).SetAttributes(OutcomeKey.Value(result.outcome))
 	if m := FromContext(ctx); m != nil {
-		m.authDecisions.With(Operation.Dimension(operation), resultDimension(result)).Inc()
+		m.authDecisions.With(Operation.Dimension(operation), result.dimension()).Inc()
 	}
 }
 
@@ -111,35 +110,17 @@ func AuthorizationAdmission(ctx context.Context, operation operationName, allowe
 	}
 	trace.SpanFromContext(ctx).SetAttributes(OutcomeKey.Value(Rejected), Reason.String("not_admitted"))
 	if m := FromContext(ctx); m != nil {
-		m.authDecisions.With(Operation.Dimension(operation), resultDimension("not_admitted")).Inc()
+		m.authDecisions.With(Operation.Dimension(operation), (semanticResult{Rejected, ReasonNotAdmitted}).dimension()).Inc()
 	}
 }
 
 type controlResponseWriter struct {
 	http.ResponseWriter
-	ctx         context.Context
 	status      int
 	wroteHeader bool
 }
 
 func (w *controlResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
-
-func (w *controlResponseWriter) ObservabilityContext() context.Context { return w.ctx }
-
-// ResponseContext lets existing problem adapters retain request correlation
-// without retaining requests or changing every authored problem's signature.
-func ResponseContext(w http.ResponseWriter) context.Context {
-	for {
-		if scoped, ok := w.(interface{ ObservabilityContext() context.Context }); ok {
-			return scoped.ObservabilityContext()
-		}
-		wrapper, ok := w.(interface{ Unwrap() http.ResponseWriter })
-		if !ok {
-			return context.Background()
-		}
-		w = wrapper.Unwrap()
-	}
-}
 
 func (w *controlResponseWriter) WriteHeader(status int) {
 	if !w.wroteHeader && (status >= 200 || status == http.StatusSwitchingProtocols) {

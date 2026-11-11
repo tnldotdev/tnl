@@ -113,7 +113,7 @@ func preparePublisher(ctx context.Context, options Options) (*clientstate.Databa
 	if options.PublisherIdentity != nil {
 		selectedIdentity = options.PublisherIdentity.value
 	}
-	native, err := publisheridentity.ResolveAdHoc(ctx, profile, control, authority, server, "", "", "", options.PublisherCredentialFile, options.EnrollmentKey, options.PublisherIdentityID, selectedIdentity)
+	native, err := publisheridentity.ResolveAdHoc(ctx, profile, publisheridentity.NativeControl{PublicURLControl: control}, authority, server, "", "", "", options.PublisherCredentialFile, options.EnrollmentKey, options.PublisherIdentityID, selectedIdentity)
 	if err != nil {
 		return fail(err)
 	}

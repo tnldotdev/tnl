@@ -133,6 +133,8 @@ func (p publisherServices) config(target string, allowedIPPrefixes []string, lim
 	relayTransportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
 	return publisher.Config{
 		Control:           p.routes,
+		Management:        p.routes,
+		AccessManagement:  p.routes,
 		TeamID:            p.teamID,
 		MembershipID:      p.membershipID,
 		DomainID:          p.domainID,

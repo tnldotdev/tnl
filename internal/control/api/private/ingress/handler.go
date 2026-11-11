@@ -18,6 +18,8 @@ const defaultRoutingTableWait = 25 * time.Second
 
 type Store interface {
 	visitorPolicyStore
+	publicServiceStore
+	serviceAuditStore
 	RegisterIngress(context.Context, controlstate.IngressRegistration, time.Time, time.Duration) (controlstate.IngressLease, error)
 	RenewIngress(context.Context, controlstate.IngressRenewal, time.Time, time.Duration) (controlstate.IngressLease, error)
 	BeginIngressDrain(context.Context, controlstate.IngressLeaseIdentity, time.Time, time.Time) (controlstate.IngressLease, error)

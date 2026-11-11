@@ -96,7 +96,7 @@ func assertNativeHTTPStableOwners(t *testing.T, d *controlstate.Database, conn *
 		if err != nil {
 			t.Fatal("valid HTTP owner delivery", err)
 		}
-		if err := d.ConfirmConnectorPeerPairPrepared(ctx, service, pair.ServiceRunId, pair.PairId, runToken, controlstate.ConnectorPeerPairPrepared{DeliveryID: delivery.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: delivery.ExpiresAt}, at); err != nil {
+		if err := d.ConfirmConnectorPeerPairPrepared(ctx, service, pair.ServiceRunId, pair.PairId, runToken, controlstate.ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: delivery.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: delivery.ExpiresAt}, at); err != nil {
 			t.Fatal("valid HTTP owner report", err)
 		}
 	}

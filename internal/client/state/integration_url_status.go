@@ -47,10 +47,13 @@ type WebhookReceiverInfo struct {
 	State     string `json:"state"`
 }
 
-type integrationGroupKey struct{ server, group string }
+type integrationScopeKey struct {
+	server string
+	IntegrationScope
+}
 type integrationProjectKey struct{ server, project string }
 type webhookStatusKey struct {
-	integrationGroupKey
+	integrationScopeKey
 	name string
 }
 
@@ -62,14 +65,14 @@ func statusReason(reason failure.Reason) (failure.Reason, string) {
 func (d *Database) snapshotIntegrationURLs(ctx context.Context, tx *sql.Tx, tunnels []clientstatedb.LocalTunnel, at time.Time) ([]IntegrationURLInfo, error) {
 	result := []IntegrationURLInfo{}
 	projects := map[integrationProjectKey]bool{}
-	groups := map[integrationGroupKey]bool{}
+	groups := map[integrationScopeKey]bool{}
 	for _, tunnel := range tunnels {
-		project, namespace, found := strings.Cut(tunnel.IntegrationGroup, "\x00")
-		if !found || project == "" || namespace == "" {
+		scope := IntegrationScope{PrimaryProjectRoot: tunnel.PrimaryProjectRoot.String, Namespace: tunnel.IntegrationNamespace.String}
+		if scope.IsZero() {
 			continue
 		}
-		projects[integrationProjectKey{tunnel.ServerOrigin, project}] = true
-		groups[integrationGroupKey{tunnel.ServerOrigin, tunnel.IntegrationGroup}] = true
+		projects[integrationProjectKey{tunnel.ServerOrigin, scope.PrimaryProjectRoot}] = true
+		groups[integrationScopeKey{tunnel.ServerOrigin, scope}] = true
 	}
 	if len(groups) == 0 {
 		return result, nil
@@ -79,10 +82,9 @@ func (d *Database) snapshotIntegrationURLs(ctx context.Context, tx *sql.Tx, tunn
 	if err != nil {
 		return nil, err
 	}
-	indices := map[integrationGroupKey]int{}
+	indices := map[integrationScopeKey]int{}
 	for _, row := range hostnames {
-		group := row.PrimaryProjectRoot + "\x00" + row.Namespace
-		key := integrationGroupKey{row.ServerOrigin, group}
+		key := integrationScopeKey{row.ServerOrigin, IntegrationScope{PrimaryProjectRoot: row.PrimaryProjectRoot, Namespace: row.Namespace}}
 		if row.Purpose == "hooks" && !groups[key] || row.Purpose == "oauth" && !projects[integrationProjectKey{row.ServerOrigin, row.PrimaryProjectRoot}] {
 			continue
 		}
@@ -113,8 +115,8 @@ func (d *Database) snapshotIntegrationURLs(ctx context.Context, tx *sql.Tx, tunn
 	fingerprints := map[webhookStatusKey][32]byte{}
 	conflicts := map[webhookStatusKey]bool{}
 	for _, row := range declarations {
-		key := webhookStatusKey{integrationGroupKey{row.ServerOrigin, row.IntegrationGroup}, row.Name}
-		index, found := indices[key.integrationGroupKey]
+		key := webhookStatusKey{integrationScopeKey{row.ServerOrigin, IntegrationScope{PrimaryProjectRoot: row.PrimaryProjectRoot.String, Namespace: row.IntegrationNamespace.String}}, row.Name}
+		index, found := indices[key.integrationScopeKey]
 		if !found {
 			continue
 		}
@@ -150,8 +152,8 @@ func (d *Database) snapshotIntegrationURLs(ctx context.Context, tx *sql.Tx, tunn
 		return nil, err
 	}
 	for _, row := range owners {
-		key := webhookStatusKey{integrationGroupKey{row.ServerOrigin, row.IntegrationGroup}, row.Name}
-		index, found := indices[key.integrationGroupKey]
+		key := webhookStatusKey{integrationScopeKey{row.ServerOrigin, IntegrationScope{PrimaryProjectRoot: row.PrimaryProjectRoot, Namespace: row.IntegrationNamespace}}, row.Name}
+		index, found := indices[key.integrationScopeKey]
 		if !found {
 			continue
 		}
@@ -166,7 +168,7 @@ func (d *Database) snapshotIntegrationURLs(ctx context.Context, tx *sql.Tx, tunn
 		result[index].Endpoints[endpointIndex].Owner = owner
 	}
 	for key, endpointIndex := range endpointIndices {
-		url := &result[indices[key.integrationGroupKey]]
+		url := &result[indices[key.integrationScopeKey]]
 		endpoint := &url.Endpoints[endpointIndex]
 		slices.SortFunc(endpoint.ReadyReceivers, func(a, b WebhookReceiverInfo) int { return strings.Compare(a.TunnelID, b.TunnelID) })
 		switch {

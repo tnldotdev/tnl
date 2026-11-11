@@ -22,7 +22,7 @@ func TestIntegrationPublisherAllocationPreservesReadFailure(t *testing.T) {
 	t.Cleanup(pool.Close)
 	reader := &Database{pool: pool}
 	publisher := PublisherIdentity{Scope: PublisherScope{Kind: "namespace", TeamID: "missing"}}
-	_, err = reader.AllocatePublisherPublicURL(t.Context(), publisher, "invocation", "http://localhost:3000", nil, nil, now)
+	_, err = reader.AllocatePublisherPublicURL(t.Context(), publisher, "invocation", "http://localhost:3000", nil, nil, now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted})
 	if !errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("missing team = %v", err)
 	}
@@ -34,7 +34,7 @@ func TestIntegrationPublisherAllocationPreservesReadFailure(t *testing.T) {
 	if _, err := lock.Exec(t.Context(), "LOCK TABLE control.teams IN ACCESS EXCLUSIVE MODE"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = reader.AllocatePublisherPublicURL(t.Context(), publisher, "invocation", "http://localhost:3000", nil, nil, now)
+	_, err = reader.AllocatePublisherPublicURL(t.Context(), publisher, "invocation", "http://localhost:3000", nil, nil, now, PublisherPublicURLOptions{AccessMode: VisitorAccessRestricted})
 	var postgres *pgconn.PgError
 	if !errors.As(err, &postgres) || postgres.Code != "55P03" || errors.Is(err, ErrPublisherIdentity) {
 		t.Fatalf("team read failure became an identity denial: %v", err)

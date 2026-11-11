@@ -54,7 +54,7 @@ func TestIntegrationServerDatabaseSpanCausality(t *testing.T) {
 	defer m.Shutdown(t.Context())
 	d.Instrument(m)
 	ctx, root := observability.Start(ctx, "request")
-	ctx, operation := d.observeOperation(ctx, "CreatePublishRun")
+	ctx, operation := d.observeOperation(ctx, observability.OpCreatePublishRun)
 	conn, err := d.pool.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)

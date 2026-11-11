@@ -49,7 +49,7 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 	assertGoldenFrame(t, "control-connector-renew", connectorRenew, WriteControl, ReadControl)
 	connectorAccepted := Message{Type: HelloAccepted, ProtocolVersion: Version,
 		ConnectorPairLegAccepted: &ConnectorPairLegAccepted{PairID: "cpp_1234567890123456789012", DeliveryID: "AQEBAQEBAQEBAQEBAQEBAQ",
-			DeliveryGeneration: 3, ConnectionSlot: 1, SourceIP: "192.0.2.10",
+			DeliveryGeneration: 3, BindingState: ConnectorPeerLegBindingActive, ConnectionSlot: 1, SourceIP: "192.0.2.10",
 			ObservedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 			ExpiresAt:  time.Date(2026, 1, 2, 3, 5, 0, 0, time.UTC)}}
 	assertGoldenFrame(t, "control-connector-accepted", connectorAccepted, WriteControl, ReadControl)

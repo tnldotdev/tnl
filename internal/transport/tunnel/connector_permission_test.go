@@ -37,6 +37,14 @@ func permissionControlPair(t *testing.T, client, server muxsession.Session) (*Co
 	return writer, await(t, accepted)
 }
 
+func TestConnectorPermissionControlRequiresRoleOwnedSuspensionGate(t *testing.T) {
+	if err := ServeConnectorPermissionControl(t.Context(), nil, func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder) {
+		t.Error("missing gate dispatched a permission update")
+	}, func() { t.Error("invalid configuration fenced a running owner") }, nil); err == nil {
+		t.Fatal("permission control accepted a missing suspension gate")
+	}
+}
+
 func TestConnectorPermissionControlRejectsOldPeersBeforeApplicationBytes(t *testing.T) {
 	for _, newServer := range []bool{false, true} {
 		t.Run(map[bool]string{false: "old publisher", true: "old connector"}[newServer], func(t *testing.T) {
@@ -91,11 +99,12 @@ func TestConnectorPermissionControlIndependentOfRawDataDeadlinesAndHalfClose(t *
 	ctx, cancel := context.WithCancel(tunnelContext(t))
 	defer cancel()
 	updates := make(chan tunnelv1.ConnectorPermissionUpdate, 4)
+	var permissionGate ConnectorPermissionGate
 	done := tunnelWorker(t, func() { cancel() }, func() error {
 		return ServeConnectorPermissionControl(ctx, control, func(u tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
 			updates <- u
 			_ = responder.Respond(u, true)
-		}, func() {})
+		}, func() {}, &permissionGate)
 	})
 	raw, err := client.transport.OpenStream(ctx)
 	if err != nil {
@@ -183,11 +192,12 @@ func TestConnectorPermissionControlSkipsMalformedBoundedUpdate(t *testing.T) {
 	ctx, cancel := context.WithCancel(tunnelContext(t))
 	defer cancel()
 	updates := make(chan tunnelv1.ConnectorPermissionUpdate, 1)
+	var permissionGate ConnectorPermissionGate
 	done := tunnelWorker(t, cancel, func() error {
 		return ServeConnectorPermissionControl(ctx, control, func(update tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
 			updates <- update
 			_ = responder.Respond(update, true)
-		}, func() {})
+		}, func() {}, &permissionGate)
 	})
 	if _, err := writer.stream.Write([]byte{0, 0, 0, 1, '{'}); err != nil {
 		t.Fatal(err)
@@ -236,14 +246,18 @@ func TestConnectorPermissionStaleGrantsNothingAndKeepsControlReusable(t *testing
 	defer cancel()
 	var stale atomic.Bool
 	stale.Store(true)
+	var permissionGate ConnectorPermissionGate
 	done := tunnelWorker(t, cancel, func() error {
 		return ServeConnectorPermissionControl(ctx, control, func(update tunnelv1.ConnectorPermissionUpdate, responder *ConnectorPermissionResponder) {
+			if responder.suspension != &permissionGate {
+				t.Error("permission replies lost the role-owned suspension gate")
+			}
 			if stale.Swap(false) {
 				_ = responder.RespondStale(update)
 			} else {
 				_ = responder.Respond(update, true)
 			}
-		}, func() {})
+		}, func() {}, &permissionGate)
 	})
 	update := connectorPermissionFixture()
 	if err := writer.Renew(tunnelContext(t), update); !errors.Is(err, ErrConnectorPermissionStale) || writer.Err() != nil {
@@ -337,8 +351,9 @@ func TestConnectorPermissionCancellationJoinsPhysicalCallback(t *testing.T) {
 				})
 				await(t, held.writeEntered)
 			} else {
+				var permissionGate ConnectorPermissionGate
 				done = tunnelWorker(t, release, func() error {
-					return ServeConnectorPermissionControl(ctx, held, func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder) {}, func() {})
+					return ServeConnectorPermissionControl(ctx, held, func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder) {}, func() {}, &permissionGate)
 				})
 			}
 			cancel()

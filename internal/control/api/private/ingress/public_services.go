@@ -19,14 +19,6 @@ type publicServiceStore interface {
 	PromotePublicServiceVisitor(context.Context, controlstate.IngressLeaseIdentity, string, time.Time) error
 }
 
-func (s *service) publicServices() (publicServiceStore, error) {
-	store, ok := s.store.(publicServiceStore)
-	if !ok {
-		return nil, serviceapi.NewProblemError(http.StatusServiceUnavailable, "unavailable", "public service admission is unavailable")
-	}
-	return store, nil
-}
-
 func (s *service) AdmitPublicServiceVisitor(ctx context.Context, id string, body ingressv1.PublicServiceVisitorClaim) (ingressv1.PublicServiceVisitorAdmission, error) {
 	var result ingressv1.PublicServiceVisitorAdmission
 	lease, ok := ingressLeaseIdentity(id, body.IngressRunId, body.IngressLeaseRevision)
@@ -34,11 +26,7 @@ func (s *service) AdmitPublicServiceVisitor(ctx context.Context, id string, body
 	if !ok || !sourceOK {
 		return result, serviceapi.NewProblemError(400, "invalid_request", "invalid public service admission")
 	}
-	store, err := s.publicServices()
-	if err != nil {
-		return result, err
-	}
-	admitted, err := store.AdmitPublicServiceVisitor(ctx, lease, body.IngressPoolId, body.VisitorConnectionId, body.DestinationPort, source, s.now())
+	admitted, err := s.store.AdmitPublicServiceVisitor(ctx, lease, body.IngressPoolId, body.VisitorConnectionId, body.DestinationPort, source, s.now())
 	if err != nil {
 		return result, s.privateStateError(ctx, err)
 	}
@@ -51,11 +39,7 @@ func (s *service) PublicServiceVisitorStatus(ctx context.Context, id string, bod
 	if !ok {
 		return result, serviceapi.NewProblemError(400, "invalid_request", "invalid public service lease")
 	}
-	store, err := s.publicServices()
-	if err != nil {
-		return result, err
-	}
-	status, err := store.PublicServiceVisitorStatus(ctx, lease, body.VisitorConnectionId, s.now())
+	status, err := s.store.PublicServiceVisitorStatus(ctx, lease, body.VisitorConnectionId, s.now())
 	if errors.Is(err, controlstate.ErrServiceAccess) || errors.Is(err, controlstate.ErrIngressLeaseStale) {
 		return ingressv1.PublicServiceVisitorStatus{State: ingressv1.PublicServiceVisitorDenied, ValidUntil: s.now()}, nil
 	}
@@ -70,11 +54,7 @@ func (s *service) PromotePublicServiceVisitor(ctx context.Context, id string, bo
 	if !ok {
 		return serviceapi.NewProblemError(400, "invalid_request", "invalid public service lease")
 	}
-	store, err := s.publicServices()
-	if err != nil {
-		return err
-	}
-	return s.privateStateError(ctx, store.PromotePublicServiceVisitor(ctx, lease, body.VisitorConnectionId, s.now()))
+	return s.privateStateError(ctx, s.store.PromotePublicServiceVisitor(ctx, lease, body.VisitorConnectionId, s.now()))
 }
 
 func (s *service) ClosePublicServiceVisitor(ctx context.Context, id string, body ingressv1.PublicServiceVisitorLookup) error {
@@ -82,11 +62,7 @@ func (s *service) ClosePublicServiceVisitor(ctx context.Context, id string, body
 	if !ok {
 		return serviceapi.NewProblemError(400, "invalid_request", "invalid public service lease")
 	}
-	store, err := s.publicServices()
-	if err != nil {
-		return err
-	}
-	return s.privateStateError(ctx, store.ClosePublicServiceVisitor(ctx, lease, body.VisitorConnectionId, s.now()))
+	return s.privateStateError(ctx, s.store.ClosePublicServiceVisitor(ctx, lease, body.VisitorConnectionId, s.now()))
 }
 
 func (s generatedServer) AdmitPublicServiceVisitor(w http.ResponseWriter, r *http.Request, id ingressv1.IngressID) {

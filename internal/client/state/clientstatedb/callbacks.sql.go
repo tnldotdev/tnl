@@ -262,7 +262,8 @@ SELECT t.server_origin, ?1, ?2, t.id,
     t.public_url_id, t.publish_run_number, ?6, ?7, ?8
 FROM local_tunnels t
 WHERE t.id = ?9 AND t.server_origin = ?10
-  AND t.integration_group = ?11 AND t.state = 'ready'
+  AND t.primary_project_root = ?11
+  AND t.integration_namespace = ?12 AND t.state = 'ready'
   AND ((t.public_url_id = ?7 AND t.publish_run_number = ?8
         AND (?6 = '' OR ?6 = t.hostname))
     OR EXISTS (SELECT 1 FROM alias_publish_runs r JOIN project_aliases a ON a.id = r.alias_id
@@ -271,26 +272,27 @@ WHERE t.id = ?9 AND t.server_origin = ?10
         AND a.selected_project_root = t.project_root AND a.selection_revision = r.selection_revision
         AND r.target_public_url_id = t.public_url_id AND r.target_publish_run_number = t.publish_run_number
         AND r.public_url_id = ?7 AND r.publish_run_number = ?8
-        AND p.expires_at > ?12))
-  AND t.stopped_at IS NULL AND t.lease_expires_at > ?12
+        AND p.expires_at > ?13))
+  AND t.stopped_at IS NULL AND t.lease_expires_at > ?13
    AND (SELECT count(*) FROM oauth_pending_callbacks WHERE server_origin = ?10
        AND hostname = ?1) < 1024
 ON CONFLICT DO NOTHING
 `
 
 type SaveOAuthCallbackParams struct {
-	Hostname         string
-	StateDigest      []byte
-	CallbackPath     string
-	CallbackQuery    string
-	ExpiresAt        int64
-	OriginHostname   string
-	PublicURLID      string
-	PublishRunNumber int64
-	TunnelID         string
-	ServerOrigin     string
-	IntegrationGroup string
-	Now              int64
+	Hostname             string
+	StateDigest          []byte
+	CallbackPath         string
+	CallbackQuery        string
+	ExpiresAt            int64
+	OriginHostname       string
+	PublicURLID          string
+	PublishRunNumber     int64
+	TunnelID             string
+	ServerOrigin         string
+	PrimaryProjectRoot   sql.NullString
+	IntegrationNamespace sql.NullString
+	Now                  int64
 }
 
 func (q *Queries) SaveOAuthCallback(ctx context.Context, arg SaveOAuthCallbackParams) (int64, error) {
@@ -305,7 +307,8 @@ func (q *Queries) SaveOAuthCallback(ctx context.Context, arg SaveOAuthCallbackPa
 		arg.PublishRunNumber,
 		arg.TunnelID,
 		arg.ServerOrigin,
-		arg.IntegrationGroup,
+		arg.PrimaryProjectRoot,
+		arg.IntegrationNamespace,
 		arg.Now,
 	)
 	if err != nil {
@@ -314,21 +317,21 @@ func (q *Queries) SaveOAuthCallback(ctx context.Context, arg SaveOAuthCallbackPa
 	return result.RowsAffected()
 }
 
-const setTunnelIntegrationGroup = `-- name: SetTunnelIntegrationGroup :execrows
+const setTunnelIntegrationScope = `-- name: SetTunnelIntegrationScope :execrows
 UPDATE local_tunnels SET
     primary_project_root = ?1,
     integration_namespace = ?2
 WHERE id = ?3 AND stopped_at IS NULL
 `
 
-type SetTunnelIntegrationGroupParams struct {
+type SetTunnelIntegrationScopeParams struct {
 	PrimaryProjectRoot   sql.NullString
 	IntegrationNamespace sql.NullString
 	TunnelID             string
 }
 
-func (q *Queries) SetTunnelIntegrationGroup(ctx context.Context, arg SetTunnelIntegrationGroupParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setTunnelIntegrationGroup, arg.PrimaryProjectRoot, arg.IntegrationNamespace, arg.TunnelID)
+func (q *Queries) SetTunnelIntegrationScope(ctx context.Context, arg SetTunnelIntegrationScopeParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setTunnelIntegrationScope, arg.PrimaryProjectRoot, arg.IntegrationNamespace, arg.TunnelID)
 	if err != nil {
 		return 0, err
 	}

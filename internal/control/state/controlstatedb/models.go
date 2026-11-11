@@ -854,12 +854,6 @@ type ControlPublishRunConnectionSlot struct {
 	ServiceKind                            string
 }
 
-type ControlPublishRunPublisherGrant struct {
-	PublishRunID        string
-	PublisherIdentityID string
-	PublisherGrantID    string
-}
-
 type ControlPublisherAccessToken struct {
 	AccessTokenDigest   []byte
 	PublisherIdentityID string

@@ -81,7 +81,7 @@ func assertNativeStateStableOwners(t *testing.T, d *Database, ctx context.Contex
 		if err != nil {
 			t.Fatal("valid owner delivery", err)
 		}
-		if err := d.ConfirmConnectorPeerPairPrepared(t.Context(), pair.ServiceID, pair.ServiceRunID, pair.ID, run.Token, ConnectorPeerPairPrepared{DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: delivery.ExpiresAt}, at); err != nil {
+		if err := d.ConfirmConnectorPeerPairPrepared(t.Context(), pair.ServiceID, pair.ServiceRunID, pair.ID, run.Token, ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: delivery.ExpiresAt}, at); err != nil {
 			t.Fatal("valid owner report", err)
 		}
 	}

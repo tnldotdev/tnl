@@ -30,7 +30,7 @@ func TestDetachedStartupFailureJoinsChild(t *testing.T) {
 			if cancelWait {
 				mode = "pending"
 			}
-			child, err := startDetachedProcess(binary, []string{"-test.run=^TestDetachedChildProcess$", "-tnl-detached-child-root=" + root, "-tnl-detached-child-mode=" + mode})
+			child, err := startDetachedProcess(binary, []string{"-test.run=^TestDetachedChildProcess$", "-tnl-detached-child-root=" + root, "-tnl-detached-child-mode=" + mode}, os.Environ())
 			if err != nil {
 				t.Fatal(err)
 			}

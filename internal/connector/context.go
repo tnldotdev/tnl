@@ -272,7 +272,7 @@ func (o Operations) ServeOwner(ctx context.Context, options OwnerServeOptions, i
 	}
 	backend.executable = executable
 	writer := &connectionReadinessWriter{Writer: output}
-	err = connectorruntime.Serve(ctx, scope, options.OwnerDirectory, executable, backend, writer)
+	err = connectorruntime.Serve(ctx, scope, options.OwnerDirectory, executable, backend.ownerConfig(), writer)
 	if err != nil && !writer.written {
 		reason := Reason(err)
 		if reason == "" {

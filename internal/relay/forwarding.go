@@ -27,7 +27,7 @@ type ForwardingAcceptorConfig struct {
 	StreamRejected   func(string)
 	Now              func() time.Time
 	Report           func(error)
-	Observer         OperationObserver
+	Observer         ForwardingObserver
 	ServiceRegistry  *ServiceRegistry
 }
 
@@ -43,7 +43,7 @@ type ForwardingAcceptor struct {
 	streamRejected   func(string)
 	now              func() time.Time
 	report           func(error)
-	observer         OperationObserver
+	observer         ForwardingObserver
 	private          *ServiceRegistry
 }
 
@@ -152,7 +152,7 @@ func (a *ForwardingAcceptor) forward(ctx context.Context, incoming tunnel.Intern
 func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel.IncomingPublicForwardingStream) (retErr error) {
 	ctx, endSpan := observability.Start(ctx, "relay.open_visitor_stream")
 	observability.Visitor(ctx, incoming.Header.VisitorConnectionID)
-	finishOpen := startOperation(ctx, a.observer, "RelayOpenVisitorStream")
+	finishOpen := startOperation(ctx, a.observer, observability.OpRelayOpenVisitorStream)
 	opened := false
 	var rejected error
 	defer func() {
@@ -207,10 +207,8 @@ func (a *ForwardingAcceptor) forwardPublic(ctx context.Context, incoming *tunnel
 	copied, err := streamcopy.Copy(incoming.Stream(), publisher)
 	copied.LeftToRight += int64(len(initial))
 	finishForward(err)
-	if observer, ok := a.observer.(interface {
-		ObserveRelayTransfer(string, int64, int64, error)
-	}); ok {
-		observer.ObserveRelayTransfer("public_url", copied.LeftToRight, copied.RightToLeft, err)
+	if a.observer != nil {
+		a.observer.ObserveRelayTransfer("public_url", copied.LeftToRight, copied.RightToLeft, err)
 	}
 	if err != nil {
 		return fmt.Errorf("relay: forward visitor connection %s: %w", incoming.Header.VisitorConnectionID, err)

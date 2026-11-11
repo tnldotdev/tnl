@@ -22,7 +22,7 @@ func (h *handler) GetProjectService(w http.ResponseWriter, r *http.Request, proj
 	}
 	record, err := store.GetProjectService(r.Context(), controlstate.GetProjectServiceRequest{TeamID: params.TeamId, ProjectKey: project, SourceFingerprint: params.SourceFingerprint, Service: service, IdentityID: principal.identityID, Now: time.Now()})
 	if err != nil {
-		serviceVisitorError(w, "read applied service", err)
+		serviceVisitorError(r.Context(), w, "read applied service", err)
 		return
 	}
 	result := serviceaccess.Service(record)

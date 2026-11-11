@@ -38,7 +38,7 @@ func reconnectBridgeFixture(t *testing.T) (*connectorBridge, func(uint64) (*conn
 	ctx, cancel := context.WithCancel(t.Context())
 	nonce := bytes.Repeat([]byte{1}, 32)
 	proof := tunnelv1.ConnectorPairLegProof{PairID: "pair", ServiceRunID: "run", RequestedAt: time.Now(), Nonce: nonce}
-	claim := connectorClaim{key: [32]byte{1}, receipt: tunnelv1.ConnectorPairLegAccepted{SourceIP: "192.0.2.1"}}
+	claim := connectorClaim{key: [32]byte{1}, receipt: tunnelv1.ConnectorPairLegAccepted{BindingState: tunnelv1.ConnectorPeerLegBindingActive, SourceIP: "192.0.2.1"}}
 	activation, err := (tunnelv1.ConnectorLegBinding{Nonce: nonce}).Activation()
 	if err != nil {
 		t.Fatal(err)

@@ -29,7 +29,8 @@ func (s *drainingSlot) Serve(ctx context.Context) error {
 		return nil
 	}
 }
-func (s *drainingSlot) Close() error { s.once.Do(func() { close(s.closed) }); return nil }
+func (s *drainingSlot) Close() error         { s.once.Do(func() { close(s.closed) }); return nil }
+func (s *drainingSlot) Transport() Transport { return TransportQUIC }
 func (s *drainingSlot) Drain(ctx context.Context) error {
 	close(s.draining)
 	select {

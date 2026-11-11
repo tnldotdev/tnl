@@ -137,7 +137,7 @@ func TestConnectorNonTCPPreparationOrdersAdmissionBeforePermissionRenewal(t *tes
 	}
 	prepared := make(chan result, 1)
 	go func() {
-		value, err := connectorstream.PrepareConnector(ctx, client, permissionPreparedRun(b, trust, entry), entry)
+		value, err := connectorstream.PrepareConnector(ctx, ctx, client, permissionPreparedRun(b, trust, entry), entry)
 		prepared <- result{value, err}
 	}()
 	joined := false
@@ -253,7 +253,7 @@ func TestConnectorNonTCPAdmissionAcceptanceKeepsOriginalSetupDeadline(t *testing
 	}
 	done := make(chan result, 1)
 	go func() {
-		value, err := connectorstream.PrepareConnector(setup, client, permissionPreparedRun(b, trust, entry), entry)
+		value, err := connectorstream.PrepareConnector(ctx, setup, client, permissionPreparedRun(b, trust, entry), entry)
 		done <- result{value, err}
 	}()
 	select {

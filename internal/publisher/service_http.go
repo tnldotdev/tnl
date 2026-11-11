@@ -24,7 +24,7 @@ import (
 )
 
 type ServiceHTTPControl interface {
-	visitorPolicyClient
+	VisitorPolicyClient
 	browserTokenClient
 	ControlURL() string
 	RedeemServiceBrowserHandoff(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceBrowserRequest) (controlv1.BrowserHandoffResponse, error)

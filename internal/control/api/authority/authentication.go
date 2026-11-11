@@ -1,13 +1,13 @@
 package authority
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
-	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	authorityv1 "github.com/tnldotdev/tnl/pkg/api/control/authority/v1"
@@ -23,7 +23,7 @@ func (h *handler) authenticateControlRequest(
 		return controlstate.ControlPrincipal{}, false
 	}
 	if h.store == nil {
-		writeAuthenticationUnavailable(response, "authenticate control request", nil)
+		writeAuthenticationUnavailable(request.Context(), response, "authenticate control request", nil)
 		return controlstate.ControlPrincipal{}, false
 	}
 	principal, err := h.store.AuthenticateAccessToken(
@@ -34,7 +34,7 @@ func (h *handler) authenticateControlRequest(
 		return controlstate.ControlPrincipal{}, false
 	}
 	if err != nil {
-		writeAuthenticationUnavailable(response, "authenticate control request", err)
+		writeAuthenticationUnavailable(request.Context(), response, "authenticate control request", err)
 		return controlstate.ControlPrincipal{}, false
 	}
 	*request = *request.WithContext(controlstate.WithControlPrincipal(request.Context(), principal))
@@ -43,7 +43,7 @@ func (h *handler) authenticateControlRequest(
 			if errors.Is(err, controlstate.ErrAuthorityAccess) {
 				writeProblem(response, http.StatusForbidden, authorityv1.Forbidden, "current company sign-in and active membership required")
 			} else {
-				writeAuthenticationUnavailable(response, "authorize team session", err)
+				writeAuthenticationUnavailable(request.Context(), response, "authorize team session", err)
 			}
 			return controlstate.ControlPrincipal{}, false
 		}
@@ -51,11 +51,11 @@ func (h *handler) authenticateControlRequest(
 	return principal, true
 }
 
-func writeAuthenticationUnavailable(response http.ResponseWriter, operation string, err error) {
+func writeAuthenticationUnavailable(ctx context.Context, response http.ResponseWriter, operation string, err error) {
 	requestID := writeProblem(response, http.StatusServiceUnavailable, authorityv1.Unavailable, "authentication is unavailable")
 	if err == nil {
-		operatorlog.ReportContext(observability.ResponseContext(response), failure.Operation(operation), failure.ServerAPIInternal, requestID, errors.New("store unavailable"))
+		operatorlog.ReportContext(ctx, failure.Operation(operation), failure.ServerAPIInternal, requestID, errors.New("store unavailable"))
 		return
 	}
-	operatorlog.ReportContext(observability.ResponseContext(response), failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
+	operatorlog.ReportContext(ctx, failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
 }

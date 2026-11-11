@@ -28,14 +28,23 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type ClientFactory func(Job) (publisheridentity.NativeControl, publisheridentity.EnrollmentAuthority, error)
+type DiscoveryClient interface {
+	Discovery(context.Context) (controlv1.ControlDiscovery, error)
+}
+
+type PublisherClients struct {
+	publisheridentity.NativeControl
+	Discovery DiscoveryClient
+}
+
+type ClientFactory func(Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error)
 
 // Clients creates isolated HTTP transports for one server's trust configuration.
 // relay trust stays WebPKI, as required by the relay transport boundary.
-func Clients(job Job) (publisheridentity.NativeControl, publisheridentity.EnrollmentAuthority, error) {
+func Clients(job Job) (PublisherClients, publisheridentity.EnrollmentAuthority, error) {
 	roots, err := trustRoots(job.ServerCAPEM)
 	if err != nil {
-		return nil, nil, err
+		return PublisherClients{}, nil, err
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}
@@ -43,10 +52,10 @@ func Clients(job Job) (publisheridentity.NativeControl, publisheridentity.Enroll
 	httpClient := &http.Client{Transport: transport}
 	control, err := clientcontrol.New(job.Server, httpClient, "")
 	if err != nil {
-		return nil, nil, err
+		return PublisherClients{}, nil, err
 	}
 	authority, err := clientauthority.New(job.Server, httpClient, "")
-	return control, authority, err
+	return PublisherClients{NativeControl: publisheridentity.NativeControl{PublicURLControl: control, Services: control, Runtime: control}, Discovery: control}, authority, err
 }
 
 type Engine struct {
@@ -318,7 +327,10 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 	if err != nil {
 		return false, err
 	}
-	native, err := publisheridentity.NewNative(control, authority, identity, private)
+	if job.Kind == KindPublicURL && control.Discovery == nil {
+		return false, ErrScope
+	}
+	native, err := publisheridentity.NewNative(control.NativeControl, authority, identity, private)
 	if err != nil {
 		return false, err
 	}
@@ -363,15 +375,14 @@ func (e Engine) attempt(ctx context.Context, job Job, attempts uint64, runtime *
 		return false, err
 	}
 	cfg.Control, cfg.State, cfg.DrainTime = native, profile, e.DrainTime
-	if discovery, ok := control.(interface {
-		Discovery(context.Context) (controlv1.ControlDiscovery, error)
-	}); ok {
-		server, err := discovery.Discovery(ctx)
-		if err != nil {
-			return false, err
-		}
-		cfg.BrowserLoginAvailable = server.BrowserLoginAvailable != nil && *server.BrowserLoginAvailable
+	cfg.Identity, cfg.Audit, cfg.VisitorControl = native, native, control.PublicURLControl
+	cfg.BrowserControl = control.PublicURLControl
+	cfg.Shares, cfg.Previews, cfg.FeedbackControl = control.PublicURLControl, control.PublicURLControl, control.PublicURLControl
+	server, err := control.Discovery.Discovery(ctx)
+	if err != nil {
+		return false, err
 	}
+	cfg.BrowserLoginAvailable = server.BrowserLoginAvailable != nil && *server.BrowserLoginAvailable
 	cfg.PublisherIdentityID = native.PublisherIdentityID()
 	transportTLS := &tls.Config{MinVersion: tls.VersionTLS13}
 	cfg.QUICConnector = muxsession.QUICConnector{TLSConfig: transportTLS}

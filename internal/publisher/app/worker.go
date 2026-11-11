@@ -22,7 +22,7 @@ type Configuration struct {
 	Inspection       inspection.Policy
 	PrimaryRoot      string
 	SharedRoot       string
-	IntegrationGroup string
+	IntegrationScope clientstate.IntegrationScope
 	TargetBinding    *target.TargetBinding
 	// cleanup owns resources allocated before the worker starts, including when
 	// target capture or local tunnel creation fails. it runs after drain/join.
@@ -85,7 +85,7 @@ func (w *Workers) Run(ctx context.Context, service Service, observe func(uint64,
 	}
 	// service.Name is the registration key, which may be an invocation ID.
 	// cfg.Service is only a configured service name; ad-hoc tunnels have none.
-	tunnel, err := w.Database.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: cfg.ControlURL, Target: service.Target, Project: cfg.ProjectRoot, Service: cfg.Service, ServiceProtocol: cfg.ServiceProtocol, IntegrationGroup: configuration.IntegrationGroup})
+	tunnel, err := w.Database.BeginTunnel(ctx, clientstate.BeginTunnelOptions{Command: clientstate.TunnelCommandPublish, Server: cfg.ControlURL, Target: service.Target, Project: cfg.ProjectRoot, Service: cfg.Service, ServiceProtocol: cfg.ServiceProtocol, IntegrationScope: configuration.IntegrationScope})
 	if err != nil {
 		return err
 	}

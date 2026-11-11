@@ -293,7 +293,7 @@ func TestIntegrationPublisherInstallLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scoped, err := publisheridentity.NewNative(control, authority, identity, signing)
+	scoped, err := publisheridentity.NewNative(control.NativeControl, authority, identity, signing)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -610,7 +610,7 @@ func TestIntegrationPublisherInstallIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, identity, err := publisheridentity.LoadNative(t.Context(), profile, control, authority, selected.ID)
+	native, identity, err := publisheridentity.LoadNative(t.Context(), profile, publisheridentity.NativeControl{PublicURLControl: control}, authority, selected.ID)
 	if err != nil || identity.Kind != authorityv1.SavedPublicUrl || identity.PublicUrlId == nil || *identity.PublicUrlId != *publisherInstallURL || identity.TeamId != *publisherInstallTeam {
 		t.Fatal("Compose identity is not scoped to the exact URL", err)
 	}

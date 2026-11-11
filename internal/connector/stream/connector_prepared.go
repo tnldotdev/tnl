@@ -106,15 +106,11 @@ func (*preparedPermissionStop) Error() string {
 }
 
 // PrepareConnector consumes a source-prepared opening without RPC or signing.
-// this is not a publisher permission constructor: the publisher independently
-// checks the signed token, exact relay-attested pair, current policy and C.
-func PrepareConnector(ctx context.Context, session muxsession.Session, run Run, entry tunnelv1.ConnectorPeerVisitorEntry) (*PreparedConnector, error) {
-	return prepareConnector(ctx, ctx, session, run, entry)
-}
-
 // setup retains the caller's original preparation deadline; lifetime owns the
 // promoted stream after preparation succeeds. stopping setup cannot close it.
-func prepareConnector(lifetime, setup context.Context, session muxsession.Session, run Run, entry tunnelv1.ConnectorPeerVisitorEntry) (_ *PreparedConnector, result error) {
+// the publisher independently checks the signed token, exact relay-attested
+// pair, current policy and C.
+func PrepareConnector(lifetime, setup context.Context, session muxsession.Session, run Run, entry tunnelv1.ConnectorPeerVisitorEntry) (_ *PreparedConnector, result error) {
 	setup, finish := observability.ClientOperation(setup, "connector.visitor_setup")
 	defer func() { finish(result) }()
 	ctx := lifetime

@@ -419,7 +419,7 @@ func startWorkloadPublishers(t *testing.T, f *privateSeparatedFixture, group, tr
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner, err := publisheridentity.NewGroup(f.identity.routes, f.identity.routes, f.identity.authority, f.controlConfig.ControlOrigin(), member, key)
+	owner, err := publisheridentity.NewGroup(publisheridentity.NativeControl{PublicURLControl: f.identity.routes, Services: f.identity.routes}, f.identity.routes, f.identity.authority, f.identity.routes.ControlURL(), member, key)
 	if err != nil {
 		t.Fatal(err)
 	}

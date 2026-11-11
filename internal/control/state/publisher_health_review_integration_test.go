@@ -29,7 +29,7 @@ func TestIntegrationPublisherGroupHealthRuntimeReplacement(t *testing.T) {
 			request := func(run string, epoch int64, at time.Time) PublisherRuntimeRequest {
 				t.Helper()
 				v := PublisherRuntimeRequest{PublisherIdentityID: replica.member.PublisherIdentityID, ScopeID: replica.member.GroupID, ProcessRunID: run, ExpectedEpoch: epoch, Action: "start", Audience: "https://control.example/v1/publisher-runtime", Now: at}
-				v.Assertion, err = publisherproof.Sign(v.PublisherIdentityID, replica.member.KeyID, publisherproof.RuntimeScope(v.ScopeID, v.Action, run, epoch), v.Audience, replica.private, at)
+				v.Assertion, err = publisherproof.Sign(v.PublisherIdentityID, replica.member.KeyID, publisherproof.RuntimeScope(v.ScopeID, v.Action, run, epoch, ""), v.Audience, replica.private, at)
 				if err != nil {
 					t.Fatal(err)
 				}

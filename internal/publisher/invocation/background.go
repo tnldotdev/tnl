@@ -189,7 +189,7 @@ func InstallBackgroundJob(ctx context.Context, registry *supervisor.Registry, fl
 		}
 	}
 	if selection.EnrollmentKey == "" && selection.PublisherIdentityID == "" && selection.PublisherCredentialFile == "" {
-		native, identity, private, publicURL, err = selectConfiguredInstalledPublisher(ctx, flags, job.Server, control, authority)
+		native, identity, private, publicURL, err = selectConfiguredInstalledPublisher(ctx, flags, job.Server, control.NativeControl, authority)
 		if err != nil {
 			return err
 		}
@@ -207,7 +207,7 @@ func InstallBackgroundJob(ctx context.Context, registry *supervisor.Registry, fl
 		if err != nil {
 			return err
 		}
-		native, identity, err = publisheridentity.EnrollNative(ctx, profile, control, authority, secret)
+		native, identity, err = publisheridentity.EnrollNative(ctx, profile, control.NativeControl, authority, secret)
 		if err != nil {
 			return err
 		}
@@ -227,7 +227,7 @@ func InstallBackgroundJob(ctx context.Context, registry *supervisor.Registry, fl
 		if err != nil {
 			return err
 		}
-		native, identity, err = publisheridentity.LoadNative(ctx, profile, control, authority, selection.PublisherIdentityID)
+		native, identity, err = publisheridentity.LoadNative(ctx, profile, control.NativeControl, authority, selection.PublisherIdentityID)
 		if err != nil {
 			return err
 		}
@@ -240,7 +240,7 @@ func InstallBackgroundJob(ctx context.Context, registry *supervisor.Registry, fl
 		if err != nil {
 			return err
 		}
-		native, err = publisheridentity.LoadFile(selection.PublisherCredentialFile, job.Server, control, authority)
+		native, err = publisheridentity.LoadFile(selection.PublisherCredentialFile, job.Server, control.NativeControl, authority)
 		if err != nil {
 			return err
 		}

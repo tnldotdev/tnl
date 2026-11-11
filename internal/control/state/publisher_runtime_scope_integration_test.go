@@ -55,7 +55,7 @@ func TestIntegrationPublisherRuntimeResourceAvailability(t *testing.T) {
 				t.Fatal(err)
 			}
 			request := func(action string, epoch int64) PublisherRuntimeRequest {
-				proof, err := publisherproof.Sign(p.ID, p.KeyID, publisherproof.RuntimeScope(p.GrantID, action, strings.Repeat("a", 32), epoch), "https://control.example/v1/publisher-runtime", key, now)
+				proof, err := publisherproof.Sign(p.ID, p.KeyID, publisherproof.RuntimeScope(p.GrantID, action, strings.Repeat("a", 32), epoch, ""), "https://control.example/v1/publisher-runtime", key, now)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -109,7 +109,7 @@ func TestIntegrationPublisherRuntimeGroupUsesEnrolledKey(t *testing.T) {
 	replica := enrollAppliedGroup(t, d, r, e, now)
 	m := replica.member
 	request := func(action, run, kid string, epoch int64, key ed25519.PrivateKey) PublisherRuntimeRequest {
-		proof, err := publisherproof.Sign(m.PublisherIdentityID, kid, publisherproof.RuntimeScope(m.GroupID, action, run, epoch), "https://control.example/v1/publisher-runtime", key, now)
+		proof, err := publisherproof.Sign(m.PublisherIdentityID, kid, publisherproof.RuntimeScope(m.GroupID, action, run, epoch, ""), "https://control.example/v1/publisher-runtime", key, now)
 		if err != nil {
 			t.Fatal(err)
 		}

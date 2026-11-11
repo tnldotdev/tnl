@@ -26,8 +26,8 @@ type WorkloadStore interface {
 
 func (h *handler) IdentifyWorkload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	store, ok := h.store.(WorkloadStore)
-	if !ok || h.workloads == nil {
+	store := h.store
+	if store == nil || h.workloads == nil {
 		writeProblem(w, 503, authorityv1.Unavailable, "workload authentication is unavailable")
 		return
 	}
@@ -38,17 +38,17 @@ func (h *handler) IdentifyWorkload(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := store.WorkloadPolicy(r.Context(), body.TeamId, body.ProjectKey, body.Workload, body.SourceFingerprint)
 	if err != nil {
-		workloadProblem(w, err)
+		workloadProblem(r.Context(), w, err)
 		return
 	}
 	c, err := h.workloads.Verify(r.Context(), p.Trust, body.Assertion)
 	if err != nil {
-		workloadProblem(w, err)
+		workloadProblem(r.Context(), w, err)
 		return
 	}
 	binding, err := store.IdentifyWorkload(r.Context(), body.TeamId, body.ProjectKey, body.Workload, body.SourceFingerprint, c, time.Now())
 	if err != nil {
-		workloadProblem(w, err)
+		workloadProblem(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, 200, authorityv1.WorkloadIdentity{Binding: binding, Services: p.Services, AssertionExpiresAt: time.Unix(c.ExpiresAt, 0)})
@@ -61,8 +61,8 @@ func (h *handler) AttachWorkloadAssertion(w http.ResponseWriter, r *http.Request
 		writeBearerProblem(w)
 		return
 	}
-	store, ok := h.store.(WorkloadStore)
-	if !ok || h.workloads == nil {
+	store := h.store
+	if store == nil || h.workloads == nil {
 		writeProblem(w, 503, authorityv1.Unavailable, "workload authentication is unavailable")
 		return
 	}
@@ -78,24 +78,24 @@ func (h *handler) AttachWorkloadAssertion(w http.ResponseWriter, r *http.Request
 	}
 	p, err := store.WorkloadAssertionPolicy(r.Context(), id, token)
 	if err != nil {
-		workloadProblem(w, err)
+		workloadProblem(r.Context(), w, err)
 		return
 	}
 	c, err := h.workloads.Verify(r.Context(), p.Trust, body.Assertion)
 	if err != nil {
-		workloadProblem(w, err)
+		workloadProblem(r.Context(), w, err)
 		return
 	}
 	result, err := store.AttachWorkloadAssertion(r.Context(), id, token, c, signature, time.Now())
 	if err != nil {
-		workloadProblem(w, err)
+		workloadProblem(r.Context(), w, err)
 		return
 	}
 	result.AssertionExpiresAt = new(time.Unix(c.ExpiresAt, 0))
 	writeJSON(w, 200, result)
 }
 
-func workloadProblem(w http.ResponseWriter, err error) {
+func workloadProblem(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrWorkloadExpired):
 		writeProblem(w, 410, authorityv1.Forbidden, "workload session expired; a current assertion may authorize a new session for future connections")
@@ -106,14 +106,14 @@ func workloadProblem(w http.ResponseWriter, err error) {
 	case errors.Is(err, oidc.ErrUnavailable):
 		writeProblem(w, 503, authorityv1.Unavailable, "provider signing keys are unavailable; retry this exchange")
 	default:
-		writeControlStateProblem(w, "authorize workload session", err)
+		writeControlStateProblem(ctx, w, "authorize workload session", err)
 	}
 }
 
 func (h *handler) ExchangeWorkload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	store, ok := h.store.(WorkloadStore)
-	if !ok || h.workloads == nil {
+	store := h.store
+	if store == nil || h.workloads == nil {
 		writeProblem(w, 503, authorityv1.Unavailable, "workload authentication is unavailable")
 		return
 	}
@@ -134,12 +134,12 @@ func (h *handler) ExchangeWorkload(w http.ResponseWriter, r *http.Request) {
 	}
 	policy, err := store.WorkloadPolicy(r.Context(), body.TeamId, body.ProjectKey, body.Workload, body.SourceFingerprint)
 	if err != nil {
-		workloadProblem(w, err)
+		workloadProblem(r.Context(), w, err)
 		return
 	}
 	execution, err := h.workloads.Verify(r.Context(), policy.Trust, body.Assertion)
 	if err != nil {
-		workloadProblem(w, err)
+		workloadProblem(r.Context(), w, err)
 		return
 	}
 	var services []string
@@ -148,7 +148,7 @@ func (h *handler) ExchangeWorkload(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := store.ExchangeWorkload(r.Context(), controlstate.ExchangeWorkloadRequest{TeamID: body.TeamId, ProjectKey: body.ProjectKey, Workload: body.Workload, SourceFingerprint: body.SourceFingerprint, Nonce: body.Nonce, Execution: execution, PublicKey: ed25519.PublicKey(public), Signature: signature, Services: services}, time.Now())
 	if err != nil {
-		workloadProblem(w, err)
+		workloadProblem(r.Context(), w, err)
 		return
 	}
 	result.AssertionExpiresAt = new(time.Unix(execution.ExpiresAt, 0))
@@ -162,8 +162,8 @@ func (h *handler) RenewWorkloadSession(w http.ResponseWriter, r *http.Request, i
 		writeBearerProblem(w)
 		return
 	}
-	store, ok := h.store.(WorkloadStore)
-	if !ok {
+	store := h.store
+	if store == nil {
 		writeProblem(w, 503, authorityv1.Unavailable, "workload authentication is unavailable")
 		return
 	}
@@ -179,7 +179,7 @@ func (h *handler) RenewWorkloadSession(w http.ResponseWriter, r *http.Request, i
 	}
 	result, err := store.RenewWorkloadSession(r.Context(), id, token, controlstate.WorkloadRenewal{Sequence: body.Sequence, Signature: signature}, time.Now())
 	if err != nil {
-		workloadProblem(w, err)
+		workloadProblem(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -191,13 +191,13 @@ func (h *handler) RevokeWorkloadSession(w http.ResponseWriter, r *http.Request, 
 		writeBearerProblem(w)
 		return
 	}
-	store, ok := h.store.(WorkloadStore)
-	if !ok {
+	store := h.store
+	if store == nil {
 		writeProblem(w, 503, authorityv1.Unavailable, "workload authentication is unavailable")
 		return
 	}
 	if err = store.RevokeWorkloadSession(r.Context(), id, token, time.Now()); err != nil {
-		workloadProblem(w, err)
+		workloadProblem(r.Context(), w, err)
 		return
 	}
 	w.WriteHeader(204)

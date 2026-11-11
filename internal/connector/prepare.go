@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"io"
 	"net"
 	"slices"
 	"strconv"
@@ -154,11 +153,15 @@ func (b *connectorConnectionBackend) prepareService(ctx context.Context, name st
 	return b.prepareListener(ctx, name, previous, service, client, control, identity)
 }
 
-func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name string, previous *ownedServiceListener, service controlv1.Service, client *workload.Client, control connectorstream.Control, identity string) (*servicePreparation, error) {
+func (b *connectorConnectionBackend) prepareListener(ctx context.Context, name string, previous *ownedServiceListener, service controlv1.Service, client *workload.Client, control connectorstream.Control, identity string) (_ *servicePreparation, result error) {
 	// until Serve takes ownership, every exit closes this adapter here.
 	defer func() {
-		if closer, ok := control.(io.Closer); ok {
-			_ = closer.Close()
+		if control != nil {
+			cleanup, cancel := context.WithTimeout(b.cleanup(), 5*time.Second)
+			defer cancel()
+			if err := control.Close(cleanup); err != nil {
+				result = errors.Join(result, &connectorstream.CleanupError{Err: err})
+			}
 		}
 	}()
 	endpoint := service.Endpoint

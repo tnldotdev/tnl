@@ -7,7 +7,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 )
 
-type publisherAuditControl interface {
+type PublisherAuditControl interface {
 	ReportPublisherServiceObservations(context.Context, string, uint64, credentials.PublishRunToken, serviceaudit.Batch) error
 }
 
@@ -20,9 +20,5 @@ func (n *Native) ReportPublisherServiceObservations(ctx context.Context, runID s
 			return ErrScope
 		}
 	}
-	control, ok := n.NativeControl.(publisherAuditControl)
-	if !ok {
-		return serviceaudit.ErrRejected
-	}
-	return control.ReportPublisherServiceObservations(ctx, runID, number, token, batch)
+	return n.PublicURLControl.ReportPublisherServiceObservations(ctx, runID, number, token, batch)
 }

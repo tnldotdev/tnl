@@ -103,7 +103,7 @@ func (d *Database) CreatePublishRun(
 	publisherLeaseDuration time.Duration,
 	connectionCredentialDuration time.Duration,
 ) (result PublishRunSetup, retErr error) {
-	ctx, finish := d.observeOperation(ctx, "CreatePublishRun")
+	ctx, finish := d.observeOperation(ctx, observability.OpCreatePublishRun)
 	defer func() { finish(retErr) }()
 	defer func() {
 		if !errors.Is(retErr, ErrInsufficientRelayServices) {

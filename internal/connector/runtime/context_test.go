@@ -30,7 +30,9 @@ func TestConnectionIPCInheritsProcessObservationContext(t *testing.T) {
 	done := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.WithValue(t.Context(), processObservationKey{}, "owner-process"))
 	defer func() { cancel(); <-done }()
-	go func() { done <- Serve(ctx, scope, directory, "/test/tnl", b, writer) }()
+	go func() {
+		done <- Serve(ctx, scope, directory, "/test/tnl", OwnerConfig{Backend: b, Done: b.failed}, writer)
+	}()
 	var state Status
 	if err := json.NewDecoder(reader).Decode(&state); err != nil {
 		t.Fatal(err)

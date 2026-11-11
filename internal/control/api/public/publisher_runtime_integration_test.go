@@ -318,7 +318,8 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, err := publisheridentity.NewNative(&runtimeNativeControl{client}, authority, identity, priv)
+	runtimeControl := &runtimeNativeControl{client}
+	native, err := publisheridentity.NewNative(publisheridentity.NativeControl{PublicURLControl: runtimeControl, Runtime: runtimeControl}, authority, identity, priv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +387,8 @@ func TestIntegrationPublisherRuntimeHTTPObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, err = publisheridentity.NewNative(&runtimeNativeControl{client}, authority, identity, priv)
+	runtimeControl = &runtimeNativeControl{client}
+	native, err = publisheridentity.NewNative(publisheridentity.NativeControl{PublicURLControl: runtimeControl, Services: runtimeControl, Runtime: runtimeControl}, authority, identity, priv)
 	if err != nil {
 		t.Fatal(err)
 	}

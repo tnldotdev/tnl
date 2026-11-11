@@ -21,7 +21,7 @@ func aliasTestTunnel(t *testing.T, state *Database, scope AliasScope, project, l
 	t.Helper()
 	tunnel, err := state.BeginTunnel(t.Context(), BeginTunnelOptions{
 		Command: TunnelCommandPublish, Server: scope.Server, Project: project, Service: "api", Target: "3000",
-		IntegrationGroup: scope.ProjectKey + "\x00" + scope.Namespace,
+		IntegrationScope: IntegrationScope{PrimaryProjectRoot: scope.ProjectKey, Namespace: scope.Namespace},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func aliasTestTunnel(t *testing.T, state *Database, scope AliasScope, project, l
 		}
 	}
 	selection, err := state.RegisterAlias(t.Context(), AliasRegistration{Scope: scope, Hostname: "review." + scope.Namespace,
-		Service: "api", TunnelID: tunnel.ID(), IntegrationGroup: scope.ProjectKey + "\x00" + scope.Namespace, Fingerprint: sha256.Sum256([]byte("review"))})
+		Service: "api", TunnelID: tunnel.ID(), IntegrationScope: IntegrationScope{PrimaryProjectRoot: scope.ProjectKey, Namespace: scope.Namespace}, Fingerprint: sha256.Sum256([]byte("review"))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,13 +134,45 @@ func TestAliasRejectsConflictingLiveDeclarations(t *testing.T) {
 	_, initial := aliasTestTunnel(t, state, scope, scope.ProjectKey, "main", true)
 	linked, _ := aliasTestTunnel(t, state, scope, filepath.Join(filepath.Dir(scope.ProjectKey), "feature"), "feature", true)
 	_, err := state.RegisterAlias(t.Context(), AliasRegistration{Scope: scope, Hostname: "review." + scope.Namespace,
-		Service: "api", TunnelID: linked.ID(), IntegrationGroup: scope.ProjectKey + "\x00" + scope.Namespace, Fingerprint: sha256.Sum256([]byte("different"))})
+		Service: "api", TunnelID: linked.ID(), IntegrationScope: IntegrationScope{PrimaryProjectRoot: scope.ProjectKey, Namespace: scope.Namespace}, Fingerprint: sha256.Sum256([]byte("different"))})
 	if !errors.Is(err, ErrAliasPolicyConflict) {
 		t.Fatalf("conflicting declaration = %v", err)
 	}
 	unchanged, err := state.AliasSelection(t.Context(), scope)
 	if err != nil || unchanged.Revision != initial.Revision || unchanged.Fingerprint != initial.Fingerprint {
 		t.Fatal("rejected declaration mutated selection")
+	}
+}
+
+func TestAliasRegistrationMatchesExplicitIntegrationScope(t *testing.T) {
+	state, _ := aliasTestDatabase(t)
+	scope := aliasTestScope(t)
+	tunnel, initial := aliasTestTunnel(t, state, scope, scope.ProjectKey, "main", true)
+	registration := AliasRegistration{Scope: scope, Hostname: initial.Hostname, Service: "api", TunnelID: tunnel.ID(),
+		IntegrationScope: IntegrationScope{PrimaryProjectRoot: scope.ProjectKey, Namespace: "other." + scope.Namespace}, Fingerprint: initial.Fingerprint}
+	if _, err := state.RegisterAlias(t.Context(), registration); !errors.Is(err, ErrAliasReceiverUnavailable) {
+		t.Fatalf("alias registration crossed integration namespaces: %v", err)
+	}
+	registration.IntegrationScope = IntegrationScope{PrimaryProjectRoot: scope.ProjectKey + "-other", Namespace: scope.Namespace}
+	if _, err := state.RegisterAlias(t.Context(), registration); err == nil {
+		t.Fatal("alias registration crossed primary project roots")
+	}
+	// an alias's domain may differ from its receiving service's domain. matching
+	// uses the service's explicit integration namespace, not the alias namespace.
+	registration.Scope.Namespace = "aliases." + scope.Namespace
+	registration.Hostname = "review." + registration.Scope.Namespace
+	registration.IntegrationScope = IntegrationScope{PrimaryProjectRoot: scope.ProjectKey, Namespace: scope.Namespace}
+	selected, err := state.RegisterAlias(t.Context(), registration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, receiver, err := state.AliasCandidate(t.Context(), selected.ID)
+	if err != nil || receiver.ID != tunnel.ID() || receiver.IntegrationScope != registration.IntegrationScope {
+		t.Fatalf("alias domain override lost its receiving scope: %#v, %v", receiver, err)
+	}
+	unchanged, err := state.AliasSelection(t.Context(), scope)
+	if err != nil || unchanged != initial {
+		t.Fatalf("rejected registration changed the original selection: %#v, %v", unchanged, err)
 	}
 }
 

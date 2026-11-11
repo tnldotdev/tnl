@@ -11,11 +11,10 @@ import (
 // RemoteRuntime is called only by an actual deployed runtime owner, never while
 // provisioning, importing or verifying a key. local app adapters do not call it.
 func (n *Native) RemoteRuntime(server string) (*publisherruntime.Owner, error) {
-	control, ok := n.NativeControl.(publisherruntime.Control)
-	if !ok {
+	if n == nil || n.Runtime == nil || server != n.ControlURL() {
 		return nil, ErrScope
 	}
-	return publisherruntime.New(control, server, n.identity.clientID, n.identity.keyID, n.identity.grantID, n.private)
+	return publisherruntime.New(n.Runtime, server, n.identity.clientID, n.identity.keyID, n.identity.grantID, n.private)
 }
 
 func (n *Native) WithRuntime(owner *publisherruntime.Owner) { n.runtime = owner }

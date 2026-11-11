@@ -62,13 +62,13 @@ func TestWebhookReadyTelemetryRequiresPublishedURLAndSelectedReceiver(t *testing
 	}
 	defer state.Close()
 	const server = "https://control.example.test"
-	const group = "project\x00member.example.test"
+	group := clientstate.IntegrationScope{PrimaryProjectRoot: t.TempDir(), Namespace: "member.example.test"}
 	const hostname = "hooks.member.example.test"
 	if _, err := state.Server(t.Context(), server); err != nil {
 		t.Fatal(err)
 	}
 	tunnel, err := state.BeginTunnel(t.Context(), clientstate.BeginTunnelOptions{
-		Command: clientstate.TunnelCommandPublish, Server: server, Target: "3000", Project: t.TempDir(), Service: "api", IntegrationGroup: group,
+		Command: clientstate.TunnelCommandPublish, Server: server, Target: "3000", Project: t.TempDir(), Service: "api", IntegrationScope: group,
 	})
 	if err != nil {
 		t.Fatal(err)

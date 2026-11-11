@@ -147,11 +147,11 @@ func TestPrivatePortOverrideHonorsFutureReservationsWithoutRenumbering(t *testin
 	port := listener.Addr().(*net.TCPAddr).Port
 	listener.Close()
 	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	if other, err := store.ListenServiceOverride(t.Context(), "identity", "service-two", address); err == nil {
+	if other, err := store.ListenServiceAt(t.Context(), "identity", "service-two", address); err == nil {
 		other.Close()
 		t.Fatal("override stole a stopped service's future reservation")
 	}
-	override, err := store.ListenServiceOverride(t.Context(), "identity", "service-one", "127.0.0.1:0")
+	override, err := store.ListenServiceAt(t.Context(), "identity", "service-one", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

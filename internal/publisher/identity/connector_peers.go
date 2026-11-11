@@ -19,11 +19,7 @@ func (n *Native) connectorPeerControl(service string) (connectorPeerControl, err
 	if _, err := n.serviceControl(service); err != nil {
 		return nil, err
 	}
-	control, ok := n.NativeControl.(connectorPeerControl)
-	if !ok {
-		return nil, ErrScope
-	}
-	return control, nil
+	return n.Services, nil
 }
 
 func (n *Native) DeliverConnectorPeerPair(ctx context.Context, service, run, pair string, generation int64, token credentials.ServiceRunToken) (controlv1.ConnectorPeerPairDelivery, error) {

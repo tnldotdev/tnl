@@ -49,7 +49,7 @@ func (h *handler) authenticatePublisher(w http.ResponseWriter, r *http.Request) 
 	}
 	p, err := store.AuthenticatePublisherAccess(r.Context(), token, publisherRequestSource(r), time.Now())
 	if err != nil {
-		publisherProblem(w, "authenticate publisher", err)
+		publisherProblem(r.Context(), w, "authenticate publisher", err)
 		return nil, controlstate.PublisherIdentity{}, false
 	}
 	fields := observability.Fields{Component: "control"}
@@ -71,7 +71,7 @@ func (h *handler) GetPublisherPublicURL(w http.ResponseWriter, r *http.Request) 
 	}
 	u, err := h.store.GetPublicURLForAuthorization(r.Context(), p.Scope.PublicURLID)
 	if err != nil {
-		publisherProblem(w, "read publisher URL", err)
+		publisherProblem(r.Context(), w, "read publisher URL", err)
 		return
 	}
 	if u.TeamID != p.Scope.TeamID || u.LifecycleState != controlstate.PublicURLLifecycleEnabled {
@@ -162,7 +162,7 @@ func (h *handler) AllocatePublisherPublicURL(w http.ResponseWriter, r *http.Requ
 	}
 	u, err := store.AllocatePublisherPublicURL(r.Context(), p, b.InvocationId, b.Target, prefixes, binding, time.Now(), controlstate.PublisherPublicURLOptions{AccessMode: mode, RequirePostQuantum: b.RequirePostQuantum != nil && *b.RequirePostQuantum})
 	if err != nil {
-		publisherProblem(w, "allocate publisher URL", err)
+		publisherProblem(r.Context(), w, "allocate publisher URL", err)
 		return
 	}
 	writeJSON(w, 201, publicURLResponse(u))
@@ -184,11 +184,11 @@ func (h *handler) DeletePublisherPublicURL(w http.ResponseWriter, r *http.Reques
 	}
 	u, err := h.store.GetPublicURLForAuthorization(r.Context(), id)
 	if err != nil {
-		publisherProblem(w, "read allocated URL", err)
+		publisherProblem(r.Context(), w, "read allocated URL", err)
 		return
 	}
 	if err := h.store.DeleteAuthorizedPublicURL(r.Context(), controlstate.AuthorizedPublicURLDeleteRequest{PublicURLID: id, TeamID: p.Scope.TeamID, ActingIdentityID: p.CreatorID, PolicyRevision: uint64(u.PolicyRevision), ExpectedMutationRevision: u.MutationRevision, PublisherIdentityID: p.ID, PublisherGrantID: p.GrantID}, time.Now()); err != nil {
-		publisherProblem(w, "delete allocated URL", err)
+		publisherProblem(r.Context(), w, "delete allocated URL", err)
 		return
 	}
 	w.WriteHeader(204)

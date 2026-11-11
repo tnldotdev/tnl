@@ -51,7 +51,7 @@ func adapterFixture(t *testing.T, identity string, handler func(*clientstate.Sto
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := control.(interface{ Close() error }).Close(); err != nil {
+		if err := control.Close(t.Context()); err != nil {
 			t.Error(err)
 		}
 	})

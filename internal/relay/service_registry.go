@@ -25,7 +25,7 @@ type serviceConnection struct {
 // ServiceRegistry contains only exact locally claimed private assignments.
 // public URL references cannot select entries from this registry.
 type ServiceRegistry struct {
-	observer    OperationObserver
+	observer    RegistryObserver
 	mu          sync.Mutex
 	connections map[string]*serviceConnection
 	claims      map[string]*privateClaim
@@ -37,7 +37,7 @@ func NewServiceRegistry() *ServiceRegistry {
 }
 
 // Instrument configures observation before the registry begins serving work.
-func (r *ServiceRegistry) Instrument(observer OperationObserver) { r.observer = observer }
+func (r *ServiceRegistry) Instrument(observer RegistryObserver) { r.observer = observer }
 
 // reserve holds local ownership from before control's claim through its final
 // disconnect. response-loss retries use the same assignment and process lease;
@@ -94,8 +94,8 @@ func (r *ServiceRegistry) insert(c *serviceConnection) error {
 	}
 	r.connections[c.ref.PublisherConnectionID] = c
 	if replaced == nil {
-		if observer, ok := r.observer.(interface{ AddRegisteredPublisherConnections(int) }); ok {
-			observer.AddRegisteredPublisherConnections(1)
+		if r.observer != nil {
+			r.observer.AddRegisteredPublisherConnections(1)
 		}
 	}
 	r.mu.Unlock()
@@ -112,8 +112,8 @@ func (r *ServiceRegistry) remove(c *serviceConnection) {
 	r.mu.Lock()
 	if r.connections[c.ref.PublisherConnectionID] == c {
 		delete(r.connections, c.ref.PublisherConnectionID)
-		if observer, ok := r.observer.(interface{ AddRegisteredPublisherConnections(int) }); ok {
-			observer.AddRegisteredPublisherConnections(-1)
+		if r.observer != nil {
+			r.observer.AddRegisteredPublisherConnections(-1)
 		}
 	}
 	r.mu.Unlock()
@@ -257,7 +257,7 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, outer
 	defer func() {
 		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		observe := startOperation(finish, acceptor.observer, "RelayDisconnectPublisherConnection")
+		observe := startOperation(finish, acceptor.observer, observability.OpRelayDisconnectPublisherConnection)
 		err := c.target.Control.privateTransition(finish, c.ref, c.lease, true)
 		observe(err)
 		result = errors.Join(result, err)
@@ -317,7 +317,7 @@ func (c *privateClaim) serve(ctx context.Context, session *tunnel.Session, outer
 func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunnel.IncomingServiceForwardingStream) (retErr error) {
 	ctx, endSpan := observability.Start(ctx, "relay.open_connector_visitor_stream")
 	observability.Visitor(ctx, incoming.Header.VisitorConnectionID)
-	finishOpen := startOperation(ctx, a.observer, "RelayOpenVisitorStream")
+	finishOpen := startOperation(ctx, a.observer, observability.OpRelayOpenVisitorStream)
 	opened := false
 	var rejected error
 	defer func() {
@@ -389,10 +389,8 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 	_, finishForward := observability.Start(ctx, "relay.forward_connector_visitor")
 	copied, err := streamcopy.Copy(incoming.Stream(), publisher)
 	finishForward(err)
-	if observer, ok := a.observer.(interface {
-		ObserveRelayTransfer(string, int64, int64, error)
-	}); ok {
-		observer.ObserveRelayTransfer("service", copied.LeftToRight, copied.RightToLeft, err)
+	if a.observer != nil {
+		a.observer.ObserveRelayTransfer("service", copied.LeftToRight, copied.RightToLeft, err)
 	}
 	return err
 }

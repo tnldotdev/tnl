@@ -52,7 +52,7 @@ func (h *handler) BeginPreviewBrowserLogin(response http.ResponseWriter, request
 		var err error
 		preview, err = h.previews.GetPreview(request.Context(), *params.PreviewId)
 		if err != nil {
-			writeControlStateProblem(response, "read browser preview", err)
+			writeControlStateProblem(request.Context(), response, "read browser preview", err)
 			return
 		}
 		if !slices.Contains(preview.PublicURLIDs, params.PublicUrlId) {
@@ -62,7 +62,7 @@ func (h *handler) BeginPreviewBrowserLogin(response http.ResponseWriter, request
 	}
 	publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), params.PublicUrlId)
 	if err != nil {
-		writeControlStateProblem(response, "read browser public URL", err)
+		writeControlStateProblem(request.Context(), response, "read browser public URL", err)
 		return
 	}
 	if preview.ID != "" && publicURL.TeamID != preview.TeamID || publicURL.LifecycleState != controlstate.PublicURLLifecycleEnabled || publicURL.Purpose != controlstate.PublicURLPurposeApp && publicURL.Purpose != controlstate.PublicURLPurposeAlias || publicURL.ServiceProtocol != controlstate.PublicURLServiceHTTP {
@@ -91,7 +91,7 @@ func (h *handler) BeginServiceBrowserLogin(response http.ResponseWriter, request
 	}
 	team, err := store.ServiceHTTPBrowserTeam(request.Context(), subject, time.Now())
 	if err != nil {
-		writeManagedCertificateProblem(response, "read managed browser subject", err)
+		writeManagedCertificateProblem(request.Context(), response, "read managed browser subject", err)
 		return
 	}
 	h.beginBrowserLogin(response, request, subject, team, "", params.ReturnPath, params.SwitchAccount)
@@ -101,13 +101,13 @@ func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.
 	verifier := oauth2.GenerateVerifier()
 	nonceBytes := make([]byte, 32)
 	if _, err := rand.Read(nonceBytes); err != nil {
-		writeUnavailableProblem(response, "create browser nonce", "browser sign-in is unavailable", failure.ServerAPIInternal, err)
+		writeUnavailableProblem(request.Context(), response, "create browser nonce", "browser sign-in is unavailable", failure.ServerAPIInternal, err)
 		return
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(nonceBytes)
 	binding := make([]byte, 32)
 	if _, err := rand.Read(binding); err != nil {
-		writeUnavailableProblem(response, "create browser binding", "browser sign-in is unavailable", failure.ServerAPIInternal, err)
+		writeUnavailableProblem(request.Context(), response, "create browser binding", "browser sign-in is unavailable", failure.ServerAPIInternal, err)
 		return
 	}
 	now := time.Now()
@@ -116,7 +116,7 @@ func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.
 	if store := h.dependencies.CompanyBrowser; store != nil {
 		intent, err = store.PrepareCompanyBrowser(request.Context(), team, h.config.OIDCIssuer, h.config.OIDCClientID, h.config.ControlURL+browserCallbackPath, now)
 		if err != nil {
-			writeControlStateProblem(response, "select company browser sign-in", err)
+			writeControlStateProblem(request.Context(), response, "select company browser sign-in", err)
 			return
 		}
 		if intent != nil {
@@ -130,7 +130,7 @@ func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.
 		state, err = h.browserAccess.BeginBrowserLogin(request.Context(), preview, subject.ID, path, nonce, verifier, binding, intent, now)
 	}
 	if err != nil {
-		writeControlStateProblem(response, "start browser sign-in", err)
+		writeControlStateProblem(request.Context(), response, "start browser sign-in", err)
 		return
 	}
 	http.SetCookie(response, serviceapi.ControlCookie(h.config.ControlURL, http.Cookie{Name: browserLoginCookieName, Value: base64.RawURLEncoding.EncodeToString(binding), Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Expires: now.Add(5 * time.Minute)}))
@@ -139,7 +139,7 @@ func (h *handler) beginBrowserLogin(response http.ResponseWriter, request *http.
 		authorization, err = h.browserOIDC.CompanyAuthorizationURL(request.Context(), state, nonce, verifier, intent.ID, intent.BindingToken)
 	}
 	if err != nil {
-		writeUnavailableProblem(response, "discover browser identity provider", "identity provider is unavailable", failure.ServerIdentityProviderUnavailable, err)
+		writeUnavailableProblem(request.Context(), response, "discover browser identity provider", "identity provider is unavailable", failure.ServerIdentityProviderUnavailable, err)
 		return
 	}
 	if switchAccount != nil && *switchAccount {
@@ -175,14 +175,14 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 		if errors.Is(err, controlstate.ErrPreviewAccess) {
 			writeProblem(response, http.StatusForbidden, controlv1.Forbidden, "browser sign-in expired")
 		} else {
-			writeControlStateProblem(response, "consume browser sign-in", err)
+			writeControlStateProblem(request.Context(), response, "consume browser sign-in", err)
 		}
 		return
 	}
 	http.SetCookie(response, serviceapi.ControlCookie(h.config.ControlURL, http.Cookie{Name: browserLoginCookieName, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1}))
 	identity, err := h.browserOIDC.Redeem(request.Context(), params.Code, attempt.Nonce, attempt.Verifier)
 	if errors.Is(err, oidc.ErrUnavailable) {
-		writeUnavailableProblem(response, "verify browser identity", "identity provider is unavailable", failure.ServerIdentityProviderUnavailable, err)
+		writeUnavailableProblem(request.Context(), response, "verify browser identity", "identity provider is unavailable", failure.ServerIdentityProviderUnavailable, err)
 		return
 	}
 	if err != nil {
@@ -199,7 +199,7 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 		if errors.Is(err, clientauthority.ErrUnauthenticated) || errors.Is(err, controlstate.ErrControlAuthentication) {
 			writeProblem(response, http.StatusUnauthorized, controlv1.Unauthenticated, "browser sign-in failed")
 		} else {
-			writeUnavailableProblem(response, "save browser sign-in", "browser sign-in could not be saved", failure.ServerAuthorityUnavailable, err)
+			writeUnavailableProblem(request.Context(), response, "save browser sign-in", "browser sign-in could not be saved", failure.ServerAuthorityUnavailable, err)
 		}
 		return
 	}
@@ -216,7 +216,7 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 	}()
 	principal, err := h.authorizer.AuthorizePublicURLReads(request.Context(), validated.AccessToken.String())
 	if errors.Is(err, authorization.ErrUnavailable) || errors.Is(err, clientauthority.ErrUnavailable) {
-		writeUnavailableProblem(response, "authorize browser identity", "browser authorization is unavailable", failure.ServerAuthorityUnavailable, err)
+		writeUnavailableProblem(request.Context(), response, "authorize browser identity", "browser authorization is unavailable", failure.ServerAuthorityUnavailable, err)
 		return
 	}
 	if err != nil || principal.identityID != issued.Identity.Identity.ID {
@@ -229,7 +229,7 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 		AccessExpiresAt: validated.AccessExpiresAt, ExpiresAt: validated.RefreshExpiresAt,
 	}, now)
 	if err != nil {
-		writeControlStateProblem(response, "save browser sign-in", err)
+		writeControlStateProblem(request.Context(), response, "save browser sign-in", err)
 		return
 	}
 	retained = true
@@ -239,7 +239,7 @@ func (h *handler) CompletePreviewBrowserLogin(response http.ResponseWriter, requ
 	}
 	publicURL, err := h.store.GetPublicURLForAuthorization(request.Context(), attempt.PublicURLID)
 	if err != nil {
-		writeControlStateProblem(response, "read signed-in browser public URL", err)
+		writeControlStateProblem(request.Context(), response, "read signed-in browser public URL", err)
 		return
 	}
 	http.Redirect(response, request, "https://"+publicURL.CanonicalHostname+"/__tnl/team/handoff/"+handoff.Token, http.StatusSeeOther)
@@ -257,7 +257,7 @@ func (h *handler) RedeemPreviewBrowserHandoff(response http.ResponseWriter, requ
 	}
 	cookie, path, next, bridge, _, err := h.browserAccess.RedeemBrowserHandoff(request.Context(), auth, body.Token, time.Now())
 	if err != nil && !errors.Is(err, controlstate.ErrPreviewAccess) {
-		writeControlStateProblem(response, "redeem browser handoff", err)
+		writeControlStateProblem(request.Context(), response, "redeem browser handoff", err)
 		return
 	}
 	if err != nil || !validBrowserReturnPath(path) {
@@ -266,12 +266,12 @@ func (h *handler) RedeemPreviewBrowserHandoff(response http.ResponseWriter, requ
 	}
 	permission, err := h.redeemedBrowserHandoffPermission(request.Context(), auth.PublicURLID, cookie, body)
 	if err != nil {
-		writeVisitorTokenProblem(response, err)
+		writeVisitorTokenProblem(request.Context(), response, err)
 		return
 	}
 	session, err := h.browserAccess.BrowserSession(request.Context(), auth.PublicURLID, cookie, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "read redeemed browser session", err)
+		writeControlStateProblem(request.Context(), response, "read redeemed browser session", err)
 		return
 	}
 	// the handoff deadline limits ticket redemption, not the browser sign-in.
@@ -369,9 +369,9 @@ func (h *handler) CheckPreviewBrowserAccess(response http.ResponseWriter, reques
 		case errors.Is(err, controlstate.ErrPreviewAccess), errors.Is(err, controlstate.ErrVisitorSignIn), errors.Is(err, authorization.ErrUnauthenticated), errors.Is(err, clientauthority.ErrUnauthenticated):
 			writeProblem(response, http.StatusUnauthorized, controlv1.Unauthenticated, "browser sign-in expired")
 		case errors.Is(err, authorization.ErrUnavailable), errors.Is(err, clientauthority.ErrUnavailable):
-			writeUnavailableProblem(response, "check browser access", "browser access is unavailable", failure.ServerAuthorityUnavailable, err)
+			writeUnavailableProblem(request.Context(), response, "check browser access", "browser access is unavailable", failure.ServerAuthorityUnavailable, err)
 		default:
-			writeControlStateProblem(response, "check browser access", err)
+			writeControlStateProblem(request.Context(), response, "check browser access", err)
 		}
 		return
 	}

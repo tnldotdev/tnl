@@ -63,7 +63,7 @@ func (h *handler) getOwnerFeedback(response http.ResponseWriter, request *http.R
 	}
 	thread, err := h.feedback.GetFeedback(request.Context(), id)
 	if err != nil {
-		writeControlStateProblem(response, "read feedback thread", err)
+		writeControlStateProblem(request.Context(), response, "read feedback thread", err)
 		return controlstate.FeedbackThread{}, authorization.Decision{}, 0, false
 	}
 	token, _ := requestBearerToken(request)
@@ -82,7 +82,7 @@ func (h *handler) GetFeedbackThread(response http.ResponseWriter, request *http.
 	}
 	result, err := feedbackThreadResponse(thread)
 	if err != nil {
-		writeControlStateProblem(response, "encode feedback thread", err)
+		writeControlStateProblem(request.Context(), response, "encode feedback thread", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
@@ -104,7 +104,7 @@ func (h *handler) ListFeedbackThreads(response http.ResponseWriter, request *htt
 	}
 	page, err := h.feedback.ListFeedbackForTeam(request.Context(), teamID, request.URL.Query().Get("cursor"))
 	if err != nil {
-		writeControlStateProblem(response, "list feedback threads", err)
+		writeControlStateProblem(request.Context(), response, "list feedback threads", err)
 		return
 	}
 	token, _ := requestBearerToken(request)
@@ -120,7 +120,7 @@ func (h *handler) ListFeedbackThreads(response http.ResponseWriter, request *htt
 	page.Threads = manageable
 	result, err := feedbackThreadPageResponse(page)
 	if err != nil {
-		writeControlStateProblem(response, "encode feedback list", err)
+		writeControlStateProblem(request.Context(), response, "encode feedback list", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
@@ -159,12 +159,12 @@ func (h *handler) AppendFeedbackEvent(response http.ResponseWriter, request *htt
 	}
 	event, err := h.feedback.AppendFeedback(request.Context(), write, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "append feedback event", err)
+		writeControlStateProblem(request.Context(), response, "append feedback event", err)
 		return
 	}
 	result, err := feedbackEventResponse(event)
 	if err != nil {
-		writeControlStateProblem(response, "encode feedback event", err)
+		writeControlStateProblem(request.Context(), response, "encode feedback event", err)
 		return
 	}
 	writeJSON(response, http.StatusCreated, result)
@@ -182,12 +182,12 @@ func (h *handler) ListFeedbackThreadEvents(response http.ResponseWriter, request
 	}
 	page, err := h.feedback.ListFeedbackEventsForThread(request.Context(), thread.ID, after)
 	if err != nil {
-		writeControlStateProblem(response, "list feedback thread events", err)
+		writeControlStateProblem(request.Context(), response, "list feedback thread events", err)
 		return
 	}
 	result, err := feedbackEventPageResponse(page)
 	if err != nil {
-		writeControlStateProblem(response, "encode feedback events", err)
+		writeControlStateProblem(request.Context(), response, "encode feedback events", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)
@@ -214,7 +214,7 @@ func (h *handler) ListFeedbackEvents(response http.ResponseWriter, request *http
 	}
 	page, err := h.feedback.ListFeedbackEventsForTeam(request.Context(), teamID, after)
 	if err != nil {
-		writeControlStateProblem(response, "watch feedback events", err)
+		writeControlStateProblem(request.Context(), response, "watch feedback events", err)
 		return
 	}
 	token, _ := requestBearerToken(request)
@@ -222,7 +222,7 @@ func (h *handler) ListFeedbackEvents(response http.ResponseWriter, request *http
 	for _, event := range page.Events {
 		thread, err := h.feedback.GetFeedback(request.Context(), event.FeedbackID)
 		if err != nil {
-			writeControlStateProblem(response, "read watched feedback", err)
+			writeControlStateProblem(request.Context(), response, "read watched feedback", err)
 			return
 		}
 		if _, _, err := h.ownerFeedbackDecision(request.Context(), token, principal, thread); err == nil {
@@ -235,7 +235,7 @@ func (h *handler) ListFeedbackEvents(response http.ResponseWriter, request *http
 	page.Events = visible
 	result, err := feedbackEventPageResponse(page)
 	if err != nil {
-		writeControlStateProblem(response, "encode watched feedback", err)
+		writeControlStateProblem(request.Context(), response, "encode watched feedback", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, result)

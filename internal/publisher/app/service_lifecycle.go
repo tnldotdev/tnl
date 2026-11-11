@@ -81,7 +81,7 @@ func (s *Service) invalidateReadiness() {
 func (s *Service) acceptObservation(observation Observation) bool {
 	if !s.Registered || !s.Routable || observation.RunNumber == 0 ||
 		s.RegistrationID != observation.RegistrationID || s.RunNumber != observation.RunNumber ||
-		s.Readiness != observation.Readiness || observation.Target != "" && s.Target != observation.Target {
+		s.Readiness != observation.Readiness || observation.Target == "" || s.Target != observation.Target {
 		return false
 	}
 	if s.Observation != nil && observation.CheckedAt.Before(s.Observation.CheckedAt) {

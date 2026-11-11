@@ -85,7 +85,7 @@ func runPrivatePublisherProvision(ctx context.Context, flags publisherProvisionC
 	if enrollment.Kind != "service" || enrollment.ServiceId == nil || *enrollment.ServiceId != service.Id || enrollment.TeamId != service.TeamId {
 		return publisheridentity.ErrScope
 	}
-	native, identity, err := publisheridentity.EnrollNative(ctx, session.Store(), session.Authenticated().Control, session.Authenticated().Authority, enrollment.EnrollmentKey)
+	native, identity, err := publisheridentity.EnrollNative(ctx, session.Store(), publisheridentity.NativeControl{PublicURLControl: session.Authenticated().Control, Services: session.Authenticated().Control}, session.Authenticated().Authority, enrollment.EnrollmentKey)
 	if err != nil {
 		return err
 	}

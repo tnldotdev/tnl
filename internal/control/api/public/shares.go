@@ -82,7 +82,7 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 			return
 		}
 		if err != nil {
-			writeControlStateProblem(response, "read share public URL", err)
+			writeControlStateProblem(request.Context(), response, "read share public URL", err)
 			return
 		}
 		if previewID == "" && preview.TeamID == "" {
@@ -125,7 +125,7 @@ func (h *handler) createShare(response http.ResponseWriter, request *http.Reques
 		PolicyRevision: revision, PublicURLs: authorized,
 	}, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "create share", err)
+		writeControlStateProblem(request.Context(), response, "create share", err)
 		return
 	}
 	writeJSON(response, http.StatusCreated, shareResponse(share))
@@ -139,7 +139,7 @@ func (h *handler) createGuestShare(response http.ResponseWriter, request *http.R
 	}
 	matched, err := h.guests.GuestSourceMatches(guest, netip.PrefixFrom(address, address.BitLen()).String())
 	if err != nil {
-		writeControlStateProblem(response, "check guest IP", err)
+		writeControlStateProblem(request.Context(), response, "check guest IP", err)
 		return
 	}
 	if !matched {
@@ -148,7 +148,7 @@ func (h *handler) createGuestShare(response http.ResponseWriter, request *http.R
 	}
 	share, err := h.shares.CreateGuestShare(request.Context(), guest.ID, publicURLID, key, label, fingerprint, expiresAt, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "create guest share", err)
+		writeControlStateProblem(request.Context(), response, "create guest share", err)
 		return
 	}
 	response.Header().Set("Cache-Control", "no-store")
@@ -170,7 +170,7 @@ func (h *handler) ListShares(response http.ResponseWriter, request *http.Request
 	}
 	page, err := h.shares.ListShares(request.Context(), preview.ID, request.URL.Query().Get("cursor"))
 	if err != nil {
-		writeControlStateProblem(response, "list shares", err)
+		writeControlStateProblem(request.Context(), response, "list shares", err)
 		return
 	}
 	writeSharePage(response, page)
@@ -192,7 +192,7 @@ func (h *handler) ListTeamShares(response http.ResponseWriter, request *http.Req
 	}
 	page, err := h.shares.ListTeamShares(request.Context(), teamID, principal.identityID, request.URL.Query().Get("cursor"))
 	if err != nil {
-		writeControlStateProblem(response, "list team shares", err)
+		writeControlStateProblem(request.Context(), response, "list team shares", err)
 		return
 	}
 	writeSharePage(response, page)
@@ -223,7 +223,7 @@ func (h *handler) RevokeShare(response http.ResponseWriter, request *http.Reques
 	}
 	revoked, err := h.shares.RevokeShare(request.Context(), share.ID, share.CreatedByIdentityID, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "revoke share", err)
+		writeControlStateProblem(request.Context(), response, "revoke share", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, shareResponse(revoked))
@@ -240,7 +240,7 @@ func (h *handler) readShare(response http.ResponseWriter, request *http.Request,
 	}
 	share, err := h.shares.GetShare(request.Context(), id)
 	if err != nil {
-		writeControlStateProblem(response, "read share", err)
+		writeControlStateProblem(request.Context(), response, "read share", err)
 		return controlstate.Share{}, false
 	}
 	if share.PreviewID != "" {

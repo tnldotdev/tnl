@@ -33,20 +33,13 @@ func (c *Client) SelectServiceRun(ctx context.Context, serviceID, deviceID strin
 
 // a person's control session may create the saved service and issue an exact
 // enrollment. the resulting publisher uses only its scoped grant for runs.
-func (c *Client) CreateService(ctx context.Context, team, name, key string, metadata ...controlv1.ServiceMetadata) (controlv1.Service, error) {
-	return c.CreateServiceAt(ctx, team, name, key, nil, metadata...)
+func (c *Client) CreateService(ctx context.Context, team, name, key string, declaration controlv1.ServiceMetadata) (controlv1.Service, error) {
+	return c.CreateServiceAt(ctx, team, name, key, nil, declaration)
 }
 
-func (c *Client) CreateServiceAt(ctx context.Context, team, name, key string, placement *controlv1.ServicePlacement, metadata ...controlv1.ServiceMetadata) (controlv1.Service, error) {
-	body := controlv1.CreateServiceRequest{TeamId: team, Name: name, Placement: placement}
-	if len(metadata) > 1 {
-		return controlv1.Service{}, errors.New("provide one service declaration")
-	}
-	if len(metadata) == 1 {
-		body.Protocol = &metadata[0].Protocol
-		body.TargetTls = metadata[0].TargetTls
-		body.PublisherPool = &metadata[0].PublisherPool
-	}
+func (c *Client) CreateServiceAt(ctx context.Context, team, name, key string, placement *controlv1.ServicePlacement, declaration controlv1.ServiceMetadata) (controlv1.Service, error) {
+	body := controlv1.CreateServiceRequest{TeamId: team, Name: name, Placement: placement,
+		Protocol: &declaration.Protocol, TargetTls: declaration.TargetTls, PublisherPool: &declaration.PublisherPool}
 	return requestWithAccess[controlv1.Service](ctx, c, func(ctx context.Context, editors ...controlv1.RequestEditorFn) (*http.Response, error) {
 		return c.api.CreateService(ctx, &controlv1.CreateServiceParams{IdempotencyKey: key},
 			body, editors...)

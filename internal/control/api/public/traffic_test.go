@@ -32,7 +32,7 @@ func TestPublishRunTrafficInputBoundary(t *testing.T) {
 		}
 	}
 	w := httptest.NewRecorder()
-	writeControlStateProblem(w, "select traffic", controlstate.ErrTrafficSelection)
+	writeControlStateProblem(t.Context(), w, "select traffic", controlstate.ErrTrafficSelection)
 	var problem controlv1.Problem
 	if err := json.Unmarshal(w.Body.Bytes(), &problem); err != nil || problem.Code != controlv1.TrafficSelectionInvalid || w.Code != 400 {
 		t.Fatalf("traffic problem: %+v %v", problem, err)

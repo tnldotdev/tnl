@@ -26,7 +26,7 @@ type EnrollmentAuthority interface {
 // lock. a locally issued one-use secret remains protected until promotion;
 // access tokens do not enter client state.
 func EnrollNative(ctx context.Context, state *clientstate.Store, control NativeControl, authority EnrollmentAuthority, secret string) (*Native, authorityv1.PublisherEnrollmentResult, error) {
-	if state == nil || control == nil || authority == nil || len(secret) > 256 {
+	if state == nil || control.PublicURLControl == nil || authority == nil || len(secret) > 256 {
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
 	p := strings.Split(secret, ".")

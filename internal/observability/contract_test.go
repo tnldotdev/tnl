@@ -178,7 +178,7 @@ func TestCompletedOperationContextUsesParent(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	m.tracerProvider = sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	ctx, parent := m.tracer().Start(t.Context(), "request")
-	m.ObserveOperationContext(ctx, "CreatePublishRun", context.Canceled, time.Millisecond)
+	m.ObserveOperationContext(ctx, OpCreatePublishRun, context.Canceled, time.Millisecond)
 	parent.End()
 	spans := exporter.GetSpans()
 	if len(spans) != 2 || spans[0].Parent.SpanID() != parent.SpanContext().SpanID() {

@@ -18,7 +18,8 @@ type OAuthCallback struct {
 }
 
 type OAuthCallbackScope struct {
-	Server, Hostname, IntegrationGroup string
+	Server, Hostname string
+	IntegrationScope IntegrationScope
 }
 
 // OAuthRedirectOrigin is the exact public URL and run that started login. an
@@ -44,7 +45,10 @@ type SaveOAuthCallbackInput struct {
 // duplicate states fail closed rather than replacing another worktree's login.
 func (d *Database) SaveOAuthCallback(ctx context.Context, input SaveOAuthCallbackInput) error {
 	scope, origin, destination := input.Scope, input.Origin, input.Destination
-	if scope.Server == "" || scope.Hostname == "" || scope.IntegrationGroup == "" || input.State == "" || len(input.State) > 8192 || destination.TunnelID == "" || destination.Path == "" || origin.PublicURLID == "" || origin.PublishRunNumber == 0 || origin.PublishRunNumber > 1<<63-1 {
+	if err := scope.IntegrationScope.Validate(); err != nil {
+		return err
+	}
+	if scope.Server == "" || scope.Hostname == "" || input.State == "" || len(input.State) > 8192 || destination.TunnelID == "" || destination.Path == "" || origin.PublicURLID == "" || origin.PublishRunNumber == 0 || origin.PublishRunNumber > 1<<63-1 {
 		return errors.New("incomplete OAuth callback")
 	}
 	digest := sha256.Sum256([]byte(input.State))
@@ -56,7 +60,9 @@ func (d *Database) SaveOAuthCallback(ctx context.Context, input SaveOAuthCallbac
 		return err
 	}
 	count, err := d.queries.SaveOAuthCallback(ctx, clientstatedb.SaveOAuthCallbackParams{
-		ServerOrigin: scope.Server, Hostname: scope.Hostname, IntegrationGroup: scope.IntegrationGroup, StateDigest: digest[:], TunnelID: destination.TunnelID,
+		ServerOrigin: scope.Server, Hostname: scope.Hostname,
+		PrimaryProjectRoot: scope.IntegrationScope.primaryProjectRoot(), IntegrationNamespace: scope.IntegrationScope.namespace(),
+		StateDigest: digest[:], TunnelID: destination.TunnelID,
 		CallbackPath: destination.Path, CallbackQuery: destination.Query, ExpiresAt: now.Add(10 * time.Minute).UnixNano(),
 		PublicURLID: origin.PublicURLID, PublishRunNumber: int64(origin.PublishRunNumber), Now: now.UnixNano(),
 		OriginHostname: origin.Hostname,

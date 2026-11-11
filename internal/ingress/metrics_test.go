@@ -56,7 +56,7 @@ func TestConcurrentBackendGaugeReturnsToZero(t *testing.T) {
 				t.Error("failed to track backend")
 				return
 			}
-			if err := server.releaseBackend(left); err != nil {
+			if err := server.releaseBackend(t.Context(), left); err != nil {
 				t.Error(err)
 			}
 		}()

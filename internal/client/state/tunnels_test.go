@@ -37,19 +37,20 @@ func TestFinishedTunnelPersistsReasonInsteadOfCause(t *testing.T) {
 	}
 }
 
-func TestIntegrationGroupRegistrationHasTypedFailures(t *testing.T) {
+func TestIntegrationScopeRegistrationHasTypedFailures(t *testing.T) {
 	database, err := Open(t.Context(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	options := BeginTunnelOptions{Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: t.TempDir(), IntegrationGroup: strings.Repeat("x", 1025)}
+	options := BeginTunnelOptions{Command: TunnelCommandPublish, Server: "https://server.example", Target: "3000", Project: t.TempDir(),
+		IntegrationScope: IntegrationScope{PrimaryProjectRoot: "/" + strings.Repeat("x", 1024), Namespace: "member.example"}}
 	if _, err := database.BeginTunnel(t.Context(), options); err == nil {
 		t.Fatal("accepted an oversized integration group")
 	} else if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ProjectConfigInvalid {
 		t.Fatalf("integration group failure = %v", err)
 	}
-	options.IntegrationGroup = "project\x00member.example"
+	options.IntegrationScope = IntegrationScope{PrimaryProjectRoot: options.Project, Namespace: "member.example"}
 	tunnel, err := database.BeginTunnel(t.Context(), options)
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +58,7 @@ func TestIntegrationGroupRegistrationHasTypedFailures(t *testing.T) {
 	if err := tunnel.Finish(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := tunnel.SetIntegrationGroup(t.Context(), options.IntegrationGroup); err == nil {
+	if err := tunnel.SetIntegrationScope(t.Context(), options.IntegrationScope); err == nil {
 		t.Fatal("stopped tunnel registered an integration group")
 	} else if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ClientStateUnavailable {
 		t.Fatalf("stopped integration group registration failure = %v", err)

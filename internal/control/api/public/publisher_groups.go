@@ -40,7 +40,7 @@ func (h *handler) RenamePublisherNamespace(w http.ResponseWriter, r *http.Reques
 	}
 	result, err := store.RenamePublisherNamespace(r.Context(), controlstate.RenamePublisherNamespaceRequest{TeamID: body.TeamId, ProjectKey: project, Group: group, NamespaceLabel: body.NamespaceLabel, ExpectedRevision: body.ExpectedRevision, IdempotencyKey: body.IdempotencyKey, ActorID: actor, DNSAutomation: h.config.DNSAutomation, Now: time.Now()})
 	if err != nil {
-		projectConfigurationProblem(w, "rename publisher DNS namespace", err)
+		projectConfigurationProblem(r.Context(), w, "rename publisher DNS namespace", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -64,7 +64,7 @@ func (h *handler) RenamePublisherGroup(w http.ResponseWriter, r *http.Request, p
 	}
 	result, err := store.RenamePublisherGroup(r.Context(), body.TeamId, project, group, body.Name, actor, body.ExpectedRevision, time.Now())
 	if err != nil {
-		projectConfigurationProblem(w, "rename publisher group", err)
+		projectConfigurationProblem(r.Context(), w, "rename publisher group", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -80,7 +80,7 @@ func (h *handler) RevokePublisherGroupMember(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := store.RevokePublisherGroupMember(r.Context(), params.TeamId, project, group, publisher, actor, time.Now()); err != nil {
-		projectConfigurationProblem(w, "revoke publisher group member", err)
+		projectConfigurationProblem(r.Context(), w, "revoke publisher group member", err)
 		return
 	}
 	w.WriteHeader(204)
@@ -115,7 +115,7 @@ func (h *handler) CreatePublisherGroupEnrollment(w http.ResponseWriter, r *http.
 			writeProblem(w, 404, controlv1.NotFound, "publisher group not found")
 			return
 		}
-		projectConfigurationProblem(w, "issue publisher group enrollment", err)
+		projectConfigurationProblem(r.Context(), w, "issue publisher group enrollment", err)
 		return
 	}
 	writeJSON(w, 201, result)
@@ -138,7 +138,7 @@ func (h *handler) RedeemPublisherGroupEnrollment(w http.ResponseWriter, r *http.
 	}
 	result, err := store.RedeemPublisherGroupEnrollment(r.Context(), body.EnrollmentKey, public, time.Now())
 	if err != nil {
-		projectConfigurationProblem(w, "redeem publisher group enrollment", err)
+		projectConfigurationProblem(r.Context(), w, "redeem publisher group enrollment", err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -160,7 +160,7 @@ func (h *handler) AcquirePublisherGroupLease(w http.ResponseWriter, r *http.Requ
 	}
 	result, err := store.AcquirePublisherGroupLease(r.Context(), body.PublisherIdentityId, body.GroupId, body.Assertion, h.config.ControlURL+"/v1/publisher-groups/lease", time.Now())
 	if err != nil {
-		projectConfigurationProblem(w, "acquire publisher group lease", err)
+		projectConfigurationProblem(r.Context(), w, "acquire publisher group lease", err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -182,7 +182,7 @@ func (h *handler) VerifyPublisherGroupIdentity(w http.ResponseWriter, r *http.Re
 	}
 	result, err := store.VerifyPublisherGroupIdentity(r.Context(), body.PublisherIdentityId, body.GroupId, body.Assertion, h.config.ControlURL+"/v1/publisher-groups/verify", time.Now())
 	if err != nil {
-		projectConfigurationProblem(w, "verify publisher group identity", err)
+		projectConfigurationProblem(r.Context(), w, "verify publisher group identity", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -200,7 +200,7 @@ func (h *handler) GetPublisherGroupAssignments(w http.ResponseWriter, r *http.Re
 	}
 	result, err := store.GetPublisherGroupAssignments(r.Context(), token, time.Now())
 	if err != nil {
-		projectConfigurationProblem(w, "get publisher group assignments", err)
+		projectConfigurationProblem(r.Context(), w, "get publisher group assignments", err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -222,7 +222,7 @@ func (h *handler) AcknowledgePublisherGroupConfiguration(w http.ResponseWriter, 
 		return
 	}
 	if err := store.AcknowledgePublisherGroupConfiguration(r.Context(), token, body.Revision, body.ConfigurationHash, body.Healthy, time.Now()); err != nil {
-		projectConfigurationProblem(w, "acknowledge publisher group configuration", err)
+		projectConfigurationProblem(r.Context(), w, "acknowledge publisher group configuration", err)
 		return
 	}
 	w.WriteHeader(204)

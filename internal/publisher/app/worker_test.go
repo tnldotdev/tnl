@@ -213,12 +213,12 @@ func TestTargetResolutionDelegatesDiscoveryAndRejectsApps(t *testing.T) {
 	container := "redis-worktree"
 	project := clientproject.Project{Root: "/project", Config: config.TNL{Services: config.Services{"db": {Protocol: &protocol, Target: &config.ServiceTarget{Type: "docker", Container: &container, Port: &port}}, "web": {}}}}
 	var selected string
-	resolved, err := target.ResolveTarget(t.Context(), project, "db", target.TargetResolverFunc(func(_ context.Context, p clientproject.Project, name string) (string, error) {
+	resolved, err := target.ResolveTarget(t.Context(), project, "db", target.TargetResolverFunc(func(_ context.Context, p clientproject.Project, name string) (string, string, error) {
 		selected = name
 		if p.Root != "/project" {
 			t.Error("wrong project")
 		}
-		return "127.0.0.1:16379", nil
+		return "127.0.0.1:16379", "redis-container-id", nil
 	}))
 	if err != nil || selected != "db" || string(*resolved.Target) != "127.0.0.1:16379" {
 		t.Fatalf("resolved=%+v err=%v", resolved, err)

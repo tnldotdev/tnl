@@ -49,17 +49,13 @@ type PublisherPublicURLOptions struct {
 	RequirePostQuantum bool
 }
 
-func (d *Database) AllocatePublisherPublicURL(ctx context.Context, p PublisherIdentity, invocation, target string, prefixes []string, binding []byte, now time.Time, options ...PublisherPublicURLOptions) (PublicURL, error) {
+func (d *Database) AllocatePublisherPublicURL(ctx context.Context, p PublisherIdentity, invocation, target string, prefixes []string, binding []byte, now time.Time, options PublisherPublicURLOptions) (PublicURL, error) {
 	if p.Scope.Kind != "namespace" || p.GuestID != "" {
 		return PublicURL{}, ErrPublisherIdentity
 	}
-	mode := VisitorAccessRestricted
-	requirePostQuantum := false
-	if len(options) != 0 {
-		mode = options[0].AccessMode
-		requirePostQuantum = options[0].RequirePostQuantum
-	}
-	if !mode.Valid() || len(options) > 1 {
+	mode := options.AccessMode
+	requirePostQuantum := options.RequirePostQuantum
+	if !mode.Valid() {
 		return PublicURL{}, ErrPublicURLInvalid
 	}
 	encoded, err := json.Marshal(struct {

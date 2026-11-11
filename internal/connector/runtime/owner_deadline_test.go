@@ -69,7 +69,7 @@ func TestConnectionOwnerRenewalUsesOriginalDeadline(t *testing.T) {
 			stopped := make(chan struct{})
 			go func() {
 				defer close(stopped)
-				done <- Serve(life, scope, directory, "/test/tnl", b, writer)
+				done <- Serve(life, scope, directory, "/test/tnl", OwnerConfig{Backend: b, Done: b.failed}, writer)
 			}()
 			t.Cleanup(func() {
 				cancel()

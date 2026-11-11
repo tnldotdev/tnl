@@ -8,7 +8,7 @@ import (
 
 func TestSavedPublicURLPostQuantumRequirement(t *testing.T) {
 	control := &publisherControlStub{allowed: []string{"lookup", "create", "update"}}
-	cfg := Config{Control: control, TeamID: "team", DomainID: "domain", PublicURLScope: controlv1.Shared,
+	cfg := Config{Control: control, Management: control, TeamID: "team", DomainID: "domain", PublicURLScope: controlv1.Shared,
 		Purpose: controlv1.App, Hostname: "app.example", Target: "http://127.0.0.1:3000", RequirePostQuantum: new(true)}
 	u, created, err := createOrLoadPublicURL(t.Context(), cfg)
 	if err != nil || !created || !u.RequirePostQuantum {

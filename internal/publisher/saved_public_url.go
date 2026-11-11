@@ -77,8 +77,8 @@ func createOrLoadPublicURL(ctx context.Context, config Config) (controlv1.Public
 	if config.Ephemeral {
 		body.Ephemeral = &config.Ephemeral
 	}
-	management, ok := config.Control.(PublicURLManagementClient)
-	if !ok {
+	management := config.Management
+	if management == nil {
 		return controlv1.PublicURL{}, false, failure.Wrap("create saved public URL", failure.PublisherGrantMismatch, errors.New("publisher grant does not permit public URL management"))
 	}
 	publicURL, err := management.CreatePublicURL(ctx, body, idempotencyKey)
@@ -125,10 +125,8 @@ func reconcilePublicURL(ctx context.Context, config Config, publicURL controlv1.
 		desiredPolicy = slices.Clone(currentPolicy)
 	}
 	if !integration && config.AccessMode != "" && (publicURL.AccessMode != config.AccessMode || !slices.Equal(currentPolicy, config.AllowedIPPrefixes)) {
-		client, ok := config.Control.(interface {
-			ReplaceVisitorAccess(context.Context, string, controlv1.ReplaceVisitorAccessRequest) (controlv1.PublicURL, error)
-		})
-		if !ok {
+		client := config.AccessManagement
+		if client == nil {
 			return controlv1.PublicURL{}, errors.New("publisher: current visitor policy client is required")
 		}
 		updated, err := client.ReplaceVisitorAccess(ctx, publicURL.Id, controlv1.ReplaceVisitorAccessRequest{
@@ -146,8 +144,8 @@ func reconcilePublicURL(ctx context.Context, config Config, publicURL controlv1.
 		desiredTarget = ""
 	}
 	if !slices.Equal(currentPolicy, desiredPolicy) {
-		management, ok := config.Control.(PublicURLManagementClient)
-		if !ok {
+		management := config.Management
+		if management == nil {
 			return controlv1.PublicURL{}, failure.Wrap("edit saved public URL", failure.PublisherGrantMismatch, errors.New("publisher grant does not permit public URL management"))
 		}
 		updated, err := management.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{
@@ -159,8 +157,8 @@ func reconcilePublicURL(ctx context.Context, config Config, publicURL controlv1.
 	if publicURL.Target == desiredTarget && (config.RequirePostQuantum == nil || *config.RequirePostQuantum == publicURL.RequirePostQuantum) {
 		return publicURL, nil
 	}
-	management, ok := config.Control.(PublicURLManagementClient)
-	if !ok {
+	management := config.Management
+	if management == nil {
 		return controlv1.PublicURL{}, failure.Wrap("edit saved public URL", failure.PublisherGrantMismatch, errors.New("publisher grant does not permit public URL management"))
 	}
 	updated, err := management.UpdatePublicURL(ctx, publicURL.Id, controlv1.UpdatePublicURLRequest{

@@ -1,9 +1,9 @@
 -- +goose Up
 CREATE TABLE baseline_identity (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    identity TEXT NOT NULL CHECK (identity = 'tnl-client-fresh-v1-services')
+    identity TEXT NOT NULL CHECK (identity = 'tnl-client-fresh-v1-integration-scope')
 ) STRICT;
-INSERT INTO baseline_identity (id, identity) VALUES (1, 'tnl-client-fresh-v1-services');
+INSERT INTO baseline_identity (id, identity) VALUES (1, 'tnl-client-fresh-v1-integration-scope');
 
 -- provisioning journals are append-only and protected by the client wrapping
 -- key. no expiration may discard a key after a remote enrollment committed.
@@ -111,12 +111,6 @@ CREATE TABLE local_tunnels (
     service_protocol TEXT NOT NULL DEFAULT 'http' CHECK (service_protocol = 'http'),
     primary_project_root TEXT,
     integration_namespace TEXT,
-    -- compatibility projection for the native caller's existing group key;
-    -- only the two components are persisted.
-    integration_group TEXT GENERATED ALWAYS AS (
-        CASE WHEN primary_project_root IS NULL THEN ''
-             ELSE primary_project_root || char(0) || integration_namespace END
-    ) VIRTUAL NOT NULL,
     hostname TEXT CHECK (hostname IS NULL OR hostname <> ''),
     target TEXT CHECK (target IS NULL OR target <> ''),
     framework TEXT CHECK (framework IS NULL OR framework <> ''),
@@ -149,7 +143,7 @@ CREATE INDEX local_tunnels_project_open_idx
 CREATE INDEX local_tunnels_cleanup_idx
     ON local_tunnels (stopped_at, lease_expires_at);
 
-CREATE INDEX local_tunnels_integration_group_idx ON local_tunnels (server_origin, primary_project_root, integration_namespace, lease_expires_at)
+CREATE INDEX local_tunnels_integration_scope_idx ON local_tunnels (server_origin, primary_project_root, integration_namespace, lease_expires_at)
     WHERE stopped_at IS NULL;
 
 -- locally observed public URL IDs let status read server state after a tunnel
@@ -258,7 +252,6 @@ CREATE TABLE webhook_owners (
     server_origin TEXT NOT NULL REFERENCES server_profiles(origin) ON DELETE CASCADE,
     primary_project_root TEXT NOT NULL,
     integration_namespace TEXT NOT NULL,
-    integration_group TEXT GENERATED ALWAYS AS (primary_project_root || char(0) || integration_namespace) VIRTUAL NOT NULL,
     name TEXT NOT NULL,
     tunnel_id TEXT NOT NULL REFERENCES local_tunnels(id) ON DELETE CASCADE,
     PRIMARY KEY (server_origin, primary_project_root, integration_namespace, name),

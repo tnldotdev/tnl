@@ -18,7 +18,7 @@ func connectorRenewalPair(t *testing.T) (*Session, *Session, tunnelv1.ConnectorP
 		ServiceID: "svc_1234567890123456789012", ServiceRunID: "srun_1234567890123456789012", RunNumber: 1,
 		PublisherIdentityID: "pub_1234567890123456789012", PublisherConnectionID: "pc_1234567890123456789012", AssignmentRevision: 1,
 		RelayServiceID: "relay-a", RelayID: "node-a", RelayRunID: "run-a", RelayLeaseRevision: 1, RequestedAt: time.Now(), Nonce: make([]byte, 32), Signature: make([]byte, 64)}
-	receipt := tunnelv1.ConnectorPairLegAccepted{PairID: proof.PairID, DeliveryID: "AQEBAQEBAQEBAQEBAQEBAQ", DeliveryGeneration: 1,
+	receipt := tunnelv1.ConnectorPairLegAccepted{PairID: proof.PairID, DeliveryID: "AQEBAQEBAQEBAQEBAQEBAQ", DeliveryGeneration: 1, BindingState: tunnelv1.ConnectorPeerLegBindingActive,
 		SourceIP: "127.0.0.1", ObservedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}
 	left, right := newMemoryPair(t)
 	type result struct {

@@ -12,7 +12,7 @@ import (
 )
 
 type nativeAuditFixture struct {
-	NativeControl
+	unusedControl
 	calls int
 	token credentials.PublishRunToken
 }
@@ -24,7 +24,7 @@ func (c *nativeAuditFixture) ReportPublisherServiceObservations(_ context.Contex
 }
 func TestConnectorAuditForwardingRetainsSelectedServiceAndRunCredential(t *testing.T) {
 	c := &nativeAuditFixture{}
-	n := &Native{NativeControl: c, publicURL: controlv1.PublicURL{Id: "url_0123456789ABCDEFGHIJKL"}}
+	n := &Native{NativeControl: NativeControl{PublicURLControl: c}, publicURL: controlv1.PublicURL{Id: "url_0123456789ABCDEFGHIJKL"}}
 	o := serviceaudit.Observation{EventID: serviceaudit.NewID(), ServiceID: n.publicURL.Id, ServiceKind: "public_url", RunID: "pr_0123456789ABCDEFGHIJKL", RunNumber: 1, EventType: "http.decision", VisitorConnectionID: "vc_0123456789ABCDEFGHIJKL", OccurredAt: time.Now(), Outcome: "allowed"}
 	if err := n.ReportPublisherServiceObservations(t.Context(), o.RunID, 1, "run-token", serviceaudit.Batch{Events: []serviceaudit.Observation{o}}); err != nil || c.calls != 1 || c.token != "run-token" {
 		t.Fatal("native lost audit capability or credential", err)

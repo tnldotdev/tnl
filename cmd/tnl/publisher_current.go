@@ -63,7 +63,7 @@ func runPublisherCurrent(ctx context.Context, flags publisherCurrentCommand, out
 			if err != nil {
 				return err
 			}
-			selected, err := publisheridentity.LoadFile(path, file.ControlURL, control, authority)
+			selected, err := publisheridentity.LoadFile(path, file.ControlURL, publisheridentity.NativeControl{PublicURLControl: control, Services: control}, authority)
 			if err != nil {
 				return err
 			}
@@ -111,7 +111,7 @@ func runPublisherCurrent(ctx context.Context, flags publisherCurrentCommand, out
 			if err != nil {
 				return err
 			}
-			if _, err := publisheridentity.LoadDefaultNamespace(ctx, profile, control, authority); err != nil {
+			if _, err := publisheridentity.LoadDefaultNamespace(ctx, profile, publisheridentity.NativeControl{PublicURLControl: control}, authority); err != nil {
 				return err
 			}
 			result.Checked = true

@@ -20,6 +20,7 @@ import (
 
 type installedServiceTargetControl struct {
 	*backgroundControl
+	publisheridentity.ServiceControl
 	service controlv1.Service
 }
 
@@ -47,8 +48,8 @@ func TestScopedPrivateInstallCapturesTargetTrustForRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	control := installedServiceTargetControl{backgroundControl: base, service: controlv1.Service{Id: id, TeamId: authority.identity.TeamId, Name: "database", Enabled: true, Protocol: controlv1.Tcp, TrustRevision: 1, TargetTls: publisheridentity.ServiceTargetTLS(trust), Endpoint: &controlv1.ServiceEndpoint{Hostname: "database.worktree.member.example.test", Port: 25443}}}
-	clients := func(supervisor.Job) (publisheridentity.NativeControl, publisheridentity.EnrollmentAuthority, error) {
-		return control, authority, nil
+	clients := func(supervisor.Job) (supervisor.PublisherClients, publisheridentity.EnrollmentAuthority, error) {
+		return supervisor.PublisherClients{NativeControl: publisheridentity.NativeControl{PublicURLControl: control, Services: control}}, authority, nil
 	}
 	if err := installBackgroundJob(t.Context(), registry, flags, selection, backgroundPublishFlags{Install: true}, strings.NewReader(""), clients, nil); err != nil {
 		t.Fatal(err)

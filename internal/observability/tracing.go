@@ -57,14 +57,13 @@ func parentOnlyLinks(options []trace.SpanStartOption) []trace.SpanStartOption {
 	return clean
 }
 
-func finishSpan(span trace.Span, outcome string) {
-	result, reason := classifyResult(outcome)
-	span.SetAttributes(OutcomeKey.Value(result))
-	if reason != "" {
+func finishSpan(span trace.Span, result semanticResult) {
+	span.SetAttributes(OutcomeKey.Value(result.outcome))
+	if reason := result.reason.String(); reason != "" {
 		span.SetAttributes(Reason.String(reason))
 	}
-	if result != Success && result != Canceled {
-		span.SetStatus(codes.Error, result.String())
+	if result.outcome != Success && result.outcome != Canceled {
+		span.SetStatus(codes.Error, result.outcome.String())
 	}
 }
 
@@ -123,7 +122,7 @@ func PublisherOperation(ctx context.Context, operation operationName) (context.C
 
 // completedSpan adapts existing observers which already own a measured interval.
 // it makes local operation spans without inventing cross-process parentage.
-func (m *Metrics) completedSpan(name operationName, outcome string, elapsed time.Duration) {
+func (m *Metrics) completedSpan(name operationName, outcome semanticResult, elapsed time.Duration) {
 	if m == nil || elapsed < 0 {
 		return
 	}
@@ -181,16 +180,16 @@ func (t ownedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	r.Header.Del("Baggage")
 	r.Header.Set("Traceparent", WireTrace(ctx).TraceParent)
 	response, err := t.base.RoundTrip(r)
-	outcome := durationOutcome(err)
+	outcome := semanticResult{outcome: ErrorOutcome(err)}
 	if response != nil {
 		span.SetAttributes(HTTPStatus.Int(response.StatusCode))
 		switch {
 		case response.StatusCode >= 500:
-			outcome = "server_error"
+			outcome = APIRequestServerError.result()
 		case response.StatusCode == 401 || response.StatusCode == 403:
-			outcome = "denied"
+			outcome = APIRequestDenied.result()
 		case response.StatusCode >= 400:
-			outcome = "client_error"
+			outcome = APIRequestClientError.result()
 		}
 	}
 	if err != nil {

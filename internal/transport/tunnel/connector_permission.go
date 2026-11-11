@@ -250,7 +250,11 @@ func (r *ConnectorPermissionResponder) respond(update tunnelv1.ConnectorPermissi
 
 // dispatch must enqueue without policy or application IO. terminal wire failure
 // fences the owner through failed before physical interruption joins.
-func ServeConnectorPermissionControl(ctx context.Context, stream muxsession.Stream, dispatch func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder), failed func(), suspension ...*ConnectorPermissionGate) error {
+// suspension belongs to the role that stages and activates the packet binding.
+func ServeConnectorPermissionControl(ctx context.Context, stream muxsession.Stream, dispatch func(tunnelv1.ConnectorPermissionUpdate, *ConnectorPermissionResponder), failed func(), suspension *ConnectorPermissionGate) error {
+	if suspension == nil {
+		return errors.New("tunnel: connector permission suspension gate is required")
+	}
 	life, cancel := context.WithCancelCause(ctx)
 	joined := make(chan struct{})
 	stop := context.AfterFunc(life, func() { defer close(joined); _ = stream.Reset(0) })
@@ -265,11 +269,7 @@ func ServeConnectorPermissionControl(ctx context.Context, stream muxsession.Stre
 		cancel(err)
 		once.Do(failed)
 	}
-	gate := &ConnectorPermissionGate{}
-	if len(suspension) > 0 && suspension[0] != nil {
-		gate = suspension[0]
-	}
-	responder := &ConnectorPermissionResponder{ctx: life, stream: stream, gate: make(chan struct{}, 1), fail: fail, suspension: gate}
+	responder := &ConnectorPermissionResponder{ctx: life, stream: stream, gate: make(chan struct{}, 1), fail: fail, suspension: suspension}
 	for {
 		update, err := tunnelv1.ReadConnectorPermissionUpdate(stream)
 		if errors.Is(err, tunnelv1.ErrConnectorPermissionUpdate) {

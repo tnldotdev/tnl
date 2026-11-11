@@ -20,7 +20,7 @@ func (d *Database) HeartbeatPublishRun(
 	leaseDuration time.Duration,
 	connectionCredentialDuration time.Duration,
 ) (result PublishRunSetup, retErr error) {
-	ctx, finish := d.observeOperation(ctx, "HeartbeatPublishRun")
+	ctx, finish := d.observeOperation(ctx, observability.OpHeartbeatPublishRun)
 	defer func() { finish(retErr) }()
 	if err := validatePublishRunAuthentication(authentication); err != nil {
 		return PublishRunSetup{}, err

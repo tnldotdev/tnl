@@ -69,7 +69,7 @@ func TestNativeOTLPPanicIsErrorWithoutExceptionOrSecret(t *testing.T) {
 
 func TestNativeOTLPCompletedOperationsKeepDistinctMachineNames(t *testing.T) {
 	f := newLinkTraceFixture(t, 1)
-	f.owner.completedSpan("database.commit", "success", time.Millisecond)
+	f.owner.completedSpan("database.commit", semanticResult{outcome: Success}, time.Millisecond)
 	_, finish := f.owner.completedOperation(WithMetrics(t.Context(), f.owner), "database.rollback", time.Millisecond)
 	finish(nil)
 	for name, span := range f.exported(t) {

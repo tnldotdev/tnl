@@ -304,6 +304,8 @@ func assertRelayProblemType(t *testing.T, response *httptest.ResponseRecorder, w
 }
 
 type relayStoreStub struct {
+	serviceConnectionStore
+	connectorPeerLegStore
 	registerRelay                 func(context.Context, controlstate.RelayRegistration, time.Time, time.Duration) (controlstate.RelayLease, error)
 	renewRelay                    func(context.Context, controlstate.RelayRenewal, time.Time, time.Duration) (controlstate.RelayLease, error)
 	beginRelayDrain               func(context.Context, controlstate.RelayLeaseIdentity, time.Time, time.Time) (controlstate.RelayLease, error)

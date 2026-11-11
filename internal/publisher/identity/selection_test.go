@@ -56,7 +56,7 @@ func TestResolveAdHocRequiresExplicitSetupAndFailsClosedOnInvalidFile(t *testing
 		t.Fatal(err)
 	}
 	a := &scopedAuthority{identity: authorityv1.PublisherEnrollmentResult{ClientId: id, KeyId: keyID, GrantId: grant, TeamId: "team", Kind: "saved_public_url", PublicUrlId: &url}}
-	control := &unusedControl{}
+	control := NativeControl{PublicURLControl: &unusedControl{}}
 	if _, err := ResolveAdHoc(t.Context(), state, control, a, server, "team", "domain", "member.example", "", "", "", nil); !errors.Is(err, ErrSetupRequired) {
 		t.Fatalf("setup was not required: %v", err)
 	}
@@ -110,23 +110,24 @@ func TestExplicitSetupReusesNamespaceKeyWithoutNewEnrollment(t *testing.T) {
 	if c.calls != 1 || lost.calls != 2 {
 		t.Fatalf("setup re-enrolled: created=%d redeemed=%d", c.calls, lost.calls)
 	}
-	if _, err := LoadLocalNamespace(t.Context(), state, c, a, team, domain, namespace); err != nil {
+	clients := NativeControl{PublicURLControl: c}
+	if _, err := LoadLocalNamespace(t.Context(), state, clients, a, team, domain, namespace); err != nil {
 		t.Fatal(err)
 	}
-	if selected, err := LoadDefaultNamespace(t.Context(), state, c, a); err != nil || selected.PublisherIdentityID() != id {
+	if selected, err := LoadDefaultNamespace(t.Context(), state, clients, a); err != nil || selected.PublisherIdentityID() != id {
 		t.Fatalf("explicit setup did not select a usable default namespace: %v", err)
 	}
-	if _, err := LoadLocalNamespace(t.Context(), state, c, a, team, domain, "other.example"); !errors.Is(err, ErrScope) {
+	if _, err := LoadLocalNamespace(t.Context(), state, clients, a, team, domain, "other.example"); !errors.Is(err, ErrScope) {
 		t.Fatalf("scope widened: %v", err)
 	}
 	t.Setenv("TNL_PUBLISHER_CREDENTIAL_FILE", "")
 	if err := os.Unsetenv("TNL_PUBLISHER_CREDENTIAL_FILE"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ResolveAdHoc(t.Context(), state, c, a, "https://control.example", team, domain, namespace, "", "", "", nil); err != nil {
+	if _, err := ResolveAdHoc(t.Context(), state, clients, a, "https://control.example", team, domain, namespace, "", "", "", nil); err != nil {
 		t.Fatalf("local namespace default: %v", err)
 	}
-	if _, err := ResolveAdHoc(t.Context(), state, c, a, "https://control.example", "", "", "", "", "", "", nil); err != nil {
+	if _, err := ResolveAdHoc(t.Context(), state, clients, a, "https://control.example", "", "", "", "", "", "", nil); err != nil {
 		t.Fatalf("local setup required a control session during publication: %v", err)
 	}
 	saved, found, err := state.PublisherIdentity(t.Context(), id)
@@ -141,14 +142,14 @@ func TestExplicitSetupReusesNamespaceKeyWithoutNewEnrollment(t *testing.T) {
 	if err := credentialfile.Write(path, file); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ResolveAdHoc(t.Context(), state, c, a, "https://control.example", "other-team", "other-domain", "other.example", path, "", "", nil); err != nil {
+	if _, err := ResolveAdHoc(t.Context(), state, clients, a, "https://control.example", "other-team", "other-domain", "other.example", path, "", "", nil); err != nil {
 		t.Fatalf("explicit file did not override local selection: %v", err)
 	}
-	if _, err := ResolveAdHoc(t.Context(), state, c, a, "https://control.example", team, domain, namespace, path+".missing", "", "", nil); !errors.Is(err, credentialfile.ErrInvalid) {
+	if _, err := ResolveAdHoc(t.Context(), state, clients, a, "https://control.example", team, domain, namespace, path+".missing", "", "", nil); !errors.Is(err, credentialfile.ErrInvalid) {
 		t.Fatalf("invalid explicit file fell back to local setup: %v", err)
 	}
 	t.Setenv("TNL_PUBLISHER_CREDENTIAL_FILE", path+".missing")
-	if _, err := ResolveAdHoc(t.Context(), state, c, a, "https://control.example", team, domain, namespace, "", "", id, nil); errors.Is(err, ErrSelection) || errors.Is(err, credentialfile.ErrInvalid) {
+	if _, err := ResolveAdHoc(t.Context(), state, clients, a, "https://control.example", team, domain, namespace, "", "", id, nil); errors.Is(err, ErrSelection) || errors.Is(err, credentialfile.ErrInvalid) {
 		t.Fatalf("explicit publisher ID was overridden by environment file: %v", err)
 	}
 }
@@ -178,12 +179,18 @@ func TestPortableNamespaceFileAuthorizesWithoutLocalSetup(t *testing.T) {
 	if err := credentialfile.Write(path, f); err != nil {
 		t.Fatal(err)
 	}
-	n, err := ResolveAdHoc(t.Context(), nil, &unusedControl{}, a, server, "", "", "", path, "", "", nil)
+	n, err := ResolveAdHoc(t.Context(), nil, NativeControl{PublicURLControl: &unusedControl{}}, a, server, "", "", "", path, "", "", nil)
 	if err != nil || n.PublisherIdentityID() != id || a.accesses != 1 {
 		t.Fatalf("portable namespace file: %v", err)
 	}
-	if _, err := ResolveAdHoc(t.Context(), nil, &unusedControl{}, a, "https://other.example", "", "", "", path, "", "", nil); !errors.Is(err, ErrScope) {
+	if _, err := ResolveAdHoc(t.Context(), nil, NativeControl{PublicURLControl: &unusedControl{}}, a, "https://other.example", "", "", "", path, "", "", nil); !errors.Is(err, ErrScope) {
 		t.Fatalf("file used with wrong control: %v", err)
+	}
+	for _, endpoint := range []string{"", "https://other.example"} {
+		control := NativeControl{PublicURLControl: endpointControl{server: endpoint}}
+		if _, err := LoadFile(path, server, control, a); !errors.Is(err, ErrScope) {
+			t.Fatalf("file accepted client endpoint %q: %v", endpoint, err)
+		}
 	}
 }
 

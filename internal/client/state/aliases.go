@@ -28,9 +28,10 @@ type AliasScope struct {
 }
 
 type AliasRegistration struct {
-	Scope                                         AliasScope
-	Hostname, Service, TunnelID, IntegrationGroup string
-	Fingerprint                                   [32]byte
+	Scope                       AliasScope
+	Hostname, Service, TunnelID string
+	IntegrationScope            IntegrationScope
+	Fingerprint                 [32]byte
 }
 
 type AliasSelection struct {
@@ -60,8 +61,10 @@ func (d *Database) RegisterAlias(ctx context.Context, registration AliasRegistra
 		return AliasSelection{}, err
 	}
 	hostname, err := naming.CanonicalizeHostname(registration.Hostname)
-	groupProject, _, validGroup := strings.Cut(registration.IntegrationGroup, "\x00")
-	if err != nil || hostname != registration.Hostname || !naming.ValidServiceName(registration.Service) || !validGroup || groupProject != scope.ProjectKey {
+	if err := registration.IntegrationScope.Validate(); err != nil {
+		return AliasSelection{}, err
+	}
+	if err != nil || hostname != registration.Hostname || !naming.ValidServiceName(registration.Service) || registration.IntegrationScope.PrimaryProjectRoot != scope.ProjectKey {
 		return AliasSelection{}, errors.New("invalid alias declaration")
 	}
 	id, err := opaqueid.New(opaqueid.AliasPrefix)
@@ -80,7 +83,7 @@ func (d *Database) RegisterAlias(ctx context.Context, registration AliasRegistra
 		AliasID: id, ServerOrigin: scope.Server, ProjectKey: scope.ProjectKey, TeamID: scope.TeamID,
 		MembershipID: scope.MembershipID, Namespace: scope.Namespace, Name: scope.Name,
 		Hostname: hostname, Service: registration.Service, Fingerprint: registration.Fingerprint[:],
-		TunnelID: registration.TunnelID, IntegrationGroup: registration.IntegrationGroup, Now: now,
+		TunnelID: registration.TunnelID, IntegrationNamespace: registration.IntegrationScope.namespace(), Now: now,
 	})
 	if err != nil {
 		return AliasSelection{}, err
@@ -111,7 +114,7 @@ func (d *Database) RegisterAlias(ctx context.Context, registration AliasRegistra
 	count, err := queries.RegisterAliasDeclaration(ctx, clientstatedb.RegisterAliasDeclarationParams{
 		AliasID: row.ID, TunnelID: registration.TunnelID, Fingerprint: registration.Fingerprint[:],
 		ServerOrigin: scope.Server, Service: sql.NullString{String: registration.Service, Valid: true},
-		IntegrationGroup: registration.IntegrationGroup, Now: now,
+		PrimaryProjectRoot: registration.IntegrationScope.primaryProjectRoot(), IntegrationNamespace: registration.IntegrationScope.namespace(), Now: now,
 	})
 	if err != nil {
 		return AliasSelection{}, err
@@ -176,7 +179,7 @@ func (d *Database) AliasCandidate(ctx context.Context, id string) (AliasSelectio
 		return selection, TunnelInfo{}, err
 	}
 	return selection, TunnelInfo{ID: tunnel.ID, Server: tunnel.ServerOrigin, Project: tunnel.ProjectRoot,
-		Service: tunnel.Service.String, IntegrationGroup: tunnel.IntegrationGroup, State: TunnelState(tunnel.State),
+		Service: tunnel.Service.String, IntegrationScope: IntegrationScope{PrimaryProjectRoot: tunnel.PrimaryProjectRoot.String, Namespace: tunnel.IntegrationNamespace.String}, State: TunnelState(tunnel.State),
 		Target: tunnel.Target.String, Hostname: tunnel.Hostname.String, PublicURL: "https://" + tunnel.Hostname.String,
 		PublicURLID: tunnel.PublicURLID.String, PublishRunNumber: uint64(tunnel.PublishRunNumber.Int64)}, nil
 }

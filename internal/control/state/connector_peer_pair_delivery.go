@@ -41,7 +41,7 @@ type ConnectorPeerPairPrepared struct {
 }
 
 func (d *Database) ConfirmConnectorPeerPairPrepared(ctx context.Context, serviceID, runID, pairID, token string, prepared ConnectorPeerPairPrepared, now time.Time) error {
-	if prepared.DeliveryID == [16]byte{} || !prepared.BindingExpiresAt.After(now) {
+	if prepared.DeliveryID == [16]byte{} || !prepared.BindingExpiresAt.After(now) || prepared.Phase != "installed" && prepared.Phase != "proved" {
 		return ErrServiceAccess
 	}
 	_, err := d.connectorPeerPairDelivery(ctx, serviceID, runID, pairID, prepared.DeliveryGeneration, token, now, &prepared)
@@ -100,10 +100,7 @@ func (d *Database) connectorPeerPairDelivery(ctx context.Context, serviceID, run
 			return ConnectorPeerPairDelivery{}, ErrServiceAccess
 		}
 		phase := prepared.Phase
-		if phase == "" && pair.BindingOperationID == "" {
-			phase = "installed"
-		}
-		if phase != "installed" && phase != "proved" || prepared.OperationID != pair.BindingOperationID || prepared.BindingChallenge != result.BindingChallenge ||
+		if prepared.OperationID != pair.BindingOperationID || prepared.BindingChallenge != result.BindingChallenge ||
 			phase == "installed" && len(prepared.PathProofs) != 0 {
 			return ConnectorPeerPairDelivery{}, ErrServiceAccess
 		}

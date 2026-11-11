@@ -150,7 +150,7 @@ func TestServiceReadinessTransitions(t *testing.T) {
 	}{
 		{"success", func(*Service, *Observation) {}, true},
 		{"readiness failure keeps routability", func(_ *Service, o *Observation) { o.Ready, o.Reason = false, "runtime.probe_failed" }, true},
-		{"optional target remains compatible", func(_ *Service, o *Observation) { o.Target = "" }, true},
+		{"missing target", func(_ *Service, o *Observation) { o.Target = "" }, false},
 		{"unregistered", func(s *Service, _ *Observation) { s.Registered = false }, false},
 		{"unroutable", func(s *Service, _ *Observation) { s.Routable = false }, false},
 		{"zero run", func(s *Service, o *Observation) { s.RunNumber, o.RunNumber = 0, 0 }, false},

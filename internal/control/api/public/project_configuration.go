@@ -17,7 +17,7 @@ type ProjectConfigurationStore interface {
 	GetProjectConfiguration(context.Context, string, string, string) (controlstate.AppliedProjectConfiguration, error)
 }
 
-func projectConfigurationProblem(w http.ResponseWriter, operation string, err error) {
+func projectConfigurationProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	switch {
 	case errors.Is(err, controlstate.ErrWorkloadBinding):
 		writeProblem(w, 400, controlv1.InvalidRequest, "GitHub workload policy requires verified repository and owner IDs; apply from a trusted operator with repository metadata access")
@@ -38,7 +38,7 @@ func projectConfigurationProblem(w http.ResponseWriter, operation string, err er
 	case errors.Is(err, pgx.ErrNoRows):
 		writeProblem(w, 404, controlv1.NotFound, "project or publisher group not found")
 	default:
-		writeControlStateProblem(w, operation, err)
+		writeControlStateProblem(ctx, w, operation, err)
 	}
 }
 
@@ -78,17 +78,17 @@ func (h *handler) ApplyProjectConfiguration(w http.ResponseWriter, r *http.Reque
 	}
 	c, _, err := controlstate.NormalizeProjectConfiguration(*body.Configuration)
 	if err != nil {
-		projectConfigurationProblem(w, "validate project configuration", err)
+		projectConfigurationProblem(r.Context(), w, "validate project configuration", err)
 		return
 	}
 	c, err = store.ResolveProjectConfiguration(r.Context(), body.TeamID, actor, c)
 	if err != nil {
-		projectConfigurationProblem(w, "resolve project public hostnames", err)
+		projectConfigurationProblem(r.Context(), w, "resolve project public hostnames", err)
 		return
 	}
 	result, err := store.ApplyProjectConfiguration(r.Context(), controlstate.ApplyProjectConfigurationRequest{TeamID: body.TeamID, ProjectKey: project, SourceFingerprint: body.SourceFingerprint, ProjectLabel: body.ProjectLabel, ActorID: actor, ExpectedRevision: *body.ExpectedRevision, Configuration: c, DNSAutomation: h.config.DNSAutomation, TrafficDefaults: h.config.TrafficDefaults, TrafficCeiling: h.config.TrafficCeiling, Now: time.Now()})
 	if err != nil {
-		projectConfigurationProblem(w, "apply project configuration", err)
+		projectConfigurationProblem(r.Context(), w, "apply project configuration", err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -107,7 +107,7 @@ func (h *handler) GetProjectConfiguration(w http.ResponseWriter, r *http.Request
 	}
 	result, err := store.GetProjectConfiguration(r.Context(), params.TeamId, project, actor)
 	if err != nil {
-		projectConfigurationProblem(w, "get project configuration", err)
+		projectConfigurationProblem(r.Context(), w, "get project configuration", err)
 		return
 	}
 	writeJSON(w, 200, result)

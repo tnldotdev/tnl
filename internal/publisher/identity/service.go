@@ -14,7 +14,11 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-type serviceControl interface {
+type ServiceControl interface {
+	serviceRunControl
+	ServiceCertificateControl
+	serviceHTTPControl
+	connectorPeerControl
 	GetPublisherService(context.Context, string) (controlv1.Service, error)
 }
 
@@ -22,29 +26,35 @@ type serviceRunControl interface {
 	PrepareServiceRun(context.Context, string, string, string, controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error)
 	HeartbeatServiceRun(context.Context, string, string, credentials.ServiceRunToken, controlv1.ServiceRunHeartbeat) (controlv1.ServiceRunState, error)
 	CloseServiceRun(context.Context, string, string, credentials.ServiceRunToken) error
+	StartServiceRun(context.Context, string, string, string, int64) (controlv1.ServiceRunSetup, error)
+	AuthorizeServiceClientCertificate(context.Context, string, string, credentials.ServiceRunToken, controlv1.AuthorizeServiceClientCertificateRequest) (controlv1.ServiceClientCertificateDecision, error)
+}
+
+type ServiceOwnerControl interface {
+	OwnerControl
+	ServiceControl
 }
 
 // EnsureServiceOwner saves a pending enrollment before redemption, so
 // response loss never issues a second grant or abandons the original key.
-func EnsureServiceOwner(ctx context.Context, state *clientstate.Store, control OwnerControl, authority EnrollmentAuthority, service controlv1.Service) (*Native, authorityv1.PublisherEnrollmentResult, error) {
+func EnsureServiceOwner(ctx context.Context, state *clientstate.Store, control ServiceOwnerControl, authority EnrollmentAuthority, service controlv1.Service) (*Native, authorityv1.PublisherEnrollmentResult, error) {
 	if state == nil || control == nil || authority == nil || !service.Enabled || !opaqueid.Valid(service.Id, opaqueid.ServicePrefix) || service.TeamId == "" {
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
 	if _, err := ServiceTrust(service); err != nil {
 		return nil, authorityv1.PublisherEnrollmentResult{}, err
 	}
-	return ensureSelectedEnrollment(ctx, state, control, authority, enrollmentSelection{kind: "service", team: service.TeamId, id: service.Id})
+	return ensureSelectedEnrollment(ctx, state, control, control, authority, enrollmentSelection{kind: "service", team: service.TeamId, id: service.Id})
 }
 
 func (n *Native) serviceControl(serviceID string) (serviceRunControl, error) {
 	if n == nil || n.identity.kind != authorityv1.Service || n.identity.serviceID != serviceID {
 		return nil, ErrScope
 	}
-	control, ok := n.NativeControl.(serviceRunControl)
-	if !ok {
+	if n.Services == nil {
 		return nil, ErrScope
 	}
-	return control, nil
+	return n.Services, nil
 }
 
 func (n *Native) PrepareServiceRun(ctx context.Context, serviceID, key, access string, declaration controlv1.ServiceRunDeclaration) (controlv1.ServiceRunPreparation, error) {
@@ -99,11 +109,10 @@ func (n *Native) GetPublisherService(ctx context.Context, access string) (contro
 	if n == nil || n.identity.kind != authorityv1.Service || n.identity.serviceID == "" || access == "" {
 		return controlv1.Service{}, ErrScope
 	}
-	control, ok := n.NativeControl.(serviceControl)
-	if !ok {
+	if n.Services == nil {
 		return controlv1.Service{}, ErrScope
 	}
-	service, err := control.GetPublisherService(ctx, access)
+	service, err := n.Services.GetPublisherService(ctx, access)
 	if err != nil {
 		return service, err
 	}

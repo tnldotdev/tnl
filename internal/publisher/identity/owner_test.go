@@ -67,7 +67,7 @@ func TestEnsureOwnerPublishesExactCompanionURLsAndReusesIdentity(t *testing.T) {
 		ready := make(chan publisher.Event, 1)
 		done := make(chan error, 1)
 		go func() {
-			done <- publisher.Run(ctx, publisher.Config{Control: reused, ControlURL: f.URL, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, MembershipID: *publicURL.MembershipId, PublicURLScope: publicURL.PublicUrlScope, Purpose: purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, Target: publicURL.Target, Handler: handler, ServiceProtocol: controlv1.Http, QUICConnector: muxsession.QUICConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}, Observe: func(event publisher.Event) error {
+			done <- publisher.Run(ctx, publisher.Config{Control: reused, Identity: reused, VisitorControl: reused, BrowserControl: reused, Shares: reused, ControlURL: f.URL, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, MembershipID: *publicURL.MembershipId, PublicURLScope: publicURL.PublicUrlScope, Purpose: purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, Target: publicURL.Target, Handler: handler, ServiceProtocol: controlv1.Http, QUICConnector: muxsession.QUICConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}, Observe: func(event publisher.Event) error {
 				if event.Type == publisher.EventReady {
 					ready <- event
 				}

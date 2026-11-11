@@ -46,23 +46,11 @@ import (
 type integrationGuestPublisherControl struct {
 	*clientcontrol.Client
 	native         *publisheridentity.Native
-	assigned       controlv1.PublicURL
 	shareRedeems   chan error
 	createRun      func(context.Context, string, string) (controlv1.PublishRunSetup, error)
 	markReady      func(context.Context, string, uint64, credentials.PublishRunToken) error
 	heartbeats     *atomic.Int64
 	policyRevision *atomic.Int64
-}
-
-func (c integrationGuestPublisherControl) PublisherIdentityID() string {
-	return c.native.PublisherIdentityID()
-}
-
-func (c integrationGuestPublisherControl) CreatePublicURL(_ context.Context, body controlv1.CreatePublicURLRequest, _ string) (controlv1.PublicURL, error) {
-	if body.Purpose != controlv1.Demo || body.CanonicalHostname != c.assigned.CanonicalHostname || body.Target != c.assigned.Target || body.Ephemeral == nil || !*body.Ephemeral {
-		return controlv1.PublicURL{}, publisheridentity.ErrScope
-	}
-	return c.assigned, nil
 }
 
 func (c integrationGuestPublisherControl) CreatePublishRun(ctx context.Context, id, retry string) (controlv1.PublishRunSetup, error) {
@@ -486,7 +474,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 		t.Fatal(err)
 	}
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: issuedPublisher.ClientId, KeyId: issuedPublisher.KeyId, GrantId: issuedPublisher.GrantId, TeamId: issuedPublisher.TeamId, PublicUrlId: &publicURL.Id, Kind: authorityv1.SavedPublicUrl}
-	native, err := publisheridentity.NewNative(scoped, authority, identity, private)
+	native, err := publisheridentity.NewNative(publisheridentity.NativeControl{PublicURLControl: scoped}, authority, identity, private)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -511,7 +499,7 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	var share controlv1.Share
 	shareRedeems := make(chan error, 1)
 	var heartbeats, policyRevision atomic.Int64
-	controlAdapter := integrationGuestPublisherControl{Client: authenticated.Control, native: native, assigned: publicURL, shareRedeems: shareRedeems, heartbeats: &heartbeats, policyRevision: &policyRevision}
+	controlAdapter := integrationGuestPublisherControl{Client: authenticated.Control, native: native, shareRedeems: shareRedeems, heartbeats: &heartbeats, policyRevision: &policyRevision}
 	preparing, allowReady := make(chan error, 1), make(chan struct{})
 	replacing := make(chan struct{})
 	if deadlineProof {
@@ -546,6 +534,8 @@ func testIntegrationGuestDemo(t *testing.T, deadlineProof bool) {
 	visitor.transport.ExpectContinueTimeout = 5 * time.Second
 	handle := startOwnedIntegrationPublisher(t, owner, publisher.Config{
 		Control: controlAdapter, TeamID: issued.TeamId, MembershipID: issued.MembershipId,
+		Identity: native, Audit: native, VisitorControl: controlAdapter, BrowserControl: scoped,
+		Shares: controlAdapter, Previews: scoped, FeedbackControl: scoped, AssignedPublicURL: &publicURL,
 		ControlURL: serverURL,
 		DomainID:   issued.DomainId, Hostname: hostname, PublicURLScope: controlv1.Member, Purpose: controlv1.Demo,
 		PolicyRevision: 1, Target: transferTarget.URL,

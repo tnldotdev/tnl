@@ -111,43 +111,8 @@ func SharedVocabulary() Vocabulary {
 	return Vocabulary{1, "internal/observability: vocabulary.go and instrument declarations", 2000, VocabularyAttributes(), instruments}
 }
 
-// classifyResult separates the small result vocabulary from closed domain detail.
-// no fallback ever uses the supplied value as a reason.
-func classifyResult(value string) (Outcome, string) {
-	switch value {
-	case "success", "allowed", "accepted":
-		return Success, ""
-	case "denied":
-		return Denied, ""
-	case "rejected":
-		return Rejected, ""
-	case "timeout", "deadline_exceeded":
-		return Timeout, ""
-	case "canceled":
-		return Canceled, ""
-	case "error":
-		return Error, ""
-	default:
-		if outcome, ok := domainOutcomes[value]; ok {
-			return outcome, value
-		}
-		return Error, "other"
-	}
-}
-
-var domainOutcomes = map[string]Outcome{
-	"forwarded": Success, "committed": Success, "placed": Success, "served": Success, "not_modified": Success, "claimed": Success, "empty": Success, "progress": Success, "pending": Success, "busy": Success,
-	"policy_denied":   Denied,
-	"not_admitted":    Rejected,
-	"capacity_denied": Rejected, "capacity": Rejected, "bandwidth": Rejected, "draining": Rejected, "invalid": Rejected, "invalid_projection": Rejected, "insufficient_services": Rejected, "client_error": Rejected, "stale": Rejected,
-	"lookup_missing": Error, "lookup_unavailable": Error, "open_failed": Error, "setup_failed": Error, "committed_failed": Error, "unavailable": Error, "retry": Error, "terminal": Error, "save_failed": Error, "http_error": Error, "server_error": Error, "transport_error": Error, "invalid_response": Error, "other": Error, "expired": Error,
-}
-
 func domainReasons() []string {
-	out := make([]string, 0, len(domainOutcomes))
-	for reason := range domainOutcomes {
-		out = append(out, reason)
-	}
+	out := slices.Clone(domainReasonNames[1:])
 	slices.Sort(out)
 	return out
 }
@@ -171,12 +136,9 @@ func metricDimensions(keys []MetricKey, values ...Dimension) attribute.Set {
 	return attribute.NewSet(attrs...)
 }
 
-// resultDimension is the legacy semantic-result boundary: supplied domain values
-// are classified before narrowing, and unknown values never become labels.
-func resultDimension(value string) Dimension {
-	outcome, reason := classifyResult(value)
-	d := OutcomeKey.Dimension(outcome)
-	if reason != "" {
+func (result semanticResult) dimension() Dimension {
+	d := OutcomeKey.Dimension(result.outcome)
+	if reason := result.reason.String(); reason != "" {
 		d.attrs = append(d.attrs, Reason.String(reason))
 	}
 	return d

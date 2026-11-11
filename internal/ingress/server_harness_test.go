@@ -233,8 +233,10 @@ type testMetrics struct {
 	forwardedBytes       map[string]int64
 }
 
-func (*testMetrics) IncCapacityRejection(string) {}
-func (*testMetrics) IncInspectionFailure(string) {}
+func (*testMetrics) IncCapacityRejection(string)            {}
+func (*testMetrics) IncInspectionFailure(string)            {}
+func (*testMetrics) ObserveTrafficAdmission(string, string) {}
+
 func (m *testMetrics) ObserveVisitor(outcome observability.VisitorOutcome) {
 	if outcome == "policy_denied" {
 		m.ipAllowlistDenials.Add(1)

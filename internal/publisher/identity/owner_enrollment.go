@@ -35,7 +35,7 @@ func (s enrollmentSelection) matches(kind, team string, publicURL, service, doma
 // ensureSelectedEnrollment keeps selection, pending-key recovery, and promotion
 // under one scope lock. explicit namespace setup alone also records a default;
 // saved URLs select their serving resource, while service trust stays above it.
-func ensureSelectedEnrollment(ctx context.Context, state *clientstate.Store, control OwnerControl, authority EnrollmentAuthority, scope enrollmentSelection) (*Native, authorityv1.PublisherEnrollmentResult, error) {
+func ensureSelectedEnrollment(ctx context.Context, state *clientstate.Store, control OwnerControl, services ServiceControl, authority EnrollmentAuthority, scope enrollmentSelection) (*Native, authorityv1.PublisherEnrollmentResult, error) {
 	if state == nil || control == nil || authority == nil {
 		return nil, authorityv1.PublisherEnrollmentResult{}, ErrScope
 	}
@@ -67,7 +67,7 @@ func ensureSelectedEnrollment(ctx context.Context, state *clientstate.Store, con
 			!scope.matches(string(identity.Kind), identity.TeamId, identity.PublicUrlId, identity.ServiceId, identity.DomainId, identity.Namespace) {
 			return nil, identity, ErrScope
 		}
-		native, identity, err = LoadNative(ctx, state, control, authority, identity.ClientId)
+		native, identity, err = LoadNative(ctx, state, NativeControl{PublicURLControl: control, Services: services}, authority, identity.ClientId)
 		if err != nil {
 			return nil, identity, err
 		}
@@ -93,7 +93,7 @@ func ensureSelectedEnrollment(ctx context.Context, state *clientstate.Store, con
 				return nil, identity, err
 			}
 		}
-		native, identity, err = EnrollNative(ctx, state, control, authority, string(pending.EnrollmentSecret))
+		native, identity, err = EnrollNative(ctx, state, NativeControl{PublicURLControl: control, Services: services}, authority, string(pending.EnrollmentSecret))
 		if err != nil {
 			return nil, identity, err
 		}

@@ -17,11 +17,7 @@ func (n *Native) serviceHTTP(service string) (serviceHTTPControl, error) {
 	if _, err := n.serviceCertificates(service); err != nil {
 		return nil, err
 	}
-	control, ok := n.NativeControl.(serviceHTTPControl)
-	if !ok {
-		return nil, ErrScope
-	}
-	return control, nil
+	return n.Services, nil
 }
 func (n *Native) RedeemServiceBrowserHandoff(ctx context.Context, service, run string, token credentials.ServiceRunToken, body controlv1.ServiceBrowserRequest) (controlv1.BrowserHandoffResponse, error) {
 	c, err := n.serviceHTTP(service)

@@ -29,8 +29,10 @@ type guestEnrollmentStub struct {
 	public      ed25519.PublicKey
 	calls, runs int
 	lost        error
-	publisheridentity.NativeControl
+	publisheridentity.PublicURLControl
 }
+
+func (*guestEnrollmentStub) ControlURL() string { return "https://control.example" }
 
 func (s *guestEnrollmentStub) EnrollGuestPublisher(_ context.Context, id string, public ed25519.PublicKey) (controlv1.GuestPublisherIdentity, error) {
 	s.calls++
@@ -88,11 +90,11 @@ func TestGuestPublicationRetriesEnrollmentWithItsDurableKeyAndUsesSignedRuns(t *
 	publicURL := controlv1.PublicURL{Id: newID(opaqueid.PublicURLPrefix), TeamId: newID(opaqueid.TeamPrefix), LifecycleState: controlv1.Enabled, Purpose: controlv1.Demo, ServiceProtocol: controlv1.Http, Ephemeral: true}
 	lost := errors.New("lost enrollment response")
 	stub := &guestEnrollmentStub{identity: controlv1.GuestPublisherIdentity{ClientId: newID(opaqueid.PublisherIdentityPrefix), KeyId: newID(opaqueid.PublisherIdentityKeyPrefix), GrantId: newID(opaqueid.PublisherGrantPrefix), PublicUrlId: publicURL.Id, TeamId: publicURL.TeamId}, lost: lost}
-	if _, err := enrollGuestNativeWithClients(t.Context(), store, publicURL, stub, stub, stub); !errors.Is(err, lost) {
+	if _, err := enrollGuestNativeWithClients(t.Context(), store, publicURL, stub, publisheridentity.NativeControl{PublicURLControl: stub}, stub); !errors.Is(err, lost) {
 		t.Fatalf("lost bootstrap response = %v", err)
 	}
 	for range 2 {
-		native, err := enrollGuestNativeWithClients(t.Context(), store, publicURL, stub, stub, stub)
+		native, err := enrollGuestNativeWithClients(t.Context(), store, publicURL, stub, publisheridentity.NativeControl{PublicURLControl: stub}, stub)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -74,7 +74,7 @@ func TestBrowserAccessForRunControlOrigins(t *testing.T) {
 	} {
 		t.Run(test.origin, func(t *testing.T) {
 			client := &clientcontrol.Client{}
-			config := Config{ControlURL: test.origin, VisitorControl: client, PreviewID: "pv_0123456789abcdefghijkl"}
+			config := Config{ControlURL: test.origin, BrowserControl: client, PreviewID: "pv_0123456789abcdefghijkl"}
 			setup := controlv1.PublishRunSetup{
 				PublicUrl:  controlv1.PublicURL{Id: certificateTestPublicURLID, ServiceProtocol: controlv1.Http},
 				PublishRun: controlv1.PublishRun{Id: "pr_0123456789abcdefghijkl", PublishRunNumber: 1},
@@ -125,11 +125,11 @@ func TestBrowserAccessForRunControlOrigins(t *testing.T) {
 
 func TestBrowserAccessForRunRequiresHTTPAndClient(t *testing.T) {
 	setup := controlv1.PublishRunSetup{PublicUrl: controlv1.PublicURL{ServiceProtocol: controlv1.Http}}
-	config := Config{ControlURL: "http://localhost:8445"}
+	config := Config{Control: &clientcontrol.Client{}, ControlURL: "http://localhost:8445"}
 	if browserAccessForRun(config, setup, "fixture-run-token") != nil {
 		t.Fatal("browser access enabled without a browser-capable control client")
 	}
-	config.VisitorControl = &clientcontrol.Client{}
+	config.BrowserControl = &clientcontrol.Client{}
 	setup.PublicUrl.ServiceProtocol = controlv1.PublicURLServiceProtocol("tcp")
 	if browserAccessForRun(config, setup, "fixture-run-token") != nil {
 		t.Fatal("browser access enabled for a TCP public URL")

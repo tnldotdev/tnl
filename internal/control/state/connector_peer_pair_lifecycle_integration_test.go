@@ -55,7 +55,7 @@ func (f connectorPairFixture) binding(t *testing.T, pair ConnectorPeerPair, at t
 func (f connectorPairFixture) report(t *testing.T, pair ConnectorPeerPair, until, at time.Time) {
 	t.Helper()
 	if err := f.d.ConfirmConnectorPeerPairPrepared(t.Context(), pair.ServiceID, pair.ServiceRunID, pair.ID, f.run.Token,
-		ConnectorPeerPairPrepared{DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: until}, at); err != nil {
+		ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: until}, at); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -358,7 +358,7 @@ func TestIntegrationConnectorPeerPairClaimReportRollbackAndReadOnlyDelivery(t *t
 	if !errors.As(err, &constraint) || constraint.Code != "23514" || !bytes.Equal(before, connectorPairSavedAuthority(t, f.d, pair.ID)) {
 		t.Fatal("claim commit rejection lost cause or mutated evidence", err)
 	}
-	err = f.d.ConfirmConnectorPeerPairPrepared(t.Context(), pair.ServiceID, pair.ServiceRunID, pair.ID, f.run.Token, ConnectorPeerPairPrepared{DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: pair.ExpiresAt}, at)
+	err = f.d.ConfirmConnectorPeerPairPrepared(t.Context(), pair.ServiceID, pair.ServiceRunID, pair.ID, f.run.Token, ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: pair.ExpiresAt}, at)
 	if !errors.As(err, &constraint) || constraint.Code != "23514" || !bytes.Equal(before, connectorPairSavedAuthority(t, f.d, pair.ID)) {
 		t.Fatal("report commit rejection lost cause or mutated authority", err)
 	}
@@ -406,7 +406,7 @@ func TestIntegrationConnectorPeerPairExpiryDuringDatabaseWait(t *testing.T) {
 					_, err := f.d.DeliverConnectorPeerPair(ctx, pair.ServiceID, pair.ServiceRunID, pair.ID, pair.DeliveryGeneration, f.run.Token, f.now)
 					return err
 				default:
-					return f.d.ConfirmConnectorPeerPairPrepared(ctx, pair.ServiceID, pair.ServiceRunID, pair.ID, f.run.Token, ConnectorPeerPairPrepared{DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: until}, f.now)
+					return f.d.ConfirmConnectorPeerPairPrepared(ctx, pair.ServiceID, pair.ServiceRunID, pair.ID, f.run.Token, ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: until}, f.now)
 				}
 			})
 			defer join()

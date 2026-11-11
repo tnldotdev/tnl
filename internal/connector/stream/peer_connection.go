@@ -219,7 +219,7 @@ func prepareConnectorConnection(ctx, setup context.Context, config Config, signe
 		p.mu.Unlock()
 		preparedRun := p.run
 		preparedRun.ValidUntil = earliestConnectorDeadline(preparedRun.ValidUntil, p.until, opening.until)
-		prepared, err := prepareConnector(life, setup, p.session, preparedRun, opening.entry)
+		prepared, err := PrepareConnector(life, setup, p.session, preparedRun, opening.entry)
 		if err != nil {
 			return nil, err
 		}
@@ -826,7 +826,7 @@ func (p *connectorConnection) Forward(ctx context.Context, local net.Conn) (resu
 				<-stopped
 			}
 		}()
-		prepared, err := prepareConnector(p.ctx, setup, p.session, run, entry)
+		prepared, err := PrepareConnector(p.ctx, setup, p.session, run, entry)
 		if err != nil {
 			return err
 		}

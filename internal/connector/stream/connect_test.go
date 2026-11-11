@@ -82,6 +82,10 @@ func (f *connectorFixture) ConnectorSigner(context.Context, string) (Signer, err
 	return f.device, nil
 }
 
+// the fixture owns authority and carriers until its test cleanup; an individual
+// connector borrows them, just as the native control adapter borrows its client.
+func (*connectorFixture) Close(context.Context) error { return nil }
+
 func (f *connectorFixture) VisitorPermission(context.Context, string) (controlv1.VisitorTokenResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

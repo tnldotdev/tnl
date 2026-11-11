@@ -1,6 +1,7 @@
 package public
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,15 +10,14 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/httpjson"
-	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func writeControlStateProblem(response http.ResponseWriter, operation string, err error) {
+func writeControlStateProblem(ctx context.Context, response http.ResponseWriter, operation string, err error) {
 	// the peer has already ended this request. match the private API boundary:
 	// do not turn its interrupted database work into a server failure response.
-	if observability.ResponseContext(response).Err() != nil {
+	if ctx.Err() != nil {
 		return
 	}
 	switch {
@@ -69,7 +69,7 @@ func writeControlStateProblem(response http.ResponseWriter, operation string, er
 		writeProblem(response, http.StatusServiceUnavailable, controlv1.PlacementUnavailable, "relay placement is unavailable")
 	default:
 		requestID := writeProblem(response, http.StatusInternalServerError, controlv1.Internal, "internal server error")
-		operatorlog.ReportContext(observability.ResponseContext(response), failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
+		operatorlog.ReportContext(ctx, failure.Operation(operation), failure.ServerAPIInternal, requestID, err)
 	}
 }
 
@@ -95,9 +95,9 @@ func writeProblem(response http.ResponseWriter, status int, code controlv1.Probl
 	return failureproblem.Write(response, status, string(code), title, title)
 }
 
-func writeUnavailableProblem(response http.ResponseWriter, operation failure.Operation, title string, reason failure.Reason, err error) {
+func writeUnavailableProblem(ctx context.Context, response http.ResponseWriter, operation failure.Operation, title string, reason failure.Reason, err error) {
 	requestID := writeProblem(response, http.StatusServiceUnavailable, controlv1.Unavailable, title)
-	operatorlog.ReportContext(observability.ResponseContext(response), operation, reason, requestID, err)
+	operatorlog.ReportContext(ctx, operation, reason, requestID, err)
 }
 
 func newRequestID() string { return failureproblem.NewRequestID() }

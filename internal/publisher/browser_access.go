@@ -46,12 +46,8 @@ func browserAccessForRun(config Config, setup controlv1.PublishRunSetup, token c
 	if err != nil || setup.PublicUrl.ServiceProtocol != controlv1.Http {
 		return nil
 	}
-	var candidate any = config.Control
-	if config.VisitorControl != nil {
-		candidate = config.VisitorControl
-	}
-	client, ok := candidate.(browserAccessClient)
-	if !ok {
+	client := config.BrowserControl
+	if client == nil {
 		return nil
 	}
 	return &browserAccess{subject: visitorscope.Scope{Kind: visitorscope.PublicURL, ID: setup.PublicUrl.Id}, client: client, previewID: config.PreviewID, publicURLID: setup.PublicUrl.Id,

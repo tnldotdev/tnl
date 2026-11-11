@@ -35,7 +35,7 @@ func (h *handler) CreateCertificateIssuance(
 		IdempotencyKey: request.Header.Get("Idempotency-Key"), RequestDigest: digest, CSRDER: body.Csr,
 	}, time.Now())
 	if err != nil {
-		writeControlStateProblem(response, "create certificate issuance", err)
+		writeControlStateProblem(request.Context(), response, "create certificate issuance", err)
 		return
 	}
 	if issuance.NewOrder {
@@ -61,7 +61,7 @@ func (h *handler) GetCertificateIssuance(response http.ResponseWriter, request *
 		request.Context(), string(issuanceID), credentials.PublishRunToken(token), time.Now(),
 	)
 	if err != nil {
-		writeControlStateProblem(response, "get certificate issuance", err)
+		writeControlStateProblem(request.Context(), response, "get certificate issuance", err)
 		return
 	}
 	writeJSON(response, http.StatusOK, certificateIssuanceResponse(issuance))

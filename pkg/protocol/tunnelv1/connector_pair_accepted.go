@@ -20,22 +20,21 @@ const (
 // ConnectorPairLegAccepted reports control's exact claim and the source observed
 // by the accepting relay socket. it carries no pair key or stream permission.
 type ConnectorPairLegAccepted struct {
-	PairID             string `json:"pair_id"`
-	DeliveryID         string `json:"delivery_id"`
-	DeliveryGeneration int64  `json:"delivery_generation"`
-	// an empty legacy state is not proof that a rebind revision is active.
-	BindingState   ConnectorPeerLegBindingState `json:"binding_state,omitempty"`
-	ConnectionSlot int                          `json:"connection_slot"`
-	SourceIP       string                       `json:"source_ip"`
-	ObservedAt     time.Time                    `json:"observed_at"`
-	ExpiresAt      time.Time                    `json:"expires_at"`
+	PairID             string                       `json:"pair_id"`
+	DeliveryID         string                       `json:"delivery_id"`
+	DeliveryGeneration int64                        `json:"delivery_generation"`
+	BindingState       ConnectorPeerLegBindingState `json:"binding_state"`
+	ConnectionSlot     int                          `json:"connection_slot"`
+	SourceIP           string                       `json:"source_ip"`
+	ObservedAt         time.Time                    `json:"observed_at"`
+	ExpiresAt          time.Time                    `json:"expires_at"`
 }
 
 func (r ConnectorPairLegAccepted) Validate() error {
 	address, err := netip.ParseAddr(r.SourceIP)
 	if err != nil || !address.IsValid() || address.IsUnspecified() || address.Zone() != "" || address.Unmap().String() != r.SourceIP ||
 		!opaqueid.Valid(r.PairID, "cpp_") || r.DeliveryGeneration < 1 || (r.ConnectionSlot != 0 && r.ConnectionSlot != 1) ||
-		(r.BindingState != "" && r.BindingState != ConnectorPeerLegBindingActive && r.BindingState != ConnectorPeerLegBindingPrepared) ||
+		(r.BindingState != ConnectorPeerLegBindingActive && r.BindingState != ConnectorPeerLegBindingPrepared) ||
 		r.ObservedAt.IsZero() || r.ExpiresAt.Sub(r.ObservedAt) <= 0 || r.ExpiresAt.Sub(r.ObservedAt) > 5*time.Minute {
 		return ErrConnectorPairLegAccepted
 	}

@@ -5,9 +5,9 @@ CREATE SCHEMA IF NOT EXISTS control;
 -- mistaken for this coordinated fresh-database cutover.
 CREATE TABLE control.schema_identity (
     id smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-workload-gitlab')
+    baseline_id text NOT NULL CHECK (baseline_id = 'tnl-control-fresh-v1-explicit-capabilities')
 );
-INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-workload-gitlab');
+INSERT INTO control.schema_identity (id, baseline_id) VALUES (1, 'tnl-control-fresh-v1-explicit-capabilities');
 
 CREATE TABLE control.identities (
     id text PRIMARY KEY CHECK (id <> ''),
@@ -1627,9 +1627,6 @@ CREATE TABLE control.publisher_namespace_allocations (
 );
 ALTER TABLE control.publish_runs ADD CONSTRAINT publish_runs_publisher_grant
     FOREIGN KEY(publisher_grant_id,publisher_identity_id) REFERENCES control.publisher_grants(id,publisher_identity_id) ON DELETE RESTRICT;
-CREATE VIEW control.publish_run_publisher_grants AS
-SELECT id AS publish_run_id,COALESCE(publisher_identity_id,'')::text AS publisher_identity_id,
-    COALESCE(publisher_grant_id,'')::text AS publisher_grant_id FROM control.publish_runs WHERE publisher_identity_id IS NOT NULL;
 
 -- managed endpoints remain service records. a certificate name and optional
 -- direct ingress mapping never create a public URL or replace visitor grants.

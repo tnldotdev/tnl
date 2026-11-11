@@ -24,7 +24,7 @@ func attachRuntimeIntegrations(ctx context.Context, state *clientstate.Database,
 	if err != nil {
 		return nil, err
 	}
-	group := projectIntegrationGroup(project, services.namespace)
+	group := projectIntegrationScope(project, services.namespace)
 	output := &Presentation{}
 	var stops []func()
 	if project.Config.OAuth {

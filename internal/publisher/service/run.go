@@ -219,10 +219,6 @@ func (b *Bound) ApplyHeartbeat(state controlv1.ServiceRunState) error {
 	return nil
 }
 
-func (b *Bound) MatchesHeartbeat(state controlv1.ServiceRunState) bool {
-	return b.ApplyHeartbeat(state) == nil
-}
-
 func (b *Bound) assignmentKey(slot uint8) string {
 	b.mu.Lock()
 	defer b.mu.Unlock()

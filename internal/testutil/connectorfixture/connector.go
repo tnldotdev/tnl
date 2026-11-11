@@ -186,7 +186,7 @@ func (n *Connector) accept(connection net.Conn, slot int) {
 	defer transport.Close()
 	var pair *connectorPair
 	receipt := func() tunnelv1.ConnectorPairLegAccepted {
-		return tunnelv1.ConnectorPairLegAccepted{PairID: pair.response.PairId, DeliveryID: pair.response.DeliveryId, DeliveryGeneration: 1, ConnectionSlot: slot, SourceIP: "127.0.0.1", ObservedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}
+		return tunnelv1.ConnectorPairLegAccepted{PairID: pair.response.PairId, DeliveryID: pair.response.DeliveryId, DeliveryGeneration: 1, BindingState: tunnelv1.ConnectorPeerLegBindingActive, ConnectionSlot: slot, SourceIP: "127.0.0.1", ObservedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}
 	}
 	session, hello, err := tunnel.AcceptWithResult(n.ctx, transport, func(_ context.Context, hello tunnelv1.Message) (*tunnelv1.ConnectorPairLegAccepted, error) {
 		n.mu.Lock()
@@ -280,10 +280,11 @@ func (n *Connector) serve(p *connectorPair, ready chan<- error) {
 	}
 	control, cancelControl := context.WithCancel(n.ctx)
 	defer cancelControl()
+	var permissionGate tunnel.ConnectorPermissionGate
 	workers.Go(func() {
 		_ = tunnel.ServeConnectorPermissionControl(control, permissions, func(update tunnelv1.ConnectorPermissionUpdate, responder *tunnel.ConnectorPermissionResponder) {
 			_ = responder.Respond(update, true)
-		}, func() { _ = session.Close() })
+		}, func() { _ = session.Close() }, &permissionGate)
 	})
 	for {
 		stream, err := session.AcceptStream(n.ctx)

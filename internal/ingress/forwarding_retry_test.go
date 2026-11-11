@@ -173,7 +173,7 @@ func TestForwarderRetryCanReuseConcurrentReplacement(t *testing.T) {
 	}
 	// another visitor invalidates the first session and establishes a replacement
 	// while this visitor's first open has not yet returned its failure.
-	forwarder.invalidate(backend.target.key(), first)
+	forwarder.invalidate(t.Context(), backend.target.key(), first)
 	second, reused, err := forwarder.session(ctx, backend.target)
 	if err != nil || reused || second == first {
 		t.Fatalf("concurrent replacement: reused=%t error=%v", reused, err)

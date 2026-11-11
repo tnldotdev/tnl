@@ -14,6 +14,7 @@ import (
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
 func TestIntegrationRelayQUICProfiles(t *testing.T) {
@@ -30,7 +31,7 @@ func TestIntegrationRelayQUICProfiles(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "quic-profile", key)
+				service, err := f.identity.routes.CreateService(t.Context(), f.identity.teamID, "quic-profile", key, controlv1.ServiceMetadata{Protocol: controlv1.Tcp})
 				if err != nil {
 					t.Fatal(err)
 				}

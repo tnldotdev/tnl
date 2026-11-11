@@ -90,6 +90,9 @@ func TestPeerConnectorReceiptBindingAndInvalidWire(t *testing.T) {
 		{"generation", func(r *ConnectorPairLegAccepted, _ *ConnectorPairLegProof, _ *string, _ *time.Time) {
 			r.DeliveryGeneration++
 		}},
+		{"missing binding state", func(r *ConnectorPairLegAccepted, _ *ConnectorPairLegProof, _ *string, _ *time.Time) {
+			r.BindingState = ""
+		}},
 		{"slot", func(r *ConnectorPairLegAccepted, _ *ConnectorPairLegProof, _ *string, _ *time.Time) {
 			r.ConnectionSlot = 0
 		}},

@@ -45,7 +45,7 @@ func companySessionID(ctx context.Context, identity string) string {
 }
 
 func requireTeamSession(ctx context.Context, q *controlstatedb.Queries, team, identity string, now time.Time) (retErr error) {
-	ctx, finish := observability.ControlOperation(ctx, "company.authorize_session")
+	ctx, finish := observability.ControlOperation(ctx, observability.OpCompanyAuthorizeSession)
 	defer func() {
 		err := retErr
 		if errors.Is(err, ErrAuthorityAccess) {

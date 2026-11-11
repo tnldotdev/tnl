@@ -16,7 +16,7 @@ import (
 )
 
 // Observer records a login before sending the authorization response to the browser.
-func Observer(state *clientstate.Database, server, hostname, group, tunnelID string) publisher.ResponseObserver {
+func Observer(state *clientstate.Database, server, hostname string, group clientstate.IntegrationScope, tunnelID string) publisher.ResponseObserver {
 	return func(response *http.Response, run publisher.PublishRunIdentity) error {
 		location, err := url.Parse(response.Header.Get("Location"))
 		if err != nil || location.Scheme != "https" || location.Host == "" {
@@ -53,7 +53,7 @@ func Observer(state *clientstate.Database, server, hostname, group, tunnelID str
 			return diagnostic.Wrap(diagnostic.OAuthCallbackUnavailable, errors.New("OAuth callback publisher is not ready"))
 		}
 		if err := state.SaveOAuthCallback(ctx, clientstate.SaveOAuthCallbackInput{
-			Scope:       clientstate.OAuthCallbackScope{Server: server, Hostname: hostname, IntegrationGroup: group},
+			Scope:       clientstate.OAuthCallbackScope{Server: server, Hostname: hostname, IntegrationScope: group},
 			Origin:      clientstate.OAuthRedirectOrigin{Hostname: run.Hostname, PublicURLID: run.PublicURLID, PublishRunNumber: run.Number},
 			Destination: clientstate.OAuthCallbackDestination{TunnelID: tunnelID, Path: callback.Path, Query: callback.RawQuery}, State: query.Get("state"),
 		}); err != nil {

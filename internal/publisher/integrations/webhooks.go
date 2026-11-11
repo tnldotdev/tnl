@@ -43,20 +43,24 @@ type webhookEndpoint struct {
 }
 
 type Webhooks struct {
-	state                   *clientstate.Database
-	server, group, hostname string
-	paths                   map[string]webhookEndpoint
+	state            *clientstate.Database
+	server, hostname string
+	group            clientstate.IntegrationScope
+	paths            map[string]webhookEndpoint
 	// report contains only endpoint/tunnel identifiers and fixed failure reasons.
 	report func(string, string, string)
 	// OnReceiverResponse runs after a selected local service returns HTTP headers.
 	OnReceiverResponse func(string)
 }
 
-func NewWebhooks(ctx context.Context, state *clientstate.Database, server, group, hostname string, definitions map[string]config.Webhook, report func(string, string, string)) (*Webhooks, []string, error) {
+func NewWebhooks(ctx context.Context, state *clientstate.Database, server string, group clientstate.IntegrationScope, hostname string, definitions map[string]config.Webhook, report func(string, string, string)) (*Webhooks, []string, error) {
 	return newWebhooks(ctx, state, server, group, hostname, definitions, report, webhooksource.Resolve)
 }
 
-func newWebhooks(ctx context.Context, state *clientstate.Database, server, group, hostname string, definitions map[string]config.Webhook, report func(string, string, string), resolve func(context.Context, webhooksource.Cache, string, string) (webhooksource.Source, error)) (*Webhooks, []string, error) {
+func newWebhooks(ctx context.Context, state *clientstate.Database, server string, group clientstate.IntegrationScope, hostname string, definitions map[string]config.Webhook, report func(string, string, string), resolve func(context.Context, webhooksource.Cache, string, string) (webhooksource.Source, error)) (*Webhooks, []string, error) {
+	if err := group.Validate(); err != nil {
+		return nil, nil, err
+	}
 	services := config.Services{}
 	providers := map[string]bool{}
 	for _, definition := range definitions {

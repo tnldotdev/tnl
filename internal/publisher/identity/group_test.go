@@ -51,7 +51,7 @@ func TestGroupUsesReplicaKeyAndOnlyLatestExactAssignments(t *testing.T) {
 	groupName := "production"
 	fake := &groupFixtureControl{member: controlv1.PublisherGroupMember{TeamId: native.identity.teamID, ProjectKey: "example", GroupId: "pgrp_example", GroupName: groupName, PublisherIdentityId: native.identity.clientID, KeyId: native.identity.keyID}, public: public}
 	fake.assignment = controlv1.PublisherGroupServiceAssignment{Service: "db", ServiceId: native.identity.serviceID, ServiceKind: "service", GrantId: native.identity.grantID, TrustRevision: 3, Configuration: controlv1.ProjectServiceConfiguration{PublisherGroup: &groupName, Target: "db.internal:5432"}}
-	group, err := NewGroup(control, fake, &lostEnrollmentResponse{}, "https://control.example", fake.member, private)
+	group, err := NewGroup(NativeControl{PublicURLControl: control, Services: control}, fake, &lostEnrollmentResponse{}, "https://control.example", fake.member, private)
 	if err != nil {
 		t.Fatal(err)
 	}

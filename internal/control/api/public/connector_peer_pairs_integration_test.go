@@ -281,7 +281,7 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 		return call(deliveryPath, bearer, map[string]int64{"delivery_generation": generation})
 	}
 	preparedPath := "/v1/services/" + service.ID + "/runs/" + run.RunID + "/connector-peer-pairs/" + pair.PairId + "/prepared"
-	report := controlv1.ConnectorPeerPairPrepared{DeliveryId: pair.DeliveryId, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: pair.ExpiresAt}
+	report := controlv1.ConnectorPeerPairPrepared{Phase: controlv1.ConnectorPeerPairPreparedInstalled, DeliveryId: pair.DeliveryId, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: pair.ExpiresAt}
 	assertDenied := func(bearer string, generation int64) {
 		t.Helper()
 		w := deliver(bearer, generation)
@@ -377,6 +377,8 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 		t.Fatal("run-token client lost delivery", err)
 	}
 	for _, mutate := range []func(*controlv1.ConnectorPeerPairPrepared){
+		func(r *controlv1.ConnectorPeerPairPrepared) { r.Phase = "" },
+		func(r *controlv1.ConnectorPeerPairPrepared) { r.Phase = "prepared" },
 		func(r *controlv1.ConnectorPeerPairPrepared) { r.DeliveryId = "invalid" },
 		func(r *controlv1.ConnectorPeerPairPrepared) {
 			r.DeliveryId = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, 16))
@@ -390,6 +392,9 @@ func TestIntegrationConnectorPeerPairPublicDevice(t *testing.T) {
 		if w := call(preparedPath, run.Token, body); w.Code < 400 {
 			t.Fatal("invalid preparation report accepted", w.Code)
 		}
+	}
+	if w := call(preparedPath, run.Token, map[string]any{"delivery_id": report.DeliveryId, "delivery_generation": report.DeliveryGeneration, "binding_expires_at": report.BindingExpiresAt}); w.Code != http.StatusBadRequest {
+		t.Fatal("preparation report without a phase accepted", w.Code)
 	}
 	if pair.PublisherPreparedUntil != nil {
 		t.Fatal("pair was prepared before the publisher reported installation")

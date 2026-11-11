@@ -433,6 +433,12 @@ func TestPublicURLWorkerObservesAvailabilityBeforeCleanup(t *testing.T) {
 		!store.saved.AvailableAt.Equal(*work.RenewAt) {
 		t.Fatalf("milestones or cleanup = %v, state %q", observer.milestones, store.saved.Authorizations[0].State)
 	}
+	if !reflect.DeepEqual(observer.claims, []certificateClaimObservation{{"public_url", observability.CertificateClaimed}, {"public_url", observability.CertificateClaimed}}) {
+		t.Fatal("certificate claims were not observed", observer.claims)
+	}
+	if !reflect.DeepEqual(observer.transitions, [][2]string{{"public_url", "available"}, {"public_url", "cleanup_complete"}}) {
+		t.Fatal("certificate transitions were not observed", observer.transitions)
+	}
 }
 
 func TestPublicURLWorkerDistinguishesApexAndWildcardAuthorizations(t *testing.T) {
@@ -705,9 +711,25 @@ type dnsChallengesStub struct {
 	presentCalls, verifyCalls, cleanupCalls [][2]string
 }
 
-type certificateMilestoneRecorder struct{ milestones []string }
+type certificateClaimObservation struct {
+	kind    string
+	outcome observability.CertificateClaimOutcome
+}
+
+type certificateMilestoneRecorder struct {
+	milestones  []string
+	claims      []certificateClaimObservation
+	transitions [][2]string
+}
 
 func (*certificateMilestoneRecorder) ObserveCertificateIterationContext(context.Context, string, string, observability.CertificateWorkOutcome, time.Duration) {
+}
+
+func (r *certificateMilestoneRecorder) ObserveCertificateClaim(kind string, outcome observability.CertificateClaimOutcome) {
+	r.claims = append(r.claims, certificateClaimObservation{kind, outcome})
+}
+func (r *certificateMilestoneRecorder) ObserveCertificateTransition(kind, state string) {
+	r.transitions = append(r.transitions, [2]string{kind, state})
 }
 
 func (r *certificateMilestoneRecorder) ObserveCertificateMilestone(_, milestone string, _ time.Duration) {

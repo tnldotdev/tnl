@@ -24,11 +24,11 @@ type PublisherIdentityStore interface {
 	RevokePublisherIdentity(context.Context, string, string, string, time.Time) error
 	RevokePublisherGrant(context.Context, string, string, string, string, time.Time) error
 	AuthenticatePublisherAccess(context.Context, string, string, time.Time) (controlstate.PublisherIdentity, error)
-	AllocatePublisherPublicURL(context.Context, controlstate.PublisherIdentity, string, string, []string, []byte, time.Time, ...controlstate.PublisherPublicURLOptions) (controlstate.PublicURL, error)
+	AllocatePublisherPublicURL(context.Context, controlstate.PublisherIdentity, string, string, []string, []byte, time.Time, controlstate.PublisherPublicURLOptions) (controlstate.PublicURL, error)
 	PublisherMayStartRun(context.Context, controlstate.PublisherIdentity, string) (bool, error)
 }
 
-func publisherProblem(w http.ResponseWriter, operation string, err error) {
+func publisherProblem(ctx context.Context, w http.ResponseWriter, operation string, err error) {
 	if errors.Is(err, controlstate.ErrAuthorityConflict) {
 		writeProblem(w, http.StatusConflict, controlv1.Conflict, "publisher grant already exists")
 		return
@@ -37,7 +37,7 @@ func publisherProblem(w http.ResponseWriter, operation string, err error) {
 		writeBearerProblem(w)
 		return
 	}
-	writeControlStateProblem(w, operation, err)
+	writeControlStateProblem(ctx, w, operation, err)
 }
 
 func (h *handler) publisherEditor(w http.ResponseWriter, r *http.Request, team string) (PublisherIdentityStore, controlstate.Membership, string, bool) {
@@ -56,7 +56,7 @@ func (h *handler) publisherEditor(w http.ResponseWriter, r *http.Request, team s
 	}
 	i, err := store.IdentityContext(r.Context(), p.identityID)
 	if err != nil {
-		writeControlStateProblem(w, "read publisher editor", err)
+		writeControlStateProblem(r.Context(), w, "read publisher editor", err)
 		return nil, controlstate.Membership{}, "", false
 	}
 	for _, m := range i.Memberships {
@@ -112,7 +112,7 @@ func (h *handler) CreatePublisherEnrollment(w http.ResponseWriter, r *http.Reque
 	}
 	e, err := store.IssuePublisherEnrollment(r.Context(), request)
 	if err != nil {
-		publisherProblem(w, "issue publisher enrollment", err)
+		publisherProblem(r.Context(), w, "issue publisher enrollment", err)
 		return
 	}
 	result := controlv1.PublisherEnrollment{Id: e.ID, EnrollmentKey: e.Key, ExpiresAt: e.Until, TeamId: s.TeamID, Kind: controlv1.PublisherEnrollmentKind(s.Kind)}
@@ -171,7 +171,7 @@ func (h *handler) ListPublisherIdentities(w http.ResponseWriter, r *http.Request
 	}
 	page, err := store.ListPublisherIdentities(r.Context(), params.TeamId, after)
 	if err != nil {
-		publisherProblem(w, "list publishers", err)
+		publisherProblem(r.Context(), w, "list publishers", err)
 		return
 	}
 	result := controlv1.PublisherIdentityPage{Identities: []controlv1.PublisherIdentity{}}
@@ -181,7 +181,7 @@ func (h *handler) ListPublisherIdentities(w http.ResponseWriter, r *http.Request
 			continue
 		}
 		if err != nil {
-			publisherProblem(w, "authorize publisher listing", err)
+			publisherProblem(r.Context(), w, "authorize publisher listing", err)
 			return
 		}
 		i := record.Identity
@@ -221,19 +221,19 @@ func (h *handler) CreatePublisherGrant(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	if err := store.AuthorizePublisherManagement(r.Context(), b.TeamId, id, editor); err != nil {
-		publisherProblem(w, "authorize publisher grant", err)
+		publisherProblem(r.Context(), w, "authorize publisher grant", err)
 		return
 	}
 	now := time.Now()
 	grant, err := store.CreatePublisherGrant(r.Context(), controlstate.CreatePublisherGrantRequest{PublisherIdentityID: id, Scope: s, EditorID: editor, EditorMembershipID: m.ID, PolicyRevision: uint64(m.PolicyRevision), ExpiresAt: b.ExpiresAt, Now: now})
 	if err != nil {
-		publisherProblem(w, "create publisher grant", err)
+		publisherProblem(r.Context(), w, "create publisher grant", err)
 		return
 	}
 	// read the server-captured namespace rather than echoing request fields.
 	p, err := store.PublisherIdentityRecord(r.Context(), b.TeamId, id)
 	if err != nil {
-		publisherProblem(w, "read publisher grant", err)
+		publisherProblem(r.Context(), w, "read publisher grant", err)
 		return
 	}
 	for _, g := range p.Grants {
@@ -251,7 +251,7 @@ func (h *handler) RevokePublisherIdentity(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := store.RevokePublisherIdentity(r.Context(), params.TeamId, id, editor, time.Now()); err != nil {
-		publisherProblem(w, "revoke publisher", err)
+		publisherProblem(r.Context(), w, "revoke publisher", err)
 		return
 	}
 	w.WriteHeader(204)
@@ -263,7 +263,7 @@ func (h *handler) RevokePublisherGrant(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	if err := store.RevokePublisherGrant(r.Context(), params.TeamId, id, grant, editor, time.Now()); err != nil {
-		publisherProblem(w, "revoke publisher grant", err)
+		publisherProblem(r.Context(), w, "revoke publisher grant", err)
 		return
 	}
 	w.WriteHeader(204)

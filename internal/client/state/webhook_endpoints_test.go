@@ -15,10 +15,11 @@ func TestWebhookRegistrationDoesNotReplaceOtherWorktreePolicies(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = state.Close() })
-	const server, group = "https://control.example.test", "/projects/shop\x00member.example.test"
+	const server = "https://control.example.test"
+	group := IntegrationScope{PrimaryProjectRoot: "/projects/shop", Namespace: "member.example.test"}
 	var tunnels []*Tunnel
 	for _, service := range []string{"web", "api"} {
-		tunnel, err := state.BeginTunnel(t.Context(), BeginTunnelOptions{Command: TunnelCommandPublish, Server: server, Target: "3000", Project: t.TempDir(), Service: service, IntegrationGroup: group})
+		tunnel, err := state.BeginTunnel(t.Context(), BeginTunnelOptions{Command: TunnelCommandPublish, Server: server, Target: "3000", Project: t.TempDir(), Service: service, IntegrationScope: group})
 		if err != nil {
 			t.Fatal(err)
 		}

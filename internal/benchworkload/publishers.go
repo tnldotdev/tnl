@@ -219,6 +219,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 				return cfg, nil, err
 			}
 			cfg.Control, cfg.AssignedPublicURL = worker, &publicURL
+			cfg.Identity, cfg.Audit = worker, worker
 			cfg.Hostname, cfg.TeamID, cfg.DomainID = publicURL.CanonicalHostname, publicURL.TeamId, publicURL.DomainId
 			cfg.Purpose, cfg.PublicURLScope, cfg.PolicyRevision = publicURL.Purpose, publicURL.PublicUrlScope, uint64(publicURL.PolicyRevision)
 			if publicURL.MembershipId != nil {
@@ -248,6 +249,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 				return cfg, nil, err
 			}
 			cfg.Control, cfg.PublisherIdentityID = native, identity.ClientId
+			cfg.Identity, cfg.Audit = native, native
 			return cfg, nil, nil
 		}
 	}
@@ -260,6 +262,7 @@ func OpenPublishers(ctx context.Context, config PublisherConfig) (_ *Publishers,
 		namespace: membership.ManagedLabel + "." + domain.CanonicalDomain, failures: make(chan error, 1), run: publisher.Run,
 		prepare: prepare,
 		base: publisher.Config{Control: publicationControl, ControlURL: auth.ServerEndpoint, State: store, Target: config.Target, DrainTime: config.DrainTime,
+			VisitorControl: auth.Control, BrowserControl: auth.Control, Shares: auth.Control,
 			Limits:    limits,
 			Ephemeral: config.Ephemeral,
 			TeamID:    team.Id, MembershipID: membership.Id, DomainID: domain.Id, PublicURLScope: controlv1.Member, Purpose: controlv1.App,

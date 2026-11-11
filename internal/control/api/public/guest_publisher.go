@@ -49,7 +49,7 @@ func (h *handler) EnrollGuestPublisher(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := store.EnrollGuestPublisher(r.Context(), trial.ID, b.PublicUrlId, publisherRequestSource(r), key, time.Now())
 	if err != nil {
-		publisherProblem(w, "enroll guest publisher", err)
+		publisherProblem(r.Context(), w, "enroll guest publisher", err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

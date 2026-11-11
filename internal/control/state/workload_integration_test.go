@@ -373,7 +373,7 @@ func TestIntegrationWorkloadPrivateAndPublicAdmission(t *testing.T) {
 	if _, err := d.DeliverConnectorPeerPair(ctx, service.ID, run.RunID, pair.ID, pair.DeliveryGeneration, session.Credential, now); !errors.Is(err, ErrServiceAccess) {
 		t.Fatal("workload credential authenticated as publisher run", err)
 	}
-	if err := d.ConfirmConnectorPeerPairPrepared(ctx, service.ID, run.RunID, pair.ID, run.Token, ConnectorPeerPairPrepared{DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: delivered.ExpiresAt}, now); err != nil {
+	if err := d.ConfirmConnectorPeerPairPrepared(ctx, service.ID, run.RunID, pair.ID, run.Token, ConnectorPeerPairPrepared{Phase: "installed", DeliveryID: pair.DeliveryID, DeliveryGeneration: pair.DeliveryGeneration, BindingExpiresAt: delivered.ExpiresAt}, now); err != nil {
 		t.Fatal(err)
 	}
 	csr, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)

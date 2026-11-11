@@ -48,9 +48,5 @@ func (s generatedServer) ReportIngressServiceObservations(w http.ResponseWriter,
 
 // IngestServiceObservations gives standalone the same lease checks as HTTP.
 func (s *service) IngestServiceObservations(ctx context.Context, lease controlstate.IngressLeaseIdentity, batch serviceaudit.Batch) (controlstate.ServiceObservationResult, error) {
-	store, ok := s.store.(serviceAuditStore)
-	if !ok {
-		return controlstate.ServiceObservationResult{}, serviceapi.NewProblemError(503, "unavailable", "service audit is unavailable")
-	}
-	return store.IngestIngressServiceObservations(ctx, lease, batch, s.now())
+	return s.store.IngestIngressServiceObservations(ctx, lease, batch, s.now())
 }
