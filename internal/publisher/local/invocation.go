@@ -23,7 +23,6 @@ import (
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	"github.com/tnldotdev/tnl/internal/publisher/identity/credentialfile"
 	publisherprotocol "github.com/tnldotdev/tnl/internal/publisher/localapi/protocol"
-	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
@@ -141,7 +140,7 @@ func (a *appRuntime) invocation(ctx context.Context, request publisherprotocol.I
 		return publisherprotocol.Registration{}, err
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
-	cfg := publisher.Config{Control: native, Identity: native, Audit: native, VisitorControl: native, BrowserControl: native, Shares: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: true, AssignedPublicURL: &publicURL, QUICConnector: muxsession.QUICConnector{TLSConfig: tlsConfig}, TCPConnector: muxsession.TLSYamuxConnector{TLSConfig: tlsConfig}}
+	cfg := publisher.Config{Control: native, Identity: native, Audit: native, VisitorControl: native, BrowserControl: native, Shares: native, ControlURL: server, State: profile, TeamID: publicURL.TeamId, DomainID: publicURL.DomainId, PublicURLScope: publicURL.PublicUrlScope, Purpose: publicURL.Purpose, PolicyRevision: uint64(publicURL.PolicyRevision), Hostname: publicURL.CanonicalHostname, ProjectRoot: a.project.Root, Target: request.Target, ServiceProtocol: "http", Limits: limits, Ephemeral: true, AssignedPublicURL: &publicURL, TransportTLS: tlsConfig}
 	cfg.PublisherIdentityID = native.PublisherIdentityID()
 	cfg.RequirePostQuantum = request.RequirePostQuantum
 	if publicURL.MembershipId != nil {

@@ -24,6 +24,34 @@ import (
 	"github.com/tnldotdev/tnl/internal/publisher"
 )
 
+func TestRuntimeTopologyRetainsRelayUDPThroughPublisherDrain(t *testing.T) {
+	receiver, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	var address string
+	t.Run("topology", func(t *testing.T) {
+		owner := newRuntimeTopology(t)
+		transport := owner.quicTransport(t)
+		address = transport.LocalAddr().String()
+		// topology cleanup, not the test context, owns this borrowed packet view.
+		packets := transport.NonQUICPackets(context.Background())
+		publisher := &integrationPublisher{done: make(chan struct{})}
+		publisher.cancel = func() {
+			_, publisher.err = packets.WriteTo([]byte("\x00drain"), receiver.LocalAddr())
+			_ = packets.Close()
+			close(publisher.done)
+		}
+		owner.publishers = append(owner.publishers, publisher)
+	})
+	packet, err := net.ListenPacket("udp", address)
+	if err != nil {
+		t.Fatal("topology cleanup did not release its relay UDP socket", err)
+	}
+	_ = packet.Close()
+}
+
 // this child only runs when selected explicitly by the harness unit tests. it
 // needs neither the integration gate nor a built product binary or database.
 func TestRuntimeHarnessChild(t *testing.T) {

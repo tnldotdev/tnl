@@ -23,6 +23,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/serviceapi"
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
@@ -146,7 +147,7 @@ func TestWireTraceSeparatedInfrastructureExport(t *testing.T) {
 				})
 				var connector muxsession.Connector = muxsession.TLSYamuxConnector{TLSConfig: clientTLS}
 				if transport == tunnel.TransportQUIC {
-					connector = muxsession.QUICConnector{TLSConfig: clientTLS}
+					connector = muxsession.QUICConnector{TLSConfig: clientTLS, Dialer: transporttest.QUICTransport(t)}
 				}
 				mux, err := connector.Connect(ctx, muxsession.Endpoint{Address: publisherAddress, ServerName: "127.0.0.1"})
 				if err != nil {

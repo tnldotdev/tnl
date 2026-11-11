@@ -49,6 +49,8 @@ type sourceQUICListener struct {
 	wait                 sync.WaitGroup
 	once                 sync.Once
 	err                  error
+	nonQUIC              *nonQUICPacketConn
+	nonQUICQueue         chan sourceQUICPacket
 }
 
 type sourceQUICPacket struct {
@@ -135,6 +137,15 @@ func (s *sourceQUICListener) receive() {
 			continue
 		}
 		s.mu.Lock()
+		// classify before source lookup/allocation: discovery must not allocate a
+		// QUIC transport, consume the handshake budget, or reach a source's table.
+		if n > 0 && buffer[0]&0x40 == 0 {
+			if n <= sourceNonQUICPacketBytes && s.nonQUIC != nil && s.nonQUIC.ctx.Err() == nil && len(s.nonQUICQueue) < cap(s.nonQUICQueue) {
+				s.nonQUICQueue <- sourceQUICPacket{data: append([]byte(nil), buffer[:n]...), oob: append([]byte(nil), oob[:oobn]...), address: net.UDPAddrFromAddrPort(udp.AddrPort())}
+			}
+			s.mu.Unlock()
+			continue
+		}
 		source := s.sources[ip]
 		if source == nil && !s.stopped && s.ctx.Err() == nil && len(s.sources) < s.limit && s.pending < sourceQUICPendingLimit && n >= 1200 && buffer[0]&0xc0 == 0xc0 {
 			// only a possible long-header handshake allocates a transport. the
@@ -310,9 +321,18 @@ func (s *sourceQUICListener) close() error {
 		}
 		s.wait.Wait()
 		s.mu.Lock()
+		defer s.mu.Unlock()
 		s.sources = nil
 		s.pending = 0
-		s.mu.Unlock()
+		// a borrowed discovery reader can still consume a queued packet after
+		// cancellation. never block behind a competing receive during cleanup.
+		for {
+			select {
+			case <-s.nonQUICQueue:
+			default:
+				return
+			}
+		}
 	})
 	return s.err
 }

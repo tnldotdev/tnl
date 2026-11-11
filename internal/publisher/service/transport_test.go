@@ -16,6 +16,7 @@ import (
 	"time"
 
 	quic "github.com/quic-go/quic-go"
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -109,7 +110,7 @@ func TestPrivatePublisherProductionSlotQUICAndTLSNoReplayAfterPathLoss(t *testin
 					}
 				}()
 			}
-			options, err := (RunConfig{TransportTLS: roots}).connectionOptions()
+			options, err := (RunConfig{TransportTLS: roots}).connectionOptions(transporttest.QUICTransport(t), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

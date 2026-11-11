@@ -24,7 +24,7 @@ func BenchmarkQUICSourceIsolationStream(b *testing.B) {
 				b.Fatal(err)
 			}
 			defer listener.Close()
-			client, err := (QUICConnector{TLSConfig: clientTLS}).Connect(ctx, Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
+			client, err := (QUICConnector{TLSConfig: clientTLS, Dialer: testQUICTransport(b)}).Connect(ctx, Endpoint{Address: listener.Addr().String(), ServerName: "relay.test"})
 			if err != nil {
 				b.Fatal(err)
 			}

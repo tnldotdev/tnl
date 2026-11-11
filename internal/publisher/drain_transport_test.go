@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/relay"
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
@@ -42,6 +43,10 @@ func drainTestConnections(t *testing.T, ctx context.Context, control *certificat
 		go func() { workers.Wait(); close(joined) }()
 		awaitPublisherTest(t, joined)
 	})
+	var dialer muxsession.QUICDialer
+	if kind == "quic" {
+		dialer = transporttest.QUICTransport(t)
+	}
 	for slot := range 2 {
 		var address string
 		var accept func() (muxsession.Session, error)
@@ -53,7 +58,7 @@ func drainTestConnections(t *testing.T, ctx context.Context, control *certificat
 			listeners = append(listeners, listener)
 			address = listener.Addr().String()
 			accept = func() (muxsession.Session, error) { return listener.Accept(ctx) }
-			connector = muxsession.QUICConnector{TLSConfig: clientTLS}
+			connector = muxsession.QUICConnector{TLSConfig: clientTLS, Dialer: dialer}
 		} else {
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {

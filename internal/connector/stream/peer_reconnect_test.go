@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/testutil/transporttest"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -229,7 +230,7 @@ func TestConnectorReconnectCancellationAndAuthorityDeadline(t *testing.T) {
 			f := newConnectorFixture(t, "quic")
 			var armed atomic.Bool
 			entered := make(chan struct{}, 2)
-			connector := muxsession.QUICConnector{TLSConfig: f.config.TransportTLS, Config: muxsession.QUICConfig{Config: fixtureDatagramConfig()}}
+			connector := muxsession.QUICConnector{TLSConfig: f.config.TransportTLS, Config: muxsession.QUICConfig{Config: fixtureDatagramConfig()}, Dialer: transporttest.QUICTransport(t)}
 			config := f.config
 			gate := muxsession.ConnectorFunc(func(ctx context.Context, endpoint muxsession.Endpoint) (muxsession.Session, error) {
 				if !armed.Load() {
