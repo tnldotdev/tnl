@@ -394,7 +394,13 @@ func (p *connectorConnection) watch() {
 			return
 		case <-p.session.Done():
 			timer.Stop()
-			p.cancel(fmt.Errorf("connector inner session ended: %w", errors.Join(ErrServiceConnection, p.session.Err())))
+			cause := p.session.Err()
+			if p.permissions != nil {
+				// a terminal permission read may reset its stream and cause remote
+				// session closure before the permission notification worker runs.
+				cause = errors.Join(cause, p.permissions.Err())
+			}
+			p.cancel(fmt.Errorf("connector inner session ended: %w", errors.Join(ErrServiceConnection, cause)))
 			return
 		case <-changed:
 			timer.Stop()

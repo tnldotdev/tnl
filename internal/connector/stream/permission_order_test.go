@@ -165,9 +165,21 @@ func TestConnectorTerminalPermissionControlPreservesEarlierAuthorizationCause(t 
 	}
 }
 
+type permissionWatchSession struct {
+	muxsession.Session
+	entered chan struct{}
+	release <-chan struct{}
+}
+
+func (s *permissionWatchSession) Done() <-chan struct{} {
+	close(s.entered)
+	<-s.release
+	return s.Session.Done()
+}
+
 func TestConnectorTerminalPermissionControlWatchWinsRetirement(t *testing.T) {
 	for _, transport := range []string{"quic", "tls-tcp"} {
-		for _, mode := range []string{"eof", "session closed"} {
+		for _, mode := range []string{"eof", "session closed", "eof then session closed"} {
 			t.Run(transport+"/"+mode, func(t *testing.T) {
 				client, server := stdioTransportSessions(t, transport)
 				ctx, cancel := context.WithCancelCause(t.Context())
@@ -204,7 +216,22 @@ func TestConnectorTerminalPermissionControlWatchWinsRetirement(t *testing.T) {
 				p := &connectorConnection{ctx: ctx, cancel: cancel, session: client, permissions: writer, until: until, preparedUntil: until, changed: make(chan struct{})}
 				p.run.ValidUntil, p.permission.ExpiresAt = until, until
 				defer p.Close()
-				if mode == "eof" {
+				watched := make(chan struct{})
+				startWatch := func() { p.workers.Go(func() { defer close(watched); p.watch() }) }
+				release := make(chan struct{})
+				resume := sync.OnceFunc(func() { close(release) })
+				defer resume()
+				if mode == "eof then session closed" {
+					gate := &permissionWatchSession{Session: client, entered: make(chan struct{}), release: release}
+					p.session = gate
+					startWatch()
+					select {
+					case <-gate.entered:
+					case <-setup.Done():
+						t.Fatal("watch did not reach session selection")
+					}
+				}
+				if mode != "session closed" {
 					err = control.CloseWrite()
 				} else {
 					err = client.Close()
@@ -223,8 +250,12 @@ func TestConnectorTerminalPermissionControlWatchWinsRetirement(t *testing.T) {
 				}
 				// the permission notification worker has not run. force watch to
 				// observe the terminal reader first, with every authority still current.
-				watched := make(chan struct{})
-				p.workers.Go(func() { defer close(watched); p.watch() })
+				if mode == "eof then session closed" {
+					_ = client.Close()
+					resume()
+				} else {
+					startWatch()
+				}
 				select {
 				case <-watched:
 				case <-time.After(time.Second):
@@ -234,7 +265,7 @@ func TestConnectorTerminalPermissionControlWatchWinsRetirement(t *testing.T) {
 				if !errors.Is(cause, ErrServiceConnection) || !errors.Is(cause, underlying) {
 					t.Fatal("watch lost terminal control classification or its underlying cause", cause)
 				}
-				if mode == "eof" && !errors.Is(cause, io.EOF) {
+				if mode != "session closed" && !errors.Is(cause, io.EOF) {
 					t.Fatal("watch discarded control EOF", cause)
 				}
 			})
