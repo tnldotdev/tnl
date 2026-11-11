@@ -7,11 +7,12 @@ import (
 	"testing"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
+	"github.com/tnldotdev/tnl/internal/publisher"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestPublicationControlPreparesVisitorsWithoutManagementAuthentication(t *testing.T) {
+func TestPublicationClientsPrepareVisitorsWithoutManagementAuthentication(t *testing.T) {
 	policyCalls, tokenCalls := 0, 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -38,14 +39,18 @@ func TestPublicationControlPreparesVisitorsWithoutManagementAuthentication(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	control := nativePublicationControl(nil, client)
-	if _, err := control.ReadPublisherVisitorPolicy(t.Context(), controlv1.PublisherVisitorPolicyRequest{}, "exact-run-token"); err != nil {
+	cfg := publisher.Config{Management: client, AccessManagement: client}
+	configureNativePublication(&cfg, nil, client)
+	if cfg.Management != nil || cfg.AccessManagement != nil {
+		t.Fatal("publication clients retained management authority")
+	}
+	if _, err := cfg.VisitorControl.ReadPublisherVisitorPolicy(t.Context(), controlv1.PublisherVisitorPolicyRequest{}, "exact-run-token"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := control.IssueVisitorToken(t.Context(), controlv1.VisitorTokenRequest{Source: json.RawMessage(`{"kind":"browser_session","secret":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`)}); err != nil {
+	if _, err := cfg.BrowserControl.IssueVisitorToken(t.Context(), controlv1.VisitorTokenRequest{Source: json.RawMessage(`{"kind":"browser_session","secret":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if policyCalls != 1 || tokenCalls != 1 {
-		t.Fatal("publication wrapper hid visitor preparation capabilities")
+		t.Fatal("publication clients did not prepare both visitor capabilities")
 	}
 }

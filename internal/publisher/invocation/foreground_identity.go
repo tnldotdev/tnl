@@ -101,7 +101,7 @@ func selectForegroundPublisher(ctx context.Context, database *clientstate.Databa
 		if err != nil {
 			return nil, errors.Join(err, cleanupGuest())
 		}
-		cfg.Control = guestPublicationControl{publicationControl: nativePublicationControl(native, services.routes), assigned: publicURL, bootstrap: services.routes}
+		cfg.Control = guestPublicationControl{PublicURLControlClient: native, assigned: publicURL, bootstrap: services.routes}
 		cfg.AssignedPublicURL = &publicURL
 		cfg.PublisherIdentityID = native.PublisherIdentityID()
 		configureNativePublication(cfg, native, services.routes)
@@ -133,7 +133,7 @@ func selectForegroundPublisher(ctx context.Context, database *clientstate.Databa
 		if err != nil {
 			return nil, err
 		}
-		cfg.Control, cfg.AssignedPublicURL = nativePublicationControl(native, services.routes), &publicURL
+		cfg.Control, cfg.AssignedPublicURL = native, &publicURL
 		cfg.PublisherIdentityID = native.PublisherIdentityID()
 		configureNativePublication(cfg, native, services.routes)
 		cfg.Hostname, cfg.PublicURLScope, cfg.Purpose = publicURL.CanonicalHostname, publicURL.PublicUrlScope, publicURL.Purpose
@@ -166,7 +166,7 @@ func selectForegroundPublisher(ctx context.Context, database *clientstate.Databa
 	if err := native.SelectPublicURL(publicURL); err != nil {
 		return nil, err
 	}
-	cfg.Control, cfg.PreserveSavedPublicURLTarget = nativePublicationControl(native, services.routes), true
+	cfg.Control, cfg.PreserveSavedPublicURLTarget = native, true
 	cfg.PublisherIdentityID = native.PublisherIdentityID()
 	configureNativePublication(cfg, native, services.routes)
 	return cleanup, nil

@@ -199,6 +199,9 @@ func TestProjectAliasPreparesAnExactNativePublisherOnlyForTheSelectedReadyReceiv
 		if _, ok := cfg.Control.(publisher.PublicURLManagementClient); ok {
 			t.Fatal("alias runtime retained person mutation authority")
 		}
+		if cfg.Management != nil || cfg.AccessManagement != nil {
+			t.Fatal("alias runtime retained explicit management authority")
+		}
 		if _, err := cfg.Control.CreatePublishRun(t.Context(), publicURL.Id, newID(opaqueid.IdempotencyPrefix)); !errors.Is(err, clientcontrol.ErrUnavailable) {
 			t.Fatalf("signed alias run: %v", err)
 		}

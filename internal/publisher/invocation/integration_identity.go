@@ -63,7 +63,7 @@ func nativeIntegrationConfig(ctx context.Context, database *clientstate.Database
 	if err := native.SelectPublicURL(publicURL); err != nil {
 		return cfg, err
 	}
-	cfg.Control, cfg.PreserveSavedPublicURLTarget = nativePublicationControl(native, services.routes), true
+	cfg.Control, cfg.PreserveSavedPublicURLTarget = native, true
 	cfg.PublisherIdentityID = native.PublisherIdentityID()
 	configureNativePublication(&cfg, native, services.routes)
 	return cfg, nil

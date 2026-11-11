@@ -269,7 +269,7 @@ func projectAliasPublisher(state *clientstate.Database, services publisherServic
 		if err != nil {
 			return integrations.Snapshot{}, err
 		}
-		snapshot.Config.Control = nativePublicationControl(native, services.routes)
+		snapshot.Config.Control = native
 		snapshot.Config.PublisherIdentityID = native.PublisherIdentityID()
 		configureNativePublication(&snapshot.Config, native, services.routes)
 		snapshot.Config.PreserveSavedPublicURLTarget = true
