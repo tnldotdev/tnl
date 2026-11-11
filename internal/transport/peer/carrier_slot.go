@@ -22,6 +22,7 @@ type CarrierSlot struct {
 
 type installedCarrier struct {
 	carrier Carrier
+	consent func() bool
 	ctx     context.Context
 	cancel  context.CancelFunc
 	work    sync.WaitGroup
@@ -63,6 +64,10 @@ func NewCarrierSlot() *CarrierSlot { return &CarrierSlot{changed: make(chan stru
 // before canceling and joining entered calls. no caller holds a role-state lock
 // while installing a carrier.
 func (s *CarrierSlot) Install(next Carrier) error {
+	return s.install(next, nil)
+}
+
+func (s *CarrierSlot) install(next Carrier, consent func() bool) error {
 	s.replace.Lock()
 	defer s.replace.Unlock()
 	s.mu.Lock()
@@ -90,7 +95,7 @@ func (s *CarrierSlot) Install(next Carrier) error {
 	}
 	if next != nil {
 		ctx, cancel := context.WithCancel(context.Background())
-		s.current = &installedCarrier{carrier: next, ctx: ctx, cancel: cancel}
+		s.current = &installedCarrier{carrier: next, consent: consent, ctx: ctx, cancel: cancel}
 		s.notifyLocked()
 	}
 	s.mu.Unlock()

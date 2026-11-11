@@ -217,7 +217,9 @@ func newServiceRuntimeFixtureContext(t *testing.T, standalone bool, opened chan<
 		return (&net.Dialer{}).DialContext(ctx, network, publicControlAddress)
 	}}
 	t.Cleanup(publicTransport.CloseIdleConnections)
-	state, err := clientstate.Open(t.Context(), filepath.Join(t.TempDir(), "state"))
+	// runtime fixtures keep credentials in private temporary files, never the
+	// machine's login keychain; key protection is tested by the state owner.
+	state, err := clientstate.OpenWithOptions(t.Context(), filepath.Join(t.TempDir(), "state"), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		t.Fatal(err)
 	}

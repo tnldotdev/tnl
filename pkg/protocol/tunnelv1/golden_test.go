@@ -58,6 +58,7 @@ func TestGoldenJSONAndFramedWireFixtures(t *testing.T) {
 	assertGoldenFrame(t, "control-connector-renewed", connectorRenewed, WriteControl, ReadControl)
 	assertGoldenFrame(t, "control-accepted", Message{Type: HelloAccepted, ProtocolVersion: Version}, WriteControl, ReadControl)
 	assertGoldenFrame(t, "connector-peer-visitor-entry", peerOpeningFixture(), WriteConnectorPeerVisitorEntry, ReadConnectorPeerVisitorEntry)
+	assertGoldenFrame(t, "connector-peer-connectivity", connectorPeerConnectivityFixture(), WriteConnectorPeerConnectivity, ReadConnectorPeerConnectivity)
 	assertGoldenFrame(t, "visitor-stream-header", VisitorStreamHeader{
 		ProtocolVersion: Version, Kind: VisitorStream, VisitorConnectionID: "visitor_connection_1",
 		PublicURLID: "public_url_1", PublishRunID: "publish_run_1", PublishRunNumber: 2,
@@ -114,7 +115,14 @@ func assertGoldenFrame[T any](t *testing.T, name string, want T, write func(io.W
 		t.Fatal(err)
 	}
 	if !bytes.Equal(encoded, compactJSON.Bytes()) {
-		t.Fatalf("JSON = %s; want %s", encoded, compactJSON.Bytes())
+		t.Fatalf("JSON does not match %s.json", name)
+	}
+	fromJSON, err := read(frame(compactJSON.String()))
+	if err != nil {
+		t.Fatalf("could not read %s.json with its frame parser", name)
+	}
+	if !reflect.DeepEqual(fromJSON, want) {
+		t.Fatalf("decoded %s.json does not match the expected message", name)
 	}
 	// the JSON and hex files are independent, committed expectations.
 	wantWire := goldenWire(t, name)
@@ -123,14 +131,14 @@ func assertGoldenFrame[T any](t *testing.T, name string, want T, write func(io.W
 		t.Fatal(err)
 	}
 	if !bytes.Equal(wire.Bytes(), wantWire) {
-		t.Fatalf("framed wire = %x; want %x", wire.Bytes(), wantWire)
+		t.Fatalf("framed wire does not match %s.frame.hex", name)
 	}
 	got, err := read(bytes.NewReader(wantWire))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("decoded fixture = %#v; want %#v", got, want)
+		t.Fatalf("decoded %s.frame.hex does not match the expected message", name)
 	}
 }
 

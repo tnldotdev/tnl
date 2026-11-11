@@ -1,0 +1,14 @@
+{
+  "protocol_version": 1,
+  "kind": "connector_peer_connectivity",
+  "pair_id": "cpp_1234567890123456789012",
+  "delivery_id": "AQEBAQEBAQEBAQEBAQEBAQ",
+  "delivery_generation": 3,
+  "attempt": 18446744073709551616,
+  "username_fragment": "abcdEFGH01234567",
+  "password": "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345",
+  "candidates": [
+    "1 1 udp 2130706431 192.0.2.10 50000 typ host",
+    "2 1 udp 1694498815 198.51.100.20 50001 typ srflx raddr 192.0.2.10 rport 50000"
+  ]
+}

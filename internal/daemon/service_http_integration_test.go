@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -29,9 +30,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	daemonconfig "github.com/tnldotdev/tnl/internal/daemon/config"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
+	"github.com/tnldotdev/tnl/internal/observability"
 	publisheridentity "github.com/tnldotdev/tnl/internal/publisher/identity"
 	publisherservice "github.com/tnldotdev/tnl/internal/publisher/service"
 	"github.com/tnldotdev/tnl/internal/testutil"
@@ -121,7 +125,7 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	}
 	serviceID := *applied.Services[0].ServiceId
 	// a group assignment is the only publisher grant for this service.
-	startServiceHTTPGroupPublisher(t, f, applied, "http-auth", group, target.Listener.Addr().String())
+	publisherMetrics := startServiceHTTPGroupPublisher(t, f, applied, "http-auth", group, target.Listener.Addr().String())
 	services, err := f.identity.routes.ListAvailableServices(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -366,6 +370,9 @@ func TestIntegrationServiceHTTPAuthentication(t *testing.T) {
 	}
 	closeResponse(response)
 	checkServiceHTTPUpgrade(t, &browser, base)
+	// closing the visitor socket does not join the publisher's upgrade handler.
+	// observe its slot release before starting the separate streaming scenario.
+	awaitServiceHTTPIdle(t, publisherMetrics)
 	// revocation terminates already admitted streaming responses, and the next
 	// request on a keepalive connection cannot reuse the earlier decision.
 	response = request(&browser, "/watch", "", "", 200)
@@ -530,6 +537,52 @@ func checkServiceHTTPUpgrade(t *testing.T, client *http.Client, base string) {
 	}
 }
 
+func awaitServiceHTTPIdle(t *testing.T, metrics prometheus.Gatherer) {
+	t.Helper()
+	privateWait(t, 10*time.Second, func(context.Context) (bool, error) {
+		families, err := metrics.Gather()
+		if err != nil {
+			return false, err
+		}
+		var active float64
+		observed := false
+		for _, family := range families {
+			if family.GetName() != "tnl_publisher_http_requests_active" {
+				continue
+			}
+			for _, point := range family.Metric {
+				if point.Gauge != nil {
+					active += point.GetGauge().GetValue()
+					observed = true
+				}
+			}
+		}
+		if observed && active == 0 {
+			return true, nil
+		}
+		return false, fmt.Errorf("publisher HTTP handlers active=%g, observed=%t", active, observed)
+	})
+}
+
+func TestServiceHTTPIdleWaitObservesPublisherRequestRelease(t *testing.T) {
+	var scrapes int
+	metrics := prometheus.GathererFunc(func() ([]*dto.MetricFamily, error) {
+		scrapes++
+		if scrapes == 1 {
+			return nil, nil
+		}
+		active := float64(1)
+		if scrapes > 2 {
+			active = 0
+		}
+		return []*dto.MetricFamily{{Name: new("tnl_publisher_http_requests_active"), Type: new(dto.MetricType_GAUGE), Metric: []*dto.Metric{{Gauge: &dto.Gauge{Value: &active}}}}}, nil
+	})
+	awaitServiceHTTPIdle(t, metrics)
+	if scrapes < 3 {
+		t.Fatal("missing metrics or an active handler passed the publisher idle fence")
+	}
+}
+
 func serviceHTTPCurl(t *testing.T, f *privateSeparatedFixture, direct string, service controlv1.Service, certificate tls.Certificate) {
 	t.Helper()
 	// curl connects to a fixture edge which supplies trusted outer PROXY v2.
@@ -589,7 +642,7 @@ func serviceHTTPTestTargetTrust(hostname, caPEM string) controlv1.ProjectTargetT
 	return controlv1.ProjectTargetTLS{Hostname: hostname, CaPem: &caPEM, Digest: hex.EncodeToString(digest[:])}
 }
 
-func startServiceHTTPGroupPublisher(t *testing.T, f *privateSeparatedFixture, applied controlv1.AppliedProjectConfiguration, project, group, target string) {
+func startServiceHTTPGroupPublisher(t *testing.T, f *privateSeparatedFixture, applied controlv1.AppliedProjectConfiguration, project, group, target string) *observability.Metrics {
 	t.Helper()
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -625,7 +678,13 @@ func startServiceHTTPGroupPublisher(t *testing.T, f *privateSeparatedFixture, ap
 	}
 	identity := authorityv1.PublisherEnrollmentResult{ClientId: member.PublisherIdentityId, KeyId: member.KeyId, TeamId: member.TeamId, GrantId: assignment.GrantId, Kind: authorityv1.Service, ServiceId: &service.Id}
 	quic, tcp := f.connectors()
-	ctx, cancel := context.WithCancel(t.Context())
+	metrics := observability.New("publisher")
+	t.Cleanup(func() {
+		if err := metrics.Shutdown(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	ctx, cancel := context.WithCancel(observability.WithMetrics(t.Context(), metrics))
 	ready, done := make(chan struct{}), make(chan error, 1)
 	go func() {
 		done <- publisherservice.Publish(ctx, publisherservice.RunConfig{Control: native, State: f.identity.state, Access: native.Access, Identity: identity, ServiceID: service.Id, Target: target, Metadata: publisheridentity.ServiceMetadata(service), HeartbeatInterval: 100 * time.Millisecond, Ready: func() error { close(ready); return nil }, RelayQUIC: quic, RelayTCP: tcp})
@@ -649,4 +708,5 @@ func startServiceHTTPGroupPublisher(t *testing.T, f *privateSeparatedFixture, ap
 	case <-time.After(15 * time.Second):
 		t.Fatal("service HTTP publisher not ready")
 	}
+	return metrics
 }

@@ -17,6 +17,10 @@ func readConnectorPeerVisitor(r io.Reader) error {
 	_, err := ReadConnectorPeerVisitorEntry(r)
 	return err
 }
+func readConnectorPeerConnectivity(r io.Reader) error {
+	_, err := ReadConnectorPeerConnectivity(r)
+	return err
+}
 
 var frameReaders = []struct {
 	name  string
@@ -34,6 +38,7 @@ var frameReaders = []struct {
 	{"control-connector-replaced", MaxControlBytes, readControl},
 	{"control-accepted", MaxControlBytes, readControl},
 	{"connector-peer-visitor-entry", MaxHeaderBytes, readConnectorPeerVisitor},
+	{"connector-peer-connectivity", MaxConnectorPeerConnectivityBytes, readConnectorPeerConnectivity},
 	{"visitor-stream-header", MaxHeaderBytes, readVisitor},
 	{"internal-forwarding-header", MaxHeaderBytes, readForwarding},
 }
@@ -83,8 +88,8 @@ func (r *headerOnlyReader) Read(p []byte) (int, error) {
 func TestFrameLengthBoundariesAndConsumption(t *testing.T) {
 	for _, test := range frameReaders {
 		t.Run(test.name, func(t *testing.T) {
-			for _, size := range []int{0, test.limit + 1} {
-				r := &headerOnlyReader{header: bytes.NewReader(binary.BigEndian.AppendUint32(nil, uint32(size)))}
+			for _, size := range []uint32{0, uint32(test.limit + 1), ^uint32(0)} {
+				r := &headerOnlyReader{header: bytes.NewReader(binary.BigEndian.AppendUint32(nil, size))}
 				if err := test.read(r); err == nil || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || r.payloadReads != 0 {
 					t.Fatalf("length %d: error %v, payload reads %d", size, err, r.payloadReads)
 				}
@@ -143,6 +148,9 @@ func TestFrameWritersPropagateErrorsAndShortWrites(t *testing.T) {
 		}},
 		{"connector-peer", func(w io.Writer) error {
 			return WriteConnectorPeerVisitorEntry(w, peerOpeningFixture())
+		}},
+		{"connector-peer-connectivity", func(w io.Writer) error {
+			return WriteConnectorPeerConnectivity(w, connectorPeerConnectivityFixture())
 		}},
 		{"forwarding", func(w io.Writer) error {
 			h, _ := ReadInternalForwardingHeader(bytes.NewReader(goldenWire(t, "internal-forwarding-header")))
