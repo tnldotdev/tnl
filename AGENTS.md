@@ -36,6 +36,9 @@ Keep contributor setup in [contributing.md](contributing.md). Explain implementa
 boundaries in source and tests rather than a separate documentation tree. Put work
 logs and check results in the PR.
 
+Never add to NOTICE. If you have a software license to add, ONLY add it to
+THIRD_PARTY_LICENSES.txt in a clean way that matches the existing format.
+
 # canonical terms
 
 Use these terms consistently in code, APIs, CLI help, and documentation. Write
